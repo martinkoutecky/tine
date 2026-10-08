@@ -1,0 +1,1 @@
+Managed storage now activates and saves more reliably on Android, recovers from interrupted setup, and reports actionable failures. Android Back works after navigation. External edits, sync/VCS conflicts, and bulk revisions are handled more safely, PDF highlights preserve formatting, and large managed graphs open and reconcile faster.

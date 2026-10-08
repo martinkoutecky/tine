@@ -1,8 +1,8 @@
 import { browserPlatform } from "./browserPlatform";
 // "A newer Tine is available" check — best-effort, once per launch.
 //
-// Notifier: ask the Tauri updater plugin what the beta channel offers (NEVER
-// the shipped Tine's `releases/latest` — see RELEASES_PAGE) and, if it's newer than
+// Notifier: ask the Tauri updater plugin what this build's channel offers (never
+// the other channel's — see RELEASES_PAGE) and, if it's newer than
 // the running build, show a sticky toast. This is the cross-platform half and is
 // always the way a user LEARNS an update exists.
 //
@@ -21,7 +21,7 @@ import { browserPlatform } from "./browserPlatform";
 // INSTALL the user asked for is different: it records a fixed stage/cause in the
 // privacy-safe diagnostic report and says which stage failed (GH #343).
 
-import { APP_PRODUCT_NAME } from "./appIdentity";
+import { APP_PRODUCT_NAME, APP_UPDATE_CHANNEL } from "./appIdentity";
 import { releaseVersion } from "../scripts/release-policy.mjs";
 import { isTauri, backend } from "./backend";
 import { dbg, recordDiagnostic } from "./debug";
@@ -32,31 +32,35 @@ import { openSettings } from "./ui";
 import { checkForUpdatesAutomatically, initUpdateSettings } from "./updateSettings";
 import { reportUiFailure } from "./uiFailure";
 
-/** THE update channel (og-only). This build (`page.tine.TineBeta`) must never offer
- * the shipped Tine: `releases/latest` there carries a higher version number, and
- * installing it would REPLACE og with master. The channel is the fixed-tag GitHub
- * release `beta`. What it offers is answered ONCE, by the Tauri updater
+/** THE update channel. Each build reads only its own channel, named by the identity switch:
+ * stable Tine (`page.tine.Tine`) reads `releases/latest`, Tine Beta (`page.tine.TineBeta`)
+ * reads the fixed-tag GitHub release `beta`. A cross-channel offer would replace one app
+ * with the other's build. What the channel offers is answered ONCE, by the Tauri updater
  * plugin: `check()` reads the endpoint in `tauri.conf.json` (Rust-side, so no
  * webview CORS problem: GitHub release-asset downloads send no
  * Access-Control-Allow-Origin) and the installer downloads from that same
  * manifest. This file therefore names no channel URL to fetch and never calls
- * `fetch()`; the only URL here is the human-facing release page below (guard:
+ * `fetch()`; the only URLs here are the human-facing release pages below (guard:
  * `src/updateChannel.guard.test.ts`). */
-const RELEASES_PAGE = "https://github.com/martinkoutecky/tine/releases/tag/beta";
+const STABLE = APP_UPDATE_CHANNEL === "stable";
+const RELEASES_PAGE = STABLE
+  ? "https://github.com/martinkoutecky/tine/releases/latest"
+  : "https://github.com/martinkoutecky/tine/releases/tag/beta";
 
-/** Acquire only Beta updates. A stable payload on the Beta endpoint is a
- * publication mistake: close its handle before any offer, download or install.
- * Both notification and installation use this door (I-4/I-12). */
-async function checkedBetaUpdate() {
+/** Acquire only this build's channel: a Beta build takes only `-beta.N` versions, a stable
+ * build only plain ones. A cross-channel payload is a publication mistake: close its
+ * handle before any offer, download or install. Both notification and installation use
+ * this door (I-4/I-12). */
+async function checkedChannelUpdate() {
   const { check } = await import("@tauri-apps/plugin-updater");
   const update = await check();
   if (!update) return null;
   try {
-    if (releaseVersion(update.version).sequence) return update;
+    if (Boolean(releaseVersion(update.version).sequence) !== STABLE) return update;
   } catch {
     // This is local syntax validation, not a failed read: reject the payload
     // and close its resource below, without retaining untrusted version text.
-    dbg("updater rejected an invalid Beta version");
+    dbg("updater rejected an invalid version");
   }
   try { await update.close(); }
   catch (error) { dbg(`updater handle close failed: ${String(error)}`); }
@@ -260,7 +264,7 @@ async function applyUpdateOrOpen(): Promise<void> {
   }
   let update: Awaited<ReturnType<(typeof import("@tauri-apps/plugin-updater"))["check"]>>;
   try {
-    update = await checkedBetaUpdate();
+    update = await checkedChannelUpdate();
   } catch (error) {
     reportUpdaterFailure("check", error);
     openReleases();
@@ -357,12 +361,12 @@ export async function offerUpdate(version: string, current: string, live: () => 
   return { manual };
 }
 
-/** The version the beta channel offers when it is newer than this build,
+/** The version this channel offers when it is newer than this build,
  *  else null. The updater plugin decides "newer" (and reads the manifest); it
  *  throws on a missing, unreachable or invalid manifest, which callers absorb.
  *  Releases the plugin's resource handle (the installer takes its own). */
 async function offeredVersion(): Promise<string | null> {
-  const offer = await checkedBetaUpdate();
+  const offer = await checkedChannelUpdate();
   if (!offer) return null;
   const version = offer.version;
   try { await offer.close(); } catch (error) { dbg(`updater handle close failed: ${String(error)}`); }
@@ -383,7 +387,7 @@ export function scheduleAutomaticUpdateCheck(): () => void {
   return () => { alive = false; if (timer !== undefined) clearTimeout(timer); };
 }
 
-/** Check the beta channel automatically only when the device preference is ON;
+/** Check this channel automatically only when the device preference is ON;
  * toast if there is one and the preference is still ON after the check.
  *  Resolves silently (never throws) in every failure case. */
 export async function checkForUpdate(): Promise<void> {
@@ -405,7 +409,7 @@ export async function checkForUpdate(): Promise<void> {
 export type UpdateStatus =
   | { kind: "current"; version: string }
   | { kind: "available"; version: string; current: string; manual?: true }
-  | { kind: "unavailable" }; // offline, rate-limited, no Beta release, or not the packaged app
+  | { kind: "unavailable" }; // offline, rate-limited, no channel release, or not the packaged app
 
 /** The About tab's explicit "Check for updates" button. Unlike `checkForUpdate`
  *  (silent on the common no-update path), this reports every outcome so the
@@ -428,7 +432,7 @@ export async function checkForUpdateNow(): Promise<UpdateStatus> {
   }
 }
 
-/** Open the beta releases page (exported for the About tab's manual link). */
+/** Open this channel's releases page (exported for the About tab's manual link). */
 export function openReleasesPage(): void {
   openReleases();
 }

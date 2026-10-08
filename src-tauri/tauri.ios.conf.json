@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Tine"
+      }
+    ]
+  },
+  "bundle": {
+    "iOS": {
+      "developmentTeam": "RQ5V4LK7N2",
+      "minimumSystemVersion": "15.4"
+    }
+  }
+}

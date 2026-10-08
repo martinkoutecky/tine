@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, Show, type JSX } from "solid-js";
+import { createEffect, createResource, createSignal, onCleanup, Show, type JSX } from "solid-js";
 import { switchGraph, createNewGraph, loadGraphPath } from "../graph";
 import { graphMeta, startupOpenFailure, setStartupOpenFailure } from "../graphSession";
 import { writeClipboardText } from "../clipboard";
@@ -8,12 +8,17 @@ import { WindowControls } from "./WindowChrome";
 import { osDrawsWindowControls } from "../nativeChrome";
 import { registerTransientLayer } from "../transientLayers";
 import { queryAllWindows } from "../windowRealm";
+import { platformKind } from "../platform";
+import { readOr } from "../resourceRead";
 
 /** First-run onboarding. Shown (as a full-cover layer) when the app starts with
  *  no graph configured: choose to open an existing Logseq graph, or create a new
  *  one that comes pre-loaded with a short guided demo. */
 export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
   const [busy, setBusy] = createSignal<null | "open" | "create">(null);
+  // iOS opens graphs only inside the app's own containers (master 027b5ae15).
+  const [platform] = createResource(platformKind);
+  const ios = () => readOr(platform, undefined, "welcome-platform") === "ios";
 
   const run = (which: "open" | "create", fn: () => Promise<unknown>) => async () => {
     if (busy()) return;
@@ -94,6 +99,12 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
         </Show>
 
         <div class="welcome-actions">
+          <Show when={ios()}>
+            <p class="welcome-busy">
+              On iPhone and iPad, graphs can live in On My iPhone or iCloud Drive → TineOutline.
+              Other Files providers aren't supported yet.
+            </p>
+          </Show>
           <button
             class="welcome-choice"
             disabled={!!busy()}

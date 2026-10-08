@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 181] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 182] = [
     "add_defender_exclusion",
     "app_architecture",
     "app_platform",
@@ -100,6 +100,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 181] = [
     "page_inventory",
     "page_print_html",
     "pick_graph_folder",
+    "prepare_graph_folder",
     "preview_block",
     "publish_html",
     "publish_live",
@@ -199,36 +200,50 @@ pub(crate) fn is_known_command(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
-    fn registered() -> Vec<String> {
+    /// Every name registered in `lib.rs`, module paths and `cfg` attributes
+    /// stripped, on every target (master's parser: a `#[cfg(...)]` inside the
+    /// handler list contains `]`, so the list end is found by bracket depth).
+    fn registered() -> BTreeSet<String> {
         let lib = include_str!("lib.rs");
         let start =
             lib.find("generate_handler![").expect("handler list") + "generate_handler![".len();
-        let end = start + lib[start..].find(']').expect("handler list end");
-        let mut names: Vec<String> = lib[start..end]
-            .split(',')
-            .map(|entry| entry.trim())
-            .filter(|entry| !entry.is_empty())
-            .map(|entry| {
-                entry
-                    .rsplit("::")
-                    .next()
-                    .unwrap_or(entry)
-                    .trim()
-                    .to_string()
-            })
-            .collect();
-        names.sort();
-        names
+        let mut depth = 1usize;
+        let mut end = start;
+        for (offset, byte) in lib[start..].bytes().enumerate() {
+            match byte {
+                b'[' => depth += 1,
+                b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = start + offset;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        lib[start..end]
+            .lines()
+            .map(|line| line.trim().trim_end_matches(','))
+            .filter(|line| !line.is_empty() && !line.starts_with("//") && !line.starts_with("#["))
+            .map(|line| line.rsplit("::").next().unwrap_or(line).trim().to_string())
+            .collect()
     }
 
     #[test]
     fn the_known_command_list_is_exactly_the_registered_handler_list() {
-        let known: Vec<String> = KNOWN_COMMANDS.iter().map(|name| name.to_string()).collect();
+        let known: BTreeSet<String> = KNOWN_COMMANDS.iter().map(|name| name.to_string()).collect();
+        assert_eq!(known.len(), KNOWN_COMMANDS.len(), "duplicate command name");
+        assert!(
+            KNOWN_COMMANDS.windows(2).all(|pair| pair[0] < pair[1]),
+            "KNOWN_COMMANDS must stay sorted so is_known_command can binary-search"
+        );
         assert_eq!(
             known,
             registered(),
-            "KNOWN_COMMANDS must equal lib.rs generate_handler! (sorted); a diagnostic IPC event may name only a registered command (I-5)"
+            "KNOWN_COMMANDS must equal lib.rs generate_handler! across every target's cfg arm (sorted); a diagnostic IPC event may name only a registered command (I-5)"
         );
     }
 

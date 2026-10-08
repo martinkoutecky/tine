@@ -21,6 +21,7 @@ async function loadUpdate(opts: {
   packaging?: string;
   updaterReject?: Error;
   updaterUpdate?: object;
+  channel?: "stable" | "beta";
 }) {
   vi.resetModules();
   const isTauriMock = vi.fn(() => opts.tauri ?? true);
@@ -65,6 +66,8 @@ async function loadUpdate(opts: {
   vi.doMock("@tauri-apps/api/app", () => ({ getVersion: getVersionMock }));
   vi.doMock("@tauri-apps/plugin-updater", () => ({ check: updaterCheckMock }));
   vi.doMock("@tauri-apps/plugin-process", () => ({ relaunch: relaunchMock }));
+  // The channel is the identity switch's; these cases pin each channel explicitly.
+  vi.doMock("./appIdentity", () => ({ APP_PRODUCT_NAME: IDENTITY.productName, APP_UPDATE_CHANNEL: opts.channel ?? "beta" }));
 
   const update = await import("./update");
   return {
@@ -211,6 +214,17 @@ describe("update checks", () => {
     await expect(update.checkForUpdateNow()).resolves.toEqual({ kind: "current", version: "0.7.0-beta.1" });
     expect(pushToastMock).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it("stable offers only stable versions and opens the latest release page", async () => {
+    const beta = vi.fn(async () => {});
+    const offered = await loadUpdate({ channel: "stable", version: "0.7.0", updaterUpdate: { version: "0.7.1", close: async () => {} } });
+    await expect(offered.update.checkForUpdateNow()).resolves.toEqual({ kind: "available", version: "0.7.1", current: "0.7.0" });
+    const refused = await loadUpdate({ channel: "stable", version: "0.7.0", updaterUpdate: { version: "0.8.0-beta.1", close: beta } });
+    await expect(refused.update.checkForUpdateNow()).resolves.toEqual({ kind: "current", version: "0.7.0" });
+    expect(beta).toHaveBeenCalledOnce();
+    refused.update.openReleasesPage();
+    expect(refused.openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases/latest");
   });
 
   afterEach(() => {

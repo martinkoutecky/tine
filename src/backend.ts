@@ -49,7 +49,7 @@ import type {
   PublicationReceipt,
   DraftRecord, DraftLoad,
 } from "./types";
-import type { GraphSources, GraphFolderPickResult, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus } from "./backendTypes";
+import type { GraphSources, GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus } from "./backendTypes";
 import { dbg } from "./debug";
 import type { EditKinds } from "./editKind";
 import { mockBackend } from "./mock";
@@ -497,6 +497,8 @@ export interface Backend {
   /** Android native graph-folder picker. Returns a real filesystem path when
    *  picked; never a content URI. */
   pickGraphFolder(): Promise<GraphFolderPickResult>;
+  /** iOS only: make an app-container (local/iCloud) graph readable before Rust enumerates it. */
+  prepareGraphFolder(path: string): Promise<PreparedGraphFolder>;
   /** Native file picker (asset upload). Null if cancelled / unsupported. */
   pickFile(): Promise<string | null>;
   /** Android: take a photo with the camera (or pick an existing image) → base64
@@ -692,7 +694,7 @@ export interface Backend {
   watcherLatencyRecent(): Promise<unknown[]>;
 }
 
-export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, SavePageEntry, GraphAnswersChange, SavePagesResult, GraphSourceFile, GraphSources, GraphFolderPickResult, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
+export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, SavePageEntry, GraphAnswersChange, SavePagesResult, GraphSourceFile, GraphSources, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, SavePageEntry, GraphAnswersChange, SavePagesResult } from "./backendTypes";
 
 export function isTauri(): boolean {
@@ -1256,6 +1258,9 @@ class TauriBackend implements Backend {
   }
   pickGraphFolder(): Promise<GraphFolderPickResult> {
     return this.call<GraphFolderPickResult>("pick_graph_folder");
+  }
+  prepareGraphFolder(path: string): Promise<PreparedGraphFolder> {
+    return this.call<PreparedGraphFolder>("prepare_graph_folder", { path });
   }
   capturePhoto(): Promise<MediaCaptureResult> {
     return this.call<MediaCaptureResult>("capture_photo");

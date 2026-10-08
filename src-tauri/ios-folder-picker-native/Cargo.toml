@@ -1,0 +1,12 @@
+[package]
+name = "tine-ios-folder-picker-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+links = "tine-ios-folder-picker-native"
+
+[dependencies]
+tauri = { version = "2" }
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

@@ -1,0 +1,242 @@
+{
+  "schemaVersion": 2,
+  "version": "0.6.987",
+  "baseTag": "v0.6.986",
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "The search index could not be built at all, on every launch, when any page contained a reference whose name is blank or only a slash, such as `[[ ]]`, `[[/]]`, `#/`, `tags:: /` or `[[　]]` (an ideographic space); Linked/Unlinked References and queries then showed \"couldn't be built (code: other)\". Such references are now ignored, as they name no page, and a page whose own name is blank or `/` is indexed normally (GH #594).",
+      "userVisible": true,
+      "regressions": [
+        "REG-INDEX-EMPTY-PAGE-NAME-594"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "internal-only: restores the index build on graphs containing blank references; the Guide does not describe blank references.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The fix skips references that name no page; no contract value changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Linked and Unlinked References answer again while the search index is building or has failed, by reading the pages as v0.6.982 did. Before, a graph whose index could not be built showed no references for the whole session. Query blocks still wait for the index (GH #594, #543).",
+      "userVisible": true,
+      "regressions": [
+        "REG-INDEX-LIVENESS-594"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The search page and the failed-index troubleshooting entry say that references answer by reading pages while the index builds or has failed.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md",
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Contract L4 records the reference fallback.",
+        "refs": [
+          "docs/contracts/index-readiness.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "The search tab (\"Open search tab\" in Ctrl+K) shows results again while the search index is building or has failed, as it did in v0.6.982. Until the index is ready they come from a scan of your pages, in page order, and the tab says so; they are replaced by the index's results once it answers. Before, the tab showed \"Rebuilding the query index…\" for as long as the index was not ready, while Ctrl+K worked (GH #543).",
+      "userVisible": true,
+      "regressions": [
+        "REG-SEARCH-TAB-BEFORE-READY-543"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The search tabs section describes the page-scan results shown until the index is ready.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Contract L4 records that search answers from parsed pages when the index is unavailable.",
+        "refs": [
+          "docs/contracts/index-readiness.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Journals stopped loading for an hour every night where the Linux AppImage's built-in time-zone data is out of date, for example in Mexico City, which no longer observes daylight saving time: the window and the app disagreed about which day it was. The app's calendar now follows the system's time-zone rules everywhere (GH #607).",
+      "userVisible": true,
+      "regressions": [
+        "UI-JOURNALS-BACKEND-DAY-AUTHORITY-607"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "internal-only: the calendar day now follows the system time-zone rules; no Guide workflow changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract covers the app clock; the guard test src/appClock.guard.test.ts records the rule.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A query table's column picker offers Page, so a hand-picked column selection can keep it (GH #606).",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-COLUMNS-OFFER-PAGE-606"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The Sheets page already lists page among the built-in columns.",
+        "refs": [
+          "crates/tine-core/src/templates/sheets.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "UI picker fix; no contract describes the picker.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "In a narrow window the indexing indicator in the toolbar says \"Indexing\" beside its bar; before, it showed a bare bar (suggested by EllisMorrow, GH #594).",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "update",
+        "reason": "The search page says the narrow toolbar shows Indexing beside the bar.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Presentation of an existing indicator.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Diagnostics: an index failure in the diagnostic report now names the step that failed as well as its class, and with `--debug` the underlying error text reaches the debug log file on every platform; before, the Windows app dropped it, so repeated `other` failures could not be diagnosed (GH #594).",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "internal-only: diagnostic report content; the Guide's diagnostic-report section stays accurate.",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The diagnostics contract records the failure site and the debug-log path.",
+        "refs": [
+          "docs/contracts/diagnostics.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Diagnostics: the experimental 32-bit Windows build no longer records its manual-update policy as an updater failure on every launch, and each session's start in the report names the build version and architecture, so a report can tell which build a previous session ran (GH #594).",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "internal-only: diagnostic report content for the experimental 32-bit Windows build.",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The diagnostics contract records the session-start fields and the manual-update policy event.",
+        "refs": [
+          "docs/contracts/diagnostics.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    }
+  ]
+}

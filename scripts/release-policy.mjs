@@ -2,6 +2,8 @@
 // channel are independent: the identity flip must not opt Beta into stable updates.
 export const BETA_TAG = "beta";
 export const BETA_ENDPOINT = "https://github.com/martinkoutecky/tine/releases/download/beta/latest.json";
+export const STABLE_CHANNEL = "stable";
+export const STABLE_ENDPOINT = "https://github.com/martinkoutecky/tine/releases/latest/download/latest.json";
 
 export function releaseVersion(version) {
   const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.([1-9]\d*))?$/.exec(version ?? "");
@@ -21,11 +23,24 @@ export function releaseVersion(version) {
 }
 
 export function releaseChannel(conf) {
-  const endpoints = conf.plugins?.updater?.endpoints;
-  if (JSON.stringify(endpoints) !== JSON.stringify([BETA_ENDPOINT])) {
-    throw new Error("Beta release builds must use only the beta updater endpoint");
+  const endpoints = JSON.stringify(conf.plugins?.updater?.endpoints);
+  const { sequence } = releaseVersion(conf.version);
+  if (endpoints === JSON.stringify([BETA_ENDPOINT])) return BETA_TAG;
+  if (endpoints === JSON.stringify([STABLE_ENDPOINT])) {
+    if (sequence) throw new Error("a -beta.N version must use only the beta updater endpoint");
+    return STABLE_CHANNEL;
   }
-  return BETA_TAG;
+  throw new Error("release builds must use exactly the beta or the stable updater endpoint");
+}
+
+/** The release name in AppImage zsync update information: `beta`, or GitHub's `latest` keyword. */
+export function zsyncReleaseName(conf) {
+  return releaseChannel(conf) === BETA_TAG ? BETA_TAG : "latest";
+}
+
+/** The GitHub release a channel publishes to: the moving `beta` tag, or `v<version>`. */
+export function releaseTag(conf) {
+  return releaseChannel(conf) === BETA_TAG ? BETA_TAG : `v${conf.version}`;
 }
 
 export function packagingProblems(conf, ship) {
@@ -42,16 +57,19 @@ export function packagingProblems(conf, ship) {
 }
 
 export function publicationPlan({ conf, mode, publish, tag }) {
-  releaseChannel(conf);
+  const channel = releaseChannel(conf);
   releaseVersion(conf.version);
-  if (mode !== "build") throw new Error("Beta supports mode=build only; promotion is not implemented");
+  if (mode !== "build") throw new Error("release supports mode=build only; promotion is not implemented");
   if (publish !== true && publish !== false) throw new Error("publish must be an explicit boolean");
-  if (publish && tag !== BETA_TAG) throw new Error("Beta builds may publish only to beta, never a versioned/stable release");
-  return { channel: BETA_TAG, publish, prerelease: true, latest: false };
+  if (publish && tag !== releaseTag(conf)) {
+    throw new Error(`a ${channel} build may publish only to ${releaseTag(conf)}, not ${tag}`);
+  }
+  const stable = channel === STABLE_CHANNEL;
+  return { channel, publish, prerelease: !stable, latest: stable };
 }
 
 export function updaterAssetUrl(repository, asset, channel = "stable") {
-  if (channel !== "stable" && channel !== BETA_TAG) throw new Error(`unknown updater channel ${channel}`);
+  if (channel !== STABLE_CHANNEL && channel !== BETA_TAG) throw new Error(`unknown updater channel ${channel}`);
   const route = channel === BETA_TAG ? `download/${BETA_TAG}` : "latest/download";
   return `https://github.com/${repository}/releases/${route}/${asset}`;
 }

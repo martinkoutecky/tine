@@ -1,0 +1,10 @@
+Your typing now reaches disk while you are still typing. Tine waited for a pause,
+and every keystroke restarted the wait, so a long passage wrote nothing.
+
+Edits are saved when the app is backgrounded, not only on a clean close.
+
+Editing one block no longer rewrites blocks you never touched.
+
+Undo can no longer overwrite a file that changed while the page was out of memory.
+
+A page changed by another app or sync client no longer becomes unsaveable.

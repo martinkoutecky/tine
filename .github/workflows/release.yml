@@ -1,7 +1,8 @@
-# Assemble immutable beta candidates by manual dispatch. publish=false
-# writes workflow artifacts only. The sole publisher is constrained to the
-# beta tag, marks it prerelease, and explicitly never marks it latest.
-# The stable master workflow is independent and is not changed by this lane.
+# Assemble immutable release candidates by manual dispatch. publish=false
+# writes workflow artifacts only. The updater endpoint in tauri.conf.json picks
+# the channel (scripts/release-policy.mjs): a Beta build publishes only to the
+# moving beta tag as a prerelease, never latest; a stable build publishes only
+# to v<version>, which must already point at the commit, marked latest.
 #
 # Signing: the macOS lane fails closed unless it can sign with Tine's Developer
 # ID certificate, notarize with a short-lived App Store Connect API token, and
@@ -14,13 +15,13 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Assemble a new beta candidate (no promotion path)
+        description: Assemble a new candidate (no promotion path); the updater endpoint picks beta or stable
         type: choice
         options: [build]
         default: build
         required: true
       publish:
-        description: Publish to beta only after verification; never mark latest
+        description: Publish after verification (Beta to the moving beta tag; stable to v<version>, marked latest)
         type: boolean
         default: false
         required: true
@@ -30,7 +31,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: release-beta
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -809,4 +810,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_MODE: ${{ inputs.mode }}
           RELEASE_PUBLISH: ${{ inputs.publish }}
-        run: node scripts/publish-release-candidate.mjs beta release-candidate
+        run: node scripts/publish-release-candidate.mjs "$(node --input-type=module -e 'import { releaseTag } from "./scripts/release-policy.mjs"; import fs from "node:fs"; process.stdout.write(releaseTag(JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"))))')" release-candidate

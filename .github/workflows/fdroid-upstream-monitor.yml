@@ -1,0 +1,85 @@
+name: F-Droid upstream monitor
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: fdroid-upstream-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    name: Check F-Droid's automated Tine update
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read the latest F-Droid update pipeline
+        id: fdroid
+        run: node scripts/fdroid-upstream-monitor.mjs
+
+      - name: Put a new upstream failure in the Tine issue queue
+        if: steps.fdroid.outputs.state == 'failed'
+        uses: actions/github-script@v8
+        env:
+          FDROID_MR_IID: ${{ steps.fdroid.outputs.mr_iid }}
+          FDROID_MR_TITLE: ${{ steps.fdroid.outputs.mr_title }}
+          FDROID_MR_URL: ${{ steps.fdroid.outputs.mr_url }}
+          FDROID_PIPELINE_ID: ${{ steps.fdroid.outputs.pipeline_id }}
+          FDROID_PIPELINE_STATUS: ${{ steps.fdroid.outputs.pipeline_status }}
+          FDROID_PIPELINE_URL: ${{ steps.fdroid.outputs.pipeline_url }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const label = "fdroid-build";
+            const marker = `<!-- fdroid-pipeline:${process.env.FDROID_PIPELINE_ID} -->`;
+            const body = [
+              marker,
+              "F-Droid's automated source build for Tine is failing.",
+              "",
+              `- Update: [!${process.env.FDROID_MR_IID} ${process.env.FDROID_MR_TITLE}](${process.env.FDROID_MR_URL})`,
+              `- Pipeline: [${process.env.FDROID_PIPELINE_ID}](${process.env.FDROID_PIPELINE_URL})`,
+              `- Status: ${process.env.FDROID_PIPELINE_STATUS}`,
+              "",
+              "This issue was created automatically. Diagnose the first Tine-specific failure in the linked pipeline; do not assume every failed F-Droid job is a Tine source defect.",
+            ].join("\n");
+
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: label });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({
+                owner, repo, name: label, color: "5319e7",
+                description: "Automated F-Droid source-build monitoring",
+              });
+            }
+
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: "open", labels: label, per_page: 100,
+            });
+            const issue = open.find((candidate) => !candidate.pull_request);
+            if (!issue) {
+              await github.rest.issues.create({
+                owner, repo,
+                title: "F-Droid automated source build is failing",
+                body,
+                labels: [label, "bug"],
+              });
+              return;
+            }
+
+            if ((issue.body ?? "").includes(marker)) return;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: issue.number, per_page: 100,
+            });
+            if (comments.some((comment) => (comment.body ?? "").includes(marker))) return;
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: issue.number, body,
+            });

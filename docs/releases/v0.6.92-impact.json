@@ -1,0 +1,717 @@
+{
+  "schemaVersion": 1,
+  "version": "0.6.92",
+  "baseTag": "v0.6.91",
+  "focusedAudit": {
+    "required": false,
+    "reason": "0.6.92 is a patch-lane release: issue-driven correctness, data-safety and performance repair on the Direct Markdown save, conflict and reference paths, plus continuing work on experimental Tine-managed storage, which stays off by default. It introduces no new subsystem, write path or platform integration, so it does not claim a minor-release audit attestation."
+  },
+  "items": [
+    {
+      "section": "Added",
+      "text": "**Ctrl+O opens the page under the caret**, and Ctrl+Shift+O opens it in the sidebar — matching Logseq, so you can navigate `[[links]]` and `#tags` without the mouse (GH #274).",
+      "userVisible": true,
+      "regressions": [
+        "UI-EDITOR-FOLLOW-LINK-AT-CARET-274"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "A new navigation shortcut belongs in the Guide shortcut list, which already teaches Ctrl+K, Ctrl+Shift+K and Ctrl+Shift+P. Added a Ctrl+O section and regenerated the single-source Guide/demo output.",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md",
+          "website/demo/features-tips-shortcuts.html",
+          "website/demo/feature-showcase.html",
+          "website/demo/search-index.js"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**A link to a page that doesn't exist yet is now dimmed**, with a dotted underline, so you can see before clicking that it will open a blank page. The link still works and still creates the page. `#tags` are deliberately left alone, since a tag with no page file is perfectly normal. Logseq does not make this distinction; it was added after a graph whose links all pointed at names no page had, with nothing on screen to say so.",
+      "userVisible": true,
+      "regressions": [
+        "REG-UNRESOLVED-PAGE-LINK-VISIBLE-20260809"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The same Guide section explains the dimmed unresolved-link styling alongside Ctrl+O: a user meeting a dimmed link needs to know it still works and still creates the page.",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md",
+          "website/demo/features-tips-shortcuts.html"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Documenting a change that shipped undocumented in 0.6.90:** a page's name comes from its `title::` property when it has one, and only otherwise from its filename — which is what Logseq does (`title::` → filename → first block). Before 0.6.90 Tine used the filename and ignored `title::`. If a graph was built against the old behaviour, files carrying a `title::` that differs from their filename are now reachable under the *title*, and `[[filename]]` links to them will open blank pages. The new dimming above makes those visible; either drop the `title::` or link to its value.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "This entry exists to document behaviour that already shipped in 0.6.90; the Guide describes page naming in terms of the page title already, so no Guide text changes. The changelog is itself the disclosure.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Background page loads and conflict actions can no longer cross editor instances.** Every editable page now receives a core-issued identity when it is installed, and replacements use an exact two-phase handoff. A late sidebar, query, journal-feed, PDF-notes, watcher, save, or “Use disk version” response is refused if the graph or editor changed while it was in flight, so it cannot replace unsaved work, inherit another editor's conflict authority, or update the replacement's save baseline. “Use disk version” remains a read-only action in every outcome. (GH #254)",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-SAVE-ATOMIC-REPLACEMENT-GH254",
+        "REG-DIRECT-SAVE-EXACT-CONFLICT-AUTHORITY-GH254",
+        "REG-CONFLICT-OVERRIDE-NAMES-ITS-OBSERVATION-GH254",
+        "REG-DIRTY-EDITOR-SURVIVES-SAME-NAME-REPLACEMENT-GH304"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Android Back now stays under Tine's safety owner from startup through close.** Before the app interface is ready, Back no longer falls through to browser history or a raw activity exit. At the route root, Tine verifies every managed graph can stop before requesting activity exit: a zero-progress refusal leaves the graph editable and retries the complete close, while a partial or interrupted native check keeps the graph protected and retries only that native check. Only a verified safe result may request the final activity exit.",
+      "userVisible": true,
+      "regressions": [
+        "UI-MANAGED-ANDROID-ROOT-SHUTDOWN-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Experimental managed storage is off by default and marked testing-only; the public site makes no claim about it.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed-storage page and journal deletes now preserve the exact accepted file in typed trash before they accept the tombstone.** A failed trash write, a changed projection, or a concurrently accepted update leaves both the file and the open draft in place; successful deletes keep the source bytes under `logseq/.tine-trash/pages` or `journals`.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-DELETE-TRASH-20260810"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Experimental managed storage is off by default and marked testing-only; the public site makes no claim about it.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Your typing is now written to disk while you're still typing.** Tine waited for a pause before saving, and every keystroke restarted the wait — so during a long fluent passage nothing reached the file at all. Measured: twelve seconds of continuous typing, at a pace slower than most people type, produced no write. A save now happens at least every three seconds while you keep going. Found by the 2026-08-09 Direct Files data-safety audit.",
+      "userVisible": true,
+      "regressions": [
+        "REG-SAVE-DEBOUNCE-CEILING-20260809"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**\"Use disk version\" now reloads the file you were actually editing.** When two files share one page name — a duplicate day, or same-titled pages in different folders — Tine pins the page to its own file so saves go back to the right place. The conflict banner didn't honour that pin: it looked the name up instead and loaded the *other* file over your tab, discarding your unsaved work along the way. Found by the same audit.",
+      "userVisible": true,
+      "regressions": [
+        "REG-CONFLICT-RESOLVE-PINNED-FILE-20260809",
+        "REG-DIRTY-EDITOR-SURVIVES-SAME-NAME-REPLACEMENT-GH304"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Deleting a page with unsaved edits now warns that they are not recoverable.** The prompt said the file moves to `.tine-trash`, which is true — but the trash gets the *file*, so anything you typed since the last save (and everything on a page with an unresolved conflict, which by definition was never written) went with it and was not in the trash. The prompt now says so while you can still cancel.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DELETE-PAGE-UNSAVED-WARNING-20260809"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Closing no longer offers to throw away a save that is still running.** If writing your changes took more than four seconds — a slow or network drive is enough — Tine reported it in the same words it uses for a save that can never succeed, and offered to close and lose the work. It now says it is still saving, waits, and only asks once the save has genuinely failed or stalled. Found by the 2026-08-09 Direct Files data-safety audit.",
+      "userVisible": true,
+      "regressions": [
+        "REG-CLOSE-FLUSH-GRACE-20260809"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A conflict banner now goes away by itself once the file is back to what you loaded.** Some editors and sync clients briefly remove a file while replacing it; Tine treated the gap as a conflict and then had no way to un-conflict a page, so it stayed stuck behind a banner whose two buttons both destroy something. Tine now re-checks: if the file is back and matches what your editor started from, the banner clears and your edit saves normally. A file that comes back genuinely changed still raises the conflict. Found by the 2026-08-09 Direct Files data-safety audit.",
+      "userVisible": true,
+      "regressions": [
+        "REG-CONFLICT-SELF-CLEARS-20260809"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**The All Pages sidebar list renders faster on a large graph.** Every visible row was re-scanning the entire page list to work out whether its name needed disambiguating — about 21 ms at 5,000 pages and 39 ms at 20,000, repeated on every render. The same information is now worked out once per list. Names are labelled exactly as before. Found by the 2026-08-09 Direct Files performance audit.",
+      "userVisible": true,
+      "regressions": [
+        "REG-ALL-PAGES-LABEL-LINEAR-20260809"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Deleting a page no longer freezes the app while it works. On a large graph the delete could block for the better part of a second (longer on very large graphs) because it ran on the same thread that dispatches every other command.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DELETE-PAGE-OFF-COMMAND-THREAD-AUDIT20260809"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Text typed while a synced file change was being loaded is no longer silently discarded. Tine decided it was safe to reload the page *before* fetching it, and never re-checked — so anything typed during the fetch was replaced by the disk version, along with its undo history.",
+      "userVisible": true,
+      "regressions": [
+        "REG-WATCHER-RELOAD-RECHECK-AUDIT20260809"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Fixed a state where Tine would insist it had unsaved changes forever — blocking every graph switch and offering to discard your work on every window close — for edits that were in fact already written to disk.",
+      "userVisible": true,
+      "regressions": [
+        "REG-FLUSH-WEDGE-PHANTOM-DIRTY-AUDIT20260809"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Edits are now saved when the app is backgrounded**, not only when a window is closed cleanly. On Android and iOS the system can reclaim a backgrounded app without warning, so anything typed since the last pause could be lost; desktop had narrower versions of the same hole (GH #255).",
+      "userVisible": true,
+      "regressions": [
+        "REG-BACKGROUND-FLUSH-255"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Editing one block no longer rewrites blocks you never touched.** On a real-shaped 1,045-file graph, editing a block and undoing it failed to restore 96 of 983 files: an unbulleted `## Heading` gained a `- ` prefix, and in the worst case the file's indentation was pushed *into* the note text and the block gained a nesting level. Found by the 2026-08-09 Direct Files data-safety audit; the same measurement now reports zero damaged files.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-SAVE-UNTOUCHED-BYTES-AUDIT20260809"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Typing no longer makes the next click slow.** Every save threw away Tine's index of which pages exist, and the only way to rebuild it was to re-read and re-parse the whole graph. So the first navigation or `[[` autocomplete after each typing pause stalled for about a quarter of a second on a 5,000-file graph, and longer on bigger ones. Found by the 2026-08-09 Direct Files performance audit.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-SAVE-KEEPS-PAGE-INVENTORY-AUDIT20260809"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Each save costs less on a big graph, and a pause in typing no longer ships the whole graph's link list across.** Two things ran on every save: a scan that rebuilt a normalized key for *every* filename in each directory along the path (4.87 ms per save with 4,000 pages in one folder, against 0.70 ms with the same pages spread over subfolders — unbounded growth in the one directory that only ever grows, inside the lock that guards the write), and a refresh of the full referenced-page-name set (15–23 ms and ~5,000 names at 5,225 files, parsed on the UI thread) that fired about 700 ms after every lull even though typing inside a block almost never changes which pages are linked. The scan now folds each path component once — which also fixes it being ~1.8× *slower* than before for any graph whose names carry diacritics — and the name set is only shipped when its digest actually changed. Found by the 2026-08-09 Direct Files performance audit.",
+      "userVisible": true,
+      "regressions": [
+        "REG-SAVE-PORTABLE-ALIAS-SCAN-ASCII-20260809",
+        "REG-REFERENCED-NAMES-DIGEST-GATE-20260809"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A file changed outside Tine is noticed promptly again when you have more than one graph open.** If watching one graph's folder failed while another succeeded, the watcher could sit blocked on the healthy graph instead of retrying the failed one, so external edits to the failed graph went unseen for as long as the other stayed quiet. The wait is now bounded whenever any root is still unwatched.",
+      "userVisible": true,
+      "regressions": [
+        "REG-WATCH-RETRY-UNWATCHED-ROOT-20260809"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Linked and Unlinked References no longer collapse themselves while you scroll or expand a group on a large graph; the section now keeps the state you put it in (GH #272).",
+      "userVisible": true,
+      "regressions": [
+        "UI-REFERENCES-SECTION-STATE-REMOUNT-272"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Unlinked References now finds mentions inside code blocks, inline code, math and other literal text**, as Logseq does — previously a page name written inside a fenced block, `$$…$$`, raw HTML, an example block or a hiccup vector was invisible to the panel (GH #270). Mentions inside `[[…]]` or after `#` still don't count, including inside code where there is no parsed link to recognise. The scan also got considerably faster: on a real 1,045-file graph an unlinked-reference lookup went from about 285 ms to 36 ms, despite now searching more of each file.",
+      "userVisible": true,
+      "regressions": [
+        "REG-UNLINKED-REFS-SEE-CODE-GH270"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Jumping to a block from the Quick Switcher (or any \"go to block\" action) now expands its collapsed parents, so the block is actually scrolled to and highlighted instead of the jump silently doing nothing (GH #258).",
+      "userVisible": true,
+      "regressions": [
+        "UI-NAV-REVEAL-COLLAPSED-BLOCK-258"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Pressing Enter inside a multi-line `$$ … $$` math environment now inserts a new line and keeps the block together, instead of splitting it and breaking the environment (GH #278).",
+      "userVisible": true,
+      "regressions": [
+        "UI-EDITOR-MATH-BLOCK-ENTER-278"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Undo can no longer silently overwrite a file that changed while you were away.** Tine keeps about eighty pages in memory and drops the oldest ones as you browse past that, deliberately keeping their undo history. But the kept history described the copy that was dropped: re-opening the page read the file fresh, and pressing undo then restored the *old* content and saved it — against the new file's revision, which the save guard accepts, because that baseline genuinely matched what was on disk. Nothing looked like a conflict. Undo entries now name the exact loaded copy they were recorded against; when that copy is gone, the entry is discarded and Tine says so instead of replaying it. Found during review of GH #254 (GH #305).",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-SAVE-ATOMIC-REPLACEMENT-GH254",
+        "REG-DIRECT-SAVE-EXACT-CONFLICT-AUTHORITY-GH254",
+        "REG-CONFLICT-OVERRIDE-NAMES-ITS-OBSERVATION-GH254",
+        "REG-DIRTY-EDITOR-SURVIVES-SAME-NAME-REPLACEMENT-GH304",
+        "REG-UNDO-ACROSS-EVICTION-305"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Tine no longer dies at launch when its data directory cannot be written.** On a machine where `~/.local/share` is owned by root — or `XDG_DATA_HOME` otherwise points somewhere unwritable — the app printed a Rust backtrace and quit, because Tauri creates the WebView's data directory during its own startup and panics on the error. Tine now checks that directory before anything resolves paths against it, moves the whole launch to the first writable fallback (`~/.tine-data`, then the runtime directory, then a temp directory), and says so in a sticky notice naming where it went. If nothing is writable it prints one actionable line instead of a backtrace (GH #303).",
+      "userVisible": true,
+      "regressions": [
+        "REG-STARTUP-UNWRITABLE-DATA-HOME-20260809"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Images and other embedded media stored in a subfolder of `assets/` now display.** Every native read path applied the top-level-only rule that belongs to asset *creation*, so a file under, say, `assets/screenshots/` stayed blank even though the link was correct. Nested paths are now read, while absolute paths, `..` traversal and symlink escapes are still refused, and newly imported assets still land directly in `assets/` (GH #300).",
+      "userVisible": true,
+      "regressions": [
+        "REG-NESTED-ASSET-READ-300"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A page changed by another program no longer becomes permanently unsaveable.** Most editors and sync clients (Syncthing, Dropbox) write a file by creating a new one and renaming it into place. Tine treated the result as a different file and refused every subsequent save with an internal message it then retried forever — even when the new content was byte-for-byte what Tine already had, and even when it was a genuine change you could have resolved. Tine now compares the content: identical content just saves, and a real difference raises the normal conflict banner. \"Keep mine\" is now bound to the exact disk version shown by that banner (including a deletion), so it cannot overwrite a newer unseen sync or editor change; a newer change is shown as a new conflict instead. (GH #254)",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-SAVE-ATOMIC-REPLACEMENT-GH254",
+        "REG-DIRECT-SAVE-EXACT-CONFLICT-AUTHORITY-GH254",
+        "REG-CONFLICT-OVERRIDE-NAMES-ITS-OBSERVATION-GH254",
+        "REG-DIRTY-EDITOR-SURVIVES-SAME-NAME-REPLACEMENT-GH304"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A correctness or performance repair; it does not change a public website capability or claim.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Experimental Tine-managed storage moved a great deal this cycle** — journal format and rollover, enrollment-integrity migration, task and block queries served from the sparse index, crash-recovery and save/query latency ceilings. None of it changes anything for Direct files, which remains the default and what this release is really about. Managed storage is still marked testing only, still off unless you turn it on, and GH #292 (setup failing on some graphs) is still open.",
+      "userVisible": true,
+      "regressions": [
+        "REG-WINDOWS-MANAGED-ACTIVATION-292"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Experimental managed storage is off by default and marked testing-only; the public site makes no claim about it.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Managed storage imports roughly twice as fast, and read about eight times fewer bytes.** Bringing a graph into managed storage was re-reading, re-hashing and re-decoding the *entire* batch of pending objects in order to fetch a single one — once per document, and again once per coordinator tick. On a real 1,000-page graph that meant gigabytes of redundant work: importing 300 pages read 3.59 GB to move about 1.3 MB of notes. Objects are now fetched individually by the content digest the caller already holds, and the per-tick check reads only the batch manifest, which already records everything it was asking for. Measured on a real graph: 100/200/300/400/600 pages now take 5.6/14.5/26.0/42.2/84.9 s, down from 10.8/29.1/50.2/80.0/157.0 s. No safety guarantee changes: objects remain content-addressed and are still verified individually when read.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "Behaviour repair within documented workflows; no Guide workflow, setting, or contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Experimental managed storage is off by default and marked testing-only; the public site makes no claim about it.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane fix; the AI changelog covers it and no editorial post is required.",
+        "refs": []
+      }
+    }
+  ]
+}

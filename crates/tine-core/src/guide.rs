@@ -620,6 +620,25 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn ios_guide_says_where_graphs_live_and_that_plugins_stay_off() {
+        // The iOS picker opens only the app's own On My iPhone / iCloud Drive
+        // folders (src/graph.ts switchGraph) and Settings hides Plugins on iOS.
+        let mobile = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "**On My iPhone → TineOutline** or **iCloud Drive → TineOutline**",
+            "refuses folders from other Files providers",
+            "a remembered graph reopens after an app update",
+            "**Plugins do not run on iOS yet.**",
+        ] {
+            assert!(
+                mobile.contains(outcome),
+                "missing iOS Guide outcome: {outcome}"
+            );
+        }
+        assert!(!mobile.contains("there is no public iOS build yet"));
+    }
+
+    #[test]
     fn mobile_guide_names_the_touch_gestures_and_the_one_back_ladder() {
         // GH #501 / #492: a gesture nothing announces reads as missing, so the
         // mobile page has to say what each swipe does and which one is Back.

@@ -28,15 +28,13 @@
     <span class="brand-word">Tine</span>
   </a>
   <nav class="nav-links">
-    <a href="#why">Same graph</a>
-    <a href="#android">Android</a>
-    <a href="plugins.html">Plugins</a>
-    <a href="#adds">What's new</a>
-    <a href="#config">Configurable</a>
+    <a href="guide/">Try it live</a>
+    <a href="#features">Features</a>
+    <a href="#mobile">Mobile</a>
     <a href="compare.html">vs Logseq</a>
-    <a href="demo/">Demo</a>
     <a href="blog/">Blog</a>
     <a href="#community">Community</a>
+    <a class="nav-heart" href="#support">♥ Support</a>
     <a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a>
   </nav>
 </header>
@@ -58,350 +56,290 @@
         <a class="btn btn-primary" href="https://github.com/martinkoutecky/tine/releases">
           Download Tine
         </a>
-        <a class="btn btn-ghost" href="demo/">
-          ▶ Browse a demo
+        <a class="btn btn-ghost" href="guide/">
+          Try it live in your browser
         </a>
         <a class="btn btn-ghost" href="https://github.com/martinkoutecky/tine">
           View source on GitHub
         </a>
       </div>
       <p class="fineprint">
-        Free &amp; open source (AGPL-3.0). Linux is the primary, best-tested platform today;
-        macOS &amp; Windows builds are newer. Not yet 1.0.
+        Linux · macOS · Windows · Android (<a href="https://f-droid.org/packages/page.tine.app/">F-Droid</a>)
+        · iPhone &amp; iPad (<a href="https://testflight.apple.com/join/rpGGpTVW">beta</a>)<br>
+        Free &amp; open source (AGPL-3.0). Not yet 1.0.
       </p>
     </div>
     <figure class="hero-shot">
-      <img src="img/hero.png" alt="Tine showing a multi-day journal feed" width="820" loading="eager">
+      <video autoplay muted loop playsinline preload="auto" poster="img/guide-demo-poster.png"
+        aria-label="The live Guide: opening a link in a split pane, searching with Ctrl+K, and switching tabs">
+        <source src="img/guide-demo.webm" type="video/webm">
+        <source src="img/guide-demo.mp4" type="video/mp4">
+      </video>
+      <figcaption>Recorded in the <a href="guide/">live Guide</a> — a real Tine export you can try in your browser.</figcaption>
     </figure>
   </section>
 
-  <!-- ANDROID (new in 0.4) -->
-  <section id="android" class="wrap">
-    <div class="android-card">
-      <span class="pill pill-alpha">Alpha · new in 0.4</span>
-      <h2>Tine is now on Android</h2>
-      <p class="section-lede center">
-        A native Android app that opens and edits your <strong>real</strong> Logseq graph on your
-        phone — the same Markdown files, over your own sync, right alongside the Logseq mobile app.
-      </p>
+  <!-- TRY IT LIVE -->
+  <section id="try" class="wrap">
+    <h2 class="center-h">Try it right now — in your browser</h2>
+    <p class="section-lede center">
+      The Guide is Tine's own documentation graph, published with Tine's <strong>live export</strong>.
+      It's read-only, but everything else works: <kbd>Ctrl</kbd>+<kbd>K</kbd> search, tabs,
+      split view, back/forward, linked references. It's the quickest way to feel how Tine moves.
+    </p>
+    <div class="cta-row center">
+      <a class="btn btn-primary" href="guide/">Open the live Guide →</a>
+    </div>
+  </section>
+
+  <!-- EVERY PLATFORM -->
+  <section id="mobile" class="band">
+    <div class="band-inner platforms">
+      <div class="platforms-text">
+        <h2>Fast on every device you own</h2>
+        <p class="section-lede">
+          The same Rust core and the same Markdown files on <strong>Linux, macOS, Windows, Android,
+          and iPhone&nbsp;/&nbsp;iPad</strong> — so your graph opens quickly on the phone too, over the
+          sync you already use.
+        </p>
+        <ul class="checks">
+          <li><strong>Desktop</strong> — Linux (AppImage, .deb, .rpm), signed &amp; notarized macOS,
+            Windows installer or portable zip. <a href="https://github.com/martinkoutecky/tine/releases/latest">Releases</a></li>
+          <li><strong>Android</strong> — on <a href="https://f-droid.org/packages/page.tine.app/">F-Droid</a>
+            with automatic updates, or the signed APK from
+            <a href="https://github.com/martinkoutecky/tine/releases/latest">GitHub</a>.</li>
+          <li><strong>iPhone &amp; iPad</strong> — public beta on
+            <a href="https://testflight.apple.com/join/rpGGpTVW">TestFlight</a>; no App Store listing yet.</li>
+        </ul>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://f-droid.org/packages/page.tine.app/">Get it on F-Droid</a>
+          <a class="btn btn-ghost" href="https://testflight.apple.com/join/rpGGpTVW">iOS beta</a>
+          <a class="btn btn-ghost" href="https://github.com/martinkoutecky/tine/blob/master/docs/FEATURES.md#mobile-android">What works on mobile</a>
+        </div>
+      </div>
       <img class="android-shot" src="img/tine-android.png" width="270" loading="lazy"
         alt="Tine running on Android — a journal feed with tasks and nested blocks on a phone">
-      <div class="cta-row center">
-        <a class="btn btn-primary" href="https://github.com/martinkoutecky/tine/releases/latest">Get the Android APK</a>
-        <a class="btn btn-ghost" href="https://github.com/martinkoutecky/tine/blob/master/docs/FEATURES.md#mobile-android">What works on mobile</a>
-      </div>
-      <p class="fineprint">
-        Early and experimental. For now it's a <strong>sideloaded APK from GitHub</strong> (arm64
-        phones) — your phone will warn that it's from outside the Play Store, which is expected for a
-        self-signed app. <strong>Play Store &amp; F-Droid are planned.</strong>
-      </p>
     </div>
   </section>
 
-  <!-- RESPECT / SAME GRAPH -->
-  <section id="why" class="band">
-    <div class="band-inner">
-      <h2>Built to sit <em>beside</em> Logseq — not replace it</h2>
-      <p class="section-lede">
-        We're long-time Logseq users and we have a lot of respect for what that project pioneered.
-        Tine isn't a fork and it isn't a clone trying to pull you away. It's an independent
-        reimplementation that deliberately targets Logseq's on-disk format, so your notes stay
-        exactly where they are — plain Markdown files you fully own.
-      </p>
-
-      <div class="swap">
-        <div class="swap-app">Logseq</div>
-        <div class="swap-pipe" aria-hidden="true">
-          <span class="swap-arrows">⇄</span>
-          <code>your-graph/<small>journals/ · pages/ · assets/ · config.edn</small></code>
-        </div>
-        <div class="swap-app">Tine</div>
-      </div>
-
-      <ul class="checks">
-        <li>Point Tine at the <code>journals/</code>, <code>pages/</code>, <code>assets/</code> and
-          <code>logseq/config.edn</code> you already use.</li>
-        <li>Edit in either app — one at a time — on the very same files.</li>
-        <li>Saves are byte-compatible Markdown that preserve your formatting, so they don't create
-          sync churn.</li>
-        <li>Keeps working alongside the Logseq mobile app (or
-          <a href="https://codeberg.org/siddharthagolu/fastlog">fastlog</a>) over your own
-          Syncthing/Dropbox sync.</li>
-        <li>Not affiliated with or endorsed by Logseq — just compatible with it, on purpose.</li>
-      </ul>
-
-      <div class="cta-row center" style="margin-top:1.6rem">
-        <a class="btn btn-primary" href="compare.html">See a feature-by-feature comparison with Logseq →</a>
-      </div>
-
-      <p class="section-lede" style="margin-top:1.6rem">
-        And it keeps the good Logseq features you already rely on — <strong>live <code>/calc</code>
-        blocks</strong>, <strong>callouts</strong>, queries, PDF annotation, namespaces, page
-        properties, org-mode and more — reading and writing them in the very same format. Browse the
-        <a href="https://docs.logseq.com">Logseq docs</a> for what's possible, try it in Tine, and if
-        something you use doesn't work yet,
-        <a href="https://github.com/martinkoutecky/tine/issues">open an issue</a> — we may well just
-        add it.
-      </p>
-      <div class="shots">
-        <figure><img src="img/calc.png" alt="A live /calc block evaluating arithmetic with a variable" loading="lazy"><figcaption>Live <code>/calc</code> blocks — a Logseq feature, preserved</figcaption></figure>
-        <figure><img src="img/callouts.png" alt="Colored note, warning, and tip callouts" loading="lazy"><figcaption>Callouts — same syntax as Logseq</figcaption></figure>
-      </div>
-    </div>
-  </section>
-
-  <!-- WHAT TINE ADDS -->
-  <section id="adds" class="wrap">
-    <h2>What Tine adds on top</h2>
+  <!-- SAME GRAPH -->
+  <section id="why" class="wrap">
+    <h2 class="center-h">Built to sit <em>beside</em> Logseq — not replace it</h2>
     <p class="section-lede center">
-      These started as <em>"I wish Logseq did this."</em> They're the reasons Tine exists beyond raw
-      speed — and you get them without giving up a single feature of your file format.
+      Tine isn't a fork or a clone trying to pull you away. It's an independent reimplementation
+      that deliberately targets Logseq's on-disk format, so your notes stay plain Markdown files
+      you fully own.
+    </p>
+    <div class="swap">
+      <div class="swap-app">Logseq</div>
+      <div class="swap-pipe" aria-hidden="true">
+        <span class="swap-arrows">⇄</span>
+        <code>your-graph/<small>journals/ · pages/ · assets/ · config.edn</small></code>
+      </div>
+      <div class="swap-app">Tine</div>
+    </div>
+    <ul class="checks narrow">
+      <li>Point Tine at the graph you already use and edit in either app — one at a time — on the
+        very same files.</li>
+      <li>Saves are byte-compatible Markdown that preserve your formatting, so they don't create
+        sync churn — alongside the Logseq mobile app or
+        <a href="https://codeberg.org/siddharthagolu/fastlog">fastlog</a> too.</li>
+      <li>The Logseq features you rely on — queries, <code>/calc</code>, callouts, PDF annotation,
+        namespaces, properties, org-mode — read and written in the very same format.</li>
+    </ul>
+    <div class="cta-row center">
+      <a class="btn btn-ghost" href="compare.html">Feature-by-feature comparison with Logseq →</a>
+    </div>
+  </section>
+
+  <!-- FLAGSHIP FEATURES -->
+  <section id="features" class="wrap flagship">
+    <h2 class="center-h">What Tine adds on top</h2>
+    <p class="section-lede center">
+      These started as <em>"I wish Logseq did this."</em> You get them without giving up a single
+      feature of your file format.
     </p>
 
-    <div class="grid">
-      <article class="card">
-        <div class="card-ic">⚡</div>
-        <h3>Native speed</h3>
-        <p>A pure-Rust core and fine-grained SolidJS reactivity in a tiny Tauri/WebKit runtime —
-          no Electron, no virtual-DOM churn. Typing stays in the frontend; whole-graph reads hit an
-          in-memory index. It stays quick on large graphs.</p>
-      </article>
-      <article class="card">
-        <div class="card-ic">▦</div>
-        <h3>Sheets</h3>
-        <p>Turn any bullet and its children into a spreadsheet-style <strong>grid</strong>, a typed
-          <strong>field table</strong>, or a <strong>Kanban board</strong> — with formula columns,
-          filters, aggregates, group-by, and CSV/TSV import. It's all still plain Logseq Markdown;
-          the views are harmless <code>tine.*</code> properties Logseq quietly ignores.</p>
-      </article>
-      <article class="card">
-        <div class="card-ic">🪟</div>
-        <h3>Split view</h3>
-        <p>Split the window into panes, each with its own tabs and history. <kbd>Ctrl</kbd>+click
-          opens a link <em>beside</em> what you're reading, drag a tab to another pane, and
-          TreeSheets-style keyboard navigation splits at a seam by typing. The layout survives a
-          restart.</p>
-      </article>
-      <article class="card">
-        <div class="card-ic">🧩</div>
-        <h3><a href="plugins.html">Capability-limited plugins</a></h3>
-        <p>Install small WebAssembly extensions and inert token themes from a signed catalogue.
-          Packages start disabled, declare narrow capabilities, and never receive unrestricted
-          access to Tine, your files, or the browser runtime.</p>
-      </article>
-      <article class="card">
-        <div class="card-ic">🗂️</div>
-        <h3>Built-in tabs</h3>
-        <p>Middle-click any bullet, page, or search hit to open it in a background tab. Pin,
-          drag-reorder, <kbd>Mod</kbd>+<kbd>W</kbd> to close, and use the overview when titles no
-          longer fit. Pins survive a restart.</p>
-      </article>
-      <article class="card">
-        <div class="card-ic">🔎</div>
-        <h3>Search that becomes a query</h3>
+    <article class="feature-row">
+      <figure><img src="img/web-split.png" alt="Three panes — a tall sheet on the left, two stacked panes on the right — with the top-right pane highlighted in pane-select mode" loading="lazy"></figure>
+      <div>
+        <h3><a class="feature-link" href="guide/workflows-keep-context-visible.html">Split view and tabs</a></h3>
+        <p>Split the window into panes, each with its own tabs and history. <kbd>Alt</kbd>+click
+          opens a link <em>beside</em> what you're reading; <kbd>Ctrl</kbd>+click or middle-click
+          opens it in a background tab. Pin and drag tabs, move them between panes, and navigate panes from the keyboard.
+          The layout survives a restart.</p>
+      </div>
+    </article>
+
+    <article class="feature-row">
+      <figure><img src="img/query-builder.png" alt="The visual query builder with task, page and property conditions, and the query text below it" loading="lazy"></figure>
+      <div>
+        <h3><a class="feature-link" href="guide/workflows-find-and-revisit.html">Search that becomes a query</a></h3>
         <p>Open every <kbd>Ctrl</kbd>+<kbd>K</kbd> result in a persistent tab, refine it with
-          friendly filters or the visual query builder, and view the same matches as search,
-          list, table, or board. Name it only when it deserves to become a real query page.</p>
-      </article>
-      <article class="card">
-        <div class="card-ic">🎯</div>
-        <h3>Focus mode &amp; dim</h3>
-        <p>Hide the chrome and fade everything but the block you're working on, with layered
-          <kbd>Esc</kbd>. A calmer way to write a long note.</p>
-      </article>
-      <article class="card">
-        <div class="card-ic">⚡</div>
-        <h3>Global quick-capture</h3>
-        <p>Bind a desktop hotkey and a small always-on-top box pops from <em>any</em> app — with the
-          full editor — and files a bullet to today's journal. Even when Tine isn't focused.</p>
-      </article>
-      <article class="card">
-        <div class="card-ic">🔁</div>
-        <h3>Carry tasks forward</h3>
-        <p>Roll unfinished tasks into today (last 7 / 30 / 365 days or a custom window), optionally
-          keeping their ancestor context.</p>
-      </article>
-      <article class="card">
-        <div class="card-ic">🛟</div>
-        <h3>A real data-safety story</h3>
-        <p>Conflict detection instead of silent overwrites, launch snapshots with one-click restore,
-          delete-to-trash, and transactional renames. Built to live safely on a graph you also edit
-          from your phone.</p>
-      </article>
-    </div>
+          friendly filters, and view the same matches as a list, table, or board. The visual
+          query editor and the query text stay in sync — edit either one — and an empty result
+          can tell you <em>why</em> it's empty. Name it when it deserves to become a query page.</p>
+      </div>
+    </article>
 
-    <div class="shots">
-      <figure><img src="img/web-sheets.png" alt="A Tine page showing a grid, a typed field table, and a task board over plain bullets" loading="lazy"><figcaption>Sheets — grid, field table, and board</figcaption></figure>
-      <figure><img src="img/web-split.png" alt="Three panes — a tall sheet on the left, two stacked panes on the right — with the top-right pane highlighted in pane-select mode" loading="lazy"><figcaption>Split view — pane-select highlights the target pane</figcaption></figure>
-      <figure><img src="img/tabs.png" alt="Built-in tabs across the top of the window" loading="lazy"><figcaption>Built-in tabs</figcaption></figure>
-      <figure><img src="img/focus.png" alt="Focus mode with inactive blocks dimmed" loading="lazy"><figcaption>Focus &amp; dim</figcaption></figure>
+    <article class="feature-row">
+      <figure><img src="img/web-sheets.png" alt="A Tine page showing a grid, a typed field table, and a task board over plain bullets" loading="lazy"></figure>
+      <div>
+        <h3><a class="feature-link" href="guide/features-sheets.html">Sheets</a></h3>
+        <p>Turn any bullet and its children into a spreadsheet-style <strong>grid</strong>, a typed
+          <strong>field table</strong>, or a <strong>board</strong> — with formula columns, filters,
+          aggregates, group-by, and CSV/TSV import. It's all still plain Logseq Markdown; the views
+          are harmless <code>tine.*</code> properties Logseq quietly ignores.</p>
+      </div>
+    </article>
+
+    <article class="feature-row">
+      <figure><img src="img/concord.png" alt="Concord's in-page review of two versions of a page, block by block, with a suggestion for each difference" loading="lazy"></figure>
+      <div>
+        <h3><a class="feature-link" href="guide/reference-files-external-edits-and-backups.html">Concord: calm conflicts, whatever you sync with</a></h3>
+        <p>When Syncthing, Dropbox or git leaves two versions of a page, Tine shows them side by
+          side <em>block by block</em>, pre-selects a suggestion from the last version both sides
+          agreed on, and lets you keep either, both, or a merge. A big <code>git checkout</code> or
+          sync burst is handled as one calm update, not a storm of reloads.</p>
+      </div>
+    </article>
+
+    <article class="feature-row">
+      <figure><img src="img/guide-demo-poster.png" alt="The Tine Guide published as a website with Tine's live export" loading="lazy"></figure>
+      <div>
+        <h3><a class="feature-link" href="guide/reference-files-external-edits-and-backups.html">Live export: publish a graph that still feels like Tine</a></h3>
+        <p>Export pages as a static site that keeps search, tabs, split view and navigation working
+          — no server needed. <a href="guide/">The Guide</a> is exactly that. From the app, or
+          <code>tine export live ~/notes</code> from the command line; your publication settings
+          decide which pages go out.</p>
+      </div>
+    </article>
+
+    <article class="feature-row">
       <figure class="stack">
-        <img src="img/quick-capture-empty.png" alt="The global quick-capture window before typing, showing the optional page-title hint" loading="lazy">
         <img src="img/quick-capture.png" alt="Quick-capture with a page title filled in, capturing to a new page" loading="lazy">
-        <figcaption>Global quick-capture — empty, then captured to a new page</figcaption>
       </figure>
-      <figure><img src="img/carry.png" alt="Carry unfinished tasks forward to today" loading="lazy"><figcaption>Carry tasks forward</figcaption></figure>
-      <figure><img src="img/query.png" alt="Query results and the visual query builder" loading="lazy"><figcaption>Queries &amp; visual builder</figcaption></figure>
-      <figure><img src="img/pdf.png" alt="PDF text and area highlighting with a notes page" loading="lazy"><figcaption>PDF annotation</figcaption></figure>
-      <figure><img src="img/waveform.png" alt="Audio waveform overlay player with skip and speed controls" loading="lazy"><figcaption>Audio waveform player</figcaption></figure>
-    </div>
+      <div>
+        <h3><a class="feature-link" href="guide/features-quick-capture.html">Global quick-capture</a></h3>
+        <p>Bind a desktop hotkey and a small always-on-top box pops up from <em>any</em> app — with
+          the full editor — and files a bullet to today's journal, or to a new page. Even when Tine
+          isn't focused.</p>
+      </div>
+    </article>
   </section>
 
-  <!-- DARK MODE -->
-  <section id="dark" class="wrap">
-    <h2 class="center-h">Light or dark — it follows your system</h2>
-    <p class="section-lede center">
-      Tine ships a polished dark theme and switches with your OS, or you can toggle it yourself.
-      Your custom Logseq CSS and themes apply just the same.
-    </p>
-    <figure class="solo-shot">
-      <img src="img/dark.png" alt="Tine's journals feed in dark mode" loading="lazy">
-    </figure>
-  </section>
-
-  <!-- CONFIGURABLE / OG DEFAULTS -->
-  <section id="config" class="band">
+  <!-- EVERYTHING ELSE -->
+  <section id="more" class="band">
     <div class="band-inner">
-      <h2>Better defaults — always one click back to Logseq</h2>
-      <p class="section-lede">
-        Where we think a default can be improved, we change it — but we never take the choice away.
-        Anything Tine does differently from Logseq is clearly badged
-        <span class="og-chip">Differs from Logseq</span> in Settings, with a one-click
-        <strong>↩ Match Logseq</strong> button. Your muscle memory is safe.
-      </p>
-      <ul class="config-list">
-        <li><strong>Copy only the selected blocks</strong> — selecting just a parent no longer
-          copies its whole subtree. <span class="muted">(Logseq copies the subtree — one click to restore.)</span></li>
-        <li><strong>Strip <code>collapsed::</code> on copy</strong> so a paste into a text editor is clean. <span class="muted">(Toggle off to match Logseq.)</span></li>
-        <li><strong>Click a block reference to scroll to it</strong> in place, or switch back to Logseq's zoom-in behavior.</li>
-        <li><strong>Link-autocomplete default</strong> — create a new page (like Logseq) or link the first match.</li>
-        <li><strong>Fully remappable keyboard shortcuts</strong> — in Settings or via <code>config.edn :shortcuts</code>.</li>
-        <li><strong>Journal date format, file-format, and watcher mode</strong> — all read from your
-          <code>config.edn</code> and adjustable in-app.</li>
-      </ul>
-      <figure class="band-shot">
-        <img src="img/settings.png" alt="Settings panel showing remappable shortcuts and revertable options" loading="lazy">
-      </figure>
+      <h2 class="center-h">And a lot of smaller things</h2>
+      <div class="mini-grid">
+        <figure><img src="img/focus.png" alt="Focus mode with inactive blocks dimmed" loading="lazy">
+          <figcaption><strong>Focus &amp; dim</strong> — fade everything but the block you're on.</figcaption></figure>
+        <figure><img src="img/carry.png" alt="Carry unfinished tasks forward to today" loading="lazy">
+          <figcaption><strong>Carry tasks forward</strong> — roll unfinished tasks into today, with context.</figcaption></figure>
+        <figure><img src="img/pdf.png" alt="PDF text and area highlighting with a notes page" loading="lazy">
+          <figcaption><strong>PDF annotation</strong> — text and area highlights, stored Logseq-style.</figcaption></figure>
+        <figure><img src="img/waveform.png" alt="Audio waveform overlay player with skip and speed controls" loading="lazy">
+          <figcaption><strong>Audio waveform player</strong> — scrub, skip, change speed.</figcaption></figure>
+        <figure><img src="img/calc.png" alt="A live /calc block evaluating arithmetic with a variable" loading="lazy">
+          <figcaption><strong>Live <code>/calc</code></strong> — a Logseq feature, preserved.</figcaption></figure>
+        <figure><img src="img/callouts.png" alt="Colored note, warning, and tip callouts" loading="lazy">
+          <figcaption><strong>Callouts</strong> — same syntax as Logseq.</figcaption></figure>
+        <figure><img src="img/dark.png" alt="Tine's journals feed in dark mode" loading="lazy">
+          <figcaption><strong>Light or dark</strong> — follows your system; your custom CSS still applies.</figcaption></figure>
+        <figure><img src="img/tabs.png" alt="Built-in tabs across the top of the window" loading="lazy">
+          <figcaption><strong>Built-in tabs</strong> — pin, reorder, and an overview when they no longer fit.</figcaption></figure>
+      </div>
+
+      <details class="defaults">
+        <summary><strong>Better defaults — always one click back to Logseq.</strong>
+          Anything Tine does differently is badged <span class="og-chip">Differs from Logseq</span>
+          in Settings, with a <strong>↩ Match Logseq</strong> button.</summary>
+        <ul class="config-list">
+          <li><strong>Copy only the selected blocks</strong> — selecting just a parent no longer
+            copies its whole subtree. <span class="muted">(Logseq copies the subtree — one click to restore.)</span></li>
+          <li><strong>Strip <code>collapsed::</code> on copy</strong> so a paste into a text editor is clean. <span class="muted">(Toggle off to match Logseq.)</span></li>
+          <li><strong>Click a block reference to scroll to it</strong> in place, or switch back to Logseq's zoom-in behavior.</li>
+          <li><strong>Link-autocomplete default</strong> — create a new page (like Logseq) or link the first match.</li>
+          <li><strong>Fully remappable keyboard shortcuts</strong> — in Settings or via <code>config.edn :shortcuts</code>.</li>
+          <li><strong>Journal date format, file-format, and watcher mode</strong> — all read from your
+            <code>config.edn</code> and adjustable in-app.</li>
+        </ul>
+        <figure class="band-shot">
+          <img src="img/settings.png" alt="Settings panel showing remappable shortcuts and revertable options" loading="lazy">
+        </figure>
+      </details>
     </div>
   </section>
 
-  <!-- OUT OF SCOPE -->
-  <section id="scope" class="wrap">
-    <h2>What Tine doesn't do — for now</h2>
-    <p class="section-lede center">
-      Tine is a faster outliner, not a wholesale replacement for Logseq. A few things are
-      deliberately out of scope. For those, just keep using Logseq on the same graph — running
-      both is the whole idea.
-    </p>
-    <div class="scope-grid">
-      <div class="scope-item">
-        <h3>Whiteboards</h3>
-        <p>The spatial canvas isn't part of Tine.</p>
+  <!-- TRUST -->
+  <section id="trust" class="wrap">
+    <h2 class="center-h">Safe with your notes, open about how it's made</h2>
+    <div class="two-col">
+      <div>
+        <h3>Careful with your files</h3>
+        <ul class="checks">
+          <li><strong>Native speed without risk</strong> — a pure-Rust core and a tiny native
+            runtime, no Electron; typing never waits on disk.</li>
+          <li><strong>Conflicts are detected, never silently overwritten</strong> — and reviewed
+            block by block with Concord.</li>
+          <li><strong>Launch snapshots</strong> with one-click restore, delete-to-trash, and
+            transactional renames.</li>
+          <li><strong>No lock-in</strong> — it round-trips byte-for-byte with Logseq, so you can walk
+            away at any time and lose nothing.</li>
+        </ul>
       </div>
-      <div class="scope-item">
-        <h3>Flashcards / spaced repetition</h3>
-        <p>No SRS review. Your <code>#card</code> blocks are preserved in the files, just not drilled.</p>
-      </div>
-      <div class="scope-item">
-        <h3>Logseq / Obsidian plugin compatibility</h3>
-        <p>Tine has its own <a href="plugins.html">capability-limited plugin system</a>, not an
-          <code>@logseq/libs</code> or Obsidian API runtime. Existing plugins need a deliberate port.</p>
-      </div>
-      <div class="scope-item">
-        <h3>Built-in git / sync</h3>
-        <p>Bring your own — Syncthing, Dropbox, git. Tine just reads and writes the files.</p>
-      </div>
-      <div class="scope-item">
-        <h3>iPhone / iPad</h3>
-        <p>There's a native <a href="#android">Android app</a>, but no iOS build yet. On iPhone,
-          use the Logseq mobile app — or
-          <a href="https://codeberg.org/siddharthagolu/fastlog">fastlog</a> — on the same
-          synced graph.</p>
+      <div>
+        <h3>Built by AI, in the open</h3>
+        <p>Tine is <strong>vibe-coded</strong> — built by <strong>Claude Code</strong>, with help from
+          <strong>Codex</strong>, under human direction and review. We're not hiding that, and we're
+          not making a thing of it either; it's simply how Tine is made.</p>
+        <p>AI-built software makes some people wary — fair enough. So Tine is made to be
+          <em>checked, not taken on faith</em>: every line is open source (AGPL-3.0), and it only
+          ever touches plain Markdown you already own. Point it at a copy of your graph and judge
+          it by how it behaves.</p>
+        <p>AI writes the code — the human writes the reflections: a short note per release, in my
+          own words. <a href="blog/"><strong>Read “The Human's Blog” →</strong></a></p>
       </div>
     </div>
     <p class="scope-note">
-      On the radar, not yet shipped: a graph view and broader coverage of advanced (Datalog)
-      queries.
+      <strong>Not in Tine, by design:</strong> whiteboards, flashcards, Logseq/Obsidian plugin
+      compatibility, and built-in sync (bring Syncthing, Dropbox or git). For those, keep using
+      Logseq on the same graph — running both is the whole idea. On the radar: a graph view.
+      <a href="compare.html">Full comparison →</a>
     </p>
   </section>
 
-  <!-- HOW IT'S BUILT -->
-  <section id="build" class="band">
-    <div class="band-inner">
-      <h2>Built by AI, in the open</h2>
-      <p class="section-lede">
-        Tine is <strong>vibe-coded</strong> — built by <strong>Claude Code</strong>, with help
-        from <strong>Codex</strong>, under human direction and review.
-        We're not hiding that, and we're not making a thing of it either; it's simply how Tine is
-        made.
-      </p>
-      <p class="section-lede">
-        AI-built software makes some people wary — fair enough. So Tine is made to be
-        <em>checked, not taken on faith</em>:
-      </p>
-      <ul class="checks">
-        <li><strong>Open source (AGPL-3.0)</strong> — every line is on GitHub to read or audit.</li>
-        <li><strong>Your files, your graph</strong> — it only ever touches plain Markdown you already own.</li>
-        <li><strong>Deliberately careful with your data</strong> — it detects outside changes and flags
-          conflicts instead of overwriting, keeps launch snapshots, and deletes to a recoverable trash.</li>
-        <li><strong>No lock-in</strong> — it round-trips byte-for-byte with Logseq, so you can walk away
-          at any time and lose nothing.</li>
-      </ul>
-      <p class="section-lede">Point it at a copy of your graph and judge it by how it behaves.</p>
-      <p class="section-lede">
-        And here's the other side of that: AI writes the code — the human writes the reflections. For
-        each release I post a short note in my own words about what changed and why, along with the
-        conversations it started — Claude summarizes them faithfully and generously, fully linked, skeptics included.
-        <a href="blog/"><strong>Read “The Human's Blog” →</strong></a>
-      </p>
-    </div>
-  </section>
-
-  <!-- Support -->
-  <section id="support" class="wrap">
-    <h2 class="center-h">Support Tine</h2>
-    <p class="section-lede center">
-      Tine is free, open source, and built in the cracks of a busy life. If it's made your notes a
-      little faster or your day a little smoother, and you'd like to say thanks with a coffee — that
-      genuinely makes me happy, and I'm grateful. Anything donated goes first toward Tine's running
-      costs — the domain, and things like app-store registration fees down the line.
-    </p>
-    <p class="section-lede center">
-      One honest thing, so there are no crossed wires: <strong>donating won't move Tine up my list,
-      and it won't buy a feature.</strong> I work on Tine when I can and on what I find worth doing — a
-      tip changes none of that. Think of it as a thank-you for what already exists, not a down payment
-      on what's next. No expectations, no obligations, either way. 🌱
-    </p>
-    <div class="cta-row center">
-      <a class="btn btn-primary" href="https://ko-fi.com/martinkoutecky">Buy me a coffee</a>
-      <a class="btn btn-ghost" href="https://github.com/sponsors/martinkoutecky">GitHub Sponsors</a>
-    </div>
-  </section>
-
-  <!-- Community -->
-  <section class="wrap" id="community">
-    <h2 class="center">Community</h2>
-    <p class="section-lede center">
-      Questions, ideas, screenshots, bug reports — come say hello on the subreddit.
-      It's the best place to follow what's shipping and shape what's next.
-    </p>
-    <div class="cta-row center">
-      <a class="btn btn-primary" href="https://www.reddit.com/r/TineOutline/">r/TineOutline</a>
-      <a class="btn btn-ghost" href="https://github.com/martinkoutecky/tine/issues">Open an issue</a>
-    </div>
-  </section>
-
-  <!-- CTA -->
-  <section class="wrap closer">
-    <h2>Try it on a copy of your graph</h2>
-    <p class="section-lede center">
-      Because Tine works on standard Logseq files, the safest way to try it is to point it at a copy
-      of your graph and see how it feels. Nothing to import, nothing to migrate.
-    </p>
-    <div class="cta-row center">
-      <a class="btn btn-primary" href="https://github.com/martinkoutecky/tine/releases">Download a build</a>
-      <a class="btn btn-ghost" href="compare.html">Compare with Logseq</a>
-      <a class="btn btn-ghost" href="https://github.com/martinkoutecky/tine#readme">Read the docs</a>
+  <!-- CLOSING STRIP -->
+  <section id="community" class="band">
+    <div class="band-inner strip3">
+      <div id="download">
+        <h3>Try it on a copy of your graph</h3>
+        <p>Nothing to import, nothing to migrate — point Tine at a copy and see how it feels.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com/martinkoutecky/tine/releases">Download</a>
+          <a class="btn btn-ghost" href="guide/">Guide</a>
+        </div>
+      </div>
+      <div>
+        <h3>Community</h3>
+        <p>Everything happens on GitHub: questions, ideas and screenshots in Discussions; bugs and
+          feature requests in issues.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com/martinkoutecky/tine/discussions">Discussions</a>
+          <a class="btn btn-ghost" href="https://github.com/martinkoutecky/tine/issues">Issues</a>
+        </div>
+      </div>
+      <div id="support">
+        <h3>Support Tine</h3>
+        <p>Tine is free and built in the cracks of a busy life. A coffee genuinely makes me happy and
+          goes first toward running costs. One honest thing: <strong>it won't move Tine up my list or
+          buy a feature</strong> — it's a thank-you for what exists, no obligations either way. 🌱</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://ko-fi.com/martinkoutecky">Ko-fi</a>
+          <a class="btn btn-ghost" href="https://github.com/sponsors/martinkoutecky">GitHub Sponsors</a>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -421,9 +359,10 @@
     <nav class="foot-links">
       <a href="https://github.com/martinkoutecky/tine">GitHub</a>
       <a href="https://github.com/martinkoutecky/tine/releases">Releases</a>
-      <a href="https://github.com/martinkoutecky/tine#readme">Docs</a>
+      <a href="guide/">Guide</a>
       <a href="plugins.html">Plugins</a>
-      <a href="https://www.reddit.com/r/TineOutline/">Community</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="https://github.com/martinkoutecky/tine/discussions">Community</a>
       <a href="https://ko-fi.com/martinkoutecky">Support</a>
       <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a>
     </nav>
@@ -453,7 +392,7 @@
     box.hidden = false;
     document.body.style.overflow = "hidden";
   }
-  document.querySelectorAll(".hero-shot img, .shots img, .band-shot img, .solo-shot img").forEach(function (img) {
+  document.querySelectorAll(".hero-shot img, .shots img, .band-shot img, .solo-shot img, .feature-row img, .mini-grid img").forEach(function (img) {
     img.classList.add("zoomable");
     img.addEventListener("click", function () { open(img); });
   });

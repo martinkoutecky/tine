@@ -6,6 +6,7 @@ import { For, Show, Suspense, createEffect, createMemo, createResource, createSi
 import { DiagnosticsTab } from "./DiagnosticsTab";
 import { PluginsTab } from "./PluginsTab";
 import { AboutTab } from "./AboutTab";
+import { platformKind } from "../platform";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
 import { ConflictFileRow } from "./JournalConflictFileRow";
 import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
@@ -92,6 +93,14 @@ const TABS: { id: SettingsTabId; label: string }[] = [
 export function Settings(): JSX.Element {
   const [tab, setTab] = createSignal<SettingsTabId>("appearance");
   const [settingsQuery, setSettingsQuery] = createSignal("");
+  const [settingsPlatform] = createResource(platformKind);
+  // Unknown native platforms fail closed: do not reveal a package host whose
+  // platform policy could not be established (ADR 0052; master b89a9e77f).
+  const pluginsAvailable = () => {
+    const platform = readOr(settingsPlatform, undefined, "settings-platform");
+    return platform === "desktop" || platform === "android";
+  };
+  const availableTabs = createMemo(() => pluginsAvailable() ? TABS : TABS.filter((entry) => entry.id !== "plugins"));
   const matches = createMemo(() => {
     const query = settingsQuery();
     return query.trim() ? SETTING_SEARCH.filter((entry) => settingMatches(entry, query)) : [];
@@ -115,10 +124,15 @@ export function Settings(): JSX.Element {
   };
 
   createEffect(() => {
+    if (!settingsPlatform.loading && tab() === "plugins" && !pluginsAvailable()) setTab("appearance");
+  });
+
+  createEffect(() => {
     if (!settingsOpen()) return;
     const requested = settingsTabRequest();
     if (!requested) return;
-    setTab(requested);
+    if (requested === "plugins" && settingsPlatform.loading) return;
+    setTab(requested === "plugins" && !pluginsAvailable() ? "appearance" : requested);
     clearSettingsTabRequest();
   });
 
@@ -169,7 +183,7 @@ export function Settings(): JSX.Element {
         <div class="settings-modal" onClick={(e) => e.stopPropagation()}>
           <aside class="settings-nav">
             <div class="settings-nav-title">Settings</div>
-            <For each={TABS}>
+            <For each={availableTabs()}>
               {(t) => (
                 <button
                   class="settings-nav-item"
@@ -185,7 +199,7 @@ export function Settings(): JSX.Element {
 
           <div class="settings-pane">
             <div class="settings-pane-head">
-              <span>{TABS.find((t) => t.id === tab())?.label}</span>
+              <span>{availableTabs().find((t) => t.id === tab())?.label}</span>
               <input
                 class="settings-search-input"
                 type="search"
@@ -247,7 +261,7 @@ export function Settings(): JSX.Element {
                 <HomePageSetting />
                 <GraphPublish /><QueryExportLimitSetting />
               </Show>
-              <Show when={tab() === "plugins"}>
+              <Show when={tab() === "plugins" && pluginsAvailable()}>
                 <PluginsTab />
               </Show>
               <Show when={tab() === "diagnostics"}>

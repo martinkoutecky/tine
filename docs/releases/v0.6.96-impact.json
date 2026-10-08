@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "version": "0.6.96",
+  "baseTag": "v0.6.95",
+  "items": [
+    {
+      "section": "Added",
+      "text": "**Conflict review can now suggest a combined \"Merged\" version of a block both sides edited.** When two devices changed provably different parts of the same block's text (against the last version both sides agreed on), the in-page conflict review offers the combination as a fourth, pre-selected choice next to keep-mine/keep-theirs/keep-both — for sync-conflict copies and for `diff3`/Fossil-style merge markers alike. Where the edits overlap but the merge tool wrote its own `####### SUGGESTED CONFLICT RESOLUTION` sections (Fossil), that suggestion is offered in the same place instead, clearly labeled as the tool's proposal. Like every suggestion it is only pre-selected: nothing is applied until you confirm, the applied text is re-derived from the same three versions (never trusted from the UI), and edits that overlap — or whose combination would not survive as a single block — simply get no offer.",
+      "userVisible": true,
+      "regressions": ["UI-CONCORD-LIVE-DIRECT-SAVE-337", "UI-CONCORD-SYNC-COPY-HANDOFF-337"],
+      "docs": {"status": "current", "reason": "The Concord contract documents the review, suggestion, persistence, recovery, and safety behavior.", "refs": ["docs/concord.md"]},
+      "website": {"status": "update", "reason": "The generated public troubleshooting and files Guide now explains the updated conflict review and recovery behavior.", "refs": ["website/guide/reference-troubleshooting-and-recovery.html", "website/guide/reference-files-external-edits-and-backups.html"]},
+      "blog": {"status": "not-applicable", "reason": "Patch release; the changelog and Guide carry the relevant user-facing change.", "refs": []}
+    },
+    {
+      "section": "Added",
+      "text": "**Conflict rows now preview the first line that actually differs**, not blindly the first line, with an `…` marker when earlier lines agree — and multi-line blocks gain a per-row expander showing the full text of each version with the differing lines highlighted.",
+      "userVisible": true,
+      "regressions": ["UI-CONCORD-LIVE-DIRECT-SAVE-337", "UI-CONCORD-SYNC-COPY-HANDOFF-337"],
+      "docs": {"status": "current", "reason": "The Concord contract documents the review, suggestion, persistence, recovery, and safety behavior.", "refs": ["docs/concord.md"]},
+      "website": {"status": "update", "reason": "The generated public troubleshooting and files Guide now explains the updated conflict review and recovery behavior.", "refs": ["website/guide/reference-troubleshooting-and-recovery.html", "website/guide/reference-files-external-edits-and-backups.html"]},
+      "blog": {"status": "not-applicable", "reason": "Patch release; the changelog and Guide carry the relevant user-facing change.", "refs": []}
+    },
+    {
+      "section": "Added",
+      "text": "**A conflict can no longer scroll out of sight.** The in-page conflict review lives at the top of the page; once it scrolls out of view a slim one-line notice stays pinned to the top of the pane — especially on a phone, where the review was previously invisible until you scrolled up. Tapping the notice unrolls the same review in place (your reading position and any choices you already made are kept); tapping again, pressing Escape, or scrolling back to the top folds it away.",
+      "userVisible": true,
+      "regressions": ["UI-CONCORD-LIVE-DIRECT-SAVE-337", "UI-CONCORD-SYNC-COPY-HANDOFF-337"],
+      "docs": {"status": "current", "reason": "The Concord contract documents the review, suggestion, persistence, recovery, and safety behavior.", "refs": ["docs/concord.md"]},
+      "website": {"status": "update", "reason": "The generated public troubleshooting and files Guide now explains the updated conflict review and recovery behavior.", "refs": ["website/guide/reference-troubleshooting-and-recovery.html", "website/guide/reference-files-external-edits-and-backups.html"]},
+      "blog": {"status": "not-applicable", "reason": "Patch release; the changelog and Guide carry the relevant user-facing change.", "refs": []}
+    },
+    {
+      "section": "Changed",
+      "text": "**The conflict review is now usable on a phone (and in a skinny split pane).** When the panel is narrow, the two versions stack full-width instead of being squeezed into unreadable columns, and the per-row choices become a compact strip — a color dot plus a short word, with the legend mapping each color to the real side name. Sync-copy names like `sync-conflict-20260705-141233-A2B2C3D` now read \"Sync copy · Jul 5\" everywhere (the exact file tag stays as a tooltip).",
+      "userVisible": true,
+      "regressions": ["UI-CONCORD-LIVE-DIRECT-SAVE-337", "UI-CONCORD-SYNC-COPY-HANDOFF-337"],
+      "docs": {"status": "current", "reason": "The Concord contract documents the review, suggestion, persistence, recovery, and safety behavior.", "refs": ["docs/concord.md"]},
+      "website": {"status": "update", "reason": "The generated public troubleshooting and files Guide now explains the updated conflict review and recovery behavior.", "refs": ["website/guide/reference-troubleshooting-and-recovery.html", "website/guide/reference-files-external-edits-and-backups.html"]},
+      "blog": {"status": "not-applicable", "reason": "Patch release; the changelog and Guide carry the relevant user-facing change.", "refs": []}
+    },
+    {
+      "section": "Changed",
+      "text": "**The startup conflict notices are gone.** The two toasts that appeared on every graph open while conflict copies or merge-marker files existed duplicated what the conflicts badge, the in-page review, and its pinned notice already say — and pointed at Settings instead of the in-page resolver. A toast still appears when a *new* conflict arrives mid-session, and for duplicate journal days (which have no other surface).",
+      "userVisible": true,
+      "regressions": ["UI-CONCORD-LIVE-DIRECT-SAVE-337", "UI-CONCORD-SYNC-COPY-HANDOFF-337"],
+      "docs": {"status": "not-applicable", "reason": "This patch behavior is fully described by its changelog entry and regression contract; no separate documentation surface is needed.", "refs": []},
+      "website": {"status": "not-applicable", "reason": "This patch item does not require a separate public website change.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch release; the changelog and Guide carry the relevant user-facing change.", "refs": []}
+    },
+    {
+      "section": "Changed",
+      "text": "**\"Apply all suggested\" no longer sweeps up a merge tool's own proposed text.** A Fossil `SUGGESTED CONFLICT RESOLUTION` body (labeled *Merged (tool)*) keeps whatever you set on that row; only your per-row choice (or the initial pre-selection you confirm) accepts text Tine did not compute itself.",
+      "userVisible": true,
+      "regressions": ["UI-CONCORD-LIVE-DIRECT-SAVE-337", "UI-CONCORD-SYNC-COPY-HANDOFF-337"],
+      "docs": {"status": "current", "reason": "The Concord contract documents the review, suggestion, persistence, recovery, and safety behavior.", "refs": ["docs/concord.md"]},
+      "website": {"status": "not-applicable", "reason": "This patch item does not require a separate public website change.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch release; the changelog and Guide carry the relevant user-facing change.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Split panes whose content fits no longer show a useless vertical scrollbar** (GH #369 — the reporter's dashboard of short panes like \"Lines\" and \"GRID\" each carried a permanent bar). The end-of-page editing slack now measures against each pane's own height (flex spacer in the pane scroller) instead of the window (`40vh`): a pane up to ~60% full shows no bar at all, a near-full pane keeps at most 40%-of-pane of breathing-room range, and a long pane still scrolls independently and its tail can scroll ~40% of the pane up off the bottom edge while editing.",
+      "userVisible": true,
+      "regressions": ["UI-PANE-SCROLL-SLACK-369"],
+      "docs": {"status": "not-applicable", "reason": "This patch behavior is fully described by its changelog entry and regression contract; no separate documentation surface is needed.", "refs": []},
+      "website": {"status": "not-applicable", "reason": "This patch item does not require a separate public website change.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch release; the changelog and Guide carry the relevant user-facing change.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Advanced queries using `:inputs [:current-page]` now follow the focused pane** (GH #301). Tine binds Logseq's standard current-page page/ref relationship, reruns it on focused-page navigation, and keeps ordinary date inputs typed and unchanged.",
+      "userVisible": true,
+      "regressions": ["REG-ADVANCED-CURRENT-PAGE-INPUT-301", "UI-ADVANCED-QUERY-CURRENT-PAGE-INPUT-301"],
+      "docs": {"status": "not-applicable", "reason": "This patch behavior is fully described by its changelog entry and regression contract; no separate documentation surface is needed.", "refs": []},
+      "website": {"status": "not-applicable", "reason": "This patch item does not require a separate public website change.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch release; the changelog and Guide carry the relevant user-facing change.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**A graph's Home page setting now follows the graph between devices** (GH #269). Tine reads and writes Logseq's `:default-home {:page \"...\"}` entry in `logseq/config.edn`, preserves other keys in that map, and safely migrates an older device-local setting after the graph opens.",
+      "userVisible": true,
+      "regressions": ["REG-GRAPH-HOME-CONFIG-OWNER-269", "UI-GRAPH-HOME-PAGE-245"],
+      "docs": {"status": "not-applicable", "reason": "This patch behavior is fully described by its changelog entry and regression contract; no separate documentation surface is needed.", "refs": []},
+      "website": {"status": "not-applicable", "reason": "This patch item does not require a separate public website change.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch release; the changelog and Guide carry the relevant user-facing change.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Resolving merge markers inside Tine now stages the pre-resolution file in the recoverable trash** (Settings → Backups & recovery), so the sides you did not choose stay recoverable — the same guarantee resolving a sync conflict copy already had.",
+      "userVisible": true,
+      "regressions": ["UI-CONCORD-LIVE-DIRECT-SAVE-337"],
+      "docs": {"status": "current", "reason": "The Concord contract documents the review, suggestion, persistence, recovery, and safety behavior.", "refs": ["docs/concord.md"]},
+      "website": {"status": "update", "reason": "The generated public troubleshooting and files Guide now explains the updated conflict review and recovery behavior.", "refs": ["website/guide/reference-troubleshooting-and-recovery.html", "website/guide/reference-files-external-edits-and-backups.html"]},
+      "blog": {"status": "not-applicable", "reason": "Patch release; the changelog and Guide carry the relevant user-facing change.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Adding a highlight no longer rewrites a PDF notes page that carries unresolved VCS merge markers.** The write is refused like any other save to a quarantined page; previously it silently lifted the quarantine while the merge was still unresolved in git/Fossil.",
+      "userVisible": true,
+      "regressions": ["REG-PDF-HIGHLIGHT-PAIR-ATOMICITY-001", "UI-PDF-PANE-MOBILE"],
+      "docs": {"status": "not-applicable", "reason": "This patch behavior is fully described by its changelog entry and regression contract; no separate documentation surface is needed.", "refs": []},
+      "website": {"status": "not-applicable", "reason": "This patch item does not require a separate public website change.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch release; the changelog and Guide carry the relevant user-facing change.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Conflict review no longer freezes on blocks with extremely long single lines.** Comparing candidate rows now caps at the first 512 characters per line (a 64 KB one-line block previously stalled the conflict panel for seconds to minutes), oversized flat pages avoid a slow exact-alignment cliff, and all conflict-review reads moved off the UI's request thread.",
+      "userVisible": true,
+      "regressions": ["UI-CONCORD-LIVE-DIRECT-SAVE-337", "UI-CONCORD-SYNC-COPY-HANDOFF-337"],
+      "docs": {"status": "not-applicable", "reason": "This patch behavior is fully described by its changelog entry and regression contract; no separate documentation surface is needed.", "refs": []},
+      "website": {"status": "not-applicable", "reason": "This patch item does not require a separate public website change.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch release; the changelog and Guide carry the relevant user-facing change.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed-storage startup failures now keep their real recovery cause and stop looking active** (GH #370). A core reopen can return a typed retryable/refused result without a serving actor; startup previously wrapped that non-serving result in a managed graph slot and then replaced its useful cause with the generic “managed storage is not ready” page-readiness error. It now refuses before publication with the original redacted diagnostic, keeps the Direct Files escape available, and freezes the elapsed time when the operation reaches its terminal failure instead of counting upward indefinitely.",
+      "userVisible": true,
+      "regressions": ["REG-MANAGED-OPEN-TERMINAL-DIAGNOSTIC-370", "UI-MANAGED-WINDOWS-UPGRADE-REOPEN-370"],
+      "docs": {"status": "current", "reason": "The storage contract and troubleshooting Guide document managed activation, diagnostic failure, retry, and Direct Files recovery.", "refs": ["docs/storage-sync-contract.md", "crates/tine-core/src/templates/troubleshooting-recovery.md"]},
+      "website": {"status": "current", "reason": "The public managed-sync and troubleshooting Guide already documents setup failure, retry, and Return to Direct Files.", "refs": ["website/guide/features-managed-sync.html", "website/guide/reference-troubleshooting-and-recovery.html"]},
+      "blog": {"status": "not-applicable", "reason": "Patch release; the changelog and Guide carry the relevant user-facing change.", "refs": []}
+    }
+  ]
+}

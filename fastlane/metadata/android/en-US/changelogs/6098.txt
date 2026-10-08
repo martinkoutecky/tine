@@ -1,0 +1,1 @@
+Improves PDF scrolling and rendering, Android editing and navigation, Direct Files conflict handling, Windows page creation, large-page references, page layout, keyboard shortcuts, and Managed Storage performance and recovery. Updates the shared lsdoc parser and restores clean F-Droid WASM builds.

@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "version": "0.6.90",
+  "baseTag": "v0.6.5",
+  "focusedAudit": {
+    "required": false,
+    "reason": "0.6.90 is in the patch release lane: it exposes an explicitly opt-in experimental managed-sync subsystem and ships issue-driven correctness fixes. This impact record does not claim a minor-release audit attestation."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "**Post-activation managed-storage reads and writes no longer freeze the app while the required first reconciliation finishes.** Ordinary page, journal, query, editor, status, transition, tick, and shutdown commands run actor waits on the blocking pool and revalidate their exact graph generation before work, so queued commands cannot gain authority over a replacement graph.",
+      "userVisible": true,
+      "regressions": ["REG-SYNC-SPARSE-V2-ACTIVATION-RESPONSIVENESS-001"],
+      "docs": {"status": "current", "reason": "The experimental managed-storage boundary and its explicit opt-in scope are documented in ADR 0049; no established Guide workflow changes.", "refs": ["docs/adr/0049-oplog-first-sparse-storage.md"]},
+      "website": {"status": "not-applicable", "reason": "Experimental responsiveness repair; it does not change a public website capability or workflow.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane experimental reliability fix; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Restarting after interrupted managed-storage activation no longer leaves the desktop window hidden behind synchronous native setup.** The themed window now paints before the unchanged fail-closed recovery path runs, while ordered recovery phases and periodic wait diagnostics make legitimate long recovery observable without admitting unvalidated state.",
+      "userVisible": true,
+      "regressions": ["UI-MANAGED-CRASH-STARTUP-RECOVERY-001"],
+      "docs": {"status": "current", "reason": "The repair preserves the existing experimental recovery contract and does not introduce a new user workflow.", "refs": ["docs/adr/0049-oplog-first-sparse-storage.md"]},
+      "website": {"status": "not-applicable", "reason": "Experimental startup reliability fix; website positioning is unchanged.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane reliability fix; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Sparse-v2 now detects sampled interior corruption in its disposable SQLite projection during reopen.** Versioned, bounded fingerprints cover up to 1 MiB across the interior of each database and WAL file in addition to their edges; a mismatch preserves forensic evidence and rebuilds from oplog authority.",
+      "userVisible": true,
+      "regressions": ["REG-SYNC-PROJECTION-CRASH-CORPUS-001"],
+      "docs": {"status": "current", "reason": "ADR 0049 already states that the oplog is authority and the projection is disposable; this strengthens that documented safety invariant.", "refs": ["docs/adr/0049-oplog-first-sparse-storage.md"]},
+      "website": {"status": "not-applicable", "reason": "Internal experimental storage integrity hardening does not change public website copy.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane integrity hardening; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Sparse-v2 activation now uses lsdoc as the single Markdown and Org outline authority.** Parser-owned source spans and topology replace Tine's duplicate structural scanners, so Logseq-compatible headings, multiline blocks, mixed indentation, and other unusual but parseable layouts import without changing their meaning. Admission remains fail-closed when a layout cannot be represented safely.",
+      "userVisible": true,
+      "regressions": ["REG-SYNC-EXTERNAL-SOURCE-ADMISSION-001"],
+      "docs": {"status": "current", "reason": "The existing file-compatibility and fail-closed managed-storage design remains accurate; no new user action is introduced.", "refs": ["docs/adr/0049-oplog-first-sparse-storage.md"]},
+      "website": {"status": "not-applicable", "reason": "Parser-authority compatibility repair does not change public website content.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane compatibility repair; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Reverse-delivered experimental shared-provider histories now schedule inbound batches by causal dependency instead of repeatedly scanning the pending queue.** Each ready manifest is registered once, already-active parents are satisfied immediately, and accepting a parent wakes only its deterministically indexed children while blocked work remains visible to status and Safe shutdown.",
+      "userVisible": true,
+      "regressions": ["REG-SYNC-SHARED-PROVIDER-R6-001"],
+      "docs": {"status": "current", "reason": "The shared-provider design remains documented as bounded, explicit experimental behavior; no Guide workflow changes.", "refs": ["docs/adr/0049-oplog-first-sparse-storage.md", "docs/adr/0051-single-user-multipart-bootstrap-authority.md"]},
+      "website": {"status": "not-applicable", "reason": "Experimental scheduler performance and liveness work does not change public website content.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane experimental reliability work; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Experimental shared-provider sync no longer loses oversized or overlapping delivery callbacks or preempts an already-observed local file edit.** Rejected callbacks retain a bounded rescan before `Safe`, observations arriving during an active cursor force a subsequent scan, and watcher-captured bytes take priority over remote ingestion. Safe reopen also republishes a completely missing provider namespace, and exact deletion of an accepted manifest repairs from authenticated local archive bytes.",
+      "userVisible": true,
+      "regressions": ["REG-SYNC-PROVIDER-OBSERVATION-ORDERING-001", "REG-SYNC-SHARED-PROVIDER-R6-TRANSIENT-INGRESS-001"],
+      "docs": {"status": "current", "reason": "The documented experimental shared-provider safety boundary remains accurate; this fixes its internal observation ordering.", "refs": ["docs/adr/0049-oplog-first-sparse-storage.md", "docs/adr/0051-single-user-multipart-bootstrap-authority.md"]},
+      "website": {"status": "not-applicable", "reason": "Experimental data-safety repair does not change public website content.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane experimental data-safety repair; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Eligible Markdown and Org files outside configured page roots stay discoverable and exact-path load/save never exposes a blank writable substitute** (GH #246). Lowercase `.markdown` files and external add/delete updates follow the same graph-wide text scope without overwriting the original bytes.",
+      "userVisible": true,
+      "regressions": ["REG-GRAPH-WIDE-TEXT-SCOPE-246"],
+      "docs": {"status": "current", "reason": "This restores the documented real-graph editing model without adding a user-visible workflow.", "refs": ["docs/adr/0004-operate-on-the-logseq-format-og-parity.md"]},
+      "website": {"status": "not-applicable", "reason": "Data-safety compatibility fix; public website claims remain accurate.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane bug fix; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Page titles now map injectively to reversible, Windows-safe filenames** (GH #249). Existing graph filenames remain readable as stored, while unsafe create/rename/rescue identities and collisions are refused without overwriting another page's bytes.",
+      "userVisible": true,
+      "regressions": ["REG-PAGE-FILENAME-IDENTITY-249"],
+      "docs": {"status": "current", "reason": "Page titles remain the documented user-facing identity; the portable filename codec is an internal compatibility repair.", "refs": ["docs/adr/0040-file-path-is-storage-identity.md"]},
+      "website": {"status": "not-applicable", "reason": "Filesystem-safety repair does not change public website content.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane data-safety fix; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**A missing remembered graph no longer prevents Tine from starting** (GH #250). Startup reaches the visible graph chooser instead of panicking during native setup, without creating or changing the missing path.",
+      "userVisible": true,
+      "regressions": ["REG-MISSING-REMEMBERED-GRAPH-250"],
+      "docs": {"status": "current", "reason": "The existing graph-picker workflow remains accurate; this repair makes it reachable after stale remembered state.", "refs": ["README.md"]},
+      "website": {"status": "not-applicable", "reason": "Startup recovery fix does not change public website content.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane startup fix; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Configured default journal templates materialize once across local midnight** (GH #260). Timer, focus, and visibility refreshes use one graph/day guard, so a new day is initialized without duplicate template blocks or stale-graph writes.",
+      "userVisible": true,
+      "regressions": ["REG-JOURNAL-TEMPLATE-ROLLOVER-260"],
+      "docs": {"status": "current", "reason": "The configured journal-template workflow remains accurate; this restores its expected rollover behavior.", "refs": ["docs/FEATURES.md"]},
+      "website": {"status": "not-applicable", "reason": "Journal reliability fix does not change public website content.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane journal fix; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Changed",
+      "text": "**Experimental sparse-v2 storage can explicitly enroll two honest devices through a shared filesystem provider.** A Safe, idle initiator publishes immutable archive objects and manifests before one descriptor; a second device joins only the exact shared lineage and projection base. Both roles reconcile exact paths or retained incremental cursors through the one actor, without whole-provider archive caps or historical-manifest replay. Durable pending-publication markers resume accepted local and external-import batches after a crash, poll mode observes provider delivery independently of graph polling, and `SharePrepared` resumes before descriptor publication. Exact byte-identical generated conflict copies are retired with no-follow proof; differing or ambiguous evidence remains visible and blocks without graph writes. The Settings actions remain explicit and experimental.",
+      "userVisible": true,
+      "regressions": ["REG-SYNC-SHARED-PROVIDER-R5-001", "REG-SYNC-SHARED-ENROLLMENT-P3-001"],
+      "docs": {"status": "update", "reason": "The canonical Guide now explains the Testing only two-device setup, explicit opt-in, and retained Direct files mode.", "refs": ["crates/tine-core/src/templates/managed-sync.md", "crates/tine-core/src/templates/guide.md"]},
+      "website": {"status": "update", "reason": "The website now distinguishes ordinary external file sync from the separate experimental managed-sync opt-in.", "refs": ["website/index.html"]},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane experimental capability; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Changed",
+      "text": "**Experimental sparse-v2 storage now has an explicit per-graph application boundary.** Opt-in retires and drains the legacy graph authority before publishing the durable binding, then routes bounded queries, editor intents, whole-root external-file observations, recovery status, and clean shutdown through one actor. Startup never enables it implicitly or falls back to a legacy writer after opt-in.",
+      "userVisible": true,
+      "regressions": ["REG-SYNC-SPARSE-V2-APP-AUTHORITY-001"],
+      "docs": {"status": "update", "reason": "The canonical Guide now states that managed storage is per-graph and never changes Direct files until explicitly enabled.", "refs": ["crates/tine-core/src/templates/managed-sync.md"]},
+      "website": {"status": "update", "reason": "The website now names Direct files as the default and managed sync as a separate explicit opt-in.", "refs": ["website/index.html"]},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane experimental architecture change; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Changed",
+      "text": "**The disconnected experimental v2 oplog engine now uses one leased, authenticated run-local scratch store.** Exact causal clocks, compact store-backed batch status/waits, shallow document checkpoints with content-addressed chunks, and paged conflict evidence replace archive-history scans and unbounded hot maps. Scratch performs no durability sync and cannot delete or rewrite authoritative archive bytes. This engine remains disconnected from graph startup, migration, and user-visible writes.",
+      "userVisible": false,
+      "regressions": [],
+      "docs": {"status": "current", "reason": "This is a disconnected internal experimental-engine implementation detail; ADR 0049's authority boundary remains accurate.", "refs": ["docs/adr/0049-oplog-first-sparse-storage.md"]},
+      "website": {"status": "not-applicable", "reason": "Disconnected internal engine work does not change public website content.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane internal experimental architecture change; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Added",
+      "text": "**Experimental managed sync can make an existing Syncthing/Dropbox graph operation-backed without moving it.** Tine stores immutable per-session Loro updates in `.tine-sync/`, keeps Markdown/Org as an editable projection for Logseq and other tools, imports external file edits conservatively, and automatically removes only conflict copies proven to be generated projections. Activation adds durable Logseq-compatible block IDs after a complete local safety snapshot; ordinary backup restore is operation-first and crash-resumable. This first version manages page and journal text; assets, PDF sidecars, and configuration remain ordinary provider-synchronized files. (Experimental, opt-in.)",
+      "userVisible": true,
+      "regressions": ["REG-SYNC-SPARSE-V2-APP-AUTHORITY-001", "REG-SYNC-LOCAL-ACTIVATION-PREHEAD-001"],
+      "docs": {"status": "update", "reason": "The canonical Guide now explains Testing only opt-in, Markdown/Org projection, current page/journal scope, and ordinary provider-managed assets/config.", "refs": ["crates/tine-core/src/templates/managed-sync.md", "crates/tine-core/src/templates/guide.md", "crates/tine-core/src/templates/welcome.md"]},
+      "website": {"status": "update", "reason": "The website now distinguishes ordinary external sync from the experimental managed-sync opt-in without marketing it as a default workflow.", "refs": ["website/index.html"]},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane experimental addition; no editorial post is required.", "refs": []}
+    },
+    {
+      "section": "Added",
+      "text": "**Sparse-oplog crash takeover can recover to a clean handoff.** A restarted experimental runtime that takes over an `Unsafe` predecessor now performs an authenticated full external-file reconciliation before admitting automatic imports or publishing `Safe`, preserving unimported projection bytes.",
+      "userVisible": true,
+      "regressions": ["REG-SYNC-UNSAFE-CRASH-RECOVERY-LIVENESS-001"],
+      "docs": {"status": "update", "reason": "The canonical Guide now tells users that setup and recovery remain conservative and that Direct files is preserved as the normal mode.", "refs": ["crates/tine-core/src/templates/managed-sync.md"]},
+      "website": {"status": "update", "reason": "The website now identifies managed sync as an experimental opt-in rather than implying it is ordinary external sync.", "refs": ["website/index.html"]},
+      "blog": {"status": "not-applicable", "reason": "Patch-lane experimental safety addition; no editorial post is required.", "refs": []}
+    }
+  ]
+}

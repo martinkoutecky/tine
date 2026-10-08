@@ -1,9 +1,11 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { releaseTag } from "../scripts/release-policy.mjs";
 
-it("preflights the OG v0.6.5 performance baseline, including a preview tag context", () => {
-  for (const ref of [undefined, "refs/tags/beta"]) {
+it("preflights the OG v0.6.5 performance baseline, including the release tag context", () => {
+  const tag = releaseTag(JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8")));
+  for (const ref of [undefined, `refs/tags/${tag}`]) {
     const result = spawnSync(process.execPath, ["scripts/check-release-preflight.mjs"], {
       encoding: "utf8", env: { ...process.env, GITHUB_REF: ref },
     });

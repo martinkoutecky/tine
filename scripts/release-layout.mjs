@@ -1,5 +1,5 @@
 import { IDENTITY } from "./lib/app-identity.mjs";
-import { BETA_TAG, releaseVersion } from "./release-policy.mjs";
+import { BETA_TAG, STABLE_CHANNEL, releaseVersion } from "./release-policy.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -199,6 +199,18 @@ export function candidateProblems(directory, version, channel = "stable") {
         inBeta = false;
       }
       if (!inBeta) problems.push(`latest.json ${platform} escapes beta`);
+    }
+    if (entry && channel === STABLE_CHANNEL) {
+      let stable = false;
+      try {
+        const url = new URL(entry.url);
+        const parts = url.pathname.split("/");
+        stable = url.protocol === "https:" && url.hostname === "github.com"
+          && parts.at(-4) === "releases" && parts.at(-3) === "latest" && parts.at(-2) === "download" && parts.at(-1) === asset;
+      } catch {
+        stable = false;
+      }
+      if (!stable) problems.push(`latest.json ${platform} is not a stable latest/download URL`);
     }
     if (entry && !entry.url?.endsWith(`/${asset}`)) problems.push(`latest.json ${platform} points at the wrong asset`);
     if (entry && (typeof entry.signature !== "string" || entry.signature.length === 0)) {

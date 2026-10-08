@@ -33,6 +33,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Crash-safe copies: when the store of crash-safe copies for a graph could not be read, Tine moved it aside (keeping its bytes) and started an empty one without saying so. It now shows a sticky error naming where the old file went (REG-OG-G37-DRAFT-STORE-SET-ASIDE-REPORTED).
 - Desktop: quitting while several windows are open no longer exits before every window has saved. Previously, a window that finished closing first (for example a main window with no graph open) could end the app while another graph window was still writing its last edit (UI-OG-GH625).
 - Linux release checks: the multi-window change had made the main window the second window the app creates (after Quick Capture), so WebDriver-driven journeys drove the hidden capture window and 35 of 45 catalog journeys failed; main is created first again. The tray journey's own D-Bus session bus now listens on a filesystem socket so it can connect on Ubuntu runners (REG-OG-CATFIX-MAIN-FIRST, REG-OG-CATFIX-TRAY-BUS).
+## [0.7.0] - 2026-10-08
+
+Tine 0.7.0 makes the Tine Beta line stable. It is Tine Beta 0.7.0-beta.2 (the
+two Beta sections below list everything it changed) plus the three fixes in
+this section. Your settings, graphs and sessions carry over from 0.6.x. The
+new Beta features since beta.2 (Flatpak, tray icon, Open in new window, custom
+CSS theming) stay in Beta for now.
+
+### Changed
+- Stable Tine is now built from the Beta line: plain Markdown/Org files are the only storage, with no on-disk search index to build or repair. Beta keeps its separate app and update channel and continues with 0.7.x betas.
+
+### Fixed
+- Opening pages: a single page whose properties were followed by a blank line and then a `#+` directive (for example `title:: X`, a blank line, `#+description: y`, or an Org file-level property drawer before `#+title:`) made every link and tag fail with "Couldn't open this page: task N panicked with message \"byte range starts at N+1 but ends at N\"" and left `[[` completion with no pages. Such pages now open and keep their title, and a page whose title cannot be read no longer stops the rest of the graph from loading (GH #644, REG-OG-GH644).
+- External edits: a page changed on disk (by Syncthing, Dropbox or another editor) stayed stale while one of its blocks was open in the editor, which includes leaving Tine for another app with the caret still in a block; it updated only after you pressed Escape or navigated away and back, and typing into the stale block then raised a conflict. The page now updates in place and the editor stays on the same block (found by its `id::`, else by its place in the outline), with the caret kept; if the change deleted that block the editor closes. A change still waits while text is being composed with an input method, and a different file taking the page's name is still refused while you edit (REG-OG-RELOAD-WHILE-EDITING).
+- Android (GH #654): the copy button on an image (on the picture itself and in the full-screen view) always answered "Couldn't copy the image", because the system clipboard plugin Tine used cannot put an image on the Android clipboard. Tine now stages the picture in its cache and puts it on the Android clipboard through the app's own file provider, which is how Android apps share images. What could not be checked without a device is whether pasting that clipboard image into a block adds it as a picture on every Android version (UI-OG-GH654).
 
 ## [0.7.0-beta.2] - 2026-10-05
 
@@ -661,6 +676,3419 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   strip beside it instead of over it (GH #435).
 - **Application chrome no longer starts a text selection** while page content
   and editors stay selectable.
+
+## [0.6.987] - 2026-09-28
+
+### Fixed
+
+- The search index could not be built at all, on every launch, when any page contained a reference whose name is blank or only a slash, such as `[[ ]]`, `[[/]]`, `#/`, `tags:: /` or `[[　]]` (an ideographic space); Linked/Unlinked References and queries then showed "couldn't be built (code: other)". Such references are now ignored, as they name no page, and a page whose own name is blank or `/` is indexed normally (GH #594).
+- Linked and Unlinked References answer again while the search index is building or has failed, by reading the pages as v0.6.982 did. Before, a graph whose index could not be built showed no references for the whole session. Query blocks still wait for the index (GH #594, #543).
+- The search tab ("Open search tab" in Ctrl+K) shows results again while the search index is building or has failed, as it did in v0.6.982. Until the index is ready they come from a scan of your pages, in page order, and the tab says so; they are replaced by the index's results once it answers. Before, the tab showed "Rebuilding the query index…" for as long as the index was not ready, while Ctrl+K worked (GH #543).
+- Journals stopped loading for an hour every night where the Linux AppImage's built-in time-zone data is out of date, for example in Mexico City, which no longer observes daylight saving time: the window and the app disagreed about which day it was. The app's calendar now follows the system's time-zone rules everywhere (GH #607).
+- A query table's column picker offers Page, so a hand-picked column selection can keep it (GH #606).
+
+### Changed
+
+- In a narrow window the indexing indicator in the toolbar says "Indexing" beside its bar; before, it showed a bare bar (suggested by EllisMorrow, GH #594).
+- Diagnostics: an index failure in the diagnostic report now names the step that failed as well as its class, and with `--debug` the underlying error text reaches the debug log file on every platform; before, the Windows app dropped it, so repeated `other` failures could not be diagnosed (GH #594).
+- Diagnostics: the experimental 32-bit Windows build no longer records its manual-update policy as an updater failure on every launch, and each session's start in the report names the build version and architecture, so a report can tell which build a previous session ran (GH #594).
+
+## [0.6.986] - 2026-09-25
+
+### Fixed
+
+- On Android 11 to 14 shared storage, creating, saving and renaming pages
+  failed with "Invalid argument (os error 22)", because the storage refuses
+  the rename that is guaranteed never to overwrite a file. Tine now checks
+  that the name is free and renames without the guarantee on storage that
+  refuses it. The same applies to network drives (NFS) that refuse it
+  (GH #538).
+- Renaming a page that many pages link to, or a sync tool changing many
+  files at once, no longer holds up searches and references while Tine updates
+  its index. The update is written as one transaction instead of one per 32
+  pages, and copying the index's log into the index file moved off the update
+  onto a background thread. On a 10,000-page graph a rename now writes about
+  a third as much (603 to 200 MB) and finishes in half the time; on Windows,
+  where each of those copies flushed the disk, a rename took about a minute
+  (GH #543). Once copied, the log is emptied, so the next launch does not
+  copy it again. Internal: tine-storage v0.28.2.
+- Typing in a block no longer resends the list of every linked page name to
+  the editor after each save when no link changed: a precision loss in the
+  check made it resend all of it, 307 KB on a 10,000-page graph (GH #543).
+- A save refused to protect data in the file, such as a page with unresolved
+  merge markers or a page-header property moved into the outline, is now
+  reported once and not retried. v0.6.985 said this was fixed, but the app
+  still received the refusal as `unknown` and retried it (GH #535, GH #546).
+- When a save fails because the device refuses a file operation, the message
+  now names the operation and the system's error number, so a report or
+  screenshot tells which step failed (GH #538, GH #590).
+
+- Search no longer treats letters that differ by a mark as the same letter
+  where the mark makes a different letter or syllable: `か` no longer finds
+  `が`, `и` no longer finds `й`, and in Hindi, Thai or Tibetan a vowel sign
+  or virama is no longer dropped, so `क` no longer finds `कु`. Accents still
+  fold as before (`cafe` finds `café`, `γεια` finds `γειά`), `елка` finds
+  `ёлка`, and `lodz` now finds `Łódź` (likewise ø, đ, ħ, ŧ). The first launch
+  after this update re-indexes the graph once.
+- A Ctrl+K search of one or two Chinese, Japanese or Korean characters, such
+  as `会议` or `東京`, now reads an index of those short words and visits only
+  the matching blocks. Before, it scanned every block, which for a rare word
+  took about 1.5 s per keystroke on a 10,000-page graph. Unlinked References
+  of a one- or two-character page name and `content match` queries use the
+  same index. It is built during the same one-time re-index as the change
+  above (GH #543). Internal: tine-storage v0.28.0, projection schema 31.
+- Reopening a graph no longer makes Ctrl+K, Linked and Unlinked References,
+  query blocks, the page list and block reference counts wait while Tine
+  compares the graph on disk with its search index. Until that comparison
+  finishes they answer from the index as you left it, and they update by
+  themselves when it finishes, so a page edited in another app while Tine was
+  closed shows up then. Edits you make meanwhile show up at once. Actions
+  that depend on the answer, such as creating, renaming or deleting a page,
+  inserting a template or exporting, still wait for the comparison (GH #550).
+- Reopening a graph no longer waits for a full check of the search index
+  before Ctrl+K, references and queries answer: that check took over a second
+  on a 10,000-page graph at every launch. The index is now checked in the
+  background, and only after the computer or phone restarted or once a week;
+  a phone closing Tine in the background never causes a check or a rebuild.
+  Damage the check finds still rebuilds the index (GH #550).
+- A block reference whose target cannot be found now shows its full
+  `((…))` text, as Logseq does, instead of the first eight characters of its
+  id. This includes `(((uuid)))`, which Logseq and Tine both read as a
+  reference to the id `(uuid`; write `( ((uuid)))` or `[label](((uuid)))` to
+  show a reference in parentheses (GH #589).
+- Linked and Unlinked References no longer lose blocks from pages you edited
+  before restarting Tine. A block you added or moved on a page in one session
+  went missing from other pages' reference panels after a relaunch, and stayed
+  missing until that page was edited again. Looking such a block up by its
+  id after a relaunch works again too. The first launch after this update
+  re-indexes the graph once (GH #594).
+- When the search index cannot be built, Linked and Unlinked References and
+  query blocks now say so instead of staying empty or "indexing" for the rest
+  of the session. Tine tries a failing build at most three times; after that
+  those panels show "couldn't be built" with a short code, a **Retry** button
+  and **Create diagnostic report**, and a relaunch tries again. Each failed
+  attempt is recorded in the diagnostic report as a fixed code with no graph
+  content. While the index is still building, Linked References shows
+  "indexing…" instead of hiding, and reads that can fall back to the pages
+  themselves, such as the page list, wait at most a minute for the index.
+  A page Tine cannot read, or one deleted while Tine was not watching, no
+  longer makes Linked or Unlinked References read every page in the graph
+  (GH #594).
+- **Ctrl+K** answers a one- or two-character search in a large graph in a
+  fraction of the time: such a search now reads only the most recent blocks
+  and says **More matches exist** when older ones may match too, where it
+  could take over a second on a 10,000-page graph. A search in Chinese,
+  Japanese or Korean, where one or two characters are a whole word, still
+  searches every block. While the index is first being built, Ctrl+K answers
+  from the pages up to several times faster, and it switches to the index
+  sooner once the index is ready. While you type, the
+  previous results stay on screen until the new ones arrive instead of
+  blanking on every key, and **Enter** waits for the new results. With
+  `--debug`, the log says whether each search was answered by the index or
+  by scanning pages, and how long it took (GH #543).
+- On a Mac, Tine now declares macOS 12.3 (Monterey) as its minimum, and the
+  startup message for a too-old web engine no longer says to update Safari: on
+  older macOS, updating the Safari app does not update the engine other apps
+  use, so the advice could not work (GH #572).
+- On Windows and macOS, a page whose name differs from its file name only in
+  case (for example **Contents** stored as `contents.md`) opens and can be
+  edited again. It failed with "could not be activated for editing" when
+  opened as the home page, from search or from the sidebar, and it could
+  appear twice in search. A file renamed by case only outside Tine, for
+  example by another device, is now listed once under its new name, and a
+  tab or Recent entry saved under the old spelling opens again (GH #597).
+
+## [0.6.985] - 2026-09-24
+
+### Changed
+
+- The search index now keeps every page current by one rule: each change
+  carries the moment it was made, and an older change never overwrites a newer
+  one. At launch Tine compares each file with the index without parsing
+  unchanged pages, so after pages change elsewhere or while Tine was closed,
+  only the changed, added or deleted pages are re-indexed; a larger change
+  still rebuilds it once. A cold, stale, damaged or configuration-changed
+  index is rebuilt in an unpublished file and appears only when complete. An
+  index holding inconsistent entries is rebuilt once instead of retrying
+  forever. Query results now list pages in file-path order, so a page created
+  this session takes its place instead of appearing last. The fixes below
+  marked GH #543 condense 118 individual entries; the full list is in
+  `docs/releases/v0.6.985-gh543-details.md` (GH #543).
+- The Guide's platform pages now describe the iOS TestFlight beta (themes
+  work, plugins do not run yet) and F-Droid updates for Android.
+- Spell-check language names in Settings now use the standard
+  "Language (Region)" form, e.g. "English (United States)" and "Spanish
+  (Mexico)" instead of "American English" and "Mexican Spanish", so regional
+  variants of one language sort together. Contributed by mikob (GH #580).
+- Diagnostic reports now record when Tine was closed through the
+  unsaved-changes warning with the user choosing to discard, with the reason
+  (a failed save or one still running) and the number of affected pages, but
+  no page names. Before, such a session read as an ordinary clean exit
+  (GH #540).
+- Internal: compact-projection P1 moved tine-storage through v0.25.0 and
+  v0.26.0. v0.25.0 deletes the Managed
+  Storage half of the crate (durable batches, local journals, sealed digests,
+  the oplog frontier and the managed layout — 32,640 → 11,863 source lines).
+  The crate became the Direct Files durability and SQLite projection crate;
+  nothing Tine used moved. At that stage, the projection schema was unchanged
+  at version 29, so no rebuild was triggered. v0.26.0 then trims the crate's
+  public surface to the methods Tine's Direct Files path calls (no user-visible
+  change).
+- Internal: Tine now pins tine-storage v0.27.0 and projection schema 30. The
+  compact schema removes redundant cache data and uses one integer coordinate
+  space for pages and blocks; an existing schema-29 projection is rebuilt once
+  from the Markdown/Org graph, without changing graph files.
+- Ctrl+K, the `((` picker and unlinked-reference search use a bounded recent-
+  result window. Inline Friendly search shares their index, canonical folding
+  and exact matcher, but remains exhaustive up to its 5,000-result limit and
+  preserves display order.
+- A cold, stale, damaged or configuration-changed search index is built and
+  checked in an unpublished file, then atomically becomes ready only as a
+  complete image. Before the first ready image, Ctrl+K and the `((` picker use
+  the loaded graph snapshot while structured queries keep waiting; failure or
+  cancellation preserves the previous coherent committed image.
+- Internal: `scripts/measure-projection.mjs` runs `graph_scale_bench --root <graph>` on a real corpus and reports the compact-projection budget rows (S1 file/Markdown, S2 build write amplification, T1 build time, M1 peak RSS, U1 bytes per single-block edit, T2 Ctrl+K p95, T3 `{{query}}` p95) against `scripts/projection-budget-policy.json`; `src/projectionBudget.test.ts` runs it only when `TINE_PROJECTION_CORPUS` names a corpus. Anon baseline recorded 2026-09-19 (compact-projection P0a).
+- Internal: every SQL statement tine-core sends to the search/query projection
+  now passes through one door (`query/projection_sql.rs`), a blessed statement
+  census exercises every shape against the pinned projection schema, and the
+  storage contract lists the projection's tables as its schema of record
+  (compact-projection campaign P0; no user-visible change).
+
+### Added
+
+- The online Guide now includes three sample journal days, so the Journals
+  view shows tasks, scheduled items, a live query and quick-capture notes
+  instead of an empty page.
+- Clicking **N conflicts** opens a **Conflicts** page listing every page that needs a decision, grouped by source, with how many blocks are left on each. Click a page to resolve it, or shift-click to keep the list in view beside it; rows disappear as pages are resolved. The conflict lists in Settings → Backups & recovery moved there, including **Discard copy** for a sync copy whose page no longer exists. Suggested by EllisMorrow (GH #536).
+- Live exports now have shareable page and block links. With one pane and one
+  tab, the browser address follows navigation; the page and block menus provide
+  explicit copy actions, and opening a link restores its page or block in the
+  read-only exported app (GH #182).
+- Tine's desktop binary now has a documented command-line interface: `--help`
+  and `--version`; explicit `open` and `capture` commands; create-only static
+  and live graph exports with graph-relative output and an explicit `--replace`;
+  and a read-only `doctor` check. Existing `tine GRAPH` and `--capture`
+  invocations remain compatible. Linux packages install a generated `man tine`
+  page (GH #567).
+- Running with `TINE_DEBUG=1` (or `--debug`) now records the search index's
+  lifecycle: when a validation starts reading the graph, how long that read
+  took, how many pages it queued, each worker turn's duration and rows, and when
+  a staged build becomes ready. Without the flag nothing is recorded (GH #543).
+
+### Fixed
+
+- Ctrl+K and the `((` picker remain useful while the query index is
+  unavailable: they search one already-loaded parsed snapshot in document
+  order and rerun against ranked results when the complete index becomes
+  ready. Structured and inline queries still wait for it. Building a large
+  graph's index the first time is about 45% faster (10,000 synthetic pages:
+  47.5 s to 26.2 s on Linux; performance-only, same schema, nothing is
+  rebuilt), and opening a large graph no longer spends most of its time
+  re-reading the index it is building. Search and page autocomplete answer
+  within seconds of launch instead of after a half-minute read storm, and a
+  search typed during launch validation reports "indexing" and retries instead
+  of starting a second build (GH #543).
+- Opening a large graph no longer parses every page beside the search-index
+  check. Page lists, aliases, reference counts, block references, embeds,
+  templates and the calendar answer from the index or wait for its check, and
+  opening today's journal or editing, saving or deleting a page meanwhile no
+  longer throws the check away. A named page such as a restored tab or a
+  favourite opens straight from its file during launch indexing: 4 s to 1 ms
+  on a 10,000-page graph. When two files claim the same page name, the file
+  named for the page is now the one opened. A journal named by a date
+  `title::` under a journal title format without a year now lists as a journal
+  with its calendar day (GH #543).
+- Common actions on a large graph no longer make Tine re-read, re-parse or
+  re-check the whole graph: renaming, merging or deleting a page, a
+  journal-format migration, switching graphs or reloading settings during
+  indexing, an edit landing as the index check finishes, and opening or saving
+  while another edit is being indexed. Creating the first page or journal day
+  after reopening checks the name against the index (416 ms to 23 ms on a
+  10,000-page graph). Saving during indexing no longer queues extra lookups,
+  reference counts or alias reads per save. Indexing runs from one background
+  owner, so a page that always fails to index costs a few spaced-out retries
+  instead of a whole-graph pass after every edit (GH #543).
+- Search, queries and page lists no longer get stuck waiting for the index, in
+  some cases for the rest of a session with nothing left running to do the
+  work. This could follow a failed index update or indexing step, renaming a
+  page whose content could not be read, creating or renaming a page while the
+  index still listed a deleted page, two parts of the app reading the graph at
+  once, or a rename or delete during a rebuild. Launch indexing now always
+  reports that it ended, even when it fails; before, page aliases,
+  block-reference counts and reference-only page names never appeared for that
+  session. A search during a rebuild says the index is not ready instead of
+  returning nothing (GH #543).
+- Search now describes the files on disk. A rename, merge or rescue no longer
+  leaves search answering from the page it used to be, and a merged-away page
+  can no longer come back. Duplicate journal days, journal filename migration
+  and migrated PDF highlight pages no longer leave duplicate or trashed text
+  findable, and edits to either file of a duplicate day reach search. A merge,
+  rescue, delete, move or save that fails part-way leaves search matching what
+  is really there. A late parsed copy of the graph can no longer undo a save
+  in search (the file on disk was never affected), and pages that change,
+  open, fail or recover during the index check reach it (GH #543).
+- One page file Tine cannot read (invalid UTF-8, unparseable, locked, or still
+  arriving from a sync service) no longer blocks creating every new page,
+  keeps the index "not ready", or makes page listings parse every page. Tine
+  says once which file it could not read; only a new page whose name that file
+  could hold is refused, and that refusal, like a rename the file blocks,
+  names the file. Fixing, restoring or deleting it clears the record. The page
+  keeps what was indexed for it until it can be read again. Exporting,
+  printing, renaming or deleting on a graph whose files cannot be read now
+  reports that instead of exporting an empty site (GH #543).
+- Settings now apply in place. Changing the home page, the format for new
+  pages, a display-only setting, dismissing the Guide notice, or editing a
+  setting in `config.edn` outside Tine no longer reloads the graph, restarts
+  indexing, cancels a print or closes an unsaved-edit recovery. Every outside
+  change to `config.edn` is now picked up, and `:hidden` updates All Pages and
+  page links without a restart. A setting changed while the graph reopens is
+  no longer lost (a favorite added then could vanish from `config.edn`).
+  Aliases, links and reference counts follow a reopened graph at once, and a
+  link no longer opens a page that merely declares its name as an alias. (GH
+  #543).
+- Tine now reports when the system refuses to watch a graph folder (for
+  example at Linux's inotify watch limit) and checks it for outside changes,
+  including `config.edn`, every few seconds by polling instead of missing them
+  silently, catching up once watching works; graph-wide settings such as the
+  journal title format take effect there too. Deleting or renaming a page
+  outside Tine, or changing a setting, no longer rescans the whole graph
+  folder; only a removed folder that held pages still does. Restoring a backup
+  no longer processes restored pages twice, a sync tool redelivering a
+  duplicate journal day's file unchanged no longer counts as an edit, and an
+  outside edit the watcher first missed no longer stays out of search (GH
+  #543).
+- Windows and graph switches keep to their own graph. A graph change or
+  finished launch in one window no longer makes another window reload, rebind
+  or stop waiting, and after switching graphs the previous graph's conflict
+  banners and favourites order no longer show on the new one. Closing a window
+  releases its index at once; switching back to a graph Tine is still
+  releasing, or opening one another Tine instance is still indexing, now waits
+  and then indexes instead of leaving search without an index. An HTML export
+  stops if its window switched graphs, and failing to update the recent-graphs
+  list (for example on a full disk) no longer fails the open or skips indexing
+  (GH #543).
+- The indexing progress bar now shows while search waits for the index to be
+  repaired, during a later rebuild in the same session, during whole-graph
+  page reads (also when the index is ready, for example while finding unused
+  assets), and for the whole build, including the first pass that reads every
+  page, where Ctrl+K's progress line vanished for minutes and re-ran the
+  search repeatedly; it now says it is indexing until it knows how many pages
+  there are. It no longer reports a refreshed graph finished before it starts
+  indexing, hides for a second on a repaint, freezes behind a page listing, or
+  goes blank while the index is being written (GH #543).
+- The app no longer freezes while Quick Capture suggests pages during
+  indexing, while the journal title format changes, or during graph-wide
+  listings (journal conflicts, filename migrations, asset trash, installed
+  plugins, spell-check dictionaries) and large asset reads, imports or backup
+  pruning; that work now runs off the main thread. Exporting query results or
+  the graph to HTML during indexing waits for the index and then exports,
+  instead of showing the wait as a failure. Linked and unlinked references in
+  the right sidebar refresh after a rename, backup restore or journal-format
+  change, moving between pages during indexing no longer shows linked
+  references as failed, and a pinned block is removed at launch only when it
+  no longer exists (GH #543).
+- A search index file damaged badly enough that SQLite will not open it is now
+  deleted and rebuilt from your Markdown (nothing in the index is a source of
+  truth); several searches failing at once no longer rebuild it twice; and a
+  damaged index no longer keeps answering or keeps a CPU core busy. A query
+  with a very long `(or …)` or `(and …)` list (about a thousand terms) now
+  answers instead of failing and rebuilding the whole index over and over. The
+  debug report records why a query was refused instead of "other", still as a
+  short fixed code, never anything from your graph. Performance: the record of
+  pages changed during indexing no longer grows without bound (GH #543).
+- Exports used the favorites and workflow the graph had when it opened,
+  ignoring changes made since.
+- When the graph's pages could not be read, the unused-assets list offered
+  every asset for trashing, including media still in use. It now reports the
+  error instead.
+- Advanced queries written the way Logseq's documentation and many
+  `config.edn` files write them now run: `[?b :block/marker "TODO"]`, a marker
+  or date variable narrowed by `contains?`, `=`, `not=`, `<`, `<=`, `>` or
+  `>=`, the block's journal page and journal day, and
+  `(not [?b :block/scheduled ?d])`. Before, these were refused as
+  unsupported, and a `not` or `or` Tine only partly understood ran as the part
+  it understood, so an "overdue" query could list scheduled tasks. Such a
+  `not`/`or` is now left out whole, so a partial answer can only be wider than
+  the query, and says so (GH #542).
+- Opening a graph no longer rebuilds its search index from scratch on every
+  launch. The Journals view reads its first days before the index has been
+  checked, and those reads were given index positions that collided with the
+  ones already stored, so the index was thrown away and rebuilt each time,
+  a large, repeated write on every open (a ~40-second open was reported on an
+  Android phone). Pages read at launch now keep
+  their stored place, and unchanged ones are not re-indexed at all (GH #550).
+- Two more pieces of whole-graph work are off the path to the first journal
+  on every open. Today's journal is found from its date instead of by listing
+  every file in the graph first, and the automatic launch backup now waits
+  until startup has finished (the background indexing is done and the app has
+  been quiet for a few seconds) instead of copying the whole graph one second
+  after open, where it competed with the first page for the disk (GH #550).
+- The online Guide at tine.page showed emoji in a monochrome outline font.
+  Published pages now use the browser's color emoji font; the desktop editor
+  on Linux keeps the monochrome font that avoids the WebKitGTK emoji
+  crash (issue #76, unchanged).
+- On a Mac whose web engine is older than Safari 15.4 (for example Big Sur
+  with Safari never updated), Tine now says so at startup and explains that
+  updating Safari fixes it, instead of opening with every page failing to
+  display. The iOS build now requires iOS 15.4 (GH #572).
+- On Android storage that refuses Tine's atomic "rename without overwriting",
+  a settings write could leave `logseq/config.edn` hidden under a `.retired`
+  name, after which the graph failed to open with "Invalid argument". Tine now
+  checks the rename works before touching `config.edn`, and a graph already
+  affected opens again with its settings restored (GH #538).
+- The Journals view no longer shows "No journal entries found" when the graph
+  folder holds something that is not a page, such as a symlink, an editor lock
+  file, or a file the system cannot read (for example an iCloud file that is
+  not downloaded). Such an entry also no longer stops today's journal from
+  being created or pages from being renamed, and a day that cannot be opened
+  no longer hides all the others (GH #385).
+- A graph no longer opens with every page blank because one item in its folder
+  cannot be read (for example a locked file, an unreadable folder, or a file
+  with an unusual name). Tine now skips that item and shows the rest. Opening a
+  large graph also no longer freezes the app for several seconds while it
+  checks for conflict copies (GH #332).
+- The default journal template could be applied again over text typed into a
+  nested block of today's journal, replacing it. Text anywhere in the journal
+  now counts, so the template never overwrites it (GH #550).
+- With a custom journal title format, opening a graph no longer tries to write
+  the journal template over today's journal delivered by a sync app, which
+  caused a hidden save conflict on every launch (GH #550).
+- A save conflict no longer ends up with a comparison that can never load. If
+  Tine lost track of the conflict in the split second after it happened (for
+  example because another page was deleted or renamed at that moment on
+  Windows), the comparison failed, and after a restart it failed every time.
+  Tine now compares your draft with the file as it is on disk instead, as it
+  already does for any conflict it restores after a restart (GH #490).
+- A page whose first bullet is a numbered-list item keeps saving. Making the
+  first bullet of a new page a numbered item and then typing its text could
+  leave the file holding only `logseq.order-list-type:: number`, with every
+  later save of that page failing (`reason code: unknown`) until Tine was
+  restarted. Tine had taken the empty numbered item for page properties; it now
+  stays a list item (GH #540).
+- A save Tine refuses in order to protect what is already in a file (a page
+  header, merge-conflict markers, an Org file it cannot reproduce) is no longer
+  retried and reported as `reason code: unknown` "after 3 tries" while the page
+  silently stops saving. One message stays up until the page saves again, says
+  the edits are kept in this window, and **Review unsaved** opens the draft to
+  copy it or open the page (GH #535, GH #546).
+- Typing a page's alias after `[[` or `#` now offers it, and the row says
+  which page it is an alias of. Choosing it inserts the alias as you wrote it,
+  and the link opens the real page (GH #558, GH #482).
+- One page that cannot be saved no longer blocks every rename in the graph.
+  A rename used to need every open page saved first, so a single page whose
+  save kept being refused made every rename fail until you deleted and
+  recreated that page. Now such a page stops a rename only if the rename would
+  change it, or its unsaved text mentions the old name, and the message names
+  it. After a rename Tine reloads only the pages the rename changed, so
+  unsaved edits on every other page are kept (GH #535).
+- Renaming a page that many other pages link to is much faster in a large
+  graph. Every file the rename rewrote re-listed the whole pages folder to
+  check for names that differ only in case or accents, so the cost grew with
+  the number of linking pages times the size of the folder; the folder is now
+  listed once per rename. On an 8,000-page graph, a rename touching 800 pages
+  went from about 2.6 s to 0.8 s of file work, and time now grows in step with
+  the graph. The rename still reads every file once, and the app still reloads
+  the graph afterwards (GH #406).
+- Editing a page's properties no longer raises a save-failure toast while you
+  are still typing them. Page properties written as the first bullet of a page
+  are saved into the file's own header, but Tine kept treating them as an
+  ordinary bullet afterwards, so a half-written `key:: value` line proposed a
+  change the save path is required to refuse — surfacing mid-edit as
+  "Couldn't save … after 3 tries — (reason code: unknown)". Tine now follows
+  those properties into the file, and an invalid page header is reported when
+  you finish editing it instead of on every autosave; the page saves by itself
+  as soon as the properties are valid again (GH #546).
+- "Export to PDF…" is no longer offered on Android and iOS, where it could not work: a mobile WebView cannot print, so the option silently did nothing. Choosing it from the command palette or a shortcut now says PDF export needs the desktop app instead of opening a dialog that leads nowhere (GH #560).
+- "Export graph to HTML" now says why it exported nothing when a graph has no public pages, instead of reporting "Exported 0 pages" with no explanation. Only pages marked `public:: true` are exported, as in Logseq (GH #560).
+- Saving a page no longer fails when the file is also hard-linked somewhere else. Graphs managed by git-annex (`annex.thin` mode links every page into `.git/annex/objects/`) or by a deduplicating tool refused every save with a physical-resource alias error, so the graph could be read but never edited. Tine now refuses only the case it can actually name - two pages inside the graph sharing one file - and only where it already knows the whole graph, which is page creation (GH #571, GH #555).
+- A page that is also hard-linked elsewhere (git-annex, a deduplicating tool) can now be renamed; before, such a graph could be saved but every rename failed with a physical-resource alias error. Opening a graph no longer fails when a crash-recovery copy of a page has picked up a second link, and edits made outside Tine to such pages no longer force a full re-index. Two pages inside the graph sharing one file are still refused, with both named (GH #571, GH #555).
+- A graph inside a Cryptomator or VeraCrypt vault (and any other user-space
+  volume) can be created and opened again. Windows asks the volume driver to
+  resolve a path to its final name, and these drivers are allowed to answer
+  "this volume has no recognized file system" — which Tine treated as a broken
+  path and refused, after it had already created the graph folders. Tine now
+  falls back to the plain absolute path when the driver cannot answer; the
+  no-follow open that actually protects the graph tree is unchanged. Saving on
+  such a volume was affected by the same call and is fixed with it (GH #561).
+- A query whose results are pages — `{{query (page-property tags x)}}` and any
+  other page query — now shows those pages in every display view. Table and
+  Board said "No results" and Search reported a count of 0, because those three
+  views read the block results a page query never produces, while List read the
+  pages. The page results were always there: the summary panel went on counting
+  them correctly beside the header's 0. Changing the view now changes only how
+  the same matches are drawn, and the count is the count of what is on screen
+  (GH #547).
+- Typing a `[[` page link on a large graph no longer re-reads the whole
+  reference index on every lookup. Offering page suggestions needs the set of
+  page names the graph links to, and the index answered that by handing back
+  one row per link — 110,000 rows to name 10,010 pages on a 10,000-page
+  graph — which took about 1.4 seconds every time it was asked, whatever was
+  typed. That set is now remembered until the graph changes, so a lookup takes
+  about 10 milliseconds. Page autocomplete, the quick capture picker, the query
+  sheet's page field and the settings page picker all share the one answer,
+  and a newly linked page still appears immediately
+  (REG-QUICKSWITCH-REFERENCE-NAMES-MEMO-001).
+- The first `[[` page lookup after an edit is no longer slow either. Remembering
+  the set of linked page names fixed every repeat lookup, but the first one
+  after each edit still had to read the whole reference index. The index now
+  keeps those names in an order it can read straight through, without consulting
+  the pages themselves, so collecting every linked name on a 10,000-page graph
+  takes about 20 milliseconds instead of 1.3 seconds. Two consequences worth
+  knowing: the first launch after this update rebuilds the graph's search index
+  once, which takes longer than a normal start, and the finished index uses
+  about 5% more disk. Saving is unaffected
+  (REG-QUICKSWITCH-REFERENCE-NAMES-INDEX-001).
+- Searching a large graph no longer reads every block for every keystroke.
+  Ctrl+K asked SQLite to materialise and rank every block in the graph and
+  then keep the matches, and it did that twice per keystroke: once for the
+  block results, and again to work out which pages had matching content. On a
+  10,000-page graph each keystroke cost about 4.5 seconds whether it matched a
+  hundred blocks or none at all. Both reads now start from the substring index
+  and visit only the blocks that can possibly match, bringing a selective
+  search down to about 1.7 seconds. A needle common enough to match more than
+  twenty thousand blocks still uses the old plan, which is genuinely the
+  faster one at that point. The answer is unchanged: the exact text predicate
+  still decides every row (REG-FRIENDLY-BLOCK-CANDIDATE-BOUND-001).
+
+## [0.6.984] - 2026-09-16
+
+### Added
+
+- While a large graph is being indexed, the toolbar shows how far it has
+  got — checking, reading or building the search index, with a page count —
+  so a long first open no longer looks stuck. Tine stays usable meanwhile
+  (GH #543).
+- **A part of Tine that fails now says so, where it failed, with a Retry — instead
+  of leaving the window blank.** Until now a single unreadable value anywhere in
+  the interface tore down the whole render and showed nothing at all, with no
+  message and no way back except restarting; at least one report of an "empty
+  app" was this, not lost notes. The page, the sidebar, Linked and Unlinked
+  References and the conflict panel now each fail on their own: the region that
+  broke shows what went wrong and a **Retry** that re-renders just that region,
+  and everything else keeps working. If the failure happened while Tine was
+  still waiting on a slow backend operation, the message says how many
+  operations are outstanding and how long they have been running, since that is
+  usually the real explanation and retrying is usually the fix
+  (UI-REGION-FAILURE-BOUNDARY-001, GH #490, GH #332).
+- **A background load that fails now costs only the thing it was loading, and a
+  panel that cannot fetch its contents says so rather than drawing itself
+  empty.** Every value Tine fetches in the background — syntax highlighting, a
+  typeset formula, a page preview, the references to a block, the results of a
+  query, the list of pages — used to throw when its fetch failed, which took
+  down the region around it. Each of those places already had a written answer
+  for "no value yet", and none of those answers could ever run. They run now: a
+  code block that could not be highlighted shows as plain text, a formula shows
+  its LaTeX, a preview shows nothing in its place, and the page carries on. For
+  panels where being empty would instead assert something false — "no references
+  to this block" when Tine merely could not look — the panel keeps its heading
+  and controls and shows **Couldn't load …**, with a **Retry** where refetching
+  is possible (UI-RESOURCE-READ-FALLBACK-002, GH #490, GH #332).
+- **Any property can be edited from the UI, on a page or on a block.** The
+  properties form offered five fixed page keys and nothing at all for blocks, so
+  every other `key:: value` line had to be typed by hand. Use **Page actions**
+  beside a page title, or right-click the title, for **Page properties…** (or
+  type `/page properties`), and right-click a block for **Properties…**: the
+  form lists the properties that are really
+  there, **Add a property** takes any key you like, and any non-preset key can be
+  removed outright. A key is accepted exactly when the property reader can match
+  it back, so anything that can be added can also be changed and removed —
+  including keys that are not plain ASCII. A read-only page offers no property
+  editing at all (UI-PROPS-ARBITRARY-EDIT-164, GH #164).
+- **Export…** on any query publishes the pages its results live on as a
+  standalone HTML site under `published-queries/<name>/`, regardless of
+  `public::`. The dialog reviews the page list first; a block query exports
+  whole pages and says so. Links to pages outside the export stay inert,
+  nested queries show only in-export results, and referenced images and files
+  are copied into the folder so it can be moved anywhere. An export that
+  would copy more than the new **Query export size limit** (Settings → Graph)
+  stops and offers the setting; a taken name can be replaced (the previous
+  export is kept in recovery) or given a separate folder. `published-queries/`
+  is never read back as pages. Queries inside the exported pages are run the
+  way the app runs them (`<% current page %>` resolves to the page, `#+BEGIN_QUERY`
+  blocks keep their table view).
+- A query export also ships an **app version**: served over HTTP, the folder
+  opens as a read-only copy of Tine over a snapshot baked at export time — the
+  query's results on the export's own home page, Ctrl+K page navigation,
+  Linked References and block previews, with every answer computed by Tine at
+  export time and nothing editable. Queries show the results they had when
+  exported, under the view they had; view changes and new queries are refused with a typed
+  reason. `index.html` opened from disk, or with `?static`, keeps the plain
+  static site.
+
+### Changed
+
+- Settings now has one **Help & diagnostics** tab containing the flight-recorder
+  report, synchronized-graph verification, and the parser comparison. The parser
+  comparison no longer offers known intentional lsdoc differences, such as
+  dollar math preserved inside Markdown emphasis, as reportable bugs.
+
+- **In Unlinked References, the highlighted mention is now the control.** Click a
+  highlighted word to open its source page with that exact mention selected. The
+  numbered jump circles now appear only when the excerpt cannot show every
+  mention — on a short block they repeated what the highlighting already said —
+  and **Show full block** marks every mention instead of dropping the
+  highlighting. Every jump, in both reference panels, now lands on the mention
+  *selected* rather than leaving an invisible caret on it, which is what made the
+  circles look inert on iPhone and iPad. Unlinked-reference highlighting also now
+  uses the same colour as search and the quick switcher; it had been a much
+  fainter tint. (GH #200)
+
+- **Managed Storage, the experimental Testing-only sync mode, is removed.**
+  Direct Files is Tine's only storage mode. A graph that used Managed Storage
+  opens as an ordinary Markdown/Org graph, and sync between devices stays with
+  your own tool, such as Syncthing or Dropbox. Any future built-in sync will be
+  designed afresh.
+
+### Fixed
+
+- Expanding a large outline no longer mounts every off-screen block embed or
+  query before visible Linked References can render (GH #408).
+- Renaming a namespaced page now updates an own `title::` property that carried
+  its old identity, so the renamed page opens at its new route and remains there
+  after restart (GH #451).
+- Windows session shutdown now terminates Tine after its bounded durability
+  drain instead of leaving the process alive until Windows force-closes it
+  (GH #455).
+- Wide query tables and sheets inside a block keep their left edge aligned with
+  the owning bullet and scroll internally (GH #473).
+- Linked References on a journal now include references written with another
+  accepted spelling of the same date, such as `[[2026-09-20]]` for
+  `Sep 20th, 2026` (GH #481).
+- Returning from Android's photo/file picker no longer discards the editor that
+  initiated the capture before the saved asset link can be inserted (GH #493).
+- A bare block reference now renders every line after a soft line break instead
+  of showing only its first line (GH #506).
+- Cold graph opening no longer runs an independent whole-graph parse for page
+  inventory alongside the shared startup parse, reducing first-open contention
+  on slower devices (GH #550).
+
+- **Page properties on an Org page are written in Org's own form.** Setting a
+  page property such as `tags` on an `.org` page put a Markdown
+  `tags:: reference` line into the file's header, which Org does not define as a
+  property — so neither Tine nor Logseq read it back and the property silently
+  did not exist, while the app showed it as saved. Tine now writes a
+  `#+tags: reference` file directive, the same form Logseq writes
+  (UI-ORG-PAGE-PROP-BYTES-164).
+- **A property whose key is not plain ASCII can be changed and removed again.**
+  A key such as `klíč::` could be created once and then never matched, so
+  editing its value added a second line with the same key instead of replacing
+  the first, and deleting it did nothing — while the page went on listing the
+  property (UI-PROP-KEY-GRAMMAR-164).
+- Search no longer stays on “Indexing — waiting for search to be ready…”, and
+  the search index is no longer rebuilt from scratch on every launch. Opening a
+  graph threw its saved index away and re-indexed every page, so on a large
+  graph (roughly 10,000 pages and up) Ctrl+K and the search tab could stay
+  unusable for many minutes and the app kept working the disk while nothing was
+  happening. An unchanged graph now reuses the index it already built, and only
+  pages that actually changed are re-indexed (GH #543).
+- **Each search on a large graph is also roughly twice as fast.** Every search
+  used to re-fold each block's text while ranking it; it now reads the folded
+  text the graph index already stores, which is the same comparison done once at
+  indexing time instead of once per block on every keystroke. Results and their
+  order are unchanged. Indexing a graph for the first time still takes time
+  proportional to its size, and search on a very large graph is still slower
+  than it should be. (GH #543)
+- While search waits for the index, a rebuild now says it is rebuilding instead
+  of showing the general indexing message, so a long wait is distinguishable
+  from a brief catch-up.
+- **Undoing a move between pages can no longer lose the moved blocks.** Undo and
+  redo of a cross-page move (a drag, a journal-day move, or a carry) now write
+  the page that regains the blocks first and hold the other page's save until it
+  lands, inside the same crash-recovery record the original move used. Before,
+  both pages were saved at once, so if the regaining page's save was refused —
+  for example because another program had changed that file — the other page's
+  removal could still be written and the blocks were left in neither file.
+- **Two quick nudges of a selection across a journal-day boundary no longer
+  duplicate a block.** Repeating the move shortcut while the first move was still
+  saving could add the same blocks to the target day twice, which then appeared
+  twice and was written to the file twice.
+- A move between pages that cannot start because a page has unsaved changes now
+  always says so. Keyboard moves across a journal-day boundary failed silently.
+- Typing ``` to start a code block lets you set its language again. The three backticks used to drop the cursor straight inside the block, which hides the line the language goes on, so there was no way to choose one except the `/Code block` command. The language list now opens on that line; pressing Escape puts the cursor inside the block as before. (GH #507)
+- Typing a workspace name with Chinese or another input method (IME) now works. The name field used to be rebuilt on every keystroke, which cancelled the character being composed. (GH #498)
+- Returning to the browser tab of a published export no longer shows a "couldn't finish checking for external changes" error. The read-only export has nothing to re-check, so it no longer tries. An export also no longer shows a stray “⊞ Table” button on every page, or an error after zooming or scrolling a PDF. (GH #549)
+- Carrying unfinished tasks to today while today's journal had a sync conflict no longer lets a later edit to one of the earlier days delete those tasks from that day's file. Tine now keeps the earlier days unchanged on disk until today is saved, as it already did for other block moves. Moving blocks into the same page twice before it saved also no longer leaves the first move's source page unable to save.
+- Queries answer every comparison they accept. `like` on `task`, `priority`
+  and `page.namespace` (for example `task like 'DO%'`), `page.journal != …`,
+  `page.name not in (…)` and `content in (…)` / `not in (…)` used to return
+  nothing. `like` on a date or checkbox (`scheduled`, `deadline`, `page.day`,
+  `page.journal`) is now reported as an error instead of silently matching
+  nothing.
+
+- Quitting Tine right after saving no longer throws away the copy of that
+  page Tine keeps for merging sync conflicts. Tine now waits up to 0.2 s at
+  quit for those updates, so a later conflict on the page still gets
+  three-way merge suggestions instead of more lines to review by hand.
+
+- While the query index is still building, property autocomplete now offers
+  an Org page's own properties (its `:PROPERTIES:` drawer) and no longer
+  offers a `key::` line that sits inside a code block, the same suggestions
+  it shows once the index is ready.
+
+## [0.6.983] - 2026-09-14
+
+### Added
+
+- **Commands can have no keyboard shortcut** without becoming unavailable in
+  the command palette. Shortcut recording can be cancelled, and help reflects
+  cleared bindings (GH #523).
+
+- **Reset interface zoom** is available in the command palette (GH #522).
+
+- **Changes from a long-absent device now merge automatically.** If an older
+  incoming change falls behind this device's compact local history, Tine
+  rebuilds that history, waits for any still-arriving prerequisite, and resumes
+  editing by itself without asking you to reopen the app or merge manually.
+
+- **All of a query's display settings, in one place.** A query block carries six
+  presentation facts — the view, what the results are grouped by, the sort order,
+  which columns show, what the footer totals, and a row limit — and until now the
+  controls beside a query could state one and a half of them: `+ sort` held one
+  sort, `+ summarize` held one total and one grouping, and the column list, the
+  view and the limit had no inline control at all. A **Display** button in the
+  open sheet now holds all six. The sort, column and total lists are real lists:
+  add to them, move an entry up or down, remove one. A second sort or a second
+  total is editable rather than invisible, and a setting Tine's controls do not
+  cover is left exactly as your file spells it. Every change is one undo step and
+  one ordinary property line.
+
+  A **query table** now saves what you do to it, too. Clicking a header sorts the
+  results and keeps that sort in the note — ascending, descending, then off.
+  Where the engine cannot sort by a column (the title, the task marker, tags, a
+  computed column) the table still sorts what is on screen and says **Table-only
+  sort**, so the difference between *sorted* and *saved as sorted* is visible
+  rather than found after a reload. Dragging a header saves the column order, and
+  a column's footer cycles count / sum / average.
+
+- **Picking a field now shows you your own graph.** Adding a condition used to
+  ask which KIND of thing you wanted first, and then — for a property — offer an
+  alphabetical list of every key in the graph, with no counts and no types, in
+  which a key you use four hundred times sat below one you used once. Changing an
+  existing row's field asked the same question again through a different control.
+  Both are one list now, and it is your graph: the built-in fields first, then
+  every property key you actually use, commonest first, each row saying what type
+  Tine has observed for it (and what you declared, when you have), how many
+  blocks or pages carry it, and a few of the values it holds. Type to narrow it.
+  A key the list does not already offer where you need it is offered by name —
+  **Use "…" as a block property**, and on a block query **Use "…" as a page
+  property** for the same key read off the block's own page — each with its
+  honest `0 blocks today`. That is how a key your graph has not got yet, and a
+  key it has only on pages, both stay writable. A graph with thousands of keys
+  opens as quickly as a small one — the list draws a screenful at a time — and
+  the arrow keys reach any of them, including on a phone-width window, where the
+  sheet scrolls to bring your own properties into view.
+
+  While Tine is still reading your graph's properties, the list says so and
+  keeps the built-in fields usable; it does not show an empty graph. A property
+  condition waits for that answer rather than guessing that the key holds text —
+  which matters most right after you declare a type, when the old answer is the
+  wrong one. Your chosen key and anything you have typed are kept while it waits.
+
+  Built-in fields — *Task marker*, *Scheduled*, *Page / tag reference* — show no
+  count. Tine keeps no statistics for those, and showing a borrowed number would
+  be telling you something it never measured.
+
+- **The query text is always there, and it answers back.** The box holding the
+  query's text used to be a collapsed *Query text* twisty at the foot of the
+  sheet — the one control that can say everything the rows cannot was the one
+  control you had to know to look for. It is now simply part of an open sheet,
+  and Tine reads what you type as you type it. When it cannot read something it
+  says which word, offers **Show me** to select that word in the text, lists the
+  spellings it does know and the property keys your graph has that look like it,
+  and points at the Guide's query-language reference. Your results stay on
+  screen, greyed, while the text is broken — a typo is not an empty graph — and
+  **Save query text** only ever saves the text that is in front of you. The
+  `⟨advanced⟩` row is a button now: press it and the cursor lands in the text at
+  the part the rows could not draw.
+
+- **A query Tine understood only part of says so plainly.** It used to list what
+  it could not read under a bare *No results*, which read as "here are your
+  results". It now says: *Tine didn't understand part of this query, so it
+  returned no results* — which is what actually happened.
+
+- **A query block now reads as a sentence, and edits as a sheet.** The row of
+  chips over every `{{query}}` is gone. At rest a query is one line of plain
+  English — *Blocks where task: TODO and page: Project/Roadmap* — with the number
+  of results beside it and a ⚙ to open it. Click either and a sheet opens over
+  the blocks below: **Find blocks ▾ where …** on top, then one row per condition,
+  each of them `field ▾ | operator ▾ | value` with a ⋮ for the rest and an × to
+  remove it. **+ Add condition** adds one. Conditions can be grouped as *all of*,
+  *any of*, *none of* or *not all of* when a query needs a branch. Escape, Back,
+  or a click anywhere else closes the sheet and leaves the sentence. On a
+  phone-width screen the sheet docks to the bottom of the window instead of
+  hanging off the side of the block.
+
+  A condition Tine cannot draw as a row is still shown — in red, with the reason,
+  and removable — rather than hidden behind raw text, and a query nested far
+  deeper than anyone means to read folds into one `⟨advanced⟩` row that is still
+  saved, still run, and still removable. Nothing about the file changes: the
+  block stays an ordinary `{{query}}` bullet, and the query text is still there
+  under the sheet to read or edit directly.
+
+- **Changing what a query selects tells you what it will cost.** Switching a
+  query between *blocks* and *pages* used to silently drop the conditions that
+  stopped applying — `task` means nothing for a page — so a click could delete
+  half a query without saying so. Tine now re-reads the whole query first and
+  says exactly what happened: *Switching to pages — 1 of your 3 conditions don't
+  apply to pages (`task = 'TODO'`)*, with **Remove them**, **Keep anyway** and
+  **Cancel**. Kept conditions stay visible as red rows with their reason, so
+  nothing disappears behind your back.
+
+- **A typed condition reopens as the comparison that wrote it.** `cost > 100`,
+  `due before 2026-01-01` and `name starts with proj` could be built but not read
+  back: reopening one showed a bare equality, and editing it destroyed the
+  comparison. Every comparison the builder offers now survives the round trip, so
+  a query you built last month opens with the operator you chose.
+
+- **One `/query` command.** The slash menu had **Query** and **Query (visual
+  builder)** as separate commands that made the same block. There is one now, and
+  it opens the new sheet with the field chooser already up.
+
+- **`{{query (all-page-tags)}}` works.** Logseq has this filter — every page
+  that carries at least one `tags::` value — and Tine did not know it, so a
+  graph written in Logseq that used it showed nothing. It now selects the same
+  pages Logseq selects.
+
+- **A query that finds nothing can say which condition emptied it.** Under an
+  empty result there is now a **why empty?** disclosure: for each condition it
+  shows how many blocks that condition matches on its own, and how many the
+  query would match without it. A query with several conditions used to say only
+  "No results", which is the one moment you most need to know which one to
+  loosen. Nothing extra is asked of the engine until you open it.
+
+- **Ctrl+Y also redoes, on Windows and Linux.** Ctrl+Z undid and Ctrl+Y did
+  nothing, because Logseq binds redo to Ctrl/Cmd+Shift+Z and leaves Ctrl+Y
+  unbound — so the key most editors on those platforms use for redo reached no
+  command at all. Ctrl+Shift+Z is still the binding the shortcuts list shows and
+  remaps; Ctrl+Y rides along as a second default, keeps one Redo row, and is
+  dropped if you bind Redo to something of your own. Not on macOS, where Ctrl+Y
+  is the system's yank inside every text field (GH #491).
+
+- **You can tell Tine what a property is, and then compare by it.** Open a
+  property in the visual query builder and it now names the property's type —
+  `text`, `number`, `date`, `checkbox` or a page link — and whether that type was
+  observed from your own values or declared. Choose **declare type…** to state it
+  yourself, with a **list of** box for keys that hold several values; Tine writes
+  an ordinary `tine.type::` line on the page named after the key, and
+  **remove declaration** takes it away again. Declaring one is what makes real
+  comparisons available: `before` / `after` / `between` for dates, `<` `≤` `>` `≥`
+  for numbers, `contains` and `starts with` for text. Once a type is declared,
+  Tine also tells you how many blocks disagree with it, which is usually a
+  typo you wanted to find.
+
+- **Search and the page switcher tell you when they are still catching up.**
+  Whole-graph search, the Ctrl-K page switcher and the `((` block picker now read
+  their answers from the same index the rest of Tine queries, instead of
+  re-reading and re-parsing your pages for every keystroke. On a large graph that
+  is the difference between a search that stalls and one that returns. Two things
+  change on screen. While the index is still being built — right after opening a
+  graph, or in the moment after a save — the switcher says it is searching rather
+  than showing an empty list, and if it genuinely cannot answer it says so and
+  offers to retry, instead of silently reporting that nothing matched. An empty
+  result now means "nothing matches", and only that.
+
+- **A search that returns both pages and blocks is now two results, each with
+  its own controls.** A mixed query used to render one undifferentiated run of
+  hits and offer one set of display settings for all of them, so choosing a
+  table because the pages suited one meant the blocks got a table too, and a row
+  limit meant to trim a long block list also trimmed the pages. **Pages** and
+  **Blocks** are now separate sections, pages first, each with its own Display
+  button, its own view, its own columns and sort, and its own row limit. Setting
+  one says nothing about the other: emptying the Blocks section leaves every
+  page in place, and neither section can borrow the room the other did not use.
+  A section that matches nothing says so and keeps its controls, so you can
+  change the setting that emptied it.
+
+  A section that leaves its display unset still follows the query's own
+  settings, exactly as before. Saying *nothing* and saying *nothing, on purpose*
+  are different states and Tine keeps them apart: clearing a section's settings
+  is recorded, survives a save and reopen in both Markdown and Org, and does not
+  quietly revert to the inherited ones the next time the file is read.
+
+- **Choose what makes a page a match.** A search that returns pages matched them
+  on their name and aliases only. A query can now ask for pages matched on their
+  **content** — a page whose own blocks satisfy the search — or on **both**.
+  A page admitted by its content is returned once, showing its best-matching
+  block as the evidence, and the Blocks section is unaffected by the choice.
+  Leaving it unset keeps the existing name-and-alias behaviour byte for byte.
+
+### Changed
+
+- **Page rename scans less text in Direct Files graphs.** A controlled
+  10,005-file graph completed the reference scan about 34.5% faster; the later
+  whole-graph cache refresh remains a separate cost (GH #406).
+
+- **Blocked rename/save messages identify the actual pending work**, conflicts
+  or reopen requirement. This improves diagnosis of GH #535; the underlying
+  reported false-conflict state is not yet resolved.
+
+- **Default task styling** uses consistent checkbox colors, strikes through
+  completed task text without its label, and applies the approved hover,
+  opacity, title-spacing and primary-text theme adjustments (GH #394).
+
+- **A query with two conditions no longer reads the whole graph to answer about
+  three blocks.** Every condition in a query was asked of the index as its own
+  complete list — "all the DONE tasks", "all the blocks tagged x" — and SQLite
+  builds each list in full before it compares them. So a query scoped to one
+  page, answering three rows, still enumerated every DONE task you have, and got
+  slower as the graph grew even though its answer did not. Tine now picks the
+  one condition that names a single thing (a page, a reference, a tag, a property
+  value), asks the index for that, and checks the remaining conditions against
+  each candidate directly — including when your query groups its conditions,
+  which used to hide the useful one a level down. On a 1,045-file graph the
+  three slowest queries in it went from 1.0 ms to 0.07 ms; on a thirty-times-
+  larger copy of the same graph one of them went from 53 ms to 0.4 ms. Results, their order and their
+  grouping are unchanged, and both spellings are checked against the old
+  whole-graph walk on every test shape.
+
+- **Linked References looks only at the blocks that link to the page.** The
+  index has always known which blocks refer to a page, but the panel asked it
+  only which PAGES did, and then re-examined every block on each of them. On a
+  1,045-page graph the busiest page narrowed to 184 pages holding 3,434 blocks,
+  of which 412 actually referred to it. The panel now asks for the blocks, so it
+  examines about one block for every ten it examined before. The rows, their
+  order, their breadcrumbs and their highlighted matches are unchanged, and a
+  page the index cannot narrow is still read the old way rather than answered
+  wrongly. Unlinked References is unaffected: its index narrows to pages.
+
+- **Opening a page no longer reads the whole graph while the index is catching
+  up.** Linked and Unlinked References used to answer a question the index was
+  still preparing by parsing every page in the graph instead. Right after a
+  graph opens, that is every file you have, once for each of the two panels, to
+  produce rows the index serves a moment later anyway. The panels now wait the
+  same fraction of a second a query block already waits, and the Unlinked
+  References header says what it is waiting for. Printing, publishing and the
+  reference diagnostics are unchanged: they have nothing to wait on, so they
+  still read the pages directly.
+
+- **The query sheet's `+ sort` and `+ summarize` buttons are gone.** Everything
+  they did — and the three settings they never reached — is in the **Display**
+  panel that now sits beside every query, on the sheet and inline alike. Notes
+  written with the old controls are read and rendered unchanged; only the place
+  you go to edit them has moved.
+
+- **Queries order all matches before sampling and display limits.** Without an
+  explicit sort, a sample is taken from the complete default page/document
+  order, so an existing sampled query may show different rows than it did
+  before. Query statistics describe that complete sample even when a display
+  limit hides rows.
+
+- **Export to PDF answers a page's queries from the same index the rest of Tine
+  reads.** A `{{query …}}` or `{{tine-query …}}` inside a page you export is
+  answered from the current search index on both Direct Files and Managed
+  graphs, instead of walking the graph a second time just for the export. Two
+  differences you will notice. While the index is still being built — the first
+  open, or the moment after a save — preparation now waits and retries rather
+  than exporting a page with a gap where the results belong. And when a query
+  exceeds a Print limit, whether in matches, source length or nesting depth,
+  Tine tells you which limit it hit and prepares nothing: no print dialog opens
+  on a page whose results are incomplete, where before the PDF was produced with
+  a "narrow it before publishing" note printed in place of the results. Starting
+  a second export, or switching graphs mid-preparation, cancels the first
+  cleanly. Page-anchored queries remain unsupported in a printed page.
+
+- **A `{{query (property …)}}` on a Direct Files graph no longer re-reads every
+  page to work out what its values mean.** Deciding whether `rank:: 007` is a
+  number or a word is a whole-graph question, and Tine answered it by walking
+  every loaded document each time it needed an answer, even though the same
+  facts already sit in the projection it keeps beside the graph. Once that
+  projection is ready the answer is read straight out of it; while it is still
+  being built — the first open, or the moment after a save — the old walk still
+  answers, so nothing waits on it. The values a query matches are unchanged, and
+  proved so: all three sources now build a byte-identical table on the same
+  graph.
+
+- **Tine now says when a query stops being readable by Logseq.** Some things
+  you can build — grouping, column totals, typed comparisons like `cost > 100` —
+  have no `{{query}}` spelling at all, and saving one has always rewritten the
+  block into Tine's own `{{tine-query}}` form, which Logseq shows as plain text.
+  It did that silently. A notice now appears under the query the moment it
+  happens, with **Undo that change** — the ordinary undo, so Ctrl+Z does the same
+  thing — and **Keep it**. **Don't show this again** is remembered per graph on
+  that device only; the choice is never written into your graph and never syncs.
+
+- **A view directive you remove now stays removed.** Column totals and grouping
+  were written both into the query text and into the block's `tine.*` properties,
+  and the properties win — so deleting a total or a grouping in the builder left
+  the old copy in the text, and the next time the block was read it came back.
+  Those two directives now live in the block's properties alone; `sort-by` and
+  `sample` keep their place in the query text, because Logseq reads those too. A
+  block you open and close without editing is still not written at all.
+
+- **Reopening an unchanged Direct Files graph no longer re-parses it.** Tine
+  now checks the graph's files against the query projection it keeps beside
+  the graph, page by page from the file bytes, and parses only the pages that
+  actually changed since the last session; an unchanged graph is ready with
+  nothing parsed and nothing retained in memory. A missing or damaged
+  projection is rebuilt by streaming pages through a bounded queue instead of
+  holding the whole parsed graph. Saves and deletions reach the projection
+  whether or not a parsed copy of the graph exists.
+
+- **A query about pages now answers with pages.** `{{query (page-property …)}}`,
+  `(page-tags …)` and `(namespace …)` ask a question about pages, but Tine
+  answered them by listing every block on each matching page — so one matching
+  page could fill the result with its whole outline. They now list the pages
+  themselves. A query about blocks is unaffected.
+
+- **The query block's `⚙ advanced` / `← Simple` switch is gone.** It converted
+  between the chip builder and a datalog query, in both directions, and neither
+  direction was safe: going out dropped any sort, grouping or summary the query
+  carried, and coming back could only read the exact shape it had itself
+  written, so an advanced query written by hand came back wrong or not at all.
+  An advanced query now stays advanced — editable as text, with its own note
+  saying which parts Tine ran and which it ignored — and is no longer offered a
+  chip builder that would rewrite it.
+
+- **`{{query (property …)}}` now matches the way you read the page, not the way
+  the bytes happen to be written.** A property value matches whatever its
+  letter case — `status:: Done` answers `(property status done)`; a value
+  written as a list matches any of its items, so `topics:: rust, queries`
+  answers `(property topics rust)`; and a key whose values are all numbers or
+  all dates is compared as a number or a date instead of as text, so
+  `rank:: 007` answers `(property rank 7)` and a date property compares in
+  calendar order. Logseq compares the raw text, case-sensitively, and splits
+  only a handful of built-in keys — so a property query that found nothing in
+  Logseq may well find what you meant here. Page names (`[[…]]`, `tags::`,
+  `alias::`) were already matched case-insensitively and still are.
+
+- **The Concord base ledger now reclaims entries whose stored text has been
+  removed from underneath it.** Its prune already dropped unreferenced blobs and
+  unreadable records; an index or conflict pin naming a blob that an antivirus
+  quarantine, a disk cleaner or a partial restore had deleted was kept forever
+  as dead metadata. Conflict diffs were never affected — a missing blob has
+  always degraded to the ordinary two-column diff — and the ledger still never
+  warns about one.
+
+### Fixed
+
+- Privacy-safe diagnostic reports now include the bounded reason code for
+  failed Tine-managed storage page saves, making prolonged unsaved-draft
+  failures diagnosable without debug mode or a special build. A large report's
+  selectable preview is shortened so Settings remains responsive; Copy and
+  Save still export the complete report (GH #540).
+
+- Closing with failed saves identifies the affected pages. Choosing not to
+  discard opens a recovery panel with page navigation, save retry, and draft
+  copying, including a complete recovery copy (GH #540).
+
+- A conflict whose original physical page is unavailable exposes its retained
+  draft and guarded resolution instead of hiding recovery behind the page-load
+  error (GH #541).
+
+- **Recovered drafts can be resolved after files change while Tine is closed.** Concord now applies choices to the same current file version shown in its review. A further change after review still stops the write and asks for a fresh review.
+
+- **Externally replaced images refresh reliably in linked asset folders.** File notifications through an approved assets symlink now reach every graph window sharing that folder, including after files are deleted.
+
+- **Quick Capture works on a cold launch.** Starting Tine with `--capture` waits for the selected graph to open before showing the capture window, so page suggestions and the saved completion policy are ready for the first input.
+
+- **Compact PDF toolbars keep More and Close reachable.** The document title
+  uses its own row in narrow panes, and settings and outline panels stay below
+  the controls (UI-PDF-COMPACT-TOOLBAR-CLIPPED-INTERNAL).
+
+- **Dragging down through multiline text keeps selection under the pointer.**
+  Starting a drag in rendered text no longer accumulates a character offset on
+  each wrapped line; code blocks and Unicode text follow the same native caret.
+
+- **Windows network graphs open correctly through UNC paths and mapped SMB
+  drives.** Directory enumeration preserves the network root while retaining
+  filesystem path-confinement checks (GH #533).
+
+- **Android formatting-toolbar taps perform each command once.** The toolbar
+  retains its horizontal position and editing focus, stays above the keyboard,
+  and keeps the keyboard open during sibling moves (GH #495, #496).
+
+- **Touch long-press page menus stay open.** Touch does not arm desktop hover
+  previews, and duplicate native context-menu or compatibility-click events no
+  longer dismiss the menu just opened (GH #207).
+
+- **Initial native Android text selection updates the formatting toolbar**
+  without requiring a later selection-handle movement (GH #375).
+
+- **Indent and outdent preserve the caret and selection** instead of moving
+  them to the end of the block (GH #519).
+
+- **Code-block horizontal scrollbars can be dragged** without the click
+  entering edit mode (GH #520).
+
+- **Embed gestures keep the intended host or source.** Clicking a gap does not
+  edit the host block; dragging an embedded root moves that occurrence, while
+  nested source controls retain their own actions (GH #514, #516).
+
+- **Editing below an expanded embed preserves the viewport**, including Undo
+  and Redo when the source text changes the embed's height (GH #515).
+
+- **Journals adds the new day after midnight without replacing the active
+  editor**, preserving its draft, focus and selection (GH #532).
+
+- **Block references render live task states** while preserving literal task
+  words and aliases (GH #518).
+
+- **Editor emoji font selection follows the platform display font**, reducing
+  the font switch between reading and editing (GH #458).
+
+- **Quitting while a change arrives from another device now shuts down cleanly.**
+  If a synced change landed in the moment you closed Tine, the shutdown reported
+  an error instead of finishing normally. Nothing was lost either way — the
+  change was already saved — but the error was wrong and alarming. Ordinary
+  progress during shutdown is now treated as ordinary progress.
+
+- **Concurrent page titles after a checkpoint are reported as an editing conflict.** If two offline devices gave one page different titles and compacted their history, reopening could incorrectly report a damaged page-name index. Tine now identifies the conflicting titles correctly; synchronization may remain blocked until that conflict is resolved.
+
+- **Queries survive a settings change.** On a Direct Files graph, dismissing
+  the Guide toast — or changing the default home, time tracking, bracket
+  display, doc-mode Enter, logical outdenting, preferred format or journal
+  title format, restoring a backup, or having `config.edn` rewritten outside
+  Tine — turned every query block into "Query results unavailable" until the
+  graph was reopened. The refresh that follows a configuration write rebuilt
+  the graph without the query index the ordinary open attaches. Both paths now
+  attach it through one function, and the refresh retires the previous index
+  worker before starting its replacement.
+
+- **Creating a block no longer freezes every query on "Rebuilding the query
+  index…".** A block created in the editor is saved under the editor's own id,
+  which is not a UUID; the index refused the whole page for it, and every
+  automatic rebuild refused the same page again, so after one such save no
+  query in the app answered until restart. Such a block now gets a stable index
+  key and answers still name it by the id the editor knows.
+
+- **"why empty?" describes an answer, not the absence of one.** While the query
+  index was still rebuilding, a query block said "No results" and offered
+  "why empty?", which opened onto an empty panel. The block now shows
+  "Rebuilding the query index…" until its query has actually run, and the
+  affordance appears only for a query that ran and matched nothing.
+
+- **A query and a board no longer disagree about what `group by state` means.**
+  One line, `tine.group-by:: state`, meant two different things depending on
+  which face was reading it: the task marker to a board, and an ordinary property
+  named `state` to a list — so changing a query from a list to a board could
+  change what it grouped by, and a board asked to group by a property called
+  `status` silently grouped by the task marker instead. A query now names its
+  grouping field outright, in a line of its own: `tine.group-field:: prop:status`
+  for the property, `tine.group-field:: state` for the task marker. There is one
+  reading of that line, and one piece of code produces it — the app, the saved
+  file and a published page cannot drift apart, which they could before.
+
+  Notes written the old way keep working with no migration and are not rewritten
+  until you change the grouping yourself; when you do, the old line is replaced
+  rather than left beside the new one. Turning grouping off on a board now stays
+  off: switching the view used to bring the task marker back, because "you said
+  no" and "nobody said anything" looked the same in the file. Tables and boards
+  built from a block's own children are unchanged.
+
+- **A query summary shows every total you asked for.** A query can ask for more
+  than one — `count; cost=sum` — and only the first was ever shown, whichever the
+  line happened to spell first; asking for a second one looked like it did
+  nothing. Every requested total now renders, in order, repeats included, both
+  overall and per group. The grouped breakdown, the board's columns and the
+  table's footer are now computed by one piece of code over one set of rows, so
+  they cannot disagree about which group a row belongs to. Grouping by tags puts
+  a row in every one of its tags' groups, exactly as the board does, and the
+  summary says so instead of presenting counts that do not add up to the result
+  as though they did.
+
+- **Which columns a query table shows, and what its columns ARE, are two
+  different lines now — and neither erases the other.** A query block used to
+  keep both in `tine.fields::`, so the two halves of Tine that write it took
+  turns destroying each other's work: editing the query's conditions replaced a
+  table's declared column types with a bare list of names, and declaring a column
+  type deleted the list of columns you had chosen to see. `tine.fields::` is now
+  only the column *types*; a new `tine.columns::` line holds the columns a query
+  table shows, and their order. Editing a query leaves your types, widths,
+  filter, formulas and any other property on the block exactly as they were, and
+  declaring a type on a query table carries your existing column choice across
+  in one step you can undo in one go.
+
+  Notes written before this keep working with no migration and without being
+  rewritten: a `tine.fields::` line holding only plain names is still read as a
+  column list until something replaces it. Published pages now show the same
+  columns, in the same order, with the same types as the app — they used to
+  ignore the choice entirely. A column you asked for that no result carries
+  still gets its place, empty, instead of shifting the rest.
+
+- **Editing a query's conditions no longer costs it its grouping or its
+  totals.** Saving a change to what a query selects rewrites the query's text,
+  and that text has no room for grouping or aggregates — so a `(group-by …)` or
+  `(aggregate …)` written in the query itself simply vanished on the next save,
+  along with everything else the rewritten text could not carry. Tine now writes
+  down whatever the block does not already record before rewriting it, so a
+  filter edit keeps the view you had. Column totals a query does not recognize
+  — the sheet's own `median`, `stddev` and the rest — survive the save untouched
+  instead of being dropped, and renaming a field carries a query's totals across
+  intact, repeated columns and all.
+
+- Managed Storage page deletion retains original block state for Restore, and moving a subtree within its page preserves concurrent edits to its children.
+
+- Managed Storage accepts independent page-path and content edits from offline
+  devices without requiring their whole path indexes to match at delivery time.
+  Exact path ownership, release ancestry, and local journal checks remain in place.
+
+- Managed Storage reuses durable writer identities across edits and restarts.
+  If its writer record is lost or damaged, new edits use a fresh causal identity
+  so an older offline branch can still arrive with its original edits intact.
+
+- Managed Storage validates the exact peer-counter ranges in incoming CRDT
+  updates, rejecting replayed ranges even when their starting frontier matches.
+
+- **A query written in the middle of a line now shows its title.** A
+  `{{query …}}` with a title or other display options — anything in the trailing
+  `{…}` — was read back from a truncated copy of your text whenever it sat
+  inside a sentence rather than alone on its own line: the closing brace was
+  missing, so the title was ignored and a stray `}` appeared after the results.
+  A query with a comma inside a quoted condition was cut at the comma the same
+  way. Tine now reads the query out of the file exactly as you wrote it, so what
+  it shows is what is there.
+
+- **A published page no longer prints a stray `}` after a query.** Publishing
+  read query macros from the same truncated copy, so a query carrying a title
+  emitted its options' closing brace as visible text next to the results, and
+  the results themselves were computed from a query missing its last character.
+
+- **Renaming a query can no longer rewrite the query.** Editing a query's title
+  used to re-assemble the whole macro from Tine's own reading of it. Now the
+  title is the only thing that changes: your conditions go back to the file
+  exactly as you typed them, even for a query Tine only partly understands. If
+  the new title would produce something Tine could not read back, nothing is
+  written at all and the query says why.
+
+- **A saved query can no longer be written as text Tine will not read back.**
+  A query whose conditions produced a comma next to a `[[page]]`, or that
+  started with a page reference and carried a title or a sort order, was written
+  to the file as bytes the document reader does not see as a query at all: the
+  block turned into literal text and the query was gone, with no way to get it
+  back by reopening. Saving now proves the result is readable — with the same
+  parser that renders your page, in both Markdown and Org. A query that starts
+  with a page reference is written in an equivalent spelling Logseq reads
+  identically; anything still unreadable is refused with a message instead of
+  being written, so the query you had stays exactly as it was.
+
+- **Turning a row off no longer changes what the rest of the query answers.**
+  Disabling one condition in a group could make a query that matched nothing
+  suddenly match everything, because a disabled row and a leftover `true`
+  cancelled each other out in a way the query never asked for. A disabled row
+  now removes exactly itself.
+
+- **A `<% current page %>` query no longer runs twice when you navigate.**
+  Moving to another page re-ran such a query immediately against the page you
+  had just left, then ran it again once the substituted text caught up — so one
+  navigation cost two whole-graph passes and could briefly show the previous
+  page's answer. It now runs once, for the page you are actually on.
+
+- **A broken or unusual condition survives editing another row.** A commented
+  out condition with an unfinished quote used to be replaced with `false` — the
+  text you wrote was gone after one save, and the unfinished quote could swallow
+  the working row underneath it. Old `content-regex` conditions had no way to be
+  written down at all, so editing any other row in the same query erased them.
+  Both are now preserved exactly, shown with their original text and error, and
+  left alone when you edit a neighbour.
+
+- **A query with a filter Tine does not understand now says so instead of
+  quietly answering a shorter question.** `{{query (and (task TODO)
+  (frobnicate x))}}` used to drop everything from the unknown filter onwards
+  and run as `(task TODO)` — a list that looked right and was not. The unknown
+  filter is now reported, the rest of the query is still shown, and no results
+  are returned until it is fixed.
+
+- **A property line with no value no longer crashes the reference reader.** A
+  block whose last line is a bare `size::` — a property you have written the
+  name of but not the value — could panic while Tine gathered the evidence
+  behind a linked reference.
+
+- **Two pages whose names differ only by punctuation or case no longer wedge a
+  Managed Storage graph.** Creating a page and then, before the background
+  save-settling caught up, creating a second page whose name folds to the same
+  key (`Alpha` and `/Alpha`, or `Foo` and `foo` at a different file path)
+  reported both saves as successful — and then left the graph unopenable, with
+  every later open refusing. The second save is now refused up front, while
+  nothing has been written, the same way it already is once the first save has
+  settled.
+
+- **A Managed Storage sync operation no longer gets stuck behind its own
+  leftover crash evidence.** If Tine lost power midway through tidying up after
+  publishing a file to the shared sync folder, it left behind a small record
+  named for that exact operation — and the next time the same operation ran, it
+  refused to start because that name was taken. The refusal could only clear
+  when an unrelated periodic sweep happened to run, which on a quiet graph might
+  be never. An operation now clears its own leftover record and carries on.
+
+- **Managed Storage keeps cleaning up sync conflict copies for the life of the
+  graph.** When a file-sync service delivered a conflict copy of a shared
+  provider file, Tine cleaned it up and kept one small record of what it had
+  removed — and never retired those records. After 512 of them, the cleanup
+  itself started refusing, so a busy multi-device graph accumulated conflict
+  copies it could no longer clear from inside the app. Those records are now
+  retired as soon as the operation they belong to is finished and forgotten, so
+  the directory tracks the graph rather than its history. Checking there is
+  room for one more also no longer opens and inspects every record already
+  there, which took up to 511 file opens on a path a save waits on.
+
+- **On Android, dark mode no longer blanks the notification bar.** Since 0.6.981
+  the strip behind the status bar has been painted by the app window rather than
+  the page, and it followed the phone's light/dark setting while the clock and
+  icons followed Tine's own — so running Tine in dark mode on a phone still in
+  light mode put white icons on a white strip. One setting now decides both
+  (GH #467).
+
+- **A conflict Tine cannot read no longer freezes the page.** When the
+  comparison failed, the panel stayed on "Reading both versions…" forever and
+  the page body went blank, so the page could not be used at all. The failure is
+  now shown, with the reason, and the rest of the page keeps working (GH #490).
+
+- **A page with an unresolved save conflict can be opened on disk again.**
+  "Open with default app" and "Show in folder" both refused while a conflict was
+  pending, which left a page whose conflict view would not load with no way to
+  read it at all. Both now open the file as it stands on disk and say so; your
+  unsaved changes stay in Tine until you resolve the conflict (GH #490).
+
+- **Clicking inside a code block now puts the cursor where you clicked.** In a
+  code block of any size, clicking anywhere in it opened an editor that looked
+  blank: the cursor jumped to the very end of the block, and the editor was
+  scrolled to the far right of its longest line, so none of the code you clicked
+  was on screen. Both halves are fixed — a click maps to the character under it,
+  and the editor opens showing that character (GH #489).
+
+- **Clicking a link to the PDF you are already reading keeps your place.**
+  Opening a PDF link with no page or highlight attached — a plain `![](…​.pdf)`
+  asset link to the document already open in that pane — jumped the reader back
+  to page 1 and cleared the highlight you were looking at. Reopening the
+  resource you are already on is now a no-op; a link that does name a page or a
+  highlight still navigates.
+
+- **Zooming a PDF no longer throws you back to page 1, and your place in a PDF
+  survives quitting and reopening.** A zoom briefly collapses the reader's
+  scroll position, and the reader was recording that momentary position as
+  "where you are" — so zooming jumped to page 1, and a reopened PDF often
+  started at the beginning instead of where you left off.
+
+- **The PDF reader's Fit width, Fit height, Area highlight, Notes and Outline
+  are reachable again in a narrow reader pane.** Below 520px — a split pane, a
+  companion pane, a phone — the toolbar correctly moved those five tools into
+  the More-settings menu, but a CSS ordering mistake left the menu copies hidden
+  as well, so there was nowhere left to click them. They now appear in the menu
+  exactly when the toolbar is too narrow to show them inline.
+
+- **The whole left-sidebar row opens its page again, and the right sidebar's
+  spare width is now the drag handle it was meant to be.** v0.6.981 narrowed the
+  wrong pane: it made only the page title clickable in the left sidebar, which
+  turned a page named `test` into a target a few characters wide, and it left
+  untouched the right sidebar, where the reported problem actually was. Both are
+  corrected. In the left sidebar every pixel of a row navigates, including the
+  blank space beside a short name — a deliberate divergence from Logseq, since
+  reordering a favourite is protected by the drag threshold, not by keeping part
+  of the row inert. In the right sidebar the title anchor no longer stretches
+  across the row, so the empty space beside it belongs to the reorder drag and
+  the hand cursor stops following the pointer out over nothing (GH #468,
+  GH #464).
+
+## [0.6.982] - 2026-09-04
+
+### Added
+
+- **"Insert block above" in a bullet's right-click menu.** The keyboard route to
+  a bullet above an existing one is Enter with the caret at its very start,
+  which splits the bullet — but a code block keeps Enter for adding a line of
+  code, so a page whose first block was a code block had no way to get anything
+  above it. The menu item works on any bullet, at any depth (GH #480).
+
+### Changed
+
+- **Managed and Direct reference and query reads now share one evaluator per
+  question, and a Managed navigation request loads its pending overlay at most
+  once.** Backlinks, unlinked references, block referrers, simple and advanced
+  queries and query export each ran through a separate Managed copy of the
+  Direct evaluator; they now run the same code over the same projected page
+  forest, and the Managed reference reads reuse the projection the query path
+  already retains instead of rebuilding one per read. Results, ordering and
+  bounds are unchanged.
+
+- **Sorting a sheet now derives each row's sort key once.** The key was
+  previously recomputed inside the comparator, so a 200-row sheet parsed,
+  looked up or read one about 12.7 times per row per sort. Sort order and
+  displayed values are unchanged.
+
+- **Several query builders on one page now share a single facets request.**
+  Every mounted builder previously asked the same whole-graph question
+  independently on each data revision; they now share one request per graph and
+  data revision, and all of them still show the current answer.
+
+- **Direct and Managed reads now share template, backlink, and block-UUID
+  ownership rules.** Duplicate UUIDs consistently resolve to Logseq's
+  parser-order owner across projection, fallback, pending, and drained states,
+  while Managed adapters reuse the shared template and backlink producers.
+
+- **Phase-A native commands now keep typed errors to the Tauri boundary without
+  changing rejection bytes.** `CommandError` retains tagged, coded, I/O,
+  worker, Tauri, and core sources behind one legacy-string serializer; the
+  remaining native command files are explicitly assigned to W4-E2b.
+
+- **Every remaining native command and helper now uses `CommandError`.** The
+  phase-B conversion drives command/helper `Result<_, String>` and temporary
+  stringify bridges to zero, retains JSON, durability, worker, plugin,
+  clipboard, platform, and graph-verification source families, keeps every
+  legacy rejection string byte-identical, and makes the cross-target guard
+  absolute.
+
+- **Backend refusal handling now branches on typed error kinds instead of
+  English wording.** Native control-flow failures use bounded JSON tags, one
+  frontend funnel constructs the existing error family, panic records retain
+  only fixed-shape metadata, and scenario I/O errors preserve `ErrorKind`.
+  Plugin-visible errors keep their previous string shape.
+
+- **Diagnostics now keep graph content out of automatic output.** Native
+  detailed diagnostics are actually debug-gated, remaining core print sites and
+  frontend console calls have equality censuses, save refusals report only a
+  count, and lsdoc-diff failures cross worker/report boundaries only as fixed
+  offsets, lengths, and hashes rather than raw parser text.
+
+- **Managed shared joins now commit through one generation-bearing marker.**
+  Verified baseline and operation directories are published under the next
+  generation, and cold open follows the marker to one complete pair while
+  reclaiming interrupted candidates.
+
+- **Core duplicate paths now share their canonical converters.** Static query
+  lists and query-backed sheets hydrate from one source-graph boundary, hot and
+  borrowed-state page materialization share one allocation-neutral block
+  collector, and graph-keyed conflict capsules use the session key helper.
+
+- **Sheets, serialized writes, and local screenshot harnesses now share their
+  canonical implementations.** Board and table field rendering use the same
+  facet readers, query DTO facets are memoized by DTO identity, shared-key
+  frontend writes use one promise-tail shape, and local preview scripts retain
+  their individual retry budgets behind one readiness helper.
+
+- **The pinned `tine-storage` release now certifies every shipped platform.**
+  Version 0.12.2 preserves complete plugin packages that contain harmless extra
+  files, strengthens interrupted-install recovery checks, and gives Linux and
+  Windows directory publication one audited implementation each. Its immutable
+  receipt names Linux, Windows, Android, macOS, iOS, and API-semver jobs.
+
+- **Direct Files property facets and PageRef queries now use the same SQLite
+  read families as Managed Storage.** One shared plan-to-SQL lowering narrows
+  PageRef candidates before the existing parser evaluator runs, while stale or
+  unavailable projections keep the exact full-walk fallback. No schema, index,
+  or query-result cache was added.
+
+- Added internal release-only benchmark drivers for query, facet, invalidation,
+  and managed save-versus-drain attribution; production behavior is unchanged.
+
+- **Repeated performance work is cut from four storage and query paths.**
+  Terminal SQLite bootstrap no longer encodes every replay intermediate into a
+  dead map; managed projection completion carries its already-authorized plan
+  instead of parsing and planning again; routed page tag queries share one
+  request per graph revision across the toggle, table, and split panes; and one
+  Query Builder instance shares a graph-revision-keyed facets fetch across its
+  controls. Product behavior and persisted formats are unchanged.
+
+- **Conflict resolution now scales with unresolved races rather than retained
+  history.** A disposable accepted-sequence index tracks concurrent block
+  pairs, exact pure-create projection candidates, and descendant settlement;
+  it rebuilds from immutable accepted batches on reopen and leaves conflict
+  semantics and persisted formats unchanged.
+
+- **Managed-storage startup diagnostics now say which stage did the work, and
+  how much.** `TINE_DEBUG=1` already printed a per-stage timing line for a
+  managed cold open, but a slow stage could not be attributed to a mechanism.
+  The open now also emits one content-free work-counter record — batches
+  replayed, receipt evidence names and content reads, full-catalog passes,
+  summary and own-completion chain reads, archive inspections — and splits the
+  old journal-drain boundary into own-endpoint retirement scan and
+  absence-decision-map open. Diagnostics only: nothing in the open path reads a
+  counter, and no user-visible behavior changes.
+
+- **Direct Files indexed queries now avoid the whole-graph parser walk when
+  their generation-bound projection is ready.** Candidate selection uses the
+  shared Managed/Direct lowering, so a `{{query}}` block on a page property,
+  block property, page, namespace, or boolean composition no longer re-reads
+  every page after every keystroke. A query whose candidate set is not
+  selective — more than one thirty-second of the graph — keeps the parser walk,
+  which is faster for those shapes; stale or unavailable projections keep it
+  too. Both routes return the same answer.
+
+### Fixed
+
+- **`:ref/linked-references-collapsed-threshold` in `config.edn` is honored.**
+  Tine already collapsed a page's Linked References once the backlink count got
+  large, matching Logseq's rule, but the number was hard-wired to Logseq's
+  default of 100 and your setting was ignored. Setting it to `0` now means what
+  it means in Logseq: every page opens with the panel folded (GH #479).
+
+- **A query no longer returns the block it is written in.** `{{query "xyz"}}`
+  matched its own text, so the results listed the page the query lives on —
+  which renders the query again, which lists the page again. Matching Logseq,
+  the query's own block is left out of its results; blocks under it are not
+  (GH #469).
+
+- **Tab inside a block embed no longer throws the caret out of the embed.**
+  Indenting, outdenting or moving a bullet inside a `{{embed}}` did the right
+  thing to the outline but reopened the editor on the block's other rendering
+  further down the page, so the following keystrokes landed out of sight. These
+  three operations now keep the caret on the surface you were typing on, as
+  splitting and merging already did (GH #477).
+
+- **Query Builder dropdowns close when you click somewhere else.** Its clause
+  menu and add-filter picker stayed open while you clicked away and started
+  editing a different block, even though the sort and summarize popovers beside
+  them closed correctly. Closing on an outside press now has one implementation
+  that every popover in Tine shares, so this cannot differ per menu again; the
+  `+ sort` button also toggles shut when you press it a second time (GH #472).
+
+- **A context submenu stays on screen.** Opened near the right edge of the
+  window — over a wide table, say — the `Show children as →` submenu was drawn
+  past the edge and its items could not be reached. It now mirrors to the left,
+  or overlays its own menu when the window is too narrow for either side
+  (GH #471).
+
+- **A page opened only in the right sidebar can be typed into.** An empty page,
+  or one whose only content is its `key:: value` header, offered nothing to
+  click and no place for the caret unless you first opened it in the main pane
+  (GH #483).
+
+- **Both copy buttons in the references sections sit on the same edge.** The one
+  in Linked References floated in the middle of its row because it and the
+  filter button each claimed the row's free space (GH #475).
+
+- **A `[[link]]` stops looking dead the moment its name becomes an alias.** After
+  you added `alias:: page1` to another page, every existing `[[page1]]` kept the
+  faded missing-page styling until you restarted Tine — even though clicking it
+  went to the right page. Tine now notices that the set of names which resolve to
+  a page has changed, not just the set of files on disk (GH #484).
+
+- **Journal-day queries such as `(between …)` work in Managed Storage on a graph
+  with a custom journal page-title format.** Tine's Managed reader worked out
+  which day a journal page was from the DEFAULT title format rather than the one
+  your graph configures, so on any graph that sets `:journal/page-title-format`
+  every journal page looked like it had no date and every journal-day query came
+  back empty — while the same query over the same files answered normally in
+  Direct Files. Both now read the day from your configured format.
+
+- **Failure messages no longer reach the logs with your notes inside them.**
+  Twelve always-on diagnostic lines used to print whatever a failed operation
+  said — and a failed save, print, or conflict capture says it about the page it
+  was working on, by name or by path. Each failure is still reported, and still
+  just as visible; what it prints is now the failure's kind and a content-free
+  identity for it. Two of the twelve, in the Direct Files projection, keep their
+  full text behind `TINE_DEBUG`/`--debug`, so you can still ask for it; the ten
+  in the app itself do not print the text anywhere, which also means a debug log
+  you send us will no longer contain it.
+
+- **A Tine that cannot find anywhere to store its application data now says
+  why.** The fatal startup message names the reason (for example
+  `PermissionDenied`) rather than only that something went wrong — you cannot
+  relaunch past that message to go looking for the cause.
+
+- **The diagnostics flight recorder releases its single-writer lock when it
+  shuts down**, instead of leaving release to whenever the last copy of the
+  file descriptor happens to close. A process spawn duplicates that descriptor
+  into the child until it execs, so the lock could outlive the recorder that
+  held it.
+
+- **Managed clean-open failures no longer collapse source types into prose.**
+  Core maps the 16 reachable error classes to stable, content-free reason codes
+  and carries them through the existing open-refusal boundary as tagged JSON, so
+  a refusal you can read and copy no longer carries a note name or a path. The
+  reason itself still reaches Settings and the startup recovery pane: the
+  diagnostic sanitizer renders the typed envelope instead of discarding it.
+
+- **Direct save errors can no longer become discard-capable conflicts because
+  of a page title or block text.** The save producer carries a closed reason
+  code and conflict epoch through tagged JSON, and the frontend no longer
+  reconstructs either value from error wording.
+
+- **Managed activation now recovers after a process abort before its authority
+  marker is published.** The marker remains the sole commit point; the next
+  activation retires a wholly recognized unmarked generation and disposable
+  SQLite projection, then rebuilds from unchanged Direct Files.
+
+- **Internal guards and Managed diagnostics now fail on the regressions they
+  name.** Source ratchets detect helper-hidden error parsing and grouped
+  filesystem imports, platform coverage is enumerated, projection/conflict
+  counters cover their real drain/rebuild boundaries, generation refusals are
+  scenario-pinned, and skipped checkpoint captures retain a bounded cause
+  without being mislabeled as recovery.
+
+- **Closing or switching graphs no longer leaves a conflicted page's
+  crash-recovery draft up to half a second stale.** The close barrier now
+  lands every pending conflict-capsule refresh before it resolves.
+- **A refused sync join names the affected notes again.** The typed
+  `shared-frontier-mismatch` refusal carries the bounded list of differing
+  relative paths (at most 32, never note content) that the join panel shows
+  and the storage/sync contract promises; the previous typed-error change had
+  dropped it.
+
+- **Managed recovery moves and Windows backup restore close their publication
+  crash windows.** Private-root archive moves now synchronize both renamed
+  parents, and Windows recovery publication cannot replace a same-named entry
+  delivered concurrently by a sync service.
+
+- **Static publishing no longer exposes a private page whose malformed
+  `public::true` line is rejected by Logseq.** Publication now uses the shared
+  lsdoc-transcribed property recognizer, including its exact whitespace rules.
+
+- Managed inventory now determines Page-versus-Journal identity from the
+  decoded filename exactly like Logseq, rather than from the containing
+  configured directory.
+
+- **Bulk insertions now keep one storage authority from admission through
+  publication.** Clipboard, quick-capture, template, HTML, and dropped-file
+  insertions route through the shared storage front door; managed limit tokens
+  retain their binding-generation re-check so a late result cannot land after a
+  backend switch.
+
+- **Android: saving a page in Direct Files works again** (GH #466). 0.6.981
+  failed every Direct Files save on Android with "unknown: Permission denied
+  (os error 13)", because page publication had been moved onto a
+  hard-link-based no-clobber move that Android's shared storage refuses. Direct
+  Files pages are published again with the same no-clobber rename 0.6.98 used
+  on every platform, keeping the exact-byte checks around it; a refused
+  filesystem call now names itself in the error instead of showing a bare
+  errno.
+
+- **Conflicted pages no longer rewrite their restart-recovery capsule for every
+  save attempt.** Identical retained drafts skip the atomic envelope write, and
+  changed drafts use a capsule-specific debounce so continued editing preserves
+  the latest recovery copy without coupling it to the ordinary page-save timer.
+
+- **Concord now uses the full pane width while you review a conflict.** The
+  ordinary reading-width limit left both versions and their decision controls
+  cramped and wrapping in a spacious window unless you happened to discover
+  wide mode. A mounted resolver now uses that pane's wide content width
+  automatically, then restores the usual reading width when the conflict is
+  resolved; narrow and split panes keep their responsive layout.
+
+- **A failed PDF area-highlight save no longer leaves an invisible nested crop
+  behind.** If the PNG lands but the highlight sidecar transaction is refused,
+  Tine now moves that exact crop into recoverable asset trash before reverting
+  the optimistic highlight.
+
+- **Unrelated backend errors containing the word “conflict” no longer trigger
+  the stale-file recovery path.** Direct save conflicts are classified once at
+  the native call boundary from their exact wire tag; UI code consumes the
+  typed result instead of searching arbitrary error prose.
+
+- Retired plugin-registry settings-cache keys are no longer parsed or migrated.
+  They are disposable cache data: Tine ignores that old shape and fetches a
+  currently signed registry, while preserving all unrelated app settings.
+
+- **Harvest D — asynchronous results stay with the graph and editor that
+  started them.** Quick Switcher creation/search, pinned-tab confirmation,
+  asset imports and recordings, plugin calls, focus rescans, and Settings
+  operations now revalidate graph-binding or operation ownership after waits;
+  display-only repaint changes no longer invalidate plugin work, and desktop
+  media-editor settings remain hidden on mobile.
+
+- Managed Storage clean reopen no longer semantically reapplies every accepted
+  operation since activation. A crash-durable disposable engine checkpoint now
+  restores the accepted frontier and replays only its unpublished archive tail;
+  damaged checkpoint bytes always fall back to full replay, while missing
+  authoritative manifests or required objects remain visible as archive damage.
+  Per-save checkpoint capture now extends that cache from its durable frontier
+  instead of recapturing accepted history. Pre-0.7 sharing descriptors no longer
+  have a production decoder, and a failure after activation authority is retained
+  resumes from the preserved marker, baseline, and archive on the next open.
+
+- **Harvest F — hostile graph and clipboard content now reaches its existing
+  consumption boundaries instead of bypassing them.** Macro links can no longer
+  navigate the privileged WebView directly, mobile blocks unknown schemes,
+  formula/query/peek/backlink recursion has explicit bounds, and pasted HTML
+  links open only through the native scheme allowlist. (Packet F's
+  re-enabled paste-time Markdown escaping was undone on review: literal
+  brackets in pasted text stay literal, per `UI-PASTE-BRACKET-LITERAL-001`.)
+
+- **Harvest H — pre-release Managed private formats have one decoder, and
+  concurrent theme changes no longer overwrite one another.** Schema-4 lazy
+  genesis and schema-1 forensic records now invalidate their containing store
+  so the existing preserve-and-rebuild lifecycle handles them atomically;
+  theme package installs and removals serialize their shared settings array.
+
+- **A crash during plugin installation or removal no longer wedges that plugin
+  version until its files are deleted by hand.** Plugin packages now publish as
+  one durably staged, no-clobber directory on every shipped platform; removal
+  retires the complete directory before reclaim, and the next plugin-store open
+  cleans interrupted staging, retirement, or incomplete package residue
+  (internal B5p, Harvest sweep).
+
+- Media (audio/video) assets returned 403 and never loaded when a graph runs under Managed Storage; the native media protocol now serves assets under both storage authorities with unchanged path containment and binding checks (internal B026).
+
+- Managed Storage stopped accepting work at 4,096 lifetime-distinct page
+  names, and at 4,096 lifetime blocks a save could report success and then
+  leave the store permanently unable to open. Four internal fixed-capacity
+  limits on run-local identity indexes were removed; the indexes now simply
+  grow with the graph's lifetime history (internal A4, Harvest sweep).
+
+- **Open tabs and pane state now survive a crash immediately after an autosave.**
+  Session and workspace files now use the same durable atomic replacement
+  protocol as other app-private settings, including file and directory
+  barriers; bursts of tab actions are serialized, and the one-time legacy
+  session move receives the same directory durability check.
+
+- **A draft that met an external edit no longer disappears when Tine is
+  restarted.** Direct Files and Tine-managed storage now retain unresolved live
+  drafts in one graph-keyed, app-private atomic capsule. Reopening restores the
+  exact draft before the graph becomes interactive; Managed storage observes
+  its current owner again instead of reviving stale overwrite authority, and a
+  completed resolution durably retires the capsule before Tine reports success.
+
+## [0.6.981] - 2026-09-01
+
+### Added
+
+- **The graph menu now has a right-click menu on every graph row.** Opening a
+  graph in a second window was reachable only by Shift-clicking a row, which
+  nothing announced. Right-clicking a row now offers **Open in a new window**
+  and **Open here**, plus **Show in folder**, **Copy path**, and **Remove from
+  this list**. The row for the graph this window already has open keeps both
+  open actions visible but inert and says why, so the menu does not change
+  shape from row to row; mobile, which has neither peer windows nor a file
+  manager, shows the actions that apply to it.
+
+- **PDFs are now ordinary pane tabs instead of a separate global side pane.**
+  Opening a graph PDF on desktop preserves the source and uses one reusable
+  companion pane; the PDF tab can be moved into any existing pane, split, or
+  quadrant, and its Notes action opens the `hls__` page in the structural
+  companion. Workspaces restore the layout and each PDF tab's page/zoom, while
+  legacy dedicated-pane sessions migrate without losing their existing panes.
+  Android keeps one route surface and Back returns through Notes, PDF, and the
+  source page in order.
+
+- **Alt+click opens an internal page or block link in the other pane.**
+  After the unified click contract moved Ctrl/Cmd+click to background tabs,
+  ordinary links had no mouse+modifier route to a pane; Alt+click is that
+  route again, matching the long-standing Alt+click / Alt+Enter gesture on
+  Search and Quick Switcher results. It splits right when there is only one
+  pane, and Shift+click (right sidebar), Ctrl/Cmd+click and middle-click
+  (background tab) keep their existing meanings everywhere. (GH #438)
+
+- **Declarative themes can now shape reading presentation without running code.**
+  Theme API 0.2 adds bounded Tine-owned presets for editorial serif typography,
+  journal headers, and a Today task summary, while existing color-only 0.1
+  themes remain compatible and `logseq/custom.css` still wins the cascade.
+
+- **Managed-storage group deletions now have an explicit recovery surface.**
+  Tier 2 and Tier 3 absence sweeps raise a warning and remain available in a
+  Deleted pages dock with their member pages and durable action status. Restore,
+  Re-apply, and Keep deletion map directly to the recorded backend actions;
+  failed restores retain their cause and can be re-run, while dismissing the
+  warning or closing the panel never records a deletion decision.
+
+### Changed
+
+- **Settings remembers whether you maximized it.** The maximize control added in v0.6.95 reset on every open, so anyone who prefers the wide dialog had to press it again each time. Settings now opens at the size you last left it, on this device, across restarts. If you have never pressed the control, nothing changes ([GH #427](https://github.com/martinkoutecky/tine/issues/427)).
+
+- **PDF rendering now uses PDF.js's maintained page-view lifecycle under one
+  window-wide admission and canvas-memory budget.** Visible/focused pages win
+  scheduling, stale work is cancelled, evicted views synchronously release
+  their backing stores, and zoom above 300% sharpens only visible clipped tiles
+  while retaining an aligned lower-resolution fallback. Area highlights use a
+  dedicated clipped capture, and a tab cannot multiply the old per-view
+  resource ceilings. (GH #393)
+
+### Fixed
+
+- **LaTeX math now renders inside italic and other emphasized Markdown.** A
+  whole agent response can be italic without turning valid `$…$` or `$$…$$`
+  fragments back into literal dollar text. The shared parser now preserves
+  top-level-valid math through ordinary italic, bold, strike, and highlight
+  containers while leaving invalid math, code spans, Org, and unrelated link
+  labels unchanged. ([GH #460](https://github.com/martinkoutecky/tine/issues/460))
+
+- **Typing a PDF page number and pressing Enter now stays on that page.** The
+  input could jump the reader and then immediately restore the old page number
+  when it lost focus, so the requested position was not retained or restored
+  with the PDF tab.
+
+- **Annotating a PDF while its notes page was being saved could freeze Tine
+  completely.** The two writers of an `hls__` page took the same two internal
+  locks in opposite orders, so each could end up waiting for the other. Because
+  one of those locks is shared by the whole graph, the freeze was not confined
+  to that page: once it happened, no further edit anywhere in the graph could be
+  saved until Tine was restarted. Six write paths took the locks in the wrong
+  order — PDF opening and annotation, the three conflict-resolution paths, and
+  one projection-recovery path — and all of them now take them in the order the
+  ordinary page save has always used. A check that walks the source now fails the
+  build if any future write path reintroduces the inversion. Only debug builds
+  ever reported this as an error; release builds, which is what everyone runs,
+  froze silently, which is why it survived so long.
+- **Clicking in the empty space after a block that ends in formatting now puts the caret at the very end.** On a block like `*some text in italics.*`, clicking past the last letter landed the caret between the letter and the closing marker you cannot see, so pressing Enter split the italics instead of starting the next block. The click is now read as "the end of this block" wherever it lands past the final glyph, for emphasis, bold, inline code and their Org equivalents alike; a deliberate click inside formatted text still lands exactly where you aimed ([GH #465](https://github.com/martinkoutecky/tine/issues/465)).
+- **Modifier-clicking a bullet now sends the block where the same modifier sends a link.** Ctrl/Cmd-click (or middle-click) opens the block zoomed in a background tab, Alt-click opens it in the other pane, and Shift-click still opens it in the right sidebar; before this, only Shift did anything and every other modifier just zoomed in place. Reference bullets in linked references, query results and embeds answer the same four gestures ([GH #456](https://github.com/martinkoutecky/tine/issues/456)).
+- **Shortcuts whose only modifier is Alt now work while you are editing a block.** A binding such as Alt+S for the next tab fired everywhere in the app except inside a block, where you had to add a second modifier; it now fires there too. Alt combinations you have not bound to anything still reach the text, so accented characters typed with Alt/Option are unaffected ([GH #461](https://github.com/martinkoutecky/tine/issues/461)).
+- **Ctrl/Cmd+Enter in search opens the highlighted result in a new tab**, matching what Ctrl/Cmd-click on the same result already did, and leaves the search open so you can fan several results out in a row ([GH #463](https://github.com/martinkoutecky/tine/issues/463)).
+- Sidebar: only the page title in a sidebar row is a link now, not the whole width of the row. The blank space to the right of a short name showed the hand cursor and opened the page, which made reordering favourites a coin toss — grab a row to move it, and it navigated instead. That space belongs to the drag now, and favourites show a grab cursor to say so. Right-clicking anywhere on a row still opens that page's menu ([GH #464](https://github.com/martinkoutecky/tine/issues/464)).
+- Block references: the small reference-count badge now sits on a block's **first** line instead of dropping to the bottom-right corner once the block wraps onto several lines. It is a right-floating chip, and a float rides whichever line the browser is on when it meets it — emitted after the text, that was the last line. It is now emitted before the text, so it looks the same on a long block as on a short one ([GH #454](https://github.com/martinkoutecky/tine/issues/454)).
+- Outline: a block's bullet now sits on the middle of that block's first line of text instead of 2px above it. The bullet's column was sized to the line height but not to the small padding above the text, so every bullet in the graph was slightly high — and twice as high under the editorial-serif typography preset, which makes the line taller. The line's height is now defined in one place and the bullet column follows it, so a typography theme moves both together ([GH #459](https://github.com/martinkoutecky/tine/issues/459)).
+- Settings: choosing **Graph**, **Journals** or **Backups & recovery** no longer makes the whole Settings window flash away and come back. Those three sections fetch something as they open, and that was enough to tear down the dialog around them; the section list, the search box and the window now stay put while a section loads ([GH #409](https://github.com/martinkoutecky/tine/issues/409)).
+- Diagnostics: Tine no longer claims it "did not close cleanly last time" every launch on iOS, iPadOS and Android. A phone or tablet reclaims a backgrounded app as a matter of course, and Tine counted that as a crash because it had no other way to tell that a mobile session had ended; it now treats going to the background as the end of the session and coming back as the start of a new one, so a crash you actually see is still reported ([GH #426](https://github.com/martinkoutecky/tine/issues/426)). The desktop half of the same report, the warning after an ordinary quit on Linux and Windows, is fixed separately in this release (below). One last warning is expected the first time you open this version, from the marker the previous one left behind.
+- Sidebar: the left sidebar's scrollbar can be grabbed with the mouse again. The drag-to-resize strip along the sidebar's edge was drawn on top of it, so on Windows the sidebar could be resized but never scrolled by dragging; the strip now sits beside the scrollbar rather than over it ([GH #435](https://github.com/martinkoutecky/tine/issues/435)).
+- Outline: clicking a block's fold arrow no longer folds the entire subtree. The guide line beside the children (which folds every descendant) was drawn on top of the fold arrow's leftmost pixels, so an aim that landed slightly left of centre hit the wrong control. The guide now stops at the arrow's edge ([GH #423](https://github.com/martinkoutecky/tine/issues/423)).
+- Theme packaging: `tine-theme.mjs check` no longer certifies a ported theme that Tine then refuses to install. It checked only the upstream source, revision and author list, so an unsupported `portedFrom.ecosystem`, a missing `relationship`, `name` or `license`, or an unknown provenance field passed the registry check and failed on install. The checker now holds `portedFrom` to the same vocabulary the app installs against ([GH #410](https://github.com/martinkoutecky/tine/issues/410)).
+
+- **Links to local files and folders now open.** A link written the Logseq way
+  (`[Test](file://D:\test.txt)`) or the Obsidian way
+  (`[Test](<file:///D:\test.txt>)`) rendered as a live link but did nothing at
+  all when clicked: the backend refused every scheme but http/https/mailto, and
+  the renderer discarded the refusal so nothing was reported either. `file:`
+  links now go to the OS default application for that file or folder, matching
+  Logseq, and any link that cannot be opened — a bad URL, a path that is no
+  longer there — says so instead of failing silently. Every other scheme stays
+  refused. (GH #444)
+
+- **Editing-toolbar buttons on mobile no longer depend on a WebView emitting a
+  click.** On iOS 27 the toolbar appeared but nothing responded to taps, while
+  the same build worked on iOS 18.5: the buttons acted only on the click a
+  browser synthesizes after a pointer press, and that press is deliberately
+  cancelled so the editor keeps focus. The tap itself now performs the action,
+  with click kept as the keyboard and assistive-technology path. (GH #434)
+
+- **Long-pressing a page link on iOS or Android no longer raises the system
+  text-selection bar over Tine's menu.** The same hold that opens Tine's context
+  menu is also the platform's own selection gesture, which no amount of event
+  handling on our side can call off — so page links and tags simply decline to
+  be selected on touch. Menus themselves are now unselectable everywhere. On
+  desktop you can still drag a selection across a link's text. (GH #452)
+
+- **Dragging a block by its bullet no longer paints a blue trail behind it.**
+  On macOS the drag doubled as a text selection and highlighted every block it
+  passed over, which made the landing spot hard to read. The same guard the
+  sidebar already used now covers the outline. (GH #424)
+
+- **A wide table no longer drags its "Add row" label across the screen.** The
+  control spans the whole table, so its centred label sat at the midpoint of the
+  full table width — off to one side and travelling as you scrolled sideways.
+  The row keeps its full-width click target; only the label is now pinned to the
+  visible edge, the way the first column already is. (GH #449)
+
+- **iPad now behaves like a tablet instead of a Mac.** The on-screen editing
+  toolbar (indent, move, insert) never appeared while editing on iPad, and
+  long-press, text selection and window chrome all took their desktop branch.
+  iPadOS 13+ serves a desktop-class `Macintosh; Intel Mac OS X` user agent from
+  a stock WebView, and Tine was reading the platform out of that string; it now
+  comes from the build itself. Split panes stay available on iPad — they follow
+  the size of the screen, not the name of the operating system. (GH #446)
+
+- **A reported switch between Direct Files and Managed Storage now survives a
+  crash at the selector boundary.** App-private storage-mode bindings use the
+  same certified durable create/replace/retire primitive as other authority
+  names, including Windows write-through retirement and Android parent-entry
+  flushing. Once activation reports Managed active, a stale Direct selector can
+  no longer reappear after power loss and take precedence at the next startup.
+
+- **Rapid Managed Storage moves no longer reuse a stale source page and then
+  flood “missing or foreign root” errors.** Repeated cross-day commands now
+  resolve one at a time against the preceding accepted move, while the actor's
+  temporary response-replay files are retired after the committed page pair is
+  installed. A native journey drives 120 uninterrupted move commands across
+  four journal-day boundaries and compares that pressure with a durable
+  20-block cross-page cut/paste.
+
+- **Direct Files saves now use durable write-through name publication on
+  Windows.** Creating, replacing, restoring, and retiring the sole-authority
+  Markdown/Org name all cross the certified typed storage boundary, so a power
+  loss cannot be acknowledged merely because a non-write-through rename was
+  briefly visible.
+
+- **A second device can join a synchronized graph that contains an honest
+  duplicate-name backup file.** A fresh scan may choose the earlier-sorting
+  backup even though the shared history already owns the canonical page path.
+  Join now accepts that shape only when the provider-owned exact file is still
+  present with exactly the shared semantics and both physical files decode to
+  the same page identity; the extra file remains untouched. The Android
+  app-UID journey now covers activation, share, a distinct-device join and
+  reopen, and the real graceful Return-to-Direct-Files composition.
+
+- **Managed Storage has one production actor and enrollment path.** Dead
+  pre-clean-runtime mutation, provider, cursor-join, and handoff state has been
+  removed from the retained actor, and a source guard prevents those fields or
+  types from returning to the production prefix of `sync_runtime.rs`.
+
+- **Managed Storage pages remain editable after heavy use evicts them from the
+  in-memory document cache.** A cold point load now reconstructs the page from
+  its accepted history instead of mistaking the cache miss for an untouched
+  page. Retained-runtime recovery also reports content-free native sub-stages
+  and has a tighter real-corpus performance gate.
+
+- **A remote `http:`/`https:` link whose URL ends in `.pdf` now opens in the
+  browser like every other external link, instead of being captured by Tine's
+  PDF viewer.** Only graph/local asset PDF references and their highlight
+  pages enter the viewer; an image-syntax remote PDF renders as an ordinary
+  external link as well rather than a broken image frame. (GH #442)
+
+- **The PDF reader's Close control is now the terminal toolbar action.** It
+  stays at the conventional far-right edge with an explicit accessible label,
+  instead of reading like another tool in the middle of the control cluster
+  (GH #443).
+
+- **Bounded managed block-referrer panels now show the same document-order
+  prefix and exact result count as Direct Files.** The SQLite-backed route
+  finishes generation-bound candidate discovery before applying the shared row
+  and byte budget, instead of truncating an internal-ID-ordered subset.
+
+- **Diagnostic and graph-verification report exports can no longer be left
+  partially written by a crash.** User-selected JSON destinations now use the
+  same temp-file, file-flush, atomic-replace, and directory-flush publication
+  family as other small durable outputs.
+
+- **Returning to Direct Files and restoring a backup now fail closed on real
+  directory durability errors.** Graph-local managed state set-aside and
+  rollback flush both changed parents in recovery-first order; the separate
+  capability-bound backup stack now durably reserves recovery directories,
+  retires live names, and publishes restored names before acknowledging them.
+
+- **Managed storage no longer reparses every baseline page when rebuilding its
+  disposable SQLite projection.** New baseline capsules carry a bounded,
+  versioned semantic receipt that is verified and reused during a healthy
+  rebuild. Existing receiptless baselines, oversized pages, parser upgrades,
+  and invalid receipts retain the prior exact-source reparse-and-compare path.
+  Foreground one-block saves also reuse exact bounded whole-document outline
+  parses, keeping both the first and steady post-drain save within two such
+  parser invocations; drains perform none.
+
+- **Managed storage now opens before its search indexes finish building.**
+  Both Unicode and CJK substring indexes are built in bounded background turns;
+  searches remain complete through an explicit slower fallback and show
+  “Search index building…” until readiness. Live edits are caught up before the
+  marker flips, and later one-block saves update only that block's search rows
+  instead of rewriting its whole page.
+
+- **Managed storage no longer forces a durable SQLite cache sync for every
+  accepted event or schema statement.** The disposable WAL projection now uses
+  `synchronous=NORMAL`, creates its schema in one atomic transaction, and keeps
+  durability at the existing explicit checkpoint and atomic file-set
+  publication boundary. A lost or corrupt cache still rebuilds from the
+  immutable baseline and accepted operation history.
+
+- **A crash during managed archive publication can no longer strand an edit
+  whose exact bytes are still durable in the local journal.** Cold open repairs
+  only torn object names covered unambiguously by an undrained local record,
+  under the workspace's sole-writer lease, and then performs the ordinary full
+  archive validation. Uncovered corruption and torn manifests still refuse
+  activation. Public archive publishers remain strict; the local drain installs
+  recoverable object names before its batch-wide flush, then installs the
+  already-durable manifest and only afterward may checkpoint the journal. The
+  enforced 10/13 save and cross-page-move barrier totals do not change.
+- **Android keeps the right-sidebar control one tap away at ordinary phone
+  widths and keeps Tine outside the system bars.** Lower-priority topbar actions
+  still move into `...` when space is constrained, while the right-sidebar
+  button remains direct until the last-resort tier; native status, navigation,
+  and display-cutout insets now bound the WebView itself. Android also treats
+  that native viewport as the sole inset owner, so OEM WebViews that expose CSS
+  safe-area values do not add a second wasteful band above the topbar (GH #205).
+
+- **Android no longer treats a refused directory durability barrier as success
+  for promoted managed-storage projection receipts.** Only the receipt store's
+  pre-enrollment initialization remains reconstructible; bases, intents,
+  attempts, mutation authority, completions, cleanup, and forensic records now
+  keep strict private-authority barriers on every platform. Each process now
+  verifies a promoted parent once before accepting an existing receipt name or
+  operational namespace, so a crash cannot erase knowledge of a refused
+  barrier; later same-process names and ordinary reads add no barrier. Android
+  devices that cannot provide app-private directory durability may initialize
+  the reconstructible empty store, but managed operations now refuse rather
+  than claiming unsafe success.
+
+- **Images changed by Syncthing, Dropbox, an external editor, or another Tine
+  window now refresh in place without reopening the graph.** Tine observes the
+  approved `assets/` directory separately from page reconciliation in Direct
+  Files and managed storage, including an approved external-assets target.
+  Asset bytes remain ordinary filesystem-synchronized files and never enter the
+  managed oplog or `.tine-sync`; open PDF/audio/video sessions are not replaced
+  mid-use and see new bytes when reopened.
+
+- Windows updater failures now leave a privacy-safe stage and cause in
+  Diagnostics, with a sanitized detailed chain available in debug mode. A
+  32-bit Windows build also links to the manual package instead of offering an
+  automatic install that its signed updater manifest does not publish (GH
+  #241). The reporter's underlying native network failure remains under
+  investigation.
+
+- Block background colors no longer crowd their bullets. Regular dots and
+  numbered-list ordinals now occupy the same 22px control track, while the
+  rounded highlight keeps text aligned with an unhighlighted or edited block.
+
+- **Same-structure external Markdown content edits no longer leave a managed
+  page stale or raise `hot_source_join` merely because Tine reached it through
+  a page-name route** (GH #397). Application-page routes now
+  agree on current source content while managed reconciliation is still in
+  progress. Structural edits such as adding, deleting, or moving bullets still
+  wait for the managed watcher to reconcile them safely.
+
+- Restoring deleted pages from the recovery panel no longer closes the panel
+  by itself the moment the restore completes: the disposed sweep stays visible
+  as actionless history until you close it.
+- Quitting Tine normally no longer shows a false "Tine did not close cleanly
+  last time" warning on the next launch. The clean-shutdown marker was cleared
+  in code placed after the app's event loop, which never runs, so every quit
+  since the flight recorder shipped was reported as a crash. This is the
+  desktop half of [GH #426](https://github.com/martinkoutecky/tine/issues/426).
+
+## [0.6.98] - 2026-08-27
+
+### Changed
+
+- **Managed-storage projection recovery is prepared for cheaper durable
+  publication.** Every projection-only producer now records one durable,
+  description-only turn before graph mutation, while foreground saves replay
+  through the same turn-level executor. Existing projection receipts remain as
+  redundant recovery evidence, startup drains semantic edits before projection
+  turns, and a disposable per-page SQLite digest avoids rendering an unchanged
+  page merely to prove it needs no terminal repair. Durability-barrier budgets
+  remain 25 for a save and 74 for a cross-page move.
+
+- **The shared parser is updated to lsdoc v0.5.6.** Raw HTML recognition now
+  indexes every supported tag in one source pass, static HTML export renders
+  safe Hiccup vectors as markup, and deeply nested projections serialize
+  iteratively instead of consuming the native stack. Native and browser-WASM
+  consumers use the same released parser and serialization contract.
+
+- **Startup no longer loads the complete Settings implementation before the
+  first page appears.** Settings and its plugin, theme, backup, and diagnostics
+  controls now load only when opened; the small journal-conflict row shared with
+  Concord remains available independently. Native startup is back within the
+  immutable v0.4.7 performance budget.
+
+- **Managed storage's private receipt-store format has been bumped**
+  (development only). Projection records now carry an explicit target-kind
+  discriminant, so a private store created by an earlier build is refused with a
+  named notice telling you to re-activate managed storage for that graph. Your
+  Markdown files are untouched by the refusal — the check runs before anything
+  can modify the graph. Managed storage has not shipped, so no released build
+  can have created such a store; this affects development machines only.
+
+- **Saving a page performs fewer disk-durability round trips** (28 → 25
+  core-initiated barriers per accepted single-block save; 77 → 74 for a
+  cross-page move). Three barriers defended no failure Tine's threat model
+  covers: a re-flush of a file that was already flushed before publication, a
+  durable queue-state write on an empty cleanup queue, and a flush of a file
+  about to be moved aside whose exact bytes are already recorded. Edits feel the
+  difference most on slow, networked, or synced filesystems.
+
+### Added
+
+- **Keyboard Shortcuts can now be searched in place** (GH #380). The existing
+  Settings search field filters command names, IDs, and bindings while that
+  section is open, including built-in shortcuts and a clear no-results state.
+
+### Fixed
+
+- **Built-in themes now recolor the main page in dark mode** (GH #401). The
+  no-flash startup frame now yields its high-specificity viewport colors to the
+  active theme tokens after startup, so Nord, Solarized, and Gruvbox apply
+  consistently to the page and sidebar while `custom.css` remains the final
+  user override.
+
+- **An exact `#` or `[[` page match no longer hides other matching pages**
+  (GH #186). The exact page remains the first/default result and suppresses the
+  redundant Create row, while prefix, substring, and fuzzy matches remain
+  available in the existing bounded literal autocomplete pool.
+
+- **A journal-feed read failure is no longer misreported as an empty graph**
+  (GH #385). The initial Journals view now shows the actual bounded backend
+  error, while a transient refresh failure still keeps an already visible feed
+  intact and retries later. This makes cloud-filesystem and access failures
+  diagnosable without mistaking present journal files for no journals.
+
+- **Unlinked References no longer falls back to a whole-graph scan while an
+  ordinary edit's one-page SQLite update is already in flight** (GH #400).
+  Reference reads wait for that bounded background delta, then use the exact
+  current candidate set; an unavailable or failed disposable projection still
+  falls back to the parser. Exact Direct Files byte conflicts remain unchanged
+  and continue to preserve both the disk version and the unsaved draft.
+
+- **Long pages no longer grow and shrink when a block enters or leaves edit
+  mode** (GH #390). Pane-relative end-of-page breathing room is now derived
+  from whether the page content naturally overflows, rather than from the
+  transient presence of a textarea, so its scroll geometry stays stable.
+
+- **A held mouse click now shows the block caret on mouse-down, matching
+  Logseq** (GH #368). Exact rendered-text caret placement still applies, and a
+  drag can still select text in the editor or escalate across blocks.
+
+- **Android and system-decorated windows keep frequent top-bar actions directly
+  visible whenever they fit** (GH #205). The overflow threshold now accounts
+  for whether Tine's three custom window controls actually occupy the row, so a
+  390px phone no longer hides calendar, journals, theme, and right sidebar in
+  the `...` menu while leaving usable space.
+
+- **Copying the in-app Guide no longer stops after its first page** (GH #391).
+  Guide pages now carry the same completed-write receipt as ordinary Direct
+  Files edits, so Tine's native watcher recognizes its own multi-page copy
+  instead of treating page one as an external change that blocks page two.
+
+- **Creating pages on Windows no longer lets a filesystem callback interrupt
+  the very Tine write that caused it** (GH #374). The earlier v0.6.97 repair
+  proved exact file-event echoes, but an ambiguous Windows callback could still
+  raise the graph-wide external-change frontier before waiting for the active
+  writer. Callback admission now serializes behind graph-text publication;
+  genuine ambiguous or external changes still go through the normal debounced
+  reconciliation before later creations are admitted.
+
+- **Rapid scrolling and zooming no longer make PDF pages compete for the UI
+  thread or flash blank while sharpening.** The reader now has one
+  viewport-prioritized full-page render scheduler, drops obsolete prefetch work,
+  pauses speculative rendering during fast wheel bursts, and defers selectable
+  text-layer construction until scrolling settles. A page's previous bitmap
+  remains visible until its sharper zoom replacement is complete. The longer-term
+  tile-aware viewer architecture is tracked in GH #393.
+
+- **Long PDFs no longer skip pages or overload the viewer during ordinary
+  scrolling.** Evicting an offscreen page's canvas could collapse its flex
+  wrapper, shrinking the document while it was being scrolled and making many
+  distant pages appear visible and render at once. Page placeholders now keep
+  stable geometry, so scrolling stays sequential and rendering remains local to
+  the viewport.
+
+- **F-Droid can rebuild Tine's browser parser from source again** (GH #392).
+  The logbook code shared with the small WASM wrapper had started reaching into
+  a tine-core-only module, while Tine's own release path kept using the already
+  generated WASM bundle. The property recognizer is now one dependency-free
+  source module shared by both crates. Pull requests and full release CI now
+  rebuild the WASM bundle from clean source. A daily monitor also files or
+  updates an Inbox issue when F-Droid's public auto-update pipeline reports a
+  new failure.
+
+- **Unlinked References now opens when a matching source page contains 10,000
+  or more blocks** (GH #388). Managed storage was applying the whole-page
+  editor payload limit before constructing the already-bounded reference
+  result. Large source pages now take one linear authenticated read while the
+  panel keeps its existing row and byte limits.
+
+- **PDFs no longer flash and disappear when two render triggers reach the same
+  page together** (GH #275). Visibility and navigation could both begin before
+  the first PDF page lookup finished, causing PDF.js to reject two simultaneous
+  renders into one canvas. Each page now has one render owner from before its
+  first asynchronous lookup through completion, zoom, eviction, or teardown.
+
+- **The block you are typing in stays above the Android keyboard toolbar**
+  (GH #384). Tine now accounts for its own toolbar when focus moves, the block
+  grows, or the keyboard viewport changes, instead of letting the active text
+  remain hidden behind the fixed controls.
+
+- **Pressing Back beyond the first Android page now closes Tine instead of
+  leaving a gray, unusable screen** (GH #386). Storage was already stopped
+  safely, but the final handoff called a Tauri command that does not exist.
+  Android now uses the installed process-exit API after the same guarded save
+  and shutdown checks.
+
+- **Enter at either side of an in-block line break now creates a clean new
+  block** (GH #361). The first fix handled the caret at the start of line two,
+  but pressing Enter at the end of line one still copied the newline into the
+  new block as an empty first line. Both caret positions now consume the same
+  structural boundary on desktop and mobile while preserving intentional blank
+  lines.
+
+- **Android page links now open their page menu consistently on long-press**
+  (GH #207). Body wiki links, links and page headers in Linked References, and
+  page results in search now distinguish Tine's deliberate hold from the
+  browser's native text-selection gesture. Quick taps, scrolling, and desktop
+  click gestures are unchanged.
+
+- **The keyboard-shortcut recorder now captures Control on macOS** (GH #378).
+  Physical Control is recorded as `ctrl`, while portable `mod` remains Command
+  on macOS and Control on Windows/Linux.
+- **Pages no longer become narrow or jump sideways when you start editing or
+  expand references** (GH #382). The pane-relative end-of-page space added in
+  v0.6.96 accidentally let the centered page column shrink to the width of its
+  current contents. Standard pages now hold a stable reading width, and Wide
+  mode fills the pane as intended. Settings → Appearance → Advanced also lets
+  you tune the standard width or give Wide mode a custom maximum on this device.
+
+- **Saving a page in a subfolder no longer costs extra waits for the disk.**
+  Every time Tine wrote or renamed a file in your graph, it asked the operating
+  system to confirm not just the folder it had actually changed, but every
+  folder above it up to the graph root. A page in `pages/Work/Notes.md` therefore
+  waited three times where a page in `pages/Notes.md` waited once, on roughly six
+  file operations per save. Only the folder that actually changed is confirmed
+  now; a folder Tine has just created is still confirmed at the moment it is
+  created, so a crash cannot lose the path your page was written into. On
+  Managed Storage an ordinary edit now waits on 28 disk flushes instead of 37,
+  and a cross-page move on 77 instead of 93 -- measured both on a test fixture
+  and on a 1,045-file copy of a real graph.
+
+- **Managed Storage saves wait on fewer disk flushes.** Each accepted edit used
+  to write four small bookkeeping files whose only job was to notice if
+  something had swapped out a folder inside Tine's own private data directory --
+  which nothing but a program already running as you could do, and which Tine
+  does not defend against by design. Each of those files cost two waits for the
+  disk to confirm, on every page an edit touches. They are gone, and Tine now
+  simply recreates the folder if it is missing instead of refusing to save the
+  page forever. An ordinary edit now waits on 37 disk flushes instead of 45, and
+  a cross-page move on 93 instead of 109. On a slow or network-backed disk that
+  wait is the bulk of the delay between finishing a keystroke and the file being
+  safely on disk.
+
+- **Opening and scrolling the Journals feed no longer walks the whole graph on
+  Managed Storage.** The feed was assembled by enumerating every page in the
+  graph and then loading the handful of days it actually shows -- on every
+  open, and again for each three-day step as you scroll back. The runtime now
+  keeps the graph's journal days indexed and rebuilds that index only when
+  something is actually accepted, so a feed page costs a lookup plus its own
+  page loads. Going back to Journals with nothing changed in between does no
+  graph-sized work at all, and the whole request is now answered in one
+  runtime turn instead of one per page.
+
+- **Managed Storage saves stop paying a disk round trip per internal file.**
+  Every accepted edit fanned its history out into several separately-flushed
+  private files, and each flush is a real device round trip: one single-block
+  save performed 55 of them and a cross-page move 130. On a local SSD that is
+  tens of milliseconds; on a slow, network, or phone filesystem it is what makes
+  an edit feel heavy. An accepted edit's history is now written and made durable
+  as ONE unit -- 45 and 109 -- and three flushes that ran before *reading* a
+  file, which could not affect what was read, are gone. Crash safety is
+  unchanged and is now stated and tested: a save interrupted by a crash or power
+  loss is either fully recorded or not recorded at all, never half-written, and
+  the graph still reopens and completes the same edit.
+
+## [0.6.97] - 2026-08-26
+
+### Added
+
+- Added a read-only synchronized-graph verifier that compares the actual Markdown and Org file bytes across devices, including nested and nonstandard layouts, without requiring shell or ADB access.
+
+### Changed
+
+- **A fault one core test injects can no longer fail an unrelated test beside
+  it.** The shared-provider "this filesystem has no `renameat2` flags" fault was
+  armed process-wide, so under a threaded `cargo test` the injected errno was
+  visible to every other test renaming a provider file at that moment; the
+  whole-suite failure set differed on every run. The fault is now scoped to the
+  thread under test and handed explicitly to the sync actor for the one request
+  that needs it, so the corpus reports the same result twice in a row (GH #350).
+
+- **Queries and search are much faster on Managed Storage.** Every managed
+  query used to re-read, re-parse, and structurally cross-check every candidate
+  page, every time -- so a page full of `{{query}}` re-parsed the graph on each
+  open, and search re-parsed it on each keystroke. Unchanged pages now reuse
+  their complete parsed application view after their exact file bytes and
+  stored page state are checked; an external edit or accepted actor change is
+  re-read immediately. Searching for a literal phrase also consults the stored
+  text index first instead of reading every page, and a result-limited search
+  now does its work only for the results it keeps.
+
+### Fixed
+
+- **Task markers mean the same thing everywhere.** The editor, carry-forward,
+  the sheet state/priority writers, and the rendered checkbox now share one
+  leading-marker recognizer that is byte-faithful to the parser: a task written
+  as `TODO<tab>x` no longer counts as open for carry-forward while rendering
+  without a checkbox, cycling or setting state on an indented task replaces its
+  marker instead of prepending a second one, and a bare `TODO` followed by
+  continuation lines is no longer treated as a task the renderer cannot see.
+- **`key:: value` property lines are recognized the same way by every tool.**
+  Logbook insertion, managed template/content checks, rename, conflict handling
+  and the read index now share the parser's exact property-line rule, so a
+  dotted key like `logseq.order-list-type:: number` is treated as a block
+  property everywhere (a logbook entry could previously be inserted above it),
+  leading whitespace and Unicode keys behave identically, and `key::value`
+  without a space is (as the parser already said) not a property.
+- **Page-link gestures are the same everywhere.** Middle-click now opens a
+  background tab from every page reference and page title — unlinked-reference
+  page headers, namespace macro and hierarchy links, the zoom breadcrumb,
+  right-sidebar item titles, query search-result rows, and the page title's
+  Ctrl/Cmd+click all behaved differently (plain-click only, or autoscroll on
+  Windows). Shift+click still opens the sidebar and plain click still navigates
+  (GH #207).
+- **A split pane's only tab keeps its close button.** The tab strip hid the ✕
+  whenever a pane held a single tab, so after one split neither pane could be
+  closed without first dragging a tab across. The ✕ now shows whenever closing
+  actually works: any multi-tab strip, or a lone non-feed tab whose pane can
+  close (GH #207).
+- **Search and conflict handling now use one contract across runtimes.** Page
+  and block search agree on Unicode whitespace, bare Unicode tags, and the
+  common linear-time regex subset; query-workspace saves and Direct conflict
+  resolution classify bounded failure codes instead of matching error prose.
+  The browser mock now also announces the graph rebind caused by changing the
+  default home page.
+- **Managed Storage and Direct Files answer the same query the same way.** The
+  two storage modes evaluated block queries through separate copies of the same
+  logic, and the copies had drifted: a byte-budgeted block-referrers panel
+  admitted a different number of rows, and kept a different set of them, on the
+  two modes for identical content. Both now use one evaluator and one
+  result-budget rule.
+- **Journal recency respects the configured title format.** On graphs with a
+  custom `:journal/page-title-format`, `(sort-by modified)` ranked every
+  journal last on three of the four query paths (they parsed titles with the
+  default format only). All producers now share one recency axis that honours
+  the graph's configured formats.
+- **Backlink filter truncation is reported consistently.** A page-property
+  root entry that hit its text/facet budget marked the context truncated on
+  Managed Storage but not on Direct Files; the two now agree.
+- **Managed rename works for every page name.** The managed rename planner
+  keyed its index lookups with a different Unicode fold than the index itself
+  (the two disagree on Greek final sigma), so renaming such a page reported
+  success while doing nothing. Rename lookups now use the index's own fold.
+- **config.edn settings can no longer clobber a nested map.** Every setting
+  writer now edits only the root map's direct entries; a same-named keyword
+  nested inside another map (e.g. under `:default-templates`) survives
+  byte-for-byte instead of being spliced over.
+- **Write-durability errors are reported, not swallowed.** The workspaces
+  registry, backup restore, and Linux window-identity writers follow the save
+  path's directory-fsync policy (tolerate "unsupported here", report real
+  errors), the window-identity writer uses unique create-only temp files, and
+  the file watcher recognizes backup-restore temp files directly.
+
+- **One spelling of a page is one favorite.** Starring a page under one
+  spelling (different case, an alias, NFC/NFD accents, boundary slashes) now
+  fills the star and toggles off under every other spelling instead of
+  appending a duplicate; the sidebar arrangement, membership, page delete, and
+  rename all use the same kind-scoped identity, so deleting a page no longer
+  silently drops a journal favorite that merely shares its name. Backlink
+  filter chips key by the same identity, so two spellings of one co-referenced
+  page no longer produce two chips that miss each other's filters.
+
+### Added
+
+- **Batch copy/export for references** (GH #348). Linked References and
+  Unlinked References each have an explicit export affordance: every entry is
+  pre-selected for copy-all, uncheck for a subset, and the familiar Copy /
+  export modal (Text, OPML, HTML, with the usual content/indent/depth/cleanup
+  options) produces the selected blocks grouped by their source page. The two
+  sections act independently, Linked honors its active filters, and normal page
+  export is unchanged — references are never included unless you ask.
+- **Favorites nest to any depth** (GH #102). A group can hold groups, and a
+  favorite can hold favorites; drag a row to the right to nest it, to the left
+  to lift it out. Depth is measured from where the drag started, so a plain
+  vertical drag never nests by accident, and the insertion line is drawn at the
+  depth the drop will land. Deleting a group still keeps everything it held —
+  now one level up rather than at the top. The arrangement page round-trips
+  every bullet at every depth, so hand-written nesting survives.
+
+- **Editing the Favorites page updates the sidebar** (GH #102). The arrangement
+  lives in an ordinary page, so editing it — in Tine or outside — is now
+  reflected immediately instead of at the next graph open. A page edit is a
+  membership statement: removing a `[[link]]` bullet unfavorites that page and
+  adding one favorites it. This also gives favorites reordering a keyboard
+  route, since the arrangement is a page like any other.
+
+- **`logseq/config.edn` is re-read while Tine runs.** A settings change made in
+  Logseq, in a text editor, or delivered by Syncthing is now picked up during
+  the session rather than being ignored until the next graph open — and
+  therefore no longer computed against a stale copy. Favorites, shortcuts,
+  macros, the home page, journal formats, hidden properties and the rest all
+  follow. Tine only pays for the reload when the file's bytes actually differ
+  from those it is serving, so its own settings writes and repeated identical
+  deliveries cost nothing.
+
+- **Privacy-safe diagnostic reports** (GH #343). Every production build now
+  retains a bounded current-and-previous-run flight recorder of fixed operation
+  names, outcomes, timings and counts. Settings → Diagnostics previews the JSON
+  before the user chooses to copy or save it; nothing is uploaded automatically,
+  and graph content, paths, page titles, queries, URLs and credentials are
+  excluded by the recorder API. Release CI also retains exact-commit native
+  symbols and hidden frontend source maps outside the shipped packages.
+
+- **Experimental 32-bit Windows packages** (GH #275). Releases now produce an
+  `i686-pc-windows-msvc` installer and portable ZIP for older Windows 10 tablets.
+  The pilot is deliberately excluded from automatic updates until it has been
+  exercised on a reporter's real 32-bit device.
+
+- **Favorites can be arranged into named groups.** One level, plain-text group
+  names, collapsible, with drag between groups as well as within one. Deleting a
+  group never unfavorites anything — its pages move back to the ungrouped list.
+  The arrangement lives in an ordinary page in your graph, so it syncs and
+  merges like everything else rather than as an opaque settings blob, and
+  because its entries are real links a page rename follows them automatically.
+  `config.edn :favorites` stays exactly what it was — the flat list Logseq
+  reads — so Logseq keeps working. Nothing is created until you actually make a
+  group: if you never group anything, nothing about Favorites changes (GH #102).
+
+### Changed
+
+- **Typing in the Linked References search box now also narrows the reference
+  chips below it.** The reference list already shrank as you typed; the chips —
+  the pages and tags you pick from — were computed over every backlink, so they
+  and their counts never moved. They now follow what you type, which is what
+  Logseq's equivalent field does and what the list is for. A chip you have
+  already selected stays visible even when your text filters its last backlink
+  away, at count zero, so a filter can never become unreachable (GH #173).
+
+- **A journal day with more than one file is now resolved on the day itself.**
+  These days — usually a leftover of changing the journal date format, which
+  never overwrites the old file — used to reach you only as a sticky notice at
+  startup pointing at Settings. They now join the conflict badge, the dock and
+  the walk like every other conflict, and the day page offers the same
+  side-by-side review: keep a line from either file, or keep both. Keeping both
+  is what "Merge" did in Settings, so nothing was lost by moving it here; the
+  other file goes to the recoverable trash once you apply. Opening, renaming and
+  trashing an individual file are still offered, on the day and in Settings.
+  Two files in different formats (a `.md` and an `.org` for one day) can't be
+  folded together and say so instead of offering a choice that could not be
+  applied. The startup notice is gone.
+
+
+- **Copy / export names its two content choices after what you actually get.**
+  The explicit *Content* option in "Copy / export as…" now reads **Plain text**
+  (cleaned, as displayed) and **Markdown** — or **Org** on an Org page —
+  (preserved source syntax: bold, highlighting, links, properties and
+  structure). The preserve choice was always implemented but shipped under
+  the internal label "Source"; users looking for the Markdown-preserving
+  option could not find it (GH #352).
+
+### Fixed
+
+- **Future iOS/TestFlight builds now use Tine's application icon.** The generated
+  Xcode project previously retained Tauri's template icon even though Tine's
+  complete iOS icon set was tracked in the repository. Project preparation now
+  installs that set before Xcode compiles the asset catalog, and the signed-IPA
+  contract compares the packaged primary icon's pixels with Tine's source. The
+  already-submitted `0.6.95.8` beta is unchanged.
+- **Dragging a favourite in the sidebar no longer selects its title.** The
+  reorder drag is a pointer gesture, not a text gesture, but nothing suppressed
+  selection, so the label smeared under the cursor. Applies to both reorderable
+  sidebar lists.
+- **The Linked References filter no longer claims to have filtered a list it has
+  not.** While the descendant index is still loading the panel deliberately
+  shows every reference — the local text it has is only a subset, so hiding a
+  reference could hide a real match — but the summary still read "N of N
+  references". It now says indexing is in progress and that the filter applies
+  when it finishes (GH #173).
+- **Deleting an open page on Android no longer passes through an unexplained
+  black frame.** Tine still waits for pending edits and the native trash
+  operation to become durable before navigating anywhere, but it now retires
+  the deleted page's pane routes in that same durable continuation, before the
+  loaded page is purged. Debug mode also times confirmation, saving, native
+  deletion, fallback loading and first paint separately so remaining
+  device/storage latency can be diagnosed without logging note names or paths
+  (GH #376).
+
+- **Creating a journal no longer makes the next Direct Files page fail to save
+  on Windows.** Windows may report several `Create`, `Modify`, and rename events
+  for Tine's own atomic page publication. Those exact self echoes now validate
+  the published path, bytes, and physical file identity under the same write
+  lock instead of raising the external-change frontier while the watcher waits
+  to reconcile them. A changed external file, an identical-byte replacement
+  inode from a sync service or second Tine, ambiguous events, and portable
+  case/NFC collisions remain fail-closed (GH #374, follow-up to GH #366).
+
+- **Block zoom keeps pointing at the intended block after siblings are inserted
+  or reordered.** Tine now keeps its deterministic, UUID-shaped runtime
+  locators separate from authored `id::` / Org `:id:` identity, resolves the
+  unique authored claimant first, and refuses ambiguous duplicate authored IDs
+  instead of guessing. Existing graphs are not rewritten (GH #373).
+
+- **Windows self-update now follows the system proxy route and shows one update
+  offer at a time.** The native updater already used the Windows trust store,
+  but its reduced feature set omitted Reqwest's separate Windows system-proxy
+  integration, so it could fail to fetch `latest.json` even while WebView2 and
+  the browser reached GitHub. Startup and manual checks also now replace the
+  same release offer instead of stacking duplicate install prompts (GH #241).
+
+- **Selecting text on Android no longer stacks Tine's formatting controls under
+  the system Cut/Copy/Paste menu.** Tine's Bold, link, code, highlight and other
+  formatting actions now dock above the existing mobile keyboard toolbar, while
+  Android keeps the selection-adjacent region for its native actions and handles.
+  The compact formatting overflow opens upward, away from the keyboard (GH #375).
+
+- **Fitting split panes no longer keep a scrollbar merely for blank editing
+  space.** The first GH #369 correction fixed short panes but still made an
+  otherwise fitting page scroll whenever it occupied 60–100% of its pane. An
+  idle pane now has zero blank scroll range at every fitting height; the 40%
+  pane-relative breathing room returns while a block is actively edited, so a
+  long page's tail remains comfortably reachable.
+
+- **The full Rust core corpus now finishes and the release gate no longer hides
+  passing tests.** Five obsolete shared-join test barriers now pause at current,
+  finite clean-runtime concurrency cuts. An honest unfiltered run completed all
+  2,116 selected-or-ignored tests without a hang or timeout, and 47 stale or
+  passing names were removed from the release exclusion. The remaining 45
+  known-red legacy-oracle tests are listed exactly and classified by behavior
+  family, so a newly passing, renamed, or omitted test fails the contract
+  instead of silently drifting outside the gate (GH #350).
+
+- **Managed Storage can reopen retained edits and moves of blocks carrying a
+  Logseq `id::` UUID.** Projection recovery now consults the same bounded
+  baseline identity candidates as planning and commit validation, instead of
+  refusing the accepted block as unauthorized when the UUID originated in the
+  activation baseline (GH #370).
+
+- **Android startup and page navigation no longer look like an unexplained black
+  or blank screen while work is pending.** The native window now has light and
+  night Tine backing colors before the WebView paints, startup immediately shows
+  a matching readiness surface, and an in-app page load has a small visible
+  indicator. Actual load failures still replace it with their error, and plugin
+  revocation checks still finish before community code can activate (GH #299).
+
+- **Clicking a block bullet no longer reports a false same-name file conflict.**
+  A block zoom now keeps using the exact page already open in Direct Files
+  instead of racing the durable block-ID save with a second read of the page's
+  older bytes. Restored zoom tabs still load missing owners from disk, and
+  genuinely different same-name physical files remain fail-closed (GH #354).
+
+- **Page action control labels no longer join dragged text selections.** The
+  journal carry-over buttons ("Carry unfinished tasks → today" and friends),
+  the tag-table toggle, the guide copy button, and the ⋯ page-actions trigger
+  are page chrome, not content: selecting across the page no longer copies
+  their label text, while the buttons stay fully clickable and keyboard-
+  focusable.
+
+- **Joining a synced graph no longer gets stuck on an older local managed-storage
+  marker.** If Direct Files is active but a previous activation left private
+  managed state behind, Tine now archives that complete predecessor unchanged
+  before bootstrapping the other device's shared identity, instead of trying to
+  open the old marker as the new graph and reporting that it names a different
+  catalog document.
+
+- **A provider deletion can no longer erase a local edit that arrived in the
+  same sync pass.** Managed sync now captures a pending Markdown or Org watcher
+  epoch before applying provider projection, then drains the complete visible
+  provider cut before classifying the resulting race. The local edit therefore
+  enters immutable history and the normal edit-versus-delete rule settles it,
+  even when the filesystem and oplog notifications arrive together.
+
+- **Direct Files delete, rename, trash, and conflict-copy moves no longer read
+  every document in the graph.** These exact no-clobber moves now validate the
+  source and destination through retained metadata and portable path checks;
+  document contents remain untouched and unrelated files are never opened.
+
+- **A crash inside a Direct Files save can no longer leave a page invisible
+  under hidden recovery names.** On the next checked open, one unambiguous
+  stranded copy is restored without clobbering a live file. Ambiguous or
+  superseded copies are retained or moved intact to recoverable conflict trash;
+  lookalikes and files whose physical identity cannot be proved are untouched.
+
+- **Changed Direct Files saves perform one fewer full-file read.** The atomic
+  retirement already detaches and byte-checks the exact expected inode before
+  publishing, so Tine no longer rereads the same live name immediately before
+  that stronger proof. External edits still win or become an explicit conflict,
+  and managed-storage projection behavior is unchanged.
+
+- **Page lists stay fast after Direct Files file lifecycle changes.** With a
+  warm graph, creates, deletes, watcher additions/removals, and renames now
+  update the exact in-memory page inventory instead of making the next page
+  lookup reopen and reparse the whole graph. Rename transactions reparse only
+  documents whose retained final bytes they already changed; explicit titles,
+  parse failures, physical paths, and watcher invalidation remain authoritative.
+
+## [0.6.96] - 2026-08-24
+
+### Added
+
+- **Conflict review can now suggest a combined "Merged" version of a block both
+  sides edited.** When two devices changed provably different parts of the same
+  block's text (against the last version both sides agreed on), the in-page
+  conflict review offers the combination as a fourth, pre-selected choice next
+  to keep-mine/keep-theirs/keep-both — for sync-conflict copies and for
+  `diff3`/Fossil-style merge markers alike. Where the edits overlap but the
+  merge tool wrote its own `####### SUGGESTED CONFLICT RESOLUTION` sections
+  (Fossil), that suggestion is offered in the same place instead, clearly
+  labeled as the tool's proposal. Like every suggestion it is only
+  pre-selected: nothing is applied until you confirm, the applied text is
+  re-derived from the same three versions (never trusted from the UI), and
+  edits that overlap — or whose combination would not survive as a single
+  block — simply get no offer.
+
+- **Conflict rows now preview the first line that actually differs**, not
+  blindly the first line, with an `…` marker when earlier lines agree — and
+  multi-line blocks gain a per-row expander showing the full text of each
+  version with the differing lines highlighted.
+
+- **A conflict can no longer scroll out of sight.** The in-page conflict
+  review lives at the top of the page; once it scrolls out of view a slim
+  one-line notice stays pinned to the top of the pane — especially on a
+  phone, where the review was previously invisible until you scrolled up.
+  Tapping the notice unrolls the same review in place (your reading position
+  and any choices you already made are kept); tapping again, pressing
+  Escape, or scrolling back to the top folds it away.
+
+### Changed
+
+- **The conflict review is now usable on a phone (and in a skinny split
+  pane).** When the panel is narrow, the two versions stack full-width instead
+  of being squeezed into unreadable columns, and the per-row choices become a
+  compact strip — a color dot plus a short word, with the legend mapping each
+  color to the real side name. Sync-copy names like
+  `sync-conflict-20260705-141233-A2B2C3D` now read "Sync copy · Jul 5"
+  everywhere (the exact file tag stays as a tooltip).
+
+- **The startup conflict notices are gone.** The two toasts that appeared on
+  every graph open while conflict copies or merge-marker files existed
+  duplicated what the conflicts badge, the in-page review, and its pinned
+  notice already say — and pointed at Settings instead of the in-page
+  resolver. A toast still appears when a *new* conflict arrives mid-session,
+  and for duplicate journal days (which have no other surface).
+
+- **"Apply all suggested" no longer sweeps up a merge tool's own proposed
+  text.** A Fossil `SUGGESTED CONFLICT RESOLUTION` body (labeled *Merged
+  (tool)*) keeps whatever you set on that row; only your per-row choice (or
+  the initial pre-selection you confirm) accepts text Tine did not compute
+  itself.
+
+### Fixed
+
+- **A settings change can no longer overwrite a `config.edn` that arrived while
+  it was being written.** Tine re-read the file before saving, but an external
+  writer — Syncthing delivering a peer's copy, Logseq, an editor — could still
+  land in the moment between that check and the write, and its changes vanished
+  with no warning. Tine now publishes the file only if it still holds what it
+  read, and otherwise re-applies your change on top of theirs. If a crash
+  interrupts a write, the file is restored on next open rather than left
+  missing.
+
+- **Renaming a page no longer edits pages that are mid-merge.** A page whose
+  file still contains unresolved merge-conflict markers is left exactly as it
+  is instead of having its links rewritten inside both sides of the conflict.
+  The rename still completes everywhere else, and a notice tells you how many
+  conflicted pages still point at the old name.
+
+
+- **Split panes whose content fits no longer show a useless vertical
+  scrollbar** (GH #369 — the reporter's dashboard of short panes like "Lines"
+  and "GRID" each carried a permanent bar). The end-of-page editing slack now
+  measures against each pane's own height (flex spacer in the pane scroller)
+  instead of the window (`40vh`): a pane up to ~60% full shows no bar at all,
+  a near-full pane keeps at most 40%-of-pane of breathing-room range, and a
+  long pane still scrolls independently and its tail can scroll ~40% of the
+  pane up off the bottom edge while editing.
+
+- **Advanced queries using `:inputs [:current-page]` now follow the focused
+  pane** (GH #301). Tine binds Logseq's standard current-page page/ref
+  relationship, reruns it on focused-page navigation, and keeps ordinary date
+  inputs typed and unchanged.
+
+- **A graph's Home page setting now follows the graph between devices** (GH
+  #269). Tine reads and writes Logseq's `:default-home {:page "..."}` entry in
+  `logseq/config.edn`, preserves other keys in that map, and safely migrates an
+  older device-local setting after the graph opens.
+- **Resolving merge markers inside Tine now stages the pre-resolution file in
+  the recoverable trash** (Settings → Backups & recovery), so the sides you
+  did not choose stay recoverable — the same guarantee resolving a sync
+  conflict copy already had.
+- **Adding a highlight no longer rewrites a PDF notes page that carries
+  unresolved VCS merge markers.** The write is refused like any other save to
+  a quarantined page; previously it silently lifted the quarantine while the
+  merge was still unresolved in git/Fossil.
+- **Conflict review no longer freezes on blocks with extremely long single
+  lines.** Comparing candidate rows now caps at the first 512 characters per
+  line (a 64 KB one-line block previously stalled the conflict panel for
+  seconds to minutes), oversized flat pages avoid a slow exact-alignment
+  cliff, and all conflict-review reads moved off the UI's request thread.
+
+- **Managed-storage startup failures now keep their real recovery cause and stop looking active** (GH #370). A core reopen can return a typed retryable/refused result without a serving actor; startup previously wrapped that non-serving result in a managed graph slot and then replaced its useful cause with the generic “managed storage is not ready” page-readiness error. It now refuses before publication with the original redacted diagnostic, keeps the Direct Files escape available, and freezes the elapsed time when the operation reaches its terminal failure instead of counting upward indefinitely.
+
+## [0.6.95] - 2026-08-23
+
+### Added
+
+- **The iOS beta can use a TineOutline-owned graph in iCloud Drive.** The native folder picker recommends `iCloud Drive → TineOutline` when iCloud is available and also accepts `On My iPhone/iPad → TineOutline`, while clearly refusing arbitrary third-party Files providers. Before Rust opens the selected graph, the iOS bridge requests any ubiquitous files that are not yet local. Signed TestFlight builds install and verify the exact iCloud Documents entitlements in both the provisioning profile and app signature.
+
+- **macOS release builds are now signed and notarized.** The universal direct-download app and DMG use Tine's Developer ID identity, authenticate notarization with a short-lived App Store Connect token, and must pass independent signature, team, stapled-ticket, Gatekeeper, and DMG-integrity checks before the release lane can be staged. Windows signing remains separate future work.
+
+- **Tine can now build a signed iOS beta for TestFlight.** A manual-only workflow creates and verifies a `TineOutline` IPA for the existing `page.tine.Tine` bundle ID, retains it as an immutable artifact by default, and only validates or uploads to TestFlight when that action is explicitly selected. It cannot submit or release a production App Store version. The iOS bundle includes its privacy manifest, export-compliance declaration, App Store provisioning proof, and a unique build number for each run.
+
+- **Tine now publishes a plain-language privacy policy and support contact.** The in-app About tab links to both, the website links to the policy, and the policy distinguishes local graph data from the limited update, plugin-catalogue, documentation, and voluntary-support traffic Tine can make.
+
+- **New editor command: Copy block embed** (GH #279) — `Mod+Shift+C` copies `{{embed ((block-id))}}` for the current block using its durable `id::`, the embed counterpart of the existing `Mod+C` block-reference copy. Remappable in Settings → Keybindings; with text selected it gets out of the way so normal copy works.
+
+- **Logseq navigation hotstrings `gh`, `gn`, `gp`** (GH #276). `g h` opens the graph's configured home page (falling back to the journals landing when none is set — Logseq's default home), `g n` / `g p` open the next and previous journal day relative to the journal you're in (or relative to today anywhere else), in the graph's configured journal title format. All three are remappable.
+
+- **Sheets now render in the HTML export and print output for any graph.** Until now, publishing a page holding a Tine Sheet emitted only the sheet's plain-bullet twin plus the visible `tine.*` view configuration, so the presentation — columns, grouping, computed cells — disappeared. Block-powered sheets now publish as meaningful read-only views: tables with their title/declared/formula/observed columns, typed checkbox cells, aggregate footers, and arithmetic formula columns; boards grouped by state, priority, tags, or fields, including query-backed boards; and grids with their positional cells, header rows, and nested grids. Numbered list blocks (`logseq.order-list-type:: number`) keep their ordinal markers, and blocks with LOGBOOK clock rows keep an elapsed-time badge while the drawer stays hidden. This applies to both whole-graph publishing and single-page print/PDF export.
+
+### Changed
+
+- **The managed-storage opt-in now says plainly that it is known to be buggy.** Settings and the built-in Guide no longer describe it merely as experimental or not mature: they state that it does not yet fully work in Tine's own testing and that work is ongoing, while retaining Direct Files as a fully supported peer rather than a migration step.
+
+- **The first iOS beta keeps Wasm plugins disabled, as required by ADR 0052.** Installed guests are not loaded, the package/catalogue surface is absent from Settings, and plugin commands cannot register. Built-in and inert token themes remain available. Enabling iOS plugins later remains a separate product and App Review decision.
+
+- **The iOS About tab omits the external Ko-fi support link.** Website, desktop, and Android support links are unchanged; iOS keeps only non-purchase project, privacy, and email-support links while the initial App Store review surface is deliberately minimal.
+
+- **The public website "Demo" is now the Guide**, at `https://tine.page/guide/`: the read-only tour of workflows, reference pages, and rendered examples published by Tine's own HTML export, no longer described as a live or editable demo. Old `https://tine.page/demo/` links redirect there; the in-app Guide and the onboarding demo graph are unchanged.
+### Fixed
+
+- **Renaming a page no longer exhausts the Direct Files safety budget on very large graphs** (GH #364). A rename already makes one bounded, no-follow inventory and rechecks every file it will touch; its inner publication helpers nevertheless attempted a second whole-graph identity build, which could refuse the operation around 13,000 pages with `initial shadow peak build memory bound exceeded`. Rename now keeps the transaction's existing evidence and repeats only target-local collision and no-clobber checks while preserving external-edit detection, rollback, hard-link refusal, namespace cascades, and graph-wide reference rewriting.
+
+- **Ctrl/Cmd+click on an internal link now opens a background tab everywhere** (GH #283). One standard pointer contract now covers page links, block refs, references, search results, Favorites, Recent, namespace crumbs and query group headers alike: plain click navigates, Shift+click opens the right sidebar, Ctrl(Win/Linux)/Cmd(macOS)+click opens a background tab — as does middle-click — and right-click keeps the explicit destination menu. (Behavior change note: Ctrl+click on a rendered `[[page]]` or `((block))` link previously opened the other pane; pane opening remains available through context menus and the window/pane gestures.)
+
+- **Block embeds now track their source block's collapse state live and keep each occurrence's own fold** (GH #360). Before you change an embed locally it follows source folding immediately. Folding or unfolding that embedded root then stores an explicit `collapsed:: true` or `collapsed:: false` on the block containing the embed, so the choice survives reload independently of the source and other occurrences; the referenced source block is never changed.
+
+- **PDF annotations are usable on mobile** (GH #191). Finishing a native touch text selection now opens the highlight color chooser, and long-pressing an existing text or area highlight opens the same recolor, remove, Copy ref, and Linked references actions as desktop. Touch-sized controls stay inside the phone viewport; desktop mouse and context-menu behavior is unchanged. The earlier mobile Close/Back escape fix remains intact.
+
+- **Queries with `<% current page %>` rerun when you navigate** (GH #301). A query that explicitly carries the `<% current page %>` dyvar now binds it to the page in the focused pane — so a sidebar (or any open) query like "everything on #current page tagged #pin" updates as you move between pages. The authored query text is untouched, queries without the dyvar don't rerun on navigation, and a delayed result from the previous page can never leak into the new page's view. (`:query-page` remains bound to the block owning the query; the EDN `:inputs [:current-page]` advanced form is still outside the engine's entity binding and is documented in the issue thread.)
+
+- **Mobile: long-pressing a page link now shows its context menu** (GH #231). Holding a `[[page link]]` (or anywhere on its angle bracket region) for ~½ second opens the same context menu desktop right-click gives, instead of silently selecting the link text. Quick taps still navigate, moving your finger cancels the hold (so scrolling is unaffected), and desktop + mouse behavior is unchanged.
+
+- **Typing `(`, `{`, `[`, `"` or backtick now inserts its counterpart by default** (GH #291). Logseq has always paired these; Tine's pairing existed but was opt-in, so on a default install the two reporters naturally disagreed. It is now on by default — Settings stays available to turn it off (an explicit opt-out is remembered). Brackets doubling (`[[`, `((`, `{{`), selection wrapping, type-through, Backspace-on-empty-pair, IME composition, and the always-on `[[ ]]` page-ref pairing behave exactly as before.
+
+- **Code blocks no longer jump layout when clicked** (GH #357). Clicking a fenced code block used to swap the mono, unwrapped, padded code card for a proportional 16px-textarea view that soft-wrapped long lines, visibly re-laying out every line. While a block is a code fence (Markdown ` ``` `/`~~~` or Org `#+BEGIN_SRC`/`#+BEGIN_EXAMPLE` — not `calc`, not mixed paragraph+fence content), the editor now presents as the same card: identical font, size, leading and padding, zero soft wrapping, horizontal scroll for long lines instead. The text stays the honest raw source, fences included, and it flips in and out live as you type.
+
+- **Searching for a page alias opens the real page, not a phantom alias page** (GH #353). When an alias's text was also referenced anywhere (`[[Book]]`), search (Ctrl+K) and the `[[` / `#` autocomplete listed both the owning page and a separate alias-named virtual page — selecting it opened a standalone "Book" page instead of the original. The shared page-candidate search now treats an alias like the page name itself, so it can never be its own result; case variants and multiple aliases are covered, ordinary pages that merely overlap an alias still rank normally, and the owning row shows an "aka Book" hint so the match is understandable.
+
+- **Files and folders linked inside `assets/` open in the system viewer / file manager** (GH #367). A labeled link such as `[image](./assets/quick-capture.png)` or `[path](./assets/)` (Markdown or Org) was handed to the external-URL opener, which rejected the relative path, so nothing opened. Such links now resolve extension-agnostically through the graph's asset opener: a file opens in the OS default app, a directory or the assets root opens in the file manager, and percent-encoded nested paths are decoded first.
+
+- **Enter at an in-block line break no longer leaves an empty first line** (GH #361). Pressing Enter with the caret right after an in-block newline now turns that newline into the block boundary, matching Logseq: the previous block ends with its last text line and the new block starts with the next line's actual text — on desktop and mobile. Shift+Enter's in-block newline, mid-line splits, and Enter at the very start of a block are unchanged.
+
+- **Blocks opened in the right sidebar always show their children** (GH #358). Shift-clicking the bullet of a collapsed block parked it in the sidebar but hid its child content until you first expanded it in the main page. The sidebar now treats the opened block as the root of its own view, exactly like zooming in the main page — children always render, and deeper collapsed blocks stay collapsed as expected.
+
+- **Page-reference styling updates as soon as a referenced page gains content** (GH #355). A `[[Page]]` link could stay in the "missing page" style after its target was created later in the same session, refreshing only on restart. The existence answers now invalidate whenever the graph's page inventory changes, so links restyle immediately — both when a page appears and when one is deleted.
+
+- **Block reference locations can be collapsed to a compact overview** (GH #344). The expanded view you get from a block's reference-count badge now offers Collapse all / Expand all: collapsed groups show only their source page title and disclosure button, which re-expands the breadcrumb and referenced block while the title itself keeps its normal navigation behavior. The state is local to that view — the page-level Linked References section keeps its own.
+
+- **Arrow keys now move between bullets inside linked references, block references, query results, and embeds** (GH #341). Previously, pressing Up/Down while editing a block in one of those views moved the caret into the block's owning page outline — an editor that usually isn't visible there — so the cursor simply vanished. Navigation now steps through the blocks exactly as rendered in that view, while structural edits (merges, indent) keep operating on the real page outline.
+
+- **Linked References: include filter chips now combine with OR** (GH #273). Selecting two pages/tags in the filter panel previously required every backlink to reference both, so the union you meant to keep collapsed to nothing. A backlink now survives when it carries any included facet; exclude chips still subtract cumulatively, and typed search still narrows the result further.
+
+- **Search and Quick Switcher results support modified clicks** (GH #288). Middle-click and Ctrl/Cmd+click open a result in a background tab of the current pane while the switcher stays open, so you can fan several hits out at once; Alt+click opens in the other pane; Shift+click opens pages and blocks in the right sidebar. Ordinary clicks, Enter, and the existing Shift/Alt+Enter shortcuts are unchanged. This is the same action set the Enter-key modifiers already offered, now reachable by mouse.
+
+- **New actions: keyboard pane resizing** (GH #286). Four remappable commands — Grow/Shrink active pane width and Grow/Shrink active pane height — nudge the nearest split of the matching axis by five points per step (the existing 15–85% limits apply). They ship unbound so you can assign your own chords in Settings → Keybindings, and are also available from the command palette.
+
+- **New action: Toggle maximize active pane** (GH #285). One pane can temporarily borrow the whole pane area (sidebars untouched) — useful when limited space wraps long lines in a multi-pane split. Toggling again restores the exact split arrangement and sizes; the state never survives into sessions or workspaces. Default shortcut `Ctrl/Cmd+Alt+M`, remappable and available from the command palette.
+
+- **Move Tab to pane {left,right,up,down} now creates the pane when none exists** (GH #282). Previously the command did nothing unless a pane already lay in that direction — so from a one-pane window (the most common starting point) it never did anything at all. With several tabs in the source pane, the active tab moves into a new pane on the requested side; with only one tab, the new pane opens as a mirror of the current tab and history and the original stays, since Tine panes are never empty. Moving into an already-existing pane behaves exactly as before.
+
+- **Android: hiding the keyboard no longer taps the note behind the toolbar** (GH #336). The editor toolbar's hide-keyboard button blurred the editor on touch-down, which closed the keyboard and removed the toolbar mid-gesture, so the tap's release landed on whatever block happened to be underneath. The button now consumes the whole touch gesture.
+
+- **Calculator blocks no longer render a phantom empty line** (GH #339). After exiting edit mode, a ```calc block showed one extra blank row below the last expression (the fenced block's trailing newline was rendered as a row). Blank lines between expressions still keep their positions.
+
+- **The Settings dialog can be enlarged on desktop** (GH #287). A new maximize/restore button in the Settings header grows the dialog to nearly fill the window with a comfortable margin, preserving the selected page and scroll position; closing Settings always restores the default size. Narrow/mobile screens are unchanged — the sheet already fills the viewport there.
+
+- **Tab close buttons always sit at the tab's right edge** (GH #340). With short titles the ✕ no longer drifts to just after the text — it stays pinned rightmost at any tab width — and it is now a real keyboard-focusable button with its own "Close tab" tooltip instead of showing the tab's "Double-click to pin" hint.
+
+- **No more white frame around the page after clicking empty space and pressing a key** (GH #345). Clicking an empty spot of the main content focused the page scroller, and the next keypress flipped the browser's focus heuristic, painting its default white frame around the whole content area. Only that default frame is suppressed — the pane-select ring and the usual focus cues on buttons and other controls are unchanged.
+
+- **Managed-storage block moves across journal-day boundaries now stay immediate and keep keyboard focus.** The source and destination publish as one durable foreground transaction, so archive/SQLite derivatives no longer dim or stall the interface before the block appears on the adjacent day. The foreground path is graph-size invariant at 100 and 10,000 pages, and rapid queued edits use exact pending-projection indexes instead of repeatedly scanning the journal prefix. Response-replay cleanup now runs on its own bounded retry lane, so a slow acknowledgement cannot stall the next move; actor cleanup remains crash-safe, bounded, and explicitly runnable. Multi-page foreground prefixes now also drain from accepted state instead of letting later queued catalog heads block an earlier projection, and a peer move no longer stalls merely because this device concurrently advanced an unrelated page in its catalog. Page and namespace renames likewise use exact SQLite name/range lookups instead of enumerating every unrelated graph page before the indexed reference rewrite. Accepted saves advance authenticated roots by path-copying only changed documents and the new batch, provider-head publication reads an incremental frontier-tip set, and clean projection attach decodes only current path heads; none of these routine boundaries now clone or replay the graph/session history.
+
+## [0.6.94] - 2026-08-22
+
+### Added
+
+- **Live Direct Files save conflicts now use Concord's in-page, block-level
+  resolver.** If another device changes a file underneath a retained Tine draft,
+  both versions appear above that page with three-way suggestions and per-block
+  keep-this / keep-that / keep-both choices. The draft is kept in app-private
+  recovery state, survives a Tine restart, and is removed only after a
+  revision-guarded resolution commits. The old global *Keep mine / Use current*
+  bar is no longer used for Direct Files conflicts.
+
+- **Conflicts are now one calm queue you resolve inside the page.** Everything
+  that needs your judgement — a Syncthing/Dropbox/Seafile conflict copy, or a
+  page carrying unresolved git/Fossil merge markers — appears in a single
+  `N conflicts` badge at the bottom of the sidebar, and clicking it walks you to
+  the next conflicted page. Nothing about a conflict is written into your graph:
+  the queue is recomputed from what is on disk, so it costs no storage, cannot go
+  stale, and survives restarts by construction. Opening a conflicted page shows
+  the two (or three) versions block by block, above the outline, named by
+  whatever produced them (a git ref, a device tag), with per-block keep-this /
+  keep-that / **keep both**, `N conflicts ↑↓` to walk between them, and a
+  suggested resolution pre-selected wherever a common ancestor answers the
+  question. Keep-both writes the two versions as adjacent sibling blocks —
+  ordinary outline Markdown. Nothing applies until you click *Apply resolution*,
+  and leaving a page with work outstanding gets a one-line note, never a blocking
+  dialog. (ADR 0057; Concord P4, part of GH #337; see docs/concord.md →
+  "Resolving conflicts".)
+
+- **git and Fossil merge conflicts can now be finished in Tine.** A page whose
+  file carries `<<<<<<<` / `|||||||` / `=======` / `>>>>>>>` markers is still
+  quarantined from ordinary saves — Tine never mangles a conflicted file — but
+  its marker sections are now parsed into complete page versions and reviewed
+  with the same block-level machinery as a sync conflict copy. `diff3`-style and
+  Fossil markers carry their own common ancestor, so most blocks arrive already
+  decided; applying writes the merged page with no markers at all, which lifts
+  the save quarantine by itself. It is the one circumstance in which Tine writes
+  a marker-bearing file, and only as the direct result of the resolution you
+  just confirmed. (Concord L5 completion.)
+
+- **Bulk external revisions — a `git checkout`, `fossil update`, branch switch, or big sync — are now handled as one calm epoch.** When one burst of external file changes touches more than 32 pages, the watcher reconciles it in a single pass against a consistent snapshot and tells the interface once (`graph-changed-bulk`) instead of once per page: one derived-view invalidation, visible pages refreshed through the existing safety checks (a page being edited defers its reload exactly like a single change), everything else reloaded lazily on navigation, and a single summary toast — "N pages updated externally", with a conflict count if any changed pages had genuinely diverged unsaved edits. Previously every page cost its own event, dataRev bump, and page fetch, and nothing summarized the revision. Small changes are untouched: at or below 32 pages, per-file behavior is byte-identical to before. (Concord P2, part of GH #337; see docs/concord.md → "External revisions".)
+
+- **Sync-conflict merges now come with per-block suggestions.** Tine keeps a
+  private per-page record of the last version it agreed on with the disk (the
+  Concord base ledger — stored in app data, never inside your graph, always
+  safe to delete). When you review a Syncthing/Dropbox/Seafile conflict copy,
+  Tine compares both sides against that remembered version: blocks only one
+  side changed arrive with the right choice pre-selected and labeled
+  *suggested*, and only blocks both sides changed still need a real decision.
+  Nothing is merged without your confirm, exactly as before; with no
+  remembered version the diff simply looks the way it always did.
+  (ADR 0056; part of Concord P3, GH #337.)
+
+- **A path-free block-diff command pair (`text_block_diff` /
+  `text_block_diff3`)** diffs two or three raw page texts with the same
+  block-tree engine the conflict merge uses — the seam the upcoming in-page
+  conflict review builds on.
+
+- **Tine now refreshes when you return to its window.** Some setups deliver no filesystem event at all — a network mount, a sync client writing through a path the kernel doesn't report, an app the OS suspended while you were away — and a page could sit stale indefinitely with nothing apparently wrong. Coming back to the Tine window now replays any reload that was deferred while you were editing and asks the watcher for one full pass over the graph. Anything that changed is handled exactly as a live change: a page you are editing is still deferred, never yanked. Throttled, so alt-tabbing costs nothing. (Concord P5, part of GH #337.)
+
+- **A new "Always ask before applying an external change" setting** (Settings → Backups & recovery, off by default). By default a page you have open with nothing unsaved updates silently when another editor or a sync tool changes its file, the same as a code editor. Turn this on and Tine holds the change instead: the page keeps showing what you were reading and offers *Reload from disk* / *Keep mine* in a small bar above the content — never a dialog, never blocking. Everything that already asked keeps asking; only the silent case changes. (Concord P5, part of GH #337.)
+
+- **The file watcher now keeps always-on latency receipts for external-change batches.** Each batch that surfaces a change (or an error scheduling a retry) records how long it spent between the OS callback, the post-debounce reconcile, and the `graph-changed` events reaching the UI, logs one structured line, and lands in a small in-memory ring the new `watcher_latency_recent` debug command returns — so slow-external-change reports (GH #337's 5–20 s) can be diagnosed from the reporter's machine instead of guessed at. Works in both inotify and poll watch modes.
+
+- **Managed-storage activation no longer rejects a complete graph because Direct Files or the startup path catalog retained a different one-page inventory.** Readiness is now proved inside the candidate managed generation by opening its transactionally complete, exact-frontier-stamped SQLite inventory and a real page; the candidate remains unpublished until that proof succeeds.
+
+- **Files with unresolved git/Fossil merge-conflict markers are now quarantined instead of mangled.** A page whose file contains column-0 conflict markers (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`, and Fossil's verbose variants) stays fully readable, but every save to it is refused with a message naming the markers — previously an edit re-indented or dropped the markers on re-save, which broke git's own conflict detection and could silently lose one side of the merge. Markers quoted inside code fences don't trigger the quarantine. Affected files are listed in Settings → Backups & recovery, and the page shows a banner explaining how to resolve.
+
+### Changed
+
+- **Conflicts are now resolved in one place: the page.** The block-by-block merge dialog inside Settings is gone. Settings → Backups & recovery keeps the *inventory* — which conflict copies and marker-bearing files exist, **Review in page…** to go to one, **Discard copy**, and the case of a copy whose original page no longer exists — while the review itself happens next to the blocks. The two surfaces had drifted into opening with different pre-selections for the same conflict, which is exactly what Concord exists to prevent; the in-page resolver gained the dialog's one exclusive capability (choosing what happens to the page's own properties when the two sides disagree) so nothing was lost. The VCS-merge-markers panel, which previously offered no action at all, now also links to the page. (Concord P5, part of GH #337.)
+
+- **Opening a graph no longer renames journal files.** A journal file whose name is not its date (`Jun 18th, 2026.md` rather than `2026_06_18.md`) can't be matched to its day, so that day looks empty — and Tine used to fix this silently at every graph open, and after any settings change. It is a repair you didn't ask for, applied to files you own: in a graph kept in git it appeared as a batch of renames the moment Tine started. The files are now listed under Settings → Backups & recovery → **Journal files named by title** with one button to rename them, which takes a snapshot first and never overwrites a name that is already taken. (Concord P5, part of GH #337.)
+
+- **Experimental managed-storage activation now reuses the parser facts it already produced during source capture.** Search text, tasks, properties, tags, headings, and collapse state travel through one bounded activation-only handoff and are accepted only when every terminal page and block still matches the authenticated engine state exactly; oversized or mismatched inputs fall back to the independent parser path. The 13,000-page fixture reused all 13,000 pages with no misses and cut SQLite lowering from about 8.1 s to 6.7 s, although total activation remained within run-to-run noise at 69.1 s. The same pass now reuses one authenticated catalog window while resolving block identities, avoiding a graph-sized catalog proof per UUID on pages that contain several `id::` values.
+
+- **Experimental managed-storage activation no longer explodes a dense reference catalog into hundreds of thousands of tiny immutable files.** `tine-storage` 0.6.2 constructs oversized Patricia ranges in bounded canonical chunks and admits the representative 130,000-block catalog in seven packs with no capacity fallback. Tine also sizes that bounded construction from real available memory on Windows. On the 13,000-page release fixture this cuts activation from 86.1 s to 67.5 s and makes SQLite, rather than immutable-catalog fallback, the clear remaining bottleneck.
+
+- **Experimental managed-storage activation now lowers each terminal page once for both SQLite and its exact-byte shadow proof.** SQLite consumes bounded terminal-page chunks while an activation-only sink derives compact, unpublished shadow evidence from the same parser-owned pages; only after SQLite has completed is that evidence bound into the atomic shadow proof. Cold recovery retains the independent builder, and differential plus crash-cut tests require both routes to publish identical durable bytes.
+
+- **Experimental managed-storage activation no longer writes and rereads a graph-sized operation spool for ordinary graphs.** Canonical semantic operations stay in a measured, byte-bounded memory builder through partitioning and detached authoring; oversized imports retain the exact spill path, and both routes are differentially required to publish the same aggregate and commit. SQLite's uninterrupted-build shortcut now retains only the authenticated accepted events it actually consumes.
+
+- **Direct Files task queries now use the same disposable SQLite fact layer as managed storage without making SQLite part of saving.** The already-parsed page cache feeds one background, coalescing worker; clean reopens reuse unchanged page facts, and task candidates are admitted only at the exact current cache generation before Tine's existing query parser evaluates them. A sidecar lease prevents concurrent graph instances from replacing one another's ready facts. Missing, stale, corrupt, incompatible, leased, or unwritable SQLite state falls back to the established Direct Files evaluator. The switched task family no longer uses its old whole-graph candidate scan as the ordinary route, while retaining the bounded final-result memo that keeps reactive re-renders cheap.
+
+- **Block search, the `((` picker, and referenced-page autocomplete now share the same disposable SQLite fact layer in Direct Files and managed storage.** SQLite supplies only generation-coherent candidates and original-case reference spellings; Tine's existing parser still owns exact fuzzy matching, ordering, property-reference rules, and presentation. The ordinary ready path no longer scans every parsed block or maintains a second referenced-name semantic cache. Missing, stale, leased, or incompatible SQLite state still falls back to the already-parsed graph without blocking open, edit, save, or external-file observation.
+
+- **Aliases, backlinks, unlinked references, and block-reference lookup/counting now use that same disposable SQLite projection in Direct Files.** SQLite narrows only an exact current cache generation and Tine still verifies every semantic result with the parser; unsafe tokenless names and non-UUID `id::` values use the parser fallback. The former in-memory alias, reference-candidate, block-identity, and block-reference-count indices and their foreground maintenance have been removed rather than retained beside SQLite.
+
+- **Managed-storage path names now come from `tine-storage`'s certified format manifest.** Tine core retains only a definition-free compatibility import, so releases pin one complete, machine-readable layout vocabulary without changing any persisted path.
+
+- **Ordinary saves under experimental managed storage do substantially less repeated work.** The hot path now reuses parser-owned commit evidence, the exact accepted editor post-state, and the preceding projection when their identities still match; ordinary projection edits are patched instead of rebuilding the page. The proofs fail closed to the complete path whenever any prerequisite is stale or absent.
+
+- **Managed-storage saves now return from one bounded foreground commit instead of rebuilding or publishing graph-wide derived state.** The exact Markdown/Org update and one private journal append establish the accepted edit; the hot overlay serves it immediately while immutable archive, SQLite, provider, checkpoint, and journal-compaction work drain afterwards. Consecutive saves use the SQLite baseline plus the exact journal suffix to prove their predecessor without reconstructing the whole page. The release gate measures a 511-block page at under 50 ms p95, and fails if the old full-page predecessor reconstruction returns. Crash replay marks pending task-query facts incomplete and safely uses the complete evaluator until rebuilt; an append whose outcome is genuinely unknowable stops further edits until restart replay, rather than risking a duplicate operation.
+
+### Fixed
+
+- **Managed storage now activates and saves on Android shared storage without
+  requiring hard-link or flagged-rename support.** Private segment, frontier,
+  and selector publication use the app-private sole-writer atomic-rename
+  fallback. The reconstructible Markdown/Org projection also falls back from
+  Android shared storage's `EACCES` answer for flagged `renameat2` to the
+  existing reserve-and-ordinary-rename protocol; a real permission denial still
+  fails that ordinary rename, and shared/provider authority remains strict. The
+  real app-UID activation, edit, crash-reopen, share-setup, shutdown, and reopen
+  journey therefore no longer stalls after a durable edit with `Permission
+  denied (os error 13)`.
+
+- **A pending managed-storage edit no longer makes unrelated pages disappear
+  until the derived projection drains.** Exact-path loads now combine the
+  exact-frontier SQLite baseline with only that path's journal-durable overlay,
+  instead of globally abandoning the baseline whenever any page has pending
+  derived work. Untouched pages therefore remain readable after a crash reopen
+  while another page's Markdown/SQLite publication catches up.
+
+- **Direct Files no longer repeats whole-graph work on ordinary foreground
+  paths.** Opening Journals before background warm now inventories filenames
+  without reading and parsing every ordinary page. Creating one page uses the
+  warm semantic-identity generation plus target-local no-replace publication,
+  instead of hashing the graph twice, and advances the cached page inventory
+  incrementally. Raw filesystem callbacks now publish an O(1) creation barrier;
+  the debounced watcher owns the single final read/parse, so event bursts do not
+  parse intermediate versions before coalescing.
+
+- **Applying a sync conflict no longer leaves the pre-merge editor behind.**
+  Concord now drains the page's pending save, blocks mutations for the guarded
+  merge, installs the exact page returned by the native commit, and only then
+  releases editing. This prevents the old open copy from immediately creating a
+  second conflict or appearing to undo the chosen merge. Newly delivered copies
+  also raise one actionable notice which retires with the resolved conflict;
+  resolving today's journal updates it in place without dropping it from the
+  live Journals feed. Deferred winner-file events are replayed as soon as the
+  guarded mutation releases, and an older inventory scan cannot resurrect the
+  resolved conflict when ordinary editing resumes. Same-content resolutions now
+  keep the returned disk revision, an in-flight Journals refresh cannot publish
+  a partial feed without today, and Apply refuses to discard edits made after a
+  live-conflict comparison was shown. After restart, a recovered unsaved draft
+  remains the reviewed side instead of being overwritten by the disk-loaded
+  editor. Android now defaults to its native
+  inotify-backed watcher; polling remains available and uses the same
+  reconciliation semantics. (GH #337.)
+
+- **Returning to Tine can no longer open an editor over a stale page.** A
+  focus-driven disk scan now has an explicit native completion receipt, waits
+  for frontend page application, and finally verifies only the visible/edited
+  working set against the current backend cache before admitting input. Clean
+  external changes appear first; dirty pages become Concord conflicts instead
+  of being replaced. The check stays bounded by active pages, not graph size.
+
+- Opening a long-lived managed graph got slower the more edit history it had,
+  independent of graph size: the startup replay re-validated every remaining
+  batch's projection objects once per admission round. Each batch's
+  dependencies are now computed exactly once, which roughly halves a
+  multi-hundred-save reopen; the remaining history-proportional cost is
+  tracked for a deeper fix.
+
+- The one-time app-data migration at startup no longer trusts a momentarily
+  unreadable `backups/` folder: any read error now means "assume there is user
+  data and leave everything alone", the existing folder is set aside instead of
+  deleted until the migrated data is actually in place, and an interrupted
+  fallback copy can no longer leave a half-populated app-data folder behind.
+
+- **A formatting-only external rewrite no longer wedges every later managed-storage save of that page.** A Windows peer or external editor may legitimately change CRLF/LF line endings or trailing-newline spelling without changing the outline. Tine used to recognize that reconciliation was a semantic no-op but kept comparing later saves with the old activation bytes, so every save was refused forever. Local-save capture now proves the endpoint's exact live bytes against accepted semantics and uses those bytes as the guarded predecessor. Formatting remains local to that device and out of shared history; a real semantic change still reconciles normally, and a second external write is still protected by the exact-base guard. (GH #362.)
+
+- **On Android, the Back gesture works again once you have navigated.** Tauri's own back handler was registering itself after Tine's — Android gives the gesture to whichever handler registered last — and it answered Back by stepping the WebView's history. With the mobile router pushing one history entry per page you open, that meant every Back after your first navigation quietly moved the page *behind* whatever was on screen: an open Settings modal never closed, and the drawer and the safe-close path never saw the gesture either. Tine now claims the gesture from its own Android plugin, which starts strictly later than Tauri's, so Back peels an in-progress shortcut recording, then a settings search, then the modal, then a drawer, exactly as it always intended to.
+
+- **Saving PDF highlights no longer reformats the annotation page.** The `hls__…` page was written with default formatting rather than its own, so every highlight save re-indented the whole file — including notes you had typed under an annotation — and re-terminated it, even when the highlight set was unchanged. It now reproduces the file's own indentation, line endings and blank lines, and an unchanged highlight set writes nothing at all. (Concord P5 write-shyness, part of GH #337.)
+
+- **A repository inside your graph folder no longer wakes the file watcher.** Events under `.git`, `.hg`, `.svn`, `.jj`, `.bzr`, Syncthing's `.stfolder`/`.stversions`, and `node_modules` are now discarded before they cost anything — a `git gc` or a rebase used to push thousands of events through the watcher's per-event work before each was discarded further down. Nothing that can contain notes is affected. (Concord P5, part of GH #337.)
+
+- **Managed storage on Android turned itself on and then flooded the screen with the same red error, forever.** The graph had one page name written to disk twice — an ordinary thing to end up with: a backup copy, a graph synced between a Mac and a Linux box (which spell accented letters differently), or a title containing a `#` that one editor writes literally and Tine writes escaped. Turning managed storage on already handles that correctly: it keeps the first file as the page and leaves the other one exactly where it is. The trouble came immediately afterwards, because the part of Tine that watches for outside edits did not follow the same rule. It met the second file, decided it was a brand-new page, found its name already taken, and refused — not just that file, but the *entire* reconciliation, so no outside edit to any page in the graph could be imported ever again. And because that refusal repeated on every retry, and each retry passed through a step the app read as "recovered", the same message was raised as a new toast every few seconds with no way to dismiss it. Both halves are fixed. Reconciliation now makes exactly the same choice activation does: the established page keeps the name, the duplicate file is left untouched and simply carries no page, and everything else in the graph reconciles normally. Nothing is ever moved, rewritten or deleted to achieve that, and a page that already exists is never taken away from you. Separately, a condition like this now says its piece once and leaves the live detail to Storage & sync, instead of repeating itself until you close the app.
+
+- **Managed storage on Android saved a page for the first time, and then could not set up sharing.** With the save fixed, the next step of the journey failed instead: turning the graph into a shared one refused immediately with a bare `Invalid argument`. The cause was the same missing rename: Tine's sharing area lives inside the graph, on Android's shared storage, and every file Tine publishes there ends by moving its own leftover temporary entry aside with the rename flag that storage does not implement — so not a single shared file could be written. Those leftovers are throwaway diagnostic copies, so they now move through the same claim-the-name-first publication the graph files use, and sharing completes. One of the sites needed a different answer: it swaps two names at once, and there is no non-atomic stand-in for a swap. Rather than fake it with a three-step shuffle, Tine uses the fact that the destination is already occupied by a zero-length marker it created itself, and does a single ordinary rename onto that marker — atomic everywhere, with no moment where the file being retired exists under neither name. What that gives up is stated plainly and handled: the old name is left free afterwards, so anything that reappears there is preserved as evidence and the operation refuses rather than guessing. Real disk errors still fail, as before, and every refusal in this area now names the exact operation and both filenames instead of a bare error number.
+
+- **Managed storage on Android still could not save a page — the rename that publishes the file is unsupported there.** With the directory-flush refusal handled, the very next operation failed instead: to publish a page Tine moves the live file aside under a hidden name and then moves the new bytes into place, using a rename that the operating system guarantees will never overwrite an existing file. Android's shared storage does not implement that rename flag at all, so every save stalled again — the edit was durable inside Tine but never reached the graph. Tine now recognises exactly the three "this filesystem does not implement that" answers and publishes another way: it first claims the destination name with an exclusive create, which fails if anything is already there, and only then moves the file onto it. The guarantee that matters — never silently destroy a file that already exists at the destination — is unchanged, and a failed publication no longer leaves an empty file behind at a page name. Anything else the filesystem reports (a disk error, a full disk) still fails the write, and files Tine is the sole authority for keep the atomic rename on every platform. The same limitation exists on FAT/exFAT removable media and some network mounts, so the fix is not Android-only.
+
+- **Managed storage on Android could still never save a page — this time the graph write itself.** With the previous refusal fixed, every save on Android reached the point where the Markdown/Org file is written into the graph and then failed there forever: 64 retries per save, all with the same `Invalid argument` from the operating system, so the edit was durable inside Tine but never reached the user's file. Android's shared storage does not always let an app force a directory's contents to disk, which is a barrier Tine uses to make a crash safe. Tine now distinguishes the two kinds of thing it writes: state Tine is the sole authority for keeps that barrier on every platform, while the Markdown/Org file — which Tine can always rebuild from its own already-durable record — accepts that Android cannot provide it, exactly as the app-private setup path already did. A barrier the platform refuses is not a crash-safety problem there; retrying it forever was. Two related improvements: a save that genuinely cannot be finished now gives up after it sees the same failure twice instead of burning the whole retry budget, and every filesystem operation on the graph-write path now reports *which* operation and *which* page failed instead of a bare error number.
+
+- **Managed storage on Android could never save a page.** Activation worked, the page loaded, and then every single save was refused. The cause was one wrong branch: when a save's manifest commit succeeded but its disposable derived state (the SQLite cache and the Markdown projection) had to be retried, the retry was handed to the *retired* storage engine's publication machinery, which the current engine never populates — so it refused instead of retrying. Android takes that path on every save; desktop Linux never did, which is why it stayed invisible. The current engine now finishes its own retained work and reports the save, or defers it for a later retry, and never refuses. Should a retry not settle, the save now also reports *why* the retry was needed, so the underlying platform cause stays visible instead of hiding behind a successful-looking save.
+
+- **Quitting managed storage after an external rescan is no longer slow on a real-sized graph.** Reading one page from the immutable managed baseline used to re-verify the *entire* sealed pack it lives in, so any pass over the graph — including the clean shutdown drain after a rescan — cost time proportional to pages × pack size. A 1,000-page graph spent about 18 seconds draining, and on a slower machine the drain hit its 30-second ceiling and gave up. Each sealed pack is now verified once per open instead of once per page: the same drain finishes in about 2 seconds. Every page's own bytes are still checked against their sealed digest on every single read, so damaged data is still refused.
+
+- **A managed page save that fails for an internal reason now says which internal reason.** Refusals raised by the editor layer against a request the application layer built itself used to arrive as an unattributed "sync actor refused application page intent", so a failure reachable only on a device we cannot attach a debugger to (Android, or a user's machine) carried no evidence at all. Every such refusal on the managed load/save path now names its stage, and an error crossing between the editor and application surfaces keeps that stage instead of dropping it. No refusal decision changed; only what the refusal is able to tell you.
+
+- **Managed-storage recovery and sharing no longer stall or refuse clean shutdown while reconciling an unchanged large graph.** The handoff scan now compares exact accepted bytes without rebuilding semantic mutation authority for every unchanged page; only paths whose bytes actually differ enter the full parser-owned reconciliation proof. The scan still yields between bounded slices, remains visibly pending, and cannot declare a safe shutdown until its exact epoch settles, while a clean drain is no longer capped by a retry count smaller than an ordinary graph.
+
+- **Enabling or joining managed storage no longer takes the graph away while setup is still running.** Tine keeps the exact Direct Files generation serving while it builds and proves the private managed candidate, rejects the handoff if the source changed, and then publishes the ready candidate exactly once. A failure or cancellation therefore leaves Direct Files usable; a crash restarts in either Direct Files or the already-proven managed generation, never a half-switched mode. Settings trusts the native readiness receipt instead of racing it with a second page probe.
+
+- **An external change to a page you are editing is no longer silently dropped.** The watcher correctly declines to yank the caret mid-edit, but the declined reload used to be forgotten: the page stayed stale until some unrelated event touched it again. Tine now records the skipped reload and replays it the moment the blocking state clears — editing ends, a block move settles, or a title rename/IME composition finishes — re-checking at that moment whether the page has meanwhile gained unsaved edits, in which case the normal conflict protocol takes over instead of a reload. (Part of GH #337.)
+
+- **Conflict-copy detection now matches the real formats sync tools generate.** A page whose name merely contains `.sync-conflict-` (say `Foo.sync-conflict-notes`) is no longer silently hidden from the page list as a false-positive Syncthing conflict copy; Syncthing detection now requires the generated `.sync-conflict-YYYYMMDD-HHMMSS-DEVICEID` shape. Seafile conflict copies (`name (SFConflict … ).md`) are now recognized and surfaced in Settings → Backups & recovery instead of appearing as duplicate pages that could hijack page identity via `title::`.
+
+- **The first cross-page subtree move after managed-storage activation no longer stalls forever in projection recovery.** Clean managed storage now reconstructs each accepted CRDT tail on its immutable activation baseline, rather than trying to import a baseline-dependent update into an empty document. The durable move therefore reaches SQLite and Markdown exactly once and remains recoverable after an immediate stop.
+
+- **An external edit no longer becomes unrecoverable merely because an unrelated page was created after the last managed save.** Managed storage retains the latest accepted page projection when its local journal collapses, and validates that page's exact dependencies and current semantic rendering without treating an unrelated catalog advance as a change to the page itself.
+
+- **Managed storage no longer reports a successful authority switch before the graph is usable.** Activation proves the candidate's complete page inventory and deterministic representative pages before its one native publication, then the frontend retires caches leased to the old generation as a reaction to that terminal receipt. The startup recovery button invokes the emergency Direct Files selector immediately—without a native confirmation dialog that can be delayed behind a stuck managed open—and stale managed workers remain unable to publish after that choice.
+
+- **A failed or killed managed-storage recovery can no longer trap Tine's whole window, including unrelated Direct Files graphs.** One native supervisor now owns each graph transition, stale managed workers cannot publish after a newer graph selection, and the recovery screen's emergency return selects and opens the current Markdown tree without waiting for managed recovery. The frontend no longer invents a terminal `native.unavailable` failure from elapsed time. A healthy Settings return remains stricter: it drains managed storage and confirms its projection, while a failed drain offers the explicit emergency escape instead of silently force-stopping authority.
+
+- **Experimental managed storage now preserves baseline `id::` block identity through editing, crash replay, and disposable-SQLite reconstruction.** Exact-frontier SQLite supplies bounded baseline UUID candidates while current CRDT documents remain semantic authority; committed-tail claims are combined with that baseline, and a missing or corrupt projection uses only a rebuild-scoped snapshot rather than restoring a resident Patricia or handwritten identity index. Ambiguous baseline UUID claims remain unresolved.
+
+- Android managed-storage activation now uses the ordinary app-private
+  `mkdirat`/`openat`/`renameat` boundary throughout reconstructible projection
+  receipt initialization, rather than re-entering capability preflights after
+  opening the receipt root. This fixes physical devices that allow normal
+  private storage access but reject those Linux-oriented preflights with
+  `Permission denied (os error 13)`.
+
+- **Android managed-storage setup no longer requires hostile-replacement directory primitives inside Tine's private receipt store.** The app-private, single-writer tree is created and opened through Android's ordinary verified file API, including its root, while shared or externally writable namespaces retain strict no-follow capability opens. If an older or interrupted candidate left a receipt tree before managed authority was promoted, retry preserves one diagnostic copy and rebuilds that disposable state from the still-authoritative Markdown graph. A setup failure also keeps its exact inner operation when storage rediscovery runs, so a device-specific error can no longer be replaced by a generic retry message.
+
+- **Enabling experimental managed storage no longer requires Android app-private storage to support Linux hostile-path or filesystem-wide primitives.** Tine uses ordinary app-private opens and validates the resulting file and directory handles, while permission or capability refusals from filesystem-wide flushes fall back to flushing each exact bootstrap tree. The same audit removed mandatory directory-fsync assumptions from graph-local shared-provider setup and publication while preserving file flushes, type and size checks, and strict durability for private authority. Ordinary graph and app-private access is sufficient; stronger platform-specific operations can no longer turn it into a misleading `Permission denied` setup failure.
+
+- **Experimental managed-storage startup failures now say what safety condition actually stopped the open.** Durable refusals carry a stable contract scenario separately from their bounded reason/stage code all the way through the native API and Settings diagnostics; temporary I/O failures remain retryable instead of being mislabeled as corrupt data. The source guard requires every public refusal class and every durable blocked reason to stay mapped to the documented vocabulary.
+
+- **Managed-storage activation failures now retain the exact activation and source-capture stage in logs and the visible diagnostic.** A platform filesystem error can no longer collapse to an unactionable raw `Permission denied`; Android device reports identify the operation that needs a compatibility repair.
+
+- **A corrupt experimental managed-storage reconciliation cache no longer makes the graph permanently unopenable.** Tine preserves the exact disposable SQLite baseline files as diagnostics, rebuilds a fresh baseline, resumes safely if either the preservation or replacement was interrupted by a crash, and leaves authoritative oplog history and graph bytes unchanged. Unsupported filesystem entries are still refused without following them.
+
+- **A paste can no longer delete text you typed while it was still in flight.** Pasting into an empty block on a page under experimental managed storage decided *before* its background work whether that block was empty enough to be replaced. If you kept typing while the paste ran, that decision was already stale and the block — with everything you had just typed in it — was removed. The decision is now made from the live block at the moment of insertion, on both storage paths. The same paste also re-checks the page's size limit against the page it is actually about to change, so an insertion the page has since outgrown is refused instead of stranded (GH #322).
+
+- **Experimental managed storage now stops accepting large edits as soon as its writer starts failing.** If the background writer failed repeatedly, Tine kept reporting that the graph was writable — the failure notice is only sent once, and nothing else was sent afterwards — so pastes, drops and captures were accepted onto pages nothing could save, and were lost on reload. A writer failure now withdraws that permission immediately, and only a fresh confirmation from storage itself restores it (GH #324).
+
+- **Pasting a large table into a Sheet under experimental managed storage no longer changes the page before the size is checked.** Sheet paste had its own clipboard path that skipped the size check entirely, so a big CSV or TSV filled in the cells first and the refusal only arrived at save time, leaving an edit that could not be written. Sheet paste now goes through the same prepare-then-apply route as the other Sheet commands: the cells are built off to the side, storage validates the whole resulting page, and the Sheet you are looking at changes only if that succeeds (GH #320).
+
+- **Dropping files while you are switching a graph to experimental managed storage no longer inserts them behind the switch.** A drop decided which storage path to use the instant it started, then read the files — and enabling managed storage takes long enough (it asks you to confirm) that the drop could finish afterwards and insert under the old decision, skipping every size check the new storage requires. Both the drop and the clipboard paste now re-prove the storage route, alongside the graph and the target block, immediately before they change anything (GH #325).
+
+- **Large pastes and captures under experimental managed storage are now measured against the whole page, not just the new text.** The size check that is supposed to refuse an insertion *before* the page changes only weighed the incoming text, so adding a little to an almost-full page was accepted and then could not be saved. It also let through text that landed exactly on the limit, which the writer counts as over. Both are fixed, and the estimate is deliberately conservative in the safe direction (GH #323).
+
+- **Sheet structure commands now stay atomic when experimental managed storage must validate them first.** Row and column changes, rectangular clear/cut/paste/fill/move, edge growth, and field renaming are prepared as one detached page candidate. Direct Files still applies them synchronously; managed storage now refuses stale, oversized, unavailable, or overlapping commands before the live page, undo history, selection, or dirty state changes.
+
+- **Experimental managed-storage cross-page move recovery now resumes the exact durable move after an immediate process loss.** The actor reconstructs only an episode-authenticated immutable local manifest, completes accepted SQLite/projection/provider work exactly once, and transfers a real external-edit conflict to the existing exact feed without overwriting the external bytes or reporting deleted affected pages as successful.
+
+- **A managed-storage writer that has entered a terminal failure can no longer report a clean shutdown.** Tine keeps the graph protected and reports the unsaved state instead of letting close imply that durability was proven.
+
+- **Parseable Markdown and Org that cannot be reproduced byte-for-byte can now be opened safely under experimental managed storage.** Tine preserves the original bytes and exposes the page read-only rather than rejecting activation or rewriting syntax it does not own.
+
+- **Repeated moves under experimental managed storage keep the same live-resolution semantics as the editor.** The durable transaction follows the accepted current position instead of replaying an obsolete positional assumption.
+
+- **Direct Files now rechecks page-creation authority at the final publication boundary.** A page or portable-equivalent path created externally after the initial check is detected before Tine publishes, closing the remaining race documented with GH #321 without overwriting external bytes.
+
+- **Multiline paste inside `$$ … $$` display math stays in the same block**, matching Enter inside the same construct instead of splitting the expression into outline blocks (GH #278).
+
+- **Task-marker clicks, full-screen images, and native text selection now target only what they should.** Clicking a task label uses Logseq's open-state toggle without removing `DONE`; generic `custom.css` image rules no longer constrain the lightbox; and selecting page text excludes Add block and reference-section interface labels (GH #259, GH #319, GH #328).
+
+- **Large graphs finish their useful startup work sooner.** Optional home-page and related scans no longer delay opening the graph and are guarded against a late result replacing newer state (GH #266).
+
+- **Experimental managed storage admits very large individual pages without false memory failures or thousands of tiny recovery resumptions.** A 20,000-block page is covered by the bounded import and recovery path (GH #311).
+
+- **Moving blocks across structural boundaries now matches Logseq on Android and desktop.** Up and Down cross child-list edges correctly instead of getting stuck or landing at the wrong hierarchy level (GH #312).
+
+- **Renaming a page onto an existing page now offers a complete Logseq-compatible merge.** Content, links, aliases, open panes, and storage transactions move together instead of leaving the collision unresolved (GH #327).
+
+- **Property autocomplete can be completed entirely from the keyboard.** Suggestions open, filter, select, and accept consistently without requiring a pointer click (GH #306).
+
+- **Dragging into a deeply nested target zone now makes the block a child of that target**, matching Logseq rather than flattening it beside the target (GH #326).
+
+- **Middle-click opens a background tab in the pane that was already active.** Clicking a link rendered in another pane no longer steals pane ownership before opening the tab (GH #87).
+
+- **Windows update checks now use the native trust store and ask separately before installing.** A successful check no longer turns immediately into an install, and certificate environments accepted by Windows no longer fail solely because the bundled TLS roots differ (GH #241).
+
+- **Editable emoji use native color faces on healthy platforms again**, while the WebKitGTK COLRv1 crash-prone path remains avoided (GH #293).
+
+- **Bundled Inter exposes its OpenType stylistic sets and character variants to `custom.css` again** (GH #298).
+
+- **Concurrent block embeds from the same source page all hydrate.** One embed finishing no longer causes its sibling to miss the source group and remain empty (GH #315).
+
+- **A fresh second device can join an experimental managed-sync graph, including from Android shared storage, or leave it for Direct Files before it has a local binding.** Provider bookkeeping files no longer obscure the canonical shared descriptor; Android no longer applies a desktop Unix owner-ID rule that its shared-storage layer does not promise; and local filesystem failures are no longer mislabeled as sync data that is still arriving. The two-device release journey proves setup, join, edits in both directions, convergence, restart, and the escape path, while the signed Android candidate compiles the platform-specific storage path.
+
+## [0.6.93] - 2026-08-12
+
+### Added
+
+- **The built-in Guide is now a real manual rather than a feature tour.** Thirteen new pages cover the journeys people actually arrive with — bringing an existing Logseq graph in, where things are, capturing and planning a day, finding and revisiting, researching a document, keeping context visible, structuring repeated information, extending Tine, and what platforms exist — alongside precise reference pages for journals/tasks/scheduling, pages/links/references/search, files/external edits/backups, troubleshooting and recovery, and platforms and mobile. The index is grouped into Start, Workflows, Feature reference and Feature showcase, and every page is a read-only page in your own graph that you can copy into it. Every claim was reread against the shipped UI at the end, which is where several long-standing wrong labels and one round-trip overclaim were found and corrected.
+- **Sheet table columns can now be resized and reset from their header edges.** Widths persist on the table's real block or tag/schema page by field identity, so they survive reloads and column reordering without moving to another field; wide columns scroll horizontally instead of crushing their text (GH #316).
+- **Journal Settings now includes the `E, dd.MM.yyyy`, `EEE, dd.MM.yyyy`, and `EEEE, dd.MM.yyyy` title formats** already supported by Tine's date engine (GH #317).
+- **Opening a graph now tells you what Tine is doing, and offers a way out when it cannot finish.** A progress card names the current phase and elapsed time once startup takes longer than a moment. If the open genuinely cannot complete, it becomes a recovery dialog with Retry lookup, Open another graph, Copy details, and — for a graph enrolled in experimental managed storage — Return this graph to Direct Files. It states plainly that no managed-storage data has been discarded. Previously a startup that stalled showed nothing and offered nothing.
+
+### Changed
+
+- **The retired v1 managed-storage prototype has been removed.** v1 was a pre-release format that never shipped enabled; its recovery paths, activation fence, lifecycle API and model path were already inert. Leftover v1 bytes in a graph directory are now simply ignored and can no longer cause a Direct Files open to be refused. Direct files, the default, is unaffected.
+
+### Fixed
+
+- **Direct Files can create a page or journal immediately after opening a graph.** A cold parsed-page cache was treated as evidence that the requested name already existed, so ordinary creation could be refused until background warming happened to finish. Creation now joins one bounded, generation-coherent identity build and proceeds only from its published evidence; malformed owners, generation drift, aliases, links, symlinks, and an external creator of the same file still fail closed without overwriting bytes (GH #318).
+- **Experimental managed storage now refuses oversized bulk insertions before changing the page.** Multiline and structured paste, file drop, template expansion and quick capture are planned against the exact active runtime's page limits before anything is inserted; a stale, unavailable, or mismatched storage binding fails closed instead of allowing a partial edit that the native writer cannot save. Pasting a large CSV or structural selection directly into a Sheet's cells is not admitted this way yet (GH #320).
+- **Heading commands and bullet dragging now act on the active block selection even when the pointer is on another block.** Multi-block heading changes and drags are atomic, undo together, preserve subtree order, and keep cross-page moves destination-first on disk (GH #240).
+- **Indenting, outdenting and moving a multi-block selection no longer floods the undo history or the store.** Indent and outdent now apply as one shared-store command instead of one per block, and a run of Up/Down moves collapses into a single undo unit that closes on an idle pause, a three-second maximum, a change of selection, any other edit, or a reload — so one Undo reverses the move you just made rather than one block of it. A feed-spanning selection that includes a read-only day is still refused without dirtying either page.
+- **Pasting a large selection that carries preserved block IDs is no longer quadratic.** Each pasted candidate used to scan the whole loaded document for an ID collision; 200+ candidates now share one pass, and the cost of the incoming check stops growing with the size of the page you paste into.
+- **A managed-storage graph whose cold start failed can no longer trap you in it.** Malformed retained scratch left over from an interrupted run refused the open permanently instead of being recovered; the exact cold-start slot is now recovered, the recovered runtime is proven to accept saves again, and an escape back to Direct Files stays available and actionable throughout. Managed storage remains experimental and off by default.
+- **Creating a page in Direct Files no longer stalls and then refuses the save on a large graph** (part of GH #249, GH #266 and GH #267). The creation path ran the managed-storage shadow-import capture twice, retaining and parsing every graph file before it could answer whether one filename was safe. On affected graphs that ended in `precheck.limit`, stranded the new edit, and made graph transitions or close wait behind repeated failed flushes. Creation now checks one non-retaining streaming census—without applying the retained-shadow cumulative-byte ceiling—against the already parsed, generation-current Direct Files index and passes that single proof to the no-replace publisher. Creation still refuses an existing target, portable case/NFC aliases of that target (including ancestor directories), semantic owners, hard links, symlinks, and an external creator of the same file without overwriting their bytes; existing exact-target saves retain their prior path-local traversal behavior. A conflicting *different* path created by another process inside the final publication window is still not detected, which is long-standing behaviour rather than new here (GH #321).
+
+## [0.6.92] - 2026-08-11
+
+### Added
+
+- **Ctrl+O opens the page under the caret**, and Ctrl+Shift+O opens it in the sidebar — matching Logseq, so you can navigate `[[links]]` and `#tags` without the mouse (GH #274).
+- **A link to a page that doesn't exist yet is now dimmed**, with a dotted underline, so you can see before clicking that it will open a blank page. The link still works and still creates the page. `#tags` are deliberately left alone, since a tag with no page file is perfectly normal. Logseq does not make this distinction; it was added after a graph whose links all pointed at names no page had, with nothing on screen to say so.
+
+### Changed
+
+- **Documenting a change that shipped undocumented in 0.6.90:** a page's name comes from its `title::` property when it has one, and only otherwise from its filename — which is what Logseq does (`title::` → filename → first block). Before 0.6.90 Tine used the filename and ignored `title::`. If a graph was built against the old behaviour, files carrying a `title::` that differs from their filename are now reachable under the *title*, and `[[filename]]` links to them will open blank pages. The new dimming above makes those visible; either drop the `title::` or link to its value.
+- **Experimental Tine-managed storage moved a great deal this cycle** — journal
+  format and rollover, enrollment-integrity migration, task and block queries
+  served from the sparse index, crash-recovery and save/query latency ceilings.
+  None of it changes anything for Direct files, which remains the default and
+  what this release is really about. Managed storage is still marked testing
+  only, still off unless you turn it on, and GH #292 (setup failing on some
+  graphs) is still open.
+- **Managed storage imports roughly twice as fast, and read about eight times
+  fewer bytes.** Bringing a graph into managed storage was re-reading, re-hashing
+  and re-decoding the *entire* batch of pending objects in order to fetch a
+  single one — once per document, and again once per coordinator tick. On a real
+  1,000-page graph that meant gigabytes of redundant work: importing 300 pages
+  read 3.59 GB to move about 1.3 MB of notes. Objects are now fetched
+  individually by the content digest the caller already holds, and the
+  per-tick check reads only the batch manifest, which already records everything
+  it was asking for. Measured on a real graph: 100/200/300/400/600 pages now take
+  5.6/14.5/26.0/42.2/84.9 s, down from 10.8/29.1/50.2/80.0/157.0 s. No safety
+  guarantee changes: objects remain content-addressed and are still verified
+  individually when read.
+
+### Fixed
+
+- **Background page loads and conflict actions can no longer cross editor instances.** Every editable page now receives a core-issued identity when it is installed, and replacements use an exact two-phase handoff. A late sidebar, query, journal-feed, PDF-notes, watcher, save, or “Use disk version” response is refused if the graph or editor changed while it was in flight, so it cannot replace unsaved work, inherit another editor's conflict authority, or update the replacement's save baseline. “Use disk version” remains a read-only action in every outcome. (GH #254)
+- **Android Back now stays under Tine's safety owner from startup through close.** Before the app interface is ready, Back no longer falls through to browser history or a raw activity exit. At the route root, Tine verifies every managed graph can stop before requesting activity exit: a zero-progress refusal leaves the graph editable and retries the complete close, while a partial or interrupted native check keeps the graph protected and retries only that native check. Only a verified safe result may request the final activity exit.
+- **Managed-storage page and journal deletes now preserve the exact accepted file in typed trash before they accept the tombstone.** A failed trash write, a changed projection, or a concurrently accepted update leaves both the file and the open draft in place; successful deletes keep the source bytes under `logseq/.tine-trash/pages` or `journals`.
+- **Your typing is now written to disk while you're still typing.** Tine waited for a pause before saving, and every keystroke restarted the wait — so during a long fluent passage nothing reached the file at all. Measured: twelve seconds of continuous typing, at a pace slower than most people type, produced no write. A save now happens at least every three seconds while you keep going. Found by the 2026-08-09 Direct Files data-safety audit.
+- **"Use disk version" now reloads the file you were actually editing.** When two files share one page name — a duplicate day, or same-titled pages in different folders — Tine pins the page to its own file so saves go back to the right place. The conflict banner didn't honour that pin: it looked the name up instead and loaded the *other* file over your tab, discarding your unsaved work along the way. Found by the same audit.
+- **Deleting a page with unsaved edits now warns that they are not recoverable.** The prompt said the file moves to `.tine-trash`, which is true — but the trash gets the *file*, so anything you typed since the last save (and everything on a page with an unresolved conflict, which by definition was never written) went with it and was not in the trash. The prompt now says so while you can still cancel.
+- **Closing no longer offers to throw away a save that is still running.** If writing your changes took more than four seconds — a slow or network drive is enough — Tine reported it in the same words it uses for a save that can never succeed, and offered to close and lose the work. It now says it is still saving, waits, and only asks once the save has genuinely failed or stalled. Found by the 2026-08-09 Direct Files data-safety audit.
+- **A conflict banner now goes away by itself once the file is back to what you loaded.** Some editors and sync clients briefly remove a file while replacing it; Tine treated the gap as a conflict and then had no way to un-conflict a page, so it stayed stuck behind a banner whose two buttons both destroy something. Tine now re-checks: if the file is back and matches what your editor started from, the banner clears and your edit saves normally. A file that comes back genuinely changed still raises the conflict. Found by the 2026-08-09 Direct Files data-safety audit.
+- **The All Pages sidebar list renders faster on a large graph.** Every visible row was re-scanning the entire page list to work out whether its name needed disambiguating — about 21 ms at 5,000 pages and 39 ms at 20,000, repeated on every render. The same information is now worked out once per list. Names are labelled exactly as before. Found by the 2026-08-09 Direct Files performance audit.
+- Deleting a page no longer freezes the app while it works. On a large graph the delete could block for the better part of a second (longer on very large graphs) because it ran on the same thread that dispatches every other command.
+- Text typed while a synced file change was being loaded is no longer silently discarded. Tine decided it was safe to reload the page *before* fetching it, and never re-checked — so anything typed during the fetch was replaced by the disk version, along with its undo history.
+- Fixed a state where Tine would insist it had unsaved changes forever — blocking every graph switch and offering to discard your work on every window close — for edits that were in fact already written to disk.
+- **Edits are now saved when the app is backgrounded**, not only when a window is closed cleanly. On Android and iOS the system can reclaim a backgrounded app without warning, so anything typed since the last pause could be lost; desktop had narrower versions of the same hole (GH #255).
+- **Editing one block no longer rewrites blocks you never touched.** On a real-shaped 1,045-file graph, editing a block and undoing it failed to restore 96 of 983 files: an unbulleted `## Heading` gained a `- ` prefix, and in the worst case the file's indentation was pushed *into* the note text and the block gained a nesting level. Found by the 2026-08-09 Direct Files data-safety audit; the same measurement now reports zero damaged files.
+- **Typing no longer makes the next click slow.** Every save threw away Tine's index of which pages exist, and the only way to rebuild it was to re-read and re-parse the whole graph. So the first navigation or `[[` autocomplete after each typing pause stalled for about a quarter of a second on a 5,000-file graph, and longer on bigger ones. Found by the 2026-08-09 Direct Files performance audit.
+- **Each save costs less on a big graph, and a pause in typing no longer ships the whole graph's link list across.** Two things ran on every save: a scan that rebuilt a normalized key for *every* filename in each directory along the path (4.87 ms per save with 4,000 pages in one folder, against 0.70 ms with the same pages spread over subfolders — unbounded growth in the one directory that only ever grows, inside the lock that guards the write), and a refresh of the full referenced-page-name set (15–23 ms and ~5,000 names at 5,225 files, parsed on the UI thread) that fired about 700 ms after every lull even though typing inside a block almost never changes which pages are linked. The scan now folds each path component once — which also fixes it being ~1.8× *slower* than before for any graph whose names carry diacritics — and the name set is only shipped when its digest actually changed. Found by the 2026-08-09 Direct Files performance audit.
+- **A file changed outside Tine is noticed promptly again when you have more than one graph open.** If watching one graph's folder failed while another succeeded, the watcher could sit blocked on the healthy graph instead of retrying the failed one, so external edits to the failed graph went unseen for as long as the other stayed quiet. The wait is now bounded whenever any root is still unwatched.
+- Linked and Unlinked References no longer collapse themselves while you scroll or expand a group on a large graph; the section now keeps the state you put it in (GH #272).
+- **Unlinked References now finds mentions inside code blocks, inline code, math and other literal text**, as Logseq does — previously a page name written inside a fenced block, `$$…$$`, raw HTML, an example block or a hiccup vector was invisible to the panel (GH #270). Mentions inside `[[…]]` or after `#` still don't count, including inside code where there is no parsed link to recognise. The scan also got considerably faster: on a real 1,045-file graph an unlinked-reference lookup went from about 285 ms to 36 ms, despite now searching more of each file.
+- Jumping to a block from the Quick Switcher (or any "go to block" action) now expands its collapsed parents, so the block is actually scrolled to and highlighted instead of the jump silently doing nothing (GH #258).
+- Pressing Enter inside a multi-line `$$ … $$` math environment now inserts a new line and keeps the block together, instead of splitting it and breaking the environment (GH #278).
+- **Undo can no longer silently overwrite a file that changed while you were away.** Tine keeps about eighty pages in memory and drops the oldest ones as you browse past that, deliberately keeping their undo history. But the kept history described the copy that was dropped: re-opening the page read the file fresh, and pressing undo then restored the *old* content and saved it — against the new file's revision, which the save guard accepts, because that baseline genuinely matched what was on disk. Nothing looked like a conflict. Undo entries now name the exact loaded copy they were recorded against; when that copy is gone, the entry is discarded and Tine says so instead of replaying it. Found during review of GH #254 (GH #305).
+- **Tine no longer dies at launch when its data directory cannot be written.** On a machine where `~/.local/share` is owned by root — or `XDG_DATA_HOME` otherwise points somewhere unwritable — the app printed a Rust backtrace and quit, because Tauri creates the WebView's data directory during its own startup and panics on the error. Tine now checks that directory before anything resolves paths against it, moves the whole launch to the first writable fallback (`~/.tine-data`, then the runtime directory, then a temp directory), and says so in a sticky notice naming where it went. If nothing is writable it prints one actionable line instead of a backtrace (GH #303).
+- **Images and other embedded media stored in a subfolder of `assets/` now display.** Every native read path applied the top-level-only rule that belongs to asset *creation*, so a file under, say, `assets/screenshots/` stayed blank even though the link was correct. Nested paths are now read, while absolute paths, `..` traversal and symlink escapes are still refused, and newly imported assets still land directly in `assets/` (GH #300).
+- **A page changed by another program no longer becomes permanently unsaveable.** Most editors and sync clients (Syncthing, Dropbox) write a file by creating a new one and renaming it into place. Tine treated the result as a different file and refused every subsequent save with an internal message it then retried forever — even when the new content was byte-for-byte what Tine already had, and even when it was a genuine change you could have resolved. Tine now compares the content: identical content just saves, and a real difference raises the normal conflict banner. "Keep mine" is now bound to the exact disk version shown by that banner (including a deletion), so it cannot overwrite a newer unseen sync or editor change; a newer change is shown as a new conflict instead. (GH #254)
+
+## [0.6.91] - 2026-08-07
+
+### Added
+
+- **Hierarchical Ctrl/Cmd+A and symmetric Shift+Up block selection.** In the
+  editor, Ctrl/Cmd+A still selects the block's text first; a further press
+  selects the block's subtree, then each ancestor's subtree, then the whole
+  visible outline, where it stays. Shift+ArrowUp extended onto a parent no
+  longer leaves the parent's later children behind: a selection that includes
+  an ancestor of its anchor covers that ancestor's whole visible subtree,
+  mirroring Shift+ArrowDown.
+- **Block-boundary keyboard navigation and forward merge.** At the exact end
+  of a block, Delete now merges the next visible block's text and children in
+  (mirroring Backspace's merge into the previous block at offset 0), and
+  ArrowRight moves into the start of the next block; ArrowLeft at the very
+  start moves into the end of the previous block. Annotation and calc blocks
+  are never merged in either direction, and a single undo restores both
+  blocks after a forward merge.
+- **Drag-reorder for sidebar lists.** Right-sidebar open items and
+  left-sidebar favorites can be reordered by dragging the row (right sidebar:
+  the header area). Sub-threshold presses stay ordinary clicks and the click
+  that ends a drag is swallowed, so navigation, middle-click, context menus,
+  close buttons and scrolling are unaffected. Order persists through the
+  existing owners (right-sidebar session state; favorites in the graph's
+  `config.edn`).
+- **Configurable graph home page.** The Graph settings tab can now pick an
+  existing page as the graph's home page; it opens in-place in the primary
+  tab whenever that graph is opened. A deleted or renamed page is skipped
+  silently at startup and surfaced in Settings with a Clear option. The
+  setting is stored per graph via the existing app-settings owner.
+- **"System" appearance option.** The Appearance settings now offer Light /
+  System / Dark. System follows the OS/WebView `prefers-color-scheme` signal,
+  applying it immediately and tracking live changes while the app runs; manual
+  Light/Dark selections ignore system changes as before. Existing saved
+  Light/Dark preferences are untouched.
+- **"Open in new tab" in the block context menu.** Right-clicking a block now
+  offers "Open in new tab", mirroring the existing page context-menu item and
+  block-bullet middle-click. Works on both editable and read-only blocks.
+- **One-click copy on calculator results.** Hovering a successful ```calc
+  result shows a copy button that copies the displayed value to the clipboard
+  via Tine's existing clipboard facade. Error and blank result lines do not
+  offer the button. The button is available in both the rendered calculator
+  and the live editor's result column; clicking it does not mutate the block
+  or create an empty row.
+- **`/That day` slash command.** Inserts a `[[date]]` reference to the
+  containing journal page's date (not today's clock date), using the
+  configured journal title format. On a non-journal page it does nothing and
+  shows a toast.
+
+### Fixed
+
+- **Linked References, search, quick switch, queries and most of the rest of the
+  app now work while Tine-managed storage is active.** Every page showed
+  "Couldn't load references because the backend request failed", and the same
+  refusal silently disabled search, quick switch, `{{query}}`, aliases,
+  templates, page icons, block references, asset browsing and more: only page
+  loading, saving and the journal feed had been given a managed path, and
+  everything else was refused for not holding the older storage mode's
+  authority. Reading and writing are now separate permissions, so whole-graph
+  *reads* are answered from the managed graph's own files while writes stay with
+  managed storage. Actions that change many pages at once — renaming, deleting
+  and merging pages, and resolving sync conflicts — are still unavailable under
+  managed storage and now say so plainly instead of reporting a failed request.
+- **Settings changes save again while Tine-managed storage is active.** Every
+  toggle in Settings was dead: favourites, task workflow, file format for new
+  pages, journal title format, first day of the week, showing brackets, logical
+  outdenting, Enter behaviour in document mode, time tracking and the default
+  journal template all appeared to work and were forgotten on the next launch.
+  Settings live in the graph's own `logseq/config.edn`, which managed storage
+  does not own, so writing them never needed the permission that was being
+  asked for. One exception remains: changing the journal title format no longer
+  renames existing journal files under managed storage.
+- **Cleaning up orphaned assets works again while Tine-managed storage is
+  active.** Moving an unused image to the recoverable trash, and emptying that
+  trash, were both refused — not because either touches your pages, but because
+  the trash folder was covered by the same permission as page text. Deleting a
+  page, journal or conflict copy is still unavailable.
+- **Error messages from the references panels no longer hide what went wrong.**
+  Both panels replaced every backend message with a generic "the backend request
+  failed", including messages that explained the cause exactly. They now show
+  what the backend actually reported.
+- **Fewer false "changed on disk" warnings while editing a managed graph.** The
+  background sync loop announced a change after every completed pass, including
+  passes that committed nothing. Arriving while a page had unsaved edits, that
+  contentless signal could be read as a conflict — which then blocked the very
+  save that would have resolved it. Only a pass that actually committed
+  something now reports a change.
+- **A managed graph that was closed cleanly now reopens even if its internal
+  cache database was deleted or damaged.** That cache is rebuildable from the
+  graph's own history, and a graph closed by a crash already rebuilt it — but a
+  graph closed *properly* refused to open at all, and the error offered a retry
+  that could never succeed. Clearing a cache directory, a backup that skipped
+  the file, or on-disk corruption could therefore make a graph permanently
+  unopenable. Both cases now rebuild. A cache that is present and current still
+  opens directly, so ordinary startup is unchanged.
+
+- **"Keep mine" now works.** When Tine found that a page had changed on disk
+  behind your back, it offered you two ways out — keep your edits, or take the
+  disk version. Keeping your edits could never succeed for any page opened from
+  a file: it failed every time with an internal message about a "captured exact
+  owner", leaving discarding your own work as the only exit that did anything.
+  It now writes your version, including after a genuine external change, which
+  is the whole situation the prompt exists for.
+- **Errors that are not conflicts no longer pretend to be.** Any unrecognised
+  save failure was reported as a conflict, which put up that same two-button
+  prompt — and neither button could resolve, say, a filename collision or an
+  internal storage failure. It also replaced the real error text, so in the one
+  case where Tine had safely set your unsaved bytes aside under a recovery file,
+  the message telling you where they were is what got thrown away. Unrecognised
+  failures now report what actually happened.
+- **A "keep mine" during a cross-page move can no longer lose the moved block.**
+  While a block moved between pages is being written to its destination, Tine
+  holds back the source page so the block is never briefly in neither place.
+  Resolving a conflict used to walk straight through that hold; it now waits and
+  is applied the moment the destination is safely written.
+- **The "couldn't save" message no longer promises a retry it wasn't making.**
+  After three failed attempts Tine said it would retry and then scheduled
+  nothing. The page was still saved on your next edit — which is what it now
+  says.
+- **External edits reach Tine-managed storage again.** Every reconcile of a
+  change made outside Tine was refused with an internal mismatch and retried to
+  the limit, so edits made by another program to a managed graph never came in.
+  Two internal descriptions of the same unchanged bytes disagreed about a
+  detail neither of them needed to agree on.
+- **A refused save in Tine-managed storage now tells you.** A managed save that
+  could not proceed retried quietly forever without ever surfacing; you could
+  close the app believing the page had been written. It now reports the refusal
+  and what resolves it.
+- **Windows: a managed page rename no longer overwrites a file that appears
+  underneath it.** The rename was documented and implemented as
+  never-replace everywhere except Windows, where it would overwrite a file that
+  arrived in the moment between the check and the rename.
+- **A sync client working in the background no longer fails your save.** Before
+  writing, Tine looks over the graph twice and requires the two looks to agree.
+  Any file changing anywhere in the graph in between makes them disagree — which
+  on a Syncthing, Dropbox or OneDrive folder is simply what a normal minute looks
+  like — and a single disagreement failed the save outright. Disagreeing means
+  something moved while Tine was looking, not that anything is wrong, so it now
+  simply looks again.
+- **A save that cannot succeed says so once, instead of trying twice more
+  first.** When a save failed for a reason no retry could change, Tine retried it
+  anyway, twice, each time redoing the whole (potentially slow) pre-save check
+  before finally showing the error. That multiplier is a large part of why
+  #267 reported "about a minute, then a red toast". Genuinely temporary failures
+  still retry.
+- **A page whose file was replaced behind Tine's back is no longer stranded.**
+  Some tools replace a file wholesale even when its contents don't change —
+  OneDrive filling in a file it had only been holding a placeholder for, a sync
+  client landing the same bytes, a plain copy over the top. Tine checks both that
+  the contents are what you started from *and* that it is the same file it read,
+  so these left a page it refused to save: "existing page identity changed since
+  load". Worse, the conflict prompt that followed had no working way out —
+  "Keep mine" hit the same check and failed, and the only button that did
+  anything threw your edit away. When the contents on disk are still exactly what
+  you started from, Tine now accepts the replacement quietly. A file whose
+  contents really did change is still a genuine conflict and still asks you.
+- **One symlink no longer makes your whole graph read-only.** A symbolic link
+  anywhere Tine looks — at the top of the graph, in `pages/`, in a folder of your
+  own — made *every* save fail, including saves of completely unrelated pages.
+  Tine never followed symlinks anyway; the pre-save check was the only place that
+  treated finding one as fatal rather than as something to step over. It now
+  steps over it. (Importing a graph into managed storage still stops, because
+  quietly leaving a file out of an import is worse than refusing it.)
+- **Errors that a conflict prompt can't fix no longer pretend to be conflicts.**
+  Several unrelated save failures — two files whose names collide on
+  case-insensitive filesystems, two paths pointing at the same physical file,
+  another page already holding the title — all surfaced as "this page changed on
+  disk", offering you a choice between two options that could not resolve any of
+  them. Whichever you picked, the page was then marked as conflicted and silently
+  stopped saving. Each now reports what actually happened.
+- **Saving a page no longer re-reads and re-analyses your whole graph
+  (GH #267).** Before writing, Tine checks that no other file in the graph is
+  about to collide with the one you are saving. Whenever it had lost track of
+  what was on disk — which, on Windows or a graph on a network drive, was
+  essentially all the time — that check re-analysed every single document you
+  own, on every save. On a large graph that is the difference between a save you
+  don't notice and a save that takes long enough to give up and show an error.
+  Losing track means Tine doesn't know what changed, not that everything did, so
+  it now re-reads only the documents whose contents actually differ from what it
+  last saw, and reuses what it already knew about the rest. Measured on a
+  1,000-page graph: the documents examined per save dropped from all of them to
+  three. Nothing about the safety check itself was relaxed.
+- **Edits made outside Tine to pages that are not in `journals/` or `pages/`
+  now show up while Tine is open (GH #268).** If you keep pages at the top level
+  of your graph or in your own folders, Tine listed them correctly when it
+  opened the graph, but then never noticed another editor or a sync client
+  changing them — the page you were looking at simply stayed stale until you
+  reopened the graph. Tine watched the whole graph folder all along; the part
+  that decides which of those changes to act on had been left looking only at
+  `journals/` and `pages/`. It now uses the same rule the rest of Tine uses to
+  decide what counts as a page, so external edits, creations and deletions
+  anywhere in your graph arrive the same way they already did under `pages/`.
+  Folders Tine deliberately ignores (`assets/`, hidden folders, `logseq/bak/`)
+  stay ignored, so dropping in an image still costs nothing.
+- **Graphs on a network share no longer re-examine the whole graph on every
+  save.** When Tine cannot use the operating system's file-change notifications
+  — typically a graph on a network drive — it checks the folder every few
+  seconds instead. Each of those checks was throwing away everything Tine knew
+  about the graph's files, so the very next save had to walk and read the entire
+  graph again before it could write. Saving got slower the bigger your graph
+  was, permanently. The periodic check now records what it actually found, so an
+  ordinary save no longer pays for it. If a check cannot read part of the graph,
+  Tine still starts over from scratch rather than trusting an incomplete
+  picture.
+- **A folder Tine cannot watch is no longer a silent failure.** If the operating
+  system refuses to install the folder watch — too many watches, a permission
+  problem, an unavailable network share — Tine kept retrying quietly while every
+  outside change went unnoticed. It now tells you once per distinct problem, and
+  keeps retrying.
+- **App now starts on macOS 12 with an older Safari/WebKit (GH #256).** A JS
+  regex lookbehind shipped in the eagerly loaded bundle; pre-16.4 WebKit can't
+  parse it and the app died with "SyntaxError: invalid group specifier name"
+  and a white screen. The regex was rewritten lookbehind-free (byte-identical
+  behavior) and a source guard test now rejects any lookbehind in `src/`.
+- **Ctrl+F now scrolls to the exact occurrence, not just its block (GH #253).**
+  In a block taller than the viewport, in-page find previously only centered
+  the block, leaving off-screen matches invisible; the reveal now centers the
+  active occurrence inside the pane (falling back to block-centering while the
+  block is being edited).
+- **Update failures are no longer silent (GH #241).** When the desktop
+  self-update fails (signature, download, or install), the error is now written
+  to the debug log and shown in a toast instead of indistinguishably opening
+  the releases page; the releases page still opens as the safe fallback. The
+  underlying Windows update failure reported in #241 is not yet diagnosed —
+  the now-visible error message is exactly what a Windows repro needs.
+
+- **Reopening a lived-in graph after a crash no longer rebuilds it.** Opening a
+  managed graph that had been edited over many sessions could stall for over a
+  minute after an unclean shutdown while it rebuilt its search/index database
+  from scratch — and the delay grew faster than the graph did. It turned out the
+  database had nothing wrong with it: it was already exactly up to date, but its
+  identity included a note of where the previous run happened to keep some
+  in-memory data, and reopening a graph moves that. Tine compared the two, saw a
+  difference that meant nothing, and concluded the database was corrupt. That
+  bookkeeping detail is no longer part of what identifies a graph's state, so an
+  up-to-date database is now recognised and simply opened. Measured on a
+  1,046-file graph: 72 s to 2 s, with the database step itself down to a few
+  milliseconds and no longer growing with the size of the graph at all.
+- **A page you are editing is no longer falsely reported as “changed on disk.”**
+  Editing a block and immediately moving it could raise the “changed on disk
+  (edited elsewhere or synced in)” banner with no external editor or sync
+  involved — and because a page with an open conflict refuses to save, the
+  banner's own warning that your unsaved changes weren't written became true
+  only because the banner appeared. Tine now requires proof that the page
+  actually diverged — its stored revision no longer matches the one the editor
+  holds — before declaring a conflict, instead of treating any change
+  notification arriving during an unsaved edit as one. A save already in flight
+  is left to its own base-revision guard. Genuine external edits, and a file
+  deleted out from under an unsaved edit, still raise the banner exactly as
+  before.
+- **Journal carry-over buttons now switch correctly at midnight.** The buttons
+  under a journal title were chosen once at mount from a bare wall-clock
+  comparison, so after the calendar rolled over, yesterday's journal kept
+  today's pull-in buttons ("Carry from previous day", "Carry last N days")
+  instead of switching to "Carry unfinished tasks → today". The choice now
+  follows a reactive day tick (DST-safe, re-synced on focus/wake), so an
+  already-open app swaps the button sets the moment the day changes.
+- **Delete/Backspace over text selected in a rendered (not-editing) block now
+  deletes that text.** Selecting a block's text with the mouse and pressing
+  Delete or Backspace did nothing — the keypress reached no editor, the
+  highlight stayed, and nothing changed (OG deletes it, since its rendered
+  view is the editor). The key now maps the rendered selection back to source
+  and deletes it through the normal store path (one undo step), then opens the
+  block in the editor at the deletion point. Conservative no-ops remain for
+  cross-block selections, selections wholly inside atomic constructs (links,
+  chips), annotation/calc blocks, and read-only pages.
+- **Managed Markdown saves now retain their authenticated projection predecessor
+  across drain, compaction, and unsafe reopen.** The next save and delayed
+  filesystem callback re-prove the exact completed-path receipt instead of
+  regenerating its historical base through the canonical serializer, so
+  empty-bullet and non-leading-heading layouts no longer strand the graph in a
+  global “updating” state. Exact live bytes, path, page, frontier, claim,
+  endpoint, and receipt bindings remain required; divergent external edits and
+  Org layout differences still fail closed.
+
+### Changed
+
+- **Rebuilding a managed graph's internal cache is much faster, and now scales
+  with the graph instead of against it.** On a 1,045-file graph the rebuild went
+  from about 15 seconds to about 2.6 seconds, and the cost is now roughly
+  proportional to graph size rather than growing faster than it — so the saving
+  gets larger, not smaller, as a graph grows. This is the recovery a graph
+  reaches after corruption or an internal format change, so it is rare, but when
+  it happens it is the whole wait before the app is usable.
+- **Managed graphs rebuild their internal cache once on first launch after this
+  update.** A field that was recorded but never used has been removed from the
+  cache's page-alias table, which changes its internal format. Nothing in your
+  graph changes; the rebuild is the faster one described above, and it happens
+  only once.
+
+- **Managed-storage save refusals now report a bounded internal reason code.**
+  This keeps graph content and filesystem details private while distinguishing
+  preparation, commit, queue, decode, and authority failures that previously
+  collapsed into one generic semantic-transaction message. Crash-reopen
+  coverage now also exercises accepted undrained history both with and without
+  the disposable resume accelerator.
+
+## [0.6.90] - 2026-08-04
+
+### Fixed
+
+- **Post-activation managed-storage reads and writes no longer freeze the app
+  while the required first reconciliation finishes.** Ordinary page, journal,
+  query, editor, status, transition, tick, and shutdown commands run actor waits
+  on the blocking pool and revalidate their exact graph generation before work,
+  so queued commands cannot gain authority over a replacement graph.
+- **Restarting after interrupted managed-storage activation no longer leaves the
+  desktop window hidden behind synchronous native setup.** The themed window now
+  paints before the unchanged fail-closed recovery path runs, while ordered
+  recovery phases and periodic wait diagnostics make legitimate long recovery
+  observable without admitting unvalidated state.
+- **Sparse-v2 now detects sampled interior corruption in its disposable SQLite
+  projection during reopen.** Versioned, bounded fingerprints cover up to 1 MiB
+  across the interior of each database and WAL file in addition to their edges;
+  a mismatch preserves forensic evidence and rebuilds from oplog authority.
+- **Sparse-v2 activation now uses lsdoc as the single Markdown and Org outline
+  authority.** Parser-owned source spans and topology replace Tine's duplicate
+  structural scanners, so Logseq-compatible headings, multiline blocks, mixed
+  indentation, and other unusual but parseable layouts import without changing
+  their meaning. Admission remains fail-closed when a layout cannot be
+  represented safely.
+- **Reverse-delivered experimental shared-provider histories now schedule inbound
+  batches by causal dependency instead of repeatedly scanning the pending
+  queue.** Each ready manifest is registered once, already-active parents are
+  satisfied immediately, and accepting a parent wakes only its deterministically
+  indexed children while blocked work remains visible to status and Safe
+  shutdown.
+- **Experimental shared-provider sync no longer loses oversized or overlapping
+  delivery callbacks or preempts an already-observed local file edit.** Rejected
+  callbacks retain a bounded rescan before `Safe`, observations arriving during
+  an active cursor force a subsequent scan, and watcher-captured bytes take
+  priority over remote ingestion. Safe reopen also republishes a completely
+  missing provider namespace, and exact deletion of an accepted manifest repairs
+  from authenticated local archive bytes.
+- **Managed-storage handoff reconciliation no longer monopolizes page reads or
+  sync setup on a large graph.** The mandatory post-publication full scan now
+  retains one exact cursor and compares a bounded path/time slice per actor
+  turn. It remains pending for shutdown safety, but ordinary application and
+  enrollment work runs between slices; the former 750 ms arrival-order delay is
+  gone.
+- **Eligible Markdown and Org files outside configured page roots stay
+  discoverable and exact-path load/save never exposes a blank writable substitute**
+  (GH #246). Lowercase `.markdown` files and external add/delete updates follow
+  the same graph-wide text scope without overwriting the original bytes.
+- **Page titles now map injectively to reversible, Windows-safe filenames**
+  (GH #249). Existing graph filenames remain readable as stored, while unsafe
+  create/rename/rescue identities and collisions are refused without overwriting
+  another page's bytes.
+- **A missing remembered graph no longer prevents Tine from starting** (GH #250).
+  Startup reaches the visible graph chooser instead of panicking during native
+  setup, without creating or changing the missing path.
+- **Configured default journal templates materialize once across local midnight**
+  (GH #260). Timer, focus, and visibility refreshes use one graph/day guard, so
+  a new day is initialized without duplicate template blocks or stale-graph writes.
+
+### Changed
+
+- **Experimental sparse-v2 storage can explicitly enroll two honest devices
+  through a shared filesystem provider.** A Safe, idle initiator publishes
+  immutable archive objects and manifests before one descriptor; a second
+  device joins only the exact shared lineage and projection base. Both roles
+  reconcile exact paths or retained incremental cursors through the one actor,
+  without whole-provider archive caps or historical-manifest replay. Durable
+  pending-publication markers resume accepted local and external-import batches
+  after a crash, poll mode observes provider delivery independently of graph
+  polling, and `SharePrepared` resumes before descriptor publication. Exact
+  byte-identical generated conflict copies are retired with no-follow proof;
+  differing or ambiguous evidence remains visible and blocks without graph
+  writes. The Settings actions remain explicit and experimental.
+- **Experimental sparse-v2 storage now has an explicit per-graph application
+  boundary.** Opt-in retires and drains the legacy graph authority before
+  publishing the durable binding, then routes bounded queries, editor intents,
+  whole-root external-file observations, recovery status, and clean shutdown
+  through one actor. Startup never enables it implicitly or falls back to a
+  legacy writer after opt-in.
+- **The disconnected experimental v2 oplog engine now uses one leased,
+  authenticated run-local scratch store.** Exact causal clocks, compact
+  store-backed batch status/waits, shallow document checkpoints with
+  content-addressed chunks, and paged conflict evidence replace archive-history
+  scans and unbounded hot maps. Scratch performs no durability sync and cannot
+  delete or rewrite authoritative archive bytes. This engine remains disconnected
+  from graph startup, migration, and user-visible writes.
+
+### Added
+
+- **Experimental managed sync can make an existing Syncthing/Dropbox graph
+  operation-backed without moving it.** Tine stores immutable per-session Loro
+  updates in `.tine-sync/`, keeps Markdown/Org as an editable projection for Logseq
+  and other tools, imports external file edits conservatively, and automatically
+  removes only conflict copies proven to be generated projections. Activation adds
+  durable Logseq-compatible block IDs after a complete local safety snapshot;
+  ordinary backup restore is operation-first and crash-resumable. This first version
+  manages page and journal text; assets, PDF sidecars, and configuration remain
+  ordinary provider-synchronized files. (Experimental, opt-in.)
+- **Sparse-oplog crash takeover can recover to a clean handoff.** A restarted
+  experimental runtime that takes over an `Unsafe` predecessor now performs an
+  authenticated full external-file reconciliation before admitting automatic imports
+  or publishing `Safe`, preserving unimported projection bytes.
 
 ## [0.6.5] - 2026-07-22
 
@@ -3150,7 +6578,9 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.6.4...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.7.0...HEAD
+[0.6.98]: https://github.com/martinkoutecky/tine/compare/v0.6.97...v0.6.98
+[0.6.90]: https://github.com/martinkoutecky/tine/compare/v0.6.5...v0.6.90
 [0.6.0]: https://github.com/martinkoutecky/tine/compare/v0.5.10...v0.6.0
 [0.5.10]: https://github.com/martinkoutecky/tine/compare/v0.5.9...v0.5.10
 [0.5.9]: https://github.com/martinkoutecky/tine/compare/v0.5.8...v0.5.9

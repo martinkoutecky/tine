@@ -1,0 +1,1522 @@
+{
+  "schemaVersion": 2,
+  "version": "0.6.981",
+  "baseTag": "v0.6.98",
+  "items": [
+    {
+      "section": "Added",
+      "text": "**The graph menu now has a right-click menu on every graph row.** Opening a graph in a second window was reachable only by Shift-clicking a row, which nothing announced. Right-clicking a row now offers **Open in a new window** and **Open here**, plus **Show in folder**, **Copy path**, and **Remove from this list**. The row for the graph this window already has open keeps both open actions visible but inert and says why, so the menu does not change shape from row to row; mobile, which has neither peer windows nor a file manager, shows the actions that apply to it.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**PDFs are now ordinary pane tabs instead of a separate global side pane.** Opening a graph PDF on desktop preserves the source and uses one reusable companion pane; the PDF tab can be moved into any existing pane, split, or quadrant, and its Notes action opens the `hls__` page in the structural companion. Workspaces restore the layout and each PDF tab's page/zoom, while legacy dedicated-pane sessions migrate without losing their existing panes. Android keeps one route surface and Back returns through Notes, PDF, and the source page in order.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-ROUTE-PANE-SESSION-20260830"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/pdf.md",
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Alt+click opens an internal page or block link in the other pane.** After the unified click contract moved Ctrl/Cmd+click to background tabs, ordinary links had no mouse+modifier route to a pane; Alt+click is that route again, matching the long-standing Alt+click / Alt+Enter gesture on Search and Quick Switcher results. It splits right when there is only one pane, and Shift+click (right sidebar), Ctrl/Cmd+click and middle-click (background tab) keep their existing meanings everywhere. (GH #438)",
+      "userVisible": true,
+      "regressions": [
+        "UI-ALT-CLICK-OTHER-PANE-438"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md",
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Declarative themes can now shape reading presentation without running code.** Theme API 0.2 adds bounded Tine-owned presets for editorial serif typography, journal headers, and a Today task summary, while existing color-only 0.1 themes remain compatible and `logseq/custom.css` still wins the cascade.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/extend-tine.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Managed-storage group deletions now have an explicit recovery surface.** Tier 2 and Tier 3 absence sweeps raise a warning and remain available in a Deleted pages dock with their member pages and durable action status. Restore, Re-apply, and Keep deletion map directly to the recorded backend actions; failed restores retain their cause and can be re-run, while dismissing the warning or closing the panel never records a deletion decision.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/managed-sync.md",
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Settings remembers whether you maximized it.** The maximize control added in v0.6.95 reset on every open, so anyone who prefers the wide dialog had to press it again each time. Settings now opens at the size you last left it, on this device, across restarts. If you have never pressed the control, nothing changes ([GH #427](https://github.com/martinkoutecky/tine/issues/427)).",
+      "userVisible": true,
+      "regressions": [
+        "UI-SETTINGS-MAXIMIZE-PERSISTS-427"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**PDF rendering now uses PDF.js's maintained page-view lifecycle under one window-wide admission and canvas-memory budget.** Visible/focused pages win scheduling, stale work is cancelled, evicted views synchronously release their backing stores, and zoom above 300% sharpens only visible clipped tiles while retaining an aligned lower-resolution fallback. Area highlights use a dedicated clipped capture, and a tab cannot multiply the old per-view resource ceilings. (GH #393)",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-TILE-AWARE-RENDER-393"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "performance-only and resource-lifecycle-only; the PDF workflow and controls are unchanged",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**LaTeX math now renders inside italic and other emphasized Markdown.** A whole agent response can be italic without turning valid `$…$` or `$$…$$` fragments back into literal dollar text. The shared parser now preserves top-level-valid math through ordinary italic, bold, strike, and highlight containers while leaving invalid math, code spans, Org, and unrelated link labels unchanged. ([GH #460](https://github.com/martinkoutecky/tine/issues/460))",
+      "userVisible": true,
+      "regressions": [
+        "UI-NESTED-EMPHASIS-LATEX-460"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/showcase.md",
+          "crates/tine-core/src/templates/welcome.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Typing a PDF page number and pressing Enter now stays on that page.** The input could jump the reader and then immediately restore the old page number when it lost focus, so the requested position was not retained or restored with the PDF tab.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-ROUTE-PANE-SESSION-20260830"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the PDF page-number control and restored pane-tab state.",
+        "refs": [
+          "crates/tine-core/src/templates/research-document.md",
+          "crates/tine-core/src/templates/pdf.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Annotating a PDF while its notes page was being saved could freeze Tine completely.** The two writers of an `hls__` page took the same two internal locks in opposite orders, so each could end up waiting for the other. Because one of those locks is shared by the whole graph, the freeze was not confined to that page: once it happened, no further edit anywhere in the graph could be saved until Tine was restarted. Six write paths took the locks in the wrong order — PDF opening and annotation, the three conflict-resolution paths, and one projection-recovery path — and all of them now take them in the order the ordinary page save has always used. A check that walks the source now fails the build if any future write path reintroduces the inversion. Only debug builds ever reported this as an error; release builds, which is what everyone runs, froze silently, which is why it survived so long.",
+      "userVisible": true,
+      "regressions": [
+        "REG-GRAPHTEXT-GATE-ORDER-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Clicking in the empty space after a block that ends in formatting now puts the caret at the very end.** On a block like `*some text in italics.*`, clicking past the last letter landed the caret between the letter and the closing marker you cannot see, so pressing Enter split the italics instead of starting the next block. The click is now read as \"the end of this block\" wherever it lands past the final glyph, for emphasis, bold, inline code and their Org equivalents alike; a deliberate click inside formatted text still lands exactly where you aimed ([GH #465](https://github.com/martinkoutecky/tine/issues/465)).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CLICK-PAST-END-TRAILING-MARKUP-465"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Modifier-clicking a bullet now sends the block where the same modifier sends a link.** Ctrl/Cmd-click (or middle-click) opens the block zoomed in a background tab, Alt-click opens it in the other pane, and Shift-click still opens it in the right sidebar; before this, only Shift did anything and every other modifier just zoomed in place. Reference bullets in linked references, query results and embeds answer the same four gestures ([GH #456](https://github.com/martinkoutecky/tine/issues/456)).",
+      "userVisible": true,
+      "regressions": [
+        "UI-BULLET-MODIFIED-CLICK-456"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Shortcuts whose only modifier is Alt now work while you are editing a block.** A binding such as Alt+S for the next tab fired everywhere in the app except inside a block, where you had to add a second modifier; it now fires there too. Alt combinations you have not bound to anything still reach the text, so accented characters typed with Alt/Option are unaffected ([GH #461](https://github.com/martinkoutecky/tine/issues/461)).",
+      "userVisible": true,
+      "regressions": [
+        "UI-ALT-SHORTCUT-WHILE-EDITING-461"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Ctrl/Cmd+Enter in search opens the highlighted result in a new tab**, matching what Ctrl/Cmd-click on the same result already did, and leaves the search open so you can fan several results out in a row ([GH #463](https://github.com/martinkoutecky/tine/issues/463)).",
+      "userVisible": true,
+      "regressions": [
+        "UI-SWITCHER-CTRL-ENTER-NEW-TAB-463"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md",
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Sidebar: only the page title in a sidebar row is a link now, not the whole width of the row. The blank space to the right of a short name showed the hand cursor and opened the page, which made reordering favourites a coin toss — grab a row to move it, and it navigated instead. That space belongs to the drag now, and favourites show a grab cursor to say so. Right-clicking anywhere on a row still opens that page's menu ([GH #464](https://github.com/martinkoutecky/tine/issues/464)).",
+      "userVisible": true,
+      "regressions": [
+        "UI-SIDEBAR-ROW-LINK-HITBOX-464"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Block references: the small reference-count badge now sits on a block's **first** line instead of dropping to the bottom-right corner once the block wraps onto several lines. It is a right-floating chip, and a float rides whichever line the browser is on when it meets it — emitted after the text, that was the last line. It is now emitted before the text, so it looks the same on a long block as on a short one ([GH #454](https://github.com/martinkoutecky/tine/issues/454)).",
+      "userVisible": true,
+      "regressions": [
+        "UI-BLOCKREF-BADGE-FIRST-LINE-454"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Outline: a block's bullet now sits on the middle of that block's first line of text instead of 2px above it. The bullet's column was sized to the line height but not to the small padding above the text, so every bullet in the graph was slightly high — and twice as high under the editorial-serif typography preset, which makes the line taller. The line's height is now defined in one place and the bullet column follows it, so a typography theme moves both together ([GH #459](https://github.com/martinkoutecky/tine/issues/459)).",
+      "userVisible": true,
+      "regressions": [
+        "UI-BULLET-FIRST-LINE-459"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Settings: choosing **Graph**, **Journals** or **Backups & recovery** no longer makes the whole Settings window flash away and come back. Those three sections fetch something as they open, and that was enough to tear down the dialog around them; the section list, the search box and the window now stay put while a section loads ([GH #409](https://github.com/martinkoutecky/tine/issues/409)).",
+      "userVisible": true,
+      "regressions": [
+        "UI-SETTINGS-SECTION-SWITCH-FLICKER-409"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Diagnostics: Tine no longer claims it \"did not close cleanly last time\" every launch on iOS, iPadOS and Android. A phone or tablet reclaims a backgrounded app as a matter of course, and Tine counted that as a crash because it had no other way to tell that a mobile session had ended; it now treats going to the background as the end of the session and coming back as the start of a new one, so a crash you actually see is still reported ([GH #426](https://github.com/martinkoutecky/tine/issues/426)). The desktop half of the same report, the warning after an ordinary quit on Linux and Windows, is fixed separately in this release (below). One last warning is expected the first time you open this version, from the marker the previous one left behind.",
+      "userVisible": true,
+      "regressions": [
+        "UI-MOBILE-BACKGROUND-FALSE-UNCLEAN-TOAST-426"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md",
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Sidebar: the left sidebar's scrollbar can be grabbed with the mouse again. The drag-to-resize strip along the sidebar's edge was drawn on top of it, so on Windows the sidebar could be resized but never scrolled by dragging; the strip now sits beside the scrollbar rather than over it ([GH #435](https://github.com/martinkoutecky/tine/issues/435)).",
+      "userVisible": true,
+      "regressions": [
+        "UI-SIDEBAR-RESIZER-COVERS-SCROLLBAR-435"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Outline: clicking a block's fold arrow no longer folds the entire subtree. The guide line beside the children (which folds every descendant) was drawn on top of the fold arrow's leftmost pixels, so an aim that landed slightly left of centre hit the wrong control. The guide now stops at the arrow's edge ([GH #423](https://github.com/martinkoutecky/tine/issues/423)).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OUTLINE-GUIDE-HITBOX-423"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Theme packaging: `tine-theme.mjs check` no longer certifies a ported theme that Tine then refuses to install. It checked only the upstream source, revision and author list, so an unsupported `portedFrom.ecosystem`, a missing `relationship`, `name` or `license`, or an unknown provenance field passed the registry check and failed on install. The checker now holds `portedFrom` to the same vocabulary the app installs against ([GH #410](https://github.com/martinkoutecky/tine/issues/410)).",
+      "userVisible": true,
+      "regressions": [
+        "REG-THEME-CHECKER-PROVENANCE-410"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Links to local files and folders now open.** A link written the Logseq way (`[Test](file://D:\\test.txt)`) or the Obsidian way (`[Test](<file:///D:\\test.txt>)`) rendered as a live link but did nothing at all when clicked: the backend refused every scheme but http/https/mailto, and the renderer discarded the refusal so nothing was reported either. `file:` links now go to the OS default application for that file or folder, matching Logseq, and any link that cannot be opened — a bad URL, a path that is no longer there — says so instead of failing silently. Every other scheme stays refused. (GH #444)",
+      "userVisible": true,
+      "regressions": [
+        "UI-LINK-LOCAL-FILE-URL-444"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Editing-toolbar buttons on mobile no longer depend on a WebView emitting a click.** On iOS 27 the toolbar appeared but nothing responded to taps, while the same build worked on iOS 18.5: the buttons acted only on the click a browser synthesizes after a pointer press, and that press is deliberately cancelled so the editor keeps focus. The tap itself now performs the action, with click kept as the keyboard and assistive-technology path. (GH #434)",
+      "userVisible": true,
+      "regressions": [
+        "UI-MOBILE-TOOLBAR-TAP-ACTIVATION-434"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Long-pressing a page link on iOS or Android no longer raises the system text-selection bar over Tine's menu.** The same hold that opens Tine's context menu is also the platform's own selection gesture, which no amount of event handling on our side can call off — so page links and tags simply decline to be selected on touch. Menus themselves are now unselectable everywhere. On desktop you can still drag a selection across a link's text. (GH #452)",
+      "userVisible": true,
+      "regressions": [
+        "UI-TOUCH-LONGPRESS-NATIVE-SELECTION-452"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Dragging a block by its bullet no longer paints a blue trail behind it.** On macOS the drag doubled as a text selection and highlighted every block it passed over, which made the landing spot hard to read. The same guard the sidebar already used now covers the outline. (GH #424)",
+      "userVisible": true,
+      "regressions": [
+        "UI-BLOCK-BULLET-DRAG-SELECTION-424"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A wide table no longer drags its \"Add row\" label across the screen.** The control spans the whole table, so its centred label sat at the midpoint of the full table width — off to one side and travelling as you scrolled sideways. The row keeps its full-width click target; only the label is now pinned to the visible edge, the way the first column already is. (GH #449)",
+      "userVisible": true,
+      "regressions": [
+        "UI-SHEET-ADDROW-HORIZONTAL-SCROLL-449"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/sheets.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**iPad now behaves like a tablet instead of a Mac.** The on-screen editing toolbar (indent, move, insert) never appeared while editing on iPad, and long-press, text selection and window chrome all took their desktop branch. iPadOS 13+ serves a desktop-class `Macintosh; Intel Mac OS X` user agent from a stock WebView, and Tine was reading the platform out of that string; it now comes from the build itself. Split panes stay available on iPad — they follow the size of the screen, not the name of the operating system. (GH #446)",
+      "userVisible": true,
+      "regressions": [
+        "UI-IPAD-PLATFORM-IDENTITY-446"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A reported switch between Direct Files and Managed Storage now survives a crash at the selector boundary.** App-private storage-mode bindings use the same certified durable create/replace/retire primitive as other authority names, including Windows write-through retirement and Android parent-entry flushing. Once activation reports Managed active, a stale Direct selector can no longer reappear after power loss and take precedence at the next startup.",
+      "userVisible": true,
+      "regressions": [
+        "REG-STORAGE-MODE-SELECTOR-DURABILITY-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Rapid Managed Storage moves no longer reuse a stale source page and then flood “missing or foreign root” errors.** Repeated cross-day commands now resolve one at a time against the preceding accepted move, while the actor's temporary response-replay files are retired after the committed page pair is installed. A native journey drives 120 uninterrupted move commands across four journal-day boundaries and compares that pressure with a durable 20-block cross-page cut/paste.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-MOVE-EPISODE-ACK-001",
+        "REG-MANAGED-JOURNAL-REORDER-CROSS-DAY-DERIVATIVE-20260823"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Direct Files saves now use durable write-through name publication on Windows.** Creating, replacing, restoring, and retiring the sole-authority Markdown/Org name all cross the certified typed storage boundary, so a power loss cannot be acknowledged merely because a non-write-through rename was briefly visible.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-FILES-WINDOWS-DURABLE-NAME-PUBLICATION-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A second device can join a synchronized graph that contains an honest duplicate-name backup file.** A fresh scan may choose the earlier-sorting backup even though the shared history already owns the canonical page path. Join now accepts that shape only when the provider-owned exact file is still present with exactly the shared semantics and both physical files decode to the same page identity; the extra file remains untouched. The Android app-UID journey now covers activation, share, a distinct-device join and reopen, and the real graceful Return-to-Direct-Files composition.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-MS16-JOIN-DUPLICATE-PATH-AUTHORITY"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed Storage has one production actor and enrollment path.** Dead pre-clean-runtime mutation, provider, cursor-join, and handoff state has been removed from the retained actor, and a source guard prevents those fields or types from returning to the production prefix of `sync_runtime.rs`.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-MS16-CURRENT-ACTOR-ONLY"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed Storage pages remain editable after heavy use evicts them from the in-memory document cache.** A cold point load now reconstructs the page from its accepted history instead of mistaking the cache miss for an untouched page. Retained-runtime recovery also reports content-free native sub-stages and has a tighter real-corpus performance gate.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-SAVE-AFTER-HOT-DOCUMENT-EVICTION-20260830"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A remote `http:`/`https:` link whose URL ends in `.pdf` now opens in the browser like every other external link, instead of being captured by Tine's PDF viewer.** Only graph/local asset PDF references and their highlight pages enter the viewer; an image-syntax remote PDF renders as an ordinary external link as well rather than a broken image frame. (GH #442)",
+      "userVisible": true,
+      "regressions": [
+        "UI-REMOTE-PDF-LINK-EXTERNAL-442"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/pdf.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**The PDF reader's Close control is now the terminal toolbar action.** It stays at the conventional far-right edge with an explicit accessible label, instead of reading like another tool in the middle of the control cluster (GH #443).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-TOOLBAR-CLOSE-443"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/pdf.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Bounded managed block-referrer panels now show the same document-order prefix and exact result count as Direct Files.** The SQLite-backed route finishes generation-bound candidate discovery before applying the shared row and byte budget, instead of truncating an internal-ID-ordered subset.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-REFERRER-BOUNDED-PREFIX-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Diagnostic and graph-verification report exports can no longer be left partially written by a crash.** User-selected JSON destinations now use the same temp-file, file-flush, atomic-replace, and directory-flush publication family as other small durable outputs.",
+      "userVisible": true,
+      "regressions": [
+        "REG-REPORT-EXPORT-ATOMIC-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Returning to Direct Files and restoring a backup now fail closed on real directory durability errors.** Graph-local managed state set-aside and rollback flush both changed parents in recovery-first order; the separate capability-bound backup stack now durably reserves recovery directories, retires live names, and publishes restored names before acknowledging them.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-RETURN-PROVIDER-ARCHIVE-DURABILITY-001",
+        "REG-BACKUP-RESTORE-DIRECTORY-DURABILITY-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed storage no longer reparses every baseline page when rebuilding its disposable SQLite projection.** New baseline capsules carry a bounded, versioned semantic receipt that is verified and reused during a healthy rebuild. Existing receiptless baselines, oversized pages, parser upgrades, and invalid receipts retain the prior exact-source reparse-and-compare path. Foreground one-block saves also reuse exact bounded whole-document outline parses, keeping both the first and steady post-drain save within two such parser invocations; drains perform none.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-LAZY-GENESIS-PARSE-RECEIPT"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed storage now opens before its search indexes finish building.** Both Unicode and CJK substring indexes are built in bounded background turns; searches remain complete through an explicit slower fallback and show “Search index building…” until readiness. Live edits are caught up before the marker flips, and later one-block saves update only that block's search rows instead of rewriting its whole page.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-LAZY-FTS-DELTA"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed storage no longer forces a durable SQLite cache sync for every accepted event or schema statement.** The disposable WAL projection now uses `synchronous=NORMAL`, creates its schema in one atomic transaction, and keeps durability at the existing explicit checkpoint and atomic file-set publication boundary. A lost or corrupt cache still rebuilds from the immutable baseline and accepted operation history.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-DISPOSABLE-SQLITE-NORMAL"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A crash during managed archive publication can no longer strand an edit whose exact bytes are still durable in the local journal.** Cold open repairs only torn object names covered unambiguously by an undrained local record, under the workspace's sole-writer lease, and then performs the ordinary full archive validation. Uncovered corruption and torn manifests still refuse activation. Public archive publishers remain strict; the local drain installs recoverable object names before its batch-wide flush, then installs the already-durable manifest and only afterward may checkpoint the journal. The enforced 10/13 save and cross-page-move barrier totals do not change.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-ARCHIVE-TORN-OBJECT-JOURNAL-REPAIR"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Android keeps the right-sidebar control one tap away at ordinary phone widths and keeps Tine outside the system bars.** Lower-priority topbar actions still move into `...` when space is constrained, while the right-sidebar button remains direct until the last-resort tier; native status, navigation, and display-cutout insets now bound the WebView itself. Android also treats that native viewport as the sole inset owner, so OEM WebViews that expose CSS safe-area values do not add a second wasteful band above the topbar (GH #205).",
+      "userVisible": true,
+      "regressions": [
+        "UI-TOPBAR-RESPONSIVE-WORKSPACE-205",
+        "UI-TOPBAR-OVERFLOW-OUTSIDE-DISMISS-205",
+        "UI-ANDROID-SYSTEM-INSET-OWNERSHIP-205",
+        "UI-ANDROID-UI-RUNTIME-RESPONSIVE-205"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Android no longer treats a refused directory durability barrier as success for promoted managed-storage projection receipts.** Only the receipt store's pre-enrollment initialization remains reconstructible; bases, intents, attempts, mutation authority, completions, cleanup, and forensic records now keep strict private-authority barriers on every platform. Each process now verifies a promoted parent once before accepting an existing receipt name or operational namespace, so a crash cannot erase knowledge of a refused barrier; later same-process names and ordinary reads add no barrier. Android devices that cannot provide app-private directory durability may initialize the reconstructible empty store, but managed operations now refuse rather than claiming unsafe success.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-ANDROID-PROMOTED-RECEIPT-BARRIER-STRICT"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Images changed by Syncthing, Dropbox, an external editor, or another Tine window now refresh in place without reopening the graph.** Tine observes the approved `assets/` directory separately from page reconciliation in Direct Files and managed storage, including an approved external-assets target. Asset bytes remain ordinary filesystem-synchronized files and never enter the managed oplog or `.tine-sync`; open PDF/audio/video sessions are not replaced mid-use and see new bytes when reopened.",
+      "userVisible": true,
+      "regressions": [
+        "REG-ASSET-OBSERVATION-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Windows updater failures now leave a privacy-safe stage and cause in Diagnostics, with a sanitized detailed chain available in debug mode. A 32-bit Windows build also links to the manual package instead of offering an automatic install that its signed updater manifest does not publish (GH #241). The reporter's underlying native network failure remains under investigation.",
+      "userVisible": true,
+      "regressions": [
+        "UI-UPDATER-DIAGNOSTICS-241",
+        "UI-UPDATER-TARGET-SUPPORT-241"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Block background colors no longer crowd their bullets. Regular dots and numbered-list ordinals now occupy the same 22px control track, while the rounded highlight keeps text aligned with an unhighlighted or edited block.",
+      "userVisible": true,
+      "regressions": [
+        "UI-BLOCK-BACKGROUND-BULLET-SPACING-INTERNAL"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Same-structure external Markdown content edits no longer leave a managed page stale or raise `hot_source_join` merely because Tine reached it through a page-name route** (GH #397). Application-page routes now agree on current source content while managed reconciliation is still in progress. Structural edits such as adding, deleting, or moving bullets still wait for the managed watcher to reconcile them safely.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-FOCUS-EXTERNAL-REFRESH-397"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores or hardens existing behavior without changing a Guide workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage and synchronization contract documents the affected authority, durability, recovery, or performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Restoring deleted pages from the recovery panel no longer closes the panel by itself the moment the restore completes: the disposed sweep stays visible as actionless history until you close it.",
+      "userVisible": true,
+      "regressions": [
+        "UI-ABSENCE-RESTORE-PANEL-AUTOCLOSE-INTERNAL"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Quitting Tine normally no longer shows a false \"Tine did not close cleanly last time\" warning on the next launch. The clean-shutdown marker was cleared in code placed after the app's event loop, which never runs, so every quit since the flight recorder shipped was reported as a crash. This is the desktop half of [GH #426](https://github.com/martinkoutecky/tine/issues/426).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CLEAN-QUIT-FALSE-UNCLEAN-TOAST-INTERNAL"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The canonical Guide already describes the released workflow and expected user-visible outcome.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API changes for this release item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail and Martin excluded Reddit/blog sync.",
+        "refs": []
+      }
+    }
+  ]
+}

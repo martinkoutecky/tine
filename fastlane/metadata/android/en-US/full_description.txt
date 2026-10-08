@@ -2,3 +2,28 @@ Tine is a fast, local-first outliner that reads and writes a real Logseq
 Markdown (and Org) graph on disk. It aims to feel like — and round-trip with —
 Logseq: the outliner, tasks and priorities, journals, page and block references,
 queries (with a visual builder), PDF and media, and HTML export.
+
+About the permissions Tine asks for:
+
+All files access — Tine edits an ordinary folder of Markdown files that you
+choose and keep wherever you like: a Syncthing folder, an SD card, a shared
+Documents directory. Android's restricted storage model offers no way to grant
+an app read-write access to a tree of plain files that other apps also write
+to, so full file access is what makes a real on-disk graph possible. Tine
+touches only the graph folder you point it at.
+
+Network access — Tine has no accounts, no server of its own, and no sync
+service; it does not phone home and collects no analytics. The permission is
+used only to load remote content that is already in your own notes: images and
+media you linked by https:// URL, and embedded YouTube or Vimeo players if you
+paste such a link. If nothing in your notes points at a remote URL, Tine makes
+no network requests of its own. The F-Droid build additionally has the online
+plugin catalogue compiled out, so plugins and themes can only be installed from
+local files.
+
+DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION — this one is not really Tine's. It is
+added automatically by Google's AndroidX libraries, it is declared by the app on
+itself at signature protection level, and it grants nothing to anyone: it exists
+so those libraries can keep their internal broadcast receivers private to the
+app rather than exposing them to other apps. It shows up in the list because
+F-Droid displays every permission found in the manifest.

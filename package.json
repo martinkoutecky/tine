@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "app": "tauri dev",
+    "ios:prepare-project": "node scripts/prepare-ios-project.mjs",
     "test": "vitest run && vitest run --config vitest.render.config.ts && npm run test:e2e-harness",
     "test:e2e-harness": "node --test scripts/e2e-main-window.test.mjs",
     "test:render": "vitest run --config vitest.render.config.ts",

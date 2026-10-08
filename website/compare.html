@@ -62,12 +62,13 @@
     <span class="brand-word">Tine</span>
   </a>
   <nav class="nav-links">
-    <a href="index.html#why">Same graph</a>
-    <a href="index.html#adds">What's new</a>
-    <a href="plugins.html">Plugins</a>
+    <a href="guide/">Try it live</a>
+    <a href="index.html#features">Features</a>
+    <a href="index.html#mobile">Mobile</a>
     <a href="compare.html" aria-current="page">vs Logseq</a>
-    <a href="demo/">Demo</a>
     <a href="blog/">Blog</a>
+    <a href="index.html#community">Community</a>
+    <a class="nav-heart" href="index.html#support">♥ Support</a>
     <a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a>
   </nav>
 </header>
@@ -113,11 +114,11 @@
       </div>
       <div class="qa-item">
         <div class="qa-q">Queries?</div>
-        <div class="qa-a"><b class="g g-part">◑</b> Yes — the everyday queries work: <code>{{query (and (task TODO) (priority A))}}</code>, page-refs, block/page properties, <code>scheduled</code>/<code>deadline</code> ranges, boolean <code>and</code>/<code>or</code>/<code>not</code>, and <code>sort-by</code>. That's the bulk of real-world use, and there's a <em>visual query builder</em> so you don't have to remember the syntax. The gap is <b>raw Datalog</b> (<code>[:find … :where [?b :block/…]]</code>): a one-click <b>⚙ advanced</b> button drops a ready-to-edit template (and a <b>← Simple</b> button converts it back to the visual builder), and Tine translates the common clause heads (task, priority, page-ref, property, page-property, page-tags, page, namespace, scheduled, deadline, journal, between) but skips arbitrary entity–attribute joins, custom rules, and <code>:result-transform</code>/<code>:view</code> — and it <em>tells you</em> which clauses ran and which it ignored, instead of guessing a wrong answer. You can also <b>summarize</b> results (count/sum/average, group-by) with no code. Queries even run in the HTML export.</div>
+        <div class="qa-a"><b class="g g-part">◑</b> Yes — the everyday queries work: <code>{{query (and (task TODO) (priority A))}}</code>, page-refs, block/page properties, <code>scheduled</code>/<code>deadline</code> ranges, boolean <code>and</code>/<code>or</code>/<code>not</code>, and <code>sort-by</code>. That's the bulk of real-world use. At rest a query reads as one plain-English sentence; the <em>visual query editor</em> and the query text stay in sync, so you don't have to remember the syntax, and an empty result can tell you which condition emptied it. The gap is <b>raw Datalog</b> (<code>[:find … :where [?b :block/…]]</code>): an advanced query stays advanced and is edited as text. Tine translates the common clause heads (task, priority, page-ref, property, page-property, page-tags, page, namespace, scheduled, deadline, journal, between) but skips arbitrary entity–attribute joins, custom rules, and <code>:result-transform</code>/<code>:view</code> — and it <em>tells you</em> which clauses ran and which it ignored, instead of guessing a wrong answer. You can also <b>summarize</b> results (count/sum/average, group-by) with no code. Queries even run in the HTML export.</div>
       </div>
       <div class="qa-item">
         <div class="qa-q">Do math on query results?</div>
-        <div class="qa-a"><b class="g g-yes">✓</b> Yes, and no code needed — the visual builder's <b>∑ summarize</b> control counts the matched blocks, sums or averages a numeric property across them, and/or groups the results (by page or property) into a per-group table. In Logseq you get this only by writing a Clojure <code>:result-transform</code> or <code>:view</code> function inside the query — an escape hatch most users never touch, with no <em>native</em> no-code path, so this is a step beyond Logseq.</div>
+        <div class="qa-a"><b class="g g-yes">✓</b> Yes, and no code needed — a query's no-code <b>summarize</b> counts the matched blocks, sums or averages a numeric property across them, and/or groups the results (by page or property) into a per-group table. In Logseq you get this only by writing a Clojure <code>:result-transform</code> or <code>:view</code> function inside the query — an escape hatch most users never touch, with no <em>native</em> no-code path, so this is a step beyond Logseq.</div>
       </div>
     </div>
   </section>
@@ -133,16 +134,16 @@
         <tbody>
           <tr><td class="feat">Outlining — nest, fold, zoom, move blocks</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Keyboard-first; drag to reorder.</td></tr>
           <tr><td class="feat">Bold / italic / strikethrough / highlight / inline code</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Cmd+B/I plus a floating selection toolbar; <code>**</code>/<code>==</code>/<code>~~</code> wrap the selection as you type.</td></tr>
-          <tr><td class="feat">Raw inline HTML (<code>&lt;ins&gt;</code>, <code>&lt;sup&gt;</code>, <code>&lt;kbd&gt;</code>…)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Renders live, sanitized to a safe allowlist (formatting tags + <code>&lt;img&gt;</code>/<code>&lt;a&gt;</code>); scripts, event handlers and <code>style</code> are stripped (<a href="https://github.com/martinkoutecky/tine/issues/16">#16</a>; new in 0.3.5). Two Logseq-parity notes: a <em>bare</em> <code>&lt;img&gt;</code> is literal in Logseq too (only a self-closed <code>&lt;img/&gt;</code> renders), and <code>^x^</code>/<code>~x~</code> aren't sub/superscript in either — use the HTML tags or <code>$math$</code>.</td></tr>
-          <tr><td class="feat">Slash command menu</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Blocks, headings, tasks, dates, code, math… A dedicated template picker is still being polished.</td></tr>
+          <tr><td class="feat">Raw inline HTML (<code>&lt;ins&gt;</code>, <code>&lt;sup&gt;</code>, <code>&lt;kbd&gt;</code>…)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Renders live, sanitized to a safe allowlist (formatting tags + <code>&lt;img&gt;</code>/<code>&lt;a&gt;</code>); scripts, event handlers and <code>style</code> are stripped (<a href="https://github.com/martinkoutecky/tine/issues/16">#16</a>). Two Logseq-parity notes: a <em>bare</em> <code>&lt;img&gt;</code> is literal in Logseq too (only a self-closed <code>&lt;img/&gt;</code> renders), and <code>^x^</code>/<code>~x~</code> aren't sub/superscript in either — use the HTML tags or <code>$math$</code>.</td></tr>
+          <tr><td class="feat">Slash command menu</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Blocks, headings, tasks, dates, code, math, queries, and your own templates (right-click → <em>Make a template</em>, then <code>/name</code>).</td></tr>
           <tr><td class="feat">Auto-pair brackets / <code>[[ ]]</code></td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Page-ref pairing is always on; general auto-pairing is a toggle.</td></tr>
           <tr><td class="feat">Block references &amp; embeds</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"><code>((ref))</code>, <code>{{embed}}</code>; copy ref/embed from the right-click menu.</td></tr>
-          <tr><td class="feat">Page &amp; block properties</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Same <code>key:: value</code> on-disk format.</td></tr>
+          <tr><td class="feat">Page &amp; block properties</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Same <code>key:: value</code> on-disk format; edit inline or through a property form (add, change, remove).</td></tr>
         </tbody>
       </table></div>
 
       <h2 class="cmp-h">Content &amp; rendering</h2>
-      <p class="cmp-h-lede">What a block can show. Every row here is verified against the live <a href="demo/feature-showcase.html">Feature showcase</a>.</p>
+      <p class="cmp-h-lede">What a block can show. Every row here is verified against the published Guide's <a href="guide/feature-showcase.html">Feature showcase</a>.</p>
       <div class="tbl-wrap"><table class="cmp">
         <colgroup><col class="c-feat"><col class="c-og"><col class="c-tine"><col></colgroup>
         <thead><tr><th>Feature</th><th>Logseq</th><th>Tine</th><th>Notes</th></tr></thead>
@@ -170,7 +171,7 @@
           <tr><td class="feat">Page links, tags, namespaces (<code>a/b/c</code>)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Namespace tree in the sidebar.</td></tr>
           <tr><td class="feat">Aliases</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"><code>alias::</code> resolves in search + refs.</td></tr>
           <tr><td class="feat">Linked &amp; unlinked references</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"></td></tr>
-          <tr><td class="feat">Favorites</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"></td></tr>
+          <tr><td class="feat">Favorites</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Favorites can be grouped, nested to any depth; editing the Favorites page updates the sidebar.</td></tr>
           <tr><td class="feat">Graph view (node-link)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-no">✗</b></td><td class="note">Not yet — researched; a local-neighborhood view is the likely first bite.</td></tr>
         </tbody>
       </table></div>
@@ -181,9 +182,9 @@
         <thead><tr><th>Feature</th><th>Logseq</th><th>Tine</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td class="feat">Simple &amp; compound queries (DSL)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">task / priority / property / page-ref / scheduled / deadline / between / sort-by, with and/or/not.</td></tr>
-          <tr><td class="feat">Advanced Datalog (<code>[:find …]</code>)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-part">◑</b></td><td class="note">Tine translates the common clause heads (task, priority, page-ref, property, page-property, page-tags, page, namespace, scheduled, deadline, journal, between, and/or/not) onto its engine; raw entity–attribute joins (<code>[?b ?a ?v]</code>) and custom rules aren't mapped. A one-click "⚙ advanced" button in the builder drops a ready-to-edit template, and it reports which clauses ran vs. were ignored — never a silently-wrong result.</td></tr>
-          <tr><td class="feat">Query result tables / views</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-part">◑</b></td><td class="note">Results render as blocks or a sortable table, with a visual builder. Logseq's <code>:view</code> (a Clojure fn that draws a custom table/layout) and <code>:result-transform</code> (a Clojure fn that reshapes the result list) aren't run.</td></tr>
-          <tr><td class="feat">Math / aggregation on results</td><td class="st"><b class="g g-no">✗</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Tine's builder has a no-code <b>∑ summarize</b> (count / sum / average a property, group-by page or property). Logseq has no native no-code path — it means writing a Clojure <code>:result-transform</code>.</td></tr>
+          <tr><td class="feat">Advanced Datalog (<code>[:find …]</code>)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-part">◑</b></td><td class="note">Tine translates the common clause heads (task, priority, page-ref, property, page-property, page-tags, page, namespace, scheduled, deadline, journal, between, and/or/not) onto its engine; raw entity–attribute joins (<code>[?b ?a ?v]</code>) and custom rules aren't mapped. An advanced query stays advanced and is edited as text; Tine reports which clauses ran vs. were ignored — never a silently-wrong result.</td></tr>
+          <tr><td class="feat">Query result tables / views</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-part">◑</b></td><td class="note">One result set, four views — Search, List, Table, Board — with a Display panel for grouping, sort, columns, totals and sample; table headers sort, reorder and total in place. Logseq's <code>:view</code> (a Clojure fn that draws a custom table/layout) and <code>:result-transform</code> (a Clojure fn that reshapes the result list) aren't run.</td></tr>
+          <tr><td class="feat">Math / aggregation on results</td><td class="st"><b class="g g-no">✗</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Tine has a no-code <b>summarize</b> (count / sum / average a property, group-by page or property). Logseq has no native no-code path — it means writing a Clojure <code>:result-transform</code>.</td></tr>
         </tbody>
       </table></div>
 
@@ -195,8 +196,9 @@
           <tr><td class="feat">Global search / quick switcher (Ctrl+K)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"></td></tr>
           <tr><td class="feat">PDF viewer + annotation / highlights</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Highlights become blocks, same as Logseq.</td></tr>
           <tr><td class="feat">Asset handling (images, files)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Paste an image → saved to <code>assets/</code>.</td></tr>
-          <tr><td class="feat">HTML publish / export</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Facets, queries, and embeds all render — resolved against your graph at publish time. This site's <a href="demo/">demo</a> is Tine's own export.</td></tr>
-          <tr><td class="feat">PDF export</td><td class="st"><span class="plug">plugin</span></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Logseq has no <em>native</em> PDF export — only a community plugin. Tine has it built in: right-click a page → <em>Export to PDF…</em> (whole page, print dialog → Save as PDF).</td></tr>
+          <tr><td class="feat">HTML publish / export</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Facets, queries, and embeds all render — resolved against your graph at publish time. This site's <a href="guide/">Guide</a> is Tine's own export.</td></tr>
+          <tr><td class="feat">Live export (a read-only Tine app)</td><td class="st"><b class="g g-no">✗</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note"><code>tine export live</code> (or Export… in the app, or on any query) publishes pages as a static site that keeps search, tabs, split view and shareable page/block links working — no server. <a href="guide/">The Guide</a> is one.</td></tr>
+          <tr><td class="feat">PDF export</td><td class="st"><span class="plug">plugin</span></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Logseq has no <em>native</em> PDF export — only a community plugin. Tine has it built in: right-click a page → <em>Export to PDF…</em> (whole page, print dialog → Save as PDF). Desktop only.</td></tr>
           <tr><td class="feat">Copy as Markdown / Rendered</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Tine adds a <em>Rendered</em> copy (paste formatted into email/docs).</td></tr>
           <tr><td class="feat">Org-mode graphs</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Reads/writes <code>.org</code>; per-graph preferred format.</td></tr>
         </tbody>
@@ -208,8 +210,22 @@
         <colgroup><col class="c-feat"><col class="c-og"><col class="c-tine"><col></colgroup>
         <thead><tr><th>Feature</th><th>Logseq</th><th>Tine</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td class="feat">Plugin platform</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-part">◑</b></td><td class="note">Tine 0.6 starts an experimental signed catalogue of bounded WebAssembly guests and inert token themes. It is intentionally not compatible with Logseq's mature <code>@logseq/libs</code> ecosystem; ports use Tine's narrower host-owned API.</td></tr>
-          <tr><td class="feat">Custom CSS and themes</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Tine reads graph <code>logseq/custom.css</code>, aliases common <code>--ls-*</code> variables, and also offers inert token-theme packages. Graph CSS remains last in the cascade.</td></tr>
+          <tr><td class="feat">Plugin platform</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-part">◑</b></td><td class="note">Tine 0.6 starts an experimental signed catalogue of bounded WebAssembly guests and declarative themes (theme API 0.2). F-Droid builds omit the network catalogue. It is intentionally not compatible with Logseq's mature <code>@logseq/libs</code> ecosystem; ports use Tine's narrower host-owned API.</td></tr>
+          <tr><td class="feat">Custom CSS and themes</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Tine reads graph <code>logseq/custom.css</code>, aliases common <code>--ls-*</code> variables, and also offers declarative theme packages. Graph CSS remains last in the cascade.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h2 class="cmp-h">Platforms &amp; your files</h2>
+      <div class="tbl-wrap"><table class="cmp">
+        <colgroup><col class="c-feat"><col class="c-og"><col class="c-tine"><col></colgroup>
+        <thead><tr><th>Feature</th><th>Logseq</th><th>Tine</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="feat">Desktop: Linux, macOS, Windows</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Linux AppImage/.deb/.rpm; signed &amp; notarized macOS; Windows installer or portable zip.</td></tr>
+          <tr><td class="feat">Android</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">On <a href="https://f-droid.org/packages/page.tine.app/">F-Droid</a> plus a signed APK; same fast core as desktop.</td></tr>
+          <tr><td class="feat">iPhone / iPad</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-part">◑</b></td><td class="note">Public <a href="https://testflight.apple.com/join/rpGGpTVW">TestFlight</a> beta; no App Store listing yet.</td></tr>
+          <tr><td class="feat">Sync conflicts (Syncthing / Dropbox copies, git markers)</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note"><b>Concord</b>: two versions of a page are reviewed in place, block by block, with a suggestion from the last version both sides agreed on; git/Fossil conflict markers can be finished in Tine; a big checkout or sync burst is one calm update; a Conflicts page lists what is open.</td></tr>
+          <tr><td class="feat">External edits while the app is open</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Refresh on window focus, optional “always ask before applying an external change”, and live <code>config.edn</code> re-read.</td></tr>
+          <tr><td class="feat">Command line</td><td class="st"><b class="g g-no">✗</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note"><code>tine open</code>, <code>capture</code>, <code>export static|live</code>, a read-only <code>doctor</code>, and <code>man tine</code> on Linux packages.</td></tr>
         </tbody>
       </table></div>
 
@@ -221,10 +237,11 @@
         <tbody>
           <tr><td class="feat">Performance on large graphs / older machines</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">The founding goal: a native Rust core + a lean UI, tuned for machines Logseq bogs down on.</td></tr>
           <tr><td class="feat">Sheets — grids, field tables &amp; boards</td><td class="st"><b class="g g-no">✗</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Render a bullet and its children as a spreadsheet-style grid, a typed field table, or a Kanban board — with formula columns, filters, aggregates, group-by, and CSV/TSV import. Stays plain Markdown plus <code>tine.*</code> properties Logseq ignores.</td></tr>
-          <tr><td class="feat">Split view</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Independent panes, each with its own tabs and history; <code>Ctrl</code>+click opens beside, drag a tab across, keyboard pane/seam navigation. Logseq has only the single right sidebar.</td></tr>
-          <tr><td class="feat">No-code query math &amp; grouping</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">The <b>∑ summarize</b> control counts / sums / averages a property and groups results with no code; in Logseq this needs a Clojure <code>:result-transform</code> / <code>:view</code>.</td></tr>
+          <tr><td class="feat">Split view</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Independent panes, each with its own tabs and history; <code>Ctrl</code>+click opens beside, Alt+click opens in the other pane, drag a tab across, keyboard pane/seam navigation. Named workspaces save and restore the whole window. Logseq has only the single right sidebar.</td></tr>
+          <tr><td class="feat">No-code query math &amp; grouping</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">The no-code <b>summarize</b> counts / sums / averages a property and groups results with no code; in Logseq this needs a Clojure <code>:result-transform</code> / <code>:view</code>.</td></tr>
           <tr><td class="feat">Editor tabs</td><td class="st"><span class="plug">plugin</span></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Built in (Logseq needs a community plugin): middle-click / Ctrl+W, reorderable, restored on launch.</td></tr>
-          <tr><td class="feat">Global quick capture</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note"><code>tine --capture</code> mini-window into today's journal.</td></tr>
+          <tr><td class="feat">Search that becomes a query</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Open every Ctrl+K result in a persistent, restorable tab; refine it and view it as a list, table or board; name it to turn it into a query page.</td></tr>
+          <tr><td class="feat">Global quick capture</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note"><code>tine capture</code> (bind it to a desktop hotkey) opens a mini-window with the full editor, into today's journal or a new page.</td></tr>
           <tr><td class="feat">Typographic replacements (<code>-&gt;</code> → →)</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Optional render-time only; your <code>.md</code> keeps the ASCII.</td></tr>
         </tbody>
       </table></div>
@@ -239,7 +256,7 @@
         <li><b>The database version of Logseq</b> — Tine targets the file/Markdown model on purpose; that's what keeps your notes as plain files you own.</li>
       </ul>
 
-      <p class="asof">As of Tine v0.6.0 · July 2026. This page is maintained by hand and will drift as features ship — <a href="https://github.com/martinkoutecky/tine/blob/master/docs/FEATURES.md">FEATURES.md</a> is the source of truth.</p>
+      <p class="asof">As of Tine v0.6.984 · September 2026. This page is maintained by hand and will drift as features ship — <a href="https://github.com/martinkoutecky/tine/blob/master/docs/FEATURES.md">FEATURES.md</a> is the source of truth.</p>
     </div>
   </section>
 
@@ -261,11 +278,15 @@
       <a href="https://github.com/martinkoutecky/tine/releases">Releases</a>
       <a href="index.html">Home</a>
       <a href="plugins.html">Plugins</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="https://github.com/martinkoutecky/tine/discussions">Community</a>
       <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a>
     </nav>
     <p class="foot-note">
       Tine is an independent reimplementation, not a fork — original Rust + SolidJS, no Logseq
-      source. <a href="https://logseq.com">Logseq</a> is © its authors. Tine is <strong>not
+      source. It targets Logseq's on-disk format and adapts parts of Logseq's outliner CSS, so it is
+      a derivative work and is released under the same license.
+      <a href="https://logseq.com">Logseq</a> is © its authors. Tine is <strong>not
       affiliated with or endorsed by Logseq.</strong>
     </p>
     <p class="foot-copy">© 2026 Martin Koutecký · Built as a faster, file-compatible companion to Logseq.</p>

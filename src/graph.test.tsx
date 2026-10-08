@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { GraphFolderPickResult, PreparedGraphFolder } from "./backend";
 import type { GraphMeta, PageDto, PageRead } from "./types";
 
 const META: GraphMeta = {
@@ -30,7 +31,9 @@ async function loadHarness(
   warm = false,
   onEpoch?: () => void,
   journal?: { journalTitle: () => string; setJournalTitleFormat: (format: string | null | undefined) => void },
+  mobile: { platform?: "android" | "ios" | "desktop"; pickerResult?: GraphFolderPickResult } = {},
 ) {
+  const platform = mobile.platform ?? "desktop";
   vi.resetModules();
   const events: string[] = [];
   let meta: GraphMeta | null = null;
@@ -40,6 +43,9 @@ async function loadHarness(
     confirm: vi.fn(async () => confirm),
     loadGraph: vi.fn(async () => ({ kind: "loaded" as const, meta: META, binding_generation: 1 })),
     pickFolder: vi.fn(async () => "/tmp"),
+    pickGraphFolder: vi.fn(async (): Promise<GraphFolderPickResult> => mobile.pickerResult ?? { status: "cancelled" }),
+    prepareGraphFolder: vi.fn(async (_path: string): Promise<PreparedGraphFolder> => ({ status: "ready", location: "local" })),
+    defaultGraphParent: vi.fn(async () => "/tmp"),
     createGraph: vi.fn(async () => META.root),
     getPage: vi.fn(async () => existing),
     resolvePage: vi.fn(async () => ({ kind: "absent" as const, id: "journals/2026_07_10.md" })),
@@ -151,7 +157,7 @@ async function loadHarness(
   vi.doMock("./pageIndex", () => ({ resetPageIndex }));
   vi.doMock("./lsShim", () => ({ CUSTOM_CSS_STYLE_ID: "test-css", ensureLsShimStyle: vi.fn() }));
   vi.doMock("./themeGallery", () => ({ ensureThemeStyle: vi.fn() }));
-  vi.doMock("./platform", () => ({ isMobile: () => false, platformKind: vi.fn(async () => "desktop") }));
+  vi.doMock("./platform", () => ({ isMobile: () => platform !== "desktop", platformKind: vi.fn(async () => platform) }));
   vi.doMock("./guide", () => ({ maybeShowGuideAnnouncement: vi.fn() }));
   vi.doMock("./workspaces", () => ({ clearWorkspaces: vi.fn() }));
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
@@ -172,6 +178,74 @@ afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
   vi.resetModules();
+});
+
+// Ported from master graph.test.tsx "mobile graph folder picker" (027b5ae15,
+// fa78c7b74): iOS opens and creates graphs only inside the app's own
+// On My iPhone / iCloud Drive containers, prepared natively first.
+describe("mobile graph folder picker", () => {
+  const OUTSIDE = "Choose a folder inside On My iPhone or iCloud Drive → TineOutline. Other Files providers aren't supported yet.";
+
+  it("opens a picked graph from Tine's iOS Documents container", async () => {
+    const harness = await loadHarness(null, undefined, true, true, undefined, undefined,
+      { platform: "ios", pickerResult: { status: "picked", path: META.root } });
+
+    await expect(harness.switchGraph()).resolves.toEqual({ kind: "loaded", root: META.root });
+    expect(harness.api.pickGraphFolder).toHaveBeenCalledOnce();
+    expect(harness.api.prepareGraphFolder).toHaveBeenCalledWith(META.root);
+    expect(harness.api.loadGraph).toHaveBeenCalledWith(META.root);
+  });
+
+  it("opens and remembers the rebased iOS container path after an app update", async () => {
+    const stale = "/var/mobile/Containers/Data/Application/OLD/Documents/template-graph";
+    const harness = await loadHarness(null, undefined, true, true, undefined, undefined, { platform: "ios" });
+    harness.api.prepareGraphFolder.mockResolvedValue({ status: "ready", location: "local", path: META.root });
+
+    await expect(harness.loadGraphPath(stale)).resolves.toEqual({ kind: "loaded", root: META.root });
+    expect(harness.api.prepareGraphFolder).toHaveBeenCalledWith(stale);
+    expect(harness.api.inspectGraphAccess).toHaveBeenCalledWith(META.root);
+    expect(harness.api.loadGraph).toHaveBeenCalledWith(META.root);
+    expect(localStorage.getItem("tine.graphPath")).toBe(META.root);
+  });
+
+  it("shows a clear refusal when iOS returns an outside-container folder", async () => {
+    const harness = await loadHarness(null, undefined, true, false, undefined, undefined,
+      { platform: "ios", pickerResult: { status: "refused" } });
+
+    await expect(harness.switchGraph()).resolves.toEqual({ kind: "aborted" });
+    expect(harness.api.loadGraph).not.toHaveBeenCalled();
+    const { toasts } = await import("./toasts");
+    expect(toasts().at(-1)).toMatchObject({ kind: "info", message: OUTSIDE });
+  });
+
+  it("prepares the chosen iCloud location before creating an iOS graph", async () => {
+    const harness = await loadHarness(null, undefined, true, true, undefined, undefined,
+      { platform: "ios", pickerResult: { status: "picked", path: META.root } });
+
+    await expect(harness.createNewGraph()).resolves.toEqual({ kind: "loaded", root: META.root });
+    expect(harness.api.pickGraphFolder).toHaveBeenCalledOnce();
+    expect(harness.api.defaultGraphParent).not.toHaveBeenCalled();
+    expect(harness.api.prepareGraphFolder).toHaveBeenNthCalledWith(1, META.root);
+    expect(harness.api.createGraph).toHaveBeenCalledWith(META.root);
+  });
+
+  it("refuses an iOS graph before native graph inspection when its container is outside scope", async () => {
+    const harness = await loadHarness(null, undefined, true, false, undefined, undefined,
+      { platform: "ios", pickerResult: { status: "picked", path: META.root } });
+    harness.api.prepareGraphFolder.mockResolvedValue({ status: "refused" });
+
+    await expect(harness.switchGraph()).resolves.toEqual({ kind: "aborted" });
+    expect(harness.api.inspectGraphAccess).not.toHaveBeenCalled();
+    expect(harness.api.loadGraph).not.toHaveBeenCalled();
+  });
+
+  it("never asks the iOS boundary to prepare a graph on Android", async () => {
+    const harness = await loadHarness(null, undefined, true, true, undefined, undefined,
+      { platform: "android", pickerResult: { status: "picked", path: META.root } });
+
+    await expect(harness.switchGraph()).resolves.toEqual({ kind: "loaded", root: META.root });
+    expect(harness.api.prepareGraphFolder).not.toHaveBeenCalled();
+  });
 });
 
 describe("default journal template graph bind", () => {

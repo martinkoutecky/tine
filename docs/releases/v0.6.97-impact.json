@@ -1,0 +1,1339 @@
+{
+  "schemaVersion": 2,
+  "version": "0.6.97",
+  "baseTag": "v0.6.96",
+  "items": [
+    {
+      "section": "Added",
+      "text": "Added a read-only synchronized-graph verifier that compares the actual Markdown and Org file bytes across devices, including nested and nonstandard layouts, without requiring shell or ADB access.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md",
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**A fault one core test injects can no longer fail an unrelated test beside it.** The shared-provider \"this filesystem has no `renameat2` flags\" fault was armed process-wide, so under a threaded `cargo test` the injected errno was visible to every other test renaming a provider file at that moment; the whole-suite failure set differed on every run. The fault is now scoped to the thread under test and handed explicitly to the sync actor for the one request that needs it, so the corpus reports the same result twice in a row (GH #350).",
+      "userVisible": false,
+      "regressions": [
+        "REG-CORE-FLAGGED-RENAME-INJECTION-DETERMINISM"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "internal-only; no user workflow or control changed",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Queries and search are much faster on Managed Storage.** Every managed query used to re-read, re-parse, and structurally cross-check every candidate page, every time -- so a page full of `{{query}}` re-parsed the graph on each open, and search re-parsed it on each keystroke. Unchanged pages now reuse their complete parsed application view after their exact file bytes and stored page state are checked; an external edit or accepted actor change is re-read immediately. Searching for a literal phrase also consults the stored text index first instead of reading every page, and a result-limited search now does its work only for the results it keeps.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DUP6-MANAGED-QUERY-PROJECTION-REUSE"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "performance-only; the user workflow and controls are unchanged",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Task markers mean the same thing everywhere.** The editor, carry-forward, the sheet state/priority writers, and the rendered checkbox now share one leading-marker recognizer that is byte-faithful to the parser: a task written as `TODO<tab>x` no longer counts as open for carry-forward while rendering without a checkbox, cycling or setting state on an indented task replaces its marker instead of prepending a second one, and a bare `TODO` followed by continuation lines is no longer treated as a task the renderer cannot see.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/journals-tasks-scheduling.md",
+          "crates/tine-core/src/templates/capture-plan-day.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**`key:: value` property lines are recognized the same way by every tool.** Logbook insertion, managed template/content checks, rename, conflict handling and the read index now share the parser's exact property-line rule, so a dotted key like `logseq.order-list-type:: number` is treated as a block property everywhere (a logbook entry could previously be inserted above it), leading whitespace and Unicode keys behave identically, and `key::value` without a space is (as the parser already said) not a property.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Page-link gestures are the same everywhere.** Middle-click now opens a background tab from every page reference and page title — unlinked-reference page headers, namespace macro and hierarchy links, the zoom breadcrumb, right-sidebar item titles, query search-result rows, and the page title's Ctrl/Cmd+click all behaved differently (plain-click only, or autoscroll on Windows). Shift+click still opens the sidebar and plain click still navigates (GH #207).",
+      "userVisible": true,
+      "regressions": [
+        "UI-INTERNAL-LINK-GESTURE-207"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The existing Guide already documents this restored interaction contract.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md",
+          "crates/tine-core/src/templates/find-and-revisit.md",
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A split pane's only tab keeps its close button.** The tab strip hid the ✕ whenever a pane held a single tab, so after one split neither pane could be closed without first dragging a tab across. The ✕ now shows whenever closing actually works: any multi-tab strip, or a lone non-feed tab whose pane can close (GH #207).",
+      "userVisible": true,
+      "regressions": [
+        "UI-SPLIT-PANE-LAST-TAB-CLOSE-207"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The existing Guide already documents this restored interaction contract.",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Search and conflict handling now use one contract across runtimes.** Page and block search agree on Unicode whitespace, bare Unicode tags, and the common linear-time regex subset; query-workspace saves and Direct conflict resolution classify bounded failure codes instead of matching error prose. The browser mock now also announces the graph rebind caused by changing the default home page.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed Storage and Direct Files answer the same query the same way.** The two storage modes evaluated block queries through separate copies of the same logic, and the copies had drifted: a byte-budgeted block-referrers panel admitted a different number of rows, and kept a different set of them, on the two modes for identical content. Both now use one evaluator and one result-budget rule.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DUP6-QUERY-EVALUATOR-MODE-PARITY"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Journal recency respects the configured title format.** On graphs with a custom `:journal/page-title-format`, `(sort-by modified)` ranked every journal last on three of the four query paths (they parsed titles with the default format only). All producers now share one recency axis that honours the graph's configured formats.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DUP4-RECENCY-CONFIGURED-FORMAT"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Backlink filter truncation is reported consistently.** A page-property root entry that hit its text/facet budget marked the context truncated on Managed Storage but not on Direct Files; the two now agree.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DUP6-BACKLINK-TRUNCATION-FLAG"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed rename works for every page name.** The managed rename planner keyed its index lookups with a different Unicode fold than the index itself (the two disagree on Greek final sigma), so renaming such a page reported success while doing nothing. Rename lookups now use the index's own fold.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DUP1-MANAGED-RENAME-FOLD"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**config.edn settings can no longer clobber a nested map.** Every setting writer now edits only the root map's direct entries; a same-named keyword nested inside another map (e.g. under `:default-templates`) survives byte-for-byte instead of being spliced over.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DUP3-CONFIG-NESTED-SHADOW"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Write-durability errors are reported, not swallowed.** The workspaces registry, backup restore, and Linux window-identity writers follow the save path's directory-fsync policy (tolerate \"unsupported here\", report real errors), the window-identity writer uses unique create-only temp files, and the file watcher recognizes backup-restore temp files directly.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DUP5-ATOMIC-WRITE-POLICY"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/contracts/small-file-writes.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**One spelling of a page is one favorite.** Starring a page under one spelling (different case, an alias, NFC/NFD accents, boundary slashes) now fills the star and toggles off under every other spelling instead of appending a duplicate; the sidebar arrangement, membership, page delete, and rename all use the same kind-scoped identity, so deleting a page no longer silently drops a journal favorite that merely shares its name. Backlink filter chips key by the same identity, so two spellings of one co-referenced page no longer produce two chips that miss each other's filters.",
+      "userVisible": true,
+      "regressions": [
+        "UI-FAVORITES-GROUPS-102",
+        "UI-REFSOURCE-EXCLUSION-SHARED-001"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md",
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/contracts/favorites-arrangement.md",
+          "docs/contracts/linked-references-filter.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Batch copy/export for references** (GH #348). Linked References and Unlinked References each have an explicit export affordance: every entry is pre-selected for copy-all, uncheck for a subset, and the familiar Copy / export modal (Text, OPML, HTML, with the usual content/indent/depth/cleanup options) produces the selected blocks grouped by their source page. The two sections act independently, Linked honors its active filters, and normal page export is unchanged — references are never included unless you ask.",
+      "userVisible": true,
+      "regressions": [
+        "UI-REFERENCE-BATCH-EXPORT-348"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md",
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Favorites nest to any depth** (GH #102). A group can hold groups, and a favorite can hold favorites; drag a row to the right to nest it, to the left to lift it out. Depth is measured from where the drag started, so a plain vertical drag never nests by accident, and the insertion line is drawn at the depth the drop will land. Deleting a group still keeps everything it held — now one level up rather than at the top. The arrangement page round-trips every bullet at every depth, so hand-written nesting survives.",
+      "userVisible": true,
+      "regressions": [
+        "UI-FAVORITES-GROUPS-102"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md",
+          "crates/tine-core/src/templates/find-and-revisit.md",
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/contracts/favorites-arrangement.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Editing the Favorites page updates the sidebar** (GH #102). The arrangement lives in an ordinary page, so editing it — in Tine or outside — is now reflected immediately instead of at the next graph open. A page edit is a membership statement: removing a `[[link]]` bullet unfavorites that page and adding one favorites it. This also gives favorites reordering a keyboard route, since the arrangement is a page like any other.",
+      "userVisible": true,
+      "regressions": [
+        "UI-FAVORITES-GROUPS-102",
+        "REG-CONFIG-LIVE-RELOAD"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md",
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/contracts/favorites-arrangement.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**`logseq/config.edn` is re-read while Tine runs.** A settings change made in Logseq, in a text editor, or delivered by Syncthing is now picked up during the session rather than being ignored until the next graph open — and therefore no longer computed against a stale copy. Favorites, shortcuts, macros, the home page, journal formats, hidden properties and the rest all follow. Tine only pays for the reload when the file's bytes actually differ from those it is serving, so its own settings writes and repeated identical deliveries cost nothing.",
+      "userVisible": true,
+      "regressions": [
+        "REG-CONFIG-LIVE-RELOAD"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/contracts/config-live-reload.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Privacy-safe diagnostic reports** (GH #343). Every production build now retains a bounded current-and-previous-run flight recorder of fixed operation names, outcomes, timings and counts. Settings → Diagnostics previews the JSON before the user chooses to copy or save it; nothing is uploaded automatically, and graph content, paths, page titles, queries, URLs and credentials are excluded by the recorder API. Release CI also retains exact-commit native symbols and hidden frontend source maps outside the shipped packages.",
+      "userVisible": true,
+      "regressions": [
+        "UI-DIAGNOSTIC-REPORT-343",
+        "REG-DIAGNOSTIC-FLIGHT-RECORDER-343"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/diagnostics-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Experimental 32-bit Windows packages** (GH #275). Releases now produce an `i686-pc-windows-msvc` installer and portable ZIP for older Windows 10 tablets. The pilot is deliberately excluded from automatic updates until it has been exercised on a reporter's real 32-bit device.",
+      "userVisible": true,
+      "regressions": [
+        "REG-RELEASE-WINDOWS-X86-275"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Favorites can be arranged into named groups.** One level, plain-text group names, collapsible, with drag between groups as well as within one. Deleting a group never unfavorites anything — its pages move back to the ungrouped list. The arrangement lives in an ordinary page in your graph, so it syncs and merges like everything else rather than as an opaque settings blob, and because its entries are real links a page rename follows them automatically. `config.edn :favorites` stays exactly what it was — the flat list Logseq reads — so Logseq keeps working. Nothing is created until you actually make a group: if you never group anything, nothing about Favorites changes (GH #102).",
+      "userVisible": true,
+      "regressions": [
+        "UI-FAVORITES-GROUPS-102"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md",
+          "crates/tine-core/src/templates/find-and-revisit.md",
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/contracts/favorites-arrangement.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Typing in the Linked References search box now also narrows the reference chips below it.** The reference list already shrank as you typed; the chips — the pages and tags you pick from — were computed over every backlink, so they and their counts never moved. They now follow what you type, which is what Logseq's equivalent field does and what the list is for. A chip you have already selected stays visible even when your text filters its last backlink away, at count zero, so a filter can never become unreachable (GH #173).",
+      "userVisible": true,
+      "regressions": [
+        "UI-REFFILTER-CHIPS-FOLLOW-TEXT-173",
+        "UI-LINKED-REFERENCES-FILTER-001"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/contracts/linked-references-filter.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**A journal day with more than one file is now resolved on the day itself.** These days — usually a leftover of changing the journal date format, which never overwrites the old file — used to reach you only as a sticky notice at startup pointing at Settings. They now join the conflict badge, the dock and the walk like every other conflict, and the day page offers the same side-by-side review: keep a line from either file, or keep both. Keeping both is what \"Merge\" did in Settings, so nothing was lost by moving it here; the other file goes to the recoverable trash once you apply. Opening, renaming and trashing an individual file are still offered, on the day and in Settings. Two files in different formats (a `.md` and an `.org` for one day) can't be folded together and say so instead of offering a choice that could not be applied. The startup notice is gone.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md",
+          "crates/tine-core/src/templates/troubleshooting-recovery.md",
+          "crates/tine-core/src/templates/journals-tasks-scheduling.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Copy / export names its two content choices after what you actually get.** The explicit *Content* option in \"Copy / export as…\" now reads **Plain text** (cleaned, as displayed) and **Markdown** — or **Org** on an Org page — (preserved source syntax: bold, highlighting, links, properties and structure). The preserve choice was always implemented but shipped under the internal label \"Source\"; users looking for the Markdown-preserving option could not find it (GH #352).",
+      "userVisible": true,
+      "regressions": [
+        "UI-EXPORT-CONTENT-PRESERVE-CHOICE-352"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Future iOS/TestFlight builds now use Tine's application icon.** The generated Xcode project previously retained Tauri's template icon even though Tine's complete iOS icon set was tracked in the repository. Project preparation now installs that set before Xcode compiles the asset catalog, and the signed-IPA contract compares the packaged primary icon's pixels with Tine's source. The already-submitted `0.6.95.8` beta is unchanged.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Dragging a favourite in the sidebar no longer selects its title.** The reorder drag is a pointer gesture, not a text gesture, but nothing suppressed selection, so the label smeared under the cursor. Applies to both reorderable sidebar lists.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**The Linked References filter no longer claims to have filtered a list it has not.** While the descendant index is still loading the panel deliberately shows every reference — the local text it has is only a subset, so hiding a reference could hide a real match — but the summary still read \"N of N references\". It now says indexing is in progress and that the filter applies when it finishes (GH #173).",
+      "userVisible": true,
+      "regressions": [
+        "UI-REFFILTER-CHIPS-FOLLOW-TEXT-173",
+        "UI-LINKED-REFERENCES-FILTER-001"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The v0.6.97 Guide sweep added or corrected the affected user workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/contracts/linked-references-filter.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Deleting an open page on Android no longer passes through an unexplained black frame.** Tine still waits for pending edits and the native trash operation to become durable before navigating anywhere, but it now retires the deleted page's pane routes in that same durable continuation, before the loaded page is purged. Debug mode also times confirmation, saving, native deletion, fallback loading and first paint separately so remaining device/storage latency can be diagnosed without logging note names or paths (GH #376).",
+      "userVisible": true,
+      "regressions": [
+        "UI-ANDROID-PAGE-DELETE-HANDOFF-376"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Creating a journal no longer makes the next Direct Files page fail to save on Windows.** Windows may report several `Create`, `Modify`, and rename events for Tine's own atomic page publication. Those exact self echoes now validate the published path, bytes, and physical file identity under the same write lock instead of raising the external-change frontier while the watcher waits to reconcile them. A changed external file, an identical-byte replacement inode from a sync service or second Tine, ambiguous events, and portable case/NFC collisions remain fail-closed (GH #374, follow-up to GH #366).",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-WINDOWS-EXACT-WATCHER-CREATION-366"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Block zoom keeps pointing at the intended block after siblings are inserted or reordered.** Tine now keeps its deterministic, UUID-shaped runtime locators separate from authored `id::` / Org `:id:` identity, resolves the unique authored claimant first, and refuses ambiguous duplicate authored IDs instead of guessing. Existing graphs are not rewritten (GH #373).",
+      "userVisible": true,
+      "regressions": [
+        "UI-BLOCK-EXTERNAL-RUNTIME-IDENTITY-SEPARATION-373"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Windows self-update now follows the system proxy route and shows one update offer at a time.** The native updater already used the Windows trust store, but its reduced feature set omitted Reqwest's separate Windows system-proxy integration, so it could fail to fetch `latest.json` even while WebView2 and the browser reached GitHub. Startup and manual checks also now replace the same release offer instead of stacking duplicate install prompts (GH #241).",
+      "userVisible": true,
+      "regressions": [
+        "UI-UPDATER-FAILURE-SURFACE-241"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Selecting text on Android no longer stacks Tine's formatting controls under the system Cut/Copy/Paste menu.** Tine's Bold, link, code, highlight and other formatting actions now dock above the existing mobile keyboard toolbar, while Android keeps the selection-adjacent region for its native actions and handles. The compact formatting overflow opens upward, away from the keyboard (GH #375).",
+      "userVisible": true,
+      "regressions": [
+        "UI-MOBILE-SELECTION-TOOLBAR-DOCK-375"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Fitting split panes no longer keep a scrollbar merely for blank editing space.** The first GH #369 correction fixed short panes but still made an otherwise fitting page scroll whenever it occupied 60–100% of its pane. An idle pane now has zero blank scroll range at every fitting height; the 40% pane-relative breathing room returns while a block is actively edited, so a long page's tail remains comfortably reachable.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PANE-SCROLL-SLACK-369"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**The full Rust core corpus now finishes and the release gate no longer hides passing tests.** Five obsolete shared-join test barriers now pause at current, finite clean-runtime concurrency cuts. An honest unfiltered run completed all 2,116 selected-or-ignored tests without a hang or timeout, and 47 stale or passing names were removed from the release exclusion. The remaining 45 known-red legacy-oracle tests are listed exactly and classified by behavior family, so a newly passing, renamed, or omitted test fails the contract instead of silently drifting outside the gate (GH #350).",
+      "userVisible": false,
+      "regressions": [
+        "REG-CORE-TEST-COMPLETION-350"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This internal change adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/testing.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed Storage can reopen retained edits and moves of blocks carrying a Logseq `id::` UUID.** Projection recovery now consults the same bounded baseline identity candidates as planning and commit validation, instead of refusing the accepted block as unauthorized when the UUID originated in the activation baseline (GH #370).",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-CLEAN-UUID-PROJECTION-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Android startup and page navigation no longer look like an unexplained black or blank screen while work is pending.** The native window now has light and night Tine backing colors before the WebView paints, startup immediately shows a matching readiness surface, and an in-app page load has a small visible indicator. Actual load failures still replace it with their error, and plugin revocation checks still finish before community code can activate (GH #299).",
+      "userVisible": true,
+      "regressions": [
+        "UI-THEMED-STARTUP-PAGE-READINESS-299"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Clicking a block bullet no longer reports a false same-name file conflict.** A block zoom now keeps using the exact page already open in Direct Files instead of racing the durable block-ID save with a second read of the page's older bytes. Restored zoom tabs still load missing owners from disk, and genuinely different same-name physical files remain fail-closed (GH #354).",
+      "userVisible": true,
+      "regressions": [
+        "UI-DIRECT-FILES-BLOCK-ZOOM-OWNER-354"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Page action control labels no longer join dragged text selections.** The journal carry-over buttons (\"Carry unfinished tasks → today\" and friends), the tag-table toggle, the guide copy button, and the ⋯ page-actions trigger are page chrome, not content: selecting across the page no longer copies their label text, while the buttons stay fully clickable and keyboard- focusable.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and focused regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Joining a synced graph no longer gets stuck on an older local managed-storage marker.** If Direct Files is active but a previous activation left private managed state behind, Tine now archives that complete predecessor unchanged before bootstrapping the other device's shared identity, instead of trying to open the old marker as the new graph and reporting that it names a different catalog document.",
+      "userVisible": true,
+      "regressions": [
+        "REG-SYNC-DIRECT-JOIN-RETAINED-AUTHORITY-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Direct Files delete, rename, trash, and conflict-copy moves no longer read every document in the graph.** These exact no-clobber moves now validate the source and destination through retained metadata and portable path checks; document contents remain untouched and unrelated files are never opened.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-RENAME-RETAINED-SHADOW-LIMIT-364",
+        "REG-DELETE-PAGE-OFF-COMMAND-THREAD-AUDIT20260809"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A provider deletion can no longer erase a local edit that arrived in the same sync pass.** Managed sync now captures a pending Markdown or Org watcher epoch before applying provider projection, then drains the complete visible provider cut before classifying the resulting race. The local edit therefore enters immutable history and the normal edit-versus-delete rule settles it, even when the filesystem and oplog notifications arrive together.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-LOCAL-EDIT-PROVIDER-DELETE-ORDER"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A crash inside a Direct Files save can no longer leave a page invisible under hidden recovery names.** On the next checked open, one unambiguous stranded copy is restored without clobbering a live file. Ambiguous or superseded copies are retained or moved intact to recoverable conflict trash; lookalikes and files whose physical identity cannot be proved are untouched.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Changed Direct Files saves perform one fewer full-file read.** The atomic retirement already detaches and byte-checks the exact expected inode before publishing, so Tine no longer rereads the same live name immediately before that stronger proof. External edits still win or become an explicit conflict, and managed-storage projection behavior is unchanged.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-SAVE-WHOLE-GRAPH-REPARSE-267"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Page lists stay fast after Direct Files file lifecycle changes.** With a warm graph, creates, deletes, watcher additions/removals, and renames now update the exact in-memory page inventory instead of making the next page lookup reopen and reparse the whole graph. Rename transactions reparse only documents whose retained final bytes they already changed; explicit titles, parse failures, physical paths, and watcher invalidation remain authoritative.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-SAVE-KEEPS-PAGE-INVENTORY-AUDIT20260809"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already documented behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing contract documents the affected behavior and its safety or compatibility boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    }
+  ]
+}

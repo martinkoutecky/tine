@@ -182,6 +182,9 @@ describe("AboutTab", () => {
       await flush();
       expect(host.textContent).not.toContain("Check for updates");
       expect(host.textContent).toContain("Updates arrive through your app's distribution channel");
+      // App Store builds carry no donation link (master b89a9e77f).
+      if (platform === "ios") expect(host.textContent).not.toContain("Ko-fi");
+      else expect(host.textContent).toContain("Ko-fi");
     } finally {
       dispose();
     }
@@ -196,6 +199,7 @@ describe("AboutTab", () => {
       await flush();
       expect(host.textContent).not.toContain("Check for updates");
       expect(host.textContent).not.toContain("distribution channel");
+      expect(host.textContent).not.toContain("Ko-fi");
     } finally {
       dispose();
     }

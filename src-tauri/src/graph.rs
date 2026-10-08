@@ -362,6 +362,32 @@ pub(crate) async fn load_graph(
     {
         crate::complete_pending_capture_show(&app, label.clone(), *binding_generation);
     }
+    // The iOS Simulator probe (.github/workflows/ios-probe.yml) copies the Guide
+    // into the graph it just opened, through the same bound-slot writer as the
+    // Guide button (master 3fa9d51d7). Simulator-only, so a hidden launch
+    // argument never becomes product behaviour on physical devices.
+    #[cfg(all(target_os = "ios", target_abi = "sim"))]
+    if std::env::args().any(|argument| argument == "--tine-ci-copy-guide") {
+        let binding_generation = result
+            .binding_generation()
+            .ok_or_else(|| "iOS Guide-copy probe did not retain the requested graph".to_string())?;
+        let worker_app = app.clone();
+        let worker_label = label.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let state = worker_app.state::<AppState>();
+            let slot = crate::state::slot_for_bound_window(
+                &state,
+                &worker_label,
+                Some(binding_generation),
+            )?;
+            tine_graph_features::guide::copy_guide_into_graph(&slot.store, "Tine Guide")
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|error| format!("iOS Guide-copy probe worker failed: {error}"))?
+        .map_err(|error| format!("iOS Guide-copy probe failed: {error}"))?;
+        crate::debug::diag("ios-guide-copy-probe-completed");
+    }
     Ok(result)
 }
 

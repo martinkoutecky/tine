@@ -630,3 +630,4 @@ try {
 console.log("Release pipeline fixture tests passed (exact-SHA CI gate + release workflow + fail-closed cases).");
 
 await import("./test-release-identity.mjs");
+await import("./test-ios-distribution.mjs");

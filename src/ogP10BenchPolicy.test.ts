@@ -10,7 +10,7 @@ it("hosted OG performance keeps its campaign anchor when master publishes a rele
   expect(result.stdout).toContain("previous v0.6.5");
 });
 
-it("the campaign selector refuses a moved anchor or a stable application", () => {
+it("the campaign selector refuses a moved anchor or an application other than the shipped one", () => {
   const root = mkdtempSync(join(tmpdir(), "tine-og-policy-"));
   try {
     mkdirSync(join(root, "scripts"));
@@ -29,9 +29,11 @@ it("the campaign selector refuses a moved anchor or a stable application", () =>
     policy.previousRelease.ref = "v0.6.987";
     expect(run().status).toBe(1);
     policy.previousRelease.ref = "v0.6.5";
-    config.identifier = identity.identities.release.identifier;
+    const other = identity.ship === "release" ? "experiment" : "release";
+    config.identifier = identity.identities[other].identifier;
     expect(run().status).toBe(1);
-    config.identifier = identity.identities.experiment.identifier;
+    config.identifier = identity.identities[identity.ship].identifier;
+    expect(run().status).toBe(0);
     policy.previousRelease.selection = "unknown";
     expect(run().status).toBe(1);
     delete policy.previousRelease.selection;

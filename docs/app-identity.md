@@ -24,7 +24,7 @@ remain accepted for the current campaign build and stable tooling.
 `src-tauri/app-identity.json` is the only place either identity is written:
 
 ```json
-{ "ship": "experiment",
+{ "ship": "release",
   "identities": {
     "release":    { "identifier": "page.tine.Tine",   "productName": "Tine",    "androidApplicationId": "page.tine.app", "deployName": "tine" },
     "experiment": { "identifier": "page.tine.TineBeta", "productName": "Tine Beta", "androidApplicationId": "page.tine.beta",  "deployName": "tine-og" } } }
@@ -155,7 +155,7 @@ staging dir, fsyncs it, and renames it into place.
 - In a release build it is a no-op (`APP_IDENTIFIER == RELEASE_IDENTIFIER`).
 - Only on desktop. Mobile app data is private to each application id.
 
-**Delete it when the switch ships `release`.** Remove the file, its `_tests.rs`,
+**Deleted in 0.7.0, when the switch first shipped `release`.** The steps were: Remove the file, its `_tests.rs`,
 the `mod` line and the one call in `lib::run()`, and its
 `APPROVED_WRITER_SITES` entry in `scripts/lib/og-enforcement.mjs`.
 `src/appIdentity.guard.test.ts` fails until you do.

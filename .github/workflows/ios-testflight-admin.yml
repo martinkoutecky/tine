@@ -1,0 +1,64 @@
+name: iOS TestFlight administration
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Inspect or advance the external TestFlight beta
+        required: true
+        default: inspect
+        type: choice
+        options:
+          - inspect
+          - prepare
+          - submit
+          - publish-link
+      build_number:
+        description: Full CFBundleVersion, e.g. 0.6.97.16, not run number 16 (blank selects latest)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight-administration
+  cancel-in-progress: false
+
+jobs:
+  testflight-admin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+      APPLE_REVIEW_CONTACT_PHONE: ${{ secrets.APPLE_REVIEW_CONTACT_PHONE }}
+      TESTFLIGHT_BUILD_NUMBER: ${{ inputs.build_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Require App Store Connect credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in APPLE_API_KEY APPLE_API_ISSUER APPLE_API_PRIVATE_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::required App Store Connect secret $name is missing"
+              exit 1
+            fi
+          done
+
+      - name: Inspect or advance external TestFlight beta
+        id: administer
+        run: node scripts/app-store-connect-testflight.mjs "${{ inputs.action }}"
+
+      - name: Publish TestFlight link
+        if: steps.administer.outputs.public_link != ''
+        run: |
+          echo "### Public TestFlight link" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.administer.outputs.public_link }}" >> "$GITHUB_STEP_SUMMARY"

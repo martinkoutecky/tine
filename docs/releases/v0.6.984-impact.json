@@ -1,0 +1,937 @@
+{
+  "schemaVersion": 2,
+  "version": "0.6.984",
+  "baseTag": "v0.6.983",
+  "items": [
+    {
+      "section": "Added",
+      "text": "**A part of Tine that fails now says so, where it failed, with a Retry — instead of leaving the window blank.** Until now a single unreadable value anywhere in the interface tore down the whole render and showed nothing at all, with no message and no way back except restarting; at least one report of an \"empty app\" was this, not lost notes. The page, the sidebar, Linked and Unlinked References and the conflict panel now each fail on their own: the region that broke shows what went wrong and a **Retry** that re-renders just that region, and everything else keeps working. If the failure happened while Tine was still waiting on a slow backend operation, the message says how many operations are outstanding and how long they have been running, since that is usually the real explanation and retrying is usually the fix (UI-REGION-FAILURE-BOUNDARY-001, GH #490, GH #332).",
+      "userVisible": true,
+      "regressions": [
+        "UI-REGION-FAILURE-BOUNDARY-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Troubleshooting's \"A part of the window is blank or shows an error\" topic describes the per-region failure message and Retry.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The failure-record shape and the outstanding-operation summary are recorded in the diagnostics census and the staleness contract.",
+        "refs": [
+          "docs/contracts/diagnostics.md",
+          "docs/contracts/frontend-staleness.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate the Guide site from the canonical templates so the published page matches this release.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**A background load that fails now costs only the thing it was loading, and a panel that cannot fetch its contents says so rather than drawing itself empty.** Every value Tine fetches in the background — syntax highlighting, a typeset formula, a page preview, the references to a block, the results of a query, the list of pages — used to throw when its fetch failed, which took down the region around it. Each of those places already had a written answer for \"no value yet\", and none of those answers could ever run. They run now: a code block that could not be highlighted shows as plain text, a formula shows its LaTeX, a preview shows nothing in its place, and the page carries on. For panels where being empty would instead assert something false — \"no references to this block\" when Tine merely could not look — the panel keeps its heading and controls and shows **Couldn't load …**, with a **Retry** where refetching is possible (UI-RESOURCE-READ-FALLBACK-002, GH #490, GH #332).",
+      "userVisible": true,
+      "regressions": [
+        "UI-RESOURCE-READ-FALLBACK-002"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Troubleshooting's \"A panel says it could not load something\" topic describes the quiet degradations and the Couldn't-load row with Retry.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The single content-free tine.resource-failed record is a new row in the content-out-of-logs census.",
+        "refs": [
+          "docs/contracts/diagnostics.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate the Guide site from the canonical templates so the published page matches this release.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Any property can be edited from the UI, on a page or on a block.** The properties form offered five fixed page keys and nothing at all for blocks, so every other `key:: value` line had to be typed by hand. Use **Page actions** beside a page title, or right-click the title, for **Page properties…** (or type `/page properties`), and right-click a block for **Properties…**: the form lists the properties that are really there, **Add a property** takes any key you like, and any non-preset key can be removed outright. A key is accepted exactly when the property reader can match it back, so anything that can be added can also be changed and removed — including keys that are not plain ASCII. A read-only page offers no property editing at all (UI-PROPS-ARBITRARY-EDIT-164, GH #164).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PROPS-ARBITRARY-EDIT-164"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "\"Page and block properties\" documents Page properties…, block Properties…, Add a property, removal, and the machine-managed exclusions.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate the Guide site from the canonical templates so the published page matches this release.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Export…** on any query publishes the pages its results live on as a standalone HTML site under `published-queries/<name>/`, regardless of `public::`. The dialog reviews the page list first; a block query exports whole pages and says so. Links to pages outside the export stay inert, nested queries show only in-export results, and referenced images and files are copied into the folder so it can be moved anywhere. An export that would copy more than the new **Query export size limit** (Settings → Graph) stops and offers the setting; a taken name can be replaced (the previous export is kept in recovery) or given a separate folder. `published-queries/` is never read back as pages. Queries inside the exported pages are run the way the app runs them (`<% current page %>` resolves to the page, `#+BEGIN_QUERY` blocks keep their table view).",
+      "userVisible": true,
+      "regressions": [
+        "REG-QUERY-EXPORT-CLOSURE-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Export… , the page-list review, the size limit and the published-queries/ folder are documented in the research and files topics.",
+        "refs": [
+          "crates/tine-core/src/templates/research-document.md",
+          "crates/tine-core/src/templates/files-external-edits-backups.md"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The export's page closure and snapshot are specified in the published-query export ADR.",
+        "refs": [
+          "docs/adr/0065-published-query-export-bakes-the-app.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate the Guide site from the canonical templates so the published page matches this release.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "A query export also ships an **app version**: served over HTTP, the folder opens as a read-only copy of Tine over a snapshot baked at export time — the query's results on the export's own home page, Ctrl+K page navigation, Linked References and block previews, with every answer computed by Tine at export time and nothing editable. Queries show the results they had when exported, under the view they had; view changes and new queries are refused with a typed reason. `index.html` opened from disk, or with `?static`, keeps the plain static site.",
+      "userVisible": true,
+      "regressions": [
+        "REG-QUERY-EXPORT-APP-CLOSURE-001",
+        "UI-QUERY-EXPORT-APP-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The research topic documents the served app version, its baked snapshot and the ?static fallback.",
+        "refs": [
+          "crates/tine-core/src/templates/research-document.md"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The baked-app snapshot and its refusals are specified in the published-query export ADR.",
+        "refs": [
+          "docs/adr/0065-published-query-export-bakes-the-app.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate the Guide site from the canonical templates so the published page matches this release.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Settings now has one **Help & diagnostics** tab containing the flight-recorder report, synchronized-graph verification, and the parser comparison. The parser comparison no longer offers known intentional lsdoc differences, such as dollar math preserved inside Markdown emphasis, as reportable bugs.",
+      "userVisible": true,
+      "regressions": [
+        "UI-DIAGNOSTICS-INTENTIONAL-PARSER-DIVERGENCE-006"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Troubleshooting and the files topic both name Settings → Help & diagnostics as the one place for the report, graph verification and the parser comparison.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md",
+          "crates/tine-core/src/templates/files-external-edits-backups.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate the Guide site from the canonical templates so the published page matches this release.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**In Unlinked References, the highlighted mention is now the control.** Click a highlighted word to open its source page with that exact mention selected. The numbered jump circles now appear only when the excerpt cannot show every mention — on a short block they repeated what the highlighting already said — and **Show full block** marks every mention instead of dropping the highlighting. Every jump, in both reference panels, now lands on the mention *selected* rather than leaving an invisible caret on it, which is what made the circles look inert on iPhone and iPad. Unlinked-reference highlighting also now uses the same colour as search and the quick switcher; it had been a much fainter tint. (GH #200)",
+      "userVisible": true,
+      "regressions": [
+        "UI-UNLINKED-REF-OCCURRENCE-MARKS-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "\"Unlinked References\" documents the clickable highlight, the selected mention and when the numbered jump row appears.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate the Guide site from the canonical templates so the published page matches this release.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Managed Storage, the experimental Testing-only sync mode, is removed.** Direct Files is Tine's only storage mode. A graph that used Managed Storage opens as an ordinary Markdown/Org graph, and sync between devices stays with your own tool, such as Syncthing or Dropbox. Any future built-in sync will be designed afresh.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "current",
+        "reason": "The Guide never described a second storage mode; \"Sync tools and conflict copies\" already documents sync as the user's own tool over ordinary Markdown/Org files.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The removal decision and the reduced storage contract are recorded in ADR 0066 and the storage/sync contract.",
+        "refs": [
+          "docs/adr/0066-remove-managed-storage.md",
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate the Guide site from the canonical templates so the published page matches this release.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Expanding a large outline no longer mounts every off-screen block embed or query before visible Linked References can render (GH #408).",
+      "userVisible": true,
+      "regressions": [
+        "UI-EXPAND-REFERENCES-BOUNDED-408"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Renaming a namespaced page now updates an own `title::` property that carried its old identity, so the renamed page opens at its new route and remains there after restart (GH #451).",
+      "userVisible": true,
+      "regressions": [
+        "REG-PAGE-RENAME-REBIND-TITLE-451"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Windows session shutdown now terminates Tine after its bounded durability drain instead of leaving the process alive until Windows force-closes it (GH #455).",
+      "userVisible": true,
+      "regressions": [
+        "UI-WINDOWS-SESSION-END-EXIT-455"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Wide query tables and sheets inside a block keep their left edge aligned with the owning bullet and scroll internally (GH #473).",
+      "userVisible": true,
+      "regressions": [
+        "UI-BLOCK-SHEET-OVERFLOW-ALIGNMENT-473"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Linked References on a journal now include references written with another accepted spelling of the same date, such as `[[2026-09-20]]` for `Sep 20th, 2026` (GH #481).",
+      "userVisible": true,
+      "regressions": [
+        "UI-JOURNAL-ISO-LINKED-REFERENCES-481"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Returning from Android's photo/file picker no longer discards the editor that initiated the capture before the saved asset link can be inserted (GH #493).",
+      "userVisible": true,
+      "regressions": [
+        "UI-ANDROID-NATIVE-PICKER-EDITOR-493"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A bare block reference now renders every line after a soft line break instead of showing only its first line (GH #506).",
+      "userVisible": true,
+      "regressions": [
+        "UI-BLOCK-REF-SOFT-BREAK-506"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Cold graph opening no longer runs an independent whole-graph parse for page inventory alongside the shared startup parse, reducing first-open contention on slower devices (GH #550).",
+      "userVisible": true,
+      "regressions": [
+        "REG-COLD-OPEN-SHARED-PAGE-BUILD-550"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Page properties on an Org page are written in Org's own form.** Setting a page property such as `tags` on an `.org` page put a Markdown `tags:: reference` line into the file's header, which Org does not define as a property — so neither Tine nor Logseq read it back and the property silently did not exist, while the app showed it as saved. Tine now writes a `#+tags: reference` file directive, the same form Logseq writes (UI-ORG-PAGE-PROP-BYTES-164).",
+      "userVisible": true,
+      "regressions": [
+        "UI-ORG-PAGE-PROP-BYTES-164"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "\"Page and block properties\" states that each property is written in its own file's form, including the Org file directive.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate the Guide site from the canonical templates so the published page matches this release.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A property whose key is not plain ASCII can be changed and removed again.** A key such as `klíč::` could be created once and then never matched, so editing its value added a second line with the same key instead of replacing the first, and deleting it did nothing — while the page went on listing the property (UI-PROP-KEY-GRAMMAR-164).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PROP-KEY-GRAMMAR-164"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Search no longer stays on “Indexing — waiting for search to be ready…”, and the search index is no longer rebuilt from scratch on every launch. Opening a graph threw its saved index away and re-indexed every page, so on a large graph (roughly 10,000 pages and up) Ctrl+K and the search tab could stay unusable for many minutes and the app kept working the disk while nothing was happening. An unchanged graph now reuses the index it already built, and only pages that actually changed are re-indexed (GH #543).",
+      "userVisible": true,
+      "regressions": [
+        "UI-SEARCH-LARGE-GRAPH-NEVER-READY-543",
+        "REG-QUERY-PROJECTION-REUSE-543"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Each search on a large graph is also roughly twice as fast.** Every search used to re-fold each block's text while ranking it; it now reads the folded text the graph index already stores, which is the same comparison done once at indexing time instead of once per block on every keystroke. Results and their order are unchanged. Indexing a graph for the first time still takes time proportional to its size, and search on a very large graph is still slower than it should be. (GH #543)",
+      "userVisible": true,
+      "regressions": [
+        "UI-SEARCH-LARGE-GRAPH-NEVER-READY-543"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "While search waits for the index, a rebuild now says it is rebuilding instead of showing the general indexing message, so a long wait is distinguishable from a brief catch-up.",
+      "userVisible": true,
+      "regressions": [
+        "UI-SEARCH-LARGE-GRAPH-NEVER-READY-543"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Undoing a move between pages can no longer lose the moved blocks.** Undo and redo of a cross-page move (a drag, a journal-day move, or a carry) now write the page that regains the blocks first and hold the other page's save until it lands, inside the same crash-recovery record the original move used. Before, both pages were saved at once, so if the regaining page's save was refused — for example because another program had changed that file — the other page's removal could still be written and the blocks were left in neither file.",
+      "userVisible": true,
+      "regressions": [
+        "UI-MOVE-UNDO-CROSS-PAGE-DURABLE-ORDER-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The ordered cross-page undo and its recovery record are specified in the direct move recovery contract.",
+        "refs": [
+          "docs/contracts/direct-move-recovery.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Two quick nudges of a selection across a journal-day boundary no longer duplicate a block.** Repeating the move shortcut while the first move was still saving could add the same blocks to the target day twice, which then appeared twice and was written to the file twice.",
+      "userVisible": true,
+      "regressions": [
+        "UI-MOVE-SELECTION-BURST-DUPLICATE-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The move recovery contract already governs repeated moves against an in-flight save.",
+        "refs": [
+          "docs/contracts/direct-move-recovery.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A move between pages that cannot start because a page has unsaved changes now always says so. Keyboard moves across a journal-day boundary failed silently.",
+      "userVisible": true,
+      "regressions": [
+        "UI-MOVE-SELECTION-BURST-DUPLICATE-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Typing ``` to start a code block lets you set its language again. The three backticks used to drop the cursor straight inside the block, which hides the line the language goes on, so there was no way to choose one except the `/Code block` command. The language list now opens on that line; pressing Escape puts the cursor inside the block as before. (GH #507)",
+      "userVisible": true,
+      "regressions": [
+        "UI-CODE-FENCE-SCAFFOLD-413"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Tips documents /Code block's language picker and the completion offered after an opening fence.",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate the Guide site from the canonical templates so the published page matches this release.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Typing a workspace name with Chinese or another input method (IME) now works. The name field used to be rebuilt on every keystroke, which cancelled the character being composed. (GH #498)",
+      "userVisible": true,
+      "regressions": [
+        "UI-WORKSPACE-NAME-IME-498"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Returning to the browser tab of a published export no longer shows a \"couldn't finish checking for external changes\" error. The read-only export has nothing to re-check, so it no longer tries. An export also no longer shows a stray “⊞ Table” button on every page, or an error after zooming or scrolling a PDF. (GH #549)",
+      "userVisible": true,
+      "regressions": [
+        "UI-PUBLISH-FOCUS-NO-RESCAN-549"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Carrying unfinished tasks to today while today's journal had a sync conflict no longer lets a later edit to one of the earlier days delete those tasks from that day's file. Tine now keeps the earlier days unchanged on disk until today is saved, as it already did for other block moves. Moving blocks into the same page twice before it saved also no longer leaves the first move's source page unable to save.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-CARRY-SOURCE-BARRIER-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The source-page barrier for carried and moved blocks is specified in the direct move recovery contract.",
+        "refs": [
+          "docs/contracts/direct-move-recovery.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Queries answer every comparison they accept. `like` on `task`, `priority` and `page.namespace` (for example `task like 'DO%'`), `page.journal != …`, `page.name not in (…)` and `content in (…)` / `not in (…)` used to return nothing. `like` on a date or checkbox (`scheduled`, `deadline`, `page.day`, `page.journal`) is now reported as an error instead of silently matching nothing.",
+      "userVisible": true,
+      "regressions": [
+        "REG-QUERY-MATRIX-OPERATORS-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The query display contract already defines the accepted operator matrix and its typed refusals.",
+        "refs": [
+          "docs/contracts/query-display.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Quitting Tine right after saving no longer throws away the copy of that page Tine keeps for merging sync conflicts. Tine now waits up to 0.2 s at quit for those updates, so a later conflict on the page still gets three-way merge suggestions instead of more lines to review by hand.",
+      "userVisible": true,
+      "regressions": [
+        "REG-CONCORD-LEDGER-EXIT-DRAIN-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "While the query index is still building, property autocomplete now offers an Org page's own properties (its `:PROPERTIES:` drawer) and no longer offers a `key::` line that sits inside a code block, the same suggestions it shows once the index is ready.",
+      "userVisible": true,
+      "regressions": [
+        "REG-AUTOCOMPLETE-PAGE-PROPERTIES-FALLBACK-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Defect fix restoring the behaviour the Guide already describes; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Defect fix or UI behaviour with no engineering contract, schema, or public API surface; the behaviour is recorded in the indexed regression catalog instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website or Guide-site surface describes this behaviour.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    }
+  ]
+}

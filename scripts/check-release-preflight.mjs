@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-import { BETA_TAG, releaseVersion, releaseChannel, packagingProblems } from "./release-policy.mjs";
+import { releaseVersion, releaseChannel, releaseTag, packagingProblems } from "./release-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readJson = (relative) => JSON.parse(fs.readFileSync(path.join(root, relative), "utf8"));
@@ -70,7 +70,7 @@ if (!new RegExp(`^## \\[${expected.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\
 
 if (process.env.GITHUB_REF?.startsWith("refs/tags/")) {
   const tag = process.env.GITHUB_REF.slice("refs/tags/".length);
-  if (tag !== BETA_TAG) problems.push(`tag ${tag} is not the beta channel`);
+  if (tag !== releaseTag(tauri)) problems.push(`tag ${tag} is not this build's release tag ${releaseTag(tauri)}`);
 }
 
 if (process.env.REQUIRE_RELEASE_READINESS === "1") {
