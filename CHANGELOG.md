@@ -8,6 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- Linked and Unlinked References: click a breadcrumb ancestor to show its subtree inline while keeping your place; Shift+click opens it in the right sidebar. Inline context resets when the reference group closes (GH #526).
+
+### Fixed
+
+- A block opened in the right sidebar now shows its source page name in the header (GH #640).
+
 ## [0.7.0-beta.3] - 2026-10-08
 
 ### Added

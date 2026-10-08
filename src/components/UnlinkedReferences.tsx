@@ -8,7 +8,7 @@ import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openPageContextMenu, openPageInSidebar } from "../ui";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { ReferenceExcerptBlocks } from "./ReferenceEvidence";
+import { LiveRefGroup } from "./LiveRefGroup";
 import { ReferenceExportChooser } from "./ReferenceExportChooser";
 import type { RefGroup } from "../types";
 import { mergeReferenceGroups } from "../referenceGroups";
@@ -146,12 +146,15 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
                   class="reference-blocks"
                   data-inpage-find-surface={`unlinked:${props.name}:${g.kind}:${g.page}`}
                 >
-                  <ReferenceExcerptBlocks
+                  <LiveRefGroup
                     blocks={g.blocks}
                     evidence={g.evidence ?? []}
                     page={g.page}
                     kind={g.kind}
                     path={g.path}
+                    surface="ref"
+                    showBreadcrumb
+                    excerpt
                   />
                 </div>
               </Show>

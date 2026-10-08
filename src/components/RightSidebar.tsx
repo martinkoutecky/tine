@@ -14,7 +14,6 @@ import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from ".
 import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
 import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, node as docNode } from "../document";
-import { visibleBody } from "../render/block";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
 import { TaggedPages } from "./TaggedPages";
 import { LinkedReferences } from "./LinkedReferences";
@@ -380,7 +379,7 @@ function BlockItem(props: {
   };
   const title = () => {
     const n = node();
-    return n ? visibleBody(n.raw)[0] || props.item.page : props.item.page;
+    return n?.page ?? props.item.page;
   };
   const bodyId = `rs-item-body-${createUniqueId()}`;
   return (
