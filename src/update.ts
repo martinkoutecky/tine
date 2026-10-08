@@ -8,9 +8,9 @@ import { browserPlatform } from "./browserPlatform";
 //
 // Installer (the toast's action): on **Windows/Linux** in the packaged app, run the
 // Tauri v2 updater — `check()` → `downloadAndInstall()` → `relaunch()` — so the
-// update applies in place. On **macOS** (bundle is unsigned → Gatekeeper would
-// reject a self-replaced app) and outside Tauri, fall back to opening the releases
-// page in the browser. Android/iOS update through their distribution channel, so
+// update applies in place. On **macOS** (manual: the Developer ID-signed bundle's
+// in-place install is not enabled yet, GH #650) and outside Tauri, fall back to
+// opening the releases page in the browser. Android/iOS update through their distribution channel, so
 // both the notifier and installer are disabled there. The updater is inert until
 // a signed release with a `latest.json` exists; any failure (no manifest yet, bad
 // signature, offline) is caught and also falls back to the releases page — it can
