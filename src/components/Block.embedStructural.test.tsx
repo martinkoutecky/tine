@@ -2,11 +2,13 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { For } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { editingId, endEdit } from "../editorController";
+import { editingId, endEdit, startEditing } from "../editorController";
+import { clearSeededFacets } from "../render/facets";
 import { installKeybindings } from "../keybindings";
 import { initParser } from "../render/parse";
-import { resetStore } from "../document";
-import { loadSingle } from "../document/workingSet";
+import { resetStore, undo } from "../document";
+import { pageToDto } from "../document/convert";
+import { loadSingle, loadFeed } from "../document/workingSet";
 import { doc, pageByName } from "../document/model";
 import type { BlockDto, PageDto, RefGroup } from "../types";
 import { Block } from "./Block";
@@ -37,6 +39,110 @@ class AllNearObserver implements IntersectionObserver {
 
 beforeAll(async () => {
   await initParser();
+});
+
+describe("Enter after a collapsed embed host (GH #642)", () => {
+  it.each([false, true])("creates a host sibling from the collapsed block occurrence; terminal=%s", async terminal => {
+    loadFixture();
+    // Occurrence-local collapse: the source stays expanded and unchanged.
+    const host = leaf("host", "{{embed ((target))}}\ncollapsed:: true");
+    const source = pageToDto("HostPage")!.blocks[1];
+    loadSingle({ name: "HostPage", title: "HostPage", kind: "page", pre_block: null,
+      blocks: terminal ? [source, host] : [host, source] });
+    clearSeededFacets();
+    const before = pageToDto("HostPage");
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <For each={pageByName("HostPage")!.roots}>{id => <Block id={id} />}</For>, root);
+    try {
+      const content = await vi.waitFor(() => {
+        const element = root.querySelector('.embed-block [data-block-id="target"] > .block-main .block-content');
+        expect(element).not.toBeNull(); return element!;
+      });
+      mouseDownAndUp(content);
+      const editor = await vi.waitFor(() => {
+        const element = root.querySelector<HTMLTextAreaElement>('.embed-block textarea.block-editor');
+        expect(element).not.toBeNull(); return element!;
+      });
+      editor.setSelectionRange(editor.value.length, editor.value.length);
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      const roots = pageByName("HostPage")!.roots;
+      expect(roots).toHaveLength(3);
+      const newId = roots[roots.indexOf("host") + 1];
+      expect(newId).not.toBe("target");
+      expect(doc.byId[newId].raw).toBe("");
+      expect(doc.byId[newId].parent).toBeNull();
+      expect(editingId()).toBe(newId);
+      expect(pageToDto("HostPage")!.blocks.find(b => b.id === "target")).toEqual(source);
+      undo();
+      expect(pageToDto("HostPage")).toEqual(before);
+    } finally { dispose(); }
+  });
+
+  it.each([false, true])("Enter in a collapsed page-embed host creates a sibling; terminal=%s", terminal => {
+    const host = { ...leaf("host", "{{embed [[SourcePage]]}}"), collapsed: true };
+    const after = leaf("after", "after");
+    const source = { id: "source-page", name: "SourcePage", title: "SourcePage", kind: "page" as const, pre_block: null,
+      blocks: [leaf("source", "source text", [leaf("child", "child text")])] };
+    vi.spyOn(backend(), "getPage").mockResolvedValue(source);
+    loadFeed([{ name: "HostPage", title: "HostPage", kind: "page", pre_block: null,
+      blocks: terminal ? [host] : [host, after] }, source]);
+    const sourceBefore = pageToDto("SourcePage");
+    const before = pageToDto("HostPage");
+    startEditing("host", host.raw.length);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <For each={pageByName("HostPage")!.roots}>{id => <Block id={id} />}</For>, root);
+    try {
+      const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      editor.setSelectionRange(editor.value.length, editor.value.length);
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      const roots = pageByName("HostPage")!.roots;
+      expect(roots).toHaveLength(terminal ? 2 : 3);
+      expect(doc.byId[roots[1]].raw).toBe("");
+      expect(doc.byId[roots[1]].parent).toBeNull();
+      expect(pageToDto("SourcePage")).toEqual(sourceBefore);
+      undo(); expect(pageToDto("HostPage")).toEqual(before);
+      expect(pageToDto("SourcePage")).toEqual(sourceBefore);
+    } finally { dispose(); }
+  });
+
+  it("Enter genuinely inside the embedded source keeps editing the source", async () => {
+    await withHostPage(async root => {
+      const editor = await editInsideEmbed(root);
+      editor.setSelectionRange(editor.value.length, editor.value.length);
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      expect(pageByName("HostPage")!.roots).toEqual(["host", "target"]);
+      expect(doc.byId.target.children).toHaveLength(3);
+    });
+  });
+
+  it("Enter in a folded source root of a page embed stays source-scoped", async () => {
+    const host = leaf("host", "{{embed [[SourcePage]]}}");
+    const source = { id: "source-page", name: "SourcePage", title: "SourcePage", kind: "page" as const, pre_block: null,
+      blocks: [{ ...leaf("source", "source text", [leaf("child", "child text")]), collapsed: true }] };
+    vi.spyOn(backend(), "getPage").mockResolvedValue(source);
+    loadFeed([{ name: "HostPage", title: "HostPage", kind: "page", pre_block: null, blocks: [host] }, source]);
+    const root = document.createElement("div"); document.body.appendChild(root);
+    const dispose = render(() => <Block id="host" />, root);
+    try {
+      const content = await vi.waitFor(() => {
+        const element = root.querySelector('.embed-block [data-block-id="source"] > .block-main .block-content');
+        expect(element).not.toBeNull(); return element!;
+      });
+      mouseDownAndUp(content);
+      const editor = await vi.waitFor(() => {
+        const element = root.querySelector<HTMLTextAreaElement>('.embed-block textarea.block-editor');
+        expect(element).not.toBeNull(); return element!;
+      });
+      editor.setSelectionRange(editor.value.length, editor.value.length);
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      expect(pageByName("HostPage")!.roots).toEqual(["host"]);
+      expect(pageByName("SourcePage")!.roots).toHaveLength(2);
+      expect(doc.byId.source.children).toEqual(["child"]);
+      undo(); expect(pageToDto("SourcePage")!.blocks).toEqual(source.blocks);
+    } finally { dispose(); }
+  });
 });
 
 // Tab and Alt+Shift+Up reach the editor through the configurable binding table,
