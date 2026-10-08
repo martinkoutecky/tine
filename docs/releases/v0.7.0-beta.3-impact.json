@@ -1,0 +1,518 @@
+{
+  "schemaVersion": 1,
+  "version": "0.7.0-beta.3",
+  "baseTag": "v0.7.0-beta.2",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta patch release over beta.2. New surfaces (multi-window, tray, Flatpak, theming) were verified per batch with real-app journeys; storage changes (G26, G37) are per-batch fixes. No exact-tree release audit was run for this Beta; that is an explicit deferral, not an audit certification."
+  },
+  "items": [
+    {
+      "section": "Added",
+      "text": "Linux: each Beta release now includes an installable **Flatpak** bundle, `Tine-Beta_<version>_x86_64.flatpak` (`flatpak install --user` the downloaded file). It uses the Beta identity (`page.tine.TineBeta`), so it installs beside a stable Tine Flatpak with its own data, includes the library the system tray needs, and is updated by installing the next bundle by hand (its update notice offers the download instead of trying to install in place). The release workflow builds it with the other platforms and a failed Flatpak build blocks the release.",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-FLATPAK",
+        "REG-OG-FLATPAK-UPDATER",
+        "REG-OG-FLATPAK-TRAY-ICON"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-FLATPAK, REG-OG-FLATPAK-UPDATER, REG-OG-FLATPAK-TRAY-ICON are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The Platforms page describes the Beta Flatpak bundle and its manual updates.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Desktop: optional system-tray icon. Settings → Appearance adds **Show Tine in the system tray** (menu: Open Tine, Quick Capture, Quit), **Minimize to tray** (minimizing the main window hides it instead of leaving it in the taskbar) and **Start minimized to tray** (launch with the main window hidden, graph already loaded). All three are off by default; closing the main window still quits; a desktop without a tray host keeps the window shown and says so in Settings, and a tray host that disappears while Tine runs brings the hidden window back (GH #625, UI-OG-GH625).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-FLATPAK-TRAY-ICON",
+        "REG-OG-CATFIX-TRAY-BUS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-FLATPAK-TRAY-ICON, REG-OG-CATFIX-TRAY-BUS are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The Platforms page describes the optional tray icon setting.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Desktop: **Open in new window** opens a page in a separate OS window (page right-click menu, the page title's ⋯ menu, or the command palette's **Open current page in new window**). Each window has its own tabs, splits and back/forward history, and no sidebars; edits save and undo exactly as in the main window, closing a window from its title bar keeps text typed just before, and open windows (up to 8) come back at the next launch. Switching graphs closes them. Documented in Workflows > Keep context visible (UI-OG-MULTIWINDOW).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-MULTIWINDOW"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-MULTIWINDOW are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Keep context visible describes Open in new window.",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Theming (GH #610): a documented set of **`--tine-*` tokens** for `logseq/custom.css`: `--tine-embed-bg`, `--tine-embed-accent`, `--tine-bullet-color`, `--tine-bullet-size`, `--tine-tag-color`, `--tine-highlight-bg`, `--tine-content-width`, `--tine-content-width-wide`, `--tine-page-title-size`, `--tine-font-size`, `--tine-content-font`, `--tine-mono-font` and `--tine-editable-font`. Each starts unset (declared under `:where(:root)`, so a plain `html { --tine-...: ... }` or `:root { ... }` rule in custom.css wins), nothing looks different until you set one, and Logseq's `--ls-*` colors keep working unchanged. The font tokens also apply under the editorial page Style preset, and `--tine-mono-font` reaches every monospace surface (code blocks, org timestamps, inline code, editors, diagnostics). The contract (`docs/contracts/theme-tokens.md`) promises that removing or renaming a token gets a **Changed** entry here, and a guard test fails when a documented token is missing from the CSS or a `--tine-*` name ships undocumented.",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH610",
+        "UI-OG-GH610-THEMING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH610, UI-OG-GH610-THEMING are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Customize Tine's look lists the tokens.",
+        "refs": [
+          "crates/tine-core/src/templates/customize-look.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Guide (GH #610): a new page, **Customize Tine's look**, covers where `logseq/custom.css` lives, theme versus custom.css precedence, the token table, ten copy-paste recipes (remove the embed shade, change bullet color, wider content, a different font, and more) and how to find what styles an element.",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH610-THEMING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH610-THEMING are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The new Guide page itself.",
+        "refs": [
+          "crates/tine-core/src/templates/customize-look.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Settings → Appearance → **Custom CSS** (GH #610): **Edit custom.css** (desktop) creates the file with a commented starter if the graph has none and opens it in your editor; saving it re-applies it live in the open window, with no restart and no reopening the graph (every platform with a file watcher, no new polling); **Disable custom CSS** is a session-only safe mode so a broken stylesheet can always be recovered from; **Developer tools** (desktop, also Ctrl+Shift+J, Cmd+Shift+J on macOS) opens the inspector to see what styles an element (opened and closed again on a release build under Linux; **Disable custom CSS** is also in the command palette, so it stays reachable if a stylesheet hides Settings). **Edit custom.css** opens the file with your system's default app for `.css` files, which may not be a text editor; choose one there. If a live re-read fails, the previous stylesheet stays applied and Tine retries once before it says so; a failure at graph open applies none.",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH610-THEMING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH610-THEMING are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Customize Tine's look covers Edit custom.css.",
+        "refs": [
+          "crates/tine-core/src/templates/customize-look.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Theme gallery (GH #649): **Soft**, a medium-brightness palette. Light mode is a warm medium-light neutral and dark mode a neutral medium-dark; the whole surface system moves together (page, sidebars, tabs, menus, code blocks, borders, hover and selection, text) and every text color stays at or above 4.5:1 contrast, including text on accent-filled labels and buttons, links on the selection overlay, muted text on tertiary surfaces and the bullet and checkbox markers (3:1), checked by a test computed from the palette. Accent-filled labels read their text color from a new `--on-accent` token that only Soft defines, so the stock themes look the same.",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH649-SOFT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH649-SOFT are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Customize Tine's look names the Soft theme.",
+        "refs": [
+          "crates/tine-core/src/templates/customize-look.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Queries (GH #651): the Guide now says why a task nested under another matching task has no row of its own in the Table, Board or result count. Tine follows Logseq's rule, a match is dropped from the top level only when its immediate parent also matches (the List shows it inside that parent), and a match under a block that does not match, such as after narrowing the query so the parent stops matching, is its own row. Pinned for every presentation by a store test and a real-app journey; no behaviour change.",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-GH651"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-GH651 are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The Queries page states the nested-match rule.",
+        "refs": [
+          "crates/tine-core/src/templates/queries.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Android (GH #654): the copy button on an image (on the picture itself and in the full-screen view) always answered \"Couldn't copy the image\", because the system clipboard plugin Tine used cannot put an image on the Android clipboard. Tine now stages the picture in its cache and puts it on the Android clipboard through the app's own file provider, which is how Android apps share images. What could not be checked without a device is whether pasting that clipboard image into a block adds it as a picture on every Android version (UI-OG-GH654).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH654"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH654 are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No Guide page describes image copy; the button now works as it already looks.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Opening pages: a single page whose properties were followed by a blank line and then a `#+` directive (for example `title:: X`, a blank line, `#+description: y`, or an Org file-level property drawer before `#+title:`) made every link and tag fail with \"Couldn't open this page: task N panicked with message \\\"byte range starts at N+1 but ends at N\\\"\" and left `[[` completion with no pages. Such pages now open and keep their title, and a page whose title cannot be read no longer stops the rest of the graph from loading (GH #644, REG-OG-GH644).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-GH644"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-GH644 are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A crash fix; pages simply open. No Guide text describes the failure.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "External edits: a page changed on disk (by Syncthing, Dropbox or another editor) stayed stale while one of its blocks was open in the editor, which includes leaving Tine for another app with the caret still in a block; it updated only after you pressed Escape or navigated away and back, and typing into the stale block then raised a conflict. The page now updates in place and the editor stays on the same block (found by its `id::`, else by its place in the outline), with the caret kept; if the change deleted that block the editor closes. A change still waits while text is being composed with an input method, and a different file taking the page's name is still refused while you edit (REG-OG-RELOAD-WHILE-EDITING).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-RELOAD-WHILE-EDITING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-RELOAD-WHILE-EDITING are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Files, external edits and backups now says pages update while a block is being edited.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "macOS (GH #650): Beta builds are now Developer ID signed and notarized, so macOS no longer refuses to open them with \"Apple could not verify…\". The Beta release workflow's macOS lane now signs the universal app and DMG, notarizes it, and independently checks the signature, the stapled notarization ticket and Gatekeeper acceptance before the build can be assembled; it fails if a signing secret is missing. Stable builds were already signed.",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-GH650"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-GH650 are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The Platforms page says the macOS build is signed and notarized.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Saving: a page whose unsaved text already matched the file on disk (for example because a sync tool delivered the same text) counted as saved without making that file durable, and its crash-safe copy was dropped; a power cut right after could lose the text. Such a save now flushes the file to disk before counting as saved (REG-OG-G26-EQUAL-BYTES-DURABLE).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-G26-EQUAL-BYTES-DURABLE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-G26-EQUAL-BYTES-DURABLE are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Internal durability fix; no user-facing workflow changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Crash-safe copies: when the store of crash-safe copies for a graph could not be read, Tine moved it aside (keeping its bytes) and started an empty one without saying so. It now shows a sticky error naming where the old file went (REG-OG-G37-DRAFT-STORE-SET-ASIDE-REPORTED).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-G37-DRAFT-STORE-SET-ASIDE-REPORTED"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-G37-DRAFT-STORE-SET-ASIDE-REPORTED are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Recovery guidance already covers crash-safe copies; the new error names the set-aside file itself.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Desktop: quitting while several windows are open no longer exits before every window has saved. Previously, a window that finished closing first (for example a main window with no graph open) could end the app while another graph window was still writing its last edit (UI-OG-GH625).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH625"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH625 are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Quitting now waits for every window to save; nothing new to learn.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Linux release checks: the multi-window change had made the main window the second window the app creates (after Quick Capture), so WebDriver-driven journeys drove the hidden capture window and 35 of 45 catalog journeys failed; main is created first again. The tray journey's own D-Bus session bus now listens on a filesystem socket so it can connect on Ubuntu runners (REG-OG-CATFIX-MAIN-FIRST, REG-OG-CATFIX-TRAY-BUS).",
+      "userVisible": false,
+      "regressions": [
+        "REG-OG-CATFIX-MAIN-FIRST",
+        "REG-OG-CATFIX-TRAY-BUS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-CATFIX-MAIN-FIRST, REG-OG-CATFIX-TRAY-BUS are covered (REG-OG-GH650 awaits this release run's signature verification step).",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Release-check fix; no user-visible workflow.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta patch release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

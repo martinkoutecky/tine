@@ -1,0 +1,1 @@
+Third Tine Beta. Fixes pages that would not open and empty [[ suggestions caused by one malformed page, pages that stayed stale after a sync while a block was being edited, image copy on Android, and the macOS build is now signed and notarized. Adds a Flatpak build, an optional tray icon, Open in new window, custom CSS theming tokens and the Soft theme.

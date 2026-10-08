@@ -5083,7 +5083,7 @@ dependencies = [
 
 [[package]]
 name = "tine"
-version = "0.7.0-beta.2"
+version = "0.7.0-beta.3"
 dependencies = [
  "base64 0.22.1",
  "cap-std",
@@ -5120,7 +5120,7 @@ dependencies = [
 
 [[package]]
 name = "tine-core"
-version = "0.7.0-beta.2"
+version = "0.7.0-beta.3"
 dependencies = [
  "ammonia",
  "chrono",
@@ -5141,7 +5141,7 @@ dependencies = [
 
 [[package]]
 name = "tine-graph-features"
-version = "0.7.0-beta.2"
+version = "0.7.0-beta.3"
 dependencies = [
  "lsdoc",
  "serde",
@@ -5164,7 +5164,7 @@ dependencies = [
 
 [[package]]
 name = "tine-search"
-version = "0.7.0-beta.2"
+version = "0.7.0-beta.3"
 dependencies = [
  "regex",
  "serde_json",
@@ -5174,7 +5174,7 @@ dependencies = [
 
 [[package]]
 name = "tine-store"
-version = "0.7.0-beta.2"
+version = "0.7.0-beta.3"
 dependencies = [
  "cap-std",
  "libc",

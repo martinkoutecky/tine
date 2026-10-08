@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.7.0-beta.3] - 2026-10-08
+
 ### Added
 - Linux: each Beta release now includes an installable **Flatpak** bundle, `Tine-Beta_<version>_x86_64.flatpak` (`flatpak install --user` the downloaded file). It uses the Beta identity (`page.tine.TineBeta`), so it installs beside a stable Tine Flatpak with its own data, includes the library the system tray needs, and is updated by installing the next bundle by hand (its update notice offers the download instead of trying to install in place). The release workflow builds it with the other platforms and a failed Flatpak build blocks the release.
 - Desktop: optional system-tray icon. Settings → Appearance adds **Show Tine in the system tray** (menu: Open Tine, Quick Capture, Quit), **Minimize to tray** (minimizing the main window hides it instead of leaving it in the taskbar) and **Start minimized to tray** (launch with the main window hidden, graph already loaded). All three are off by default; closing the main window still quits; a desktop without a tray host keeps the window shown and says so in Settings, and a tray host that disappears while Tine runs brings the hidden window back (GH #625, UI-OG-GH625).
