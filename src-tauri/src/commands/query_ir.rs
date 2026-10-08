@@ -512,15 +512,15 @@ mod tests {
             }
         };
         let advanced = "[:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p]] :inputs [:current-page]";
-        // Q1 lowers `[?b :block/refs ?p]` to the page-ref filter (master's
-        // lowering), whose path-refs closure includes the page's own blocks.
+        // `:block/refs` is OG's direct-reference attribute (GH #628): the
+        // page's own blocks do not reference it, so only the linking block binds.
         assert_eq!(
             rows(advanced, Some("Focus A")),
-            vec!["on a", "TODO about [[Focus A]]"]
+            vec!["TODO about [[Focus A]]"]
         );
         assert_eq!(
             rows(advanced, Some("Focus B")),
-            vec!["on b", "TODO about [[Focus B]]"]
+            vec!["TODO about [[Focus B]]"]
         );
         assert!(rows(advanced, None).is_empty());
     }
