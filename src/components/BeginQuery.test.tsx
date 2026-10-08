@@ -204,6 +204,19 @@ describe("terminated whole-block BEGIN_QUERY", () => {
       dispose();
     }
   });
+
+  it("shows the evaluator's refusal and TQL suggestion without rendering partial rows", async () => {
+    const refusedSource = BEGIN_QUERY.replace(":class)", ":suggestion-class)")
+      .replace("]]}", "]] :result-transform (fn [rows] (take 1 rows))}");
+    const run = stubAdvancedEngine([], { ran: [], ignored: ["result-transform"], supported: false });
+    run.mockResolvedValue({ anchor: "block", groups: [], report: { ran: [], ignored: ["result-transform"], supported: false }, total: 0, exceeded: false,
+      diagnostics: [{ kind: "syntax", message: "This query returns no results. To query the underlying rows without :result-transform, use TQL: task = 'TODO'" }] });
+    const { root, dispose } = mount(() => <RefBlocks blocks={[dto("suggestion-query", refusedSource)]} page="Source" pageKind="page" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain("use TQL: task = 'TODO'"));
+      expect(root.textContent).toContain("Unsupported BEGIN_QUERY");
+    } finally { dispose(); }
+  });
 });
 
 it("shares decoded titles, discards and input refusals with native export", () => {

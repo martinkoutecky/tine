@@ -35,8 +35,8 @@ export const ATTRS: readonly Attr[] = [
 ];
 
 /** One relation of the anchor row. */
-export type Rel = "refs" | "tags" | "props" | "children" | "parent" | "ancestors" | "descendants" | "blocks" | "page";
-export const RELS: readonly Rel[] = ["refs", "tags", "props", "children", "parent", "ancestors", "descendants", "blocks", "page"];
+export type Rel = "refs" | "direct_refs" | "tags" | "props" | "children" | "parent" | "ancestors" | "descendants" | "blocks" | "page";
+export const RELS: readonly Rel[] = ["refs", "direct_refs", "tags", "props", "children", "parent", "ancestors", "descendants", "blocks", "page"];
 
 /** OData §5.1.1.13 quantifiers: `any` is false and `every` true on an empty collection (Q5). */
 export type Quant = "any" | "none" | "every";

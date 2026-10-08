@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Common Logseq advanced queries translate automatically: tagged-page name lookups with string inputs, numeric and relative scheduled/deadline windows, direct page references, and scheduled-or-deadline alternatives. Strict date bounds and page results are preserved; unsupported queries refuse whole and translatable rows beneath a result transform get a TQL suggestion. Graph-supplied code never runs (GH #628).
 - Logseq journal configuration: `:default-queries {:journals [...]}` renders beneath today's blocks with independent query errors; `:feature/disable-scheduled-and-deadline-query?` hides the agenda and `:scheduled/future-days` controls its horizon. Config edits apply live (GH #223, GH #629).
 - Deleting referenced blocks shows how many references are now broken, with **Undo** to restore the blocks and their ids (GH #635).
 - Merging blocks with Backspace/Delete shows how many references now point to the surviving block, or broke when both blocks had ids, with **Undo** (GH #652).

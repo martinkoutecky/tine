@@ -3766,17 +3766,19 @@ mod tests {
             let index = graph.query_index();
             let facts = index.facts(entry, doc);
             let config = index.parse_config();
-            let touches = |plan: std::sync::Arc<exec::Plan>| plan.touches(entry, doc, &facts, config);
+            let touches =
+                |plan: std::sync::Arc<exec::Plan>| plan.touches(entry, doc, &facts, config);
             assert!(touches(
                 exec::run_query_bounded(&graph, "(and (task TODO) [[Target]])", 20, 1 << 20).1
             ));
             assert!(!touches(
-                exec::run_query_bounded(&graph, "(and (task TODO) (page \"Target\"))", 20, 1 << 20).1
+                exec::run_query_bounded(&graph, "(and (task TODO) (page \"Target\"))", 20, 1 << 20)
+                    .1
             ));
             assert!(touches(
                 exec::run_advanced_query_bounded(
                     &graph,
-                    r#"[:find (pull ?b [*]) :where (and (task ?b #{"TODO"}) (page-ref ?b "Target"))]"#,
+                r#"[:find (pull ?b [*]) :where (and (task ?b #{"TODO"}) (page-ref ?b "target"))]"#,
                     20,
                     1 << 20,
                 )

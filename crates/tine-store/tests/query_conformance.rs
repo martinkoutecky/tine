@@ -204,6 +204,249 @@ fn page_names(result: &QueryResult) -> Vec<String> {
     pages.iter().map(|page| page.name.clone()).collect()
 }
 
+// GH #628 / docs Advanced Queries examples 1, 3, 6, 14. OG provenance:
+// graph-parser/util/db.cljs::resolve-input, db/rules.cljc::query-dsl-rules,
+// frontend/db/query-react.cljs::get-query-result (DataScript evaluates triples
+// and predicates together, then returns distinct find values).
+#[test]
+fn gh628_tagged_pages_are_page_rows_and_string_inputs_keep_og_case_semantics() {
+    let fixture = open(&[
+        (
+            "pages/Flutter.md",
+            "tags:: Programming\n\n- body\n- another block\n",
+        ),
+        ("pages/Rust.md", "tags:: programming, systems\n\n- body\n"),
+        ("pages/Other.md", "- #programming is only a block tag\n"),
+    ]);
+    for (input, expected) in [
+        (r#""programming""#, vec!["Flutter", "Rust"]),
+        (r#""Programming""#, vec![]), // ordinary strings are NOT lowercased by OG
+        (r#""[[Programming]]""#, vec!["Flutter", "Rust"]),
+        (r#""missing""#, vec![]),
+    ] {
+        let source = format!(
+            r#"{{:query [:find ?name :in $ ?tag :where
+            [?t :block/name ?tag] [?p :block/tags ?t] [?p :block/name ?name]]
+            :inputs [{input}] :view (fn [rows] (throw "never execute"))}}"#
+        );
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(&source),
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        );
+        assert!(result.report.supported, "{input}: {:?}", result.report);
+        let mut names = page_names(&result);
+        names.sort();
+        assert_eq!(names, expected, "{input}");
+    }
+}
+
+#[test]
+fn gh628_date_windows_keep_strict_inclusive_and_disjunctive_semantics() {
+    let today = JournalDate::today();
+    let date = |offset| today.add_days(offset).file_stem().replace('_', "-");
+    let tasks = format!("- TODO lower\n  SCHEDULED: <{}>\n- TODO inside\n  SCHEDULED: <{}>\n- TODO upper\n  SCHEDULED: <{}>\n- TODO deadline only\n  DEADLINE: <{}>\n- TODO both outside and inside\n  SCHEDULED: <{}>\n  DEADLINE: <{}>\n- TODO absent\n", date(0), date(1), date(7), date(2), date(9), date(3));
+    let fixture = open(&[("pages/Tasks.md", &tasks)]);
+    for (attribute, lower, upper, inputs, expected) in [
+        (
+            "[?b :block/scheduled ?d]",
+            ">",
+            "<",
+            ":today :7d-after",
+            vec!["TODO inside"],
+        ),
+        (
+            "[?b :block/scheduled ?d]",
+            ">=",
+            "<=",
+            ":today :+7d",
+            vec!["TODO inside", "TODO lower", "TODO upper"],
+        ),
+        (
+            "(or [?b :block/scheduled ?d] [?b :block/deadline ?d])",
+            ">",
+            "<",
+            ":today :7d-after",
+            vec![
+                "TODO both outside and inside",
+                "TODO deadline only",
+                "TODO inside",
+            ],
+        ),
+        (
+            "[?b :block/deadline ?d]",
+            ">",
+            "<",
+            ":1d-before :7d-after",
+            vec!["TODO both outside and inside", "TODO deadline only"],
+        ),
+    ] {
+        let source = format!("{{:query [:find (pull ?b [*]) :in $ ?lo ?hi :where {attribute} [({lower} ?d ?lo)] [({upper} ?d ?hi)]] :inputs [{inputs}]}}");
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(&source),
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        );
+        assert!(result.report.supported, "{source}: {:?}", result.report);
+        assert_eq!(block_lines(&result), expected, "{source}");
+    }
+    let numeric = format!("{{:query [:find (pull ?b [*]) :in $ ?lo ?hi :where [?b :block/scheduled ?d] [(> ?d ?lo)] [(< ?d ?hi)]] :inputs [{} {}]}}", today.ordinal_key(), today.add_days(7).ordinal_key());
+    let result = run_ir(
+        &fixture.graph,
+        &advanced_query(&numeric),
+        &ViewSettings::default(),
+        &ExecutionContext::none(),
+    );
+    assert_eq!(block_lines(&result), vec!["TODO inside"]);
+    let unscheduled = r#"[:find (pull ?b [*]) :where [?b :block/marker ?m] (not [(contains? #{"DONE" "CANCELED"} ?m)]) [(missing? $ ?b :block/scheduled)] [(missing? $ ?b :block/deadline)]]"#;
+    let result = run_ir(
+        &fixture.graph,
+        &advanced_query(unscheduled),
+        &ViewSettings::default(),
+        &ExecutionContext::none(),
+    );
+    assert!(result.report.supported, "{:?}", result.report);
+    assert_eq!(block_lines(&result), vec!["TODO absent"]);
+}
+
+#[test]
+fn gh628_docs_wildcard_marker_and_page_ref_input_rules_answer_exactly() {
+    let today = JournalDate::today();
+    let journal_path = format!("journals/{}.md", today.file_stem());
+    let fixture = open(&[(
+        journal_path.as_str(),
+        "- TODO [[datalog]]\n- DONE finished\n- plain\n",
+    )]);
+    for (source, expected) in [
+        (
+            r#"[:find (pull ?b [*]) :where [?b :block/marker _]]"#,
+            vec!["DONE finished", "TODO [[datalog]]"],
+        ),
+        (
+            r#"{:query [:find (pull ?b [*]) :in $ ?start ?today ?tag :where (between ?b ?start ?today) (page-ref ?b ?tag)] :inputs [:-7d :today "datalog"]}"#,
+            vec!["TODO [[datalog]]"],
+        ),
+        (
+            r#"{:query [:find (pull ?b [*]) :in $ ?start ?end :where (between ?b ?start ?end)] :inputs [:tomorrow :today]}"#,
+            vec![],
+        ),
+    ] {
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(source),
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        );
+        assert!(result.report.supported, "{source}: {:?}", result.report);
+        assert_eq!(block_lines(&result), expected);
+    }
+}
+
+#[test]
+fn gh628_direct_reference_identity_joins_do_not_inherit_ancestors_or_owning_page() {
+    let fixture = open(&[
+        ("pages/Project.md", "- no explicit ref on the owning page\n"),
+        (
+            "pages/Links.md",
+            "- parent [[Project]]\n  - child without reference\n- direct [[Project]]\n- other\n",
+        ),
+    ]);
+    for source in [
+        r#"[:find (pull ?b [*]) :where [?p :block/name "project"] [?b :block/refs ?p]]"#,
+        r#"{:query [:find (pull ?b [*]) :in $ ?name :where [?p :block/name ?name] [?b :block/refs ?p]] :inputs ["project"]}"#,
+        CURRENT_PAGE_QUERY,
+    ] {
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(source),
+            &ViewSettings::default(),
+            &ExecutionContext::on_page("Project"),
+        );
+        assert!(result.report.supported, "{source}: {:?}", result.report);
+        assert_eq!(
+            block_lines(&result),
+            vec!["direct [[Project]]", "parent [[Project]]"]
+        );
+    }
+    let physical = r#"{:query [:find (pull ?b [*]) :in $ ?name :where [?p :block/name ?name] [?b :block/page ?p]] :inputs ["[[Project]]"]}"#;
+    let result = run_ir(
+        &fixture.graph,
+        &advanced_query(physical),
+        &ViewSettings::default(),
+        &ExecutionContext::none(),
+    );
+    assert_eq!(
+        block_lines(&result),
+        vec!["no explicit ref on the owning page"]
+    );
+    // The direct relation prints to an executable TQL filter with the same rows.
+    assert_eq!(
+        block_lines(&run_text(
+            &fixture.graph,
+            "direct_ref('project')",
+            QueryDialect::Tql
+        )),
+        vec!["direct [[Project]]", "parent [[Project]]"]
+    );
+    let upper = physical
+        .replace(":block/page", ":block/refs")
+        .replace("[[Project]]", "Project");
+    let result = run_ir(
+        &fixture.graph,
+        &advanced_query(&upper),
+        &ViewSettings::default(),
+        &ExecutionContext::none(),
+    );
+    assert!(result.report.supported);
+    assert!(
+        block_lines(&result).is_empty(),
+        "ordinary input strings retain case in OG"
+    );
+}
+
+#[test]
+fn gh628_direct_refs_include_og_marker_priority_and_namespace_prefixes() {
+    let fixture = open(&[("pages/Refs.md", "- TODO [#A] [[project/sub]]\n- plain\n")]);
+    for page in ["todo", "a", "project", "project/sub"] {
+        let source = format!(
+            r#"[:find (pull ?b [*]) :where [?p :block/name "{page}"] [?b :block/refs ?p]]"#
+        );
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(&source),
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        );
+        assert!(result.report.supported, "{page}: {:?}", result.report);
+        assert_eq!(
+            block_lines(&result),
+            vec!["TODO [#A] [[project/sub]]"],
+            "{page}"
+        );
+    }
+}
+
+#[test]
+fn gh628_docs_simple_query_map_uses_the_existing_simple_engine() {
+    let fixture = open(&[(
+        "pages/Tasks.md",
+        "- DOING [#A] chosen\n- DOING [#B] other priority\n- TODO [#A] other marker\n",
+    )]);
+    let tine_core::query_edn::BeginQueryMatch::Supported { query, .. } =
+        tine_core::query_edn::inspect_begin_query(
+            r#"{:title "Tasks" :query (and (todo DOING) (priority A))}"#,
+        )
+    else {
+        panic!("simple map supported");
+    };
+    assert_eq!(
+        block_lines(&run_text(&fixture.graph, &query, QueryDialect::Og)),
+        vec!["DOING [#A] chosen"]
+    );
+}
+
 #[test]
 fn optional_block_attributes_are_two_valued() {
     let fixture = truth_graph();
@@ -637,14 +880,8 @@ fn one_parse_answers_differently_on_two_current_pages() {
     let view = ViewSettings::default();
     let on_alpha = run_ir(graph, &query, &view, &ExecutionContext::on_page("Alpha"));
     let on_beta = run_ir(graph, &query, &view, &ExecutionContext::on_page("Beta"));
-    assert_eq!(
-        block_lines(&on_beta),
-        vec!["beta body", "links to [[Beta]] and more"]
-    );
-    assert_eq!(
-        block_lines(&on_alpha),
-        vec!["alpha body", "links to [[Alpha]]"]
-    );
+    assert_eq!(block_lines(&on_beta), vec!["links to [[Beta]] and more"]);
+    assert_eq!(block_lines(&on_alpha), vec!["links to [[Alpha]]"]);
     assert!(on_alpha.report.supported && on_beta.report.supported);
     assert!(on_alpha
         .report
@@ -698,11 +935,8 @@ fn run_and_explain_agree_on_results_and_report() {
     let run = run_ir(&fixture.graph, &query, &ViewSettings::default(), &context);
     let explained = explain(&fixture.graph, &query, &context);
     assert_eq!(run.report, explained.report);
-    assert_eq!(run.total, 2, "{:?}", run.rows);
-    assert_eq!(
-        block_lines(&run),
-        vec!["beta body", "links to [[Beta]] and more"]
-    );
+    assert_eq!(run.total, 1, "{:?}", run.rows);
+    assert_eq!(block_lines(&run), vec!["links to [[Beta]] and more"]);
     // The explanation counts the BOUND tree, not the advanced placeholder.
     assert_eq!(explained.rows.len(), 1, "{:?}", explained.rows);
     assert_eq!(explained.rows[0].alone, run.total);

@@ -448,7 +448,7 @@ fn cost(filter: &Filter) -> u8 {
             } => 4,
             Leaf::Attr { .. } => 0,
             Leaf::Rel { rel, .. } => match rel {
-                Rel::Refs | Rel::Tags => 1,
+                Rel::Refs | Rel::DirectRefs | Rel::Tags => 1,
                 Rel::Page => 2,
                 Rel::Props => 3,
                 Rel::Children | Rel::Parent | Rel::Ancestors | Rel::Descendants | Rel::Blocks => 6,

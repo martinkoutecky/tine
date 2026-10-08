@@ -819,6 +819,9 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
               >
                 {(label) => <>{label()}: query contains unsupported clauses.</>}
               </Show>
+              <Show when={blockingDiagnostics().length > 0}>
+                <span class="query-diagnostics">{" "}{blockingDiagnostics().map((d) => d.message).join(" · ")}</span>
+              </Show>
             </div>
           </Match>
           <Match when={true}>

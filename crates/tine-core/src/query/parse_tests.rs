@@ -3,6 +3,84 @@
 //! Evaluation tests over a graph belong with execution (og lane Q2).
 
 use super::advanced_patterns::{adv_range, advanced_pred};
+
+#[test]
+fn gh628_inputs_resolve_without_changing_numeric_dates_or_string_identity() {
+    let today = crate::date::JournalDate::from_ordinal(20261008);
+    for (input, ordinal) in [
+        ("20261008", 20261008),
+        (":today", 20261008),
+        (":7d-after", 20261015),
+        (":7d-before", 20261001),
+        (":7d", 20261001),
+        (":+7d", 20261015),
+        (":yesterday", 20261007),
+        (":tomorrow", 20261009),
+        (":-1w", 20261001),
+        (":+1m", 20261108),
+    ] {
+        let source = format!("{{:title \"ignore :where :inputs\" :query [:find (pull ?b [*]) :in $ ?day :where [?b :block/scheduled ?day]] :inputs [{input}]}}");
+        let (query, _, ignored) = advanced_pred(&source, None, today);
+        assert!(ignored.is_empty(), "{input}: {ignored:?}");
+        assert_eq!(
+            query.unwrap().filter,
+            crate::query::ir::Filter::attr(
+                crate::query::ir::Attr::Scheduled,
+                crate::query::ir::CmpOp::Eq,
+                crate::query::ir::Value::Number {
+                    number: ordinal as f64
+                }
+            )
+        );
+    }
+    let source = r#"{:query [:find ?name :in $ ?tag :where [?t :block/name ?tag] [?p :block/tags ?t] [?p :block/name ?name]] :inputs ["computer science"]}"#;
+    let (query, _, ignored) = advanced_pred(source, None, today);
+    assert!(ignored.is_empty(), "{ignored:?}");
+    assert_eq!(query.unwrap().anchor, crate::query::ir::Anchor::Page);
+    for input in [":Today", ":now", ":2026-10-08"] {
+        let source = format!("{{:query [:find (pull ?b [*]) :in $ ?day :where [?b :block/scheduled ?day]] :inputs [{input}]}}");
+        let (query, ran, ignored) = advanced_pred(&source, None, today);
+        assert!(query.is_none(), "{input}");
+        assert!(ran.is_empty());
+        assert!(!ignored.is_empty());
+    }
+}
+
+#[test]
+fn gh628_arbitrary_joins_rules_projections_and_transforms_refuse_whole() {
+    let today = crate::date::JournalDate::from_ordinal(20261008);
+    for source in [
+        r#"[:find ?b ?m :where [?b :block/marker ?m]]"#,
+        r#"[:find (pull ?b [:block/content]) :where [?b :block/marker "TODO"]]"#,
+        r#"[:find (pull ?b [*]) :where []]"#,
+        r#"[:find ?name :where [?p :block/name ?name]]"#,
+        r#"[:find (pull ?b [*]) :where [?b :block/page ?p] [?p :block/journal? _]]"#,
+        r#"{:query [:find (pull ?b [*]) :in $ ?tag :where [?b :block/marker "TODO"] (page-ref ?other ?tag)] :inputs ["project"]}"#,
+        r#"{:query [:find (pull ?b [*]) :where (task ?b #{"TODO"})] :rules [[(task ?b ?m) [?b :block/content ?m]]]}"#,
+        r#"{:query [:find (pull ?b [*]) :in $ % :where (task ?b #{"TODO"})] :inputs [[[(task ?b ?m) [?b :block/content ?m]]]]}"#,
+        r#"[:find (pull ?b [*]) :where (or [?b :block/scheduled ?d] [?b :block/deadline ?d]) [(> ?d 20261008)] [?other :block/scheduled ?d]]"#,
+    ] {
+        let (query, ran, ignored) = advanced_pred(source, None, today);
+        assert!(query.is_none(), "{source}");
+        assert!(ran.is_empty());
+        assert!(!ignored.is_empty(), "{source}");
+    }
+    let source = r#"{:query [:find (pull ?b [*]) :where [?b :block/marker "TODO"]] :result-transform (fn [xs] (take 1 xs))}"#;
+    let (query, _) = super::parse_query_input(
+        source,
+        super::QueryInput::Advanced,
+        today,
+        super::registry::Registry::none(),
+    );
+    let resolved =
+        super::resolve_for_execution(&query, &super::ir::ExecutionContext::none(), today);
+    assert!(!resolved.is_executable());
+    assert!(resolved.report().ran.is_empty());
+    assert!(resolved.query().diagnostics.iter().any(|d| d
+        .message
+        .contains("without :result-transform, use TQL:")
+        && d.message.contains("TODO")));
+}
 use super::ir::{
     Anchor, Attr, CmpOp, DiagnosticKind, ExecutionContext, Filter, Quant, Rel, Source, Value,
 };
@@ -235,7 +313,11 @@ fn advanced_current_page_input_lowers_the_standard_page_relationship() {
 
     assert_eq!(
         lowered.map(|query| query.filter),
-        Some(e_page_ref("focus a"))
+        Some(Filter::rel(
+            Rel::DirectRefs,
+            Quant::Any,
+            Filter::attr(Attr::Name, CmpOp::Eq, Value::text("focus a"))
+        ))
     );
     assert_eq!(ran, vec!["current-page-ref"]);
     assert!(ignored.is_empty());

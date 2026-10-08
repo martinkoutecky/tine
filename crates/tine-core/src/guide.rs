@@ -1176,6 +1176,12 @@ mod og_20d_guide_tests {
             "`(task)` with no marker",
             "no datalog engine",
             "`:view` and `:result-transform` never run",
+            "Advanced-query shapes that run",
+            "Tagged-page name results",
+            "numeric `yyyymmdd` inputs",
+            "strict `>` / `<`",
+            "reversed bounds return nothing",
+            "`direct_ref('project')`",
             "20,000 rows",
             "Tine 0.6 (stable)",
         ] {

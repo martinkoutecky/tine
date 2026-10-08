@@ -91,6 +91,14 @@ fn native_macro_printer_refuses_unreadable_options() {
 fn begin_query_inspector_preserves_live_payload_semantics() {
     use query_edn::BeginQueryMatch::{Supported, Unsupported};
     let query = "[:find (pull ?b [*]) :where (task ?b \"TODO\")]";
+    let rules = "[[(task ?b ?m) [?b :block/content ?m]]]";
+    assert_eq!(
+        query_edn::inspect_begin_query(&format!("{{:query {query} :rules {rules}}}")),
+        Supported {
+            query: format!("{query} :rules {rules}"),
+            title: None
+        }
+    );
     let payload = format!(
         r#"{{#_ :discarded :title "Line\nTwo\t\u03bb" :query {query} :inputs [:current-page]}}"#
     );

@@ -217,6 +217,17 @@
         "kind": "leaf",
         "leaf": {
           "kind": "rel",
+          "rel": "direct_refs",
+          "quant": "any",
+          "pred": {
+            "kind": "true"
+          }
+        }
+      },
+      {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "rel",
           "rel": "tags",
           "quant": "none",
           "pred": {

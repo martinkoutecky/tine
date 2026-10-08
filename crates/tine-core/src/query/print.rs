@@ -395,6 +395,14 @@ fn tql_rel(rel: Rel, quant: Quant, pred: &Filter, through_page: bool) -> String 
             Some(name) => format!("[[{name}]]"),
             None => format!("any(refs, {})", tql_expr(pred, Prec::Or)),
         },
+        Rel::DirectRefs => match pred.ref_name() {
+            Some(name) if quant == Quant::Any => format!("direct_ref({})", sql_string(&name)),
+            _ => format!(
+                "{}(direct_refs, {})",
+                quant_name(quant),
+                tql_expr(pred, Prec::Or)
+            ),
+        },
         Rel::Tags => match pred.ref_name() {
             Some(name) => format!("tag({})", sql_string(&name)),
             None => format!("any(tags, {})", tql_expr(pred, Prec::Or)),
@@ -763,7 +771,8 @@ fn og_rel(
         Rel::Props => og_props(pred, through_page || anchor == Anchor::Page),
         // Inline tags and structural block relations are Tine-only:
         // OG's simple-query DSL has no head for any of them.
-        Rel::Tags
+        Rel::DirectRefs
+        | Rel::Tags
         | Rel::Children
         | Rel::Parent
         | Rel::Ancestors

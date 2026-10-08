@@ -321,6 +321,31 @@ fn top_level_forms(source: &str) -> Option<Vec<Form>> {
     }
 }
 
+/// One direct option value in an advanced map or vector-plus-options stream.
+/// Duplicate declarations refuse rather than choosing one arbitrarily.
+pub(crate) fn option_value<'a>(source: &'a str, key: &str) -> Option<&'a str> {
+    let forms = top_level_forms(source)?;
+    let mut found = None;
+    for (i, form) in forms.iter().enumerate() {
+        let pairs = if form.kind == Kind::Map {
+            form.children.chunks_exact(2).collect::<Vec<_>>()
+        } else if form.kind == Kind::Atom && &source[form.span.clone()] == key {
+            vec![forms.get(i..i + 2)?]
+        } else {
+            Vec::new()
+        };
+        for pair in pairs {
+            if &source[pair[0].span.clone()] == key {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(&source[pair[1].span.clone()]);
+            }
+        }
+    }
+    found
+}
+
 /// Whether an authored advanced-query source *declares* the option `key`
 /// (for example `:result-transform`): either as a direct entry of a map form
 /// (`{:query [..] :result-transform (fn ..)}`) or as a top-level keyword
@@ -421,6 +446,7 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
     let mut query = None;
     let mut inputs = None;
     let mut result_transform = None;
+    let mut rules = None;
     for pair in form.children.chunks_exact(2) {
         let value = &source[pair[1].span.clone()];
         match &source[pair[0].span.clone()] {
@@ -444,6 +470,7 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
             // advanced lowerer sees it and refuses the whole query visibly,
             // instead of running the bare vector as if the transform did not exist.
             ":result-transform" => result_transform = Some(value),
+            ":rules" => rules = Some(value),
             ":title" => {
                 if title.is_some() || pair[1].kind != Kind::String {
                     return Unsupported {
@@ -465,9 +492,18 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
                 .is_none_or(|c| !c.is_ascii_alphanumeric() && *c != b'_')
         })
     };
-    let Some(query) =
-        query.filter(|q| q.starts_with('[') && keyword(q, ":find") && keyword(q, ":where"))
-    else {
+    // Docs example 17 embeds the existing simple DSL in the same EDN map.
+    // Route it to that parser; inputs/rules/transforms have no simple meaning.
+    if query.is_some_and(|q| q.starts_with('('))
+        && (inputs.is_some() || rules.is_some() || result_transform.is_some())
+    {
+        return Unsupported {
+            reason: "simple query maps with inputs, rules or result-transform are unsupported",
+        };
+    }
+    let Some(query) = query.filter(|q| {
+        q.starts_with('(') || (q.starts_with('[') && keyword(q, ":find") && keyword(q, ":where"))
+    }) else {
         return Unsupported {
             reason: "expected an advanced :query vector",
         };
@@ -478,6 +514,9 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
     };
     if let Some(transform) = result_transform {
         query = format!("{query} :result-transform {transform}");
+    }
+    if let Some(rules) = rules {
+        query = format!("{query} :rules {rules}");
     }
     Supported { query, title }
 }

@@ -10,6 +10,10 @@ use super::ir::{Anchor, Attr, CmpOp, Filter, Quant, Query, Rel, Source, Value};
 use super::{og, query_nesting_within_limit, query_source_within_limit, QUERY_NESTING_MAX};
 use crate::date::JournalDate;
 
+#[path = "advanced_joins.rs"]
+mod joins;
+use joins::{lower_current_page_patterns, lower_date_disjunctions, lower_named_page_query};
+
 /// Collect balanced `(...)`/`[...]` groups at the top level of `s` (string-aware),
 /// stopping at the first top-level *closing* bracket (so scanning after `:where`
 /// halts at the find-vector's `]` rather than swallowing `:inputs`).
@@ -170,12 +174,16 @@ fn edn_body(item: &str, open: char, close: char) -> Option<&str> {
 
 /// The variable the query returns: `:find (pull ?b [*])` or `:find ?b`.
 pub(super) fn advanced_find_var(src: &str) -> Option<String> {
-    let at = src.find(":find")?;
-    let first = *edn_items(&src[at + ":find".len()..]).first()?;
+    let items = edn_items(edn_body(query_vector(src)?, '[', ']')?);
+    let at = items.iter().position(|s| *s == ":find")?;
+    let first = *items.get(at + 1)?;
+    if !matches!(items.get(at + 2).copied(), Some(":in" | ":where")) {
+        return None;
+    }
     let var = match edn_body(first, '(', ')') {
         Some(call) => {
             let items = edn_items(call);
-            if items.first() != Some(&"pull") {
+            if items.first() != Some(&"pull") || items.len() != 3 || items[2] != "[*]" {
                 return None;
             }
             *items.get(1)?
@@ -183,6 +191,11 @@ pub(super) fn advanced_find_var(src: &str) -> Option<String> {
         None => first,
     };
     var.starts_with('?').then(|| var.to_string())
+}
+
+fn query_vector(src: &str) -> Option<&str> {
+    crate::query_edn::option_value(src, ":query")
+        .or_else(|| edn_items(src).into_iter().find(|s| s.starts_with('[')))
 }
 
 /// Top-level `where` clauses with single-branch wrappers opened: an `(and ..)`
@@ -313,15 +326,42 @@ pub(super) fn lower_attribute_patterns(
     };
     let triple = |group: &str| -> Option<[String; 3]> {
         let items = edn_items(edn_body(group, '[', ']')?);
-        (items.len() == 3 && items[0].starts_with('?')).then(|| {
+        ((items.len() == 2 || items.len() == 3) && items[0].starts_with('?')).then(|| {
             [
                 items[0].to_string(),
                 items[1].to_string(),
-                items[2].to_string(),
+                items.get(2).unwrap_or(&"_").to_string(),
             ]
         })
     };
     let active: Vec<usize> = (0..groups.len()).filter(|i| !taken.contains(i)).collect();
+
+    // The cookbook's built-in `missing?` is an attribute absence test.
+    for &index in &active {
+        let Some(body) = edn_body(&groups[index], '[', ']') else {
+            continue;
+        };
+        let outer = edn_items(body);
+        if outer.len() != 1 {
+            continue;
+        }
+        let Some(call) = edn_body(outer[0], '(', ')') else {
+            continue;
+        };
+        let items = edn_items(call);
+        if items.len() != 4 || items[0] != "missing?" || items[1] != "$" || items[2] != block {
+            continue;
+        }
+        if let Some((attr, _)) = advanced_attribute(AdvTarget::Block, items[3]) {
+            lowered.insert(
+                index,
+                (
+                    Filter::not(Filter::attr(attr, CmpOp::IsSet, Value::None)),
+                    "missing?",
+                ),
+            );
+        }
+    }
 
     // The returned block's page variable(s).
     let mut pages = std::collections::HashSet::new();
@@ -357,7 +397,28 @@ pub(super) fn lower_attribute_patterns(
         let Some((attr, label)) = advanced_attribute(target, &attribute) else {
             continue;
         };
-        if object.starts_with('?') {
+        if object == "_" {
+            if attr == Attr::Journal {
+                continue;
+            }
+            lowered.insert(
+                index,
+                (
+                    advanced_on_target(target, Filter::attr(attr, CmpOp::IsSet, Value::None)),
+                    label,
+                ),
+            );
+        } else if inputs.contains_key(&object) {
+            if let Some(value) = advanced_literal(attr, &object, inputs) {
+                lowered.insert(
+                    index,
+                    (
+                        advanced_on_target(target, Filter::attr(attr, CmpOp::Eq, value)),
+                        label,
+                    ),
+                );
+            }
+        } else if object.starts_with('?') {
             if attr != Attr::Journal && !bindings.contains_key(&object) {
                 bindings.insert(object, (index, target, attr, label));
             }
@@ -376,7 +437,13 @@ pub(super) fn lower_attribute_patterns(
     let mut predicates: std::collections::HashMap<String, Vec<(usize, Filter)>> =
         std::collections::HashMap::new();
     for &index in &active {
-        let Some(call) = edn_body(&groups[index], '[', ']')
+        let negation = edn_body(&groups[index], '(', ')')
+            .map(edn_items)
+            .filter(|items| items.len() == 2 && items[0] == "not");
+        let predicate_group = negation
+            .as_ref()
+            .map_or(groups[index].as_str(), |items| items[1]);
+        let Some(call) = edn_body(predicate_group, '[', ']')
             .map(edn_items)
             .filter(|items| items.len() == 1)
             .and_then(|items| edn_body(items[0], '(', ')'))
@@ -427,7 +494,14 @@ pub(super) fn lower_attribute_patterns(
             Some((var.to_string(), Filter::attr(*attr, op, value)))
         })();
         if let Some((var, filter)) = lowered_predicate {
-            predicates.entry(var).or_default().push((index, filter));
+            predicates.entry(var).or_default().push((
+                index,
+                if negation.is_some() {
+                    Filter::not(filter)
+                } else {
+                    filter
+                },
+            ));
         }
     }
 
@@ -477,7 +551,14 @@ pub(super) fn lower_attribute_patterns(
         let Some((attr, _)) = advanced_attribute(target, &attribute) else {
             continue;
         };
-        let inner = if object.starts_with('?') {
+        let inner = if object == "_" {
+            Filter::attr(attr, CmpOp::IsSet, Value::None)
+        } else if inputs.contains_key(&object) {
+            let Some(value) = advanced_literal(attr, &object, inputs) else {
+                continue;
+            };
+            Filter::attr(attr, CmpOp::Eq, value)
+        } else if object.starts_with('?') {
             let outside = groups
                 .iter()
                 .enumerate()
@@ -510,6 +591,30 @@ pub(crate) fn advanced_pred(
     current_page: Option<&str>,
     today: JournalDate,
 ) -> (Option<Query>, Vec<String>, Vec<String>) {
+    advanced_pred_inner(query_src, current_page, today, false)
+}
+
+/// Suggest the translated row filter only when the sole refusal is a result
+/// transform. The suggestion explicitly discards that transform; it never runs
+/// a partial query automatically.
+pub(super) fn advanced_row_suggestion(
+    src: &str,
+    current_page: Option<&str>,
+    today: JournalDate,
+) -> Option<String> {
+    if !crate::query_edn::declares_option(src, ":result-transform") {
+        return None;
+    }
+    let (query, _, _) = advanced_pred_inner(src, current_page, today, true);
+    query.map(|q| super::print::print_tql(&q))
+}
+
+fn advanced_pred_inner(
+    query_src: &str,
+    current_page: Option<&str>,
+    today: JournalDate,
+    suggest_rows: bool,
+) -> (Option<Query>, Vec<String>, Vec<String>) {
     // Both limits live here, not only at the two `run_advanced_*` entry points,
     // because `page_affects_advanced_query` reaches this function directly. It
     // used to skip the byte ceiling entirely, which made scoped invalidation the
@@ -524,10 +629,55 @@ pub(crate) fn advanced_pred(
     let inputs = resolve_inputs(query_src, current_page, today);
     let mut ran = Vec::new();
     let mut ignored = Vec::new();
-    let groups = flatten_single_branch_groups(where_groups(query_src));
+    let Some(vector) = query_vector(query_src) else {
+        return (None, ran, vec!["query-vector".into()]);
+    };
+    if advanced_find_var(query_src).is_none() {
+        return (None, ran, vec!["find projection".into()]);
+    }
+    let vector_items = edn_items(edn_body(vector, '[', ']').unwrap_or(""));
+    let input_values = crate::query_edn::option_value(query_src, ":inputs")
+        .and_then(|s| edn_body(s, '[', ']'))
+        .map(edn_items)
+        .unwrap_or_default();
+    if input_values.len() != declared_input_vars(query_src).len() {
+        return (None, ran, vec!["input count".into()]);
+    }
+    if let Some(at) = vector_items.iter().position(|s| *s == ":in") {
+        if vector_items[at + 1..]
+            .iter()
+            .take_while(|s| !s.starts_with(':'))
+            .any(|s| *s != "$" && !s.starts_with('?'))
+        {
+            return (
+                None,
+                ran,
+                vec!["input binding (rules or collection)".into()],
+            );
+        }
+    }
+    let groups = flatten_single_branch_groups(where_groups(vector));
+    if !joins::rules_target_result(&groups, advanced_find_var(query_src).as_deref().unwrap()) {
+        return (None, ran, vec!["rule result binding".into()]);
+    }
+    // Authored rules may replace even familiar rule names. Never execute or
+    // silently substitute our built-ins for a graph's rule definitions.
+    if crate::query_edn::declares_option(query_src, ":rules") {
+        ignored.push("rules".into());
+    }
+    if !suggest_rows && crate::query_edn::declares_option(query_src, ":result-transform") {
+        ignored.push("result-transform".into());
+    }
+    if let Some(query) = lower_named_page_query(query_src, &groups, &inputs) {
+        return if ignored.is_empty() {
+            (Some(query), vec!["named-pages".into()], ignored)
+        } else {
+            (None, Vec::new(), ignored)
+        };
+    }
     let (lowered_page_properties, consumed_patterns) = lower_page_property_patterns(&groups);
     let (lowered_current_pages, current_page_patterns) =
-        lower_current_page_patterns(&groups, &inputs);
+        lower_current_page_patterns(&groups, &inputs, advanced_find_var(query_src).as_deref());
     let consumed_patterns = consumed_patterns
         .into_iter()
         .chain(current_page_patterns)
@@ -538,12 +688,23 @@ pub(crate) fn advanced_pred(
         .chain(lowered_current_pages.keys().copied())
         .chain(lowered_page_properties.keys().copied())
         .collect::<std::collections::HashSet<_>>();
-    let (lowered_attributes, attribute_patterns) = lower_attribute_patterns(
+    let (mut lowered_attributes, mut attribute_patterns) = lower_attribute_patterns(
         &groups,
         &taken,
         advanced_find_var(query_src).as_deref(),
         &inputs,
     );
+    // Docs example 14: both alternatives bind the SAME date variable. Move
+    // its predicates into each branch before OR, retaining existential
+    // semantics when a block has both dates (one outside, one inside).
+    let (date_or, date_or_patterns) = lower_date_disjunctions(
+        &groups,
+        &taken,
+        advanced_find_var(query_src).as_deref(),
+        &inputs,
+    );
+    lowered_attributes.extend(date_or);
+    attribute_patterns.extend(date_or_patterns);
     let preds: Vec<Filter> = groups
         .iter()
         .enumerate()
@@ -584,9 +745,6 @@ pub(crate) fn advanced_pred(
     }
     // GH #542: a `:result-transform` is a Clojure function (ADR 0042 keeps
     // scripting out). It reorders or reshapes the answer, so say it did not run.
-    if crate::query_edn::declares_option(query_src, ":result-transform") {
-        ignored.push("result-transform".into());
-    }
     if ignored.iter().any(|item| item == "query-nesting-too-deep") {
         return (None, Vec::new(), ignored);
     }
@@ -619,67 +777,11 @@ pub(crate) fn advanced_pred(
     (Some(query), ran, ignored)
 }
 
-/// Lower the exact DataScript relationship Logseq uses to connect the typed
-/// `:current-page` input to blocks. This is deliberately not a general join
-/// engine: one page-name identity pattern must feed one `:block/refs` or
-/// `:block/page` pattern, and every other shape remains visibly unsupported.
-fn lower_current_page_patterns(
-    groups: &[String],
-    inputs: &std::collections::HashMap<String, AdvancedInput>,
-) -> (
-    std::collections::HashMap<usize, (Filter, &'static str)>,
-    std::collections::HashSet<usize>,
-) {
-    let triples = groups
-        .iter()
-        .enumerate()
-        .filter_map(|(index, group)| {
-            let inner = group.trim().strip_prefix('[')?.strip_suffix(']')?.trim();
-            let tokens = inner.split_whitespace().collect::<Vec<_>>();
-            (tokens.len() == 3).then_some((index, tokens))
-        })
-        .collect::<Vec<_>>();
-
-    let mut candidates = Vec::new();
-    for (identity_index, identity) in &triples {
-        if identity[1] != ":block/name" || !identity[0].starts_with('?') {
-            continue;
-        }
-        let Some(AdvancedInput::Page(page)) = inputs.get(identity[2]) else {
-            continue;
-        };
-        for (relation_index, relation) in &triples {
-            if relation[0] == identity[0]
-                || !relation[0].starts_with('?')
-                || relation[2] != identity[0]
-            {
-                continue;
-            }
-            let lowered = match relation[1] {
-                ":block/refs" => Some((Filter::page_ref(page.clone()), "current-page-ref")),
-                ":block/page" => Some((
-                    Filter::rel(
-                        Rel::Page,
-                        Quant::Any,
-                        Filter::attr(Attr::Name, CmpOp::Eq, Value::text(page.clone())),
-                    ),
-                    "current-page",
-                )),
-                _ => None,
-            };
-            if let Some(lowered) = lowered {
-                candidates.push((*identity_index, *relation_index, lowered));
-            }
-        }
-    }
-    if candidates.len() != 1 {
-        return Default::default();
-    }
-    let (identity_index, relation_index, lowered) = candidates.pop().unwrap();
-    (
-        std::collections::HashMap::from([(relation_index, lowered)]),
-        std::collections::HashSet::from([identity_index]),
-    )
+/// EDN strings with escapes are outside this bounded translator. Refuse them
+/// rather than confusing the lexical spelling with the decoded value.
+fn edn_string(token: &str) -> Option<String> {
+    let text = token.strip_prefix('"')?.strip_suffix('"')?;
+    (!text.contains('\\')).then(|| text.to_string())
 }
 
 /// Conservatively lower only the exact DataScript relationship used by the
@@ -821,10 +923,21 @@ fn parse_adv_group(
                 adv_text_list(adv_strings(inner)),
             ))
         }
-        "page-ref" => adv_strings(inner).into_iter().next().map(|n| {
-            ran.push("page-ref".into());
-            Filter::page_ref(n)
-        }),
+        "page-ref" => {
+            let args = edn_items(inner);
+            let name = args.get(2).and_then(|arg| match inputs.get(*arg) {
+                Some(AdvancedInput::Page(name)) => Some(name.clone()),
+                _ => edn_string(arg),
+            });
+            name.filter(|_| args.len() == 3).map(|name| {
+                ran.push("page-ref".into());
+                if name != name.to_lowercase() {
+                    Filter::False
+                } else {
+                    Filter::page_ref(name)
+                }
+            })
+        }
         "property" | "page-property" => inner
             .split_whitespace()
             .skip(1)
@@ -917,7 +1030,7 @@ fn parse_adv_group(
                 .unwrap_or(Attr::Day);
             let lo = adv_bound(args[args.len() - 2], inputs, today);
             let hi = adv_bound(args[args.len() - 1], inputs, today);
-            if lo.is_none() && hi.is_none() {
+            if lo.is_none() || hi.is_none() {
                 ignored.push("between".into());
                 return None;
             }
@@ -925,7 +1038,14 @@ fn parse_adv_group(
             // The advanced dialect resolves its bounds eagerly: `:inputs` may
             // bind a bound to an already-resolved ordinal, and an advanced query
             // is never re-printed as OG DSL, so the IR carries the ordinals.
-            let range = adv_range(attr, lo, hi);
+            // The advanced `between` RULE compares in authored order (OG
+            // db/rules.cljc). The simple DSL's builder sorts its two bounds;
+            // do not borrow that reversal for this Datalog rule.
+            let range = if lo > hi {
+                Filter::False
+            } else {
+                adv_range(attr, lo, hi)
+            };
             Some(if attr == Attr::Day {
                 Filter::rel(Rel::Page, Quant::Any, range)
             } else {
@@ -989,21 +1109,19 @@ pub(super) enum AdvancedInput {
 
 /// The `?var`s an `:in` clause declares, in order.
 fn declared_input_vars(src: &str) -> Vec<String> {
-    match src.find(":in") {
-        Some(i) => {
-            let rest = &src[i + 3..];
-            let end = rest
-                .find(":where")
-                .or_else(|| rest.find(']'))
-                .unwrap_or(rest.len());
-            rest[..end]
-                .split_whitespace()
-                .filter(|t| t.starts_with('?'))
-                .map(String::from)
-                .collect()
-        }
-        None => Vec::new(),
-    }
+    let Some(body) = query_vector(src).and_then(|s| edn_body(s, '[', ']')) else {
+        return Vec::new();
+    };
+    let items = edn_items(body);
+    let Some(at) = items.iter().position(|s| *s == ":in") else {
+        return Vec::new();
+    };
+    items[at + 1..]
+        .iter()
+        .take_while(|s| !s.starts_with(':'))
+        .filter(|s| s.starts_with('?'))
+        .map(|s| s.to_string())
+        .collect()
 }
 
 /// Build a typed positional input map by zipping `:in $ ?a ?b …` with
@@ -1016,25 +1134,46 @@ fn resolve_inputs(
 ) -> std::collections::HashMap<String, AdvancedInput> {
     let mut map = std::collections::HashMap::new();
     let vars = declared_input_vars(src);
-    let vals: Vec<String> = match src.find(":inputs") {
-        Some(i) => {
-            let rest = &src[i + ":inputs".len()..];
-            match (rest.find('['), rest.find(']')) {
-                (Some(a), Some(b)) if b > a => rest[a + 1..b]
-                    .split_whitespace()
-                    .map(String::from)
-                    .collect(),
-                _ => Vec::new(),
-            }
-        }
-        None => Vec::new(),
-    };
+    let vals = crate::query_edn::option_value(src, ":inputs")
+        .and_then(|s| edn_body(s, '[', ']'))
+        .map(edn_items)
+        .unwrap_or_default();
     for (v, val) in vars.iter().zip(vals.iter()) {
-        if val.eq_ignore_ascii_case(":current-page") {
+        if *val == ":current-page" {
             if let Some(page) = current_page.map(str::trim).filter(|page| !page.is_empty()) {
                 map.insert(v.clone(), AdvancedInput::Page(page.to_lowercase()));
             }
-        } else if let Some(ord) = resolve_date_token(val.trim_start_matches(':'), today) {
+        } else if let Some(text) = edn_string(val) {
+            let text = match text.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
+                Some(page) => page.to_lowercase(),
+                None => text,
+            };
+            map.insert(v.clone(), AdvancedInput::Page(text));
+        } else if let Ok(number) = val.parse::<i64>() {
+            // Numeric inputs are DataScript numbers already, NOT epoch days.
+            map.insert(v.clone(), AdvancedInput::Date(number));
+        } else if let Some(keyword) = val.strip_prefix(':') {
+            let legacy = keyword
+                .strip_suffix("d-after")
+                .map(|n| (n, '+'))
+                .or_else(|| keyword.strip_suffix("d-before").map(|n| (n, '-')))
+                .or_else(|| keyword.strip_suffix('d').map(|n| (n, '-')))
+                .filter(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+            let token =
+                legacy.map_or_else(|| keyword.to_string(), |(n, sign)| format!("{sign}{n}d"));
+            // Keywords are case-sensitive in OG. Only its date-input grammar
+            // resolves here: e.g. :now / :Today / :2026-10-08 stay unbound.
+            let admitted = matches!(keyword, "today" | "yesterday" | "tomorrow")
+                || legacy.is_some()
+                || (keyword.starts_with(['+', '-'])
+                    && matches!(DateToken::parse(keyword), Some(DateToken::Relative { .. })));
+            if admitted {
+                if let Some(ord) = resolve_date_token(&token, today) {
+                    map.insert(v.clone(), AdvancedInput::Date(ord));
+                }
+            }
+        } else if let Some(ord) = resolve_date_token(val, today) {
+            // Preserve Tine's previously supported bare date-stem extension.
             map.insert(v.clone(), AdvancedInput::Date(ord));
         }
     }

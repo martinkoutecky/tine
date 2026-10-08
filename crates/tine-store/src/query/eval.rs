@@ -415,6 +415,23 @@ fn eval_block_leaf(
         },
         Leaf::Rel { rel, quant, pred } => match rel {
             Rel::Refs => eval_refs(*quant, pred, block, ancestor_refs, ctx),
+            Rel::DirectRefs => {
+                // OG graph-parser/block.cljs::with-page-refs also adds the
+                // marker, priority and namespace prefixes to direct refs.
+                let names = block
+                    .projection()
+                    .refs_norm()
+                    .iter()
+                    .map(String::as_str)
+                    .chain(block.marker())
+                    .chain(block.priority())
+                    .flat_map(|name| {
+                        name.match_indices('/')
+                            .map(move |(at, _)| &name[..at])
+                            .chain(std::iter::once(name))
+                    });
+                quantify(*quant, names, |name| eval_name_element(pred, name))
+            }
             Rel::Tags => quantify(*quant, block.projection().tags().iter(), |tag| {
                 eval_name_element(pred, tag)
             }),
