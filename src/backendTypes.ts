@@ -92,7 +92,11 @@ export interface GraphSources {
 
 export type GraphFolderPickResult =
   | { status: "picked"; path: string }
-  | { status: "permission-requested" | "permission-needed" | "cancelled"; path?: string };
+  | { status: "permission-requested" | "permission-needed" | "cancelled" | "refused"; path?: string };
+
+export type PreparedGraphFolder =
+  | { status: "ready"; location: "local" | "icloud"; path?: string }
+  | { status: "refused"; location?: undefined };
 
 export interface ClipboardAssetFile {
   path: string;

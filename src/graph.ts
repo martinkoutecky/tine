@@ -124,9 +124,12 @@ export async function authorizeGraphAccess(path: string): Promise<boolean> {
 }
 
 export async function loadGraphPath(
-  path: string,
+  requestedPath: string,
   options: { forceRefresh?: boolean; transitionHeld?: boolean } = {}
 ): Promise<LoadGraphPathOutcome> {
+  // The path Rust opens and localStorage remembers. On iOS the native boundary
+  // may rebase it below (app-container relocation after an update).
+  let path = requestedPath;
   const startingBinding = captureBinding();
   const ownsTransition = !options.transitionHeld;
   if (graphTransitioning() && ownsTransition) return { kind: "aborted" };
@@ -142,11 +145,6 @@ export async function loadGraphPath(
     await Promise.resolve();
     if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
   }
-  // Whether we're switching to a *different* graph than last time. Only then do
-  // we drop the persisted right-sidebar items; reopening the same graph at
-  // startup keeps them (and we prune stale block refs below).
-  const prev = graphMeta()?.root || persistedGraphPath();
-  const switching = !!prev && !!path && prev !== path;
   // Persist the current graph's pending edits BEFORE opening another graph —
   // otherwise the debounced save would either fire against the new graph or be
   // dropped by resetStore. No-op on first load (nothing dirty). If something
@@ -154,7 +152,6 @@ export async function loadGraphPath(
   // discard that edit — gated on whether a graph is actually loaded now, NOT on
   // the persisted path (which is empty on a TINE_GRAPH/CLI launch).
   const hadGraph = !!graphMeta();
-  const rebindsPdfOwner = hadGraph && (switching || options.forceRefresh === true);
   const flushed = await flushAll();
   if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
   if (hadGraph && !flushed) {
@@ -168,6 +165,38 @@ export async function loadGraphPath(
     catch { console.warn("Session not saved before graph switch"); }
   }
   if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
+  if (path && (await platformKind()) === "ios") {
+    // iOS opens only folders inside the app's own Documents or iCloud
+    // containers (master 027b5ae15, fa78c7b74). The native boundary downloads
+    // an iCloud graph before Rust enumerates it and rebases a remembered
+    // Documents-relative path onto the current container after an app update.
+    let prepared;
+    try {
+      const result = await readOwned(bindingOwner(), backend().prepareGraphFolder(path));
+      if (result.kind === "stale") return { kind: "aborted" };
+      prepared = result.value;
+    } catch (error) {
+      pushToast(`Couldn't prepare the iCloud graph. (${String(error)})`, "error", { sticky: true });
+      return { kind: "aborted" };
+    }
+    if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
+    if (prepared.status !== "ready") {
+      pushToast(
+        "TineOutline can only open folders inside On My iPhone or iCloud Drive → TineOutline.",
+        "error",
+        { sticky: true }
+      );
+      return { kind: "aborted" };
+    }
+    path = prepared.path ?? path;
+  }
+  // Whether we're switching to a *different* graph than last time. Only then do
+  // we drop the persisted right-sidebar items; reopening the same graph at
+  // startup keeps them (and we prune stale block refs below). Computed after
+  // the iOS rebase so a container relocation is not mistaken for a switch.
+  const prev = graphMeta()?.root || persistedGraphPath();
+  const switching = !!prev && !!path && prev !== path;
+  const rebindsPdfOwner = hadGraph && (switching || options.forceRefresh === true);
   if (!(await authorizeGraphAccess(path))) return { kind: "aborted" };
   if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
   // This is the last await before the backend graph binding can change.  Flush
@@ -467,9 +496,10 @@ async function injectCustomCss(): Promise<void> {
   document.head.appendChild(el);
 }
 
-/** Open a graph chosen with the desktop folder picker or Android graph picker.
- * Android may request all-files access and return aborted until granted. iOS
- * currently shows an unsupported-action toast and returns aborted. Cancellation,
+/** Open a graph chosen with the desktop folder picker or the Android/iOS graph
+ * picker. Android may request all-files access and return aborted until
+ * granted; iOS refuses folders outside the app's On My iPhone / iCloud Drive
+ * containers with an info toast and returns aborted. Cancellation,
  * permission refusal and stale ownership return aborted; a successful pick
  * delegates to loadGraphPath, which flushes the old graph before switching.
  * Desktop picker errors reject; graph-load cost follows graph files. */
@@ -477,39 +507,46 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
   const owner = bindingOwner();
   const platform = await platformKind();
   if (!owner()) return { kind: "aborted" };
-  if (platform === "android") {
+  if (platform === "android" || platform === "ios") {
     let result;
     try {
       const picked = await readOwned(owner, backend().pickGraphFolder());
       if (picked.kind === "stale") return { kind: "aborted" };
       result = picked.value;
     } catch (e) {
-      pushToast(`Couldn't open the Android folder picker. (${String(e)})`, "error");
+      const platformName = platform === "android" ? "Android" : "iOS";
+      pushToast(`Couldn't open the ${platformName} folder picker. (${String(e)})`, "error");
       return { kind: "aborted" };
     }
     // Diagnostic breadcrumbs (visible in `adb logcat`, chromium console channel):
     // an intermittent first-run stall on "Opening…" — these pin down whether the
     // native picker returned and whether the graph parse completed or hung.
-    console.info("[tine/android] pickGraphFolder completed");
+    // I-5: console text stays fixed, so each platform spells its own line.
+    if (platform === "android") console.info("[tine/android] pickGraphFolder completed");
+    else console.info("[tine/ios] pickGraphFolder completed");
     if (result.status === "picked") {
       if (result.path) {
-        console.info("[tine/android] loadGraphPath: start");
+        if (platform === "android") console.info("[tine/android] loadGraphPath: start");
+        else console.info("[tine/ios] loadGraphPath: start");
         const outcome = await openPickedGraphPath(result.path);
-        console.info("[tine/android] loadGraphPath: done");
+        if (platform === "android") console.info("[tine/android] loadGraphPath: done");
+        else console.info("[tine/ios] loadGraphPath: done");
         return outcome;
       }
       return { kind: "aborted" };
     }
-    if (result.status === "permission-requested" || result.status === "permission-needed") {
+    if (
+      platform === "android" &&
+      (result.status === "permission-requested" || result.status === "permission-needed")
+    ) {
       pushToast('Grant "All files access" for Tine, then tap Open again.', "info");
     }
-    return { kind: "aborted" };
-  }
-  if (platform === "ios") {
-    pushToast(
-      "Opening an existing graph on iOS is coming soon. For now, tap “Create a new graph” to try Tine.",
-      "info"
-    );
+    if (platform === "ios" && result.status === "refused") {
+      pushToast(
+        "Choose a folder inside On My iPhone or iCloud Drive → TineOutline. Other Files providers aren't supported yet.",
+        "info"
+      );
+    }
     return { kind: "aborted" };
   }
   const picked = await readOwned(owner, backend().pickFolder());
@@ -529,20 +566,57 @@ async function openPickedGraphPath(path: string): Promise<LoadGraphPathOutcome> 
   }
 }
 
-/** Create a demo graph under a desktop-picked folder or the mobile default
- * graph parent, then open it and navigate to Welcome to Tine. Cancellation
+/** Create a demo graph under a desktop-picked folder, the Android default graph
+ * parent, or an iOS-picked folder inside the app's On My iPhone / iCloud Drive
+ * containers (anything else is refused with a toast), then open it and navigate to Welcome to Tine. Cancellation
  * returns aborted. A created directory can remain if opening fails; today's
  * narrated journal seed is best effort and its failure does not change a
  * loaded outcome. Creation errors toast and return aborted; picker/parent errors
  * reject. Cost follows graph creation, templates and the graph load. */
 export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
   const owner = bindingOwner();
-  const dirResult = (await isMobile())
-    ? await readOwned(owner, backend().defaultGraphParent())
-    : await readOwned(owner, backend().pickFolder("Choose where to create your new graph"));
-  if (dirResult.kind === "stale") return { kind: "aborted" };
-  const dir = dirResult.value;
+  const platform = await platformKind();
+  if (!owner()) return { kind: "aborted" };
+  let dir: string | null;
+  if (platform === "ios") {
+    const picked = await readOwned(owner, backend().pickGraphFolder());
+    if (picked.kind === "stale") return { kind: "aborted" };
+    if (picked.value.status === "refused") {
+      pushToast(
+        "Choose a folder inside On My iPhone or iCloud Drive → TineOutline. Other Files providers aren't supported yet.",
+        "info"
+      );
+      return { kind: "aborted" };
+    }
+    dir = picked.value.status === "picked" ? picked.value.path : null;
+  } else {
+    const dirResult = (await isMobile())
+      ? await readOwned(owner, backend().defaultGraphParent())
+      : await readOwned(owner, backend().pickFolder("Choose where to create your new graph"));
+    if (dirResult.kind === "stale") return { kind: "aborted" };
+    dir = dirResult.value;
+  }
   if (!dir) return { kind: "aborted" };
+  if (platform === "ios") {
+    let prepared;
+    try {
+      const result = await readOwned(owner, backend().prepareGraphFolder(dir));
+      if (result.kind === "stale") return { kind: "aborted" };
+      prepared = result.value;
+    } catch (error) {
+      pushToast(`Couldn't prepare the iCloud location. (${String(error)})`, "error", { sticky: true });
+      return { kind: "aborted" };
+    }
+    if (prepared.status !== "ready") {
+      pushToast(
+        "TineOutline can only create graphs inside On My iPhone or iCloud Drive → TineOutline.",
+        "error",
+        { sticky: true }
+      );
+      return { kind: "aborted" };
+    }
+    dir = prepared.path ?? dir;
+  }
   let root: string;
   try {
     const created = await writeOwned(owner, backend().createGraph(dir));

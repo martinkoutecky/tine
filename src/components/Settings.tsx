@@ -91,16 +91,13 @@ const TABS: { id: SettingsTabId; label: string }[] = [
 export function Settings(): JSX.Element {
   const [tab, setTab] = createSignal<SettingsTabId>("appearance");
   const [settingsQuery, setSettingsQuery] = createSignal("");
-  const [settingsPlatform] = createResource(async () => {
-    try {
-      return await platformKind();
-    } catch {
-      // Unknown native platforms fail closed: do not reveal a package host whose
-      // platform policy could not be established (ADR 0052; master b89a9e77f).
-      return undefined;
-    }
-  });
-  const pluginsAvailable = () => settingsPlatform() === "desktop" || settingsPlatform() === "android";
+  const [settingsPlatform] = createResource(platformKind);
+  // Unknown native platforms fail closed: do not reveal a package host whose
+  // platform policy could not be established (ADR 0052; master b89a9e77f).
+  const pluginsAvailable = () => {
+    const platform = readOr(settingsPlatform, undefined, "settings-platform");
+    return platform === "desktop" || platform === "android";
+  };
   const availableTabs = createMemo(() => pluginsAvailable() ? TABS : TABS.filter((entry) => entry.id !== "plugins"));
   const matches = createMemo(() => {
     const query = settingsQuery();
