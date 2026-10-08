@@ -102,16 +102,12 @@ fn named_asset(store: &Store, name: &str) -> Result<tine_store::FileId, AssetAcc
         .map_err(AssetAccessError::Store)
 }
 
-/// Read one asset into bytes, optionally bounded by `max_bytes`. An in-area
+/// Read one asset into bytes, bounded by the required `max_bytes`. An in-area
 /// final symlink may resolve; an escape is refused. Cost O(path components + bytes).
-pub fn read_asset(
-    store: &Store,
-    name: &str,
-    max_bytes: Option<u64>,
-) -> Result<Vec<u8>, AssetAccessError> {
+pub fn read_asset(store: &Store, name: &str, max_bytes: u64) -> Result<Vec<u8>, AssetAccessError> {
     let id = named_asset(store, name)?;
     store
-        .read(&id, max_bytes)
+        .read(&id, Some(max_bytes))
         .map(|(bytes, _)| bytes)
         .map_err(AssetAccessError::Store)
 }

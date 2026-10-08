@@ -82,8 +82,6 @@ let snapshotPromise: Promise<PublishedSnapshot> | null = null;
 /** Largest snapshot document a viewer will read (I-22). Far above any real export;
  *  a larger body is a wrong or hostile file and refuses visibly. */
 export const PUBLISHED_SNAPSHOT_MAX_BYTES = 512 * 1024 * 1024;
-/** Largest asset `readAsset` buffers when the caller names no cap of its own (I-22). */
-export const PUBLISHED_ASSET_MAX_BYTES = 256 * 1024 * 1024;
 
 /** Read a response body of at most `max` bytes: a declared length over the cap refuses
  *  before any byte is read, and a body that outgrows it (no or wrong length) is cancelled
@@ -616,13 +614,13 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     // ---- assets and the browser ----
     // A refused or missing asset rejects (I-9): an empty byte array reads as a valid empty
     // file and blanks a PDF or image with no cause. The live backend rejects the same way.
-    async readAsset(name: string, maxBytes?: number) {
+    async readAsset(name: string, maxBytes: number) {
       await load();
       const url = assetUrl(name);
       if (!url) throw new Error(`asset ${name}: not a file inside the published assets`);
       const response = await fetch(url);
       if (!response.ok) throw new Error(`asset ${name}: HTTP ${response.status}`);
-      return readBounded(response, maxBytes ?? PUBLISHED_ASSET_MAX_BYTES, `asset ${name}`);
+      return readBounded(response, maxBytes, `asset ${name}`);
     },
     async streamAsset(name: string) {
       await load();

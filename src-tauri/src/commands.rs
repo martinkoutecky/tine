@@ -628,6 +628,13 @@ mod save_wire_tests {
             "{RULE}"
         );
         assert_eq!(
+            read_asset_error(tine_graph_features::assets::AssetAccessError::Store(
+                StoreError::TooLarge { limit: 12, len: 13 }
+            )),
+            "asset-too-large",
+            "L-1: a capped read keeps the UI's existing refusal token"
+        );
+        assert_eq!(
             sync_conflict_error(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
                 "secret"
@@ -1415,9 +1422,10 @@ pub(crate) async fn preview_block(
 #[tauri::command]
 pub(crate) fn read_asset(
     name: String,
-    max_bytes: Option<u64>,
+    max_bytes: u64,
     state: GraphContext<'_>,
 ) -> Result<tauri::ipc::Response, String> {
+    // L-1: a missing maxBytes fails IPC deserialization before any file read.
     // Return RAW bytes (not a JSON number[]), so a multi-MB PDF/image isn't
     // serialized element-by-element and re-parsed on the JS side — the frontend
     // receives an ArrayBuffer directly.

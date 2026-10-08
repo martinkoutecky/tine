@@ -168,7 +168,11 @@ fn asset_path_import_read_and_trash_summary_keep_one_file_semantics() {
     )
     .unwrap();
     assert_eq!(name, "kept.bin");
-    assert_eq!(assets::read_asset(&store, &name, None).unwrap(), b"media");
+    const TEST_ASSET_MAX_BYTES: u64 = 5;
+    assert_eq!(
+        assets::read_asset(&store, &name, TEST_ASSET_MAX_BYTES).unwrap(),
+        b"media"
+    );
     // Under the canonical root `Store::open` binds (Windows: `\\?\` path).
     assert_eq!(
         assets::path_for_os_handoff(&store, &name).unwrap(),

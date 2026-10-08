@@ -135,6 +135,8 @@ describe("published reads are parser-decided, visible on failure and bounded (OG
     __resetPublishedSnapshotForTest();
   });
   const bytesOf = (n: number) => new Uint8Array(n).fill(7);
+  const TEST_ASSET_MAX_BYTES = 10;
+  const TOO_SMALL_MAX_BYTES = TEST_ASSET_MAX_BYTES - 1;
   const respond = (body: Uint8Array, init: ResponseInit = {}) => new Response(body as unknown as BodyInit, init);
 
   it("lists only real ((uuid)) references as referrers, never a code lookalike", async () => {
@@ -153,16 +155,16 @@ describe("published reads are parser-decided, visible on failure and bounded (OG
   it("rejects a missing or refused asset instead of answering empty bytes", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 404 })));
     const api = publishedBackend(async () => snapshot);
-    await expect(api.readAsset("gone.png")).rejects.toThrow(/gone\.png.*404/);
-    await expect(api.readAsset("../escape.png")).rejects.toThrow(/outside|not a file/);
+    await expect(api.readAsset("gone.png", TEST_ASSET_MAX_BYTES)).rejects.toThrow(/gone\.png.*404/);
+    await expect(api.readAsset("../escape.png", TEST_ASSET_MAX_BYTES)).rejects.toThrow(/outside|not a file/);
     await expect(api.streamAsset("/etc/passwd")).rejects.toThrow(/not a file/);
   });
 
   it("honours the caller's byte cap on an asset, by declared length and by streamed length", async () => {
     const api = publishedBackend(async () => snapshot);
     vi.stubGlobal("fetch", vi.fn(async () => respond(bytesOf(10), { headers: { "content-length": "10" } })));
-    expect((await api.readAsset("ok.bin", 10)).byteLength).toBe(10);
-    await expect(api.readAsset("big.bin", 9)).rejects.toThrow(/larger than 9/);
+    expect((await api.readAsset("ok.bin", TEST_ASSET_MAX_BYTES)).byteLength).toBe(10);
+    await expect(api.readAsset("big.bin", TOO_SMALL_MAX_BYTES)).rejects.toThrow(/larger than 9/);
     // No declared length: the running total refuses and cancels the stream.
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {

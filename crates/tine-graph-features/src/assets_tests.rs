@@ -1,5 +1,7 @@
 use super::*;
 
+const TEST_ASSET_MAX_BYTES: u64 = 16;
+
 #[test]
 fn nested_asset_reads_and_openers_stay_inside_assets() {
     let root = std::env::temp_dir().join(format!(
@@ -12,7 +14,10 @@ fn nested_asset_reads_and_openers_stay_inside_assets() {
     std::fs::write(root.join("assets/sub/x.png"), b"png").unwrap();
     std::fs::write(root.join("outside.png"), b"outside").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
-    assert_eq!(read_asset(&store, "sub/x.png", None).unwrap(), b"png");
+    assert_eq!(
+        read_asset(&store, "sub/x.png", TEST_ASSET_MAX_BYTES).unwrap(),
+        b"png"
+    );
     validate_stream_asset(&store, "sub/x.png").unwrap();
     assert_eq!(
         path_for_os_handoff(&store, "sub/x.png").unwrap(),
@@ -27,14 +32,17 @@ fn nested_asset_reads_and_openers_stay_inside_assets() {
         "sub/../x.png",
         "sub\\x.png",
     ] {
-        assert!(read_asset(&store, bad, None).is_err(), "{bad}");
+        assert!(
+            read_asset(&store, bad, TEST_ASSET_MAX_BYTES).is_err(),
+            "{bad}"
+        );
         assert!(validate_stream_asset(&store, bad).is_err(), "{bad}");
         assert!(path_for_os_handoff(&store, bad).is_err(), "{bad}");
     }
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&root, root.join("assets/escape")).unwrap();
-        assert!(read_asset(&store, "escape/outside.png", None).is_err());
+        assert!(read_asset(&store, "escape/outside.png", TEST_ASSET_MAX_BYTES).is_err());
         assert!(validate_stream_asset(&store, "escape/outside.png").is_err());
         assert!(path_for_os_handoff(&store, "escape/outside.png").is_err());
     }
@@ -100,6 +108,8 @@ fn asset_open_accepts_files_directories_and_the_assets_root() {
 
 #[test]
 fn a_bounded_asset_read_refuses_an_oversized_file_and_accepts_the_limit() {
+    const EXACT_MAX_BYTES: u64 = 5;
+    const TOO_SMALL_MAX_BYTES: u64 = EXACT_MAX_BYTES - 1;
     let root = std::env::temp_dir().join(format!(
         "tine-bounded-asset-read-{}-{:?}",
         std::process::id(),
@@ -110,13 +120,13 @@ fn a_bounded_asset_read_refuses_an_oversized_file_and_accepts_the_limit() {
     std::fs::write(root.join("assets/large.pdf"), b"12345").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     assert_eq!(
-        read_asset(&store, "large.pdf", Some(5)).unwrap(),
+        read_asset(&store, "large.pdf", EXACT_MAX_BYTES).unwrap(),
         b"12345",
         "a file exactly at the limit is read"
     );
     assert!(
         matches!(
-            read_asset(&store, "large.pdf", Some(4)),
+            read_asset(&store, "large.pdf", TOO_SMALL_MAX_BYTES),
             Err(AssetAccessError::Store(StoreError::TooLarge {
                 limit: 4,
                 ..

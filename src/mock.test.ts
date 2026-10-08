@@ -3,6 +3,15 @@ import { mockBackend } from "./mock";
 import type { PageDto } from "./types";
 
 describe("mock backend", () => {
+  it("accepts the caller's exact asset cap and refuses one byte over (L-1)", async () => {
+    const api = mockBackend();
+    const TEST_ASSET_MAX_BYTES = 5;
+    const TOO_SMALL_MAX_BYTES = TEST_ASSET_MAX_BYTES - 1;
+    const name = await api.saveAsset("l1-limit.bin", new Uint8Array(TEST_ASSET_MAX_BYTES), 0);
+    expect((await api.readAsset(name, TEST_ASSET_MAX_BYTES)).byteLength).toBe(TEST_ASSET_MAX_BYTES);
+    await expect(api.readAsset(name, TOO_SMALL_MAX_BYTES)).rejects.toBe("asset-too-large");
+  });
+
   it("keeps distinct page owners and scopes while search names fold", async () => {
     const pages: PageDto[] = ["Ａ", "A", "Café", "Cafe"].map((name) => ({
       name, title: name, kind: "page", pre_block: null,

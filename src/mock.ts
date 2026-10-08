@@ -4,6 +4,7 @@
 import { split_linkable_property } from "./render/wasm/lsdoc_wasm.js";
 import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
+import { ASSET_INGRESS_MAX_BYTES } from "./backend";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, DraftRecord, BlockPreview, DraftLoad, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
@@ -1340,15 +1341,15 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       const { blocks, truncated } = previewDtoSubtree(group.blocks[0], maxNodes, "borrowed");
       return { group: { ...group, blocks }, truncated };
     },
-    async readAsset(name: string, maxBytes?: number): Promise<Uint8Array> {
-      void maxBytes;
-      if (mockAssets[name]) return mockAssets[name];
-      if (name === "sample.pdf") return decodeB64(SAMPLE_PDF_B64);
-      if (name === "voice_memo.wav") return decodeB64(SILENT_WAV_B64);
-      return new Uint8Array();
+    async readAsset(name: string, maxBytes: number): Promise<Uint8Array> {
+      const bytes = mockAssets[name] ?? (name === "sample.pdf" ? decodeB64(SAMPLE_PDF_B64)
+        : name === "voice_memo.wav" ? decodeB64(SILENT_WAV_B64) : new Uint8Array());
+      if (bytes.byteLength > maxBytes) throw "asset-too-large";
+      return bytes;
     },
     async streamAsset(name: string): Promise<string> {
-      const bytes = await this.readAsset(name);
+      // Mock streams buffer bytes; use the existing asset-ingress ceiling.
+      const bytes = await this.readAsset(name, ASSET_INGRESS_MAX_BYTES);
       if (!bytes.length) return "";
       const type = name.toLowerCase().endsWith(".wav") ? "audio/wav" : "application/octet-stream";
       return URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type }));
