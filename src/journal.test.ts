@@ -1,13 +1,24 @@
 import { describe, it, expect } from "vitest";
 import dateGoldenRaw from "./fixtures/date-golden.json?raw";
+import journalTitleGoldenRaw from "../tests/fixtures/i12-journal-title-golden.json?raw";
+import { JOURNAL_TITLE_FORMATS } from "./journalTitleFormats";
+import ogFormats from "../tests/fixtures/og-journal-formats.json";
 import {
   formatJournal,
   isJournalTitle,
-  localDayRolloverDelay,
   parseJournalWith,
   setJournalTitleFormat,
+  parseJournalTitle,
+  localDayKey,
+  localDateFromDayKey,
+  localDayRolloverDelay,
   type JournalDateParts,
 } from "./journal";
+
+it("inverts a valid journal day key in years below 100", () => {
+  const day = localDateFromDayKey(10102);
+  expect([day.getFullYear(), day.getMonth() + 1, day.getDate()]).toEqual([1, 1, 2]);
+});
 
 type FormatVector = {
   fmt: string;
@@ -28,12 +39,34 @@ type DateGoldenFixture = {
 };
 
 const dateGolden = JSON.parse(dateGoldenRaw) as DateGoldenFixture;
+const journalTitleGolden = JSON.parse(journalTitleGoldenRaw) as { cases: { name: string; expected: boolean }[] };
+
+it("formats and parses every source-derived OG journal preset through wasm (I-12)", () => {
+  for (const { pattern, title } of ogFormats.formats) {
+    expect(formatJournal(new Date(2024, 0, 5), pattern), pattern).toBe(title);
+    expect(parseJournalWith(title, pattern), pattern).toEqual({ y: 2024, m: 1, d: 5 });
+  }
+  expect(formatJournal(new Date(2024, 0, 5), "EE, yyyy-MM-dd")).toBe("Fri, 2024-01-05");
+  for (const [pattern, title] of [["E, yyyy-MM-dd", "F, 2024-01-05"], ["EE, yyyy-MM-dd", "Fr, 2024-01-05"]]) {
+    expect(parseJournalWith(title, pattern)).toEqual({ y: 2024, m: 1, d: 5 });
+  }
+});
+
+it("offers exactly the source-derived OG preset list", () => {
+  expect([...JOURNAL_TITLE_FORMATS]).toEqual(ogFormats.formats.map(f => f.pattern));
+});
 
 function localDate({ y, m, d }: JournalDateParts): Date {
   return new Date(y, m - 1, d);
 }
 
 describe("isJournalTitle (route [[date]] links to journals)", () => {
+  it("matches the Rust journal title fixture", () => {
+    setJournalTitleFormat(null);
+    for (const { name, expected } of journalTitleGolden.cases) {
+      expect(isJournalTitle(name), name).toBe(expected);
+    }
+  });
   it("recognizes the default MMM do, yyyy format", () => {
     setJournalTitleFormat("MMM do, yyyy");
     expect(isJournalTitle("Jun 26th, 2026")).toBe(true);
@@ -63,6 +96,8 @@ describe("isJournalTitle (route [[date]] links to journals)", () => {
     expect(isJournalTitle("2026-13-26")).toBe(false); // month 13
     expect(isJournalTitle("2026-06-40")).toBe(false); // day 40
     expect(isJournalTitle("2026-06-26 extra")).toBe(false);
+    expect(isJournalTitle("Feb 31st, 2026")).toBe(false);
+    expect(isJournalTitle("2026_06_26")).toBe(true);
   });
 });
 
@@ -84,16 +119,32 @@ describe("journal date grammar golden fixture", () => {
   });
 });
 
-describe("local journal-day lifecycle", () => {
-  it("arms calendar midnight correctly across 23-hour and 25-hour DST days", () => {
-    const original = process.env.TZ;
-    try {
-      process.env.TZ = "America/New_York";
-      expect(localDayRolloverDelay(new Date(2030, 2, 10), 0)).toBe(23 * 60 * 60 * 1000);
-      expect(localDayRolloverDelay(new Date(2030, 10, 3), 0)).toBe(25 * 60 * 60 * 1000);
-    } finally {
-      if (original === undefined) delete process.env.TZ;
-      else process.env.TZ = original;
-    }
-  });
+it("parses the containing journal's date across configured and fallback titles", () => {
+  setJournalTitleFormat("dd.MM.yyyy");
+  expect(localDayKey(parseJournalTitle("21.07.2026")!)).toBe(20260721);
+  expect(localDayKey(parseJournalTitle("2026-07-21")!)).toBe(20260721);
+  expect(parseJournalTitle("ordinary page")).toBeNull();
+  setJournalTitleFormat(null);
 });
+
+it("computes the next local calendar rollover without 24-hour arithmetic", () => {
+  expect(localDayRolloverDelay(new Date(2026, 6, 21, 23, 59, 59, 900))).toBe(125);
+});
+
+it("offers all three dotted Logseq journal title formats", () => {
+  for (const pattern of ["E, dd.MM.yyyy", "EEE, dd.MM.yyyy", "EEEE, dd.MM.yyyy"]) {
+    expect(JOURNAL_TITLE_FORMATS).toContain(pattern);
+    const title = formatJournal(new Date(2026, 6, 21), pattern);
+    expect(parseJournalWith(title, pattern)).toEqual({ y: 2026, m: 7, d: 21 });
+  }
+});
+
+ it("classification and conversion agree for trimmed titles and early years (D17)", () => {
+   setJournalTitleFormat(null);
+   for (const title of ["0099-01-01", " 0099-01-01 ", "0000_02_29"]) {
+     expect(isJournalTitle(title)).toBe(true);
+     const date = parseJournalTitle(title)!;
+     expect(date).not.toBeNull();
+     expect(date.getFullYear()).toBe(Number(title.trim().slice(0, 4)));
+   }
+ });

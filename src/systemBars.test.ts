@@ -50,44 +50,43 @@ describe("Android system-bar theme synchronization", () => {
     expect(activity.match(/SystemBarAppearance\.restore\(this\)/g)).toHaveLength(2);
     expect(activity.indexOf("SystemBarAppearance.restore(this)")).toBeGreaterThan(activity.indexOf("super.onCreate"));
   });
-
-  it("uses a light or night Tine backing color before the WebView paints", () => {
+  // GH #205 (master 945337d03): WebView reports env(safe-area-inset-*) as zero
+  // on API 35, so the Activity content root is the one inset owner. The IME is
+  // part of that native viewport (master d5412929a): edge-to-edge WebView can
+  // leave visualViewport unchanged under keyboard occlusion, so the bottom pad is
+  // the larger of the navigation bar and the keyboard. The insets themselves
+  // stay unconsumed so descendants still observe IME visibility.
+  it("bounds the WebView by the native system-bar and cutout insets", () => {
     const root = path.resolve(import.meta.dirname, "..");
-    const values = path.join(root, "src-tauri/gen/android/app/src/main/res/values");
-    const night = path.join(root, "src-tauri/gen/android/app/src/main/res/values-night");
-    const lightTheme = fs.readFileSync(path.join(values, "themes.xml"), "utf8");
-    const darkTheme = fs.readFileSync(path.join(night, "themes.xml"), "utf8");
-    const lightColors = fs.readFileSync(path.join(values, "colors.xml"), "utf8");
-    const darkColors = fs.readFileSync(path.join(night, "colors.xml"), "utf8");
-
-    expect(lightTheme).toContain('<item name="android:windowBackground">@color/tine_window_background</item>');
-    expect(darkTheme).toContain('<item name="android:windowBackground">@color/tine_window_background</item>');
-    expect(lightColors).toContain('<color name="tine_window_background">#FFFFFFFF</color>');
-    expect(darkColors).toContain('<color name="tine_window_background">#FF1A1B1E</color>');
+    const activity = fs.readFileSync(path.join(root,
+      "src-tauri/gen/android/app/src/main/java/page/tine/app/MainActivity.kt"), "utf8");
+    expect(activity).toContain("ViewCompat.setOnApplyWindowInsetsListener(content)");
+    expect(activity).toContain("WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()");
+    expect(activity).toContain("val ime = insets.getInsets(WindowInsetsCompat.Type.ime())");
+    expect(activity).toContain("view.setPadding(safe.left, safe.top, safe.right, maxOf(safe.bottom, ime.bottom))");
+    // Not consumed: the listener hands the original insets back to descendants.
+    expect(activity).toMatch(/maxOf\(safe\.bottom, ime\.bottom\)\)\s*\n\s*insets\s*\n\s*\}/);
+    expect(activity).toContain("ViewCompat.requestApplyInsets(content)");
+    expect(activity.indexOf("setOnApplyWindowInsetsListener")).toBeGreaterThan(activity.indexOf("super.onCreate"));
   });
 
-  // GH #467. The window background above is only the pre-restore initial paint,
-  // and it is resolved by the ANDROID night setting. Once the system-bar insets
-  // began padding the content root, that same window background became the strip
-  // behind the status bar -- while the bar ICONS follow TINE's theme. When the
-  // two disagreed the strip went white under white icons. The strip colour is
-  // now set from the same `dark` flag, through resources that carry no
+  // GH #467. Once the insets pad the content root, the WINDOW paints the strip
+  // behind the status bar while the bar ICONS follow Tine's theme. The strip
+  // colour is set from the same `dark` flag, through resources that carry no
   // values-night variant so the resolver cannot reintroduce the device setting.
   it("paints the system-bar strip from Tine's theme, not the device night setting", () => {
     const root = path.resolve(import.meta.dirname, "..");
-    const values = path.join(root, "src-tauri/gen/android/app/src/main/res/values");
-    const night = path.join(root, "src-tauri/gen/android/app/src/main/res/values-night");
-    const lightColors = fs.readFileSync(path.join(values, "colors.xml"), "utf8");
-    const nightColors = fs.readFileSync(path.join(night, "colors.xml"), "utf8");
+    const res = path.join(root, "src-tauri/gen/android/app/src/main/res");
+    const lightColors = fs.readFileSync(path.join(res, "values/colors.xml"), "utf8");
+    const nightDir = path.join(res, "values-night");
+    const nightXml = fs.readdirSync(nightDir).map((f) => fs.readFileSync(path.join(nightDir, f), "utf8")).join("\n");
     const plugin = fs.readFileSync(path.join(root,
       "src-tauri/gen/android/app/src/main/java/page/tine/app/SystemBarsPlugin.kt"), "utf8");
 
     expect(lightColors).toContain('<color name="tine_system_bar_light">#FFFFFFFF</color>');
     expect(lightColors).toContain('<color name="tine_system_bar_dark">#FF1A1B1E</color>');
-    // A values-night override would put the device setting back in charge.
-    expect(nightColors).not.toContain("tine_system_bar_light");
-    expect(nightColors).not.toContain("tine_system_bar_dark");
-    // One authority: the same `dark` that chooses the icon appearance.
+    expect(nightXml).not.toContain("tine_system_bar_light");
+    expect(nightXml).not.toContain("tine_system_bar_dark");
     expect(plugin).toContain("if (dark) R.color.tine_system_bar_dark else R.color.tine_system_bar_light");
     expect(plugin).toContain("activity.window.setBackgroundDrawable(");
   });

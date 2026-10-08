@@ -1,8 +1,12 @@
 //! Shared parser for the Ctrl-K quick-search query dialect (GH #44).
 //!
-//! Mirrors `src/editor/searchQuery.ts` on the frontend — keep the two in sync
-//! (the grammar, the `is_simple` rule, and the match semantics must agree, or a
-//! query would filter differently in the page list than in the block list).
+//! One native/browser answerer: the frontend calls this crate through lsdoc-wasm.
+//! Fold/map cost O(text bytes); parse cost O(query bytes plus bounded regex compilation).
+//! Matching costs O(text bytes × query terms); mapped evidence costs O(text scalars ×
+//! needle scalars), bounded by a caller-supplied result limit. No graph access or I/O.
+//! Invalid or oversized regexes return an error and match nothing; callers surface the
+//! error. Regexes use original text, while boolean callers supply the selected fold.
+//! Callers need no Unicode tables or engine-specific syntax checks.
 //!
 //! Grammar (the mainstream full-text convention — see the cited scan in
 //! `subagent-tasks/notes/search-syntax-industry-scan.md`):
@@ -18,77 +22,206 @@
 //! quick switcher uses to keep today's fuzzy page-name ranking; any second
 //! term / operator / regex switches both pages and blocks to this grammar.
 
-mod fold;
+use std::ops::Range;
+use std::sync::OnceLock;
+use unicode_normalization::char::canonical_combining_class;
+use unicode_normalization::UnicodeNormalization;
+use unicode_segmentation::UnicodeSegmentation;
 
-pub use fold::MappedFold;
-
-fn is_search_whitespace(char: char) -> bool {
-    matches!(
-        char,
-        '\u{0009}'..='\u{000d}'
-            | '\u{0020}'
-            | '\u{00a0}'
-            | '\u{1680}'
-            | '\u{2000}'..='\u{200a}'
-            | '\u{2028}'
-            | '\u{2029}'
-            | '\u{202f}'
-            | '\u{205f}'
-            | '\u{3000}'
-            | '\u{feff}'
-    )
+fn is_search_whitespace(ch: char) -> bool {
+    matches!(ch, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}'
+        | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}'
+        | '\u{205f}' | '\u{3000}' | '\u{feff}')
 }
 
-fn common_regex_pattern(pattern: &str) -> bool {
-    let bytes = pattern.as_bytes();
-    let mut i = 0;
-    let mut in_class = false;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' {
-            if i + 1 < bytes.len() && matches!(bytes[i + 1], b'1'..=b'9') {
-                return false;
-            }
-            i += 2;
-            continue;
-        }
-        if bytes[i] == b'[' {
-            in_class = true;
-            i += 1;
-            continue;
-        }
-        if bytes[i] == b']' && in_class {
-            in_class = false;
-            i += 1;
-            continue;
-        }
-        if !in_class
-            && bytes[i] == b'('
-            && bytes.get(i + 1) == Some(&b'?')
-            && bytes.get(i + 2) != Some(&b':')
-        {
-            return false;
-        }
-        i += 1;
+/// Maximum regex program and lazy DFA cache bytes, for every search/TQL engine.
+pub const REGEX_PROGRAM_MAX_BYTES: usize = 1 << 20;
+
+/// Compile the shared Rust Unicode regex dialect, including inline flags. Invalid
+/// syntax and programs above 1 MiB fail explicitly; matching stays linear in text.
+pub fn compile_regex(pattern: &str) -> Result<regex::Regex, regex::Error> {
+    regex::RegexBuilder::new(pattern)
+        .size_limit(REGEX_PROGRAM_MAX_BYTES)
+        .dfa_size_limit(REGEX_PROGRAM_MAX_BYTES)
+        .build()
+}
+
+fn is_nonspacing_mark(ch: char) -> bool {
+    if ch.is_ascii() {
+        return false;
     }
-    true
+    static MN: OnceLock<regex::Regex> = OnceLock::new();
+    MN.get_or_init(|| regex::Regex::new(r"\A\p{Mn}\z").unwrap())
+        .is_match(ch.encode_utf8(&mut [0; 4]))
 }
 
-/// Canonical comparison representation for non-regex search: whole-string
-/// lowercase, NFKC, NFD/drop Unicode Mn, then NFC.
+fn is_ignorable_mark(ch: char) -> bool {
+    matches!(ch, '\u{034f}' | '\u{17b4}'..='\u{17b5}' | '\u{180b}'..='\u{180d}'
+        | '\u{180f}' | '\u{fe00}'..='\u{fe0f}' | '\u{e0100}'..='\u{e01ef}')
+}
+
+fn is_cyrillic(ch: char) -> bool {
+    matches!(ch, '\u{0400}'..='\u{052f}' | '\u{1c80}'..='\u{1c8f}'
+        | '\u{2de0}'..='\u{2dff}' | '\u{a640}'..='\u{a69f}')
+}
+
+fn unstroke(ch: char) -> char {
+    match ch {
+        'ł' => 'l',
+        'ø' => 'o',
+        'đ' => 'd',
+        'ħ' => 'h',
+        'ŧ' => 't',
+        other => other,
+    }
+}
+
+fn fold_lowered(lowered: &str) -> String {
+    let mut out = String::with_capacity(lowered.len());
+    let mut base = None;
+    for ch in lowered.nfkd().map(unstroke) {
+        let mn = is_nonspacing_mark(ch);
+        let class = canonical_combining_class(ch);
+        let retained = !mn
+            || (!is_ignorable_mark(ch)
+                && (class == 0
+                    || matches!(class, 8 | 9 | 84 | 91 | 103 | 118 | 129 | 130 | 132)
+                    || base.is_some_and(|b| is_cyrillic(b) && !(b == 'е' && ch == '\u{0308}'))));
+        if retained {
+            out.push(ch);
+        }
+        if class == 0 && !mn {
+            base = Some(ch);
+        }
+    }
+    out.nfc().collect()
+}
+
+/// The one comparison form for non-regex search. It matches master's accent,
+/// compatibility and letter-making-mark policy without changing stored text.
 pub fn canonical_fold(value: &str) -> String {
-    fold::fold_text(value)
+    if value.is_ascii() {
+        return value.to_ascii_lowercase();
+    }
+    fold_lowered(&value.to_lowercase())
 }
 
-/// The same canonical fold with one raw UTF-16 range per output scalar.
-pub fn canonical_fold_with_map(value: &str) -> MappedFold {
-    fold::fold(value)
+/// OG's explicit `:feature/enable-search-remove-accents? false` behavior:
+/// compatibility forms still fold, but accents remain significant.
+pub fn literal_fold(value: &str) -> String {
+    if value.is_ascii() {
+        return value.to_ascii_lowercase();
+    }
+    value.to_lowercase().nfkc().collect()
 }
 
-/// One AND-term: a substring to test (already canonically folded) plus whether it is
+/// Content for [`Matcher::parse_exact`]: NFC only, borrowed when already NFC.
+pub fn exact_text(value: &str) -> std::borrow::Cow<'_, str> {
+    if unicode_normalization::is_nfc(value) {
+        std::borrow::Cow::Borrowed(value)
+    } else {
+        std::borrow::Cow::Owned(value.nfc().collect())
+    }
+}
+
+/// Lowercase plus NFC page identity, without compatibility or accent folding.
+pub fn identity_fold(value: &str) -> String {
+    value.to_lowercase().nfc().collect()
+}
+
+/// Fold with original UTF-16 spans for search evidence. Each output scalar
+/// points to its whole source grapheme, including discarded combining marks.
+pub fn canonical_fold_with_map(value: &str) -> (String, Vec<Range<usize>>) {
+    fold_with_map(value, true)
+}
+
+/// Mapped comparison form when the graph disables accent removal.
+pub fn literal_fold_with_map(value: &str) -> (String, Vec<Range<usize>>) {
+    fold_with_map(value, false)
+}
+
+#[cfg(test)]
+thread_local! {
+    static MAPPED_UNICODE_GRAPHEMES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn fold_with_map(value: &str, remove_accents: bool) -> (String, Vec<Range<usize>>) {
+    if value.is_ascii() {
+        // CRLF is one source grapheme: both scalars keep its whole span.
+        let spans = value
+            .grapheme_indices(true)
+            .flat_map(|(at, grapheme)| std::iter::repeat_n(at..at + grapheme.len(), grapheme.len()))
+            .collect();
+        return (value.to_ascii_lowercase(), spans);
+    }
+    let lowered = value.to_lowercase();
+    let mut sources = Vec::new();
+    let mut at = 0;
+    for ch in value.chars() {
+        let start = at;
+        at += ch.len_utf16();
+        for _ in ch.to_lowercase() {
+            sources.push(start..at);
+        }
+    }
+    let mut output = String::new();
+    let mut spans = Vec::new();
+    let mut source_at = 0;
+    for grapheme in lowered.graphemes(true) {
+        #[cfg(test)]
+        MAPPED_UNICODE_GRAPHEMES.with(|count| count.set(count.get() + 1));
+        let count = grapheme.chars().count();
+        let contributors = &sources[source_at..source_at + count];
+        source_at += count;
+        let span =
+            contributors.first().map_or(0, |s| s.start)..contributors.last().map_or(0, |s| s.end);
+        let folded = if remove_accents {
+            fold_lowered(grapheme)
+        } else {
+            grapheme.nfkc().collect()
+        };
+        for ch in folded.chars() {
+            output.push(ch);
+            spans.push(span.clone());
+        }
+    }
+    // Compatibility decomposition can make adjacent raw graphemes compose:
+    // `ㄱㅏ` becomes the Hangul L+V pair and then one syllable. Compose the
+    // complete output and union the contributing original spans.
+    let mut composed = String::new();
+    let mut composed_spans = Vec::new();
+    let mut at = 0;
+    for grapheme in output.graphemes(true) {
+        let count = grapheme.chars().count();
+        let contributors = &spans[at..at + count];
+        at += count;
+        let span =
+            contributors.first().map_or(0, |s| s.start)..contributors.last().map_or(0, |s| s.end);
+        for ch in grapheme.nfc() {
+            composed.push(ch);
+            composed_spans.push(span.clone());
+        }
+    }
+    let output = composed;
+    let spans = composed_spans;
+    debug_assert_eq!(
+        output,
+        if remove_accents {
+            canonical_fold(value)
+        } else {
+            literal_fold(value)
+        }
+    );
+    (output, spans)
+}
+
+/// One AND-term: a substring folded according to the matcher policy, plus whether it is
 /// negated (`-term` → must NOT be present).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Term {
-    /// Canonically folded needle for `visible_lower.contains(..)`.
+    /// Needle folded with the matcher's policy. Compare only with a body folded
+    /// the same way: `canonical_fold` by default, `literal_fold` when accents
+    /// remain significant. `projection().visible_lower` is canonical only.
     pub text: String,
     pub negated: bool,
     /// The term came from a `"quoted phrase"` — an explicit opt-in to the
@@ -130,6 +263,30 @@ pub enum Matcher {
 impl Matcher {
     /// Parse a raw query string into a matcher.
     pub fn parse(query: &str) -> Matcher {
+        Self::parse_with_policy(query, true)
+    }
+
+    /// Parse using the graph's OG accent-removal setting.
+    pub fn parse_with_policy(query: &str, remove_accents: bool) -> Matcher {
+        Self::parse_with_fold(
+            query,
+            if remove_accents {
+                canonical_fold
+            } else {
+                literal_fold
+            },
+        )
+    }
+
+    /// Parse deliberate query content without case or accent folding. Only
+    /// canonical composition is normalized (NFC), so `é` typed precomposed and
+    /// decomposed is the same text. Pass [`exact_text`] of the content to
+    /// [`Self::matches`]. Search callers continue to use [`Self::parse_with_policy`].
+    pub fn parse_exact(query: &str) -> Matcher {
+        Self::parse_with_fold(query, |q| exact_text(q).into_owned())
+    }
+
+    fn parse_with_fold(query: &str, fold: fn(&str) -> String) -> Matcher {
         let q = query.trim_matches(is_search_whitespace);
         if q.is_empty() {
             return Matcher::Empty;
@@ -139,17 +296,12 @@ impl Matcher {
         // treat it as a literal boolean term instead.)
         if q.len() >= 3 && q.starts_with('/') && q.ends_with('/') {
             let pat = &q[1..q.len() - 1];
-            if !common_regex_pattern(pat) {
-                return Matcher::InvalidRegex(
-                    "regex feature is not supported by both search engines".to_string(),
-                );
-            }
-            return match regex::Regex::new(pat) {
+            return match compile_regex(pat) {
                 Ok(re) => Matcher::Regex(re),
                 Err(e) => Matcher::InvalidRegex(e.to_string()),
             };
         }
-        let groups = parse_boolean(q);
+        let groups = parse_boolean(q, fold);
         // A group with no positive term (e.g. the whole query is `-foo`) would
         // match nearly everything — drop it; if none survive, the query is Empty.
         let groups: Vec<AndGroup> = groups
@@ -163,8 +315,10 @@ impl Matcher {
         }
     }
 
-    /// Does `visible` match? `lower` is the pre-folded A6 search body
-    /// (hot path for boolean terms); `orig` is the original body (needed by regex).
+    /// Does the body match? `lower` must use the same policy as the matcher:
+    /// `canonical_fold` for `parse`/policy true, `literal_fold` for policy false.
+    /// For `parse_exact`, pass [`exact_text`] of the content as `lower`. `orig` is the
+    /// original body for regex; Empty/InvalidRegex match nothing.
     pub fn matches(&self, lower: &str, orig: &str) -> bool {
         match self {
             Matcher::Regex(re) => re.is_match(orig),
@@ -185,7 +339,7 @@ impl Matcher {
         }
     }
 
-    /// Rank a page name (already A6-folded in `lower`, original in `orig`) for
+    /// Rank a page name (already folded in `lower`, original in `orig`) for
     /// the non-simple path: prefix > substring, else `None` if it doesn't match.
     pub fn score_name(&self, lower: &str, orig: &str) -> Option<i32> {
         match self {
@@ -212,7 +366,7 @@ fn group_matches(group: &AndGroup, lower: &str) -> bool {
 
 /// Tokenize + group a boolean query. `OR` (bare, uppercase) starts a new group;
 /// other tokens accumulate into the current group.
-fn parse_boolean(q: &str) -> Vec<AndGroup> {
+fn parse_boolean(q: &str, fold: fn(&str) -> String) -> Vec<AndGroup> {
     let tokens = tokenize(q);
     let mut groups: Vec<AndGroup> = Vec::new();
     let mut cur: AndGroup = Vec::new();
@@ -225,7 +379,7 @@ fn parse_boolean(q: &str) -> Vec<AndGroup> {
             continue;
         }
         cur.push(Term {
-            text: canonical_fold(&tok.text),
+            text: fold(&tok.text),
             negated: tok.negated,
             quoted: tok.quoted,
         });
@@ -299,9 +453,134 @@ fn tokenize(q: &str) -> Vec<Token> {
     out
 }
 
+/// Original UTF-16 ranges of overlapping folded substring matches, deduplicated
+/// and capped at `limit`. Empty needles produce no evidence.
+pub fn substring_spans(
+    text: &str,
+    needle: &str,
+    limit: usize,
+    remove_accents: bool,
+) -> Vec<Range<usize>> {
+    let (folded, map) = fold_with_map(text, remove_accents);
+    let hay: Vec<_> = folded.chars().collect();
+    let needle: Vec<_> = if remove_accents {
+        canonical_fold(needle)
+    } else {
+        literal_fold(needle)
+    }
+    .chars()
+    .collect();
+    if needle.is_empty() || needle.len() > hay.len() || limit == 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for at in 0..=hay.len() - needle.len() {
+        if hay[at..at + needle.len()] == needle {
+            let span = map[at].start..map[at + needle.len() - 1].end;
+            if !out.contains(&span) {
+                out.push(span);
+            }
+            if out.len() == limit {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Regex evidence in original UTF-16 coordinates, including zero-width matches.
+pub fn regex_spans(re: &regex::Regex, text: &str, limit: usize) -> Vec<Range<usize>> {
+    re.find_iter(text)
+        .take(limit)
+        .map(|hit| {
+            text[..hit.start()].encode_utf16().count()..text[..hit.end()].encode_utf16().count()
+        })
+        .collect()
+}
+
+impl Matcher {
+    /// First positive occurrence (even in a nonmatching boolean group), as used
+    /// by snippet highlighting. Regex zero-width hits retain their position.
+    pub fn first_span(&self, text: &str, remove_accents: bool) -> Option<Range<usize>> {
+        match self {
+            Self::Regex(re) => regex_spans(re, text, 1).into_iter().next(),
+            Self::Boolean(groups) => groups
+                .iter()
+                .flatten()
+                .filter(|term| !term.negated && !term.text.is_empty())
+                .filter_map(|term| {
+                    substring_spans(text, &term.text, 1, remove_accents)
+                        .into_iter()
+                        .next()
+                })
+                .min_by_key(|span| span.start),
+            _ => None,
+        }
+    }
+
+    /// Bounded positive evidence for the first satisfied group. Regex zero-width
+    /// hits are omitted for multi-range presentation; first_span preserves them.
+    pub fn spans(&self, text: &str, limit: usize, remove_accents: bool) -> Vec<Range<usize>> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        match self {
+            Self::Regex(re) => re
+                .find_iter(text)
+                .filter(|hit| hit.end() > hit.start())
+                .take(limit)
+                .map(|hit| {
+                    text[..hit.start()].encode_utf16().count()
+                        ..text[..hit.end()].encode_utf16().count()
+                })
+                .collect(),
+            Self::Boolean(groups) => {
+                let lower = if remove_accents {
+                    canonical_fold(text)
+                } else {
+                    literal_fold(text)
+                };
+                let Some(group) = groups.iter().find(|group| group_matches(group, &lower)) else {
+                    return Vec::new();
+                };
+                let mut out = Vec::new();
+                for term in group
+                    .iter()
+                    .filter(|term| !term.negated && !term.text.is_empty())
+                {
+                    out.extend(substring_spans(
+                        text,
+                        &term.text,
+                        limit - out.len(),
+                        remove_accents,
+                    ));
+                }
+                out.sort_by_key(|span| (span.start, span.end));
+                out
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ascii_search_evidence_skips_unicode_normalization_and_keeps_crlf_spans() {
+        for fold in [canonical_fold_with_map, literal_fold_with_map] {
+            MAPPED_UNICODE_GRAPHEMES.with(|count| count.set(0));
+            let (folded, spans) = fold("AB\r\nCd");
+            assert_eq!(folded, "ab\r\ncd");
+            assert_eq!(spans, vec![0..1, 1..2, 2..4, 2..4, 4..5, 5..6]);
+            assert_eq!(
+                MAPPED_UNICODE_GRAPHEMES.with(|count| count.get()),
+                0,
+                "I-25: ASCII search evidence must skip per-grapheme Unicode normalization; see fold_with_map"
+            );
+        }
+    }
 
     fn m(q: &str) -> Matcher {
         Matcher::parse(q)
@@ -309,6 +588,46 @@ mod tests {
     // Convenience: match against text (folds the boolean side once).
     fn hit(q: &str, text: &str) -> bool {
         m(q).matches(&canonical_fold(text), text)
+    }
+
+    #[test]
+    fn shared_whitespace_and_regex_contract() {
+        assert_eq!(
+            Matcher::parse("\u{feff}foo\u{feff}").simple_term(),
+            Some("foo")
+        );
+        assert_eq!(
+            Matcher::parse("\u{85}foo\u{85}").simple_term(),
+            Some("\u{85}foo\u{85}")
+        );
+        assert!(hit("foo\u{2003}bar", "bar then foo"));
+        assert!(hit(r"/\p{L}+/", "café"));
+        assert!(hit(r"/(?i)abc/", "ABC"));
+        for query in [r"/foo(?=bar)/", r"/(a)\1/"] {
+            assert!(matches!(m(query), Matcher::InvalidRegex(_)), "{query}");
+        }
+    }
+
+    #[test]
+    fn shared_parser_contract_fixtures() {
+        let rows: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/search-query-contract.json"
+        ))
+        .unwrap();
+        for row in rows.as_array().unwrap() {
+            let query = row["query"].as_str().unwrap();
+            let body = row["match"].as_str().unwrap();
+            let matcher = m(query);
+            let kind = match matcher {
+                Matcher::Boolean(_) => "boolean",
+                Matcher::Regex(_) => "regex",
+                Matcher::InvalidRegex(_) => "invalid",
+                Matcher::Empty => "empty",
+            };
+            assert_eq!(kind, row["kind"], "{query}");
+            assert_eq!(matcher.simple_term(), row["simple"].as_str(), "{query}");
+            assert_eq!(hit(query, body), kind != "invalid", "{query}");
+        }
     }
 
     #[test]
@@ -383,33 +702,9 @@ mod tests {
     }
 
     #[test]
-    fn regex_contract_is_unicode_aware_and_rejects_engine_specific_features() {
-        assert!(hit(r"/\p{L}+/", "café"));
-        assert!(!hit(r"/\p{L}+/", "123"));
-        assert!(hit(r"/[(?]+/", "(?"));
-        for query in [r"/foo(?=bar)/", r"/(a)\1/", r"/(?i)abc/"] {
-            assert!(matches!(m(query), Matcher::InvalidRegex(_)), "{query}");
-        }
-    }
-
-    #[test]
     fn empty_query_matches_nothing() {
         assert!(matches!(m("   "), Matcher::Empty));
         assert!(!hit("   ", "anything"));
-    }
-
-    #[test]
-    fn a6_erased_terms_keep_positive_false_and_negative_true_semantics() {
-        let mark = "\u{301}";
-        let positive = m(mark);
-        assert_eq!(positive.simple_term(), None);
-        assert!(!hit(mark, "anything"));
-        assert!(!hit(&format!("{mark} alpha"), "alpha"));
-        assert!(hit(&format!("{mark} OR alpha"), "alpha"));
-        assert!(hit(&format!("alpha -{mark}"), "alpha"));
-        assert!(!hit(&format!("alpha -{mark}"), "anything"));
-        assert!(matches!(m(&format!("-{mark}")), Matcher::Empty));
-        assert!(!hit(&format!("\"{mark}\""), "anything"));
     }
 
     #[test]
@@ -430,122 +725,157 @@ mod tests {
     }
 
     #[test]
-    fn a6_search_fold_applies_compatibility_and_removes_only_accents() {
+    fn canonical_unicode_equivalence_and_default_accent_fold() {
         assert!(hit("café", "a cafe\u{301} here"));
         assert!(hit("cafe\u{301}", "a café here"));
         assert!(hit("\u{ac00}", "Hangul \u{1100}\u{1161}"));
         assert!(hit("i\u{307}", "\u{130}"));
         assert!(hit("cafe", "café"));
-        assert!(hit("tine", "Ｔｉｎｅ"));
-        assert!(hit("office", "ofﬁce"));
-        assert!(hit("prilis zlutoucky kun", "Příliš žluťoučký kůň"));
-        assert!(!hit("का", "क"), "Mc must remain significant");
-        assert!(!hit("a⃝", "a"), "Me must remain significant");
-        assert!(!hit("か", "が"), "kana voicing makes another syllable");
-        assert!(!hit("и", "й"), "й is its own Cyrillic letter");
-        assert!(hit("елка", "ёлка"));
         assert!(hit("lodz", "Łódź"));
-        assert!(!hit("STRASSE", "Straße"), "this is not full casefold");
+        assert!(hit("елка", "ёлка"));
+        assert!(!hit("か", "が"));
+        assert!(!hit("и", "й"));
+        assert!(!hit("कु", "क"));
         // Regular expressions retain their original-text semantics.
         assert!(!hit("/café/", "cafe\u{301}"));
     }
 
     #[test]
-    fn already_folded_terms_are_not_folded_a_second_time() {
-        assert_eq!(canonical_fold("𝐀"), "A");
-        assert_eq!(canonical_fold(&canonical_fold("𝐀")), "a");
-        assert!(hit("𝐀", "𝐀"));
-        assert!(!hit("a", "𝐀"));
-    }
-}
-
-/// DUP-8: the shared search-grammar conformance corpus.
-///
-/// This dialect is implemented twice -- here, and in `src/editor/searchQuery.ts`
-/// for the page list -- and until now the only thing keeping the two in step was
-/// the "keep the two in sync" note at the top of both files. A user typing one
-/// query into Ctrl+K gets both engines at once, so a drift between them shows up
-/// as the page list and the block list disagreeing about the same query.
-///
-/// `tests/fixtures/search-query-corpus.json` is asserted here and, case for
-/// case, by `src/editor/searchQuery.corpus.test.ts`. The corpus pins CURRENT
-/// behavior. Every row has one shared answer; adding a runtime-specific answer
-/// would reintroduce the page-list/block-list split this corpus prevents.
-#[cfg(test)]
-mod corpus {
-    use super::*;
-    use serde_json::Value;
-
-    const CORPUS: &str = include_str!("../../../tests/fixtures/search-query-corpus.json");
-
-    fn tokens_json(query: &str) -> Value {
-        Value::Array(
-            tokenize(query)
-                .into_iter()
-                .map(|t| {
-                    serde_json::json!({
-                        "text": t.text,
-                        "negated": t.negated,
-                        "quoted": t.quoted,
-                        "isOr": t.is_or,
-                    })
-                })
-                .collect(),
-        )
+    fn master_accent_fold_policy_keeps_letter_making_marks() {
+        // a3e7bfda9: Latin/Greek/RTL accents, strokes, ignorable marks,
+        // Cyrillic ё, and compatibility width fold; letter-making marks stay.
+        for (raw, plain) in [
+            ("café", "cafe"),
+            ("Příliš žluťoučký kůň", "prilis zlutoucky kun"),
+            ("γειά", "γεια"),
+            ("שָׁלוֹם", "שלום"),
+            ("مَرْحَبًا", "مرحبا"),
+            ("ёлка", "елка"),
+            ("Łódź", "lodz"),
+            ("Øresund", "oresund"),
+            ("Đà Nẵng", "da nang"),
+            ("Ħal", "hal"),
+            ("Ŧ", "t"),
+            ("Ｔｉｎｅ", "tine"),
+            ("a\u{034f}b", "ab"),
+        ] {
+            assert_eq!(canonical_fold(raw), canonical_fold(plain), "{raw:?}");
+        }
+        for (raw, plain) in [
+            ("が", "か"),
+            ("ぱ", "は"),
+            ("क्", "क"),
+            ("कु", "क"),
+            ("กุ", "ก"),
+            ("ກຸ", "ກ"),
+            ("ཀི", "ཀ"),
+            ("й", "и"),
+            ("ї", "і"),
+            ("ў", "у"),
+            ("ѐ", "е"),
+        ] {
+            assert_ne!(canonical_fold(raw), canonical_fold(plain), "{raw:?}");
+        }
+        let (folded, spans) = canonical_fold_with_map("🧠 cafe\u{301} café");
+        assert_eq!(folded, "🧠 cafe cafe");
+        assert_eq!(spans[5], 6..8);
+        assert_eq!(spans[6], 8..9);
     }
 
-    fn verdict_json(query: &str) -> Value {
-        let matcher = Matcher::parse(query);
-        match &matcher {
-            // The two regex engines word their errors differently; the message
-            // is not a contract, only the refusal is.
-            Matcher::Empty => serde_json::json!({ "kind": "empty" }),
-            Matcher::InvalidRegex(_) => serde_json::json!({ "kind": "invalid" }),
-            Matcher::Regex(re) => serde_json::json!({ "kind": "regex", "pattern": re.as_str() }),
-            Matcher::Boolean(groups) => serde_json::json!({
-                "kind": "boolean",
-                "groups": groups
-                    .iter()
-                    .map(|group| {
-                        group
-                            .iter()
-                            .map(|t| serde_json::json!({
-                                "text": t.text,
-                                "negated": t.negated,
-                                "quoted": t.quoted,
-                            }))
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>(),
-                "simpleTerm": matcher.simple_term(),
-            }),
+    #[test]
+    fn master_a6_compatibility_fixtures_keep_source_ranges() {
+        // 48321626a/6370058fa fold.rs accepted_a6_fixtures: ligatures,
+        // width, Jamo composition, dotted I and contextual sigma.
+        for (raw, folded, span_at) in [
+            ("ofﬁce", "office", (2, 2..3)),
+            ("😀Ｔｉｎｅ", "😀tine", (1, 2..3)),
+            ("ㄱㅏ", "가", (0, 0..2)),
+            ("İstanbul", "istanbul", (0, 0..1)),
+            ("ΟΣ Σ", "ος σ", (1, 1..2)),
+        ] {
+            let (mapped, spans) = canonical_fold_with_map(raw);
+            assert_eq!(canonical_fold(raw), folded, "{raw:?}");
+            assert_eq!(mapped, folded, "{raw:?}");
+            assert_eq!(spans[span_at.0], span_at.1, "{raw:?}");
+        }
+        assert_ne!(canonical_fold("Straße"), canonical_fold("STRASSE"));
+    }
+
+    #[test]
+    fn master_a6_reordering_and_hangul_fixtures_match_mapped_text() {
+        for (raw, expected) in [
+            ("prefix ㄱ\u{301}ㅏ suffix", "prefix 가 suffix"),
+            ("한글", "한글"),
+            ("Kelvin", "kelvin"),
+            ("Ｐｒｏｊｅｃｔ ｶﾞｲﾄﾞ 豈", "project ガイド 豈"),
+            ("a\u{301}", "a"),
+            ("ΟΣ Σ", "ος σ"),
+        ] {
+            let (mapped, spans) = canonical_fold_with_map(raw);
+            assert_eq!(canonical_fold(raw), expected, "{raw:?}");
+            assert_eq!(mapped, expected, "{raw:?}");
+            assert_eq!(spans.len(), mapped.chars().count(), "{raw:?}");
         }
     }
 
     #[test]
-    fn the_rust_engine_matches_every_corpus_case() {
-        let doc: Value = serde_json::from_str(CORPUS).expect("corpus is valid JSON");
-        let cases = doc["cases"].as_array().expect("corpus has a `cases` array");
-        assert!(!cases.is_empty(), "the corpus is empty");
+    fn config_off_uses_literal_case_and_canonical_equivalence() {
+        let match_off = Matcher::parse_with_policy("cafe", false);
+        assert!(!match_off.matches(&literal_fold("café"), "café"));
+        assert!(Matcher::parse_with_policy("café", false)
+            .matches(&literal_fold("cafe\u{301}"), "cafe\u{301}"));
+        assert_eq!(literal_fold("Ｔｉｎｅ"), "tine");
+        assert_ne!(identity_fold("Ｔｉｎｅ"), identity_fold("Tine"));
+        let (mapped, spans) = literal_fold_with_map("Ｔｉｎｅ");
+        assert_eq!(mapped, "tine");
+        assert_eq!(spans, vec![0..1, 1..2, 2..3, 3..4]);
+    }
 
-        for case in cases {
-            let name = case["name"].as_str().expect("every case is named");
-            let query = case["query"].as_str().expect("every case has a query");
-            assert!(
-                case.get("knownDivergence").is_none(),
-                "{name}: the conformance corpus must have one cross-runtime answer"
-            );
-            let expected = case;
+    #[test]
+    fn erased_accent_terms_keep_boolean_semantics() {
+        // 6370058fa lib.rs a6_erased_terms_keep_positive_false_and_negative_true_semantics.
+        let mark = "\u{301}";
+        assert_eq!(Matcher::parse(mark).simple_term(), None);
+        assert!(!hit(mark, "anything"));
+        assert!(!hit(&format!("{mark} alpha"), "alpha"));
+        assert!(hit(&format!("{mark} OR alpha"), "alpha"));
+        assert!(hit(&format!("alpha -{mark}"), "alpha"));
+        assert!(matches!(
+            Matcher::parse(&format!("-{mark}")),
+            Matcher::Empty
+        ));
+    }
+}
+
+#[cfg(test)]
+mod unicode_contract {
+    use super::*;
+    #[test]
+    fn native_unicode_regex_fixture_matches_browser_contract() {
+        let rows: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/search-regex-unicode.json"
+        ))
+        .unwrap();
+        for row in rows.as_array().unwrap() {
+            let q = row["query"].as_str().unwrap();
+            let text = row["text"].as_str().unwrap();
+            let m = Matcher::parse(q);
+            assert!(matches!(m, Matcher::Regex(_)), "{q}");
             assert_eq!(
-                tokens_json(query),
-                expected["tokens"],
-                "{name}: tokenize({query:?}) changed"
+                m.matches(&canonical_fold(text), text),
+                row["match"].as_bool().unwrap(),
+                "{q}"
             );
-            assert_eq!(
-                verdict_json(query),
-                expected["verdict"],
-                "{name}: Matcher::parse({query:?}) changed"
-            );
+            let spans: Vec<_> = m
+                .spans(text, 24, true)
+                .into_iter()
+                .map(|span| serde_json::json!({"start":span.start,"end":span.end}))
+                .collect();
+            assert_eq!(serde_json::json!(spans), row["spans"], "{q}");
         }
+        assert!(matches!(
+            Matcher::parse("/a{1000000}/"),
+            Matcher::InvalidRegex(_)
+        ));
     }
 }

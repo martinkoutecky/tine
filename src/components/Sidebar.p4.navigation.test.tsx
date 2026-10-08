@@ -4,22 +4,10 @@ import { backend } from "../backend";
 import { installMobileDrawerMode } from "../mobileDrawers";
 import { openPage, resetTabsToJournals, route } from "../router";
 import type { LoadGraphPathOutcome } from "../graph";
-import type { PageEntry } from "../types";
-import {
-  activeDrawer,
-  bumpGraphEpoch,
-  closeContextMenu,
-  closeSwitcher,
-  completeActiveLeftNavigation,
-  resetLeftSidebarSections,
-  setAliasMap,
-  setFavorites,
-  setLeftSidebarOpen,
-  setRecentPages,
-  setRightSidebar,
-  setRightSidebarOpen,
-  sidebarOpen,
-} from "../ui";
+import type { PageEntry, PageInventoryEntry } from "../types";
+import { resetPageIndex } from "../pageIndex";
+import { activeDrawer, closeContextMenu, closeSwitcher, completeActiveLeftNavigation, resetLeftSidebarSections, setFavorites, setLeftSidebarOpen, setRecentPages, setRightSidebar, setRightSidebarOpen, sidebarOpen } from "../ui";
+import { bumpGraphEpoch } from "../graphSession";
 import { Sidebar, type GraphNavigationActions } from "./Sidebar";
 
 type MutableMedia = MediaQueryList & { matches: boolean; emit(): void };
@@ -51,9 +39,6 @@ function page(name: string, path = `pages/${name.replaceAll("/", "___")}.md`): P
   return { name, path, kind: "page", date_key: null };
 }
 
-// Sidebar page rows are addressed by their `.nav-page-label` title, not by the
-// row: GH #464 made the title the link and left the rest of the row as grab
-// space for a reorder drag.
 function findText(root: ParentNode, selector: string, text: string): HTMLElement {
   const found = [...root.querySelectorAll<HTMLElement>(selector)]
     .find((element) => element.textContent?.trim() === text || element.textContent?.includes(text));
@@ -68,7 +53,7 @@ function dispatch(element: Element, type = "click", init: MouseEventInit = {}) {
 afterEach(() => {
   closeContextMenu();
   closeSwitcher();
-  setAliasMap({});
+  resetPageIndex();
   setFavorites([]);
   setRecentPages([]);
   setRightSidebar([]);
@@ -93,7 +78,14 @@ describe("GH #161 successful left-navigation boundary", () => {
       page("Namespace/Child"),
       ...Array.from({ length: 303 }, (_, index) => page(`Filler ${String(index).padStart(3, "0")}`)),
     ];
-    vi.spyOn(backend(), "listPages").mockResolvedValue(pages);
+    const entries: PageInventoryEntry[] = pages.map((row) => ({
+      key: row.name.toLowerCase(),
+      name: row.name,
+      is_journal: false,
+      day: null,
+      target: { kind: "existing", id: row.path, others: [] },
+    }));
+    vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries });
     vi.spyOn(backend(), "listKnownGraphs").mockResolvedValue([
       { name: "Known graph", path: "/graphs/known" },
     ]);
@@ -169,13 +161,13 @@ describe("GH #161 successful left-navigation boundary", () => {
       openPage("Favorite same page", "page");
       armLeft();
       before = completion.mock.calls.length;
-      dispatch(findText(root, "#sidebar-favorites-list .nav-page-label", "Favorite same page"));
+      dispatch(findText(root, "#sidebar-favorites-list .nav-page", "Favorite same page"));
       await expectCompleted(before);
       expect(route()).toMatchObject({ kind: "page", name: "Favorite same page" });
 
       armLeft();
       before = completion.mock.calls.length;
-      dispatch(findText(root, "#sidebar-recent-list .nav-page-label", "Recent destination"));
+      dispatch(findText(root, "#sidebar-recent-list .nav-page", "Recent destination"));
       await expectCompleted(before);
       expect(route()).toMatchObject({ kind: "page", name: "Recent destination" });
 
@@ -184,7 +176,7 @@ describe("GH #161 successful left-navigation boundary", () => {
       dispatch(findText(root, ".nav-section-header", "ALL PAGES"));
       await expectNotCompleted(before);
       expect(sidebarOpen()).toBe(true);
-      const pathRow = await vi.waitFor(() => findText(root, ".nav-page-label", "A path target"));
+      const pathRow = await vi.waitFor(() => findText(root, ".nav-page", "A path target"));
       dispatch(pathRow);
       await expectCompleted(before);
       expect(route()).toMatchObject({
@@ -231,17 +223,17 @@ describe("GH #161 successful left-navigation boundary", () => {
       resetLeftSidebarSections();
       armLeft();
       before = completion.mock.calls.length;
-      dispatch(findText(root, "#sidebar-favorites-list .nav-page-label", "Favorite same page"), "click", { shiftKey: true });
+      dispatch(findText(root, "#sidebar-favorites-list .nav-page", "Favorite same page"), "click", { shiftKey: true });
       await expectNotCompleted(before);
       expect(activeDrawer()).toBe("right");
 
       armLeft();
       before = completion.mock.calls.length;
-      dispatch(findText(root, "#sidebar-favorites-list .nav-page-label", "Favorite same page"), "auxclick", { button: 1 });
+      dispatch(findText(root, "#sidebar-favorites-list .nav-page", "Favorite same page"), "auxclick", { button: 1 });
       await expectNotCompleted(before);
       expect(activeDrawer()).toBe("left");
 
-      dispatch(findText(root, "#sidebar-favorites-list .nav-page-label", "Favorite same page"), "contextmenu", { clientX: 10, clientY: 20 });
+      dispatch(findText(root, "#sidebar-favorites-list .nav-page", "Favorite same page"), "contextmenu", { clientX: 10, clientY: 20 });
       await expectNotCompleted(before);
       expect(activeDrawer()).toBe("left");
       closeContextMenu();
@@ -339,7 +331,7 @@ describe("GH #161 successful left-navigation boundary", () => {
       document.body.appendChild(desktopFocus);
       desktopFocus.focus();
       before = completion.mock.calls.length;
-      dispatch(findText(root, "#sidebar-favorites-list .nav-page-label", "Favorite same page"));
+      dispatch(findText(root, "#sidebar-favorites-list .nav-page", "Favorite same page"));
       await vi.waitFor(() => expect(completion).toHaveBeenCalledTimes(before + 1));
       expect(route()).toMatchObject({ kind: "page", name: "Favorite same page" });
       expect(sidebarOpen()).toBe(true);

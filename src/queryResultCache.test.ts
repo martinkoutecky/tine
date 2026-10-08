@@ -1,84 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetSharedQueryResultsForTests, sharedQueryResult } from "./queryResultCache";
-import { OperationCancelledError } from "./backend";
 
 afterEach(resetSharedQueryResultsForTests);
 
 describe("shared query results", () => {
-  it("delivers the result to a remaining subscriber after another leaves", async () => {
-    const a = new AbortController();
-    const b = new AbortController();
-    let shared!: AbortSignal;
-    let finish!: (value: object) => void;
-    const load = (signal: AbortSignal) => { shared = signal; return new Promise<object>(resolve => { finish = resolve; }); };
-    const first = sharedQueryResult("graph", "q", load, a.signal);
-    const second = sharedQueryResult("graph", "q", load, b.signal);
-    const rejected = expect(first).rejects.toBeInstanceOf(OperationCancelledError);
-    a.abort();
-    await rejected;
-    const value = { answer: true };
-    finish(value);
-    expect(await second).toBe(value);
-    expect(shared.aborted).toBe(false);
-  });
-
-  it("cancels the shared load only when its last subscriber leaves", async () => {
-    const a = new AbortController();
-    const b = new AbortController();
-    let shared!: AbortSignal;
-    let finish!: (value: object) => void;
-    const load = vi.fn((signal: AbortSignal) => {
-      shared = signal;
-      return new Promise<object>(resolve => { finish = resolve; });
-    });
-    const first = sharedQueryResult("graph", "q", load, a.signal);
-    const second = sharedQueryResult("graph", "q", load, b.signal);
-    const firstRejected = expect(first).rejects.toBeInstanceOf(OperationCancelledError);
-    const secondRejected = expect(second).rejects.toBeInstanceOf(OperationCancelledError);
-    a.abort();
-    await firstRejected;
-    expect(shared.aborted).toBe(false);
-    b.abort();
-    await secondRejected;
-    expect(shared.aborted).toBe(true);
-    expect(load).toHaveBeenCalledTimes(1);
-    // A late completion cannot overwrite or remove a newer attempt's memo.
-    const fresh = { fresh: true };
-    expect(await sharedQueryResult("graph", "q", async () => fresh)).toBe(fresh);
-    finish({ obsolete: true });
-    await Promise.resolve();
-    const unexpected = vi.fn(async () => ({}));
-    expect(await sharedQueryResult("graph", "q", unexpected)).toBe(fresh);
-    expect(unexpected).not.toHaveBeenCalled();
-  });
-
-  it("keeps an unowned metadata consumer alive when a cancellable subscriber leaves", async () => {
-    const controller = new AbortController();
-    let shared!: AbortSignal;
-    let finish!: (value: object) => void;
-    const load = (signal: AbortSignal) => {
-      shared = signal;
-      return new Promise<object>(resolve => { finish = resolve; });
-    };
-    const owned = sharedQueryResult("graph", "q", load, controller.signal);
-    const metadata = sharedQueryResult("graph", "q", load);
-    const rejected = expect(owned).rejects.toBeInstanceOf(OperationCancelledError);
-    controller.abort();
-    await rejected;
-    expect(shared.aborted).toBe(false);
-    const value = {};
-    finish(value);
-    expect(await metadata).toBe(value);
-  });
-
-  it("does not admit an already cancelled subscriber", async () => {
-    const controller = new AbortController();
-    controller.abort();
-    const load = vi.fn(async () => ({}));
-    await expect(sharedQueryResult("graph", "q", load, controller.signal)).rejects.toBeInstanceOf(OperationCancelledError);
-    expect(load).not.toHaveBeenCalled();
-  });
-
   it("coalesces identical concurrent pane requests and shares the DTO", async () => {
     const value = [{ page: "P", blocks: [] }];
     const load = vi.fn(async () => value);

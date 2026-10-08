@@ -21,8 +21,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::config::ParseConfig;
 use crate::doc::property_key_norm;
+use crate::query::atom::ParseConfig;
 use crate::query::atom::{atom_key, Atom, AtomFormat};
 use crate::query::ir::{Cardinality, ObservedType, RegistryRow, RegistrySnapshot};
 use crate::refs;
@@ -89,14 +89,15 @@ impl std::fmt::Display for RegistryError {
 }
 
 /// One coherent registry snapshot: the rows, the generation they were built at,
-/// and the [`ParseConfig`] digest they were built under (G7 — the generation
-/// advances unconditionally when that digest changes).
+/// and the [`ParseConfig`] they were built under (G7 — a registry built under
+/// a different config is a different registry). Master records a projection
+/// digest of the config; og compares the config itself.
 #[derive(Debug, Clone)]
 pub struct Registry {
     rows: Vec<RegistryRow>,
     index: HashMap<String, usize>,
     generation: u64,
-    config_digest: tine_storage::ContentDigest,
+    config: ParseConfig,
 }
 
 impl Registry {
@@ -116,7 +117,7 @@ impl Registry {
             rows: Vec::new(),
             index: HashMap::new(),
             generation: 0,
-            config_digest: config.digest(),
+            config: config.clone(),
         }
     }
 
@@ -128,8 +129,9 @@ impl Registry {
         self.generation
     }
 
-    pub fn config_digest(&self) -> tine_storage::ContentDigest {
-        self.config_digest
+    /// The parse config this registry was built under.
+    pub fn config(&self) -> &ParseConfig {
+        &self.config
     }
 
     pub fn row(&self, key: &str) -> Option<&RegistryRow> {
@@ -171,10 +173,9 @@ impl Registry {
     }
 
     /// Rebuild a registry from a wire snapshot (§7.1). The command layer reads
-    /// the snapshot and hands it back to the parser for suggestions; the digest
-    /// is not part of the wire
-    /// shape, so a reconstructed registry carries the default config's digest
-    /// and must never be used as a cache key.
+    /// the snapshot and hands it back to the parser for suggestions; the config
+    /// is not part of the wire shape, so a reconstructed registry carries the
+    /// default config and must never be used as a cache key.
     pub fn from_snapshot(snapshot: &RegistrySnapshot) -> Registry {
         let mut registry = Registry::empty(&ParseConfig::default());
         registry.index = snapshot
@@ -185,6 +186,14 @@ impl Registry {
             .collect();
         registry.rows = snapshot.rows.clone();
         registry.generation = snapshot.generation;
+        registry
+    }
+
+    /// [`Self::from_snapshot`] under the config it was built with: the launch
+    /// checkpoint's restore of a registry it captured whole (ADR 0070).
+    pub fn from_snapshot_under(snapshot: &RegistrySnapshot, config: &ParseConfig) -> Registry {
+        let mut registry = Registry::from_snapshot(snapshot);
+        registry.config = config.clone();
         registry
     }
 
@@ -217,7 +226,7 @@ impl Registry {
 /// classifier, the atomizer, the histogram, the top values, the mismatch count
 /// and the declaration binding stay the one producer's (§6.2, D-4).
 ///
-/// The result keeps the base generation and config digest while being built.
+/// The result keeps the base generation and config while being built.
 /// The existing committed registry owner publishes it with the semantic
 /// generation of its effective rows; rebuilding unchanged metadata does not
 /// advance that generation. This helper owns inference, not publication.
@@ -252,7 +261,7 @@ pub fn patch_registry(
         rows,
         index,
         generation: base.generation,
-        config_digest: base.config_digest,
+        config: base.config.clone(),
     }
 }
 
@@ -367,7 +376,7 @@ pub fn build_registry(
         rows: rows_out,
         index,
         generation: 0,
-        config_digest: config.digest(),
+        config: config.clone(),
     })
 }
 
@@ -401,14 +410,21 @@ pub fn flatten_property_atoms(
     out
 }
 
-/// Every atom of ONE owner, keyed by normalized property name, from the owner's
-/// property lines in source order — the shape both physical producers write
+/// Every atom of ONE owner, grouped by normalized property name, from the
+/// owner's property lines — the shape both physical producers write
 /// `property_atoms` from (§5.8, D-4/M6: one computation, two writers).
 ///
 /// `properties` is `(raw key, value)` in the order the physical `properties`
-/// rows are numbered, which is exactly the `ordinal` those rows carry. Several
-/// lines may share one normalized key (`k::` twice; `K::` and `k::`); the
-/// flattening rule makes them one atom list.
+/// rows are numbered; a line's index is its `ordinal`. Several lines may share
+/// one normalized key (`k::` twice; `K::` and `k::`); the flattening rule makes
+/// them one atom list.
+///
+/// Returns one `(source_name, normalized_name, atoms)` per distinct normalized
+/// key, SORTED BY `normalized_name` (not source order): `source_name` is the
+/// raw key of the FIRST line with that normalized key, and `normalized_name` is
+/// its `property_key_norm`. Lines whose normalized key is empty are dropped;
+/// internal keys are NOT excluded; a key whose values yield no atoms is still
+/// returned, with an empty list. Pure.
 pub fn owner_property_atoms(
     properties: &[(String, String)],
     format: AtomFormat,
@@ -685,7 +701,7 @@ mod tests {
     }
 
     /// The G8 repeated-row flattening fixture (§5.8): `k:: a` twice, `K:: b`,
-    /// `k:: a, c` → one atom list `[a, b, c]`, cardinality 3.
+    /// `k:: a, c` → one atom list `[a, b, "a, c"]`, cardinality 3 (D2).
     #[test]
     fn repeated_and_case_colliding_rows_flatten_into_one_atom_list() {
         let registry = build(vec![
@@ -698,7 +714,7 @@ mod tests {
         assert_eq!(k.cardinality, Cardinality::Many);
         assert_eq!(k.count_blocks, 1);
         let values: Vec<&str> = k.top_values.iter().map(|(text, _)| text.as_str()).collect();
-        assert_eq!(values, vec!["a", "b", "c"]);
+        assert_eq!(values, vec!["a", "a, c", "b"]);
     }
 
     #[test]
@@ -1014,7 +1030,7 @@ mod tests {
             9,
             "a patched table is a VIEW of the base, never a new published generation"
         );
-        assert_eq!(patched.config_digest(), base.config_digest());
+        assert_eq!(patched.config(), base.config());
         // And a non-empty patch does not advance it either.
         let after = patch_registry(&base, vec![("gamma".to_string(), None)]);
         assert_eq!(after.generation(), 9);
@@ -1083,7 +1099,7 @@ mod tests {
     }
 
     #[test]
-    fn a_registry_records_the_config_digest_it_was_built_under() {
+    fn a_registry_records_the_config_it_was_built_under() {
         let mut config = ParseConfig::default();
         config.separated_by_commas = vec!["k".into()];
         let registry = build_registry(
@@ -1092,6 +1108,6 @@ mod tests {
             &config,
         )
         .unwrap();
-        assert_eq!(registry.config_digest(), config.digest());
+        assert_eq!(registry.config(), &config);
     }
 }

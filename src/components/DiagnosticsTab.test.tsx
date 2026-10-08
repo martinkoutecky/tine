@@ -1,107 +1,114 @@
-import { render } from "solid-js/web";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { DIAGNOSTIC_PREVIEW_LIMIT, DiagnosticsTab } from "./DiagnosticsTab";
+import * as reload from "../reloadOnFocus";
+import { DIAGNOSTIC_PREVIEW_LIMIT, DiagnosticsTab, diagnosticReportPreview } from "./DiagnosticsTab";
 
-describe("DiagnosticsTab", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-    document.body.innerHTML = "";
-  });
+async function flush() {
+  for (let i = 0; i < 12; i += 1) await Promise.resolve();
+}
 
-  it("creates a previewable privacy-safe current-and-previous-run report", async () => {
-    vi.spyOn(backend(), "diagnosticReport").mockResolvedValue({
-      text: "{\n  \"schemaVersion\": 1,\n  \"sessions\": [\"current\", \"previous\"]\n}",
-      suggestedFileName: "tine-diagnostics-123.json",
-    });
-    const root = document.createElement("div");
-    document.body.append(root);
-    const dispose = render(() => <DiagnosticsTab />, root);
+function button(host: HTMLElement, label: string): HTMLButtonElement {
+  const found = [...host.querySelectorAll("button")].find((candidate) => candidate.textContent === label);
+  if (!found) throw new Error(`no ${label} button`);
+  return found;
+}
 
-    const create = [...root.querySelectorAll("button")].find((button) =>
-      button.textContent?.includes("Create diagnostic report")
-    ) as HTMLButtonElement;
-    create.click();
+describe("Help & diagnostics (GH #343)", () => {
+  afterEach(() => { vi.restoreAllMocks(); document.body.innerHTML = ""; });
 
-    await vi.waitFor(() => expect(root.querySelector("textarea")?.value).toContain('"schemaVersion": 1'));
-    expect(root.textContent).toContain("Nothing is uploaded automatically");
-    expect(root.textContent).toContain("page titles");
-    expect(root.textContent).toContain("Help improve Tine's parser");
-    expect(root.textContent).toContain("Run comparison");
+  it("creates a reviewable report, copies the complete text, and clears recorded events", async () => {
+    const text = JSON.stringify({ schemaVersion: 1, sessions: { current: [{ event: "runtime.started" }] } });
+    const report = vi.spyOn(backend(), "diagnosticReport").mockResolvedValue({ text, suggestedFileName: "tine-diagnostics-1.json" });
+    const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
+    const clear = vi.spyOn(backend(), "clearDiagnostics").mockResolvedValue(undefined);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <DiagnosticsTab />, host);
+    expect(host.querySelector("h2")?.textContent).toBe("Help & diagnostics");
+    expect(host.textContent).toContain("Help improve Tine's parser");
+
+    button(host, "Create diagnostic report").click();
+    await flush();
+    expect(report).toHaveBeenCalledOnce();
+    expect(host.querySelector<HTMLTextAreaElement>(".diagnostics-preview textarea")?.value).toBe(text);
+    expect(host.textContent).toContain("tine-diagnostics-1.json");
+
+    button(host, "Copy report").click();
+    await flush();
+    expect(writeText).toHaveBeenCalledWith(text);
+
+    button(host, "Clear recorded events").click();
+    await flush();
+    expect(clear).toHaveBeenCalledOnce();
+    expect(host.querySelector(".diagnostics-preview")).toBeNull();
     dispose();
   });
 
-  it("copies only the generated report and can clear retained events", async () => {
-    const completeReport = `safe-report\n${"x".repeat(DIAGNOSTIC_PREVIEW_LIMIT * 2)}`;
-    vi.spyOn(backend(), "diagnosticReport").mockResolvedValue({
-      text: completeReport,
-      suggestedFileName: "tine-diagnostics.json",
-    });
-    const copy = vi.spyOn(backend(), "writeText").mockResolvedValue();
-    const clear = vi.spyOn(backend(), "clearDiagnostics").mockResolvedValue();
-    const root = document.createElement("div");
-    document.body.append(root);
-    const dispose = render(() => <DiagnosticsTab />, root);
+  it("shortens only the on-screen preview of a large report; Copy report keeps every byte", async () => {
+    const text = `${"a".repeat(DIAGNOSTIC_PREVIEW_LIMIT)}middle${"z".repeat(9 * 1024)}`;
+    const preview = diagnosticReportPreview(text);
+    expect(preview.length).toBeLessThan(DIAGNOSTIC_PREVIEW_LIMIT + 200);
+    expect(preview).toContain(`[Preview shortened: ${text.length - DIAGNOSTIC_PREVIEW_LIMIT} characters omitted.`);
+    expect(preview.endsWith("z".repeat(8 * 1024))).toBe(true);
+    expect(diagnosticReportPreview("small")).toBe("small");
 
-    ([...root.querySelectorAll("button")].find((button) =>
-      button.textContent?.includes("Create diagnostic report")
-    ) as HTMLButtonElement).click();
-    await vi.waitFor(() => expect(root.querySelector("textarea")?.value).toContain("Preview shortened"));
-    expect(root.querySelector("textarea")?.value.length).toBeLessThan(completeReport.length);
-    expect(root.textContent).toContain("exports the complete report");
-
-    ([...root.querySelectorAll("button")].find((button) => button.textContent === "Copy report") as HTMLButtonElement).click();
-    await vi.waitFor(() => expect(copy).toHaveBeenCalledWith(completeReport));
-
-    ([...root.querySelectorAll("button")].find((button) => button.textContent === "Clear recorded events") as HTMLButtonElement).click();
-    await vi.waitFor(() => expect(clear).toHaveBeenCalled());
-    expect(root.querySelector("textarea")).toBeNull();
+    vi.spyOn(backend(), "diagnosticReport").mockResolvedValue({ text, suggestedFileName: "big.json" });
+    const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <DiagnosticsTab />, host);
+    button(host, "Create diagnostic report").click();
+    await flush();
+    expect(host.querySelector<HTMLTextAreaElement>(".diagnostics-preview textarea")?.value).toBe(preview);
+    expect(host.textContent).toContain("Large report: this preview is shortened");
+    button(host, "Copy report").click();
+    await flush();
+    expect(writeText).toHaveBeenCalledWith(text);
     dispose();
   });
 
-  it("compares graph bytes and identifies the exact differing source path", async () => {
-    const local = {
-      schemaVersion: 1,
-      tool: "tine-graph-bytes",
-      algorithm: "sha256",
-      complete: true,
-      generatedAtUnixMs: 1,
-      files: [{ path: "journals/2026_06_19.md", length: 85, digest: "a".repeat(64) }],
-      aggregateDigest: "b".repeat(64),
-      errors: [],
-    };
-    const other = {
-      ...local,
-      files: [{ path: "journals/2026_06_19.md", length: 85, digest: "c".repeat(64) }],
-      aggregateDigest: "d".repeat(64),
-    };
-    vi.spyOn(backend(), "createGraphVerification").mockResolvedValue({
-      text: JSON.stringify(local),
-      suggestedFileName: "tine-graph-verification.json",
-      totalFiles: 1,
-      totalBytes: 85,
-      aggregateDigest: local.aggregateDigest,
-      complete: true,
-    });
-    const root = document.createElement("div");
-    document.body.append(root);
-    const dispose = render(() => <DiagnosticsTab />, root);
+  // og ADR 0058 (master 271885b2): on desktop the user may save the report to
+  // a file they pick; a cancelled dialog is not an error.
+  it("saves a report where the user picks on desktop, and says nothing when cancelled", async () => {
+    const save = vi.spyOn(backend(), "saveDiagnosticReport").mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const toasts = await import("../toasts");
+    const toast = vi.spyOn(toasts, "pushToast");
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <DiagnosticsTab />, host);
+    expect(host.textContent).toContain("this run and the previous one");
+    button(host, "Save report…").click();
+    await flush();
+    expect(save).toHaveBeenCalledOnce();
+    expect(toast).toHaveBeenCalledWith("Diagnostic report saved", "success");
+    toast.mockClear();
+    button(host, "Save report…").click();
+    await flush();
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(toast).not.toHaveBeenCalled();
+    dispose();
+  });
 
-    ([...root.querySelectorAll("button")].find((button) =>
-      button.textContent?.includes("Create graph verification")
-    ) as HTMLButtonElement).click();
-    await vi.waitFor(() => expect(root.textContent).toContain("1 files"));
-    const textareas = root.querySelectorAll("textarea");
-    const otherInput = textareas[textareas.length - 1];
-    otherInput.value = JSON.stringify(other);
-    otherInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
-    ([...root.querySelectorAll("button")].find((button) =>
-      button.textContent === "Compare reports"
-    ) as HTMLButtonElement).click();
-
-    await vi.waitFor(() => expect(root.textContent).toContain("Different bytes"));
-    expect(root.textContent).toContain("journals/2026_06_19.md");
-    expect(root.textContent).toContain("file paths and page names");
+  // GH #623: the full stat diff on demand, with the time it finished.
+  it("rescans the graph on demand and shows when it finished", async () => {
+    const finished = new Date(2026, 9, 2, 13, 14, 15).getTime();
+    let release!: () => void;
+    const rescan = vi.spyOn(reload, "rescanGraphNowFromSettings").mockImplementation(
+      () => new Promise((resolve) => { release = () => resolve(finished); }),
+    );
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <DiagnosticsTab />, host);
+    expect(host.textContent).not.toContain("Last rescan finished");
+    button(host, "Rescan graph").click();
+    await flush();
+    expect(rescan).toHaveBeenCalledOnce();
+    expect(button(host, "Rescanning…").disabled).toBe(true);
+    release();
+    await flush();
+    expect(button(host, "Rescan graph").disabled).toBe(false);
+    expect(host.textContent).toContain(`Last rescan finished at ${new Date(finished).toLocaleTimeString()}.`);
     dispose();
   });
 });

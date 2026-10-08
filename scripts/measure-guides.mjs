@@ -1,19 +1,25 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Measure horizontal alignment of the child indent guide-line vs the parent
 // bullet center. OG aligns them; Tine currently doesn't. Prints, for each block
 // that has rendered children, the parent-bullet center x and the guide-line
 // (.block-children border-left) x, and their delta. Usage (after env.sh):
 //   node scripts/measure-guides.mjs
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = 5199;
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "inherit" });
 
+async function waitForServer(url, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try { const r = await fetch(url); if (r.ok) return; } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 40, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   const page = await browser.newPage({ viewport: { width: 1180, height: 820 }, deviceScaleFactor: 1 });
   await page.goto(`http://localhost:${PORT}/`);

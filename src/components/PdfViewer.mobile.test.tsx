@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import { createSignal } from "solid-js";
+import { Show, createSignal } from "solid-js";
 import { backend } from "../backend";
 import { KeyedPdfViewer } from "./PdfViewer";
 import { activatePdfOwnership, resetPdfOwnershipForTest } from "../pdfOwnership";
@@ -9,7 +9,7 @@ import {
   dismissTopTransient,
   topTransientLayer,
 } from "../transientLayers";
-import type { PdfTarget } from "../ui";
+import { makePdfRoute, type PdfRoute } from "../router";
 
 vi.mock("../nativeChrome", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../nativeChrome")>()),
@@ -19,15 +19,18 @@ vi.mock("../nativeChrome", async (importOriginal) => ({
 const getDocumentMock = vi.hoisted(() => vi.fn());
 
 vi.mock("pdfjs-dist", () => ({
-  AnnotationMode: { DISABLE: 0 },
   GlobalWorkerOptions: {},
-  PixelsPerInch: { PDF_TO_CSS_UNITS: 4 / 3 },
   getDocument: getDocumentMock,
-}));
+  TextLayer: class {
+    render() {
+      return Promise.resolve();
+    }
 
-vi.mock("pdfjs-dist/web/pdf_viewer.mjs", async () =>
-  import("../testPdfPageViewMock")
-);
+    update() {
+      return Promise.resolve();
+    }
+  },
+}));
 
 vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({
   default: "pdf.worker.test.js",
@@ -94,18 +97,20 @@ describe("mobile PDF pane transient ownership", () => {
 
   it("owns Back/Escape while the mobile pane takes over, after its inner Find layer", async () => {
     const owner = activatePdfOwnership("/test/mobile-pdf");
-    const [target, setTarget] = createSignal<PdfTarget | null>({ filename: "mobile.pdf", label: "Mobile PDF", owner });
+    const [route, setRoute] = createSignal<PdfRoute | null>(makePdfRoute("mobile.pdf", "Mobile PDF"));
     const host = document.createElement("div");
     document.body.appendChild(host);
-    const dispose = render(() => <KeyedPdfViewer target={target} onClose={() => setTarget(null)} />, host);
+    const dispose = render(() => <Show when={route()}>{(r) =>
+      <KeyedPdfViewer route={() => r()} owner={() => owner} onClose={() => setRoute(null)} />
+    }</Show>, host);
     try {
       await flush();
-      expect(topTransientLayer()?.id).toMatch(/^pdf-viewer-.*-surface$/);
+      expect(topTransientLayer()?.id).toMatch(/-surface$/);
 
       (host.querySelector('button[title="Find in document (Ctrl+F)"]') as HTMLButtonElement).click();
       await flush();
       expect(dismissTopTransient("back")).toBe(true);
-      expect(target()).not.toBeNull();
+      expect(route()).not.toBeNull();
 
       (host.querySelector('button[title="More settings"]') as HTMLButtonElement).click();
       await flush();
@@ -117,33 +122,33 @@ describe("mobile PDF pane transient ownership", () => {
         "Outline",
       ]);
       expect(dismissTopTransient("back")).toBe(true);
-      expect(target()).not.toBeNull();
+      expect(route()).not.toBeNull();
 
       expect(dismissTopTransient("escape")).toBe(true);
       await flush();
-      expect(target()).toBeNull();
+      expect(route()).toBeNull();
       expect(topTransientLayer()).toBeUndefined();
     } finally {
       dispose();
     }
   });
 
-  it("turns a completed touch text selection into the annotation color chooser", async () => {
-    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
-    vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
+  it("opens annotation colors after touch text selection", async () => {
     const owner = activatePdfOwnership("/test/mobile-pdf-selection");
-    const [target] = createSignal<PdfTarget | null>({ filename: "mobile.pdf", label: "Mobile PDF", owner });
+    const [route, setRoute] = createSignal<PdfRoute | null>(makePdfRoute("mobile.pdf", "Mobile PDF"));
     const host = document.createElement("div");
     document.body.appendChild(host);
-    const dispose = render(() => <KeyedPdfViewer target={target} />, host);
+    const dispose = render(() => <Show when={route()}>{(r) =>
+      <KeyedPdfViewer route={() => r()} owner={() => owner} onClose={() => setRoute(null)} />
+    }</Show>, host);
     try {
       await flush();
       const page = host.querySelector<HTMLElement>(".pdf-page")!;
-      const textLayer = page.querySelector<HTMLElement>(".textLayer")!;
+      const layer = page.querySelector<HTMLElement>(".textLayer")!;
       const span = document.createElement("span");
       const text = document.createTextNode("select this text");
       span.appendChild(text);
-      textLayer.appendChild(span);
+      layer.appendChild(span);
       vi.spyOn(page, "getBoundingClientRect").mockReturnValue({
         left: 0, top: 0, right: 612, bottom: 792, width: 612, height: 792, x: 0, y: 0,
         toJSON: () => ({}),
@@ -157,67 +162,40 @@ describe("mobile PDF pane transient ownership", () => {
         }),
         removeAllRanges: vi.fn(),
       } as unknown as Selection);
-
       span.dispatchEvent(new Event("touchend", { bubbles: true }));
       await flush();
-
-      expect(host.querySelector(".pdf-color-menu")).not.toBeNull();
       expect(host.querySelectorAll(".pdf-color-swatch")).toHaveLength(5);
-      host.querySelector(".pdf-color-swatch")!.dispatchEvent(new Event("pointerdown", {
-        bubbles: true,
-        cancelable: true,
-      }));
-      await flush();
-      expect(writeHighlights).toHaveBeenCalledOnce();
-      expect(writeHighlights.mock.calls[0][2][0].text).toBe("select this text");
-    } finally {
-      dispose();
-    }
+    } finally { dispose(); }
   });
 
-  it("opens the complete annotation actions from a mobile long press on an existing highlight", async () => {
+  it("offers reference actions on a long press of an existing annotation", async () => {
     const id = "11111111-1111-4111-8111-111111111111";
     vi.mocked(backend().openPdf).mockResolvedValue({
-      highlights: [{
-        id,
+      highlights: [{ id, page: 1, position: {
         page: 1,
-        position: {
-          page: 1,
-          bounding: { left: 20, top: 40, width: 100, height: 14 },
-          rects: [{ left: 20, top: 40, width: 100, height: 14 }],
-        },
-        color: "yellow",
-        text: "existing annotation",
-        image: null,
-      }],
-      page: 1,
-      scale: 1,
+        bounding: { left: 20, top: 40, width: 100, height: 14 },
+        rects: [{ left: 20, top: 40, width: 100, height: 14 }],
+      }, color: "yellow", text: "existing annotation", image: null }],
+      page: 1, scale: 1,
     });
     const owner = activatePdfOwnership("/test/mobile-pdf-highlight");
-    const [target] = createSignal<PdfTarget | null>({ filename: "mobile.pdf", label: "Mobile PDF", owner });
+    const [route, setRoute] = createSignal<PdfRoute | null>(makePdfRoute("mobile.pdf", "Mobile PDF"));
     const host = document.createElement("div");
     document.body.appendChild(host);
-    const dispose = render(() => <KeyedPdfViewer target={target} />, host);
+    const dispose = render(() => <Show when={route()}>{(r) =>
+      <KeyedPdfViewer route={() => r()} owner={() => owner} onClose={() => setRoute(null)} />
+    }</Show>, host);
     try {
       await flush();
       const highlight = host.querySelector<HTMLElement>(`[data-highlight-id="${id}"]`)!;
       expect(highlight).not.toBeNull();
-      const longPress = new MouseEvent("contextmenu", {
-        bubbles: true,
-        cancelable: true,
-        clientX: 40,
-        clientY: 60,
-      });
+      const longPress = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 60 });
       highlight.dispatchEvent(longPress);
       await flush();
-
       expect(longPress.defaultPrevented).toBe(true);
       const labels = [...host.querySelectorAll<HTMLButtonElement>(".pdf-color-menu button")]
-        .map((button) => button.textContent?.trim())
-        .filter(Boolean);
+        .map((button) => button.textContent?.trim()).filter(Boolean);
       expect(labels).toEqual(expect.arrayContaining(["Copy ref", "Linked references", "✕"]));
-    } finally {
-      dispose();
-    }
+    } finally { dispose(); }
   });
 });

@@ -1,3 +1,4 @@
+// Ported from master src/components/QueryMacro.ir.test.tsx.
 // The seam between the block and the ONE query engine (SPEC §4.3.1, §7.1;
 // I-9, I-12, I-20, I-4).
 //
@@ -16,22 +17,32 @@
 //      macro name is chosen from `query_og_expressible`, an OG refusal is
 //      answered by switching dialect, and any OTHER refusal writes nothing and
 //      shows the printer's own message (I-9).
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
 import { initParser } from "../render/parse";
-import { backend, QueryNotReadyError, QueryPrintRefusedError } from "../backend";
-import { setDataRev } from "../ui";
+import { backend, QueryPrintRefusedError } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { blockProperty, doc, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { blockProperty, resetStore, setRaw } from "../document";
+import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import type { RefGroup } from "../types";
 import type { ExplainEmptyResult, ParsedQuery, Query, QueryResult, ViewSettings } from "../editor/queryIr";
-import { blockRunResult } from "../queryReadingsTestkit";
+import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { resetTabsToJournals, route } from "../router";
+import { tryFreezeGraphRewrite } from "../document/graphRewriteState";
+import { toasts, setToasts } from "../toasts";
+import { bumpDataRev } from "../graphSession";
+import { resetQueryTextOpenForTests } from "../navSettings";
 
 beforeAll(async () => {
   await initParser();
+});
+
+// GH #619 item 4: the query text is behind an "Edit as text" toggle, closed by default. These
+// tests are about the text pane, so they open the toggle the way a user who wants the text has.
+beforeEach(() => {
+  resetQueryTextOpenForTests(true);
 });
 
 afterEach(() => {
@@ -40,6 +51,7 @@ afterEach(() => {
   resetStore();
   resetTabsToJournals();
   localStorage.clear();
+  setToasts([]);
   document.body.innerHTML = "";
 });
 
@@ -89,6 +101,70 @@ function load(raw: string, { readOnly = false }: { readOnly?: boolean } = {}): v
 const TQL_MACRO = "{{tine-query -- task TODO}}";
 
 describe("B1: a TQL block executes through query_run", () => {
+  it("renders a scoped block board without a singular tine.view property", async () => {
+    load("{{tine-query -- task TODO}}\ntine.block-view:: board");
+    const parse = backend().parseQuery.bind(backend());
+    vi.spyOn(backend(), "parseQuery").mockImplementation(async (...args) => ({
+      ...await parse(...args), block_presentation: "board",
+    }));
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".sheet-board")).not.toBeNull());
+    } finally { dispose(); }
+  });
+  it("coalesces twenty identical visible query runs after a save revision", async () => {
+    const ids = Array.from({ length: 20 }, (_, index) => `query-${index}`);
+    setDoc({
+      byId: Object.fromEntries([...ids.map((id) => [id, node(id, TQL_MACRO)]), ["todo", node("todo", "TODO A tracked row")]]),
+      pages: [page([...ids, "todo"])], feed: ["Sheet"], loaded: true,
+    });
+    const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    const { root, dispose } = mount(() => <>{ids.map((id) => <Block id={id} />)}</>);
+    try {
+      await vi.waitFor(() => expect(root.querySelectorAll(".query-count")).toHaveLength(20));
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      bumpDataRev();
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    } finally {
+      dispose();
+    }
+  });
+
+  it("shows a rejected run without claiming an empty answer", async () => {
+    load(TQL_MACRO);
+    vi.spyOn(backend(), "queryRun").mockRejectedValue(new Error("result-too-large"));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("result-too-large"));
+      expect(root.textContent).not.toContain("No results");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("shows a parser diagnostic without claiming an empty answer", async () => {
+    load(TQL_MACRO);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue({
+      ...blockRunResult([], { ran: [], ignored: [], supported: false }),
+      diagnostics: [{ kind: "syntax", message: "Invalid condition", disabled: false }],
+    });
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({
+      query: {
+        anchor: "block", filter: { kind: "raw", text: "-- task TODO", diagnostic_kind: "syntax" },
+        diagnostics: [{ kind: "syntax", message: "Invalid condition", disabled: false }],
+        source: { kind: "tql", original: "-- task TODO", og_options: "" },
+      },
+      view: {},
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("Invalid condition"));
+      expect(root.textContent).not.toContain("No results");
+    } finally {
+      dispose();
+    }
+  });
   it("uses the exact page count and physical path returned by the shared page reader", async () => {
     load("{{tine-query @page and journal = false}}");
     const answer: QueryResult = {
@@ -109,9 +185,9 @@ describe("B1: a TQL block executes through query_run", () => {
 
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
-      await vi.waitFor(() => expect(root.querySelector(".query-page-row")?.textContent).toContain("Twin"));
+      await vi.waitFor(() => expect(root.querySelector(".query-page-link")?.textContent).toContain("Twin"));
       expect(root.querySelector(".query-count")?.textContent).toBe("43");
-      (root.querySelector(".query-page-row") as HTMLButtonElement).click();
+      (root.querySelector(".query-page-link") as HTMLButtonElement).click();
       expect(route()).toMatchObject({
         kind: "page",
         name: "Twin",
@@ -150,7 +226,7 @@ describe("B1: a TQL block executes through query_run", () => {
 
       const { root, dispose } = mount(() => <Block id="query" />);
       try {
-        await vi.waitFor(() => expect(root.querySelectorAll(".query-page-row")).toHaveLength(2));
+        await vi.waitFor(() => expect(root.querySelectorAll(".query-page-link")).toHaveLength(2));
         expect(root.textContent).toContain("Twin");
         expect(root.textContent).toContain("Other");
         // The count the header shows is the count of the rows it is showing.
@@ -162,43 +238,10 @@ describe("B1: a TQL block executes through query_run", () => {
     });
   }
 
-  it("automatically retries indexing without reporting an empty query", async () => {
-    load(TQL_MACRO);
-    let finish!: (value: ReturnType<typeof blockRunResult>) => void;
-    const answer = new Promise<ReturnType<typeof blockRunResult>>(resolve => { finish = resolve; });
-    const run = vi.spyOn(backend(), "queryRun")
-      .mockRejectedValueOnce(new QueryNotReadyError("indexing")).mockReturnValue(answer);
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await vi.waitFor(() => expect(root.querySelector(".query-readiness-status")?.textContent).toContain("Updating"));
-      expect(root.querySelector(".query-empty")?.textContent).not.toContain("No results");
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-      finish(blockRunResult(groups()));
-      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
-      expect(root.querySelector(".query-readiness-status")).toBeNull();
-    } finally { dispose(); }
-  });
 
-  it("retains existing query group DOM during a pending refresh", async () => {
-    load(TQL_MACRO);
-    let finish!: (value: ReturnType<typeof blockRunResult>) => void;
-    const answer = new Promise<ReturnType<typeof blockRunResult>>(resolve => { finish = resolve; });
-    const run = vi.spyOn(backend(), "queryRun").mockResolvedValueOnce(blockRunResult(groups()))
-      .mockRejectedValueOnce(new QueryNotReadyError("pending_edits")).mockReturnValue(answer);
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
-      const group = root.querySelector(".query-group");
-      setDataRev(value => value + 1);
-      await vi.waitFor(() => expect(root.querySelector(".query-readiness-status")).not.toBeNull());
-      expect(root.querySelector(".query-group")).toBe(group);
-      expect(root.textContent).toContain("A tracked row");
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
-      finish(blockRunResult(groups()));
-      await vi.waitFor(() => expect(root.querySelector(".query-readiness-status")).toBeNull());
-      expect(root.querySelector(".query-group")).toBe(group);
-    } finally { dispose(); }
-  });
+  // master's "automatically retries indexing…" and "retains existing query group DOM
+  // during a pending refresh" are X-class: og has no index readiness (QueryNotReadyError).
+
 
   it("renders its rows, and hands the evaluator the IR rather than a printed string", async () => {
     load(TQL_MACRO);
@@ -217,7 +260,9 @@ describe("B1: a TQL block executes through query_run", () => {
       // display settings at all still HAS a presentation — the resolver's
       // default — and sending the resolved view rather than the raw reading is
       // what makes a scoped one reach the executor at all.
-      expect(view).toEqual({ view: "list" });
+      // og: the reading's own view goes to the evaluator (the scoped-display
+      // resolver that turns `{}` into `{ view: "list" }` is Q4b's).
+      expect(view).toEqual({});
     } finally {
       dispose();
     }
@@ -262,29 +307,30 @@ describe("why empty? describes an answer, not the absence of one", () => {
   // 2026-09-11: with the projection rebuilding, `query_parse` retried forever,
   // no reading existed, nothing ran, `total()` fell to 0 — and the block said
   // "No results" with a "why empty?" that opened a panel with nothing in it.
-  it("shows the readiness state and no affordance until a run has come back", async () => {
+  // og: no index readiness; the same contract holds while the parse is still
+  // pending (master's "shows the readiness state…" asserted "Rebuilding the
+  // query index…", which og never shows).
+  it("shows no affordance and no \"No results\" until a run has come back", async () => {
     load(TQL_MACRO);
-    let ready = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
     vi.spyOn(backend(), "parseQuery").mockImplementation(async (text: string) => {
-      if (!ready) throw new QueryNotReadyError("recovering");
+      await gate;
       return parsedAs(text);
     });
     const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([]));
     const explainEmpty = vi.spyOn(backend(), "queryExplainEmpty");
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
-      await vi.waitFor(() => expect(root.textContent).toContain("Rebuilding the query index…"));
+      await settle();
       expect(root.querySelector(".query-why-empty")).toBeNull();
       expect(root.textContent).not.toContain("No results");
       expect(run).not.toHaveBeenCalled();
       expect(explainEmpty).not.toHaveBeenCalled();
 
-      // The engine comes back: the retry lands, the run comes back empty, and
-      // only NOW is there an empty answer to explain.
-      ready = true;
+      release();
       await vi.waitFor(() => expect(root.querySelector(".query-why-empty")).not.toBeNull(), { timeout: 4000 });
       expect(root.textContent).toContain("No results");
-      expect(root.textContent).not.toContain("Rebuilding the query index…");
     } finally {
       dispose();
     }
@@ -307,6 +353,84 @@ async function openSheet(root: HTMLElement): Promise<HTMLElement> {
     return sheet;
   });
 }
+
+describe("Q4b: Display saves through the query block", () => {
+  it("adding a count does not persist an unchosen grouping", async () => {
+    load(TQL_MACRO);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("-- task TODO");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const sheet = await openSheet(root);
+      sheet.querySelector<HTMLButtonElement>(".qd-trigger")!.click();
+      [...sheet.querySelectorAll<HTMLButtonElement>(".qd-panel button")]
+        .find((button) => button.textContent === "+ count")!.click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.col-aggregates")).toBe("count"));
+      expect(blockProperty("query", "tine.group-field")).toBeNull();
+    } finally { dispose(); }
+  });
+
+  it("saves an explicit empty grouping when None is chosen from an unset view", async () => {
+    load(TQL_MACRO);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("-- task TODO");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const sheet = await openSheet(root);
+      sheet.querySelector<HTMLButtonElement>(".qd-trigger")!.click();
+      await vi.waitFor(() => expect(sheet.querySelector(".qd-panel")).not.toBeNull());
+      [...sheet.querySelectorAll<HTMLButtonElement>(".qd-panel button")]
+        .find((button) => button.textContent === "None")!.click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.group-field")).toBe(""));
+    } finally { dispose(); }
+  });
+
+  it("offers Page as a table column and writes it on the query block (GH #606)", async () => {
+    load(TQL_MACRO);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("-- task TODO");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const sheet = await openSheet(root);
+      sheet.querySelector<HTMLButtonElement>(".qd-trigger")!.click();
+      await vi.waitFor(() => expect(sheet.querySelector(".qd-panel")).not.toBeNull());
+      const column = [...sheet.querySelectorAll<HTMLButtonElement>(".qd-add")]
+        .find((button) => button.textContent?.includes("column"));
+      column!.click();
+      const page = [...sheet.querySelectorAll<HTMLButtonElement>(".qs-vocab-option")]
+        .find((button) => button.textContent?.trim() === "Page");
+      expect(page).toBeDefined();
+      page!.click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.columns")).toBe("page"));
+      expect(blockProperty("query", "tine.fields")).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("sorts a query table's Page header locally and never writes the query view (D8/D11)", async () => {
+    load(`${TQL_MACRO}\ntine.view:: table`);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("-- task TODO");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const header = await vi.waitFor(() => {
+        const found = root.querySelector<HTMLElement>('[data-sheet-field-header][data-sheet-field="page"]');
+        if (!found) throw new Error("Page column was not rendered");
+        return found;
+      });
+      header.click();
+      // A header click is browsing: the sort shows on the header and the
+      // query block's saved view is untouched.
+      await vi.waitFor(() => expect(header.textContent).toContain("\u25B2"));
+      expect(blockProperty("query", "tine.sort")).toBeNull();
+    } finally { dispose(); }
+  });
+});
 
 /** Reach the text pane in the sheet's footer. **P4 retired the disclosure**:
  *  inside an open sheet the pane is visible and editable, so opening the sheet
@@ -478,6 +602,103 @@ async function saveThroughPane(root: HTMLElement, text: string): Promise<void> {
 }
 
 describe("B5: the save path chooses the name and answers NotApplicable", () => {
+  it("reports a frozen rewrite refusal without changing the block or showing a crossing notice", async () => {
+    load("{{query (task TODO)}}");
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("-- task DONE");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    let release: (() => void) | null = null;
+    try {
+      const input = await openPane(root);
+      vi.spyOn(backend(), "parseQuery").mockImplementation(async (source: string) => parsedAs(source));
+      type(input, "-- task DONE");
+      const save = await vi.waitFor(() => {
+        const found = document.querySelector<HTMLButtonElement>(".query-text-pane-save");
+        if (!found || found.disabled) throw new Error("save unavailable");
+        return found;
+      });
+      release = tryFreezeGraphRewrite();
+      expect(release).not.toBeNull();
+      save.click();
+      await vi.waitFor(() => expect(root.textContent).toContain("not changed"));
+      expect(doc.byId.query.raw).toBe("{{query (task TODO)}}");
+      expect(root.querySelector(".query-crossing-notice")).toBeNull();
+    } finally {
+      release?.();
+      dispose();
+    }
+  });
+  it("edits the second of two identical macros without changing the first", async () => {
+    load("{{query (task TODO)}} and {{query (task TODO)}}");
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("(task DONE)");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const gears = await vi.waitFor(() => {
+        const found = root.querySelectorAll<HTMLButtonElement>(".qs-gear");
+        if (found.length !== 2) throw new Error(`expected two query sheets, got ${found.length}`);
+        return found;
+      });
+      gears[1].click();
+      const input = await vi.waitFor(() => {
+        const found = document.querySelector<HTMLTextAreaElement>(".query-text-pane-input");
+        if (!found) throw new Error("second query pane is absent");
+        return found;
+      });
+      vi.spyOn(backend(), "parseQuery").mockImplementation(async (source: string) => parsedAs(source));
+      type(input, "-- task DONE");
+      const save = await vi.waitFor(() => {
+        const found = document.querySelector<HTMLButtonElement>(".query-text-pane-save");
+        if (!found || found.disabled) throw new Error("save is not enabled");
+        return found;
+      });
+      save.click();
+      await vi.waitFor(() => expect(doc.byId.query.raw).toBe("{{query (task TODO)}} and {{query (task DONE)}}"));
+    } finally {
+      dispose();
+    }
+  });
+  it("refuses an in-flight edit when the authored macro's raw extent moves", async () => {
+    const original = "{{query (task TODO)}} and {{query (task TODO)}}";
+    load(original);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    let finishPrint: ((text: string) => void) | undefined;
+    vi.spyOn(backend(), "printQuery").mockImplementation(async (_query, _view, dialect) =>
+      dialect === "og" ? new Promise<string>((resolve) => { finishPrint = resolve; }) : "-- task TODO");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const gears = await vi.waitFor(() => {
+        const found = root.querySelectorAll<HTMLButtonElement>(".qs-gear");
+        if (found.length !== 2) throw new Error("two macros not rendered");
+        return found;
+      });
+      gears[1].click();
+      const input = await vi.waitFor(() => {
+        const found = document.querySelector<HTMLTextAreaElement>(".query-text-pane-input");
+        if (!found) throw new Error("pane not open");
+        return found;
+      });
+      vi.spyOn(backend(), "parseQuery").mockImplementation(async (source: string) => parsedAs(source));
+      type(input, "-- task DONE");
+      const save = await vi.waitFor(() => {
+        const found = document.querySelector<HTMLButtonElement>(".query-text-pane-save");
+        if (!found || found.disabled) throw new Error("save not ready");
+        return found;
+      });
+      save.click();
+      await vi.waitFor(() => expect(finishPrint).toBeDefined());
+      setRaw("query", `prefix ${original}`);
+      finishPrint!("(task DONE)");
+      await settle();
+      expect(doc.byId.query.raw).toBe(`prefix ${original}`);
+      expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("changed"))).toBe(true);
+    } finally {
+      dispose();
+    }
+  });
   it("keeps {{query}} for an OG-expressible edit, and an empty view adds no property line", async () => {
     load('{{query (task TODO)}}');
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
@@ -639,7 +860,15 @@ describe("B6: directive migration for blocks that stay {{query}}", () => {
     }
   });
 
-  it("keeps (sort-by a desc) in the OG text AND gains tine.sort:: a desc", async () => {
+  // Not og's design (og E, family 3, verified 2026-09-29): master's save writes the
+  // full six-field `queryViewPropertyPatch` against the persisted block; og's save
+  // (`materializeView`) writes only the facts its dialect's reprint would drop, and a
+  // Display edit writes its own complete patch (`displayPropertyPatch`, tested in
+  // QueryDisplay/QueryWorkspace tests). The observable outcomes differ only where the
+  // test's mocked parse invents a view no real block can carry (columns/view kind live
+  // only in properties, so a filter save cannot lose them) or where og writes no
+  // redundant `tine.sort::` beside a `(sort-by …)` OG spelling. Left skipped on purpose.
+  it.skip("keeps (sort-by a desc) in the OG text AND gains tine.sort:: a desc", async () => {
     load('{{query (task TODO) (sort-by a desc)}}');
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
     vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
@@ -657,7 +886,15 @@ describe("B6: directive migration for blocks that stay {{query}}", () => {
     }
   });
 
-  it("drops tine.sort when the sort is removed, so the removal survives a reparse", async () => {
+  // Not og's design (og E, family 3, verified 2026-09-29): master's save writes the
+  // full six-field `queryViewPropertyPatch` against the persisted block; og's save
+  // (`materializeView`) writes only the facts its dialect's reprint would drop, and a
+  // Display edit writes its own complete patch (`displayPropertyPatch`, tested in
+  // QueryDisplay/QueryWorkspace tests). The observable outcomes differ only where the
+  // test's mocked parse invents a view no real block can carry (columns/view kind live
+  // only in properties, so a filter save cannot lose them) or where og writes no
+  // redundant `tine.sort::` beside a `(sort-by …)` OG spelling. Left skipped on purpose.
+  it.skip("drops tine.sort when the sort is removed, so the removal survives a reparse", async () => {
     load('{{query (task TODO)}}\ntine.sort:: a desc');
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
     vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
@@ -678,7 +915,15 @@ describe("B6: directive migration for blocks that stay {{query}}", () => {
     }
   });
 
-  it("persists all six §7.6 fields, so the block re-parses to the saved view", async () => {
+  // Not og's design (og E, family 3, verified 2026-09-29): master's save writes the
+  // full six-field `queryViewPropertyPatch` against the persisted block; og's save
+  // (`materializeView`) writes only the facts its dialect's reprint would drop, and a
+  // Display edit writes its own complete patch (`displayPropertyPatch`, tested in
+  // QueryDisplay/QueryWorkspace tests). The observable outcomes differ only where the
+  // test's mocked parse invents a view no real block can carry (columns/view kind live
+  // only in properties, so a filter save cannot lose them) or where og writes no
+  // redundant `tine.sort::` beside a `(sort-by …)` OG spelling. Left skipped on purpose.
+  it.skip("persists all six §7.6 fields, so the block re-parses to the saved view", async () => {
     load('{{query (task TODO)}}');
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
     vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
@@ -822,5 +1067,112 @@ describe("B7: an unknown head reads as 'returned no results', never as 'ignored'
     } finally {
       dispose();
     }
+  });
+});
+
+// GH #619 item 9: "Pages and blocks" — one query, both result families.
+describe("item 9: a query can show pages and blocks together", () => {
+  const pageAnswer = (): QueryResult => ({
+    anchor: "page",
+    pages: [{ path: "pages/Twin.md", name: "Twin", kind: "page", properties: [["tags", "gptpro"]] }],
+    diagnostics: [],
+    report: { ran: ["journal"], ignored: [], supported: true },
+    total: 1,
+    matched_total: 1,
+    exceeded: false,
+  });
+  /** The engine's answers by anchor: the macro's own text reads as blocks, and the
+   *  print-then-parse round trip the sheet uses for an anchor switch yields the page twin. */
+  function engineByAnchor() {
+    const parse = backend().parseQuery.bind(backend());
+    vi.spyOn(backend(), "parseQuery").mockImplementation(async (text, ...rest) => {
+      if (text.startsWith("@page")) {
+        const block = await parse("-- task TODO", ...rest);
+        return { ...block, query: { ...block.query, anchor: "page" as const } };
+      }
+      return parse(text, ...rest);
+    });
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("@page and task TODO");
+    const run = vi.spyOn(backend(), "queryRun").mockImplementation(async (query) =>
+      query.anchor === "page" ? pageAnswer() : blockRunResult(groups()));
+    return { run };
+  }
+
+  it("shows a Pages section above a Blocks section, with the total counting both", async () => {
+    load(`${TQL_MACRO}\ntine.result-kinds:: pages-and-blocks`);
+    const { run } = engineByAnchor();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-page-link")?.textContent).toContain("Twin"));
+      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
+      const sections = [...root.querySelectorAll<HTMLElement>("[data-query-result-kind]")];
+      expect(sections.map((section) => section.dataset.queryResultKind)).toEqual(["page", "block"]);
+      expect(sections[0].querySelector(".query-page-link")).not.toBeNull();
+      expect(sections[1].textContent).toContain("A tracked row");
+      expect(root.querySelector(".query-count")?.textContent).toBe("2");
+      // One run per family, never a flipped IR run: the page twin went through print/parse.
+      expect(run.mock.calls.map(([query]) => query.anchor).sort()).toEqual(["block", "page"]);
+    } finally { dispose(); }
+  });
+
+  it("says per family when a sample cut the answer short, and says nothing for a complete one", async () => {
+    load(`${TQL_MACRO}\ntine.result-kinds:: pages-and-blocks`);
+    engineByAnchor();
+    // Pages: 1 returned of 5 counted (a `sample`). Blocks: complete.
+    vi.spyOn(backend(), "queryRun").mockImplementation(async (query) =>
+      query.anchor === "page" ? { ...pageAnswer(), matched_total: 5 } : blockRunResult(groups()));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-page-link")?.textContent).toContain("Twin"));
+      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
+      const sections = [...root.querySelectorAll<HTMLElement>("[data-query-result-kind]")];
+      expect(sections[0].textContent).toContain("More pages match than are shown.");
+      expect(sections[1].textContent).not.toContain("match than are shown");
+    } finally { dispose(); }
+  });
+
+  it("a block family of a table-view block renders as a table, like blocks mode", async () => {
+    load(`${TQL_MACRO}\ntine.result-kinds:: pages-and-blocks\ntine.view:: table`);
+    engineByAnchor();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
+      const blockSection = root.querySelector<HTMLElement>('[data-query-result-kind="block"]')!;
+      expect(blockSection.querySelector('[data-sheet-field-header]')).not.toBeNull();
+    } finally { dispose(); }
+  });
+
+  it("without the property it stays a plain block query", async () => {
+    load(TQL_MACRO);
+    engineByAnchor();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
+      expect(root.querySelector("[data-query-result-kind]")).toBeNull();
+      expect(root.querySelector(".query-page-link")).toBeNull();
+    } finally { dispose(); }
+  });
+
+  it("the sheet's selector offers it, and choosing it stores the choice on the block", async () => {
+    load(TQL_MACRO);
+    engineByAnchor();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
+      root.querySelector<HTMLButtonElement>(".qs-gear")!.click();
+      await vi.waitFor(() => expect(document.querySelector(".qs-anchor-button")).not.toBeNull());
+      document.querySelector<HTMLButtonElement>(".qs-anchor-button")!.click();
+      const options = [...document.querySelectorAll<HTMLButtonElement>(".qs-option")];
+      expect(options.map((option) => option.textContent)).toEqual([
+        expect.stringContaining("blocks"), expect.stringContaining("pages"), expect.stringContaining("pages and blocks"),
+      ]);
+      options[2].click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.result-kinds")).toBe("pages-and-blocks"));
+      await vi.waitFor(() => expect(root.querySelector(".query-page-link")).not.toBeNull());
+      // And back to one family clears it.
+      document.querySelector<HTMLButtonElement>(".qs-anchor-button")!.click();
+      [...document.querySelectorAll<HTMLButtonElement>(".qs-option")][0].click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.result-kinds")).toBeNull());
+    } finally { dispose(); }
   });
 });

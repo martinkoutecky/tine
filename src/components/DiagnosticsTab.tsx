@@ -1,70 +1,70 @@
-import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
-import {
-  OperationCancelledError,
-  backend,
-  type DiagnosticReport,
-  type GraphVerificationProgress,
-  type GraphVerificationReport,
-} from "../backend";
-import { writeClipboardTextResilient } from "../clipboard";
-import {
-  compareGraphVerificationManifests,
-  parseGraphVerificationManifest,
-  type GraphVerificationComparison,
-} from "../graphVerification";
-import { platformKind } from "../platform";
-import { pushToast } from "../ui";
+// Settings → Help & diagnostics: review, copy, save (desktop) or clear the
+// privacy-safe diagnostic report of this run and the previous one (GH #343,
+// og ADR 0058), verify a synchronized graph's exact bytes against another
+// device, list this session's recent error messages (memory only), and run the parser comparison
+// ("Help improve Tine's parser"). Nothing here is uploaded automatically.
+import { Show, createSignal, onCleanup, type JSX } from "solid-js";
+import { backend, type DiagnosticReport } from "../backend";
+import { writeClipboardText } from "../clipboard";
+import { dbg } from "../debug";
+import { isMobilePlatform } from "../nativeChrome";
+import { ownedWhen, readOwned, writeOwned } from "../owned";
+import { rescanGraphNowFromSettings } from "../reloadOnFocus";
+import { pushToast } from "../toasts";
+import { ErrorToastHistory } from "./ErrorToastHistory";
+import { GraphVerification } from "./GraphVerification";
 import { ImproveTab } from "./ImproveTab";
+import "../styles/diagnostics.css";
 
 export const DIAGNOSTIC_PREVIEW_LIMIT = 64 * 1024;
 const DIAGNOSTIC_PREVIEW_TAIL = 8 * 1024;
 
-/**
- * Keep the selectable WebView control small enough to remain responsive on
- * Windows. Copy and Save still use DiagnosticReport.text, so shortening this
- * on-screen review never shortens the exported evidence.
- */
+/** The on-screen review text: the whole report up to 64 KiB, otherwise its
+ * head and last 8 KiB around a notice naming how much was left out. Keeps the
+ * selectable WebView control responsive on Windows; Copy report still uses
+ * the complete `DiagnosticReport.text`. Pure; O(report length). */
 export function diagnosticReportPreview(text: string): string {
   if (text.length <= DIAGNOSTIC_PREVIEW_LIMIT) return text;
   const headLength = DIAGNOSTIC_PREVIEW_LIMIT - DIAGNOSTIC_PREVIEW_TAIL;
   const omitted = text.length - DIAGNOSTIC_PREVIEW_LIMIT;
-  return `${text.slice(0, headLength)}\n\n[Preview shortened: ${omitted} characters omitted. Copy report or Save report… exports the complete report.]\n\n${text.slice(-DIAGNOSTIC_PREVIEW_TAIL)}`;
+  return `${text.slice(0, headLength)}\n\n[Preview shortened: ${omitted} characters omitted. Copy report exports the complete report.]\n\n${text.slice(-DIAGNOSTIC_PREVIEW_TAIL)}`;
 }
 
-export function DiagnosticsTab() {
+export function DiagnosticsTab(): JSX.Element {
   const [report, setReport] = createSignal<DiagnosticReport | null>(null);
   const [busy, setBusy] = createSignal(false);
-  const [desktop, setDesktop] = createSignal(false);
-  const [verification, setVerification] = createSignal<GraphVerificationReport | null>(null);
-  const [verificationProgress, setVerificationProgress] = createSignal<GraphVerificationProgress | null>(null);
-  const [verificationOperation, setVerificationOperation] = createSignal<string | null>(null);
-  const [otherManifest, setOtherManifest] = createSignal("");
-  const [comparison, setComparison] = createSignal<GraphVerificationComparison | null>(null);
+  const [rescanning, setRescanning] = createSignal(false);
+  const [rescanFinished, setRescanFinished] = createSignal<number | null>(null);
   let disposed = false;
-  let stopVerificationProgress: (() => void) | undefined;
-
-  onMount(() => {
-    void platformKind().then((kind) => setDesktop(kind === "desktop")).catch(() => {});
-    void backend().onGraphVerificationProgress((progress) => {
-      if (progress.operationId === verificationOperation()) setVerificationProgress(progress);
-    }).then((stop) => {
-      if (disposed) stop();
-      else stopVerificationProgress = stop;
-    });
-  });
-  onCleanup(() => {
-    disposed = true;
-    stopVerificationProgress?.();
-  });
+  onCleanup(() => { disposed = true; });
 
   const createReport = async () => {
     setBusy(true);
     try {
-      setReport(await backend().diagnosticReport(__GIT_COMMIT__, __BUILD_TIME__));
+      const result = await readOwned(ownedWhen(() => !disposed), backend().diagnosticReport(__GIT_COMMIT__, __BUILD_TIME__));
+      if (result.kind === "current") setReport(result.value);
     } catch (error) {
-      pushToast(`Could not create diagnostic report: ${String(error)}`, "error");
+      dbg(`diagnostic report failed: ${String(error)}`);
+      pushToast("Could not create the diagnostic report.", "error");
     } finally {
-      setBusy(false);
+      if (!disposed) setBusy(false);
+    }
+  };
+
+  // A forced full rebuild of the open graph on demand: every file re-read and
+  // re-parsed, ignoring stamps (the rescan on return to the window stays the
+  // cheap stat diff). Shows when it ended.
+  const rescanGraph = async () => {
+    setRescanning(true);
+    try {
+      const finished = await rescanGraphNowFromSettings();
+      if (!disposed) setRescanFinished(finished);
+      if (finished === null && !disposed) pushToast("No graph rescan ran. Open a graph first.", "info");
+    } catch (error) {
+      dbg(`graph rescan failed: ${String(error)}`);
+      pushToast("Could not rescan the graph.", "error");
+    } finally {
+      if (!disposed) setRescanning(false);
     }
   };
 
@@ -72,90 +72,32 @@ export function DiagnosticsTab() {
     const current = report();
     if (!current) return;
     try {
-      await writeClipboardTextResilient(current.text);
+      await writeClipboardText(current.text);
       pushToast("Diagnostic report copied", "success");
     } catch (error) {
-      pushToast(`Could not copy diagnostic report: ${String(error)}`, "error");
+      dbg(`diagnostic report copy failed: ${String(error)}`);
+      pushToast("Could not copy the diagnostic report.", "error");
     }
   };
 
   const saveReport = async () => {
     try {
-      if (await backend().saveDiagnosticReport(__GIT_COMMIT__, __BUILD_TIME__)) {
-        pushToast("Diagnostic report saved", "success");
-      }
+      const saved = await writeOwned(ownedWhen(() => !disposed), backend().saveDiagnosticReport(__GIT_COMMIT__, __BUILD_TIME__));
+      if (saved.kind === "current" && saved.value) pushToast("Diagnostic report saved", "success");
     } catch (error) {
-      pushToast(`Could not save diagnostic report: ${String(error)}`, "error");
+      dbg(`diagnostic report save failed: ${String(error)}`);
+      pushToast("Could not save the diagnostic report.", "error");
     }
   };
 
   const clearReport = async () => {
     try {
-      await backend().clearDiagnostics();
-      setReport(null);
+      const result = await writeOwned(ownedWhen(() => !disposed), backend().clearDiagnostics());
+      if (result.kind === "current") setReport(null);
       pushToast("Recorded diagnostic events cleared", "success");
     } catch (error) {
-      pushToast(`Could not clear diagnostic events: ${String(error)}`, "error");
-    }
-  };
-
-  const createVerification = async () => {
-    const operationId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
-    setVerificationOperation(operationId);
-    setVerificationProgress({ operationId, processed: 0, total: 0 });
-    setComparison(null);
-    try {
-      const result = await backend().createGraphVerification(operationId);
-      setVerification(result);
-      if (!result.complete) pushToast("Graph verification was incomplete", "error");
-    } catch (error) {
-      if (!(error instanceof OperationCancelledError)) {
-        pushToast(`Could not verify graph files: ${String(error)}`, "error");
-      }
-    } finally {
-      setVerificationOperation(null);
-    }
-  };
-
-  const cancelVerification = async () => {
-    const operationId = verificationOperation();
-    if (operationId) await backend().cancelGraphVerification(operationId);
-  };
-
-  const copyVerification = async () => {
-    const current = verification();
-    if (!current) return;
-    try {
-      await writeClipboardTextResilient(current.text);
-      pushToast("Graph verification report copied", "success");
-    } catch (error) {
-      pushToast(`Could not copy graph verification report: ${String(error)}`, "error");
-    }
-  };
-
-  const saveVerification = async () => {
-    const current = verification();
-    if (!current) return;
-    try {
-      if (await backend().saveGraphVerificationReport(current.text)) {
-        pushToast("Graph verification report saved", "success");
-      }
-    } catch (error) {
-      pushToast(`Could not save graph verification report: ${String(error)}`, "error");
-    }
-  };
-
-  const compareVerification = () => {
-    const current = verification();
-    if (!current) return;
-    try {
-      setComparison(compareGraphVerificationManifests(
-        parseGraphVerificationManifest(current.text),
-        parseGraphVerificationManifest(otherManifest()),
-      ));
-    } catch (error) {
-      setComparison(null);
-      pushToast(`Could not compare graph verification reports: ${String(error)}`, "error");
+      dbg(`diagnostic clear failed: ${String(error)}`);
+      pushToast("Could not clear the recorded diagnostic events.", "error");
     }
   };
 
@@ -163,13 +105,20 @@ export function DiagnosticsTab() {
     <section class="diagnostics-tab settings-section">
       <h2>Help & diagnostics</h2>
       <p>
-        Tine keeps a small, bounded flight recorder for the current and previous run. It records
-        operation names, outcomes, timings, counts, platform and build information.
+        Tine keeps a small, bounded flight recorder of this run and the previous one, including
+        whether the previous run closed cleanly. It records operation names, outcomes, timings,
+        counts, platform and build information.
       </p>
       <p class="settings-hint diagnostics-privacy">
         It does not record graph content, file paths, page titles, queries, URLs, credentials, or
-        the detailed opt-in debug log. Nothing is uploaded automatically. You choose whether to
-        copy or save a report and share it.
+        the detailed opt-in debug log. It is kept in Tine's private app data (at most 1 MiB), never
+        in your graph, and nothing is uploaded. You choose whether to copy or save a report and
+        share it.
+      </p>
+      <p class="settings-hint diagnostics-privacy">
+        A report also carries statistics about your graph, such as how long each step of opening
+        it took and the sizes of its pages, as numbers only. They never include a page name, any
+        text, or a hash of either.
       </p>
       <div class="diagnostics-actions">
         <button type="button" class="primary" disabled={busy()} onClick={() => void createReport()}>
@@ -177,13 +126,26 @@ export function DiagnosticsTab() {
         </button>
         <Show when={report()}>
           <button type="button" onClick={() => void copyReport()}>Copy report</button>
-          <Show when={desktop()}>
-            <button type="button" onClick={() => void saveReport()}>Save report…</button>
-          </Show>
+        </Show>
+        <Show when={!isMobilePlatform}>
+          <button type="button" onClick={() => void saveReport()}>Save report…</button>
         </Show>
         <button type="button" class="danger" onClick={() => void clearReport()}>
           Clear recorded events
         </button>
+      </div>
+      <div class="diagnostics-rescan">
+        <button type="button" disabled={rescanning()} onClick={() => void rescanGraph()}>
+          {rescanning() ? "Rescanning…" : "Rescan graph"}
+        </button>
+        <span class="settings-hint" role="status">
+          <Show
+            when={rescanFinished()}
+            fallback="Re-reads every file in the open graph and rebuilds Tine's view of it."
+          >
+            {(finished) => `Last rescan finished at ${new Date(finished()).toLocaleTimeString()}.`}
+          </Show>
+        </span>
       </div>
       <Show when={report()}>
         {(current) => (
@@ -192,91 +154,16 @@ export function DiagnosticsTab() {
             <Show when={current().text.length > DIAGNOSTIC_PREVIEW_LIMIT}>
               <span class="settings-hint">
                 Large report: this preview is shortened to keep Settings responsive. Copy report
-                or Save report… exports the complete report.
+                exports the complete report.
               </span>
             </Show>
             <textarea readonly spellcheck={false} value={diagnosticReportPreview(current().text)} />
           </label>
         )}
       </Show>
-      <div class="diagnostics-verification">
-        <h3>Verify synchronized graph</h3>
-        <p>
-          Compare the exact Markdown and Org file bytes on two devices. The report includes file
-          paths and page names, but not file contents. Nothing is uploaded automatically.
-        </p>
-        <div class="diagnostics-actions">
-          <button type="button" class="primary" disabled={verificationOperation() !== null} onClick={() => void createVerification()}>
-            {verificationOperation() ? "Verifying..." : "Create graph verification report"}
-          </button>
-          <Show when={verificationOperation()}>
-            <button type="button" onClick={() => void cancelVerification()}>Cancel</button>
-          </Show>
-          <Show when={verification()}>
-            <button type="button" onClick={() => void copyVerification()}>Copy graph report</button>
-            <Show when={desktop()}>
-              <button type="button" onClick={() => void saveVerification()}>Save graph report...</button>
-            </Show>
-          </Show>
-        </div>
-        <Show when={verificationOperation() !== null ? verificationProgress() : null}>
-          {(current) => (
-            <p class="settings-hint">
-              {current().total === 0 ? "Reading graph file list..." : `${current().processed} / ${current().total} files`}
-            </p>
-          )}
-        </Show>
-        <Show when={verification()}>
-          {(current) => (
-            <>
-              <p class="settings-hint">
-                {current().complete ? "Complete" : "Incomplete"} · {current().totalFiles} files · {current().totalBytes} bytes
-              </p>
-              <label class="diagnostics-preview">
-                <span>Report preview · {current().suggestedFileName}</span>
-                <textarea readonly spellcheck={false} value={current().text} />
-              </label>
-              <label class="diagnostics-preview">
-                <span>Report from the other device</span>
-                <textarea
-                  spellcheck={false}
-                  value={otherManifest()}
-                  onInput={(event) => setOtherManifest(event.currentTarget.value)}
-                  placeholder="Paste the graph verification report here"
-                />
-              </label>
-              <button type="button" class="primary" disabled={!otherManifest().trim()} onClick={compareVerification}>
-                Compare reports
-              </button>
-            </>
-          )}
-        </Show>
-        <Show when={comparison()}>
-          {(result) => (
-            <div class="diagnostics-comparison">
-              <Show when={result().matches}>
-                <p><strong>The source file sets and bytes match.</strong></p>
-              </Show>
-              <Show when={result().incomplete}>
-                <p><strong>At least one report is incomplete. No match can be confirmed.</strong></p>
-              </Show>
-              <For each={[
-                ["Only on this device", result().localOnly],
-                ["Only on the other device", result().otherOnly],
-                ["Different bytes", result().changed],
-              ] as const}>
-                {([label, paths]) => (
-                  <Show when={paths.length > 0}>
-                    <h4>{label}</h4>
-                    <ul><For each={paths}>{(path) => <li><code>{path}</code></li>}</For></ul>
-                  </Show>
-                )}
-              </For>
-            </div>
-          )}
-        </Show>
-      </div>
-      <div class="diagnostics-parser-comparison">
+      <ErrorToastHistory />
+      <GraphVerification />
+      <div class="diagnostics-improve">
         <h3>Help improve Tine's parser</h3>
         <ImproveTab />
       </div>

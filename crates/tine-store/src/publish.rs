@@ -1,0 +1,1035 @@
+//! Staged publication: Store::publish_site and publish_query_site share the
+//! stage/sync/retire/no-replace/identity protocol. Query destination review is
+//! read-only O(colliding siblings); commit is O(output bytes + retirement),
+//! holds the writer lock and emits no page Change. It never mutates source pages.
+//! Create refuses a concurrent winner. Replace retires the current directory
+//! into logseq/.tine-trash/conflicts and reports it on success or later failure.
+//! Missing assets warn, copied bytes are caller-budgeted, and TooLarge refuses
+//! before commit. I/O errors may follow a completed rename: inspect named output
+//! and recovery before retrying. Windows directory sync is filesystem-dependent;
+//! Linux/macOS/iOS/Android sync output entries. Callers need no staging knowledge.
+
+use crate::model::Graph;
+use crate::store::Store;
+use crate::transaction::IoError;
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, OpenOptions};
+#[cfg(not(target_os = "windows"))]
+use same_file::Handle as FileIdentity;
+#[cfg(test)]
+use std::cell::RefCell;
+use std::fs;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+
+// `same_file::Handle` keeps its Windows handle open without FILE_SHARE_DELETE,
+// which makes MoveFileW reject the final stage rename. Keep a separately-opened
+// identity handle that does share deletion instead. We first compare it against
+// the bound capability while both are open, so an ambient path swap cannot make
+// the identity refer to a different directory; the live handle then prevents
+// file-ID reuse through the move and supports ReFS's full 128-bit identities.
+#[cfg(target_os = "windows")]
+#[derive(Debug)]
+struct FileIdentity {
+    _file: fs::File,
+    volume: u64,
+    id: [u8; 16],
+}
+
+#[cfg(target_os = "windows")]
+impl PartialEq for FileIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.volume == other.volume && self.id == other.id
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Eq for FileIdentity {}
+
+#[cfg(target_os = "windows")]
+fn identity_from_file(file: fs::File) -> io::Result<FileIdentity> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
+    };
+
+    let mut information = FILE_ID_INFO::default();
+    let result = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&mut information as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if result == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(FileIdentity {
+        _file: file,
+        volume: information.VolumeSerialNumber,
+        id: information.FileId.Identifier,
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn identity_from_file(file: fs::File) -> io::Result<FileIdentity> {
+    FileIdentity::from_file(file)
+}
+
+#[cfg(target_os = "windows")]
+fn identity_from_path(path: &Path) -> io::Result<FileIdentity> {
+    use std::os::windows::{ffi::OsStrExt, io::FromRawHandle};
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide.push(0);
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    identity_from_file(unsafe { fs::File::from_raw_handle(handle) })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn identity_from_path(path: &Path) -> io::Result<FileIdentity> {
+    FileIdentity::from_path(path)
+}
+
+struct PublishStage {
+    path: PathBuf,
+    root: Dir,
+    dir: Dir,
+    identity: FileIdentity,
+}
+
+// The stage may be moved to `publish` on success. A failed emit or commit
+// leaves its original name in place; remove only that same directory.
+struct StageCleanup {
+    path: PathBuf,
+    root: Dir,
+    identity: FileIdentity,
+}
+
+impl StageCleanup {
+    fn new(stage: &PublishStage) -> io::Result<Self> {
+        Ok(Self {
+            path: stage.path.clone(),
+            root: stage.root.try_clone()?,
+            identity: identity_from_path(&stage.path)?,
+        })
+    }
+}
+
+impl Drop for StageCleanup {
+    fn drop(&mut self) {
+        if !identity_from_path(&self.path).is_ok_and(|live| live == self.identity) {
+            return;
+        }
+        if let Some(name) = self.path.file_name() {
+            let _ = self.root.remove_dir_all(name);
+        }
+    }
+}
+
+/// A staged site file writer. Each call writes and fsyncs one new file.
+pub struct SiteWriter {
+    stage: PublishStage,
+    files: u64,
+}
+
+impl SiteWriter {
+    /// Write a unique relative file name. Empty or absolute names, backslashes,
+    /// empty components, `.`, and `..` are refused; writing the same name
+    /// twice returns `AlreadyExists`. Cost O(bytes).
+    pub fn write(&mut self, rel: &str, bytes: &[u8]) -> Result<(), IoError> {
+        write_publish_stage_file(&self.stage, rel, bytes).map_err(IoError::from)?;
+        self.files += 1;
+        Ok(())
+    }
+}
+
+/// A failed site export attempts to remove its unpublished stage. An early
+/// setup failure or cleanup error may leave it on disk. Any retired previous
+/// site remains under `logseq/.tine-trash/conflicts/`.
+#[derive(Debug)]
+pub struct PublishFailed {
+    /// Error that prevented the new site from being published.
+    pub cause: IoError,
+    /// Recovery location of the retired site, if retirement had completed.
+    pub previous_kept: Option<PathBuf>,
+}
+
+/// The published site path is for handing to the OS or showing to the user.
+#[derive(Debug)]
+pub struct PublishReceipt {
+    /// Published directory for an OS or browser handoff.
+    pub site: PathBuf,
+    /// Number of files emitted by the caller.
+    pub files: u64,
+    /// Recovery location of a previous site retired during successful replacement.
+    pub previous_kept: Option<PathBuf>,
+}
+
+impl Store {
+    /// Fold the existing per-document block-reference counter over exactly a
+    /// publication's selected pages. Cost O(selected blocks); no graph bytes
+    /// are read or written. Callers need no cache or index state.
+    pub(crate) fn publication_block_ref_counts(
+        &self,
+        corpus: &tine_core::Corpus,
+    ) -> std::collections::HashMap<String, usize> {
+        let mut counts = std::collections::HashMap::new();
+        for page in &corpus.pages {
+            for (id, count) in crate::model::document_block_ref_counts(&page.document) {
+                *counts.entry(id).or_default() += count;
+            }
+        }
+        counts
+    }
+
+    /// Read assets referenced by exactly the supplied parsed source pages for
+    /// a publication. Candidate names use the store's one asset-ref
+    /// scanner and file-id validator. Missing files warn; oversized live assets
+    /// return TooLarge before publication. Reads are bounded during copying.
+    /// Cost O(selected text + asset bytes), capped by budget. No graph writes.
+    pub(crate) fn publication_assets(
+        &self,
+        corpus: &tine_core::Corpus,
+        budget: u64,
+        warnings: &mut Vec<String>,
+    ) -> Result<Vec<(String, Vec<u8>)>, crate::StoreError> {
+        let mut names = std::collections::HashSet::new();
+        for page in &corpus.pages {
+            if let Some(pre) = &page.document.pre_block {
+                crate::model::collect_asset_refs(pre, &mut names);
+            }
+            for block in &page.document.roots {
+                crate::model::collect_block_asset_refs(block, &mut names);
+            }
+        }
+        // The orphan scanner keeps raw and decoded URL spellings. A browser
+        // decodes the URL, so copy only the decoded name when both were seen.
+        let encoded: Vec<_> = names
+            .iter()
+            .filter(|name| name.contains('%'))
+            .cloned()
+            .collect();
+        for name in encoded {
+            if crate::model::percent_decode(&name) != name {
+                names.remove(&name);
+            }
+        }
+        // The shared orphan answerer also marks ancestors (PDF area-image
+        // directories). Publication copies files, so remove those directory
+        // markers while preserving the complete nested reference.
+        let referenced: Vec<_> = names.iter().cloned().collect();
+        for name in referenced {
+            for parent in Path::new(&name).ancestors().skip(1) {
+                if let Some(parent) = parent.to_str() {
+                    names.remove(parent);
+                }
+            }
+        }
+        let mut names: Vec<_> = names.into_iter().collect();
+        names.sort();
+        let mut out = Vec::new();
+        let mut remaining = budget;
+        for name in names {
+            // The scanner over-collects on purpose (orphan detection must not
+            // miss a reference), so a candidate may be prose after `assets/`
+            // rather than a file name. One that cannot name a file is simply
+            // not an asset: skip it like a missing one instead of failing the
+            // whole publication. A real read failure of an asset still fails.
+            let Ok(id) = self.file_id(crate::Area::Assets, &name) else {
+                continue;
+            };
+            match self.read(&id, Some(remaining)) {
+                Ok((bytes, _)) => {
+                    remaining = remaining.saturating_sub(bytes.len() as u64);
+                    out.push((format!("assets/{name}"), bytes));
+                }
+                Err(crate::StoreError::InvalidTarget(_)) => {
+                    warnings.push(format!("Asset {name} was omitted: not a regular file."));
+                }
+                Err(crate::StoreError::NotFound) => {
+                    warnings.push(format!("Asset {name} was omitted: file not found."));
+                }
+                Err(crate::StoreError::Io(error))
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::InvalidFilename | std::io::ErrorKind::NotADirectory
+                    ) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(out)
+    }
+
+    /// Publish a create-only site under a directory explicitly picked by the
+    /// user. The leaf must be a portable name. The parent must exist outside
+    /// the graph; even a symlink into the graph is refused. Files are fsynced
+    /// in an owned stage and the stage is moved without clobbering an existing
+    /// leaf. A failure after the rename can leave a complete but unsynced site;
+    /// inspect the named destination before retrying. Cost O(emitted bytes).
+    pub(crate) fn publish_site_external(
+        &self,
+        parent: &Path,
+        leaf: &str,
+        emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
+    ) -> Result<PublishReceipt, PublishFailed> {
+        let failed = |error: io::Error| PublishFailed {
+            cause: error.into(),
+            previous_kept: None,
+        };
+        validate_leaf(leaf).map_err(failed)?;
+        let parent = fs::canonicalize(parent).map_err(failed)?;
+        let graph_root = fs::canonicalize(&self.graph.root).map_err(failed)?;
+        if parent.starts_with(&graph_root) {
+            return Err(failed(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "export destination is inside the graph",
+            )));
+        }
+        let _writer = self.writer.lock().unwrap();
+        if self.is_closed() {
+            return Err(failed(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "store closed",
+            )));
+        }
+        let stage = reserve_publish_stage_at(&parent).map_err(failed)?;
+        let _cleanup = StageCleanup::new(&stage).map_err(failed)?;
+        let mut writer = SiteWriter { stage, files: 0 };
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| emit(&mut writer))) {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                return Err(PublishFailed {
+                    cause: error,
+                    previous_kept: None,
+                })
+            }
+            Err(_) => return Err(failed(io::Error::other("export callback panicked"))),
+        }
+        let files = writer.files;
+        let out = parent.join(leaf);
+        let PublishStage {
+            path,
+            root,
+            dir,
+            identity,
+        } = writer.stage;
+        crate::directory_durability::sync_directory_entry(&path).map_err(failed)?;
+        drop(dir);
+        match root.symlink_metadata(leaf) {
+            Ok(_) => {
+                return Err(failed(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "export folder already exists",
+                )))
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(failed(error)),
+        }
+        crate::model::move_file_noreplace(&path, &out).map_err(failed)?;
+        if !identity_from_path(&out).is_ok_and(|current| current == identity) {
+            return Err(failed(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "export stage changed during publication",
+            )));
+        }
+        crate::directory_durability::sync_directory_entry(&parent).map_err(failed)?;
+        Ok(PublishReceipt {
+            site: out,
+            files,
+            previous_kept: None,
+        })
+    }
+
+    /// Export a static site to `<graph root>/publish`; report retained previous output. Each emitted file is
+    /// fsynced, then the previous site is retired and the new site is moved
+    /// into place without replacing a concurrent winner. A concurrent
+    /// directory that appears at the destination stays live and causes an
+    /// error rather than a successful receipt; the prior site
+    /// remains in recovery. Failure attempts to remove the reserved stage;
+    /// an early setup or cleanup error may leave it on disk. This does not
+    /// emit a graph `Change`. Cost O(emitted bytes + previous-site retirement);
+    /// it blocks page saves and other writes for the full operation, including
+    /// the caller's `emit` closure and each output file's fsync. Prepare
+    /// expensive content before calling and keep `emit` bounded.
+    /// `emit` must not call methods on this store: they can wait for the
+    /// writer lock held here. A callback panic is returned as a failure after
+    /// stage cleanup, so later store calls remain usable.
+    pub fn publish_site(
+        &self,
+        emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
+    ) -> Result<PublishReceipt, PublishFailed> {
+        self.publish_site_at(None, true, emit)
+    }
+
+    fn publish_site_at(
+        &self,
+        query_folder: Option<&str>,
+        replace: bool,
+        emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
+    ) -> Result<PublishReceipt, PublishFailed> {
+        let _writer = self.writer.lock().unwrap();
+        if self.is_closed() {
+            return Err(PublishFailed {
+                cause: io::Error::new(io::ErrorKind::BrokenPipe, "store closed").into(),
+                previous_kept: None,
+            });
+        }
+        let setup = (|| {
+            let out = match query_folder {
+                Some(folder) => {
+                    validate_leaf(folder)?;
+                    let parent = self.graph.root.join("published-queries");
+                    self.graph.ensure_write_target(&parent)?;
+                    fs::create_dir_all(&parent)?;
+                    crate::directory_durability::sync_directory_entry(&self.graph.root)?;
+                    parent.join(folder)
+                }
+                None => self.graph.root.join("publish"),
+            };
+            self.graph.ensure_write_target(&out)?;
+            let stage = reserve_publish_stage_at(out.parent().unwrap())?;
+            Ok::<_, io::Error>((out, stage))
+        })();
+        let (out, stage) = setup.map_err(|cause| PublishFailed {
+            cause: cause.into(),
+            previous_kept: None,
+        })?;
+        let _cleanup = StageCleanup::new(&stage).map_err(|cause| PublishFailed {
+            cause: cause.into(),
+            previous_kept: None,
+        })?;
+        let mut writer = SiteWriter { stage, files: 0 };
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| emit(&mut writer))) {
+            Ok(Ok(())) => {}
+            Ok(Err(cause)) => {
+                return Err(PublishFailed {
+                    cause,
+                    previous_kept: None,
+                });
+            }
+            Err(_) => {
+                return Err(PublishFailed {
+                    cause: io::Error::other("static-site emit callback panicked").into(),
+                    previous_kept: None,
+                });
+            }
+        }
+        let files = writer.files;
+        let previous_kept = commit_publish_stage_report(&self.graph, writer.stage, &out, replace)
+            .map_err(|(cause, previous_kept)| PublishFailed {
+            cause: cause.into(),
+            previous_kept,
+        })?;
+        Ok(PublishReceipt {
+            site: out,
+            files,
+            previous_kept,
+        })
+    }
+}
+
+/// Count projected block references over exactly the selected publication
+/// pages. Cost O(selected blocks); source pages are not changed.
+pub fn publication_block_ref_counts(
+    store: &Store,
+    corpus: &tine_core::Corpus,
+) -> std::collections::HashMap<String, usize> {
+    store.publication_block_ref_counts(corpus)
+}
+
+/// Read selected pages' referenced assets through Store's validated asset
+/// reader. Missing assets append warnings; TooLarge refuses the caller-supplied
+/// cumulative byte budget. Cost O(selected text + budget); no graph writes.
+pub fn publication_assets(
+    store: &Store,
+    corpus: &tine_core::Corpus,
+    budget: u64,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<(String, Vec<u8>)>, crate::StoreError> {
+    store.publication_assets(corpus, budget, warnings)
+}
+
+/// Publish a fresh site leaf below an existing user-picked OS directory. The
+/// parent must be outside the graph. Store stages and fsyncs files, then moves
+/// the stage create-only; a collision or changed stage refuses publication.
+pub fn publish_site_external(
+    store: &Store,
+    parent: &std::ffi::OsStr,
+    leaf: &str,
+    emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
+) -> Result<PublishReceipt, PublishFailed> {
+    store.publish_site_external(Path::new(parent), leaf, emit)
+}
+
+fn validate_leaf(leaf: &str) -> io::Result<()> {
+    if leaf.is_empty()
+        || leaf.len() > 80
+        || leaf.starts_with('-')
+        || leaf.ends_with('-')
+        || !leaf
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid export folder",
+        ));
+    }
+    Ok(())
+}
+
+/// Inspect a portable query leaf without creating output. Returns its display
+/// path, whether it exists, and the first unused -N suggestion on collision.
+/// Cost O(colliding sibling names). I/O/unsafe layout errors refuse review;
+/// the suggestion is advisory, and commit never reallocates a chosen name.
+pub fn query_publication_destination(
+    store: &Store,
+    folder: &str,
+) -> io::Result<(String, bool, Option<String>)> {
+    validate_leaf(folder)?;
+    let parent = store.graph.root.join("published-queries");
+    store.graph.ensure_write_target(&parent.join(folder))?;
+    let exists = |name: &str| match fs::symlink_metadata(parent.join(name)) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    };
+    let occupied = exists(folder)?;
+    let mut suggested = None;
+    if occupied {
+        for n in 2u32.. {
+            let suffix = format!("-{n}");
+            let stem = folder[..folder.len().min(80 - suffix.len())].trim_end_matches('-');
+            let candidate = format!("{stem}{suffix}");
+            if !exists(&candidate)? {
+                suggested = Some(candidate);
+                break;
+            }
+        }
+    }
+    Ok((
+        parent.join(folder).display().to_string(),
+        occupied,
+        suggested,
+    ))
+}
+
+/// Commit a query leaf under published-queries through the same staged door as
+/// Store::publish_site. Create refuses a concurrent winner; Replace preserves
+/// the directory occupying the leaf at commit and reports its recovery path on
+/// success or later failure. Cost O(emitted bytes); holds the writer lock, so
+/// emit must not call Store. Stage/retirement/install errors can leave complete
+/// output or recovery on disk: inspect reported paths before retrying.
+pub fn publish_query_site(
+    store: &Store,
+    folder: &str,
+    replace: bool,
+    emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
+) -> Result<PublishReceipt, PublishFailed> {
+    store.publish_site_at(Some(folder), replace, emit)
+}
+
+struct PublishRecovery {
+    path: PathBuf,
+    dir: Dir,
+}
+
+#[cfg(target_os = "windows")]
+fn dir_identity(dir: &Dir, path: &Path) -> io::Result<FileIdentity> {
+    let capability = identity_from_file(dir.try_clone()?.into_std_file())?;
+    let share_delete = identity_from_path(path)?;
+    if capability != share_delete {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "static-publish staging path changed while binding its identity",
+        ));
+    }
+    Ok(share_delete)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn dir_identity(dir: &Dir, _path: &Path) -> io::Result<FileIdentity> {
+    identity_from_file(dir.try_clone()?.into_std_file())
+}
+
+#[cfg(test)]
+fn reserve_publish_stage(graph: &Graph) -> io::Result<PublishStage> {
+    reserve_publish_stage_at(&graph.root)
+}
+
+fn reserve_publish_stage_at(parent: &Path) -> io::Result<PublishStage> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let root = Dir::open_ambient_dir(parent, ambient_authority())?;
+    for _ in 0..128 {
+        let name = format!(
+            ".tine-publish-stage-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        );
+        let path = parent.join(&name);
+        match root.create_dir(&name) {
+            Ok(()) => {
+                let dir = root.open_dir(&name)?;
+                let identity = dir_identity(&dir, &path)?;
+                return Ok(PublishStage {
+                    path,
+                    root,
+                    dir,
+                    identity,
+                });
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not reserve a unique static-publish staging directory",
+    ))
+}
+
+fn write_publish_stage_file(stage: &PublishStage, name: &str, bytes: &[u8]) -> io::Result<()> {
+    let relative = Path::new(name);
+    if name.is_empty()
+        || name.contains('\\')
+        || name
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        || relative.is_absolute()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "static-publish output name must be one file",
+        ));
+    }
+    publish_stage_write_race_hook(stage)?;
+    // All generation is relative to the directory handle reserved above. A
+    // rename plus symlink/junction replacement of the ambient stage pathname
+    // therefore cannot redirect an open or truncate outside the graph.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    if let Some(parent) = relative
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        stage.dir.create_dir_all(parent)?;
+    }
+    let mut file = stage.dir.open_with(relative, &options)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    // Directory entries for nested app/asset paths must be durable before the
+    // leaf is installed (crash/power-loss boundary, storage-contract.md).
+    let mut parent = relative.parent();
+    while let Some(dir) = parent {
+        crate::directory_durability::sync_directory_entry(&stage.path.join(dir))?;
+        parent = dir.parent();
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+thread_local! {
+    static PUBLISH_STAGE_WRITE_SWAP: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static PUBLISH_RECOVERY_SWAP: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn replace_bound_dir_path(path: &Path, outside: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let displaced = path.with_file_name(format!(
+            "{}.displaced",
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("bound")
+        ));
+        fs::rename(path, &displaced)?;
+        symlink(outside, path)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, outside);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+fn publish_stage_write_race_hook(stage: &PublishStage) -> io::Result<()> {
+    PUBLISH_STAGE_WRITE_SWAP.with(|outside| match outside.borrow_mut().take() {
+        Some(outside) => replace_bound_dir_path(&stage.path, &outside),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn publish_stage_write_race_hook(_stage: &PublishStage) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn publish_recovery_race_hook(recovery: &PublishRecovery) -> io::Result<()> {
+    PUBLISH_RECOVERY_SWAP.with(|outside| match outside.borrow_mut().take() {
+        Some(outside) => replace_bound_dir_path(&recovery.path, &outside),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn publish_recovery_race_hook(_recovery: &PublishRecovery) -> io::Result<()> {
+    Ok(())
+}
+
+fn reserve_publish_recovery(graph: &Graph, root: &Dir) -> io::Result<PublishRecovery> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let recovery_rel = Path::new("logseq").join(".tine-trash").join("conflicts");
+    let recovery = graph.root.join(&recovery_rel);
+    graph.ensure_write_target(&recovery)?;
+    root.create_dir_all(&recovery_rel)?;
+    let recovery_root = root.open_dir(&recovery_rel)?;
+    for rel in [
+        "logseq/.tine-trash/conflicts",
+        "logseq/.tine-trash",
+        "logseq",
+        "",
+    ] {
+        crate::directory_durability::sync_directory_entry(&graph.root.join(rel))?;
+    }
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    for _ in 0..128 {
+        let name = format!(
+            "{stamp}-{}__previous-publish",
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        );
+        match recovery_root.create_dir(&name) {
+            Ok(()) => {
+                crate::directory_durability::sync_directory_entry(&recovery)?;
+                return Ok(PublishRecovery {
+                    path: recovery.join(&name),
+                    dir: recovery_root.open_dir(&name)?,
+                });
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not reserve static-publish recovery directory",
+    ))
+}
+
+fn commit_publish_stage_report(
+    graph: &Graph,
+    stage: PublishStage,
+    out: &Path,
+    replace: bool,
+) -> Result<Option<PathBuf>, (io::Error, Option<PathBuf>)> {
+    graph
+        .ensure_write_target(out)
+        .map_err(|error| (error, None))?;
+    crate::directory_durability::sync_directory_entry(&stage.path)
+        .map_err(|error| (error, None))?;
+    let PublishStage {
+        path,
+        root,
+        dir,
+        identity,
+    } = stage;
+    // Windows refuses to rename a directory while this capability is open.
+    // Every file is already synced and the stable identity above survives the
+    // close for the post-move replacement check.
+    drop(dir);
+
+    let parent_identity = dir_identity(&root, out.parent().unwrap()).map_err(|e| (e, None))?;
+    if !identity_from_path(out.parent().unwrap()).is_ok_and(|live| live == parent_identity) {
+        return Err((
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "publication parent changed before commit",
+            ),
+            None,
+        ));
+    }
+
+    // Reject a pre-existing alias without touching it. A replacement racing the
+    // check is moved as an inode into bound recovery and rejected there; it is
+    // never followed for a write.
+    let leaf = out.file_name().unwrap();
+    let graph_dir =
+        Dir::open_ambient_dir(&graph.root, ambient_authority()).map_err(|e| (e, None))?;
+    let old_recovery = match root.symlink_metadata(leaf) {
+        Ok(metadata) => {
+            if !replace {
+                return Err((io::Error::new(io::ErrorKind::AlreadyExists, "another export occupies the destination; replace it or choose a separate folder"), None));
+            }
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err((
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "static-publish output is not a real directory",
+                    ),
+                    None,
+                ));
+            }
+            let recovery =
+                reserve_publish_recovery(graph, &graph_dir).map_err(|error| (error, None))?;
+            publish_recovery_race_hook(&recovery).map_err(|error| (error, None))?;
+            root.rename(leaf, &recovery.dir, "previous")
+                .map_err(|error| (error, None))?;
+            let previous = recovery.path.join("previous");
+            let retired = recovery
+                .dir
+                .symlink_metadata("previous")
+                .map_err(|error| (error, Some(previous.clone())))?;
+            if !retired.is_dir() || retired.file_type().is_symlink() {
+                return Err((
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "static-publish output changed during retirement",
+                    ),
+                    Some(previous),
+                ));
+            }
+            crate::directory_durability::sync_directory_entry(&recovery.path)
+                .and_then(|_| {
+                    crate::directory_durability::sync_directory_entry(out.parent().unwrap())
+                })
+                .map_err(|e| (e, Some(previous)))?;
+            publication_pause("retired");
+            Some(recovery)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err((error, None)),
+    };
+
+    let previous_kept = old_recovery
+        .as_ref()
+        .map(|recovery| recovery.path.join("previous"));
+
+    publication_pause("before-install");
+    if let Err(error) = crate::model::move_file_noreplace(&path, out) {
+        // The previous site stays complete in conflict recovery. Avoid a
+        // compare-then-replace restoration that could clobber a late winner.
+        return Err((error, previous_kept));
+    }
+    let out_meta = fs::symlink_metadata(out).map_err(|error| (error, previous_kept.clone()))?;
+    let same_stage = out_meta.is_dir()
+        && !out_meta.file_type().is_symlink()
+        && identity_from_path(out).is_ok_and(|live| live == identity);
+    if same_stage {
+        crate::directory_durability::sync_directory_entry(out.parent().unwrap())
+            .map_err(|e| (e, previous_kept.clone()))?;
+        return Ok(previous_kept);
+    }
+
+    // A replaced stage must never remain live. Move it through the bound graph
+    // and recovery directory handles; the previous complete site is already
+    // retained separately and is not overwritten during automatic recovery.
+    let bad = reserve_publish_recovery(graph, &graph_dir)
+        .map_err(|error| (error, previous_kept.clone()))?;
+    let _ = root.rename(leaf, &bad.dir, "invalid-stage");
+    Err((
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "static-publish staging directory changed during commit",
+        ),
+        previous_kept,
+    ))
+}
+
+// Process-level interruption/race hooks are compiled only for fixture tests.
+fn publication_pause(point: &str) {
+    #[cfg(feature = "test-faults")]
+    if std::env::var("TINE_PUBLICATION_PAUSE").as_deref() == Ok(point) {
+        if let Ok(marker) = std::env::var("TINE_PUBLICATION_MARKER") {
+            while !Path::new(&format!("{marker}.continue")).exists() {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
+    let _ = point;
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn stage_names(root: &Path) -> Vec<String> {
+        fs::read_dir(root)
+            .unwrap()
+            .flatten()
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.starts_with(".tine-publish-stage-"))
+            .collect()
+    }
+
+    #[test]
+    fn failed_publish_removes_its_reserved_stage() {
+        let (base, _) = roots("cleanup-on-error");
+        let store = Store::open(&base, Default::default()).unwrap().0;
+        let result = store.publish_site(&mut |writer| {
+            writer.write("index.html", b"partial")?;
+            Err(io::Error::other("emit failed").into())
+        });
+        assert!(result.is_err());
+        assert!(stage_names(&base).is_empty());
+
+        fs::write(base.join("publish"), b"not a directory").unwrap();
+        let result = store.publish_site(&mut |writer| writer.write("index.html", b"partial"));
+        assert!(result.is_err());
+        assert!(stage_names(&base).is_empty());
+    }
+
+    #[test]
+    fn panicking_emit_cleans_stage_and_leaves_writer_usable() {
+        let (base, _) = roots("panic-on-emit");
+        let store = Store::open(&base, Default::default()).unwrap().0;
+        let failed = store.publish_site(&mut |writer| {
+            writer.write("index.html", b"partial")?;
+            panic!("injected emitter panic")
+        });
+        assert!(failed.is_err());
+        assert!(stage_names(&base).is_empty());
+        let published = store
+            .publish_site(&mut |writer| writer.write("index.html", b"complete"))
+            .unwrap();
+        assert_eq!(published.files, 1);
+        assert_eq!(
+            fs::read(base.join("publish/index.html")).unwrap(),
+            b"complete"
+        );
+        store.close();
+    }
+
+    fn roots(label: &str) -> (PathBuf, PathBuf) {
+        let base =
+            std::env::temp_dir().join(format!("tine-publish-{label}-{}", std::process::id()));
+        let outside = std::env::temp_dir().join(format!(
+            "tine-publish-{label}-outside-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        (base, outside)
+    }
+
+    #[test]
+    fn external_publication_is_atomic_and_never_enters_the_graph() {
+        let (base, outside) = roots("external-destination");
+        let store = Store::open(&base, Default::default()).unwrap().0;
+        let first = store
+            .publish_site_external(&outside, "selected", &mut |writer| {
+                writer.write("index.html", b"first")
+            })
+            .unwrap();
+        assert_eq!(first.site, outside.join("selected"));
+        assert_eq!(fs::read(first.site.join("index.html")).unwrap(), b"first");
+        assert!(!base.join("selected").exists());
+        assert!(store
+            .publish_site_external(&outside, "selected", &mut |writer| {
+                writer.write("index.html", b"second")
+            })
+            .is_err());
+        assert_eq!(
+            fs::read(outside.join("selected/index.html")).unwrap(),
+            b"first"
+        );
+        assert!(store
+            .publish_site_external(&base, "inside", &mut |writer| {
+                writer.write("index.html", b"leak")
+            })
+            .is_err());
+        assert!(!base.join("inside").exists());
+        store.close();
+    }
+
+    #[test]
+    fn publish_commit_never_writes_through_a_replaced_output_symlink() {
+        let (base, outside) = roots("output-swap");
+        fs::write(outside.join("index.html"), "outside sentinel").unwrap();
+        let graph = Graph::open(&base);
+        let stage = reserve_publish_stage(&graph).unwrap();
+        write_publish_stage_file(&stage, "index.html", b"generated").unwrap();
+        symlink(&outside, base.join("publish")).unwrap();
+        assert!(commit_publish_stage_report(&graph, stage, &base.join("publish"), true).is_err());
+        assert_eq!(
+            fs::read_to_string(outside.join("index.html")).unwrap(),
+            "outside sentinel"
+        );
+        assert!(fs::symlink_metadata(base.join("publish"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[test]
+    fn publish_stage_handle_survives_ambient_symlink_swap_without_outside_write() {
+        let (base, outside) = roots("stage-swap");
+        fs::write(outside.join("style.css"), "outside sentinel").unwrap();
+        PUBLISH_STAGE_WRITE_SWAP.with(|slot| *slot.borrow_mut() = Some(outside.clone()));
+        let store = Store::open(&base, Default::default()).unwrap().0;
+        let result = store.publish_site(&mut |writer| {
+            writer.write("style.css", b"generated")?;
+            writer.write("public.html", b"generated page")
+        });
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(outside.join("style.css")).unwrap(),
+            "outside sentinel"
+        );
+        assert!(!outside.join("public.html").exists());
+    }
+
+    #[test]
+    fn publish_recovery_handle_survives_ambient_symlink_swap_without_outside_move() {
+        let (base, outside) = roots("recovery-swap");
+        fs::create_dir_all(base.join("publish")).unwrap();
+        fs::write(base.join("publish/index.html"), "previous site").unwrap();
+        fs::write(outside.join("previous"), "outside sentinel").unwrap();
+        PUBLISH_RECOVERY_SWAP.with(|slot| *slot.borrow_mut() = Some(outside.clone()));
+        let store = Store::open(&base, Default::default()).unwrap().0;
+        let receipt = store
+            .publish_site(&mut |writer| writer.write("index.html", b"generated"))
+            .unwrap();
+        assert!(receipt.site.join("index.html").exists());
+        assert_eq!(
+            fs::read_to_string(outside.join("previous")).unwrap(),
+            "outside sentinel"
+        );
+        let conflicts = base.join("logseq/.tine-trash/conflicts");
+        assert!(fs::read_dir(conflicts)
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.path().join("previous/index.html").exists()));
+    }
+}

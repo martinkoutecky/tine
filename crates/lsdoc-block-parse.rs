@@ -9,6 +9,196 @@
 
 use lsdoc::ast::{Block, Inline, ListItem, Projection, Span};
 
+const MAX_PARSED_TREE_DEPTH: usize = 1024;
+/// Source-side ceiling on a line's quote staircase for free-text doors; the
+/// same 128-level ceiling the page admission applies (`PARSE_INPUT_MAX_DEPTH`).
+#[allow(dead_code)] // each crate that includes this file uses a subset
+pub(crate) const SOURCE_QUOTE_DEPTH_MAX: usize = 128;
+
+/// `>` markers that open a quote staircase on one line: after leading spaces
+/// and any list markers, each `>` optionally followed by spaces. lsdoc parses
+/// every level by recursing *during the parse* (`markdown_blockquote_sequence`
+/// re-parses the stripped body), so a tree check after the parse is too late:
+/// ~1,300 levels overflow a 2 MiB debug stack before any tree exists (I-22).
+/// Counts markers, an upper bound on levels (lsdoc may strip two per level).
+pub(crate) fn line_quote_depth(line: &str) -> usize {
+    let spaces = |bytes: &[u8], mut at: usize| {
+        while matches!(bytes.get(at), Some(b' ' | b'\t' | b'\x0c' | b'\x1a')) {
+            at += 1;
+        }
+        at
+    };
+    let bytes = line.as_bytes();
+    let mut at = spaces(bytes, 0);
+    loop {
+        let digits = bytes[at..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        let marker_end = match bytes.get(at + digits) {
+            Some(b'.' | b')') if digits > 0 => at + digits + 1,
+            Some(b'-' | b'+' | b'*') if digits == 0 => at + 1,
+            _ => break,
+        };
+        if !matches!(bytes.get(marker_end), Some(b' ' | b'\t')) {
+            break;
+        }
+        at = spaces(bytes, marker_end);
+    }
+    let mut depth = 0;
+    while bytes.get(at) == Some(&b'>') {
+        depth += 1;
+        at = spaces(bytes, at + 1);
+    }
+    depth
+}
+
+fn quote_depth_within(text: &str, limit: usize) -> bool {
+    text.split(['\n', '\r'])
+        .all(|line| line_quote_depth(line) <= limit)
+}
+
+/// Refuse before lsdoc recurses: the block doors keep their panic contract
+/// (the page parse isolates it), sized to the tree bound so no input that
+/// parsed before is refused by this check alone.
+fn admit_block_source(raw: &str) {
+    if !quote_depth_within(raw, MAX_PARSED_TREE_DEPTH) {
+        panic!("lsdoc quote nesting exceeds 1024 levels");
+    }
+}
+
+// lsdoc's parser uses heap frames, but its returned AST has recursive drop.
+// Check the *actual* AST before any of Tine's recursive consumers see it.
+fn parsed_tree_within_limit(blocks: &[Block], limit: usize) -> bool {
+    enum Node<'a> {
+        Block(&'a Block, usize),
+        Item(&'a ListItem, usize),
+        Inline(&'a Inline, usize),
+    }
+    let mut todo: Vec<_> = blocks.iter().map(|block| Node::Block(block, 1)).collect();
+    while let Some(node) = todo.pop() {
+        match node {
+            Node::Block(block, depth) => {
+                if depth > limit {
+                    return false;
+                }
+                match block {
+                    Block::Quote { children, .. } | Block::Custom { children, .. } => {
+                        todo.extend(children.iter().map(|child| Node::Block(child, depth + 1)));
+                    }
+                    Block::List { items, .. } => {
+                        todo.extend(items.iter().map(|item| Node::Item(item, depth + 1)));
+                    }
+                    Block::Paragraph { inline, .. }
+                    | Block::Heading { inline, .. }
+                    | Block::Bullet { inline, .. }
+                    | Block::FootnoteDef { inline, .. } => {
+                        todo.extend(inline.iter().map(|item| Node::Inline(item, depth + 1)));
+                    }
+                    _ => {}
+                }
+            }
+            Node::Item(item, depth) => {
+                if depth > limit {
+                    return false;
+                }
+                todo.extend(item.items.iter().map(|child| Node::Item(child, depth + 1)));
+                todo.extend(
+                    item.content
+                        .iter()
+                        .map(|child| Node::Block(child, depth + 1)),
+                );
+                todo.extend(item.name.iter().map(|child| Node::Inline(child, depth + 1)));
+            }
+            Node::Inline(item, depth) => {
+                if depth > limit {
+                    return false;
+                }
+                let children = match item {
+                    Inline::Emphasis { children, .. }
+                    | Inline::Subscript { children, .. }
+                    | Inline::Superscript { children, .. }
+                    | Inline::Tag { children, .. } => Some(children),
+                    Inline::Link { label, .. } => Some(label),
+                    Inline::Fnref { definition, .. } => Some(definition),
+                    _ => None,
+                };
+                if let Some(children) = children {
+                    todo.extend(children.iter().map(|child| Node::Inline(child, depth + 1)));
+                }
+            }
+        }
+    }
+    true
+}
+
+// Drain children before dropping a refused tree. Ordinary `Drop` on a deep
+// `Block`/`ListItem`/`Inline` chain would overflow the parser thread's stack.
+fn drop_parsed_tree(blocks: Vec<Block>) {
+    enum Node {
+        Block(Block),
+        Item(ListItem),
+        Inline(Inline),
+    }
+    let mut todo: Vec<_> = blocks.into_iter().map(Node::Block).collect();
+    while let Some(node) = todo.pop() {
+        match node {
+            Node::Block(mut block) => match &mut block {
+                Block::Quote { children, .. } | Block::Custom { children, .. } => {
+                    todo.extend(std::mem::take(children).into_iter().map(Node::Block));
+                }
+                Block::List { items, .. } => {
+                    todo.extend(std::mem::take(items).into_iter().map(Node::Item));
+                }
+                Block::Paragraph { inline, .. }
+                | Block::Heading { inline, .. }
+                | Block::Bullet { inline, .. }
+                | Block::FootnoteDef { inline, .. } => {
+                    todo.extend(std::mem::take(inline).into_iter().map(Node::Inline));
+                }
+                _ => {}
+            },
+            Node::Item(mut item) => {
+                todo.extend(std::mem::take(&mut item.items).into_iter().map(Node::Item));
+                todo.extend(
+                    std::mem::take(&mut item.content)
+                        .into_iter()
+                        .map(Node::Block),
+                );
+                todo.extend(std::mem::take(&mut item.name).into_iter().map(Node::Inline));
+            }
+            Node::Inline(mut item) => {
+                let children = match &mut item {
+                    Inline::Emphasis { children, .. }
+                    | Inline::Subscript { children, .. }
+                    | Inline::Superscript { children, .. }
+                    | Inline::Tag { children, .. } => Some(children),
+                    Inline::Link { label, .. } => Some(label),
+                    Inline::Fnref { definition, .. } => Some(definition),
+                    _ => None,
+                };
+                if let Some(children) = children {
+                    todo.extend(std::mem::take(children).into_iter().map(Node::Inline));
+                }
+            }
+        }
+    }
+}
+
+fn bounded_blocks(blocks: Vec<Block>) -> Vec<Block> {
+    if parsed_tree_within_limit(&blocks, MAX_PARSED_TREE_DEPTH) {
+        blocks
+    } else {
+        drop_parsed_tree(blocks);
+        panic!("lsdoc parsed tree exceeds 1024 levels");
+    }
+}
+
+fn bounded_projection(mut projection: Projection) -> Projection {
+    projection.blocks = bounded_blocks(std::mem::take(&mut projection.blocks));
+    projection
+}
+
 #[derive(Debug)]
 struct ProtectedCode {
     start: usize,
@@ -272,9 +462,10 @@ fn restore_blocks(blocks: &mut [Block], protected: &[ProtectedCode], restored: &
 }
 
 pub(crate) fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
+    admit_block_source(raw);
     let prepared = match prepare(raw, is_org) {
         Preparation::Plain(input) => {
-            return lsdoc::parse(&input, if is_org { "org" } else { "md" })
+            return bounded_blocks(lsdoc::parse(&input, if is_org { "org" } else { "md" }))
         }
         Preparation::Protected(prepared) => prepared,
     };
@@ -282,19 +473,23 @@ pub(crate) fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
     let mut restored = vec![false; prepared.protected.len()];
     restore_blocks(&mut blocks, &prepared.protected, &mut restored);
     if restored.iter().all(|value| *value) {
-        blocks
+        bounded_blocks(blocks)
     } else {
         // Fail closed: an unanticipated parser shape may retain lsdoc's original
         // classification, but transformed bytes must never leak into the AST.
-        lsdoc::parse(&format!("- {}", raw.trim_start()), "md")
+        bounded_blocks(lsdoc::parse(&format!("- {}", raw.trim_start()), "md"))
     }
 }
 
 #[allow(dead_code)] // the wasm crate needs block parsing only; tine-core uses the full projection
 pub(crate) fn parse_projection(raw: &str, is_org: bool) -> Projection {
+    admit_block_source(raw);
     let prepared = match prepare(raw, is_org) {
         Preparation::Plain(input) => {
-            return lsdoc::parse_format(&input, if is_org { "org" } else { "md" })
+            return bounded_projection(lsdoc::parse_format(
+                &input,
+                if is_org { "org" } else { "md" },
+            ))
         }
         Preparation::Protected(prepared) => prepared,
     };
@@ -302,15 +497,144 @@ pub(crate) fn parse_projection(raw: &str, is_org: bool) -> Projection {
     let mut restored = vec![false; prepared.protected.len()];
     restore_blocks(&mut projection.blocks, &prepared.protected, &mut restored);
     if restored.iter().all(|value| *value) {
-        projection
+        bounded_projection(projection)
     } else {
-        lsdoc::parse_format(&format!("- {}", raw.trim_start()), "md")
+        bounded_projection(lsdoc::parse_format(
+            &format!("- {}", raw.trim_start()),
+            "md",
+        ))
+    }
+}
+
+/// Parse free text that is NOT a block body (a property value, a whole file):
+/// no re-bulleting. A quote staircase deeper than [`SOURCE_QUOTE_DEPTH_MAX`]
+/// is refused before lsdoc recurses, and a tree deeper than the block bound is
+/// drained iteratively; either way `None`, and the caller degrades (no refs
+/// from that value, an empty document) instead of aborting (I-22). Text lsdoc
+/// does not yet own (an ownership gap in v2, e.g. `"- s::\r"`) is likewise
+/// `None` through the strict hook rather than the panicking `parse_format`: in
+/// the wasm build (`panic = "abort"`) that panic is an `unreachable` trap with
+/// no message and no way to isolate it. Every
+/// production `lsdoc::parse*` call is in this file
+/// (`tine-core/tests/lsdoc_parse_boundary.rs`).
+#[allow(dead_code)] // each crate that includes this file uses a subset
+pub(crate) fn parse_text_bounded(text: &str, format: &str) -> Option<Projection> {
+    if !quote_depth_within(text, SOURCE_QUOTE_DEPTH_MAX) {
+        return None;
+    }
+    let mut projection =
+        lsdoc::__try_parse_format_v2(text, if format == "org" { "org" } else { "md" })?;
+    let blocks = std::mem::take(&mut projection.blocks);
+    if parsed_tree_within_limit(&blocks, MAX_PARSED_TREE_DEPTH) {
+        projection.blocks = blocks;
+        Some(projection)
+    } else {
+        drop_parsed_tree(blocks);
+        None
+    }
+}
+
+/// A whole page's outline headers ([`lsdoc::parse_outline`]) under the
+/// free-text bound: `None` when the page's quote staircase is deeper than
+/// [`SOURCE_QUOTE_DEPTH_MAX`] (refused before lsdoc recurses) or lsdoc does not
+/// take ownership of the text. lsdoc drops its own parse tree stack-safely.
+#[allow(dead_code)] // each crate that includes this file uses a subset
+pub(crate) fn parse_outline_bounded(text: &str, format: &str) -> Option<Vec<lsdoc::OutlineHeader>> {
+    if !quote_depth_within(text, SOURCE_QUOTE_DEPTH_MAX) {
+        return None;
+    }
+    lsdoc::parse_outline(text, format)
+        .ok()
+        .map(|outline| outline.headers)
+}
+
+/// [`lsdoc::inline`] under the same bound, for inline-only readers.
+#[allow(dead_code)] // each crate that includes this file uses a subset
+pub(crate) fn parse_inline_bounded(text: &str, format: &str) -> Option<Vec<Inline>> {
+    let wrapped = vec![Block::Paragraph {
+        inline: lsdoc::inline(text, format),
+        span: None,
+    }];
+    if !parsed_tree_within_limit(&wrapped, MAX_PARSED_TREE_DEPTH) {
+        drop_parsed_tree(wrapped);
+        return None;
+    }
+    match wrapped.into_iter().next() {
+        Some(Block::Paragraph { inline, .. }) => Some(inline),
+        _ => None,
     }
 }
 
 #[cfg(test)]
 mod preparation_tests {
     use super::*;
+
+    #[test]
+    fn actual_parsed_tree_depth_is_checked_and_drained_iteratively() {
+        let make_tree = |depth| {
+            let mut tree = vec![Block::Paragraph {
+                inline: Vec::new(),
+                span: None,
+            }];
+            for _ in 0..depth {
+                tree = vec![Block::Quote {
+                    children: tree,
+                    span: None,
+                }];
+            }
+            tree
+        };
+        assert_eq!(bounded_blocks(make_tree(510)).len(), 1);
+        assert_eq!(bounded_blocks(make_tree(1_020)).len(), 1);
+        assert!(std::panic::catch_unwind(|| bounded_blocks(make_tree(20_000))).is_err());
+    }
+
+    #[test]
+    fn quote_staircase_is_counted_as_lsdoc_nests_it() {
+        for (line, depth) in [
+            ("> > > x", 3),
+            (">>>x", 3),
+            ("  - > > x", 2),
+            ("1. >\t> x", 2),
+            ("text > not a quote", 0),
+            ("-> arrow", 0),
+            ("a:: >>> value", 0),
+        ] {
+            assert_eq!(line_quote_depth(line), depth, "{line}");
+        }
+        let at_cap = format!("{}x", "> ".repeat(SOURCE_QUOTE_DEPTH_MAX));
+        assert!(parse_text_bounded(&at_cap, "md").is_some());
+        let deep = format!("{}x", "> ".repeat(20_000));
+        assert!(parse_text_bounded(&deep, "md").is_none());
+        assert!(std::panic::catch_unwind(|| parse_projection(&deep, false)).is_err());
+    }
+
+    #[test]
+    fn lsdoc_nesting_forms_are_actual_deep_trees() {
+        let mut callouts = String::from("- root\n");
+        for index in 0..600 {
+            callouts.push_str(&format!("  #+BEGIN_a{index}\n"));
+        }
+        callouts.push_str("  text\n");
+        for index in (0..600).rev() {
+            callouts.push_str(&format!("  #+END_a{index}\n"));
+        }
+        let mut lists = String::from("- root\n");
+        for depth in 0..600 {
+            lists.push_str(&" ".repeat(depth + 2));
+            lists.push_str("+ item\n");
+        }
+        for (source, format) in [
+            (callouts, "md"),
+            (lists, "md"),
+            (format!("{}x\n", ">".repeat(1_200)), "org"),
+        ] {
+            let blocks = lsdoc::parse(&source, format);
+            let deep = !parsed_tree_within_limit(&blocks, 512);
+            drop_parsed_tree(blocks);
+            assert!(deep, "{format} construct should build a deep lsdoc tree");
+        }
+    }
 
     #[test]
     fn ordinary_blocks_keep_the_single_input_fast_path() {

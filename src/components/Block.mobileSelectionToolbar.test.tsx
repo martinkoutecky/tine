@@ -3,7 +3,9 @@ import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
-import { loadSingle, pageByName, resetStore } from "../store";
+import { resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { pageByName } from "../document/model";
 import type { BlockDto } from "../types";
 
 const platform = vi.hoisted(() => ({ mobile: true }));
@@ -11,6 +13,8 @@ vi.mock("../nativeChrome", () => ({
   get isMobilePlatform() {
     return platform.mobile;
   },
+  // The block-swipe wiring reads the E2E gesture override; unset in unit tests.
+  touchGesturePlatform: () => null,
 }));
 
 beforeAll(() => initParser());

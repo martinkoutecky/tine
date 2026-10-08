@@ -1,30 +1,67 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
-import { blockProperty, doc, resetStore, setDoc, setBlockProperty, setRaw, undo, type FeedPage, type Node as StoreNode } from "../store";
-import { route } from "../router";
+import { blockProperty, resetStore, undo } from "../document";
+import { type FeedPage, type Node as StoreNode } from "../document/model";
+import { doc, setDoc } from "../document/model";
+import { openJournals, openPage, route } from "../router";
+import { journalTitle } from "../journal";
 import type { QueryExecution, QueryHit, RefGroup } from "../types";
-import type { QueryReport, QueryResult } from "../editor/queryIr";
-import { bumpDataRev, bumpGraphEpoch, setWorkflow } from "../ui";
-import { queryMacroExtent } from "../editor/queryMacro";
-import { backendReadsQueries } from "../queryReadingsTestkit";
+import { editingId, startEditing } from "../editorController";
+import type { ParsedQuery, QueryResult, QueryTextDialect, Source } from "../editor/queryIr";
+import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { searchFilter } from "../editor/queryBuilder";
-import { editingId, endEdit, startEditing } from "../editorController";
+import { readEdnOptions } from "../editor/edn";
+import { resetSharedQueryResultsForTests } from "../queryResultCache";
+import { bumpDataRev } from "../graphSession";
+import * as blockRender from "../render/block";
+import { renderedBlocks, resetNearObserverForTests } from "../lazyObserve";
+import { openSwitcher, closeSwitcher } from "../ui";
 
 beforeAll(async () => {
   await initParser();
 });
 
 afterEach(() => {
+  closeSwitcher();
+  resetNearObserverForTests();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  resetSharedQueryResultsForTests();
   resetStore();
-  setWorkflow("now");
   localStorage.clear();
   document.body.innerHTML = "";
+});
+
+/** What the ONE engine reads for a macro argument, stated for these tests (the
+ *  jsdom mock has no parser): an advanced vector/map is `advanced`, a trailing
+ *  `{…}` after an OG form or vector is the opaque options map, and the host's
+ *  `tine.view` reaches the view. The filter is the IR's honest `raw`. */
+function readQuery(text: string, dialect: QueryTextDialect, properties: [string, string][] = []): ParsedQuery {
+  const trimmed = text.trim();
+  const split = /^([\s\S]*?[)\]"])\s*(\{:[\s\S]*\})$/.exec(trimmed);
+  const [original, og_options] = split && !trimmed.startsWith("{") ? [split[1], split[2]] : [trimmed, ""];
+  const kind: Source["kind"] = /^[[{]/.test(trimmed) ? "advanced" : dialect === "macro_tql" ? "tql" : "og";
+  const view = Object.fromEntries(properties.filter(([key]) => key === "tine.view").map(([, value]) => ["view", value]));
+  return {
+    query: { anchor: "block", filter: { kind: "raw", text: original, diagnostic_kind: "not_applicable" }, diagnostics: [], source: { kind, original, og_options } as Source },
+    view,
+    legacy_table: readEdnOptions(og_options)?.table ?? false,
+  } as ParsedQuery;
+}
+
+/** State what `query_run` answers: these block groups. */
+function mockRun(groups: RefGroup[] | (() => RefGroup[]), report?: Parameters<typeof blockRunResult>[1]) {
+  return vi.spyOn(backend(), "queryRun").mockImplementation(async () =>
+    blockRunResult(typeof groups === "function" ? groups() : groups, report));
+}
+
+beforeEach(() => {
+  vi.spyOn(backend(), "parseQuery").mockImplementation(async (text, dialect, properties) => readQuery(text, dialect, properties));
 });
 
 function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => void } {
@@ -68,22 +105,6 @@ function queryGroups(ids: string[]): RefGroup[] {
   ];
 }
 
-/** What `query_run` answers for a block-anchored query (§7.1). Execution goes
- *  through the ONE evaluator now — `run_query` and `run_advanced_query` cannot
- *  read TQL and are no longer on the render path — so this is what every result
- *  in this file is mocked as. `report` is the advanced ran/ignored answer, which
- *  now rides on the result rather than on a second command (M5). */
-function blockResult(groups: RefGroup[], report?: Partial<QueryReport>): QueryResult {
-  return {
-    anchor: "block",
-    groups,
-    diagnostics: [],
-    report: { ran: [], ignored: [], supported: true, ...report },
-    total: groups.reduce((sum, group) => sum + group.blocks.length, 0),
-    exceeded: false,
-  };
-}
-
 function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -93,55 +114,16 @@ async function settleQuery(): Promise<void> {
   await tick();
 }
 
-/** The Display panel, opened. A builder-backed query states its view there now
- *  — the header switcher would be a second control writing the same key — so
- *  the helper opens the sheet and the panel, in that order, exactly as a user
- *  would. Hosts with no builder (an advanced query, a friendly search) keep the
- *  header switcher, which is why both branches live here. */
-async function openDisplay(root: HTMLElement): Promise<HTMLElement> {
-  const gear = await vi.waitFor(() => {
-    const found = root.querySelector<HTMLButtonElement>(".qs-gear");
-    if (!found) throw new Error("the query sentence never appeared");
-    return found;
-  });
-  if (!document.querySelector(".qs-sheet")) gear.click();
-  const trigger = await vi.waitFor(() => {
-    const found = document.querySelector<HTMLButtonElement>(".qd-trigger");
-    if (!found) throw new Error("the Display control never appeared");
-    return found;
-  });
-  if (!document.querySelector(".qd-panel")) trigger.click();
-  return await vi.waitFor(() => {
-    const panel = document.querySelector<HTMLElement>(".qd-panel");
-    if (!panel) throw new Error("the Display panel never opened");
-    return panel;
-  });
-}
-
-async function clickView(
-  root: HTMLElement,
-  label: "Search" | "List" | "Table" | "Board",
-): Promise<void> {
-  const legacy = [...root.querySelectorAll(".query-view-switcher button")].find(
-    (el) => el.textContent?.trim() === label
-  ) as HTMLButtonElement | undefined;
-  if (legacy) {
-    legacy.click();
-    return;
-  }
-  const panel = await openDisplay(root);
-  const button = [...panel.querySelectorAll(".qd-view")].find(
+function clickView(root: HTMLElement, label: "Search" | "List" | "Table" | "Board"): void {
+  const button = [...root.querySelectorAll(".query-view-switcher button")].find(
     (el) => el.textContent?.trim() === label
   ) as HTMLButtonElement | undefined;
   if (!button) throw new Error(`missing query view button ${label}`);
   button.click();
 }
 
-async function activeView(root: HTMLElement): Promise<string | undefined> {
-  const legacy = root.querySelector(".query-view-switcher button.active");
-  if (legacy) return legacy.textContent?.trim();
-  const panel = await openDisplay(root);
-  return panel.querySelector(".qd-view.active")?.textContent?.trim();
+function activeView(root: HTMLElement): string | undefined {
+  return root.querySelector(".query-view-switcher button.active")?.textContent?.trim();
 }
 
 function presentedResultNumbers(
@@ -171,247 +153,246 @@ function loadQueryDoc(queryRaw: string) {
     feed: ["Sheet"],
     loaded: true,
   });
-  vi.spyOn(backend(), "queryRun").mockResolvedValue(blockResult(queryGroups(["todo"])));
+  mockRun(queryGroups(["todo"]));
 }
 
-function loadAdvancedQueryDoc(queryRaw: string) {
-  setDoc({
-    byId: {
-      query: node("query", queryRaw, null),
-      todo: node("todo", "TODO From query\nowner:: Martin", null),
-    },
-    pages: [page(["query", "todo"])],
-    feed: ["Sheet"],
-    loaded: true,
+function loadDamagedQueryDoc(raw: string) {
+  loadQueryDoc(raw);
+  // State the native empty OG reading (og.rs::parse_og): pages, true filter.
+  // Before the fix the missing extent is converted to exactly this empty input.
+  vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties) => {
+    const parsed = readQuery(text, dialect, properties);
+    return text === "" ? { ...parsed, query: { ...parsed.query, anchor: "page", filter: { kind: "true" } } } : parsed;
   });
-  // The advanced ran/ignored answer now rides on the run's own report (M5).
-  vi.spyOn(backend(), "queryRun").mockResolvedValue(
-    blockResult(queryGroups(["todo"]), { ran: ["task"], ignored: [], supported: true }),
-  );
-  // Whether a `{{query …}}` holds datalog is the ENGINE's reading, not a regex
-  // over the text (§7.1) — so the test says the engine read datalog.
-  const argument = queryMacroExtent(queryRaw)?.argument ?? "";
-  backendReadsQueries({ [argument]: { form: argument, kind: "advanced" } });
+  vi.mocked(backend().queryRun).mockResolvedValue({
+    anchor: "page", pages: [
+      { path: "pages/Sheet.md", name: "Sheet", kind: "page", properties: [] },
+      { path: "pages/Other.md", name: "Other", kind: "page", properties: [] },
+    ], diagnostics: [], report: { ran: [], ignored: [], supported: true }, total: 2, exceeded: false,
+  });
 }
 
 describe("QueryMacro sheet integration", () => {
-  it("keeps a completed task mounted for the two-second UI grace, then removes the departed row coherently", async () => {
-    setWorkflow("todo");
-    loadQueryDoc("{{query (task TODO)}}");
-    let ids = ["todo"];
-    const run = vi.spyOn(backend(), "queryRun").mockImplementation(async () => blockResult(queryGroups(ids)));
+  it("renders the reported options map without a stray brace", async () => {
+    const raw = '{{query (page-property tags gptpro) {:title "gptpro"}}}\ntine.group-field:: prop:anchor\ntine.view:: search';
+    loadQueryDoc(raw);
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
-      await vi.waitFor(() => expect(root.querySelector('[data-block-id="todo"]')).not.toBeNull());
-      const row = root.querySelector<HTMLElement>('[data-block-id="todo"]')!;
-      const checkbox = row.querySelector<HTMLElement>(".block-task-checkbox")!;
-
-      ids = [];
-      checkbox.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
-      expect(doc.byId.todo.raw).toMatch(/^DONE /);
-      expect(row.querySelector(".block-marker")?.textContent).toBe("DONE");
-      bumpDataRev();
-
-      await tick();
-      expect(run).toHaveBeenCalledTimes(1);
-      expect(root.querySelector('[data-block-id="todo"]')).toBe(row);
-      expect(root.querySelector(".query-count")?.textContent).toBe("1");
-
-      await new Promise((resolve) => setTimeout(resolve, 2_050));
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-      await vi.waitFor(() => expect(root.querySelector('[data-block-id="todo"]')).toBeNull());
-      expect(root.querySelector(".query-count")?.textContent).toBe("0");
-
-      // A later projection/change notification is a fresh demand, not part of
-      // the expired hold, so the coherent row can return without another wait.
-      undo();
-      ids = ["todo"];
-      bumpDataRev();
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
-      await vi.waitFor(() => expect(root.querySelector('[data-block-id="todo"]')).not.toBeNull());
-      expect(root.querySelector(".query-count")?.textContent).toBe("1");
-    } finally {
-      dispose();
-    }
-  });
-
-  it("keeps the live DONE edit when an early committed query still returns the older TODO row", async () => {
-    setWorkflow("todo");
-    loadQueryDoc("{{query (task TODO)}}");
-    const older = blockResult(queryGroups(["todo"]));
-    let answer = older;
-    const run = vi.spyOn(backend(), "queryRun").mockImplementation(async () => answer);
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      const row = await vi.waitFor(() => {
-        const found = root.querySelector<HTMLElement>('[data-block-id="todo"]');
-        expect(found).not.toBeNull();
-        return found!;
-      });
-      row.querySelector<HTMLElement>(".block-task-checkbox")!
-        .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
-      bumpDataRev();
-      expect(doc.byId.todo.raw).toMatch(/^DONE /);
-      await new Promise((resolve) => setTimeout(resolve, 2_050));
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-      expect(root.querySelector('[data-block-id="todo"]')).toBe(row);
-      expect(row.querySelector(".block-marker")?.textContent).toBe("DONE");
-      expect(doc.byId.todo.raw).toMatch(/^DONE /);
-      expect(root.querySelector(".query-count")?.textContent).toBe("1");
-
-      // Later ordinary projection progress updates membership without rolling
-      // back the independently live editor/source object in the meantime.
-      answer = blockResult(queryGroups([]));
-      bumpDataRev();
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
-      await vi.waitFor(() => expect(root.querySelector('[data-block-id="todo"]')).toBeNull());
-      expect(root.querySelector(".query-count")?.textContent).toBe("0");
-      expect(doc.byId.todo.raw).toMatch(/^DONE /);
-    } finally {
-      dispose();
-    }
-  });
-
-  it("coalesces checkbox reversal and Undo into the latest grace refresh", async () => {
-    setWorkflow("todo");
-    loadQueryDoc("{{query (task TODO)}}");
-    let ids = ["todo"];
-    const run = vi.spyOn(backend(), "queryRun").mockImplementation(async () => blockResult(queryGroups(ids)));
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      const row = await vi.waitFor(() => {
-        const found = root.querySelector<HTMLElement>('[data-block-id="todo"]');
-        expect(found).not.toBeNull();
-        return found!;
-      });
-      const toggle = () => row.querySelector<HTMLElement>(".block-task-checkbox")!
-        .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
-
-      ids = [];
-      toggle();
-      bumpDataRev();
-      expect(doc.byId.todo.raw).toMatch(/^DONE /);
-      ids = ["todo"];
-      toggle();
-      bumpDataRev();
-      expect(doc.byId.todo.raw).toMatch(/^TODO /);
-      ids = [];
-      toggle();
-      bumpDataRev();
-      expect(doc.byId.todo.raw).toMatch(/^DONE /);
-      undo();
-      ids = ["todo"];
-      bumpDataRev();
-      expect(doc.byId.todo.raw).toMatch(/^TODO /);
-
-      await tick();
-      expect(run).toHaveBeenCalledTimes(1);
-      expect(root.querySelector('[data-block-id="todo"]')).toBe(row);
-      await new Promise((resolve) => setTimeout(resolve, 2_050));
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-      expect(root.querySelector('[data-block-id="todo"]')).toBe(row);
-      expect(root.querySelector(".query-count")?.textContent).toBe("1");
-    } finally {
-      dispose();
-    }
-  });
-
-  it("keeps a focused result editor and its coherent snapshot until editing ends", async () => {
-    const form = "(task TODO) (sort-by page asc)";
-    setDoc({
-      byId: {
-        query: node("query", `{{query ${form}}}`, null),
-        "hit-a": node("hit-a", "TODO First\nMultiline detail", null),
-        "hit-b": node("hit-b", "TODO Second", null),
-      },
-      pages: [page(["query", "hit-a", "hit-b"])],
-      feed: ["Sheet"],
-      loaded: true,
-    });
-    backendReadsQueries({ [form]: { form, view: { sort: [["page", "asc"]] } } });
-    let finishRefresh!: (value: QueryResult) => void;
-    const run = vi.spyOn(backend(), "queryRun")
-      .mockResolvedValueOnce(blockResult(queryGroups(["hit-a", "hit-b"])))
-      .mockImplementationOnce(() => new Promise<QueryResult>((resolve) => { finishRefresh = resolve; }));
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      const row = await vi.waitFor(() => {
-        const found = root.querySelector<HTMLElement>('[data-block-id="hit-a"]');
-        expect(found).not.toBeNull();
-        return found!;
-      });
-      bumpDataRev();
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-
-      const content = row.querySelector<HTMLElement>(".block-content")!;
-      content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
-      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
-      const editor = await vi.waitFor(() => {
-        const found = row.querySelector<HTMLTextAreaElement>("textarea.block-editor");
-        expect(found).not.toBeNull();
-        return found!;
-      });
-      editor.focus();
-      editor.setSelectionRange(5, 5);
-      setRaw("hit-a", "TODO First edited\nMultiline detail");
-      expect(doc.byId["hit-a"].raw).toContain("First edited");
-      expect(editingId()).toBe("hit-a");
-
-      finishRefresh(blockResult(queryGroups(["hit-b"])));
-      await tick();
-      expect(row.isConnected).toBe(true);
-      expect(row.querySelector("textarea.block-editor")).toBe(editor);
-      expect(root.querySelector(".query-count")?.textContent).toBe("2");
-
-      endEdit("blur");
-      await vi.waitFor(() => expect(root.querySelector('[data-block-id="hit-a"]')).toBeNull());
-      expect(root.querySelector(".query-count")?.textContent).toBe("1");
-    } finally {
-      dispose();
-    }
-  });
-
-  it("keeps sorted result nodes mounted when another result disappears", async () => {
-    const form = "(task TODO) (sort-by page asc)";
-    const hitIds = Array.from({ length: 30 }, (_, index) => `hit-${index + 1}`);
-    setDoc({
-      byId: {
-        query: node("query", `{{query ${form}}}`, null),
-        ...Object.fromEntries(hitIds.map((id, index) => [
-          id,
-          node(id, `TODO Result ${index + 1}\nMultiline detail ${index + 1}`, null),
-        ])),
-      },
-      pages: [page(["query", ...hitIds])],
-      feed: ["Sheet"], loaded: true,
-    });
-    backendReadsQueries({ [form]: { form, view: { sort: [["page", "asc"]] } } });
-    let ids = [...hitIds];
-    const run = vi.spyOn(backend(), "queryRun").mockImplementation(async () => blockResult(queryGroups(ids)));
-    const { root, dispose } = mount(() => <Block id="query" />);
-    const result = (id: string) => root.querySelector(`.query-group [data-block-id="${id}"]`);
-    try {
-      await vi.waitFor(() => expect(result("hit-30")).not.toBeNull());
-      const first = result("hit-1")!;
-      const last = result("hit-30")!;
-      expect(root.querySelectorAll(".query-crumb")).toHaveLength(1);
-      ids = ids.filter((id) => id !== "hit-2");
-      bumpDataRev();
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-      await vi.waitFor(() => expect(result("hit-2")).toBeNull());
-      expect(first.isConnected).toBe(true);
-      expect(result("hit-1")).toBe(first);
-      expect(result("hit-30")).toBe(last);
-      // Removing the first member must not just transfer the unstable group
-      // key to the next member and recreate the rest of the page again.
-      ids = ids.filter((id) => id !== "hit-1");
-      bumpDataRev();
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
-      await vi.waitFor(() => expect(result("hit-1")).toBeNull());
-      expect(result("hit-30")).toBe(last);
-      expect(last.isConnected).toBe(true);
-      expect(root.querySelectorAll(".query-crumb")).toHaveLength(1);
+      await settleQuery();
+      expect(root.querySelector(".query-title")?.textContent).toBe("gptpro");
+      expect(root.querySelector(".block-content")?.textContent).not.toContain("}");
+      expect(doc.byId.query.raw).toBe(raw);
     } finally { dispose(); }
+  });
+
+  it("shows a source parse error instead of running the reported damaged macro as an empty query", async () => {
+    const raw = '{{query (page-property tags gptpro) {:title "gptpro"}}\ntine.group-field:: prop:anchor\ntine.view:: search';
+    loadDamagedQueryDoc(raw);
+    vi.mocked(backend().queryRun).mockClear();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      expect(root.textContent).toMatch(/query source.*pars/i);
+      expect(backend().queryRun).not.toHaveBeenCalled();
+      expect(doc.byId.query.raw).toBe(raw);
+      startEditing("query");
+      await settleQuery();
+      expect(root.querySelector<HTMLTextAreaElement>("textarea.block-editor")?.value).toContain(raw.split("\n")[0]);
+    } finally { dispose(); }
+  });
+
+  it("reports unreadable source before offering a builder edit on the damaged block", async () => {
+    const raw = '{{query (page-property tags gptpro) {:title "gptpro"}}\ntine.group-field:: prop:anchor\ntine.view:: search';
+    loadDamagedQueryDoc(raw);
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue('(page-property tags gptpro)');
+    vi.spyOn(backend(), "queryRegistry").mockResolvedValue({ generation: 1, rows: [{
+      normalized_name: "tags", cardinality: "one", observed_type: "text",
+      count_blocks: 0, count_pages: 1, mismatch_count: 0,
+    }] });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      // Exercise Martin's edit if an invalid source is still allowed into the builder.
+      const gear = root.querySelector<HTMLButtonElement>(".qs-gear");
+      if (gear) {
+        gear.click();
+        await settleQuery();
+        document.querySelector<HTMLButtonElement>(".qs-add")!.click();
+        await settleQuery();
+        const tags = [...document.querySelectorAll<HTMLElement>("[role=option]")]
+          .find((option) => option.textContent?.trim() === "tags");
+        expect(tags).toBeDefined();
+        tags!.click();
+        const value = document.querySelector<HTMLInputElement>('.qs-input[aria-label="Value"]')!;
+        value.value = "gptpro";
+        value.dispatchEvent(new Event("input", { bubbles: true }));
+        document.querySelector<HTMLButtonElement>(".qs-commit")!.click();
+        await settleQuery();
+      }
+      expect(root.textContent).not.toContain("The block changed while saving");
+      expect(root.querySelector('[role="alert"]')?.textContent).toMatch(/query source.*pars/i);
+      expect(root.querySelector(".qs-gear")).toBeNull();
+      expect(doc.byId.query.raw).toBe(raw);
+    } finally { dispose(); }
+  });
+  it("leaves background List mounts pending while the picker owns foreground input", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    renderedBlocks.add("query");
+    mockRun(Array.from({ length: 100 }, (_, index) => ({
+      page: `Result ${index}`, kind: "page", blocks: [{ id: `result-${index}`, raw: "TODO found", children: [], collapsed: false }],
+    })));
+    const frames = new Map<number, FrameRequestCallback>();
+    let serial = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++serial, callback);
+      return serial;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
+    openSwitcher();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      expect(root.querySelectorAll(".query-group").length,
+        "I-25: covered background List DOM must yield to foreground picker input").toBe(0);
+      expect(root.querySelector(".query-pending-groups")).not.toBeNull();
+      closeSwitcher();
+      expect(root.querySelectorAll(".query-group").length).toBe(0);
+      const queued = [...frames.values()].at(-1)!;
+      expect(queued).toBeTypeOf("function");
+      openSwitcher();
+      queued(0);
+      expect(root.querySelectorAll(".query-group").length).toBe(0);
+      closeSwitcher();
+      for (let turn = 0; root.querySelectorAll(".query-group").length === 0 && turn < 20; turn += 1) {
+        const [id, frame] = [...frames][0];
+        frames.delete(id);
+        frame(0);
+      }
+      expect(root.querySelectorAll(".query-group").length).toBe(32);
+      openSwitcher();
+      expect(root.querySelectorAll(".query-group").length).toBe(32);
+    } finally { dispose(); }
+  });
+  it("mounts broad List results in bounded frames while retaining keyed groups and cancelling retired work", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    renderedBlocks.add("query");
+    let results: RefGroup[] = Array.from({ length: 100 }, (_, index) => ({
+      page: `Result ${index}`, kind: "page", blocks: [{ id: `result-${index}`, raw: "TODO found", children: [], collapsed: false }],
+    }));
+    mockRun(() => results);
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    vi.stubGlobal("IntersectionObserver", class {
+      observe() {} unobserve() {} disconnect() {}
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    let retiredFrame: FrameRequestCallback | undefined;
+    try {
+      await settleQuery();
+      expect(root.querySelectorAll(".query-group").length,
+        "I-25: a broad List must mount at most 32 new group shells per frame").toBe(32);
+      const first = root.querySelector(".query-group");
+      expect(root.querySelector(".query-pending-groups")).not.toBeNull();
+      const advanceFrame = () => {
+        const before = root.querySelectorAll(".query-group").length;
+        const [id, frame] = [...frames][0];
+        frames.delete(id);
+        frame(0);
+        expect(root.querySelectorAll(".query-group").length - before).toBeLessThanOrEqual(32);
+      };
+      for (let turn = 0; root.querySelectorAll(".query-group").length < 64 && turn < 20; turn += 1) advanceFrame();
+      expect(root.querySelectorAll(".query-group").length).toBe(64);
+      expect(root.querySelector(".query-group")).toBe(first);
+      for (let turn = 0; frames.size && turn < 20; turn += 1) advanceFrame();
+      expect(root.querySelectorAll(".query-group").length).toBe(100);
+      expect(root.querySelector(".query-pending-groups")).toBeNull();
+      results = results.map((group) => ({ ...group, page: `New ${group.page}` }));
+      bumpDataRev();
+      await settleQuery();
+      expect(root.querySelectorAll(".query-group").length).toBe(32);
+      expect(frames.size).toBeGreaterThan(0);
+      retiredFrame = [...frames.values()].at(-1);
+    } finally { dispose(); }
+    expect(frames.size).toBe(0);
+    retiredFrame?.(0);
+    expect(root.children.length).toBe(0);
+  });
+  it("defers offscreen List group headers and mounts them on viewport approach", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    renderedBlocks.add("query");
+    const observations = new Map<Element, IntersectionObserverCallback>();
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(private callback: IntersectionObserverCallback) {}
+      observe(element: Element) { observations.set(element, this.callback); }
+      unobserve(element: Element) { observations.delete(element); }
+      disconnect() { observations.clear(); }
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await expect.poll(() => root.querySelectorAll(".query-group").length).toBe(1);
+      expect(root.querySelector(".query-page"), "I-25: offscreen List groups reserve height without mounting headers and row subtrees").toBeNull();
+      const group = root.querySelector(".query-group")!;
+      const intersect = observations.get(group)!;
+      expect(intersect).toBeTypeOf("function");
+      intersect([{ target: group, isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+      expect(root.querySelector(".query-page")?.textContent).toBe("Sheet");
+    } finally { dispose(); }
+  });
+  it("does not build search excerpts for a collapsed List query, and builds them when Search is chosen", async () => {
+    loadQueryDoc('{{query (task TODO) {:collapsed? true}}}');
+    const visible = vi.spyOn(blockRender, "visibleBody");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-count")?.textContent).toContain("1"));
+      const excerptCalls = () => visible.mock.calls.filter(([raw]) => raw === doc.byId.todo.raw);
+      expect(excerptCalls(), "List counts need no per-result Search projection").toHaveLength(0);
+      clickView(root, "Search");
+      await vi.waitFor(() => expect(excerptCalls().length).toBeGreaterThan(0));
+      (root.querySelector(".query-collapse") as HTMLButtonElement).click();
+      await vi.waitFor(() => expect(root.querySelector(".query-search-hit")?.textContent).toContain("From query"));
+    } finally { dispose(); }
+  });
+
+  it("keeps a newer friendly-search result when an older request finishes last", async () => {
+    setDoc({
+      byId: {
+        query: node("query", '{{query (search "alpha")}}\ntine.view:: search', null),
+        old: node("old", "Old result", null),
+        fresh: node("fresh", "Fresh result", null),
+      },
+      pages: [page(["query", "old", "fresh"])], feed: ["Sheet"], loaded: true,
+    });
+    const execution = (id: "old" | "fresh"): QueryExecution => ({
+      hits: [{ entity: "block", page: "Sheet", kind: "page", block: {
+        id, raw: doc.byId[id].raw, collapsed: false, children: [],
+      }, display_text: doc.byId[id].raw, evidence: [] }],
+      diagnostics: [], explanation: { branches: [] }, cancelled: false,
+    });
+    let finishOld!: (value: QueryExecution) => void;
+    const search = vi.spyOn(backend(), "runGraphSearch")
+      .mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; }))
+      .mockResolvedValue(execution("fresh"));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(1));
+      bumpDataRev();
+      await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(root.textContent).toContain("Fresh result"));
+      finishOld(execution("old"));
+      await settleQuery();
+      expect(root.textContent).toContain("Fresh result");
+      expect(root.textContent).not.toContain("Old result");
+    } finally {
+      finishOld?.(execution("old"));
+      dispose();
+    }
   });
 
   it("shows bounded ancestor context for list-query hits", async () => {
@@ -426,7 +407,7 @@ describe("QueryMacro sheet integration", () => {
       feed: ["Sheet"],
       loaded: true,
     });
-    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockResult([
+    mockRun([
       {
         page: "Sheet",
         kind: "page",
@@ -437,7 +418,7 @@ describe("QueryMacro sheet integration", () => {
           children: [],
         }],
       },
-    ]));
+    ]);
 
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
@@ -466,7 +447,7 @@ describe("QueryMacro sheet integration", () => {
       kind: "page",
       blocks: [{ id: "hit-root", raw: "TODO Query hit", collapsed: false, children: [] }],
     }];
-    const runQuery = vi.spyOn(backend(), "queryRun").mockImplementation(async () => blockResult(freshResult()));
+    const runQuery = mockRun(freshResult);
 
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
@@ -490,10 +471,9 @@ describe("QueryMacro sheet integration", () => {
 
   it("reopens a materialized friendly search without exposing it as raw DSL", async () => {
     loadQueryDoc('{{query (search "alpha beta")}}\ntine.view:: search');
-    // What a `(search …)` form MEANS is the engine's answer, not a regex here:
-    // the chip is friendly because the IR carries a `content match` leaf.
-    backendReadsQueries({
-      '(search "alpha beta")': { form: '(search "alpha beta")', filter: searchFilter("alpha beta") },
+    vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties) => {
+      const read = readQuery(text, dialect, properties);
+      return { ...read, query: { ...read.query, filter: searchFilter("alpha beta") } };
     });
     const execution: QueryExecution = {
       hits: [{
@@ -525,92 +505,17 @@ describe("QueryMacro sheet integration", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     await settleQuery();
 
-    expect(await activeView(root)).toBe("Search");
-    // The resting SENTENCE says it, and says it as words plus one soft value —
-    // not as the DSL text the block happens to hold.
+    expect(activeView(root)).toBe("Search");
+    // Master's assertion (QueryMacro.test.tsx "reopens a materialized friendly search").
     expect(root.querySelector(".qs-sentence")?.textContent).toBe("Blocks where search: alpha beta");
     expect(root.querySelector(".qs-seg-value")?.textContent).toBe("alpha beta");
     expect(root.querySelector(".qs-seg-advanced")).toBeNull();
     expect([...root.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual(["alpha", "beta"]);
-    // An inline Friendly search is a whole-graph question, so it sends NO
-    // physical page scope — and it carries both families' resolved Display
-    // settings beside it (§7.6, Q3).
-    expect(graphSearch).toHaveBeenCalledWith(
-      "alpha beta", 500, 5_000, "inline-query:query", false, undefined,
-      { pageView: { view: "search" }, blockView: { view: "search" } },
-    );
+    expect(graphSearch).toHaveBeenCalledWith("alpha beta", 500, 5_000, "inline-query:query", false);
     root.querySelector<HTMLButtonElement>(".query-search-hit")!.click();
     expect(route()).toMatchObject({ kind: "page", name: "Sheet", pageKind: "page" });
 
     dispose();
-  });
-
-  it("keeps friendly-search hits and count coherent while their live block is being edited", async () => {
-    setDoc({
-      byId: {
-        query: node("query", '{{query (search "Result")}}\ntine.view:: search', null),
-        "hit-a": node("hit-a", "TODO Result A\nMultiline edit", null),
-        "hit-b": node("hit-b", "TODO Result B", null),
-      },
-      pages: [page(["query", "hit-a", "hit-b"])],
-      feed: ["Sheet"],
-      loaded: true,
-    });
-    backendReadsQueries({
-      '(search "Result")': { form: '(search "Result")', filter: searchFilter("Result") },
-    });
-    const hit = (id: "hit-a" | "hit-b"): QueryHit => ({
-      entity: "block",
-      page: "Sheet",
-      kind: "page",
-      block: {
-        id,
-        raw: doc.byId[id].raw,
-        collapsed: false,
-        children: [],
-        breadcrumb: [],
-        properties: [],
-      },
-      display_text: doc.byId[id].raw,
-      evidence: [],
-    });
-    const execution = (ids: ("hit-a" | "hit-b")[]): QueryExecution => ({
-      hits: ids.map(hit),
-      diagnostics: [],
-      explanation: { branches: [] },
-      cancelled: false,
-    });
-    let finishRefresh!: (value: QueryExecution) => void;
-    const graphSearch = vi.spyOn(backend(), "runGraphSearch")
-      .mockResolvedValueOnce(execution(["hit-a", "hit-b"]))
-      .mockImplementationOnce(() => new Promise((resolve) => { finishRefresh = resolve; }));
-
-    const { root, dispose } = mount(() => <><Block id="query" /><Block id="hit-a" /></>);
-    try {
-      await vi.waitFor(() => expect(root.querySelectorAll(".query-search-hit")).toHaveLength(2));
-      const sourceRow = root.querySelector<HTMLElement>('.ls-block[data-block-id="hit-a"]')!;
-      sourceRow.querySelector<HTMLElement>(".block-content")!
-        .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
-      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
-      await vi.waitFor(() => expect(editingId()).toBe("hit-a"));
-
-      bumpDataRev();
-      await vi.waitFor(() => expect(graphSearch).toHaveBeenCalledTimes(2));
-      finishRefresh(execution(["hit-b"]));
-      await tick();
-
-      expect(root.querySelectorAll(".query-search-hit")).toHaveLength(2);
-      expect(root.querySelector(".query-count")?.textContent).toBe("2");
-      expect(root.querySelector(".query-search-results")?.textContent).toContain("Result A");
-      expect(sourceRow.querySelector("textarea.block-editor")).not.toBeNull();
-
-      endEdit("blur");
-      await vi.waitFor(() => expect(root.querySelectorAll(".query-search-hit")).toHaveLength(1));
-      expect(root.querySelector(".query-count")?.textContent).toBe("1");
-      expect(root.querySelector(".query-search-results")?.textContent).not.toContain("Result A");
-    } finally {
-      dispose();
-    }
   });
 
   it("keeps ordinary DSL query membership across Search, List, Table, and Board presentations", async () => {
@@ -628,13 +533,13 @@ describe("QueryMacro sheet integration", () => {
       feed: ["Sheet"],
       loaded: true,
     });
-    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockResult(queryGroups(ids)));
+    mockRun(queryGroups(ids));
     const graphSearch = vi.spyOn(backend(), "runGraphSearch");
 
     const { root, dispose } = mount(() => <Block id="query" />);
     await settleQuery();
 
-    expect(await activeView(root)).toBe("Search");
+    expect(activeView(root)).toBe("Search");
     expect(root.querySelector(".query-count")?.textContent).toBe("9");
     expect(root.querySelectorAll(".query-search-results .query-search-hit")).toHaveLength(9);
     expect(root.querySelector(".query-search-hit")?.textContent).toContain("Result 1");
@@ -642,9 +547,9 @@ describe("QueryMacro sheet integration", () => {
     expect(graphSearch).not.toHaveBeenCalled();
 
     for (const view of ["List", "Table", "Board", "Search"] as const) {
-      await clickView(root, view);
+      clickView(root, view);
       await settleQuery();
-      expect(await activeView(root)).toBe(view);
+      expect(activeView(root)).toBe(view);
       expect(root.querySelector(".query-count")?.textContent).toBe("9");
       expect(presentedResultNumbers(root, view)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
@@ -665,12 +570,8 @@ describe("QueryMacro sheet integration", () => {
     await settleQuery();
 
     expect(root.querySelector(".query-header")).not.toBeNull();
-    expect(root.querySelector(".qs-line")).not.toBeNull();
-    // This block's text is mocked as unparsed, so the sentence reads it back as
-    // the retained leaf it is — still one line, still not a chip bar.
-    expect(root.querySelector(".qs-sentence")?.textContent).toBe("Blocks where (todo TODO)");
-    // Exactly once: one sentence, one gear, one count — not one per face.
-    expect(root.querySelectorAll(".qs-sentence")).toHaveLength(1);
+    expect(root.querySelector(".qs-sentence")).not.toBeNull();
+    expect(root.querySelector(".qs-seg")).not.toBeNull();
     expect(root.querySelectorAll(".sheet-table")).toHaveLength(1);
     expect(root.querySelectorAll(".query-table")).toHaveLength(0);
     expect(root.textContent).toContain("From query");
@@ -693,30 +594,25 @@ describe("QueryMacro sheet integration", () => {
       feed: ["Sheet"],
       loaded: true,
     });
-    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockResult(queryGroups(["low", "high"])));
+    const run = mockRun(queryGroups(["low", "high"]));
 
     const { root, dispose } = mount(() => <Block id="query" />);
     await settleQuery();
 
-    expect(await activeView(root)).toBe("Table");
+    expect(activeView(root)).toBe("Table");
     expect(
       [...root.querySelectorAll(".sheet-title-cell .sheet-cell-body")].map((cell) => cell.textContent?.trim())
     ).toEqual(["High score"]);
 
-    await clickView(root, "Board");
+    clickView(root, "Board");
     await settleQuery();
-    expect(await activeView(root)).toBe("Board");
+    expect(activeView(root)).toBe("Board");
     expect([...root.querySelectorAll(".sheet-board-card-title")].map((card) => card.textContent?.trim())).toEqual([
       "High score",
     ]);
     // View switching must retain the coarse query and the formula refinement.
     expect(blockProperty("query", "tine.filter")).toBe("points > 2");
-    // Execution goes through the ONE evaluator, carrying the query the engine
-    // read — not a string the frontend re-printed (I-12).
-    expect(vi.mocked(backend().queryRun).mock.calls[0][0].source).toMatchObject({
-      kind: "og",
-      original: '(and (todo TODO) "score")',
-    });
+    expect(run.mock.calls.every(([query]) => query.source.kind === "og" && query.source.original === '(and (todo TODO) "score")')).toBe(true);
 
     dispose();
   });
@@ -733,72 +629,34 @@ describe("QueryMacro sheet integration", () => {
     ));
     await settleQuery();
 
-    expect(await activeView(root)).toBe("List");
+    expect(activeView(root)).toBe("List");
 
-    await clickView(root, "Table");
-    expect(await activeView(root)).toBe("Table");
+    clickView(root, "Table");
+    expect(activeView(root)).toBe("Table");
     expect(blockProperty("query", "tine.view")).toBe("table");
     expect(doc.byId.query.raw).toBe("{{query (todo TODO)}}\ntine.view:: table");
     undo();
     expect(doc.byId.query.raw).toBe(originalRaw);
-    expect(await activeView(root)).toBe("List");
+    expect(activeView(root)).toBe("List");
 
-    await clickView(root, "Table");
-    await clickView(root, "Board");
-    expect(await activeView(root)).toBe("Board");
+    clickView(root, "Table");
+    clickView(root, "Board");
+    expect(activeView(root)).toBe("Board");
     expect(blockProperty("query", "tine.view")).toBe("board");
-    // The Board's default grouping is written under the QUERY-owned key, whose
-    // value is a canonical field id — so `state` here is the task marker and
-    // could not be mistaken for an ordinary property of the same name (P5B).
-    expect(blockProperty("query", "tine.group-field")).toBe("state");
-    expect(blockProperty("query", "tine.group-by")).toBeNull();
+    expect(blockProperty("query", "tine.group-by")).toBe("state");
     undo();
     expect(blockProperty("query", "tine.view")).toBe("table");
-    expect(blockProperty("query", "tine.group-field")).toBeNull();
+    expect(blockProperty("query", "tine.group-by")).toBeNull();
 
-    await clickView(root, "Board");
-    await clickView(root, "List");
-    expect(await activeView(root)).toBe("List");
+    clickView(root, "Board");
+    clickView(root, "List");
+    expect(activeView(root)).toBe("List");
     expect(blockProperty("query", "tine.view")).toBeNull();
-    expect(blockProperty("query", "tine.group-field")).toBe("state");
+    expect(blockProperty("query", "tine.group-by")).toBe("state");
     undo();
     expect(blockProperty("query", "tine.view")).toBe("board");
-    expect(blockProperty("query", "tine.group-field")).toBe("state");
+    expect(blockProperty("query", "tine.group-by")).toBe("state");
 
-    dispose();
-  });
-
-  // Found by `scripts/e2e-query-display.mjs` on real WebKit, where a press is a
-  // POINTER sequence and not a bare `click()`: the panel is portalled to <body>,
-  // the sheet's outside-pointer check looked for an open popover UNDER its own
-  // element, and so every press in the panel read as a press outside the sheet.
-  // The sheet closed, the panel went with it, and the control's own click never
-  // landed — the whole panel was unusable with a real pointer while every
-  // `click()`-driven test passed.
-  it("holds the sheet still under a press inside the portalled Display panel", async () => {
-    loadQueryDoc("{{query (todo TODO)}}");
-    const { root, dispose } = mount(() => (
-      <>
-        <Block id="query" />
-        <ContextMenu />
-      </>
-    ));
-    await settleQuery();
-    const panel = await openDisplay(root);
-
-    const board = [...panel.querySelectorAll<HTMLButtonElement>(".qd-view")].find(
-      (el) => el.textContent?.trim() === "Board",
-    )!;
-    // The press first, exactly as a pointer delivers it, and only then the
-    // click: the bug was that nothing survived in between.
-    for (const type of ["pointerdown", "mousedown"] as const) {
-      board.dispatchEvent(new MouseEvent(type, { bubbles: true, composed: true }));
-    }
-    expect(document.querySelector(".qs-sheet")).not.toBeNull();
-    expect(document.querySelector(".qd-panel")).not.toBeNull();
-
-    board.click();
-    await vi.waitFor(() => expect(blockProperty("query", "tine.view")).toBe("board"));
     dispose();
   });
 
@@ -813,224 +671,12 @@ describe("QueryMacro sheet integration", () => {
     ));
     await settleQuery();
 
-    await clickView(root, "Board");
+    clickView(root, "Board");
 
     expect(blockProperty("query", "tine.view")).toBe("board");
-    // A legacy key that already answers is a STATEMENT, so the Board default
-    // does not speak over it — `state` is nowhere here.
-    //
-    // What the switch DOES do is pin the meaning the block had. A bare
-    // `tine.group-by:: tags` on a LIST is the ordinary property `tags`, which is
-    // what the list grouper has always read; the same token on a Board would be
-    // the tags facet. So the switch writes the list reading canonically and
-    // retires the ambiguous key, rather than letting the new view silently
-    // reinterpret it.
-    expect(blockProperty("query", "tine.group-field")).toBe("prop:tags");
-    expect(blockProperty("query", "tine.group-by")).toBeNull();
+    expect(blockProperty("query", "tine.group-by")).toBe("tags");
 
     dispose();
-  });
-
-  it("switching to Board leaves an explicit no-grouping alone", async () => {
-    // A PRESENT but empty `tine.group-field` is the user saying "no grouping".
-    // The Board default only fills the silence, so it must not speak over this.
-    loadQueryDoc("{{query (todo TODO)}}\ntine.group-field:: ");
-
-    const { root, dispose } = mount(() => (
-      <>
-        <Block id="query" />
-        <ContextMenu />
-      </>
-    ));
-    await settleQuery();
-
-    await clickView(root, "Board");
-
-    expect(blockProperty("query", "tine.view")).toBe("board");
-    expect(blockProperty("query", "tine.group-field")).toBe("");
-    dispose();
-  });
-
-  it("keeps the task-marker default on a board whose grouping nothing states", async () => {
-    // ADR 0030, kept alive across the P5B grouping split. A note authored as
-    // `tine.view:: board` with no grouping ANYWHERE has always shown a
-    // task-marker board — the default fills the silence. `unset` and an explicit
-    // clear are two different answers, and only the clear is one ungrouped
-    // column; collapsing them would silently un-group every existing board.
-    setDoc({
-      byId: {
-        query: node("query", "{{query (todo TODO)}}\ntine.view:: board", null),
-        todo: node("todo", "TODO From query\nowner:: Martin", null),
-      },
-      pages: [page(["query", "todo"])],
-      feed: ["Sheet"],
-      loaded: true,
-    });
-    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockResult(queryGroups(["todo"])));
-
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await settleQuery();
-
-      const headings = await vi.waitFor(() => {
-        const found = [...root.querySelectorAll(".sheet-board-header span:first-child")].map((el) =>
-          el.textContent?.trim(),
-        );
-        if (!found.length) throw new Error("the board never rendered");
-        return found;
-      });
-      expect(headings).toContain("TODO");
-      expect(headings).not.toContain("All results");
-      // Reading is not writing: the default is applied by the renderer, and the
-      // note gains no property from being looked at (I-4).
-      expect(blockProperty("query", "tine.group-field")).toBeNull();
-    } finally {
-      dispose();
-    }
-  });
-
-  it("opens Display without the filter sheet and reads its registry only on demand", async () => {
-    bumpGraphEpoch();
-    loadQueryDoc("{{query (todo TODO)}}");
-    const registry = vi.spyOn(backend(), "queryRegistry");
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await settleQuery();
-      expect(document.querySelector('.qs-sheet[aria-label="Query filter"]')).toBeNull();
-      expect(registry).not.toHaveBeenCalled();
-      const trigger = root.querySelector<HTMLButtonElement>(".qd-trigger");
-      expect(trigger).not.toBeNull();
-      trigger!.click();
-      await vi.waitFor(() => expect(document.querySelector(".qd-panel")).not.toBeNull());
-      await vi.waitFor(() => expect(registry).toHaveBeenCalledTimes(1));
-      expect(document.querySelector('.qs-sheet[aria-label="Query filter"]')).toBeNull();
-    } finally { dispose(); }
-  });
-
-  it("does not undo a display edit with the next click made before the re-parse", async () => {
-    // FAIL-BEFORE (I-20): every display surface renders from the ENGINE's last
-    // reading, and the engine re-reads asynchronously. Two clicks inside one
-    // parse round-trip therefore both start from the reading that predates the
-    // first — and a write set computed against the block's properties from that
-    // stale reading restates the fact the first click just changed, undoing it.
-    //
-    // Here: clear the grouping, then switch to Board without waiting. The
-    // switch's untouched grouping is the pre-clear one, and the save baseline
-    // called that a disagreement with the empty `tine.group-field` and wrote the
-    // old grouping straight back.
-    loadQueryDoc("{{query (todo TODO)}}\ntine.group-by:: state");
-
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await settleQuery();
-      const panel = await openDisplay(root);
-
-      const clear = [...panel.querySelectorAll<HTMLButtonElement>(".qd-row-btn")].find(
-        (button) => button.textContent?.trim() === "None",
-      )!;
-      const board = [...panel.querySelectorAll<HTMLButtonElement>(".qd-view")].find(
-        (button) => button.textContent?.trim() === "Board",
-      )!;
-      // Two clicks, no await between them — the parse cannot have answered.
-      clear.click();
-      board.click();
-
-      expect(blockProperty("query", "tine.view")).toBe("board");
-      // The explicit clear survives, and the ambiguous legacy key stays retired.
-      expect(blockProperty("query", "tine.group-field")).toBe("");
-      expect(blockProperty("query", "tine.group-by")).toBeNull();
-    } finally {
-      dispose();
-    }
-  });
-
-  it("keeps both aggregate additions made before the re-parse", async () => {
-    loadQueryDoc("{{query (todo TODO)}}");
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await settleQuery();
-      const panel = await openDisplay(root);
-      const add = [...panel.querySelectorAll<HTMLButtonElement>("button")].find(
-        (button) => button.textContent?.trim() === "+ count",
-      )!;
-      add.click();
-      add.click();
-      expect(blockProperty("query", "tine.col-aggregates")).toBe("count;count");
-    } finally { dispose(); }
-  });
-
-  it("shows the sheet-only aggregate segments it retains, and keeps them on an edit", async () => {
-    // FAIL-BEFORE: `tine.col-aggregates` is shared ground (contract §5). The
-    // save merges rather than rewrites, so a table-only `estimate=median`
-    // survived — but no surface said so, and the panel that DOES list the
-    // aggregates listed only the three the query reader owns. Retention the
-    // author cannot see is indistinguishable from loss.
-    loadQueryDoc("{{query (todo TODO)}}\ntine.col-aggregates:: estimate=median");
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await settleQuery();
-      const panel = await openDisplay(root);
-      // Read from the block's OWN bytes: the query reader never returns this
-      // segment, so no reading of the view could have produced it.
-      expect(panel.querySelector(".qd-retained")?.textContent).toContain("estimate=median");
-
-      const add = [...panel.querySelectorAll<HTMLButtonElement>("button")].find(
-        (button) => button.textContent?.trim() === "+ count",
-      )!;
-      add.click();
-      // The unrelated edit appends; the retained segment keeps its text and its
-      // place, and the panel still says it is there.
-      expect(blockProperty("query", "tine.col-aggregates")).toBe("estimate=median;count");
-      await vi.waitFor(() =>
-        expect(document.querySelector(".qd-retained")?.textContent).toContain("estimate=median"),
-      );
-    } finally { dispose(); }
-  });
-
-  it("preserves a grouping clear when a sample save starts before the re-parse", async () => {
-    loadQueryDoc("{{query (todo TODO)}}\ntine.group-by:: state");
-    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
-    vi.spyOn(backend(), "printQuery").mockResolvedValue("(todo TODO)");
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await settleQuery();
-      const panel = await openDisplay(root);
-      const clear = [...panel.querySelectorAll<HTMLButtonElement>(".qd-row-btn")].find(
-        (button) => button.textContent?.trim() === "None",
-      )!;
-      const sample = panel.querySelector<HTMLInputElement>(".qd-sample")!;
-      clear.click();
-      sample.value = "2";
-      sample.dispatchEvent(new Event("input", { bubbles: true }));
-      sample.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-      await vi.waitFor(() => expect(blockProperty("query", "tine.sample")).toBe("2"));
-      expect(blockProperty("query", "tine.group-field")).toBe("");
-      expect(blockProperty("query", "tine.group-by")).toBeNull();
-    } finally { dispose(); }
-  });
-
-  it.each(["property", "graph"])("does not overwrite a %s change while the printer is pending", async (change) => {
-    loadQueryDoc("{{query (todo TODO)}}");
-    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
-    let finish!: (text: string) => void;
-    const printed = new Promise<string>((resolve) => { finish = resolve; });
-    const printer = vi.spyOn(backend(), "printQuery").mockReturnValue(printed);
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await settleQuery();
-      const panel = await openDisplay(root);
-      const sample = panel.querySelector<HTMLInputElement>(".qd-sample")!;
-      sample.value = "2";
-      sample.dispatchEvent(new Event("input", { bubbles: true }));
-      sample.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-      await vi.waitFor(() => expect(printer).toHaveBeenCalled());
-      if (change === "property") setBlockProperty("query", "owner", "Later edit");
-      else bumpGraphEpoch();
-      finish("(todo TODO)");
-      await vi.waitFor(() => expect(root.querySelector(".query-print-refused")?.textContent).toContain("changed while saving"));
-      if (change === "property") expect(blockProperty("query", "owner")).toBe("Later edit");
-      expect(blockProperty("query", "tine.sample")).toBeNull();
-    } finally { finish("(todo TODO)"); dispose(); }
   });
 
   it("collapses a query sheet face while keeping the query controls visible", async () => {
@@ -1048,7 +694,7 @@ describe("QueryMacro sheet integration", () => {
     (root.querySelector(".query-collapse") as HTMLElement).click();
 
     expect(root.querySelector(".query-header")).not.toBeNull();
-    expect(root.querySelector(".qs-line")).not.toBeNull();
+    expect(root.querySelector(".qs-sentence")).not.toBeNull();
     expect(root.querySelectorAll(".sheet-table")).toHaveLength(0);
 
     dispose();
@@ -1063,7 +709,7 @@ describe("QueryMacro sheet integration", () => {
       },
       pages: [page(["q1", "q2", "todo"])], feed: ["Sheet"], loaded: true,
     });
-    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockResult(queryGroups(["todo"])));
+    mockRun(queryGroups(["todo"]));
     const { root, dispose } = mount(() => <><Block id="q1" /><Block id="q2" /></>);
     await settleQuery();
     const toggles = root.querySelectorAll<HTMLElement>(".query-collapse");
@@ -1075,8 +721,7 @@ describe("QueryMacro sheet integration", () => {
 
   it("persists an explicit expanded override over source collapsed true", async () => {
     loadQueryDoc("{{query (todo TODO) {:collapsed? true}}}");
-    backendReadsQueries({ "(todo TODO) {:collapsed? true}": { form: "(todo TODO)", opts: "{:collapsed? true}" } });
-    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockResult(queryGroups(["todo"])));
+    mockRun(queryGroups(["todo"]));
     const first = mount(() => <Block id="query" />);
     await settleQuery();
     const toggle = first.root.querySelector(".query-collapse") as HTMLElement;
@@ -1094,7 +739,6 @@ describe("QueryMacro sheet integration", () => {
 
   it("keeps legacy :table-view? rendering read-only when no tine.view is set", async () => {
     loadQueryDoc("{{query (todo TODO) {:table-view? true}}}");
-    backendReadsQueries({ "(todo TODO) {:table-view? true}": { form: "(todo TODO)", opts: "{:table-view? true}" } });
 
     const { root, dispose } = mount(() => (
       <>
@@ -1104,21 +748,123 @@ describe("QueryMacro sheet integration", () => {
     ));
     await settleQuery();
 
-    expect(await activeView(root)).toBe("List");
+    expect(activeView(root)).toBe("List");
     expect(blockProperty("query", "tine.view")).toBeNull();
     expect(root.querySelectorAll(".query-table")).toHaveLength(1);
+    // A wide result table scrolls inside .md-table-wrap instead of cram-wrapping
+    // its nowrap cells past the block (master ee7730b48).
+    expect(root.querySelector(".query-table")!.parentElement!.classList.contains("md-table-wrap")).toBe(true);
     expect(root.querySelectorAll(".sheet-table")).toHaveLength(0);
 
     dispose();
   });
 
-  // The `⚙ advanced` / `← Simple` pair is gone with the frontend's datalog
-  // converters (§9 P0-ts). What must still hold is that an authored advanced
-  // query renders its ran/ignored note and does NOT show the chip bar — the
-  // builder edits a filter, and converting authored datalog into one is out of
-  // scope (§4.3.1, Q13).
+  it.each([
+    ["{{query (task TODO)}}\nquery-table:: true", true],
+    ["{{query (task TODO) table}}", false],
+  ])("reads legacy table mode without writing query-table: %s", async (raw, property) => {
+    loadQueryDoc(raw);
+    vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties) => {
+      if (property) expect(properties).toContainEqual(["query-table", "true"]);
+      return { ...readQuery(text, dialect, properties), legacy_table: true };
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    await settleQuery();
+    expect(root.querySelectorAll(".query-table")).toHaveLength(1);
+    expect(doc.byId.query.raw).toBe(raw);
+    clickView(root, "Table");
+    expect(blockProperty("query", "tine.view")).toBe("table");
+    expect(blockProperty("query", "query-table")).toBe(property ? "true" : null);
+    undo();
+    expect(doc.byId.query.raw).toBe(raw);
+    clickView(root, "List");
+    expect(blockProperty("query", "tine.view")).toBe("list");
+    await settleQuery();
+    expect(root.querySelectorAll(".query-table")).toHaveLength(0);
+    expect(blockProperty("query", "query-table")).toBe(property ? "true" : null);
+    dispose();
+  });
+
+  // OG query_table.cljs:61-109,163-179 (audit #9): the legacy table reads its columns
+  // and initial sort from the HOST block's `query-properties`, `query-sort-by` and
+  // `query-sort-desc`.
+  describe("legacy :table-view? host properties", () => {
+    const groupsWith = (rows: Array<[string, Array<[string, string]>]>): RefGroup[] => [
+      {
+        page: "Sheet",
+        kind: "page",
+        blocks: rows.map(([text, properties], index) => ({
+          id: `row-${index}`, raw: text, collapsed: false, children: [], properties,
+        })),
+      },
+    ];
+    const rowsData: Array<[string, Array<[string, string]>]> = [
+      ["TODO bravo", [["owner", "Beta"], ["rank", "10"]]],
+      ["TODO alpha", [["owner", "Alpha"], ["rank", "9"]]],
+      ["TODO charlie", [["owner", "Gamma"], ["rank", "100"]]],
+    ];
+    const headers = (root: HTMLElement) =>
+      [...root.querySelectorAll(".query-table th")].map((th) => th.textContent?.replace(/[ ▲▼]/g, ""));
+    const firstColumn = (root: HTMLElement) =>
+      [...root.querySelectorAll(".query-table tbody tr")].map((tr) => tr.querySelector("td")!.textContent);
+
+    async function table(raw: string) {
+      loadQueryDoc(raw);
+      mockRun(groupsWith(rowsData));
+      const view = mount(() => <Block id="query" />);
+      await settleQuery();
+      return view;
+    }
+
+    it("shows only the columns query-properties names, in that order", async () => {
+      const { root, dispose } = await table(
+        "{{query (task TODO) {:table-view? true}}}\nquery-properties:: [:rank :block]"
+      );
+      expect(headers(root)).toEqual(["rank", "Content"]);
+      expect(firstColumn(root)).toEqual(["10", "9", "100"]);
+      dispose();
+    });
+
+    it("derives block, page and the property columns when query-properties is absent", async () => {
+      const { root, dispose } = await table("{{query (task TODO) {:table-view? true}}}");
+      expect(headers(root)).toEqual(["Content", "Page", "owner", "rank"]);
+      dispose();
+    });
+
+    it("sorts by query-sort-by, descending unless query-sort-desc is false", async () => {
+      const desc = await table("{{query (task TODO) {:table-view? true}}}\nquery-sort-by:: owner");
+      expect(firstColumn(desc.root)).toEqual(["charlie", "bravo", "alpha"]);
+      desc.dispose();
+      document.body.innerHTML = "";
+      const asc = await table(
+        "{{query (task TODO) {:table-view? true}}}\nquery-sort-by:: owner\nquery-sort-desc:: false"
+      );
+      expect(firstColumn(asc.root)).toEqual(["alpha", "bravo", "charlie"]);
+      asc.dispose();
+    });
+
+    it("compares numeric cells as numbers", async () => {
+      const { root, dispose } = await table(
+        "{{query (task TODO) {:table-view? true}}}\nquery-sort-by:: rank\nquery-sort-desc:: false"
+      );
+      expect(firstColumn(root)).toEqual(["alpha", "bravo", "charlie"]);
+      dispose();
+    });
+
+    it("leaves the engine order alone when no sort property is given", async () => {
+      const { root, dispose } = await table("{{query (task TODO) {:table-view? true}}}");
+      expect(firstColumn(root)).toEqual(["bravo", "alpha", "charlie"]);
+      dispose();
+    });
+  });
+
+  // og's "shows an enabled Simple toggle for stashed advanced queries…" is retired
+  // with the frontend datalog/DSL converters, as on master (§9 P0-ts: the
+  // `⚙ advanced` / `← Simple` pair is gone; Macro.tsx has no stash).
+  // Ported from master QueryMacro.test.tsx.
   it("renders an advanced query's report without offering the filter builder", async () => {
-    loadAdvancedQueryDoc('{{query [:find (pull ?b [*]) :where (task ?b "TODO")]}}');
+    loadQueryDoc('{{query [:find (pull ?b [*]) :where (task ?b "TODO")]}}');
+    mockRun(queryGroups(["todo"]), { ran: ["task"] });
 
     const { root, dispose } = mount(() => (
       <>
@@ -1140,6 +886,79 @@ describe("QueryMacro sheet integration", () => {
   });
 });
 
+describe("QueryMacro through query_parse + query_run", () => {
+  const emptyRun = (extra: Partial<QueryResult> = {}): QueryResult => ({ ...blockRunResult([]), ...extra } as QueryResult);
+
+  it("renders a page-anchored answer as page rows, sending the host block's tine.* view properties", async () => {
+    loadQueryDoc("{{query (page-property type book)}}\ntine.sample:: 5\nowner:: Martin");
+    const parse = vi.mocked(backend().parseQuery);
+    const run = vi.spyOn(backend(), "queryRun").mockResolvedValue({
+      anchor: "page",
+      pages: [
+        { path: "pages/Dune.md", name: "Dune", kind: "page", properties: [["type", "book"]] },
+        { path: "pages/Emma.md", name: "Emma", kind: "page", properties: [["type", "book"]] },
+      ],
+      diagnostics: [],
+      report: { ran: [], ignored: [], supported: true },
+      total: 2,
+      exceeded: false,
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelectorAll(".query-page-link").length).toBe(2));
+      // Only `tine.*` keys travel; the engine merges them into the view
+      // (master semantics: `tine.sample::` on the host block samples).
+      expect(parse).toHaveBeenCalledWith("(page-property type book)", "macro_query", [["tine.sample", "5"]]);
+      // The run is bound to the page the query block is on (master semantics).
+      expect(run.mock.calls[0][2]).toEqual({ current_page: "Sheet" });
+      expect([...root.querySelectorAll(".query-page-link")].map((el) => el.textContent)).toEqual(["Dune", "Emma"]);
+      expect(root.querySelector(".query-count")?.textContent).toBe("2");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("shows an invalid query's diagnostics instead of a bare \"No results\" (I-9)", async () => {
+    loadQueryDoc("{{query (frobnicate x)}}");
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(emptyRun({
+      diagnostics: [
+        { kind: "unknown_head", message: "unknown query head `frobnicate`", suggestions: [], disabled: false },
+        { kind: "syntax", message: "greyed out", suggestions: [], disabled: true },
+      ],
+    }));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-diagnostics")).not.toBeNull());
+      const text = root.querySelector(".query-diagnostics")!.textContent ?? "";
+      expect(text).toContain("didn't understand part of this query");
+      expect(text).toContain("unknown query head `frobnicate`");
+      expect(text).not.toContain("greyed out");
+      expect(root.querySelector(".query-why-empty")).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("binds :current-page to OG's current page — the focused route, else today — not the rendering page", async () => {
+    const source = "{{query {:query [:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p]] :inputs [:current-page]}}}";
+    loadQueryDoc(source);
+    const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(emptyRun());
+    openJournals();
+    const { dispose } = mount(() => <Block id="query" />);
+    try {
+      // No routed page and no configured home: OG falls back to today.
+      await vi.waitFor(() => expect(run).toHaveBeenCalled());
+      expect(run.mock.calls.at(-1)![2]?.current_page).toBe(journalTitle(new Date()));
+      openPage("Elsewhere");
+      await vi.waitFor(() => expect(run.mock.calls.at(-1)![2]?.current_page).toBe("Elsewhere"));
+      expect(run.mock.calls.map((call) => call[2]?.current_page)).not.toContain("Sheet");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+// Ported from master QueryMacro.test.tsx.
 // GH #469. `{{query "xyz"}}` matched its own block, because the block's own text
 // contains `xyz` — so the query listed the page it lives on, which renders the
 // query again, which lists the page again. OG removes exactly the host block
@@ -1162,7 +981,7 @@ describe("a query never returns its own block (GH #469)", () => {
   it("drops the host block from a simple DSL query's results", async () => {
     loadSelfMatching('{{query "From query"}}\ntine.view:: list');
     // The backend answers honestly: the host block's own text matches too.
-    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockResult(queryGroups(["query", "todo"])));
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(queryGroups(["query", "todo"])));
 
     const { root, dispose } = mount(() => <Block id="query" />);
     await settleQuery();
@@ -1180,14 +999,8 @@ describe("a query never returns its own block (GH #469)", () => {
     loadSelfMatching('{{query {:query [:find (pull ?b [*]) :where [?b :block/content "x"]]}}}\ntine.view:: list');
     // A form that is ITSELF one map stays whole: `split_trailing_map` only splits
     // a map that FOLLOWS a nonempty form (§4.3.1).
-    backendReadsQueries({
-      '{:query [:find (pull ?b [*]) :where [?b :block/content "x"]]}': {
-        form: '{:query [:find (pull ?b [*]) :where [?b :block/content "x"]]}',
-        kind: "advanced",
-      },
-    });
     vi.spyOn(backend(), "queryRun").mockResolvedValue(
-      blockResult(queryGroups(["query", "todo"]), { ran: ["content"] }),
+      blockRunResult(queryGroups(["query", "todo"]), { ran: ["content"] }),
     );
 
     const { root, dispose } = mount(() => <Block id="query" />);
@@ -1228,312 +1041,14 @@ describe("a query never returns its own block (GH #469)", () => {
   });
 });
 
-// **Scoped Display settings on an inline query** (SPEC §7.6, Q3).
-//
-// A Friendly search answers two questions at once, and its two answers are
-// controlled independently: `tine.page-*` for the Pages section, `tine.block-*`
-// for the Blocks section, `tine.page-match-scope` for which pages are members
-// at all. Rust reads all of it and hands it to the frontend flattened beside
-// `{query, view}`; these cases are the evidence that the frontend consumes it
-// as WRITTEN — including the difference between a draft that is absent and one
-// that is present and empty, which is the difference between "inherit" and
-// "clear".
-describe("q3: scoped display settings on an inline query", () => {
-  const pageHit = (name: string, path: string): QueryHit => ({
-    entity: "page",
-    page: { name, kind: "page", date_key: null, path },
-    display_text: name,
-    evidence: [{ clause_id: 1, field: "page_name", mode: "contains", spans: [{ start: 0, end: 5 }] }],
-    score: 10,
-    row: { name, kind: "page", path, properties: [["status", "open"]] },
+// Ported from master QueryMacro.test.tsx, then changed on purpose (Martin 2026-10-03, GH #619 comment 2): the sheet opens
+// on the empty condition list and the field chooser (og's QueryListbox `.qs-menu`) stays CLOSED until the user opens it.
+it("choosing the Query slash command opens its sheet on the condition list, chooser closed", async () => {
+  vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties) => {
+    const read = readQuery(text, dialect, properties);
+    return { ...read, query: { ...read.query, filter: { kind: "and", items: [] } } };
   });
-  const blockHit = (id: string, raw: string): QueryHit => ({
-    entity: "block",
-    page: "Sheet",
-    kind: "page",
-    block: { id, raw, collapsed: false, children: [], breadcrumb: [], properties: [] },
-    display_text: raw,
-    evidence: [{ clause_id: 1, field: "visible_content", mode: "contains", spans: [{ start: 0, end: 5 }] }],
-  });
-  const mixed = (): QueryExecution => ({
-    hits: [pageHit("Alpha notes", "pages/alpha.md"), blockHit("todo", "TODO alpha work")],
-    diagnostics: [],
-    explanation: { branches: [] },
-    cancelled: false,
-    has_more: { pages: true, blocks: false },
-  });
-
-  function loadFriendly(raw: string, reading: Parameters<typeof backendReadsQueries>[0][string]) {
-    setDoc({
-      byId: {
-        query: node("query", raw, null),
-        todo: node("todo", "TODO alpha work", null),
-      },
-      pages: [page(["query", "todo"])],
-      feed: ["Sheet"],
-      loaded: true,
-    });
-    backendReadsQueries({ '(search "alpha")': reading });
-  }
-
-  it("q3_macro_consumes_flattened_scopes", async () => {
-    // FAIL-BEFORE: Macro read the singular `view` only, so both families
-    // rendered under one presentation and the two sections did not exist. The
-    // Pages half of the answer was dropped entirely outside the Search face.
-    loadFriendly('{{query (search "alpha")}}\ntine.view:: list', {
-      form: '(search "alpha")',
-      filter: searchFilter("alpha"),
-      view: { view: "list" },
-      // Pages are a TABLE with a column of the page's own property; blocks stay
-      // on the inherited list. Two families, two presentations, one query.
-      page_presentation: "table",
-      page_display: { columns: ["status"] },
-      page_match_scope: "both",
-    });
-    const search = vi.spyOn(backend(), "runGraphSearch").mockResolvedValue(mixed());
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await settleQuery();
-      // Both resolved views ride the ONE request, with the membership scope.
-      expect(search).toHaveBeenCalledWith(
-        "alpha", 500, 5_000, "inline-query:query", false, undefined,
-        {
-          pageMatchScope: "both",
-          pageView: { view: "table", columns: ["status"] },
-          blockView: { view: "list" },
-        },
-      );
-
-      const pages = root.querySelector<HTMLElement>('[data-query-result-kind="page"]')!;
-      const blocks = root.querySelector<HTMLElement>('[data-query-result-kind="block"]')!;
-      expect(pages.querySelector("h3")?.textContent).toBe("Pages");
-      expect(blocks.querySelector("h3")?.textContent).toBe("Blocks");
-      // The Pages section took its OWN presentation…
-      expect(pages.querySelector("table.query-results-table")).not.toBeNull();
-      expect([...pages.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["Page", "status"]);
-      expect(pages.querySelector("tbody tr")?.textContent).toContain("open");
-      // …and the Blocks section kept the inherited one.
-      expect(blocks.querySelector("table")).toBeNull();
-      expect(blocks.textContent).toContain("alpha work");
-      // The backend's own truncation flag, beside the family it describes.
-      expect(pages.textContent).toContain("More pages match than are shown.");
-      expect(blocks.textContent).not.toContain("More blocks match");
-
-      // Each section names its own control and its own dialog.
-      expect(pages.querySelector('[aria-label="Display pages"]')).not.toBeNull();
-      expect(blocks.querySelector('[aria-label="Display blocks"]')).not.toBeNull();
-      // The membership control belongs to neither namespace's display state.
-      const scope = pages.querySelector<HTMLSelectElement>(".query-page-match select")!;
-      expect(scope.value).toBe("both");
-      expect([...scope.options].map((option) => option.textContent))
-        .toEqual(["Names and aliases", "Page content", "Both"]);
-      expect([...scope.options].map((option) => option.value)).toEqual(["names", "content", "both"]);
-    } finally {
-      dispose();
-    }
-  });
-
-  it("q3_scoped_block_presentation_reaches_the_sheet_face", async () => {
-    // FAIL-BEFORE: the scoped presentation was inert for the two faces that are
-    // drawn by a sheet. `sheetFaceFor` asked the SINGULAR `tine.view` whether it
-    // was already a sheet face before it would honour a scoped `board`, so a
-    // note whose Blocks section said `tine.block-view:: board` fell through to
-    // the grouped renderer: the panel said Board and the section kept showing a
-    // list, with nothing on screen or in the file to explain the disagreement.
-    // The presentation is the scoped namespace's own authority (§15.1); what a
-    // sheet face needs from the block is a schema owner, not the other
-    // namespace's opinion.
-    loadFriendly('{{query (search "alpha")}}\ntine.view:: list\ntine.block-display:: 1\ntine.block-view:: board', {
-      form: '(search "alpha")',
-      filter: searchFilter("alpha"),
-      view: { view: "list" },
-      block_presentation: "board",
-      block_display: {},
-    });
-    vi.spyOn(backend(), "runGraphSearch").mockResolvedValue(mixed());
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await settleQuery();
-      const blocks = root.querySelector<HTMLElement>('[data-query-result-kind="block"]')!;
-      expect(blocks.querySelector(".sheet-board")).not.toBeNull();
-      // The other family is untouched by it: nothing about the Pages section
-      // asked for a sheet, so it keeps the presentation it inherited.
-      const pages = root.querySelector<HTMLElement>('[data-query-result-kind="page"]')!;
-      expect(pages.querySelector(".sheet-board")).toBeNull();
-    } finally {
-      dispose();
-    }
-  });
-
-  it("q3_absent_scope_inherits_and_present_empty_clears", async () => {
-    // FAIL-BEFORE: nothing distinguished the two, because nothing read either.
-    // `{}` is falsy-shaped in every way that matters, so a truthiness copy of
-    // the draft turns "clear" into "inherit" silently.
-    const search = vi.spyOn(backend(), "runGraphSearch").mockResolvedValue(mixed());
-
-    // No page draft at all: the Pages section inherits the singular sort.
-    loadFriendly('{{query (search "alpha")}}\ntine.view:: list', {
-      form: '(search "alpha")',
-      filter: searchFilter("alpha"),
-      view: { view: "list", sort: [["page", "asc"]] },
-    });
-    let mounted = mount(() => <Block id="query" />);
-    await settleQuery();
-    expect(search.mock.calls.at(-1)?.[6]).toEqual({
-      pageView: { view: "list", sort: [["page", "asc"]] },
-      blockView: { view: "list", sort: [["page", "asc"]] },
-    });
-    mounted.dispose();
-    resetStore();
-
-    // A PRESENT, empty page draft: the marker is there and states nothing, so
-    // the Pages section shows nothing extra. The Blocks section is untouched.
-    loadFriendly('{{query (search "alpha")}}\ntine.view:: list', {
-      form: '(search "alpha")',
-      filter: searchFilter("alpha"),
-      view: { view: "list", sort: [["page", "asc"]] },
-      page_display: {},
-    });
-    mounted = mount(() => <Block id="query" />);
-    try {
-      await settleQuery();
-      expect(search.mock.calls.at(-1)?.[6]).toEqual({
-        pageView: { view: "list" },
-        blockView: { view: "list", sort: [["page", "asc"]] },
-      });
-    } finally {
-      mounted.dispose();
-    }
-  });
-
-  it("q3_scoped_edit_preserves_sibling_and_source", async () => {
-    // FAIL-BEFORE: there was no scoped writer on this path at all, and the one
-    // singular writer rewrote `tine.sort`/`tine.columns` for the whole block.
-    loadFriendly(
-      '{{query (search "alpha")}}\ntine.view:: list\ntine.sort:: page asc\n'
-      + 'tine.block-display:: 1\ntine.block-columns:: owner\nunknown.property:: keep me',
-      {
-        form: '(search "alpha")',
-        filter: searchFilter("alpha"),
-        view: { view: "list", sort: [["page", "asc"]] },
-        block_display: { columns: ["owner"] },
-      },
-    );
-    vi.spyOn(backend(), "runGraphSearch").mockResolvedValue(mixed());
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await settleQuery();
-      const before = doc.byId.query.raw;
-
-      // Switch the PAGES section to a board through its own panel.
-      const pages = root.querySelector<HTMLElement>('[data-query-result-kind="page"]')!;
-      pages.querySelector<HTMLButtonElement>('[aria-label="Display pages"]')!.click();
-      const panel = await vi.waitFor(() => {
-        const found = document.querySelector<HTMLElement>('[aria-label="Page display"]');
-        if (!found) throw new Error("the Page display panel never opened");
-        return found;
-      });
-      [...panel.querySelectorAll<HTMLButtonElement>(".qd-view")]
-        .find((button) => button.textContent?.trim() === "Board")!.click();
-
-      // The page namespace gained its own complete draft…
-      expect(blockProperty("query", "tine.page-view")).toBe("board");
-      expect(blockProperty("query", "tine.page-display")).toBe("1");
-      // …cloned from what the section was ALREADY showing, so the edit did not
-      // silently clear the inherited sort.
-      expect(blockProperty("query", "tine.page-sort")).toBe("page asc");
-      // The sibling namespace, the singular settings, the unknown authored
-      // property and the query TEXT are all exactly as they were.
-      expect(blockProperty("query", "tine.block-columns")).toBe("owner");
-      expect(blockProperty("query", "tine.block-display")).toBe("1");
-      expect(blockProperty("query", "tine.sort")).toBe("page asc");
-      expect(blockProperty("query", "tine.view")).toBe("list");
-      expect(blockProperty("query", "unknown.property")).toBe("keep me");
-      expect(doc.byId.query.raw.split("\n")[0]).toBe(before.split("\n")[0]);
-
-      // One undo unit: the whole scoped change comes back in one step.
-      undo();
-      expect(doc.byId.query.raw).toBe(before);
-    } finally {
-      dispose();
-    }
-  });
-
-  it("q3_mixed_operation_rejects_stale_completion", async () => {
-    // FAIL-BEFORE (I-20): request identity carried the query and the singular
-    // view only, so a read started under one section's settings could land on
-    // a screen showing another's — and both families would then describe
-    // different graph states.
-    loadFriendly('{{query (search "alpha")}}\ntine.view:: list', {
-      form: '(search "alpha")',
-      filter: searchFilter("alpha"),
-      view: { view: "list" },
-    });
-    // The reading the ENGINE would give: it reads `tine.*` off the block every
-    // time, so the membership scope the user just wrote is in the next parse.
-    vi.spyOn(backend(), "parseQuery").mockImplementation(async () => {
-      const written = blockProperty("query", "tine.page-match-scope");
-      return {
-        query: {
-          anchor: "block" as const,
-          filter: searchFilter("alpha"),
-          diagnostics: [],
-          source: { kind: "og" as const, original: '(search "alpha")', og_options: "" },
-        },
-        view: { view: "list" as const },
-        ...(written ? { page_match_scope: written as "names" | "content" | "both" } : {}),
-      };
-    });
-    let releaseFirst!: (value: QueryExecution) => void;
-    const first = new Promise<QueryExecution>((resolve) => { releaseFirst = resolve; });
-    const search = vi.spyOn(backend(), "runGraphSearch")
-      .mockImplementationOnce(() => first)
-      .mockResolvedValue({
-        hits: [pageHit("Beta notes", "pages/beta.md")],
-        diagnostics: [],
-        explanation: { branches: [] },
-        cancelled: false,
-      });
-
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await settleQuery();
-      expect(search).toHaveBeenCalledTimes(1);
-
-      // The membership scope changes while the first read is still in flight.
-      // That is a DIFFERENT question, so it starts its own read. The engine
-      // re-reads the block's properties on every parse, so the stub does too —
-      // a stub that kept answering "no scope" would be testing a backend that
-      // cannot see the property the user just wrote.
-      const scope = root.querySelector<HTMLSelectElement>(".query-page-match select")!;
-      scope.value = "content";
-      scope.dispatchEvent(new Event("change", { bubbles: true }));
-      await settleQuery();
-      expect(search.mock.calls.length).toBeGreaterThan(1);
-      expect(search.mock.calls.at(-1)?.[6]).toMatchObject({ pageMatchScope: "content" });
-      await vi.waitFor(() => expect(
-        root.querySelector('[data-query-result-kind="page"]')?.textContent,
-      ).toContain("Beta notes"));
-
-      // The superseded answer lands late. It describes a query that is no
-      // longer on screen, so nothing about it may reach the sections.
-      releaseFirst(mixed());
-      await settleQuery();
-      const pages = root.querySelector<HTMLElement>('[data-query-result-kind="page"]')!;
-      expect(pages.textContent).toContain("Beta notes");
-      expect(pages.textContent).not.toContain("Alpha notes");
-      expect(root.querySelector('[data-query-result-kind="block"]')?.textContent)
-        .toContain("No matching blocks.");
-    } finally {
-      dispose();
-    }
-  });
-});
-
-// Exercise the actual editor completion and mounted builder ownership handoff.
-it("choosing the Query slash command opens its sheet and field chooser", async () => {
-  backendReadsQueries({ "": { form: "", filter: { kind: "and", items: [] } } });
-  vi.spyOn(backend(), "queryRun").mockResolvedValue(blockResult([]));
+  vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([]));
   setDoc({
     byId: { query: node("query", "/query", null) },
     pages: [page(["query"])], feed: ["Sheet"], loaded: true,
@@ -1555,7 +1070,9 @@ it("choosing the Query slash command opens its sheet and field chooser", async (
     command.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(doc.byId.query.raw.trim()).toBe("{{query }}"));
     await vi.waitFor(() => expect(document.querySelector(".qs-sheet")).not.toBeNull());
-    await vi.waitFor(() => expect(document.querySelector(".qs-vocab")).not.toBeNull());
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(document.querySelector(".qs-menu")).toBeNull();
+    expect(document.querySelectorAll(".qs-sheet .qs-row")).toHaveLength(0);
     expect(editingId()).toBeNull();
   } finally { dispose(); }
 });

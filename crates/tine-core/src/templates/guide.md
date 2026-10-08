@@ -12,22 +12,24 @@ icon:: 🧭
   - [[Workflows/Keep context visible]] — park a source in the right sidebar, keep places in tabs and panes, and save the layout as a workspace.
   - [[Workflows/Structure repeated information]] — turn a small repeated outline into a table or board, then find and reuse its blocks before reaching for query syntax.
   - [[Workflows/Capture and plan your day]] — journal-first daily flow: tasks, priorities, dates, the agenda, and carrying leftovers forward.
-  - [[Workflows/Find and revisit]] — jump back to anything with Ctrl+K, follow links and reference panels, and keep a search as an ordinary page.
+  - [[Workflows/Find and revisit]] — jump back to anything with Ctrl+K and follow links and reference panels.
   - [[Workflows/Research a document]] — bring in a PDF, highlight it, and tie the highlights into your notes beside the source.
   - [[Workflows/Extend Tine]] — install a plugin or theme, see exactly what authority it receives, and disable or remove it safely.
   - [[Features/Sheets]] — create grids, tables, boards, queries, and formulas over ordinary bullets.
+  - [[Features/Queries]] — keep live lists of matching blocks and pages with simple or advanced queries.
   - [[Features/Formulas]] — build read-only computed columns with the visual formula editor.
-  - [[Features/Quick capture]] — set up a global capture box (desktop) that files notes into your graph.
+  - [[Features/Quick capture]] — set up a global capture box that files notes into your graph.
   - [[Features/PDF annotation]] — highlight PDFs and turn those highlights into linked note blocks.
 - ## Feature reference
   - [[Features/Plugins]] — install capability-limited extensions and token themes, review what they request, and keep them under your control.
   - [[Features/Tips & shortcuts]] — learn Ctrl+K, slash commands, tabs, sidebars, focus mode, and daily shortcuts.
   - [[Reference/Files, external edits, and backups]] — learn what Tine writes where, and where snapshots, conflict copies, and the trash live.
-  - [[Reference/Troubleshooting and recovery]] — follow numbered recovery steps for conflict banners, deleted pages, snapshots, sync copies, duplicate days, and bad starts.
+  - [[Reference/Troubleshooting and recovery]] — follow numbered recovery steps for the changed-on-disk banner, deleted pages, snapshots, conflict copies, duplicate days, a graph that will not open, and a region that fails to display.
   - [[Reference/Journals, tasks, and scheduling]] — map journal setup, task markers and priorities, scheduling dates, the agenda, time tracking, and repeating tasks.
   - [[Reference/Pages, links, references, and search]] — the exact rules for pages, links, tags, aliases, block references, reference panels, and every search surface.
+  - [[Reference/Tine query model]] — every way a query's answer can differ from Logseq's, and why.
+  - [[Reference/Command line]] — open a graph, start Quick Capture, check a graph, or publish a static or live export from a terminal.
   - [[Reference/Platforms and mobile]] — learn what changes on a narrow window versus on the Android app, and what ships on each platform today.
-  - [[Reference/Command line]] — open or inspect a graph and create static or live exports from a terminal.
 - ## Feature showcase
   - [[Feature showcase]] — inspect one live example of each supported Logseq rendering feature.
 - ## Create one yourself

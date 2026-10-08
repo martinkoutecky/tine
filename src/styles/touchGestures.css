@@ -1,0 +1,94 @@
+/* Touch long-press (GH #231, #452) — see src/render/longPress.ts. */
+
+/* A menu is chrome, never text. On iOS the menu is portalled under a finger
+   that is still down, and the platform's own long-press selection latched onto
+   the first item's label — the reporter saw "Copy / Look Up" raised over Tine's
+   menu with an action highlighted as selected text (GH #452). Native menus on
+   every platform are unselectable; so is this one. */
+.ctx-overlay,
+.ctx-menu,
+.ctx-item {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Touch long-press raises Tine's own context menu (GH #231); keep iOS's
+   native link callout bubble from stacking on top of it. */
+.page-ref,
+.tag {
+  -webkit-touch-callout: none;
+}
+
+/* On a touch platform the SAME hold that opens Tine's menu is also the OS's
+   text-selection gesture, and that gesture is owned by a native recognizer:
+   preventDefault() on our synthetic `contextmenu` cannot cancel it, and iOS
+   does not fire `contextmenu` for touch at all. The only thing that stops the
+   selection is refusing to be selectable (GH #452). Desktop keeps ordinary
+   selection — a mouse user can still drag across a link's text. */
+html[data-platform="ios"] :is(.page-ref, .tag),
+html[data-platform="android"] :is(.page-ref, .tag) {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* GH #375: Android/iOS already own the selection-adjacent region with their
+   native Cut/Copy/Paste ActionMode. Tine's separate formatting actions form a
+   second row immediately above the existing mobile keyboard toolbar instead of
+   competing for that region. MobileKeyboardToolbar publishes the measured lift
+   from the layout viewport, including the visible keyboard and safe-area. */
+.sel-toolbar-mobile {
+  position: fixed;
+  top: auto;
+  bottom: var(--mobile-kb-toolbar-lift, calc(64px + var(--system-inset-bottom)));
+  left: max(6px, var(--system-inset-left));
+  right: max(6px, var(--system-inset-right));
+  z-index: 81;
+  justify-content: center;
+}
+
+/* The dock is already above the keyboard, so its narrow-layout overflow opens
+   farther upward rather than covering the keyboard toolbar below. */
+.sel-toolbar-mobile .sel-toolbar-overflow {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+/* Block swipe (GH #501, src/blockSwipe.ts): the row owns horizontal pans, the
+   page keeps vertical scrolling and pinch. Rows that contain their own
+   sideways scroller (code, tables, sheets) keep full native panning instead:
+   touch-action intersects down the tree, so a pan-y ancestor would freeze the
+   inner scroller. The swipe's own disabled zones already skip those targets. */
+html[data-touch-gestures] .block-main:not(:has(.code-block, .md-table-wrap, .sheet-scroll)) {
+  touch-action: pan-y pinch-zoom;
+}
+/* Swipe feedback: the row follows the finger a little and tints by the action
+   a release would run. Presentation only; the action is decided in blockSwipe.ts. */
+html[data-touch-gestures] .block-main[data-swipe] {
+  transform: translateX(calc(var(--swipe-dx, 0px) * 0.35));
+  transition: none;
+}
+html[data-touch-gestures] .block-main[data-swipe="indent"] { background: color-mix(in srgb, var(--accent, #4a90d9) 12%, transparent); }
+html[data-touch-gestures] .block-main[data-swipe="outdent"] { background: color-mix(in srgb, var(--accent, #4a90d9) 12%, transparent); }
+html[data-touch-gestures] .block-main[data-swipe="actions"] { background: color-mix(in srgb, var(--accent, #4a90d9) 22%, transparent); }
+
+/* OG block-left-menu/block-right-menu: reveal a direction-specific icon in
+   the space exposed beside the moving row; more replaces outdent for actions. */
+html[data-touch-gestures] .block-main[data-swipe] { position: relative; }
+.block-swipe-cue {
+  position: absolute;
+  top: 4px;
+  right: -26px;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  color: var(--accent, #4a90d9);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.3;
+}
+.block-swipe-cue[data-action="indent"] { right: auto; left: -26px; }
+.block-swipe-cue[data-armed="true"] { opacity: 1; }

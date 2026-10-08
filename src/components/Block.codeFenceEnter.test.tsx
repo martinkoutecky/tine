@@ -1,42 +1,13 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { For, type JSX } from "solid-js";
-import { render } from "solid-js/web";
-import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore, undo } from "../store";
+import { describe, expect, it } from "vitest";
+import { For } from "solid-js";
+import { pageByName, undo } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
 import { startEditing } from "../editorController";
-import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
+import { installBlockEditorLifecycle, mount, blk, page, pressEnter } from "../tests/blockEditorTestkit";
 
-beforeAll(async () => {
-  await initParser();
-});
-
-afterEach(() => {
-  resetStore();
-  document.body.innerHTML = "";
-});
-
-function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => void } {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  const dispose = render(node, root);
-  return { root, dispose };
-}
-
-function blk(id: string, raw: string): BlockDto {
-  return { id, raw, collapsed: false, children: [] };
-}
-
-function page(name: string, blocks: BlockDto[]): PageDto {
-  return { name, kind: "page", title: name, pre_block: null, blocks };
-}
-
-function pressEnter(ta: HTMLTextAreaElement, caret: number) {
-  ta.focus();
-  ta.selectionStart = caret;
-  ta.selectionEnd = caret;
-  ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-}
+installBlockEditorLifecycle();
 
 // GH #66: Enter INSIDE a fenced code block must insert a newline and stay in the
 // same block, not split off a new bullet (which breaks the fence).
@@ -67,8 +38,8 @@ describe("Enter inside a code fence", () => {
     }
   });
 
-  it("stays inside a four-backtick fence after a shorter three-backtick run", () => {
-    loadSingle(page("Code", [blk("code-4", "````js\n```\nconst x = 1\n````") ]));
+  it("stays inside a four-backtick fence closed by a four-backtick run", () => {
+    loadSingle(page("Code", [blk("code-4", "````js\nconst x = 1\n````") ]));
     const id = pageByName("Code")!.roots[0];
     startEditing(id, 0);
     const { root, dispose } = mount(() => (
@@ -80,6 +51,25 @@ describe("Enter inside a code fence", () => {
       pressEnter(ta, caret);
       expect(pageByName("Code")!.roots).toEqual([id]);
       expect(doc.byId[id].raw).toContain("const x = 1\n\n````");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("leaves a four-backtick fence at the parser's shorter closing run (OG/mldoc, not CommonMark)", () => {
+    // mldoc closes the container at the inner three-backtick run, so the line after it is
+    // ordinary text and Enter there splits the block (Martin 2026-10-01).
+    loadSingle(page("Code", [blk("code-4", "````js\n```\nconst x = 1\n````") ]));
+    const id = pageByName("Code")!.roots[0];
+    startEditing(id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Code")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
+      const caret = ta.value.indexOf("const x = 1") + "const x = 1".length;
+      pressEnter(ta, caret);
+      expect(pageByName("Code")!.roots.length).toBe(2);
     } finally {
       dispose();
     }

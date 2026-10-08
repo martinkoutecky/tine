@@ -11,6 +11,16 @@ beforeAll(async () => {
 const out = (src: string) => evalCalc(src).map((l) => l.output);
 
 describe("calc evaluator (Logseq parity)", () => {
+  it("rejects expensive imported powers while retaining ordinary large calculations", () => {
+    expect(out("2 ^ 1000")[0]).toBe("1.07150860718626732095e+301");
+    expect(evalCalc("1e100000\n2 ^ 100000\n3").map((line) => [line.output, !!line.error]),
+      "I-22: calc rejects imported powers and scientific exponents above the digit budget")
+      .toEqual([[null, true], [null, true], ["3", false]]);
+  });
+  it("budgets the parsed expression independently of a trailing comment", () => {
+    expect(evalCalc(`2 # ${"x".repeat(16000)}`)[0].output).toBe("2");
+    expect(evalCalc(`${"1".repeat(16001)} # short`)[0].error).toBe(true);
+  });
   it("basic arithmetic + precedence", () => {
     expect(out("1 + 2 * 3")).toEqual(["7"]);
     expect(out("(1 + 2) * 3")).toEqual(["9"]);
@@ -132,6 +142,12 @@ describe("calc exit commit serialization", () => {
     const raw = "```calc\n1 + 2\n```";
     expect(serializeCalcExitCommit(raw)).toBe(raw);
   });
+
+  it("preserves text after the closing fence when the calc editor exits", () => {
+    const raw = "```calc\n1 + 2\n```\nordinary text\n- [ ] task";
+    expect(serializeCalcExitCommit(raw), "calc exit rule: serializeCalcExitCommit preserves the ordinary-text suffix").toBe(raw);
+    expect(serializeCalcExitCommit("2 + 3", raw)).toBe("```calc\n2 + 3\n```\nordinary text\n- [ ] task");
+  });
 });
 
 describe("trailing blank lines (GH #339)", () => {
@@ -164,4 +180,10 @@ describe("trailing blank lines (GH #339)", () => {
     const bare = evalCalc("x = 3\nx * 2").map((r) => [r.input, r.output]);
     expect(withTrailing).toEqual(bare);
   });
+});
+
+
+it("bounds scientific zero precision just like nonzero precision (OG-B-FRONT)", () => {
+  expect(evalCalc("0\n:fmt sci 10001").at(-1)).toMatchObject({error: true});
+  expect(evalCalc("0\n:fmt sci 10000").at(-1)?.output).toHaveLength(10005);
 });

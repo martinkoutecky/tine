@@ -1,8 +1,9 @@
 import { createSignal } from "solid-js";
 import { backend, type InstalledPluginRecord } from "../backend";
-import { doc, setRaw } from "../store";
-import { pushToast } from "../ui";
+import { setRaw, node as docNode } from "../document";
+import { pushToast } from "../toasts";
 import { platformKind } from "../platform";
+import { latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import {
   parsePluginManifest,
   supportsPlatform,
@@ -118,7 +119,7 @@ export class PluginManager {
 
   private async enqueuePersistence<T>(key: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.persistenceChains.get(key) ?? Promise.resolve();
-    const result = previous.catch(() => {}).then(operation);
+    const result = previous.then(operation);
     const tail = result.then(() => undefined, () => undefined);
     this.persistenceChains.set(key, tail);
     try {
@@ -128,7 +129,14 @@ export class PluginManager {
     }
   }
 
+  /** Load installed plugin records and settings for the current platform.
+   * A revoked id/version is persisted disabled. When activationHeld is true,
+   * leave enabled plugins loaded without starting them; otherwise attempt each
+   * enabled plugin independently and record startup failures. A newer initialize
+   * call supersedes older results. Backend/platform errors reject; cost follows
+   * installed plugins and their settings/startup work. */
   async initialize(revoked: RevokedPluginVersions = new Set(), activationHeld = false) {
+    const owner = latestOwner(this, "initialize");
     // Seed before the first await. A live refresh may supersede this set while
     // platform/storage reads are pending, but initialization never writes the
     // older startup snapshot again afterward.
@@ -138,15 +146,20 @@ export class PluginManager {
     this.desiredEnabled.clear();
     this.intentGeneration.clear();
     this.platform = await platformKind();
-    const records = await backend().listInstalledPlugins();
-    const parsed = await Promise.all(records.map(async (record) => {
+    const loaded = await readOwned(owner, backend().listInstalledPlugins());
+    if (loaded.kind === "stale") return;
+    const records = loaded.value;
+    const parsedResults = await Promise.all(records.map(async (record) => {
       const plugin = this.parseRecord(record);
       if (!plugin.error) plugin.settings = await this.loadSettings(plugin.manifest);
+      if (!owner()) return null;
       const key = versionKey(plugin.manifest.id, plugin.manifest.version);
       const desired = record.enabled && !this.revoked.has(key);
       const intent = this.recordIntent(key, desired);
       return { record, plugin, intent };
     }));
+    if (!owner()) return;
+    const parsed = parsedResults.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
     const managed = parsed.map(({ plugin }) => plugin);
     setInstalledPlugins(managed);
     this.initialized = true;
@@ -254,19 +267,28 @@ export class PluginManager {
       (plugin) => plugin.manifest.id === id && plugin.manifest.version === version
     );
     if (!target) throw new Error("plugin version is not installed");
+    const key = versionKey(id, version);
+    this.recordIntent(key, false);
+    const starting = this.starting.get(id);
+    if (starting?.version === version) {
+      starting.runtime.dispose();
+      this.starting.delete(id);
+    }
     const active = this.active.get(id);
     if (active?.manifest.version === version) {
       active.runtime.dispose();
       this.active.delete(id);
       this.patch(id, version, { enabled: false, running: false, error: undefined });
     }
-    await backend().uninstallPlugin(target.storageId, target.storageVersion);
+    await this.enqueuePersistence(key, () => backend().uninstallPlugin(target.storageId, target.storageVersion));
     const remaining = installedPlugins().filter(
       (item) => versionKey(item.storageId, item.storageVersion) !== versionKey(target.storageId, target.storageVersion)
     );
     setInstalledPlugins(remaining);
     if (!remaining.some((item) => item.storageId === target.storageId)) {
-      await backend().setAppString(this.settingsStorageKey(target.storageId), "{}");
+      await this.enqueuePersistence(this.settingsStorageKey(target.storageId), () =>
+        backend().setAppString(this.settingsStorageKey(target.storageId), "{}")
+      );
     }
   }
 
@@ -277,8 +299,7 @@ export class PluginManager {
     if (!plugin) throw new Error("plugin version is not installed");
     const definition = plugin.manifest.settings?.find((item) => item.key === key);
     if (!definition || !settingAccepts(definition, value)) throw new Error("plugin setting value is invalid");
-    const settings = { ...plugin.settings, [key]: value };
-    await this.storeSettings(plugin.manifest, settings, [key], true);
+    await this.storeSettings(plugin.manifest, (settings) => ({ ...settings, [key]: value }), [key], true);
   }
 
   async resetSetting(id: string, version: string, key: string): Promise<void> {
@@ -288,7 +309,7 @@ export class PluginManager {
     if (!plugin) throw new Error("plugin version is not installed");
     const definition = plugin.manifest.settings?.find((item) => item.key === key);
     if (!definition) throw new Error("plugin setting does not exist");
-    await this.storeSettings(plugin.manifest, { ...plugin.settings, [key]: definition.default }, [key], true);
+    await this.storeSettings(plugin.manifest, (settings) => ({ ...settings, [key]: definition.default }), [key], true);
   }
 
   async resetSettings(id: string, version: string): Promise<void> {
@@ -296,8 +317,7 @@ export class PluginManager {
       (item) => item.manifest.id === id && item.manifest.version === version
     );
     if (!plugin) throw new Error("plugin version is not installed");
-    const settings = defaultPluginSettings(plugin.manifest.settings);
-    await this.storeSettings(plugin.manifest, settings, (plugin.manifest.settings ?? []).map((item) => item.key), true);
+    await this.storeSettings(plugin.manifest, () => defaultPluginSettings(plugin.manifest.settings), (plugin.manifest.settings ?? []).map((item) => item.key), true);
   }
 
   commands(): ManagedCommand[] {
@@ -465,7 +485,8 @@ export class PluginManager {
     const key = versionKey(plugin.manifest.id, plugin.manifest.version);
     return this.enqueuePersistence(key, async () => {
       if (!this.intentIsCurrent(key, intent, true) || this.revoked.has(key)) return false;
-      await backend().setPluginEnabled(plugin.storageId, plugin.storageVersion, true);
+      await writeOwned(ownedWhen(() => this.intentIsCurrent(key, intent, true) && !this.revoked.has(key)),
+        backend().setPluginEnabled(plugin.storageId, plugin.storageVersion, true));
       return this.intentIsCurrent(key, intent, true) && !this.revoked.has(key);
     });
   }
@@ -478,7 +499,8 @@ export class PluginManager {
     const key = versionKey(plugin.manifest.id, plugin.manifest.version);
     return this.enqueuePersistence(key, async () => {
       if (!this.intentIsCurrent(key, intent, false)) return false;
-      await backend().setPluginEnabled(plugin.storageId, plugin.storageVersion, false);
+      await writeOwned(ownedWhen(() => this.intentIsCurrent(key, intent, false)),
+        backend().setPluginEnabled(plugin.storageId, plugin.storageVersion, false));
       if (!this.intentIsCurrent(key, intent, false)) return false;
       this.patch(plugin.manifest.id, plugin.manifest.version, {
         enabled: false,
@@ -494,7 +516,8 @@ export class PluginManager {
     try {
       await this.enqueuePersistence(key, async () => {
         if (!this.intentIsCurrent(key, intent, false)) return;
-        await backend().setPluginEnabled(plugin.storageId, plugin.storageVersion, false);
+        await writeOwned(ownedWhen(() => this.intentIsCurrent(key, intent, false)),
+          backend().setPluginEnabled(plugin.storageId, plugin.storageVersion, false));
         if (!this.intentIsCurrent(key, intent, false)) return;
         this.durableDisablePending.delete(key);
         this.patch(plugin.manifest.id, plugin.manifest.version, {
@@ -576,7 +599,10 @@ export class PluginManager {
     let runtime: PluginRuntime | undefined;
     let registeredStarting = false;
     try {
-      const bytes = await backend().readPluginEntry(id, version);
+      const loaded = await readOwned(ownedWhen(() => this.intentIsCurrent(key, intent, true)
+        && !this.revoked.has(key) && !this.activationHeld), backend().readPluginEntry(id, version));
+      if (loaded.kind === "stale") { assertAllowed(); throw new Error("plugin startup was superseded"); }
+      const bytes = loaded.value;
       assertAllowed();
       if (plugin.sha256 !== "mock" && (await digestHex(bytes)) !== plugin.sha256) {
         throw new Error("installed plugin digest does not match its recorded bytes");
@@ -683,7 +709,7 @@ export class PluginManager {
     if (!this.invocationAuthorityCurrent(authority)) return [];
     let effects: PluginEffect[];
     try {
-      effects = (await authority.plugin.runtime.invoke(event)).effects;
+      effects = (await authority.plugin.runtime.invoke(this.guestEvent(authority.plugin.manifest, event))).effects;
     } catch (error) {
       // A genuine timeout/crash has already killed this worker. Retire only the
       // exact still-current active runtime; a starting runtime is owned by start()'s
@@ -703,6 +729,28 @@ export class PluginManager {
     return this.invocationAuthorityCurrent(authority) ? accepted : [];
   }
 
+  /** What the guest may read. A command or slash command sees the one block the
+   * user invoked it on (the user action is consent to that block). Decorations
+   * see every visible block with no user action, so their `raw` text requires
+   * `graph.read.visible`. The host validates effects against the original event. */
+  private guestEvent(manifest: PluginManifest, event: PluginEvent): PluginEvent {
+    switch (event.kind) {
+      case "decorate-blocks":
+        return manifest.capabilities.includes("graph.read.visible")
+          ? event
+          : { ...event, blocks: event.blocks.map((block) => ({ ...block, raw: "" })) };
+      case "command":
+      case "slash-command":
+      case "activate":
+      case "settings-changed":
+        return event;
+      default: {
+        const unhandled: never = event;
+        return unhandled;
+      }
+    }
+  }
+
   private async applyEffect(authority: InvocationAuthority, event: PluginEvent, effect: PluginEffect): Promise<boolean> {
     if (!this.invocationAuthorityCurrent(authority)) return false;
     const manifest = authority.plugin.manifest;
@@ -716,7 +764,7 @@ export class PluginManager {
           return false;
         }
         if (!this.invocationAuthorityCurrent(authority)) return false;
-        const block = doc.byId[effect.blockId];
+        const block = docNode(effect.blockId);
         if (!block || block.raw !== effect.expectedRaw) return false;
         if (!this.invocationAuthorityCurrent(authority)) return false;
         setRaw(effect.blockId, effect.raw, { timetracking: false });
@@ -736,12 +784,9 @@ export class PluginManager {
         if (!manifest.capabilities.includes("settings.write")) return false;
         const definition = manifest.settings?.find((item) => item.key === effect.key);
         if (!definition) return false;
-        const current = installedPlugins().find(
-          (item) => item.manifest.id === manifest.id && item.manifest.version === manifest.version
-        );
         const value = effect.value === null ? definition.default : effect.value;
         if (!settingAccepts(definition, value)) return false;
-        await this.storeSettings(manifest, { ...(current?.settings ?? defaultPluginSettings(manifest.settings)), [effect.key]: value }, [effect.key], false);
+        await this.storeSettings(manifest, (settings) => ({ ...settings, [effect.key]: value }), [effect.key], false);
         return true;
       }
     }
@@ -790,13 +835,19 @@ export class PluginManager {
 
   private async storeSettings(
     manifest: PluginManifest,
-    candidate: PluginSettings,
+    update: (current: PluginSettings) => PluginSettings,
     changedKeys: string[],
     notifyRunning: boolean
   ) {
-    const settings = validatePluginSettings(manifest.settings, candidate);
-    await backend().setAppString(this.settingsStorageKey(manifest.id), JSON.stringify(settings));
-    this.patchSettings(manifest.id, settings);
+    const settings = await this.enqueuePersistence(this.settingsStorageKey(manifest.id), async () => {
+      const current = installedPlugins().find((item) =>
+        item.manifest.id === manifest.id && item.manifest.version === manifest.version
+      )?.settings ?? defaultPluginSettings(manifest.settings);
+      const next = validatePluginSettings(manifest.settings, update(current));
+      await backend().setAppString(this.settingsStorageKey(manifest.id), JSON.stringify(next));
+      this.patchSettings(manifest.id, next);
+      return next;
+    });
     const active = this.active.get(manifest.id);
     if (notifyRunning && active?.manifest.version === manifest.version && manifest.capabilities.includes("settings.read")) {
       await this.invokeAndApply({ plugin: active, phase: "active" }, {

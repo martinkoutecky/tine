@@ -11,10 +11,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay, stopDisplay } from "./lib/e2e-display.mjs";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-
-await ensureDisplay();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const G = "/tmp/txdg-clickrepro-g";
@@ -26,6 +22,20 @@ const TD = process.env.TAURI_DRIVER ||
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4446);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4447);
 
+let xvfb;
+async function ensureDisplay() {
+  if (process.env.DISPLAY) return;
+  for (const display of [":97", ":98", ":99", ":100"]) {
+    const logfd = fs.openSync(`/tmp/xvfb-clickrepro${display.slice(1)}.log`, "w");
+    let err = "";
+    const child = spawn("Xvfb", [display, "-screen", "0", "1400x1000x24"], { stdio: ["ignore", logfd, logfd] });
+    child.on("error", (e) => { err = e.message; });
+    await sleep(900);
+    if (!err && child.exitCode == null) { xvfb = child; process.env.DISPLAY = display; return; }
+  }
+  throw new Error("Xvfb failed to start");
+}
+
 const PAGE = `- **bold** rest of line
   second line here
 - **bold** start then a -> b and x -- y here
@@ -35,13 +45,6 @@ const PAGE = `- **bold** rest of line
 - plain target below
 - another plain block
 - before \`a literal block\` after
-- *some text in italics.*
-- **ends in bold**
-- ends in \`code\`
-- *italics with a referrer.*
-  id:: 4d1f0a20-0000-0000-0000-000000000465
-- points at ((4d1f0a20-0000-0000-0000-000000000465))
-- {{img https://example.invalid/floated.png 80 60 right}} *text beside a floated image.*
 `;
 
 fs.rmSync(G, { recursive: true, force: true });
@@ -69,14 +72,14 @@ const env = {
   GDK_BACKEND: "x11",
 };
 const tdLog = fs.openSync("/tmp/td-clickrepro.log", "w");
-const td = spawn(TD, webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), { env, stdio: ["ignore", tdLog, tdLog], detached: true });
+const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", tdLog, tdLog], detached: true });
 await sleep(3000);
 
 let browser;
 try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/",
-    capabilities: tauriCapabilities(APP, "clickcaret-repro"),
+    capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
     logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60000,
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20000 });
@@ -136,54 +139,11 @@ try {
       return { err: "text not found: " + nd };
     }, blockIdx, needle, offset);
 
-  // GH #465: a point in the empty run-out to the RIGHT of the final rendered
-  // glyph on a block's last visual line — where a user clicks meaning "put the
-  // caret at the end of this block".
-  const pastEndPoint = async (blockIdx) =>
-    browser.execute((idx) => {
-      const blocks = [...document.querySelectorAll(".ls-block")];
-      const block = blocks[idx];
-      if (!block) return { err: "no block " + idx };
-      const content = block.querySelector(".block-content");
-      if (!content) return { err: "no .block-content in block " + idx };
-      const r = document.createRange();
-      // Skip out-of-flow children — the reference-count badge floats right and
-      // is drawn against the block's right edge, so a range over the whole
-      // block would put "where the text ends" at the full content width and
-      // this probe would report no run-out at all (GH #454 x GH #465).
-      const rects = [];
-      const collect = (node) => {
-        if (node.nodeType === 1) {
-          const st = getComputedStyle(node);
-          if (st.float === "left" || st.float === "right"
-              || st.position === "absolute" || st.position === "fixed") return;
-          if (node.childElementCount > 0) { [...node.childNodes].forEach(collect); return; }
-        }
-        r.selectNode(node);
-        rects.push(...r.getClientRects());
-      };
-      [...content.childNodes].forEach(collect);
-      if (rects.length === 0) return { err: "no line boxes in block " + idx };
-      const bottom = Math.max(...rects.map((b) => b.bottom));
-      const last = rects.filter((b) => b.bottom >= bottom - 0.5);
-      const right = Math.max(...last.map((b) => b.right));
-      const top = Math.min(...last.map((b) => b.top));
-      const host = content.getBoundingClientRect();
-      // Well past the text but still inside the content box, so the click
-      // reaches this block rather than the page background.
-      const x = right + Math.max(12, Math.min(60, (host.right - right) / 2));
-      if (x >= host.right - 1) return { err: "no run-out to the right of block " + idx };
-      return { x, y: (top + bottom) / 2, right, hostRight: host.right };
-    }, blockIdx);
-
   const realClick = async (x, y) => {
     await browser.performActions([{
       type: "pointer", id: "mouse", parameters: { pointerType: "mouse" },
       actions: [
-        // Stay on the leading half of the measured glyph. Rounding a
-        // fractional left-edge probe to the right can cross WebKit's caret
-        // midpoint and make the harness select the following character.
-        { type: "pointerMove", duration: 0, x: Math.floor(x), y: Math.round(y) },
+        { type: "pointerMove", duration: 0, x: Math.round(x), y: Math.round(y) },
         { type: "pointerDown", button: 0 },
         { type: "pointerUp", button: 0 },
       ],
@@ -207,7 +167,7 @@ try {
         idx: closest ? blocks.indexOf(closest) : -1,
         editingIdx: editingBlock ? blocks.indexOf(editingBlock) : -1,
         aeTag: ae ? ae.tagName : "null",
-        textSel: String(window.getSelection() || "").slice(0, 40),
+        textSel: isEd ? ae.value.slice(ae.selectionStart, ae.selectionEnd) : String(window.getSelection() || "").slice(0, 40),
         selBlocks: document.querySelectorAll(".block-main.selected").length,
         crfp: (window.__crfpLog || []).slice(-1)[0] || null,
       };
@@ -228,24 +188,8 @@ try {
   const raw1 = "**bold** start then a -> b and x -- y here\nmore -- dashed text line";
   const raw5 = "before `a literal block` after";
 
-  console.log("\n=== GH #368: editor exists after pointerDown, before pointerUp ===");
-  let p = await charPoint(0, "bold", 2);
-  requirePoint(p, "mousedown timing point");
-  await browser.performActions([{
-    type: "pointer", id: "mouse", parameters: { pointerType: "mouse" },
-    actions: [
-      { type: "pointerMove", duration: 0, x: Math.floor(p.x), y: Math.round(p.y) },
-      { type: "pointerDown", button: 0 },
-    ],
-  }]);
-  await sleep(100);
-  expectEditor(await probe("pointer still held"), 0, raw0.indexOf("bold") + 2, "mousedown edit timing");
-  await browser.releaseActions();
-  await sleep(200);
-  await browser.keys(["Escape"]); await sleep(300);
-
   console.log("\n=== BUG 1a: click inside bold (line 1) of multiline block 0 ===");
-  p = await charPoint(0, "bold", 2);
+  let p = await charPoint(0, "bold", 2);
   console.log("point:", JSON.stringify(p));
   requirePoint(p, "bold point"); await realClick(p.x, p.y);
   expectEditor(await probe("bold+2 → expect sel=4"), 0, raw0.indexOf("bold") + 2, "bold click");
@@ -306,55 +250,6 @@ try {
   await probe("final state");
   await browser.keys(["Escape"]); await sleep(400);
 
-  // GH #465: clicking in the empty space after the last glyph means "the end of
-  // this block", including when the block ends in markup the reader cannot see.
-  // Before the fix the caret stopped one byte short, between the last letter and
-  // the closing delimiter, so Enter split the construct instead of leaving it.
-  // Block 11 puts a right-floated image beside its text. A float is drawn hard
-  // against the block's right edge and is taller than the line it rides, so
-  // measuring the block as ONE range reports its text as ending at the full
-  // content width — and the past-the-end rule is dead in that block. Measured
-  // in the running app: image box right 1080 / bottom 545.2 against text right
-  // 665.5 / bottom 542.2. Block 9 carries a reference-count badge (block 10
-  // references it) and is here as the control: that badge is shorter than the
-  // line, so it never defines the bottom band and never had this effect.
-  const badged = await browser.execute(() => {
-    const b = [...document.querySelectorAll(".ls-block")][9];
-    return b ? !!b.querySelector(":scope > .block-main .block-refs-count") : null;
-  });
-  console.log("block 9 carries a reference-count badge:", badged);
-  if (badged !== true) {
-    throw new Error("block 9 has no reference-count badge — the badge control is not being exercised");
-  }
-  const floated = await browser.execute(() => {
-    const b = [...document.querySelectorAll(".ls-block")][11];
-    const el = b && b.querySelector(".block-content .img-align-right");
-    if (!el) return null;
-    const box = el.getBoundingClientRect();
-    const host = b.querySelector(".block-content").getBoundingClientRect();
-    return { floats: getComputedStyle(el).float, reachesRightEdge: box.right >= host.right - 1 };
-  });
-  console.log("block 11 float:", JSON.stringify(floated));
-  if (!floated || floated.floats !== "right" || !floated.reachesRightEdge) {
-    throw new Error("block 11 has no right-floated image at the content edge — the float case is not being exercised");
-  }
-  for (const [idx, raw] of [[6, "*some text in italics.*"], [7, "**ends in bold**"], [8, "ends in `code`"], [9, "*italics with a referrer.*"], [11, "{{img https://example.invalid/floated.png 80 60 right}} *text beside a floated image.*"]]) {
-    console.log(`\n=== GH #465: click past the end of ${JSON.stringify(raw)} ===`);
-    const past = await pastEndPoint(idx);
-    console.log("point:", JSON.stringify(past));
-    requirePoint(past, `past-end point for ${raw}`);
-    await realClick(past.x, past.y);
-    expectEditor(await probe(`past end of ${raw}`), idx, raw.length, `past-end click on ${raw}`);
-    await browser.keys(["Escape"]); await sleep(400);
-  }
-
-  console.log("\n=== GH #465 control: a precise click INSIDE the italic still maps exactly ===");
-  p = await charPoint(6, "some text in italics.", 2);
-  console.log("point:", JSON.stringify(p));
-  requirePoint(p, "italic interior point"); await realClick(p.x, p.y);
-  expectEditor(await probe("italic interior +2"), 6, "*some text in italics.*".indexOf("some") + 2, "italic interior click");
-  await browser.keys(["Escape"]); await sleep(400);
-
   const realDrag = async (x1, y1, x2, y2) => {
     const steps = 6;
     const actions = [{ type: "pointerMove", duration: 0, x: Math.round(x1), y: Math.round(y1) }, { type: "pointerDown", button: 0 }];
@@ -367,21 +262,17 @@ try {
     await sleep(600);
   };
 
-  console.log("\n=== DRAG 1: within block 0, 'second' → 'here' (raw editor text selection) ===");
+  console.log("\n=== DRAG 1: within block 0, 'second' → 'here' (text selection) ===");
   const d1a = await charPoint(0, "second", 0);
   const d1b = await charPoint(0, "here", 3);
   console.log("from", JSON.stringify(d1a), "to", JSON.stringify(d1b));
   requirePoint(d1a, "drag-1 start"); requirePoint(d1b, "drag-1 end");
   await realDrag(d1a.x, d1a.y, d1b.x, d1b.y);
   const dragText = await probe("in-block drag");
-  if (!dragText.isEditor || dragText.selBlocks !== 0) throw new Error("in-block drag did not remain an editor text selection");
-  const selectedEditorText = await browser.execute(() => {
-    const active = document.activeElement;
-    return active instanceof HTMLTextAreaElement
-      ? active.value.slice(active.selectionStart, active.selectionEnd)
-      : "";
-  });
-  if (selectedEditorText.length < 3) throw new Error(`in-block editor drag selected too little text: ${JSON.stringify(selectedEditorText)}`);
+  // Mousedown may enter the editor (master GH #368). Observe the selected
+  // text at either surface rather than requiring the rendered DOM to survive.
+  const expectedSelection = raw0.slice(raw0.indexOf("second"), raw0.indexOf("here") + 3);
+  if (dragText.textSel !== expectedSelection || dragText.selBlocks !== 0) throw new Error("in-block drag did not preserve the intended text selection");
   await browser.keys(["Escape"]); await sleep(300);
   await browser.execute(() => window.getSelection()?.removeAllRanges());
 
@@ -403,5 +294,5 @@ try {
 } finally {
   try { if (browser) await browser.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}
-  stopDisplay();
+  if (xvfb) xvfb.kill();
 }

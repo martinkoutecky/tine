@@ -9,17 +9,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { clickWhenReachable } from "./lib/e2e-click.mjs";
 import {
   startWebdriverApplication,
   stopWebdriverApplication,
   tauriCapabilities,
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
-
-await ensureDisplay();
+import { APP_ID } from "./lib/app-identity.mjs";
+import { openPageByName } from "./lib/e2e-navigation.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -30,7 +28,7 @@ const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4521);
 const TMP = path.join(os.tmpdir(), `tine-pdf-logseq-e2e-${process.pid}`);
 const GRAPH = path.join(TMP, "graph");
 const ARTIFACTS = process.env.E2E_ARTIFACT_DIR || TMP;
-const APP_DATA = path.join(TMP, "xdg", "data", "page.tine.Tine");
+const APP_DATA = path.join(TMP, "xdg", "data", APP_ID);
 const SETTINGS = path.join(APP_DATA, "tine-settings.json");
 const SAMPLE_ID = "6a5604f8-a337-4336-a711-2ba6bc14fbfd";
 const PDF = "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA1IDAgUiA+PiA+PiAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAyMDUgPj4Kc3RyZWFtCkJUIC9GMSAyMCBUZiA3MiA3MjAgVGQgKFRpbmUgUERGIHZpZXdlcikgVGogRVQKQlQgL0YxIDEzIFRmIDcyIDY5MCBUZCAoU2VsZWN0IHRoaXMgdGV4dCB0byBjcmVhdGUgYSBoaWdobGlnaHQuKSBUaiBFVApCVCAvRjEgMTMgVGYgNzIgNjY4IFRkIChIaWdobGlnaHRzIHBlcnNpc3QgdG8gYXNzZXRzLzxrZXk+LmVkbiArIGFuIGhsc19fIHBhZ2UuKSBUaiBFVAoKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDA0OTcgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo1NjcKJSVFT0Y=";
@@ -235,18 +233,11 @@ const xdo = (...args) => execFileSync(XDOTOOL, args, {
     : env,
   timeout: 15_000,
 }).trim();
-// This journey drives the real GTK file chooser, which needs a window manager:
-// without one `xdo_activate_window` reports "your windowmanager claims not to
-// support _NET_ACTIVE_WINDOW" and the chooser never receives the typed path.
-// Default to openbox like every sibling native journey does, instead of running
-// silently WM-less whenever E2E_WINDOW_MANAGER happens to be unset -- only
-// `scripts/run-e2e.mjs` sets it, so a direct run of this file could never reach
-// the native-upload proof and failed 700 lines later with an X error.
-const wmLog = process.platform === "linux"
+const wmLog = process.platform === "linux" && process.env.E2E_WINDOW_MANAGER
   ? fs.openSync(path.join(ARTIFACTS, "window-manager.log"), "w")
   : undefined;
 const wm = wmLog !== undefined
-  ? spawn(process.env.E2E_WINDOW_MANAGER || "openbox", ["--sm-disable"], {
+  ? spawn(process.env.E2E_WINDOW_MANAGER, ["--sm-disable"], {
       env,
       stdio: ["ignore", wmLog, wmLog],
       detached: true,
@@ -478,32 +469,18 @@ async function nativeClickSelector(selector, id, text) {
   await nativeClickAt(target.point, id);
 }
 
-// A reader tool is reachable two ways depending on how wide the reader pane is:
-// inline on the toolbar, or inside the "More settings" overflow once the
-// toolbar collapses. Which one applies is not a property of the tool, so every
-// caller goes through here rather than assuming the inline button exists --
-// under a real window manager the window is smaller than a bare Xvfb screen and
-// the toolbar collapses, which is how a direct click on the Area highlight
-// button met a display:none element with a 0x0 rect.
-async function clickReaderTool(selector, label, id) {
-  const inlineVisible = await browser.execute((wanted) => {
-    const button = document.querySelector(wanted);
-    const rect = button?.getBoundingClientRect();
-    const style = button ? getComputedStyle(button) : null;
-    return Boolean(rect && rect.width > 0 && rect.height > 0
-      && style?.display !== "none" && style?.visibility !== "hidden");
+// Reader tools remain available through the overflow menu in narrow panes.
+// Follow that visible user path without forcing a particular toolbar layout.
+async function nativeReaderTool(selector, label, id) {
+  const visible = await browser.execute((wanted) => {
+    const element = document.querySelector(wanted);
+    const rect = element?.getBoundingClientRect();
+    return !!rect && rect.width > 0 && rect.height > 0;
   }, selector);
-  if (inlineVisible) {
-    await nativeClickSelector(selector, id);
-    return;
-  }
-  await nativeClickSelector('button[title="More settings"]', `${id}-more`);
+  if (visible) return nativeClickSelector(selector, id);
+  await nativeClickSelector('button[title="More settings"]', `${id}-settings`);
   await browser.$(".pdf-settings-menu").waitForExist({ timeout: 5_000 });
-  await nativeClickSelector(".pdf-settings-overflow button", `${id}-overflow`, label);
-}
-
-async function openOutlineWithNativePointer(id) {
-  await clickReaderTool('button[title="Outline"]', "Outline", id);
+  await nativeClickSelector(".pdf-settings-overflow button", id, label);
 }
 
 async function nativeClickIndexed(selector, index, id) {
@@ -523,39 +500,10 @@ async function typeKeys(text) {
 }
 
 async function routeToPage(name) {
-  const current = await browser.$("h1.page-title").getText().catch(() => "");
-  if (current.trim() === name) return;
-  await nativeClickSelector('button[title^="Search (Ctrl+K)"]', `route-${name.replaceAll(/\W+/g, "-")}`);
-  const input = await browser.$(".switcher-input");
-  await input.waitForExist({ timeout: 5000 });
-  await typeKeys(name);
-  await browser.waitUntil(() => browser.execute((wanted) => {
-    const active = document.querySelector(".switcher-row.active .switcher-name");
-    if (active?.textContent?.trim() === wanted) return true;
-    return [...document.querySelectorAll(".switcher-row:not(.block-result) .switcher-name")]
-      .some((node) => node.textContent?.trim() === wanted);
-  }, name), {
-    timeout: 10_000,
-    timeoutMsg: `switcher did not expose routed page ${name}`,
-  });
-  const exactActive = await browser.execute((wanted) =>
-    document.querySelector(".switcher-row.active .switcher-name")?.textContent?.trim() === wanted, name);
-  if (!exactActive) {
-    const point = await browser.execute((wanted) => {
-      const nameElement = [...document.querySelectorAll(".switcher-row:not(.block-result) .switcher-name")]
-        .find((node) => node.textContent?.trim() === wanted);
-      const rect = nameElement?.closest(".switcher-row")?.getBoundingClientRect();
-      return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
-    }, name);
-    if (!point) throw new Error(`exact switcher result disappeared for ${name}`);
-    await nativeClickAt(point, `route-result-${name.replaceAll(/\W+/g, "-")}`);
-  } else {
-    await browser.keys(["Enter"]);
-  }
-  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === name, {
-    timeout: 10_000,
-    timeoutMsg: `named page ${name} did not become the active route`,
-  });
+  // Fixture authoring belongs to the notes pane. A reader close can leave its
+  // pane focused on another tab; activate notes before the shared navigator.
+  await browser.$("main").click();
+  await openPageByName(browser, name, { entry: "button" });
 }
 
 function sha256(file) {
@@ -664,53 +612,6 @@ function assertNear(actual, expected, label, tolerance = 1.25) {
   }
 }
 
-function visibleGtkChooserIds() {
-  try {
-    return xdo("search", "--onlyvisible", "--name", "^Choose a file$").split(/\s+/).filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-function gtkChooserNativeState(id) {
-  let active = "";
-  let focus = "";
-  try { active = xdo("getactivewindow"); } catch {}
-  try { focus = xdo("getwindowfocus"); } catch {}
-  return { id, visible: visibleGtkChooserIds().includes(id), active, focus };
-}
-
-async function activateGtkChooser(id, source, phase) {
-  try {
-    xdo("windowactivate", "--sync", id);
-    xdo("windowfocus", "--sync", id);
-  } catch (error) {
-    throw new Error(`E2E_NATIVE_CHOOSER_INPUT_UNDELIVERED ${phase} ${source}: ${JSON.stringify({
-      state: gtkChooserNativeState(id),
-      error: error?.stderr?.toString().trim() || error?.message || String(error),
-    })}`);
-  }
-  const deadline = Date.now() + 2_000;
-  let state = gtkChooserNativeState(id);
-  while (Date.now() < deadline) {
-    state = gtkChooserNativeState(id);
-    // Openbox's EWMH active window is the stable top-level readiness signal.
-    // X focus may name an internal GTK child and therefore is diagnostic only.
-    if (state.visible && state.active === id) return state;
-    await sleep(25);
-  }
-  throw new Error(`E2E_NATIVE_CHOOSER_INPUT_UNDELIVERED ${phase} ${source}: ${JSON.stringify(state)}`);
-}
-
-async function waitForGtkChooserToClose(id, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!visibleGtkChooserIds().includes(id)) return true;
-    await sleep(25);
-  }
-  return false;
-}
-
 async function chooseGtkFile(source) {
   if (process.platform !== "linux") throw new Error("literal GTK file chooser automation is Linux-only");
   let raw;
@@ -723,7 +624,7 @@ async function chooseGtkFile(source) {
   const id = ids.at(-1);
   if (!id) throw new Error(`xdotool returned no GTK chooser window for ${source}`);
   const title = xdo("getwindowname", id);
-  const initial = await activateGtkChooser(id, source, "before-path");
+  xdo("windowactivate", "--sync", id);
   // GTK4's file chooser owns a focused child surface; XTEST reaches it only
   // through the active X11 window, not xdotool's --window XSendEvent path.
   xdo("key", "--clearmodifiers", "ctrl+l");
@@ -735,51 +636,44 @@ async function chooseGtkFile(source) {
       timeout: 5_000,
     });
   } catch {}
-  // GTK's location entry may either accept the absolute path immediately or
-  // resolve it while keeping the chooser open for the default Open action.
-  // Observe that transition rather than assuming 120ms is enough on every host.
+  // GTK's location entry first resolves the absolute path; on the current
+  // rfd/GTK bridge it keeps the chooser open until the default Open accelerator
+  // is invoked afterwards. This is still entirely native X11 keyboard input.
   xdo("key", "--clearmodifiers", "Return");
-  if (!await waitForGtkChooserToClose(id, 2_000)) {
-    await activateGtkChooser(id, source, "before-open");
-    xdo("key", "--clearmodifiers", "alt+o");
-    if (!await waitForGtkChooserToClose(id, 2_000)) {
-      throw new Error(`E2E_NATIVE_CHOOSER_INPUT_UNDELIVERED chooser-remained-open ${source}: ${JSON.stringify(gtkChooserNativeState(id))}`);
-    }
+  await sleep(120);
+  try {
+    const visible = xdo("search", "--onlyvisible", "--name", "^Choose a file$").split(/\s+/);
+    if (visible.includes(id)) xdo("key", "--clearmodifiers", "alt+o");
+  } catch {
+    // The first Return already accepted the path and closed the chooser.
   }
-  return { id, title, initial, closed: true };
+  return { id, title };
 }
 
 async function closePdfWithNativePointer(id) {
-  // Every call site means "no PDF is open in this pane now". A pane can hold
-  // more than one PDF tab -- this journey deliberately keeps A and B open side
-  // by side to prove they keep separate identity and restore their own view
-  // state -- so closing the active one reveals the next PDF underneath. The
-  // user outcome is "the Close PDF control closes the PDF you are reading";
-  // asserting that ONE click empties the pane was an assumption about how many
-  // tabs happened to be open, and it only became reachable once the reader
-  // stopped losing its place at the same-resource reopen above.
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const open = await browser.execute(() =>
-      document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") ?? null);
-    if (open === null) return;
-    await nativeClickSelector('button[title="Close PDF"]', attempt === 0 ? id : `${id}-${attempt}`);
-    await browser.waitUntil(() => browser.execute((previous) =>
-      (document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") ?? null) !== previous, open), {
-      timeout: 10_000,
-      timeoutMsg: `${id}: the Close PDF control did not close ${open}`,
-    });
-  }
-  throw new Error(`${id}: PDFs kept reappearing after six closes`);
+  const filename = await browser.execute(() => document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename"));
+  if (!filename) throw new Error(`no PDF reader to close: ${id}`);
+  await nativeClickSelector('button[title="Close PDF"]', id);
+  // Closing a reader tab may reveal another PDF tab; the resource we closed
+  // must disappear, without requiring every other reader to be closed too.
+  await browser.waitUntil(() => browser.execute((closed) =>
+    [...document.querySelectorAll(".pdf-viewer")].every((viewer) => viewer.getAttribute("data-pdf-filename") !== closed), filename), {
+    timeout: 10_000, timeoutMsg: `closing PDF did not remove ${filename}`,
+  });
 }
 
 async function nativeClickPdfLink(filename, label, id) {
   const point = await browser.execute((wanted, wantedLabel) => {
     const link = [...document.querySelectorAll(".page-blocks .pdf-link")]
       .find((candidate) => candidate.outerHTML.includes(wanted) || candidate.textContent?.includes(wantedLabel));
-    const rect = link?.getBoundingClientRect();
-    return rect && rect.width > 0 && rect.height > 0
-      ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
-      : null;
+    // A wrapped inline link's union rectangle includes non-link whitespace.
+    // Choose an actual fragment that receives the pointer, not that union.
+    return [...(link?.getClientRects() ?? [])].map((rect) => ({
+      x: rect.left + rect.width / 2, y: rect.top + rect.height / 2,
+    })).find((point) => {
+      const hit = document.elementFromPoint(point.x, point.y);
+      return hit && (hit === link || link.contains(hit));
+    }) ?? null;
   }, filename, label);
   if (!point) {
     const links = await browser.execute(() => [...document.querySelectorAll(".page-blocks .pdf-link")]
@@ -945,7 +839,7 @@ async function proveNativeUploadsThemesAndHighlights() {
     connectionRetryCount: 1, connectionRetryTimeout: 60_000,
     capabilities: tauriCapabilities(APP, "pdf-theme-relaunch", process.platform, webviewTarget.debuggerAddress),
   });
-  await ensureMainWindow(browser, { what: "the Tine window carrying the PDF fixtures" });
+  await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   await routeToPage("PDF Outline");
   await reopenCurrentPagePdf(path.basename(OUTLINE_STORED), "Outline fixture", "outline-reopen-after-process-relaunch");
@@ -963,7 +857,7 @@ async function proveNativeUploadsThemesAndHighlights() {
   // The real fixture contains an explicit page-reference parent and a nested
   // named destination. Expansion and both navigation kinds are pointer actions;
   // the DOM only observes their visible result.
-  await openOutlineWithNativePointer("pdf-outline-open");
+  await nativeReaderTool('button[title="Outline"]', "Outline", "pdf-outline-open");
   try {
     await browser.waitUntil(() => browser.execute(() =>
       document.querySelector(".pdf-outline-panel")?.textContent?.includes("Explicit Page One")), {
@@ -1000,7 +894,7 @@ async function proveNativeUploadsThemesAndHighlights() {
   });
   await browser.keys(["Escape"]);
   await browser.$(".pdf-outline-panel").waitForExist({ reverse: true, timeout: 5_000 });
-  await openOutlineWithNativePointer("pdf-outline-reopen");
+  await nativeReaderTool('button[title="Outline"]', "Outline", "pdf-outline-reopen");
   await browser.$(".pdf-outline-panel").waitForExist({ timeout: 5_000 });
   await nativeClickSelector(".pdf-scroll", "pdf-outline-outside-dismiss");
   await browser.$(".pdf-outline-panel").waitForExist({ reverse: true, timeout: 5_000 });
@@ -1049,121 +943,69 @@ async function proveNativeUploadsThemesAndHighlights() {
   );
 
   // Select the deterministic line with an actual pointer drag across the live
-  // PDF.js text layer. No Range/selection event is synthesized in this proof.
-  // Wait for the proposition the drag actually needs.
-  //
-  // This used to wait for "a span with this text exists", then require on the
-  // very next line that the span have geometry a pointer can traverse. Those
-  // are different propositions and PDF.js satisfies them in that order: the
-  // span enters the DOM before the text layer is laid out and scaled. On an
-  // idle machine the gap is invisible; pinned to two contended cores it is
-  // not, and the journey then failed on the geometry line having "waited" for
-  // something else (v0.6.984 F28, found with run-e2e --pin-cpus=2
-  // --under-load). Waiting for the geometry itself subsumes the existence
-  // check, and a text layer that genuinely never lays out still fails — now
-  // saying that is what happened.
-  const readSelectionTarget = () => browser.execute((expectedText) => {
-    const span = [...document.querySelectorAll(".textLayer span")]
-      .find((candidate) => candidate.textContent?.trim() === expectedText);
-    const rect = span?.getBoundingClientRect();
-    return rect && rect.width > 20 && rect.height > 5
-      ? { start: { x: rect.left + 1, y: rect.top + rect.height / 2 }, end: { x: rect.right, y: rect.top + rect.height / 2 }, right: rect.right }
-      : null;
-  }, HIGHLIGHT_TEXT);
-  let selectionTarget = null;
-  await browser.waitUntil(async () => (selectionTarget = await readSelectionTarget()) !== null, {
-    timeout: 20_000,
-    timeoutMsg: "deterministic PDF text never gained usable native-drag geometry (>20x5px) for pointer selection",
+  // PDF.js text layer. Ranges only measure glyph geometry; the browser selection
+  // itself is produced by the native drag.
+  await browser.waitUntil(() => browser.execute((expectedText) =>
+    [...document.querySelectorAll(".textLayer span")].some((span) => span.textContent?.trim() === expectedText), HIGHLIGHT_TEXT), {
+    timeout: 10_000,
+    timeoutMsg: "deterministic PDF text was not exposed for literal pointer selection",
   });
-  // A native xdotool drag across the WebKit text layer occasionally lands
-  // without producing the selection: sometimes no selection at all (the color
-  // menu never opens), sometimes a short prefix of the line. Both used to fail
-  // several assertions later, on a missing element or a mismatched string, so
-  // the retry predicate here is the OUTCOME the journey needs -- exactly the
-  // deterministic line selected on page 1 -- not the intermediate sign that the
-  // menu opened. The drag is idempotent, so retrying the whole operation is
-  // safe; this is the rule scripts/lib/e2e-navigation.mjs encodes for rows.
-  let selected = null;
-  let lastCandidate = null;
-  const attempts = [];
-  // Where the drag must END is a property of the font and zoom, not something a
-  // single magic offset gets right: one pixel inside the right edge can stop
-  // before the sentence's final period, while overshooting leaves the text run
-  // and selects nothing at all. Walk outward from the edge and keep the first
-  // offset that yields the exact line; the ladder is recorded in the failure
-  // message so a future divergence names the geometry instead of an element.
-  const END_OFFSETS = [-1, -2, -3];
-  for (let attempt = 0; attempt < END_OFFSETS.length && selected === null; attempt += 1) {
-    await browser.execute(() => window.getSelection()?.removeAllRanges());
-    // Re-measure every attempt. A drag that failed to select can still have
-    // scrolled or reflowed the page, so coordinates captured before the loop
-    // are stale by the retry -- which is how a ladder of offsets came back with
-    // "no selection" for an offset that had worked moments earlier.
-    const live = await browser.execute((expectedText) => {
+  // Wait for the resized split-pane text layer to settle, and verify that
+  // integer native coordinates resolve to the first and last text offsets.
+  let selectionTarget;
+  let previousGeometry;
+  let stableGeometry = 0;
+  await browser.waitUntil(async () => {
+    const measured = await browser.execute((expectedText) => {
       const span = [...document.querySelectorAll(".textLayer span")]
         .find((candidate) => candidate.textContent?.trim() === expectedText);
-      const rect = span?.getBoundingClientRect();
-      return rect && rect.width > 20 && rect.height > 5
-        ? { left: rect.left, right: rect.right, y: rect.top + rect.height / 2 }
-        : null;
-    }, HIGHLIGHT_TEXT);
-    if (!live) {
-      attempts.push({ offset: END_OFFSETS[attempt], remeasured: false });
-      continue;
-    }
-    const end = { x: live.right + END_OFFSETS[attempt], y: live.y };
-    await nativePointerDrag(
-      { x: live.left + 1, y: live.y },
-      end,
-      attempt === 0 ? "pdf-text-highlight-selection" : `pdf-text-highlight-selection-retry-${attempt}`,
-    );
-    const menuOpen = await browser.$(".pdf-color-menu")
-      .waitForExist({ timeout: 5_000 })
-      .then(() => true, () => false);
-    if (!menuOpen) {
-      attempts.push({ offset: END_OFFSETS[attempt], menuOpen: false });
-      continue;
-    }
-    const candidate = await browser.execute(() => {
-      const selection = window.getSelection();
-      const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-      const page = range?.commonAncestorContainer.parentElement?.closest(".pdf-page")
-        ?? document.querySelector(".pdf-page");
-      const pageRect = page?.getBoundingClientRect();
-      const rects = range ? [...range.getClientRects()].filter((rect) => rect.width > 0 && rect.height > 0) : [];
-      const zoom = Number(document.querySelector(".pdf-zoom-level")?.textContent?.replace("%", "")) / 100;
-      return {
-        text: selection?.toString().trim() ?? "",
-        page: Number(page?.getAttribute("data-page")),
-        zoom,
-        pageWidth: pageRect?.width,
-        pageHeight: pageRect?.height,
-        pageLeft: pageRect?.left,
-        pageTop: pageRect?.top,
-        rects: rects.map((rect) => ({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom })),
+      if (!span?.firstChild) return null;
+      const glyphs = document.createRange();
+      glyphs.selectNodeContents(span);
+      const rect = glyphs.getBoundingClientRect();
+      const y = Math.round(rect.top + rect.height / 2);
+      const endpoint = (edge, offset) => {
+        for (let delta = -3; delta <= 3; delta++) {
+          const x = Math.round(edge) + delta;
+          const caret = document.caretRangeFromPoint(x, y);
+          if (caret?.startContainer === span.firstChild && caret.startOffset === offset) return { x, y };
+        }
+        return null;
       };
-    });
-    lastCandidate = candidate;
-    attempts.push({ offset: END_OFFSETS[attempt], menuOpen: true, text: candidate.text, rects: candidate.rects.length });
-    // Accept the line with or without its final period. Reaching past that last
-    // glyph is not achievable by pointer: ending at or beyond the span's right
-    // edge lands outside the text run and selects nothing at all, while any
-    // offset inside it stops before a ~2px period at this zoom. What the user
-    // outcome actually requires is that whatever WAS selected round-trips into
-    // the sidecar and the hls page unchanged, which the assertions below now
-    // check against this exact string instead of against a constant.
-    if ((candidate.text === HIGHLIGHT_TEXT || candidate.text === HIGHLIGHT_TEXT.replace(/\.$/, ""))
-      && candidate.page === 1
-      && Number.isFinite(candidate.zoom) && candidate.rects.length === 1) {
-      selected = candidate;
-    }
+      const start = endpoint(rect.left, 0);
+      const end = endpoint(rect.right, span.firstChild.textContent.length);
+      return start && end ? { start, end } : null;
+    }, HIGHLIGHT_TEXT);
+    const geometry = JSON.stringify(measured);
+    stableGeometry = measured && geometry === previousGeometry ? stableGeometry + 1 : 0;
+    previousGeometry = geometry;
+    selectionTarget = measured;
+    return stableGeometry >= 2;
+  }, { timeout: 10_000, interval: 100, timeoutMsg: "PDF glyph endpoints did not settle for native selection" });
+  await nativePointerDrag(selectionTarget.start, selectionTarget.end, "pdf-text-highlight-selection");
+  await browser.$(".pdf-color-menu").waitForExist({ timeout: 5_000 });
+  const selected = await browser.execute(() => {
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const page = range?.commonAncestorContainer.parentElement?.closest(".pdf-page")
+      ?? document.querySelector(".pdf-page");
+    const pageRect = page?.getBoundingClientRect();
+    const rects = range ? [...range.getClientRects()].filter((rect) => rect.width > 0 && rect.height > 0) : [];
+    const zoom = Number(document.querySelector(".pdf-zoom-level")?.textContent?.replace("%", "")) / 100;
+    return {
+      text: selection?.toString().trim() ?? "",
+      page: Number(page?.getAttribute("data-page")),
+      zoom,
+      pageWidth: pageRect?.width,
+      pageHeight: pageRect?.height,
+      pageLeft: pageRect?.left,
+      pageTop: pageRect?.top,
+      rects: rects.map((rect) => ({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom })),
+    };
+  });
+  if (selected.text !== HIGHLIGHT_TEXT || selected.page !== 1 || !Number.isFinite(selected.zoom) || selected.rects.length !== 1) {
+    throw new Error(`native pointer selection was not the exact deterministic line: ${JSON.stringify(selected)}`);
   }
-  if (selected === null) {
-    throw new Error(`no native drag selected the exact deterministic line: ${JSON.stringify({ attempts, expected: HIGHLIGHT_TEXT })}`);
-  }
-  // Every persistence assertion below is against what the pointer really
-  // selected, so a truncation, escaping, or re-derivation bug still fails.
-  const selectedText = selected.text;
   const beforeTextIds = fs.existsSync(ORG_SIDECAR) ? ednIds(fs.readFileSync(ORG_SIDECAR, "utf8")) : [];
   await nativeClickIndexed(".pdf-color-swatch", 4, "pdf-text-highlight-purple");
   await browser.$(".pdf-color-menu").waitForExist({ reverse: true, timeout: 5_000 });
@@ -1172,15 +1014,15 @@ async function proveNativeUploadsThemesAndHighlights() {
     if (!fs.existsSync(ORG_SIDECAR) || !fs.existsSync(ORG_HLS_PAGE)) return false;
     const written = fs.readFileSync(ORG_SIDECAR, "utf8");
     textHighlightId = ednIds(written).find((id) => !beforeTextIds.includes(id));
-    return !!textHighlightId && written.includes(`:content {:text "${selectedText}"}`)
+    return !!textHighlightId && written.includes(`:content {:text "${HIGHLIGHT_TEXT}"}`)
       && written.includes(':properties {:color "purple"}')
       && fs.readFileSync(ORG_HLS_PAGE, "utf8").includes(`:id: ${textHighlightId}`);
   }, { timeout: 15_000, timeoutMsg: "native purple text selection did not persist a matching sidecar and hls annotation" });
   const textSidecar = fs.readFileSync(ORG_SIDECAR, "utf8");
   const textHls = fs.readFileSync(ORG_HLS_PAGE, "utf8");
   const textEntry = ednHighlightEntry(textSidecar, textHighlightId, "purple");
-  if (!textEntry.includes(`:content {:text "${selectedText}"}`)
-    || !textHls.includes(`* ${selectedText}`)
+  if (!textEntry.includes(`:content {:text "${HIGHLIGHT_TEXT}"}`)
+    || !textHls.includes(`* ${HIGHLIGHT_TEXT}`)
     || !textHls.includes(":hl-page: 1")
     || !textHls.includes(":hl-color: purple")
     || !textHls.includes(`:id: ${textHighlightId}`)) {
@@ -1188,30 +1030,18 @@ async function proveNativeUploadsThemesAndHighlights() {
   }
   const bounding = ednBounding(textEntry);
   const rect = selected.rects[0];
-  // Scale by the rendered page box, NOT by the zoom percentage the toolbar
-  // shows. That label is rounded to whole percent ("73%"), while the real scale
-  // here is 575.875/792 = 0.72711, so every expected value came out ~0.4% low:
-  // the page height landed at 788.87 against the product's exact 792, and an x2
-  // drifted 1.254 against a 1.25 tolerance -- which reads as a subpixel
-  // rounding artifact and is really a rounded divisor. The fixture's MediaBox
-  // is [0 0 612 792] (declared above), so the page's own coordinate system is
-  // known exactly and the oracle needs no zoom at all.
-  const PAGE_POINTS = { width: 612, height: 792 };
-  const toPageX = (clientX) =>
-    ((clientX - selected.pageLeft) / selected.pageWidth) * PAGE_POINTS.width;
-  const toPageY = (clientY) =>
-    ((clientY - selected.pageTop) / selected.pageHeight) * PAGE_POINTS.height;
+  // The toolbar percentage is rounded for display. The fixture is 612pt wide;
+  // use its rendered scale when checking durable PDF-space coordinates.
+  const pageScale = selected.pageWidth / 612;
   const expectedGeometry = {
-    x1: toPageX(rect.left),
-    y1: toPageY(rect.top),
-    x2: toPageX(rect.right),
-    y2: toPageY(rect.bottom),
-    width: PAGE_POINTS.width,
-    height: PAGE_POINTS.height,
+    x1: (rect.left - selected.pageLeft) / pageScale,
+    y1: (rect.top - selected.pageTop) / pageScale,
+    x2: (rect.right - selected.pageLeft) / pageScale,
+    y2: (rect.bottom - selected.pageTop) / pageScale,
+    width: selected.pageWidth / pageScale,
+    height: selected.pageHeight / pageScale,
   };
-  for (const key of Object.keys(expectedGeometry)) {
-    assertNear(bounding[key], expectedGeometry[key], `text highlight ${key}`);
-  }
+  for (const key of Object.keys(expectedGeometry)) assertNear(bounding[key], expectedGeometry[key], `text highlight ${key}`);
   await browser.waitUntil(() => browser.execute((id) => !!document.querySelector(`.pdf-hl[data-highlight-id="${id}"]`), textHighlightId), {
     timeout: 5_000,
     timeoutMsg: "persisted text highlight did not paint a live overlay",
@@ -1241,7 +1071,7 @@ async function proveNativeUploadsThemesAndHighlights() {
   // implementation threshold.
   let areaHighlightId;
   if (process.platform !== "darwin") {
-    await clickReaderTool('button[title^="Area highlight"]', "Area highlight", "pdf-toolbar-area-enable");
+    await nativeReaderTool('button[title^="Area highlight"]', "Area highlight", "pdf-toolbar-area-enable");
     const toolbarEnabled = await browser.execute(() =>
       document.querySelector('button[title^="Area highlight"]')?.classList.contains("active") ?? false);
     if (!toolbarEnabled) throw new Error("real toolbar Area button did not become active");
@@ -1317,7 +1147,7 @@ async function proveNativeUploadsThemesAndHighlights() {
   }
   literalReceipt.rows.textHighlight = {
     id: textHighlightId,
-    text: selectedText,
+    text: HIGHLIGHT_TEXT,
     color: "purple",
     sidecar: ORG_SIDECAR,
     hls: ORG_HLS_PAGE,
@@ -1343,10 +1173,7 @@ try {
     connectionRetryCount: 1, connectionRetryTimeout: 60_000,
     capabilities: tauriCapabilities(APP, "default", process.platform, webviewTarget.debuggerAddress),
   });
-  // On Windows the driver does not reliably attach to the app window: this
-  // journey spent its whole 20 s budget hunting `.pdf-link` inside a Quick
-  // Capture window and reported the missing link rather than the wrong window.
-  await ensureMainWindow(browser, { what: "the Tine window carrying the PDF fixtures" });
+  await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   const pdfLink = browser.$(".pdf-link");
   try {
@@ -1397,7 +1224,7 @@ try {
   // `logseq-sample.pdf` deliberately has no outline dictionary. Open the real
   // reader's outline popover by pointer and observe its visible empty state;
   // this is not a component mock or a synthetic outline result.
-  await openOutlineWithNativePointer("pdf-no-outline-open");
+  await nativeReaderTool('button[title="Outline"]', "Outline", "pdf-no-outline-open");
   await browser.waitUntil(() => browser.execute(() =>
     document.querySelector(".pdf-outline-empty")?.textContent?.trim() === "No outlines"), {
     timeout: 10_000,
@@ -1566,10 +1393,12 @@ try {
   if (!existingActions.includes("Copy ref") || !existingActions.includes("Linked references")) {
     throw new Error(`existing PDF highlight menu omitted reference actions: ${JSON.stringify(existingActions)}`);
   }
+  // This existing DOM-event probe targets the pointer handler; WebKitDriver
+  // W3C mouse actions do not synthesize pointerdown.
   await browser.execute(() => {
     const action = [...document.querySelectorAll(".pdf-hl-action")]
       .find((element) => element.textContent?.trim() === "Copy ref");
-    action?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window }));
+    action?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window, pointerType: "mouse", button: 0 }));
   });
   await browser.waitUntil(() => fs.readFileSync(hlsPage, "utf8").includes(`:id: ${SAMPLE_ID}`), {
     timeout: 10_000,
@@ -1592,7 +1421,7 @@ try {
   await browser.execute(() => {
     const action = [...document.querySelectorAll(".pdf-hl-action")]
       .find((element) => element.textContent?.trim() === "Linked references");
-    action?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window }));
+    action?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window, pointerType: "mouse", button: 0 }));
   });
   await browser.waitUntil(() => browser.execute((highlightId) => {
     const block = document.querySelector(`.ls-block[data-block-ref="${highlightId}"]`);
@@ -1601,69 +1430,24 @@ try {
     timeout: 10_000,
     timeoutMsg: "Linked references did not open the annotation block with its ordinary referrers visible",
   });
-  // Back belongs to a PANE. `button[title="Go back"]` is matched document-wide,
-  // and by this point the journey has two panes, so the bare selector could
-  // click the back button of a pane with no history -- leaving the annotation
-  // page on screen while the assertion below waited for the journal. Click the
-  // back button of the pane that actually shows the annotation block.
-  //
-  // The user outcome is "you can get back to where you were", not "Back is the
-  // control that does it". Linked references opens the annotation in its own
-  // TAB, so that pane's Back is legitimately disabled; the way back is the tab
-  // the reader came from. Accept either -- and note that the old bare
-  // `button[title="Go back"]` selector was matched document-wide across two
-  // panes, so it could click a pane with no history at all.
-  const returned = await browser.execute((highlightId) => {
-    const block = document.querySelector(`.ls-block[data-block-ref="${highlightId}"]`);
-    const pane = block?.closest("[data-pane-id]") ?? document;
-    const back = pane.querySelector('button[title="Go back"]');
-    if (back && !back.disabled) { back.click(); return "back"; }
-    const tab = [...pane.querySelectorAll(".tab")].find((candidate) =>
-      !candidate.classList.contains("active")
-      && /journal/i.test(candidate.querySelector(".tab-title")?.textContent ?? ""));
-    if (tab) { tab.click(); return "tab"; }
-    return null;
-  }, SAMPLE_ID);
-  if (!returned) {
-    const surfaces = await browser.execute(() =>
-      [...document.querySelectorAll("[data-pane-id]")].map((pane) => ({
-        pane: pane.getAttribute("data-pane-id"),
-        backDisabled: pane.querySelector('button[title="Go back"]')?.disabled ?? null,
-        tabs: [...pane.querySelectorAll(".tab")].map((tab) =>
-          `${tab.querySelector(".tab-title")?.textContent?.trim()}${tab.classList.contains("active") ? "*" : ""}`),
-      })));
-    throw new Error(`no way back from the annotation surface: ${JSON.stringify(surfaces)}`);
-  }
-  try {
-    await browser.waitUntil(() => browser.execute(() =>
-      document.querySelectorAll(".pdf-link").length >= 2 &&
-      document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-sample.pdf"), {
-      timeout: 10_000,
-      timeoutMsg: "returning from PDF highlight references did not restore the journal surface",
-    });
-  } catch (error) {
-    const state = await browser.execute(() => ({
-      pdfLinks: document.querySelectorAll(".pdf-link").length,
-      filename: document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") ?? null,
-      viewers: document.querySelectorAll(".pdf-viewer").length,
-      panes: [...document.querySelectorAll("[data-pane-id]")].map((pane) => pane.getAttribute("data-pane-id")),
-      title: document.querySelector("h1.page-title")?.textContent?.trim() ?? null,
-      // Tine routes in-app: `location` and `history.length` are constant ("/", 1)
-      // and are NOT routing signals. Report the tab strip instead.
-      tabs: [...document.querySelectorAll(".tab")].map((tab) => ({
-        title: tab.querySelector(".tab-title")?.textContent?.trim() ?? "",
-        active: tab.classList.contains("active"),
-        pane: tab.closest("[data-pane-id]")?.getAttribute("data-pane-id") ?? null,
-      })),
-      backButtons: document.querySelectorAll('button[title="Go back"]').length,
-    })).catch((driverError) => ({ driverError: String(driverError) }));
-    throw new Error(`${error.message}: ${JSON.stringify(state)}`, { cause: error });
-  }
+  // Notes can open in a new companion tab with no back-history. Activate that
+  // notes surface and return to Journals while preserving the open reader.
+  await browser.$("main:has(.block-references)").click();
+  await browser.$('button[title="Journals"]').click();
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelectorAll(".pdf-link").length >= 2 &&
+    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-sample.pdf"), {
+    timeout: 10_000,
+    timeoutMsg: "returning from PDF highlight references did not restore the journal surface",
+  });
 
   // OG carries an annotation entity through block-ref navigation, then scrolls
   // to that exact highlight. A filename is the resource identity; a second
   // target in the same file must not remount it. A different filename still is
-  // a complete boundary: cleanup flushes A to A, then B opens only B's state.
+  // a complete boundary: A's reader position stays with A's route, then B opens
+  // only B's state. Reading and zooming write no graph files (GH #577, Martin
+  // 2026-10-04): the position persists in the pane route/session, not the sidecar.
+  const sidecarBeforeZoom = fs.readFileSync(sidecar, "utf8");
   await browser.$('button[title="Zoom in"]').click();
 
   // First prove ordinary direct-link A -> B -> A with real pointer clicks and
@@ -1681,10 +1465,9 @@ try {
     timeout: 10_000,
     timeoutMsg: "PDF B's distinct text never appeared",
   });
-  await browser.waitUntil(() => {
-    const written = fs.readFileSync(sidecar, "utf8");
-    return written.includes(":scale 1.93") && written.includes(':plugin "keep"') && written.includes(":future-root 42");
-  }, { timeout: 10_000, timeoutMsg: "PDF A cleanup did not persist A's pending view state" });
+  if (fs.readFileSync(sidecar, "utf8") !== sidecarBeforeZoom) {
+    throw new Error("zooming PDF A and switching to B rewrote A's sidecar; reader position belongs to the route");
+  }
   if (fs.readFileSync(secondSidecar, "utf8") !== originalSecondSidecar) {
     throw new Error("switching from PDF A wrote A's pending state or baseline into PDF B");
   }
@@ -1706,11 +1489,7 @@ try {
     timeout: 10_000,
     timeoutMsg: "the first PDF annotation block reference did not resolve",
   });
-  // Same class as the chip below: an inline reference chip clicked while the
-  // PDF pane is switching. Route it through the same preconditions.
-  await clickWhenReachable(browser, `[data-block-ref="${SECOND_FIRST_ID}"]`, {
-    what: "the first PDF annotation block reference",
-  });
+  await firstSecondRef.click();
   try {
     await browser.waitUntil(() => browser.execute((highlightId) =>
       document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-second.pdf" &&
@@ -1747,12 +1526,7 @@ try {
     throw new Error("switching from PDF A wrote A's pending state or baseline into PDF B");
   }
 
-  // Intercepted on the hosted Linux runner while every local run clicked it
-  // (release run 35158841575). Wait for the chip to be the node a click at
-  // its centre reaches, and name whatever is on top if it never is.
-  await clickWhenReachable(browser, `[data-block-ref="${SECOND_SECOND_ID}"]`, {
-    what: "the same-PDF block reference",
-  });
+  await browser.$(`[data-block-ref="${SECOND_SECOND_ID}"]`).click();
   await browser.waitUntil(() => browser.execute((highlightId) =>
     document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target") === highlightId &&
     document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_SECOND_ID), {
@@ -1808,7 +1582,7 @@ try {
   await browser.$(".pdf-color-menu").waitForExist({ timeout: 5000 });
   await browser.execute(() => {
     document.querySelector(".pdf-color-swatch")
-      ?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+      ?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window, pointerType: "mouse", button: 0 }));
   });
   await browser.waitUntil(() => {
     const written = fs.readFileSync(sidecar, "utf8");
@@ -1819,9 +1593,7 @@ try {
 
   // Exercise the sibling entry surface too: navigate to the hls page and click
   // a different rendered annotation badge, not merely an inline ((block ref)).
-  await clickWhenReachable(browser, `[data-block-ref="${SECOND_FIRST_ID}"]`, {
-    what: "the first PDF annotation block reference (return path)",
-  });
+  await browser.$(`[data-block-ref="${SECOND_FIRST_ID}"]`).click();
   await browser.waitUntil(() => browser.execute((highlightId) =>
     document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-second.pdf" &&
     document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_FIRST_ID), {
@@ -1834,9 +1606,7 @@ try {
   await hlsLink.click();
   await browser.$(`.pdf-annotation-line .hl-prefix[data-highlight-id="${SECOND_SECOND_ID}"]`)
     .waitForExist({ timeout: 10_000 });
-  await clickWhenReachable(browser, `.pdf-annotation-line .hl-prefix[data-highlight-id="${SECOND_SECOND_ID}"]`, {
-    what: "the annotation line highlight prefix",
-  });
+  await browser.$(`.pdf-annotation-line .hl-prefix[data-highlight-id="${SECOND_SECOND_ID}"]`).click();
   await browser.waitUntil(() => browser.execute((highlightId) =>
     document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_SECOND_ID), {
     timeout: 10_000,

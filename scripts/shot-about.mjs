@@ -1,7 +1,7 @@
 // Settings → About tab (GH #32): version, links, credits. Headless Chromium over
 // the mock backend, both themes. Usage (after `source scripts/env.sh && npm run build`):
 //   node scripts/shot-about.mjs
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -30,7 +30,7 @@ try {
     if (themeToggleFirst) {
       // flip to dark via the appearance tab, then back to About
       await page.locator(".settings-nav-item", { hasText: "Appearance" }).first().click();
-      await page.locator('.theme-opt[title="Dark theme"]').click();
+      await page.locator(".theme-switch").first().click();
       await sleep(200);
       await about.click();
       await page.waitForSelector(".about-tab", { timeout: 3000 });

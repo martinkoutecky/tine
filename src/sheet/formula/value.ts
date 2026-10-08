@@ -1,4 +1,4 @@
-import { parseIsoDateLike, type IsoDateParts } from "../typed";
+import { parseIsoDateLike, utcCalendarMillis, type IsoDateParts } from "../typed";
 
 export type DurationUnit = "s" | "m" | "h" | "d" | "w" | "M" | "y";
 
@@ -69,7 +69,7 @@ export function dateToUtcDate(value: FormulaDateValue): Date {
   const time = value.value.time;
   const hour = time ? Number(time.slice(0, 2)) : 0;
   const minute = time ? Number(time.slice(3, 5)) : 0;
-  return new Date(Date.UTC(value.value.y, value.value.m, value.value.d, hour, minute));
+  return new Date(utcCalendarMillis(value.value.y, value.value.m, value.value.d, hour, minute));
 }
 
 export function parseDurationValue(value: string): FormulaDurationValue | null {

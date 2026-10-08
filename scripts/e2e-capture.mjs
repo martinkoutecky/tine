@@ -9,19 +9,20 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { APP_ID } from "./lib/app-identity.mjs";
+import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
 
-await ensureDisplay();
+ensurePrivateSessionBus();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const COLD_CAPTURE = process.env.E2E_CAPTURE_COLD === "1";
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
 const XDOTOOL = process.env.E2E_XDOTOOL || "xdotool";
 const TD = process.env.TAURI_DRIVER || "tauri-driver";
 const WD = process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver";
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4456);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4457);
-const TMP = process.env.TINE_CAPTURE_TEST_ROOT || "/tmp/tine-capture-e2e";
+const TMP = "/tmp/tine-capture-e2e";
 const GRAPH = `${TMP}/graph`;
 // Avoid adjacent duplicate characters: WebKitWebDriver coalesces identical
 // synthetic key-downs on some Linux versions even though a physical keyboard
@@ -32,7 +33,7 @@ const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR || TMP;
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
-const appData = `${TMP}/xdg/data/page.tine.Tine`;
+const appData = `${TMP}/xdg/data/${APP_ID}`;
 fs.mkdirSync(appData, { recursive: true });
 const settingsPath = `${appData}/tine-settings.json`;
 // Capture is an independent WebView: begin with a persisted non-default mode
@@ -141,7 +142,7 @@ const waitForForwarderExit = (child, timeoutMs) => new Promise((resolve, reject)
 const driverLog = fs.openSync(`${ARTIFACT_DIR}/tauri-driver.log`, "w");
 let td = spawn(
   TD,
-  webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, WD),
+  ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", WD],
   { env, stdio: ["ignore", driverLog, driverLog], detached: true },
 );
 await sleep(2500);
@@ -152,12 +153,16 @@ try {
     hostname: "127.0.0.1",
     port: DRIVER_PORT,
     path: "/",
-    capabilities: tauriCapabilities(APP, "capture"),
+    capabilities: {
+      browserName: "wry",
+      "wdio:enforceWebDriverClassic": true,
+      "tauri:options": { application: APP, ...(COLD_CAPTURE ? { args: ["--capture"] } : {}) },
+    },
     logLevel: "error",
     connectionRetryCount: 1,
     connectionRetryTimeout: 60_000,
   });
-  await waitForWindow("Tine", 20_000);
+  await waitForWindow(COLD_CAPTURE ? "Quick Capture" : "Tine", 20_000);
   const handles = await browser.getWindowHandles();
   if (handles.length !== 2) throw new Error(`expected main + hidden capture WebViews, got ${handles.length}`);
   let mainHandle;
@@ -173,24 +178,27 @@ try {
   if (!mainHandle || !captureHandle) {
     throw new Error(`could not identify Tine WebViews: ${JSON.stringify({ webviews, mainHandle, captureHandle })}`);
   }
-  await browser.switchToWindow(mainHandle);
-  // This scenario exercises the normal global-shortcut path: hand off to an
-  // app that is already running. GitHub's cold WebKit/portal startup can expose
-  // a titled main window before its native surfaces have settled; launching the
-  // second process during that unrelated cold-start race can leave Openbox
-  // focused on its root window. Require one stable turn before the handoff.
-  await sleep(1500);
-  await waitForWindow("Tine", 5000);
+  if (!COLD_CAPTURE) {
+    await browser.switchToWindow(mainHandle);
+    // This scenario exercises the normal global-shortcut path: hand off to an
+    // app that is already running. GitHub's cold WebKit/portal startup can expose
+    // a titled main window before its native surfaces have settled; launching the
+    // second process during that unrelated cold-start race can leave Openbox
+    // focused on its root window. Require one stable turn before the handoff.
+    await sleep(1500);
+    await waitForWindow("Tine", 5000);
 
-  const second = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
-  // The single-instance callback runs in the primary while this short-lived
-  // forwarding process still owns GTK/X11 resources. On slower hosted runners,
-  // probing native focus during that teardown observes a destroyed transient
-  // frame rather than the final user-visible state. Require the forwarder to
-  // exit successfully, then prove that Quick Capture owns focus without clicks.
-  await waitForForwarderExit(second, 5000);
-  second.unref();
-  await waitForWindow("Quick Capture", 10_000);
+    const second = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+    // The single-instance callback runs in the primary while this short-lived
+    // forwarding process still owns GTK/X11 resources. On slower hosted runners,
+    // probing native focus during that teardown observes a destroyed transient
+    // frame rather than the final user-visible state. Require the forwarder to
+    // exit successfully, then prove that Quick Capture owns focus without clicks.
+    await waitForForwarderExit(second, 5000);
+    second.unref();
+    await waitForWindow("Quick Capture", 10_000);
+
+  }
 
   // Model the short interval between seeing the newly painted window and a
   // human's first keystroke, while still proving that focus remains native.
@@ -280,8 +288,8 @@ try {
     const firstDeadline = Date.now() + 5_000;
     while (Date.now() < firstDeadline) {
       first = await activeAutocomplete();
-      // The fresh-profile default pairs this opener. Wait for that settled
-      // value and its insertion point before sending the second key.
+      // The fresh-profile default pairs this opener. Observe its insertion
+      // point before sending the next key, as in master's capture journey.
       if (first.value === "[]" &&
           first.selectionStart === 1 && first.selectionEnd === 1) break;
       await sleep(50);
@@ -347,10 +355,7 @@ try {
   const settingsState = () => browser.execute(() => ({
     modalOpen: Boolean(document.querySelector(".settings-modal")),
     tabs: [...document.querySelectorAll(".settings-nav-item")].map((tab) => ({
-      // The tab's identity, not its wording: "Diagnostics" became
-      // "Help & diagnostics" once already, and v0.8.0 localization reworks
-      // every label in the app at once.
-      id: tab.getAttribute("data-settings-tab") ?? "",
+      label: tab.textContent?.trim() ?? "",
       active: tab.classList.contains("active"),
     })),
     advanced: [...document.querySelectorAll(".settings-advanced-toggle")].map((toggle) => ({
@@ -370,13 +375,13 @@ try {
     throw new Error(`${message}; settings=${JSON.stringify(last)}`);
   };
   const openedSettings = await waitForSettingsState((state) => state.modalOpen, "Settings UI did not open");
-  if (!openedSettings.tabs.some((tab) => tab.id === "editor")) {
+  if (!openedSettings.tabs.some((tab) => tab.label === "Editor")) {
     throw new Error(`Settings UI lacks its Editor tab; settings=${JSON.stringify(openedSettings)}`);
   }
-  const editorTab = await browser.$('.settings-nav-item[data-settings-tab="editor"]');
+  const editorTab = await browser.$("//button[contains(concat(' ', normalize-space(@class), ' '), ' settings-nav-item ') and normalize-space(.)='Editor']");
   await editorTab.click();
   let currentSettings = await waitForSettingsState(
-    (state) => state.tabs.some((tab) => tab.id === "editor" && tab.active),
+    (state) => state.tabs.some((tab) => tab.label === "Editor" && tab.active),
     "Settings UI did not activate the Editor tab",
   );
   if (!currentSettings.advanced.some((section) => section.expanded === "true")) {
@@ -404,7 +409,7 @@ try {
   await browser.switchToWindow(captureHandle);
   // Filing resets the scratch editor. Ctrl+A on its already-empty text exits
   // into outline selection, so clearing again destroys this test's input owner.
-  // Assert the reset instead and type into the editor the application focused.
+  // Assert the reset and type into the editor the application focused.
   await expectAutocompleteValue("", "reopened Quick Capture did not retain its empty focused editor after filing");
   await typePageQueryFromEmpty("Fz");
   await expectActiveAutocomplete('Create "Fz"', "reopened Quick Capture retained the hidden existing-first policy");
@@ -418,16 +423,27 @@ try {
   await sleep(700);
   td = spawn(
     TD,
-    webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, WD),
+    ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", WD],
     { env, stdio: ["ignore", driverLog, driverLog], detached: true },
   );
   await sleep(2_500);
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/",
-    capabilities: tauriCapabilities(APP, "capture"),
+    capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
     logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
   });
   const restartedHandles = await browser.getWindowHandles();
+  // Startup graph loading belongs to the visible WebView. Establish the graph
+  // fixture before asking the still-cold Capture WebView for page candidates;
+  // native window creation alone does not prove the graph has opened.
+  let restartedMain = null;
+  for (const handle of restartedHandles) {
+    await browser.switchToWindow(handle);
+    if (matchesWindowName(await browser.getTitle(), "Tine")) restartedMain = handle;
+  }
+  if (!restartedMain) throw new Error("fresh process lacked its graph window");
+  await browser.switchToWindow(restartedMain);
+  await browser.$(".ls-block").waitForExist({ timeout: 20_000 });
   const restartedCapture = await (async () => {
     for (const handle of restartedHandles) {
       await browser.switchToWindow(handle);

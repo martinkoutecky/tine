@@ -6,12 +6,22 @@ use super::ir::{
     AggFn, QueryStatistics, QueryStatisticsCell as Cell, QueryStatisticsGroup,
     QueryStatisticsGroupingStatus as Status, QueryStatisticsMarker as Marker, ViewSettings,
 };
-use super::results::ResultReadError;
 use std::collections::HashMap;
 
 #[cfg(test)]
 #[path = "statistics_tests.rs"]
 mod tests;
+
+/// The one way a statistics fold refuses: its caller-granted cell budget is
+/// spent (master reported it as `StatisticsResourceLimit`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StatisticsResourceLimit;
+
+impl std::fmt::Display for StatisticsResourceLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Exact query statistics exceed the available memory limit. Narrow the query or remove grouping or aggregates.")
+    }
+}
 
 /// One aggregate column's running total. It keeps three numbers and never a
 /// row, which is the whole point: statistics describe the COMPLETE sample, and
@@ -105,7 +115,7 @@ struct Group {
 
 /// The fold itself, driven one row at a time by the result reader as it streams
 /// the ordered sample. Retains accumulators and group keys; never rows.
-pub(crate) struct StatisticsFold {
+pub struct StatisticsFold {
     /// The EFFECTIVE view (Board grouping resolved, empty grouping cleared), so
     /// every later question about what was requested has one answer.
     view: ViewSettings,
@@ -121,10 +131,20 @@ pub(crate) struct StatisticsFold {
 }
 
 impl StatisticsFold {
-    pub(crate) fn new(
+    /// Start a fold for `view`. The view is first replaced by
+    /// [`effective_statistics_view`](super::view::effective_statistics_view)
+    /// (Board default grouping, explicit empty grouping cleared, an implicit
+    /// whole-result `count` when grouping has no aggregate); [`Self::view`]
+    /// returns that effective view.
+    ///
+    /// `Ok(None)` when the effective view requests no aggregate: the caller
+    /// skips statistics and the result carries none. `Err(StatisticsResourceLimit)`
+    /// when the fixed per-aggregate overhead alone exceeds `max_bytes`; the rest
+    /// of `max_bytes` is the budget [`Self::add`] charges new group keys against.
+    pub fn new(
         view: &ViewSettings,
         max_bytes: usize,
-    ) -> Result<Option<Self>, ResultReadError> {
+    ) -> Result<Option<Self>, StatisticsResourceLimit> {
         let view = super::view::effective_statistics_view(view);
         // No aggregates requested and no grouping to imply one: the reader skips
         // the whole fold, and the result carries no statistics at all. Absent
@@ -150,7 +170,7 @@ impl StatisticsFold {
             );
         let remaining = max_bytes
             .checked_sub(overhead)
-            .ok_or(ResultReadError::StatisticsResourceLimit)?;
+            .ok_or(StatisticsResourceLimit)?;
         Ok(Some(Self {
             overall: vec![Accumulator::default(); view.aggregates.len()],
             view,
@@ -161,15 +181,29 @@ impl StatisticsFold {
         }))
     }
 
-    pub(crate) fn view(&self) -> &ViewSettings {
+    /// The EFFECTIVE view the fold was built for (see [`Self::new`]).
+    pub fn view(&self) -> &ViewSettings {
         &self.view
     }
 
-    pub(crate) fn add(
+    /// Fold one result row. `values[i]` is the raw value for the effective
+    /// view's i-th aggregate (`None` = absent); the slice must have exactly one
+    /// entry per aggregate: extra entries are ignored, and missing ones are
+    /// neither summed nor counted as skipped. `keys` are the row's group keys:
+    /// the row is counted in EVERY listed group (group counts can sum to more
+    /// than `count`), in no group when `keys` is empty, and `keys` is ignored
+    /// when the view has no grouping or groups by a `formula:` field.
+    ///
+    /// `Err(StatisticsResourceLimit)` when a NEW group key's retained-size
+    /// charge exceeds the remaining budget. The row has then already been added
+    /// to `count`, the overall cells and every group before the failing key;
+    /// there is no rollback, so the caller must discard the fold.
+    /// O(aggregates × keys).
+    pub fn add(
         &mut self,
         values: &[Option<String>],
         keys: Vec<Option<String>>,
-    ) -> Result<(), ResultReadError> {
+    ) -> Result<(), StatisticsResourceLimit> {
         self.count += 1;
         for ((cell, (_, op)), value) in self
             .overall
@@ -198,7 +232,7 @@ impl StatisticsFold {
                     self.remaining = self
                         .remaining
                         .checked_sub(bytes)
-                        .ok_or(ResultReadError::StatisticsResourceLimit)?;
+                        .ok_or(StatisticsResourceLimit)?;
                     let at = self.groups.len();
                     self.by_key.insert(key.clone(), at);
                     self.groups.push(Group {
@@ -233,7 +267,13 @@ impl StatisticsFold {
             .is_some_and(|field| field.as_str().starts_with("formula:"))
     }
 
-    pub(crate) fn finish(self) -> QueryStatistics {
+    /// The wire statistics. Groups are in first-seen order and present only
+    /// when grouping is `Exact`; `None` for no grouping and for `formula:`
+    /// grouping (`UnsupportedFormula`, overall cells still exact). A cell with
+    /// no honest number is a marker: `EmptyGroup` (zero rows in scope),
+    /// `NonNumeric` (rows, but no finite number), `NonFinite` (sum/avg
+    /// overflowed). `DivisionByZero` is never produced here.
+    pub fn finish(self) -> QueryStatistics {
         let grouping_status = if self.unsupported_formula() {
             Status::UnsupportedFormula
         } else if self.view.group_by.is_some() {

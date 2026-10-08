@@ -1,24 +1,53 @@
-// Frontend parser for the Ctrl-K quick-search query dialect (GH #44).
-//
-// This module owns syntax only. Terms retain the user's exact spelling so the
-// production UI can forward them to the native engine without folding twice.
-// Native search owns authoritative normalization and matching.
+// Friendly search metadata, membership and evidence come from tine-search via wasm.
+// Initialize the app parser before calling this synchronous door. Parsing costs
+// O(query bytes + bounded compilation); membership O(text × terms); evidence
+// O(text × needle scalars), capped by limit. Invalid programs match nothing.
+import { search_query_json, search_matches, search_spans_json, search_substring_spans_json } from "../render/wasm/lsdoc_wasm.js";
 
-export interface Term {
-  // Exact term spelling from the friendly source.
-  text: string;
-  negated: boolean;
-  // Came from a `"quoted phrase"` — an explicit grammar opt-in, so even a single
-  // quoted word is not treated as `simple`.
-  quoted: boolean;
-}
-
-export type SearchMatcher =
+interface Term { text: string; negated: boolean; quoted: boolean }
+interface SearchSource { query: string; removeAccents: boolean; simple: string | null }
+export type SearchMatcher = SearchSource & (
   | { kind: "empty" }
   | { kind: "invalid"; error: string }
-  | { kind: "regex"; re: RegExp }
-  // OR of AND-groups; every retained group has ≥1 positive term.
-  | { kind: "boolean"; groups: Term[][] };
+  | { kind: "regex"; pattern: string }
+  | { kind: "boolean"; groups: Term[][] }
+);
+interface SourceSpan { start: number; end: number }
+
+function wasmLimit(limit: number): number {
+  return Math.min(0xffffffff, Math.max(0, Math.floor(limit) || 0));
+}
+
+/** Shared folded substring evidence in original UTF-16 coordinates. */
+export function searchSubstringSpans(text: string, needle: string, limit = Number.POSITIVE_INFINITY, removeAccents = true): SourceSpan[] {
+  return JSON.parse(search_substring_spans_json(text, needle, wasmLimit(limit), removeAccents)) as SourceSpan[];
+}
+
+/** Native grammar and bounded Rust regex validation; source is retained so
+ * parser recovery/cache eviction can transparently recompile the matcher. */
+export function parseSearchQuery(query: string, removeAccents = true): SearchMatcher {
+  return { ...JSON.parse(search_query_json(query, removeAccents)), query, removeAccents } as SearchMatcher;
+}
+
+/** lower must use the matcher's fold policy; regex sees only original text. */
+export function matcherMatches(m: SearchMatcher, lower: string, orig: string): boolean {
+  return search_matches(m.query, m.removeAccents, lower, orig);
+}
+
+export function simpleTerm(m: SearchMatcher): string | null {
+  return m.simple;
+}
+
+/** Earliest positive evidence; zero-width regex hits retain their position. */
+export function matchHighlight(m: SearchMatcher, text: string): { start: number; len: number } | null {
+  const span = (JSON.parse(search_spans_json(m.query, m.removeAccents, text, 1, true)) as SourceSpan[])[0];
+  return span ? { start: span.start, len: span.end - span.start } : null;
+}
+
+/** Positive evidence for the first matching group, with empty regex hits omitted. */
+export function matchHighlights(m: SearchMatcher, text: string, limit = 24): SourceSpan[] {
+  return JSON.parse(search_spans_json(m.query, m.removeAccents, text, wasmLimit(limit), false)) as SourceSpan[];
+}
 
 export const SEARCH_SYNTAX = [
   { example: "foo bar", description: "contains both terms", match: "bar then foo", miss: "foo only" },
@@ -27,92 +56,6 @@ export const SEARCH_SYNTAX = [
   { example: '"exact phrase"', description: "matches adjacent words", match: "an exact phrase here", miss: "exact other phrase" },
   { example: "/[A-Z]{3}/", description: "case-sensitive regular expression", match: "ABC", miss: "abc" },
 ] as const;
-
-// The exact cross-runtime whitespace contract. ECMAScript and Rust's Unicode
-// helpers disagree on U+FEFF and U+0085, so using either runtime's broad helper
-// would make one query split differently between the page and block engines.
-function isSearchWhitespace(char: string): boolean {
-  const code = char.codePointAt(0) ?? 0;
-  return (
-    (code >= 0x0009 && code <= 0x000d)
-    || code === 0x0020
-    || code === 0x00a0
-    || code === 0x1680
-    || (code >= 0x2000 && code <= 0x200a)
-    || code === 0x2028
-    || code === 0x2029
-    || code === 0x202f
-    || code === 0x205f
-    || code === 0x3000
-    || code === 0xfeff
-  );
-}
-
-function trimSearchWhitespace(value: string): string {
-  const chars = Array.from(value);
-  let start = 0;
-  let end = chars.length;
-  while (start < end && isSearchWhitespace(chars[start])) start += 1;
-  while (end > start && isSearchWhitespace(chars[end - 1])) end -= 1;
-  return chars.slice(start, end).join("");
-}
-
-/** Reject regex constructs for which Rust `regex` and JavaScript RegExp do not
- * share semantics. Non-capturing groups remain available; look-around, inline
- * flags, named/engine-specific groups, and backreferences do not. */
-function commonRegexPattern(pattern: string): boolean {
-  let inClass = false;
-  for (let i = 0; i < pattern.length; i += 1) {
-    if (pattern[i] === "\\") {
-      const escaped = pattern[i + 1];
-      if (escaped && escaped >= "1" && escaped <= "9") return false;
-      i += 1;
-      continue;
-    }
-    if (pattern[i] === "[") {
-      inClass = true;
-      continue;
-    }
-    if (pattern[i] === "]" && inClass) {
-      inClass = false;
-      continue;
-    }
-    if (!inClass && pattern[i] === "(" && pattern[i + 1] === "?" && pattern[i + 2] !== ":") {
-      return false;
-    }
-  }
-  return true;
-}
-
-export function parseSearchQuery(query: string): SearchMatcher {
-  const q = trimSearchWhitespace(query);
-  if (!q) return { kind: "empty" };
-  // Whole-query regex: `/pattern/` with a non-empty pattern. (`//` is too short —
-  // an empty pattern matches everything — so it falls through to a literal term.)
-  if (q.length >= 3 && q.startsWith("/") && q.endsWith("/")) {
-    const pat = q.slice(1, -1);
-    if (!commonRegexPattern(pat)) {
-      return { kind: "invalid", error: "regex feature is not supported by both search engines" };
-    }
-    try {
-      // Case-sensitive (no `i`), matching the Rust `regex` side: the pattern owns
-      // its case classes, so `[A-Z]` works.
-      return { kind: "regex", re: new RegExp(pat, "u") };
-    } catch (e) {
-      return { kind: "invalid", error: e instanceof Error ? e.message : "invalid regex" };
-    }
-  }
-  const groups = parseBoolean(q).filter((g) => g.some((t) => !t.negated));
-  if (!groups.length) return { kind: "empty" };
-  return { kind: "boolean", groups };
-}
-
-// The single positive bare term when this is a one-term query, else null.
-export function simpleTerm(m: SearchMatcher): string | null {
-  if (m.kind !== "boolean" || m.groups.length !== 1 || m.groups[0].length !== 1) return null;
-  const t = m.groups[0][0];
-  return !t.negated && !t.quoted ? t.text : null;
-}
 
 function quoteDsl(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -127,7 +70,7 @@ export function friendlySearchToDsl(query: string): { dsl: string; error: string
   if (matcher.kind === "invalid") return { dsl: "", error: matcher.error };
   if (matcher.kind === "empty") return { dsl: "", error: "Add at least one positive search term." };
   if (matcher.kind === "regex") {
-    return { dsl: `(content-regex ${quoteDsl(matcher.re.source)})`, error: null };
+    return { dsl: `(content-regex ${quoteDsl(matcher.pattern)})`, error: null };
   }
   const termDsl = (term: Term) => {
     const content = quoteDsl(term.text);
@@ -141,8 +84,8 @@ export function friendlySearchToDsl(query: string): { dsl: string; error: string
 }
 
 /** Canonical lossless on-disk representation for a friendly search workspace.
- * The `(search …)` predicate is a Tine query extension compiled by the same
- * Rust QueryPlan as Ctrl+K; it keeps the friendly source reconstructible. */
+ * The `(search …)` predicate is a Tine query extension evaluated by the
+ * in-memory query evaluator using the graph's search policy. */
 export function friendlySearchToSavedDsl(query: string): string {
   return `(search ${quoteDsl(query.trim())})`;
 }
@@ -160,77 +103,6 @@ export function savedDslToFriendlySearch(dsl: string): string | null {
       out += match[1][i + 1];
       i += 1;
     } else out += char;
-  }
-  return out;
-}
-
-function parseBoolean(q: string): Term[][] {
-  const tokens = tokenize(q);
-  const groups: Term[][] = [];
-  let cur: Term[] = [];
-  for (const tok of tokens) {
-    if (tok.isOr) {
-      groups.push(cur);
-      cur = [];
-      continue;
-    }
-    if (!tok.text) continue;
-    cur.push({ text: tok.text, negated: tok.negated, quoted: tok.quoted });
-  }
-  groups.push(cur);
-  return groups.filter((g) => g.length > 0);
-}
-
-export interface Token {
-  text: string;
-  negated: boolean;
-  quoted: boolean;
-  isOr: boolean;
-}
-
-// Split into tokens, honoring `"quoted phrases"` (may contain spaces) and a
-// leading `-` for negation. A bare unquoted `OR` becomes an OR separator.
-//
-// Exported so the shared conformance corpus
-// (`tests/fixtures/search-query-corpus.json`) can be asserted against the same
-// function the Rust side asserts against, rather than against a proxy.
-export function tokenize(q: string): Token[] {
-  const chars = Array.from(q);
-  const out: Token[] = [];
-  let i = 0;
-  while (i < chars.length) {
-    if (isSearchWhitespace(chars[i])) {
-      i += 1;
-      continue;
-    }
-    let negated = false;
-    // Leading `-` negates, but only when something non-space follows it.
-    if (chars[i] === "-" && i + 1 < chars.length && !isSearchWhitespace(chars[i + 1])) {
-      negated = true;
-      i += 1;
-    }
-    let text: string;
-    let quoted: boolean;
-    if (i < chars.length && chars[i] === '"') {
-      // Quoted phrase: read to the closing quote (or end of input).
-      i += 1;
-      const start = i;
-      while (i < chars.length && chars[i] !== '"') i += 1;
-      text = chars.slice(start, i).join("");
-      if (i < chars.length) i += 1; // consume closing quote
-      quoted = true;
-    } else {
-      // Bare token: read to the next whitespace.
-      const start = i;
-      while (i < chars.length && !isSearchWhitespace(chars[i])) i += 1;
-      text = chars.slice(start, i).join("");
-      quoted = false;
-    }
-    if (!quoted && !negated && text === "OR") {
-      out.push({ text: "", negated: false, quoted: false, isOr: true });
-    } else {
-      out.push({ text, negated, quoted, isOr: false });
-    }
   }
   return out;
 }

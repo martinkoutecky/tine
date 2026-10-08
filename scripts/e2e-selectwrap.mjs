@@ -4,19 +4,19 @@
 // marks (`*`/`~`/`=`) wrap and double, including literal delimiter events with
 // Alt held (GH #83). Drives real keydown events, so it exercises Block.tsx's
 // keydown→wrapSelectionEdit→autocomplete path, not just the pure logic.
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 
 const PORT = Number(process.env.E2E_PREVIEW_PORT || 5197);
-// Spawn the binary, not `npx`. `npx` forks its own `node .../vite` child, so
-// SIGKILL on the npx shell left the preview server running: one orphaned vite
-// per full-suite run, each holding ~90 MB, until a release E2E run was killed
-// for memory (2026-09-16). Every other preview launcher in scripts/ already
-// spawns ./node_modules/.bin/vite directly.
-const server = spawn("./node_modules/.bin/vite", ["preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
-const waitForServer = (url, tries = 60) => waitForHttpServer(url, tries, 250);
+const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+async function waitForServer(url, tries = 60) {
+  for (let i = 0; i < tries; i++) {
+    try { if ((await fetch(url)).ok) return; } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 let failures = 0;
 const check = (name, got, want) => {
@@ -25,27 +25,18 @@ const check = (name, got, want) => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}: ${JSON.stringify(got)}${ok ? "" : ` (want ${JSON.stringify(want)})`}`);
 };
 
-async function ensureEditor(page) {
-  const editor = page.locator("textarea.block-editor");
-  if (!(await editor.isVisible().catch(() => false))) {
-    await page.locator(".ls-block .block-content").first().click();
-  }
-  await editor.waitFor({ state: "visible", timeout: 3000 });
+// Fill fixture text without invoking select-all: on an empty block that command
+// correctly enters block selection. The wrapping/formatting keys below remain
+// real keydown events through the editor.
+async function prepareEditor(page, content) {
+  await page.locator(".ls-block .block-content").first().click();
+  await page.locator("textarea.block-editor").fill(content);
 }
 
 // Enter the first block's editor, replace its text with `content`, then select
 // [selStart,selEnd) and press each key in `keys`. Returns {value, acOpen}.
 async function gesture(page, content, selStart, selEnd, keys) {
-  await ensureEditor(page);
-  // Replace the field's contents directly rather than via Ctrl+A. This scenario
-  // is about selection WRAPPING; Ctrl+A is only being used here to clear the
-  // field. Since GH #262 it is also the block-selection ladder, and its first
-  // press in an EMPTY block deliberately escalates out of the editor (see
-  // src/components/Block.selectAll.test.tsx) -- which removed the textarea this
-  // scenario then typed into. select() states the intent and is a no-op when
-  // the block is already empty.
-  await page.evaluate(() => document.querySelector("textarea.block-editor")?.select());
-  await page.keyboard.type(content);
+  await prepareEditor(page, content);
   await sleep(120);
   await page.evaluate(([s, e]) => {
     const ta = document.querySelector("textarea.block-editor");
@@ -62,16 +53,7 @@ async function gesture(page, content, selStart, selEnd, keys) {
 // Exercise the configured semantic command path rather than literal delimiter
 // auto-wrapping. `direction=backward` matches Ctrl+Shift+Left's live selection.
 async function formatGesture(page, content, selStart, selEnd, key, direction = "backward") {
-  await ensureEditor(page);
-  // Replace the field's contents directly rather than via Ctrl+A. This scenario
-  // is about selection WRAPPING; Ctrl+A is only being used here to clear the
-  // field. Since GH #262 it is also the block-selection ladder, and its first
-  // press in an EMPTY block deliberately escalates out of the editor (see
-  // src/components/Block.selectAll.test.tsx) -- which removed the textarea this
-  // scenario then typed into. select() states the intent and is a no-op when
-  // the block is already empty.
-  await page.evaluate(() => document.querySelector("textarea.block-editor")?.select());
-  await page.keyboard.type(content);
+  await prepareEditor(page, content);
   await sleep(120);
   await page.evaluate(([s, e, dir]) => {
     const ta = document.querySelector("textarea.block-editor");

@@ -16,10 +16,11 @@ import type { JSX } from "solid-js";
 import { Block } from "./Block";
 import { initParser } from "../render/parse";
 import { backend, QueryPrintRefusedError } from "../backend";
-import { doc, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { resetStore } from "../document";
+import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import type { RefGroup } from "../types";
-import { backendReadsQueries } from "../queryReadingsTestkit";
-import { blockRunResult } from "../queryReadingsTestkit";
+import { backendReadsQueries } from "../tests/queryReadingsTestkit";
+import { blockRunResult } from "../tests/queryReadingsTestkit";
 
 beforeAll(async () => {
   await initParser();
@@ -79,6 +80,53 @@ function load(raw: string): void {
 const HOSTILE_ARGUMENT = '(and (task TODO) "a, b") {:title "Open, work"}';
 
 describe("a query macro is read from the block's raw source", () => {
+  it("keeps only the suffix when markup crosses a prematurely closed title", async () => {
+    const argument = '(task TODO) {:title "Sprint }} **inside"}';
+    const raw = `Before {{query ${argument}}} after** tail`;
+    load(raw);
+    backendReadsQueries({ [argument]: { form: "(task TODO)" } });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settle();
+      expect(root.querySelectorAll(".query-block")).toHaveLength(1);
+      const body = root.querySelector(".block-content")!.cloneNode(true) as HTMLElement;
+      body.querySelector(".query-block")!.remove();
+      expect(body.textContent).toBe("Before  after** tail");
+      expect(doc.byId.query.raw).toBe(raw);
+    } finally { dispose(); }
+  });
+
+  for (const format of ["md", "org"] as const) {
+    for (const argument of [
+      '(task TODO) {:title "Sprint }} board"}',
+      '(task TODO) {:title "x" :meta {:x 1}}',
+      '(property x "}}")',
+      '(task TODO) {:title "{{query (task DONE)}}"}',
+    ]) {
+      it(`renders only the full parsed macro span in ${format}: ${argument}`, async () => {
+        const suffix = format === "md" ? "\\*literal\\*" : "literal";
+        const properties = format === "md" ? "tine.view:: search" : ":PROPERTIES:\r\n:tine.view: search\r\n:END:";
+        const raw = `  é𐐀 Before {{query ${argument}}} after ${suffix} {{query (task DONE)}}\r\n${properties}`;
+        load(raw);
+        setDoc("pages", 0, "format", format);
+        backendReadsQueries({
+          [argument]: { form: "(task TODO)", opts: "" },
+          "(task DONE)": { form: "(task DONE)" },
+        });
+        const { root, dispose } = mount(() => <Block id="query" />);
+        try {
+          await settle();
+          expect(root.querySelectorAll(".query-block")).toHaveLength(2);
+          expect(backend().parseQuery).toHaveBeenCalledWith(argument, "macro_query", [["tine.view", "search"]]);
+          const body = root.querySelector(".block-content")!.cloneNode(true) as HTMLElement;
+          body.querySelectorAll(".query-block").forEach((query) => query.remove());
+          expect(body.textContent).toBe(`é𐐀 Before  after ${format === "md" ? "*literal*" : "literal"} `);
+          expect(doc.byId.query.raw).toBe(raw);
+        } finally { dispose(); }
+      });
+    }
+  }
+
   it("hands the engine the exact bytes, options map and literal comma included", async () => {
     load(`Tasks: {{query ${HOSTILE_ARGUMENT}}} — see above`);
     backendReadsQueries({
@@ -196,4 +244,54 @@ describe("editing a query's title preserves its authored form (§4.3.1)", () => 
       dispose();
     }
   });
+});
+
+
+describe("OG-R4A title edits own only top-level option spans", () => {
+  for (const options of ['{:x [:title "keep"]}', '{:x [:title "keep"] :title "actual"}', '{:x #_ :title [:title "keep"] :title #_ "ignored" "actual"}']) {
+    it(`preserves nested title bytes in ${options}`, async () => {
+      const argument = `(task TODO) ${options}`;
+      load(`{{query ${argument}}}`);
+      backendReadsQueries({ [argument]: { form: "(task TODO)", opts: options } });
+      const printed = vi.spyOn(backend(), "printQuery").mockImplementation(async (query) =>
+        `(task TODO) ${"og_options" in query.source ? query.source.og_options : ""}`);
+      const { root, dispose } = mount(() => <Block id="query" />);
+      try {
+        await settle();
+        expect(root.querySelector(".query-title")?.textContent).toBe(options.includes('"actual"') ? "actual" : "Query");
+        (root.querySelector(".query-title") as HTMLElement).click();
+        await settle();
+        const input = root.querySelector(".query-title-input") as HTMLInputElement;
+        input.value = "renamed";
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        await vi.waitFor(() => expect(printed).toHaveBeenCalled());
+        const source = printed.mock.calls[0][0].source;
+        const expected = options.includes('"actual"')
+          ? options.replace('"actual"', '"renamed"') : '{:title "renamed" :x [:title "keep"]}';
+        expect("og_options" in source && source.og_options).toBe(expected);
+        await vi.waitFor(() => expect(doc.byId.query.raw).toBe(`{{query (task TODO) ${expected}}}`));
+      } finally { dispose(); }
+    });
+  }
+});
+
+it("unreadable EDN title edits refuse visibly and never reach the printer", async () => {
+  const options = '{:x [:title "keep"] :title "\\q"}';
+  const argument = `(task TODO) ${options}`;
+  load(`{{query ${argument}}}`);
+  backendReadsQueries({ [argument]: { form: "(task TODO)", opts: options } });
+  const printed = vi.spyOn(backend(), "printQuery");
+  const before = doc.byId.query.raw;
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    await settle();
+    (root.querySelector(".query-title") as HTMLElement).click();
+    await settle();
+    const input = root.querySelector(".query-title-input") as HTMLInputElement;
+    input.value = "renamed";
+    input.dispatchEvent(new FocusEvent("blur"));
+    await vi.waitFor(() => expect(root.querySelector(".query-print-refused")?.textContent).toContain("Unreadable EDN options"));
+    expect(printed).not.toHaveBeenCalled();
+    expect(doc.byId.query.raw).toBe(before);
+  } finally { dispose(); }
 });

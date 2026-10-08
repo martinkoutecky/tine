@@ -1,0 +1,1 @@
+First Tine Beta, rebuilt from Tine 0.6.5 with a smaller core and the features and fixes developed since then. Installs next to stable Tine with separate settings and Beta updates. Open your existing Logseq Markdown or Org graph, and save your edits before switching between apps.

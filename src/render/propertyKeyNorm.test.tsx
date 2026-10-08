@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { renderBlocks } from "./body";
+import { initParser } from "./parse";
+import { parseBody } from "./facets";
 import { isRenderHiddenProp, propertyKeyNorm } from "./block";
 
 function renderedProperty(key: string, value: string): { key: string | null; value: string | null } {
@@ -17,6 +19,8 @@ function renderedProperty(key: string, value: string): { key: string | null; val
   return rendered;
 }
 
+beforeAll(initParser);
+
 describe("propertyKeyNorm", () => {
   it("folds case, spaces, and underscores to the canonical property key", () => {
     expect(propertyKeyNorm(" Done_At ")).toBe("done-at");
@@ -32,4 +36,15 @@ describe("propertyKeyNorm", () => {
   it("folds user-hidden property names before comparing them", () => {
     expect(isRenderHiddenProp("My_Prop", ["my-prop"])).toBe(true);
   });
+});
+
+it("direct AST rendering uses the same earliest-group and last-value rule as live blocks", () => {
+  const raw = "status:: first\nSTATUS:: last\nid:: hidden\nbody\nstatus:: trailing";
+  const host = document.createElement("div");
+  const dispose = render(() => renderBlocks(parseBody(raw, "md")), host);
+  try {
+    expect(host.querySelectorAll(".prop")).toHaveLength(1);
+    expect(host.querySelector(".prop-value")?.textContent).toBe("last");
+    expect(host.querySelector(".prop-key .page-ref")?.textContent).toBe("status");
+  } finally { dispose(); }
 });

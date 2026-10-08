@@ -1,13 +1,7 @@
 import { For, Show, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
-import { backend } from "../backend";
-import {
-  closeHelpPopup,
-  graphMeta,
-  helpPopupOpen,
-  openSettings,
-  openWelcome,
-  toggleHelpPopup,
-} from "../ui";
+import { openExternal } from "./primitives";
+import { closeHelpPopup, helpPopupOpen, openSettings, openWelcome, toggleHelpPopup } from "../ui";
+import { graphMeta } from "../graphSession";
 import { BUILTIN_KEYS, type BuiltinKeyDef, type ShortcutScope } from "../keybindings";
 import { EmojiText } from "../render/emoji";
 import { openGuide } from "../guide";
@@ -53,9 +47,7 @@ export const HELP_ITEMS: HelpItem[] = [
   },
 ];
 
-function openExternal(url: string) {
-  void backend().openExternal(url).catch(() => {});
-}
+
 
 export function HelpPopup(): JSX.Element {
   let root: HTMLDivElement | undefined;
@@ -110,8 +102,8 @@ export interface ShortcutSettingRow {
   label: string;
   binding: string;
   /** A second built-in chord that runs the same command. Shown beside the
-   *  binding so it is discoverable, but not remappable and not its own row:
-   *  it disappears the moment the user binds the command themselves. */
+   *  binding so it is discoverable, but not remappable and not its own row: it
+   *  disappears the moment the user binds the command themselves. */
   alias?: string;
   effective: string;
   overridden: boolean;
@@ -144,21 +136,18 @@ const SHORTCUT_GROUPS: { scope: ShortcutScope; title: string; description: strin
   },
 ];
 
+/** Group shortcut rows and filter by all search terms across command labels,
+ * ids and bindings. Cost: O(commands × query length); no I/O or failure. */
 export function buildShortcutPaneData(shortcuts: ShortcutSettingRow[], search = ""): ShortcutPaneSection[] {
-  const query = search.trim().toLocaleLowerCase();
-  const queryTerms = query.split(/\s+/).filter(Boolean);
-  const includesQuery = (...values: (string | undefined)[]) => {
-    const haystack = values.filter(Boolean).join(" ").toLocaleLowerCase();
-    return queryTerms.every((term) => haystack.includes(term));
+  const terms = search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const matches = (...values: (string | undefined)[]) => {
+    const text = values.filter(Boolean).join(" ").toLocaleLowerCase();
+    return terms.every((term) => text.includes(term));
   };
   return SHORTCUT_GROUPS.map((group) => ({
     ...group,
-    commands: shortcuts.filter((s) =>
-      s.scope === group.scope && includesQuery(s.label, s.id, s.effective, s.binding)
-    ),
-    builtins: BUILTIN_KEYS.filter((s) =>
-      s.scope === group.scope && includesQuery(s.label, s.id, s.binding, s.details)
-    ),
+    commands: shortcuts.filter((s) => s.scope === group.scope && matches(s.label, s.id, s.effective, s.binding)),
+    builtins: BUILTIN_KEYS.filter((s) => s.scope === group.scope && matches(s.label, s.id, s.binding, s.details)),
   }));
 }
 
@@ -342,13 +331,7 @@ function ShortcutRow(props: {
       </span>
       <span class="help-shortcut-tail">
         <Show when={props.row.effective.trim() && props.row.effective !== "false"}>
-          <button
-            class="help-reset"
-            title="Remove this keybinding"
-            onClick={() => props.onUnbind(props.row.id)}
-          >
-            Unbind
-          </button>
+          <button class="help-reset" title="Remove this keybinding" onClick={() => props.onUnbind(props.row.id)}>Unbind</button>
         </Show>
         <Show when={props.row.overridden}>
           <button
@@ -391,27 +374,22 @@ export function ShortcutsSettingsPane(props: {
   onUnbind: (id: string) => void;
   onReset: (id: string) => void;
 }): JSX.Element {
-  const query = () => props.search.trim();
-  const sections = createMemo(() => buildShortcutPaneData(props.shortcuts, query()));
-  const hasMatches = createMemo(() => sections().some(
-    (section) => section.commands.length > 0 || section.builtins.length > 0,
-  ));
+  const sections = createMemo(() => buildShortcutPaneData(props.shortcuts, props.search));
 
   return (
     <div class="help-shortcuts-pane">
-      <Show when={!query()}>
-        <div class="settings-hint settings-block">
-          Click a binding to record new keys (<code>mod</code> = Ctrl, or Cmd on macOS). Esc cancels.
-          Overrides are saved locally on top of <code>config.edn</code>.
-        </div>
+      <div class="settings-hint settings-block">
+        Click a binding to record new keys (<code>mod</code> = Ctrl, or Cmd on macOS). Esc cancels.
+        Overrides are saved locally on top of <code>config.edn</code>.
+      </div>
 
+      <Show when={!props.search.trim()}>
         <TriggerTable shortcuts={props.shortcuts} />
         <SyntaxTable />
       </Show>
-
-      <Show when={!query() || hasMatches()} fallback={
-        <div class="settings-search-empty help-shortcut-search-empty">No matching shortcuts</div>
-      }>
+      <Show when={props.search.trim() && sections().every((section) => !section.commands.length && !section.builtins.length)}>
+        <div class="settings-search-empty">No matching shortcuts</div>
+      </Show>
 
       <For each={sections()}>
         {(section) => (
@@ -453,7 +431,6 @@ export function ShortcutsSettingsPane(props: {
           </Show>
         )}
       </For>
-      </Show>
     </div>
   );
 }

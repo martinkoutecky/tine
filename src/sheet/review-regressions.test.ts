@@ -3,19 +3,11 @@
 // footer, and one-undo atomicity for the empty-journal append path.
 import { beforeAll, beforeEach, expect, it } from "vitest";
 import { initParser } from "../render/parse";
-import {
-  appendToTodayJournal,
-  doc,
-  insertOutlineAfter,
-  pageToDto,
-  resetStore,
-  setDoc,
-  undo,
-  type FeedPage,
-  type Node,
-} from "../store";
+import { appendToTodayJournal, insertOutlineAfter, resetStore, undo } from "../document";
+import { pageToDto } from "../document/convert";
+import { type FeedPage, type Node } from "../document/model";
+import { doc, setDoc } from "../document/model";
 import { journalTitle } from "../journal";
-import { graphBindingRuntime } from "../graphBindingRuntime";
 import { setColumnAggregate } from "./mutations";
 
 beforeAll(async () => {
@@ -23,7 +15,6 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   resetStore();
-  graphBindingRuntime.bind(1, { binding_generation: 1 });
 });
 
 function page(name: string, kind: "page" | "journal", roots: string[], readOnly = false): FeedPage {
@@ -33,18 +24,6 @@ function node(id: string, raw: string, pageName: string, parent: string | null =
   return { id, raw, collapsed: false, parent, page: pageName, children };
 }
 
-/** The DTO's CONTENT, without the editor identity it now also carries.
- *
- *  `activation` names the live editor instance and `path` names where that editor
- *  will live — an absent page learns its prospective target when it first saves.
- *  Neither is what the page CONTAINS, and these assertions are about an outline
- *  round-tripping through undo, so including them would report an editor learning
- *  its own address as though the undo had failed. (GH #254 increment 3.) */
-const content = (dto: unknown) => {
-  const { activation: _activation, path: _path, ...rest } = (dto ?? {}) as Record<string, unknown>;
-  return rest;
-};
-
 it("insertOutlineAfter refuses read-only pages (file-drop choke point)", () => {
   setDoc({
     byId: { anchor: node("anchor", "Anchor", "Sheet") },
@@ -52,11 +31,11 @@ it("insertOutlineAfter refuses read-only pages (file-drop choke point)", () => {
     feed: ["Sheet"],
     loaded: true,
   });
-  const before = content(pageToDto("Sheet"));
+  const before = pageToDto("Sheet");
 
   insertOutlineAfter("anchor", [{ raw: "Dropped", children: [] }]);
 
-  expect(content(pageToDto("Sheet"))).toEqual(before);
+  expect(pageToDto("Sheet")).toEqual(before);
 });
 
 it("setColumnAggregate refuses read-only owners (footer bypassed the gridPage gate)", () => {
@@ -76,10 +55,10 @@ it("setColumnAggregate refuses read-only owners (footer bypassed the gridPage ga
 it("appending to an empty today journal undoes in one step (anchor/insert/delete = one unit)", async () => {
   const today = journalTitle(new Date());
   setDoc({ byId: {}, pages: [page(today, "journal", [])], feed: [today], loaded: true });
-  const before = content(pageToDto(today));
+  const before = pageToDto(today);
 
   expect(await appendToTodayJournal("#Tag ")).toBe(true);
   undo();
 
-  expect(content(pageToDto(today))).toEqual(before);
+  expect(pageToDto(today)).toEqual(before);
 });

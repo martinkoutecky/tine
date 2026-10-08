@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { initParser } from "../render/parse";
 import { renderInlines } from "../render/inline";
-import { resetStore } from "../store";
+import { resetStore } from "../document";
 import { backend } from "../backend";
 import { openPage } from "../router";
 import { layoutPaneIds, paneRouter, resetPaneLayoutToSingle } from "../panes";
@@ -13,8 +13,8 @@ import { NamespaceCrumb } from "./Namespace";
 import { LinkedReferences } from "./LinkedReferences";
 import { QueryMacro } from "./Macro";
 import type { RefGroup } from "../types";
-import { backendReadsQueries } from "../queryReadingsTestkit";
-import { blockRunResult } from "../queryReadingsTestkit";
+import { backendReadsQueries } from "../tests/queryReadingsTestkit";
+import { blockRunResult } from "../tests/queryReadingsTestkit";
 
 // GH #283 (approved contract): ONE modified-click decision across internal
 // page/block link surfaces:
@@ -205,8 +205,8 @@ describe("modified-click contract on internal links (GH #283)", () => {
     setFavorites([{ name: "Fav One", kind: "page" }]);
     const m = mount(() => <Sidebar />);
     try {
-      // GH #464: the page TITLE is the link, not the whole row.
-      const row = [...m.root.querySelectorAll<HTMLElement>("#sidebar-favorites-list .nav-page-label")][0];
+      // og: the whole favorite row is the link (master GH #464 makes only the title one).
+      const row = [...m.root.querySelectorAll<HTMLElement>("#sidebar-favorites-list .nav-page")][0];
       expect(row).toBeTruthy();
       click(row, { shiftKey: true });
       expect(rightSidebar().length).toBeGreaterThan(0);
@@ -251,7 +251,7 @@ describe("modified-click contract on internal links (GH #283)", () => {
       blocks: [{ id: "query-hit", raw: "TODO row", collapsed: false, children: [] }],
     }]));
     backendReadsQueries({
-      "(task TODO) {:table-view? true}": { form: "(task TODO)", opts: "{:table-view? true}" },
+      "(task TODO) {:table-view? true}": { form: "(task TODO)", opts: "{:table-view? true}", legacy_table: true },
     });
     const m = mount(() => <QueryMacro body={'query (task TODO) {:table-view? true}'} />);
     try {
@@ -375,8 +375,8 @@ describe("Alt+click opens the link in the other pane (GH #438)", () => {
     setFavorites([{ name: "Fav One", kind: "page" }]);
     const m = mount(() => <Sidebar />);
     try {
-      // GH #464: the page TITLE is the link, not the whole row.
-      const row = [...m.root.querySelectorAll<HTMLElement>("#sidebar-favorites-list .nav-page-label")][0];
+      // og: the whole favorite row is the link (master GH #464 makes only the title one).
+      const row = [...m.root.querySelectorAll<HTMLElement>("#sidebar-favorites-list .nav-page")][0];
       expect(row).toBeTruthy();
       openPage("Elsewhere", "page");
       click(row, { altKey: true });
@@ -419,7 +419,7 @@ describe("Alt+click opens the link in the other pane (GH #438)", () => {
       blocks: [{ id: "query-hit", raw: "TODO row", collapsed: false, children: [] }],
     }]));
     backendReadsQueries({
-      "(task TODO) {:table-view? true}": { form: "(task TODO)", opts: "{:table-view? true}" },
+      "(task TODO) {:table-view? true}": { form: "(task TODO)", opts: "{:table-view? true}", legacy_table: true },
     });
     const m = mount(() => <QueryMacro body={'query (task TODO) {:table-view? true}'} />);
     try {

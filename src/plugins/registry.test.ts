@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { installCommunityTheme, parseRegistryIndex, parseSafetyReport } from "./registry";
+import { installCommunityTheme, parseRegistryIndex, parseSafetyReport, refreshCommunityRegistry } from "./registry";
 import { uninstallThemePackage } from "../themes/manager";
 
 const version = {
@@ -173,5 +173,46 @@ describe("signed plugin registry parsing", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+
+describe("registry network rejection releases the body (OG-B-FRONT)", () => {
+  it.each(["declared", "streamed", "status"])("aborts %s oversized/error responses", async kind => {
+    const signals: AbortSignal[] = [];
+    const cancel = vi.fn();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      signals.push(init!.signal as AbortSignal);
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new Uint8Array(2 * 1024 * 1024 + 1)); },
+        cancel,
+      });
+      return new Response(body, {status: kind === "status" ? 503 : 200,
+        headers: kind === "declared" ? {"content-length": "100000000"} : {}});
+    });
+    try {
+      await refreshCommunityRegistry({timeoutMs: 1000});
+      expect(signals).toHaveLength(2);
+      expect(signals.every(signal => signal.aborted)).toBe(true);
+      if (kind === "streamed") expect(cancel).toHaveBeenCalledTimes(2);
+    } finally { fetchMock.mockRestore(); }
+  });
+  it("allows a fully consumed response exactly at the declared limit", async () => {
+    const signals: AbortSignal[] = [];
+    const cancel = vi.fn();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      signals.push(init!.signal as AbortSignal);
+      const count = String(url).endsWith(".sig") ? 1024 : 2 * 1024 * 1024;
+      const body = new ReadableStream<Uint8Array>({start(controller) {
+        controller.enqueue(new Uint8Array(count)); controller.close();
+      }, cancel});
+      return new Response(body, {headers: {"content-length": String(count)}});
+    });
+    try {
+      await refreshCommunityRegistry({timeoutMs: 1000});
+      expect(signals).toHaveLength(2);
+      expect(signals.every(signal => !signal.aborted)).toBe(true);
+      expect(cancel).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
   });
 });

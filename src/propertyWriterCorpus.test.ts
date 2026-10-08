@@ -1,10 +1,11 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { splitPagePreamble, upsertPropertyLine } from "./editor/properties";
+import { pagePartsWithProperty, splitPagePreamble } from "./editor/properties";
 import { pageProperties } from "./render/block";
 
-// The anonymized-graph acceptance gate for GH #164's property writers.
+// The anonymized-graph acceptance gate for GH #164's property writers
+// (ported from master d9faed555 in og 14 Q5; the probe loop adds a non-ASCII key).
 //
 // **Why this exists as a permanent, env-gated test.** The corpus discipline is
 // that synthetic fixtures are generated from *our model of a graph* - the same
@@ -29,10 +30,10 @@ import { pageProperties } from "./render/block";
 // **Known limit, stated so a green run is not over-read:** this corpus is all
 // Markdown (1075 `.md`, 0 `.org`), so it cannot exercise the Org page-property
 // directive writer from the same packet. Org stays proven at the unit layer
-// (`orgPreBlockWithProperty` in src/editor/properties.test.ts, and the org page
-// write in src/store.test.ts). A gate cannot prove what its corpus lacks.
+// (`pagePartsWithProperty` in src/editor/properties.test.ts and
+// src/document/edits/pageProperties14q5.test.ts). A gate cannot prove what its corpus lacks.
 const ANON = process.env.ANON_GRAPH;
-const PROBE = "tine.corpus-probe";
+const PROBES = ["tine.corpus-probe", "klíč-probe"];
 
 function pageFiles(root: string): string[] {
   return ["pages", "journals"].flatMap((dir) => {
@@ -78,23 +79,25 @@ describe.skipIf(!ANON)("property writers over a real graph (ANON_GRAPH)", () => 
       const format = file.endsWith(".org") ? "org" : "md";
       const before = pageProperties(properties, format);
 
-      const added = upsertPropertyLine(properties, PROBE, "x");
-      const after = pageProperties(added, format);
+      for (const PROBE of PROBES) {
+        // The page writer operates on the whole pre-block text; here the whole file.
+        const [addedFile] = pagePartsWithProperty([raw], format, PROBE, "x");
+        const after = pageProperties(addedFile, format);
 
-      if (!after.some(([k, v]) => k.toLowerCase() === PROBE && v === "x")) probeNotReadBack += 1;
+        if (!after.some(([k, v]) => k.toLowerCase() === PROBE && v === "x")) probeNotReadBack += 1;
 
-      // Every key/value that was there must still be there, in the same order.
-      const survived = after.filter(([k]) => k.toLowerCase() !== PROBE);
-      const sameAsBefore = survived.length === before.length
-        && survived.every(([k, v], i) => k === before[i][0] && v === before[i][1]);
-      if (!sameAsBefore) existingKeysDisturbed += 1;
+        // Every key/value that was there must still be there, in the same order.
+        const survived = after.filter(([k]) => k.toLowerCase() !== PROBE);
+        const sameAsBefore = survived.length === before.length
+          && survived.every(([k, v], i) => k === before[i][0] && v === before[i][1]);
+        if (!sameAsBefore) existingKeysDisturbed += 1;
 
-      // A header write must not reach past the header.
-      const rewritten = (added ?? "") + (remainder ?? "");
-      if (!rewritten.endsWith(remainder ?? "")) remainderDisturbed += 1;
+        // A header write must not reach past the header.
+        if (!addedFile.endsWith(remainder ?? "")) remainderDisturbed += 1;
 
-      const removed = upsertPropertyLine(added, PROBE, null);
-      if (removed !== properties) roundTripNotByteExact += 1;
+        const [removed] = pagePartsWithProperty([addedFile], format, PROBE, null);
+        if (removed !== raw) roundTripNotByteExact += 1;
+      }
     }
 
     // Counts only - never a name, a path, or a byte.

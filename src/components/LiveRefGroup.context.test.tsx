@@ -1,9 +1,12 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createSignal, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, resetStore, setDoc } from "../store";
-import type { BlockDto, PageDto } from "../types";
+import { pageByName, resetStore } from "../document";
+import { backend } from "../backend";
+import { loadSingle } from "../document/workingSet";
+import { doc, setDoc } from "../document/model";
+import type { BlockDto, PageDto, PageRead } from "../types";
 import { LiveRefGroup } from "./LiveRefGroup";
 
 beforeAll(async () => {
@@ -11,6 +14,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   resetStore();
   document.body.innerHTML = "";
 });
@@ -68,6 +72,22 @@ function hierarchy(): { page: PageDto; result: BlockDto; sourceHit: BlockDto } {
 }
 
 describe("LiveRefGroup reference context", () => {
+  it("drops a source page read after its group unmounts", async () => {
+    const { page, result } = hierarchy();
+    let finish!: (value: PageRead) => void;
+    const read = vi.spyOn(backend(), "getPage").mockImplementation(() =>
+      new Promise((resolve) => { finish = resolve; }));
+    const { dispose } = mount(() => (
+      <LiveRefGroup page={page.name} kind={page.kind} blocks={[result]} surface="ref" />
+    ));
+    await expect.poll(() => read.mock.calls.length).toBe(1);
+    dispose();
+    finish({ ...page, id: "pages/source.md" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(pageByName(page.name), "I-20: a retired LiveRefGroup cannot populate the shared page store").toBeUndefined();
+  });
+
   it("bounds a hit breadcrumb to the final three ancestors and marks omitted context", async () => {
     const { page, result } = hierarchy();
     const topLevel: BlockDto = {
@@ -88,6 +108,40 @@ describe("LiveRefGroup reference context", () => {
         .toBe("…›Three›Four›Five");
       expect(root.querySelectorAll(".ref-breadcrumb")).toHaveLength(1);
       expect(root.textContent).toContain("Top-level");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("renders one breadcrumb per shared parent and gathers siblings under it (OG group-by :block/parent)", async () => {
+    const leaf = (id: string, raw: string): BlockDto => ({ id, raw, collapsed: false, children: [] });
+    const s1 = leaf("sib-1", "Sibling one [[Target]]");
+    const s2 = leaf("sib-2", "Sibling two [[Target]]");
+    const t1 = leaf("other-1", "Other [[Target]]");
+    const page: PageDto = {
+      name: "Grouped",
+      title: "Grouped",
+      kind: "page",
+      pre_block: null,
+      blocks: [
+        { id: "parent-a", raw: "Parent A", collapsed: false, children: [s1, s2] },
+        { id: "parent-b", raw: "Parent B", collapsed: false, children: [t1] },
+      ],
+    };
+    loadSingle(page);
+    const hit = (b: BlockDto, crumb: string) => ({ ...b, breadcrumb: [crumb] });
+    // Interleaved on purpose: OG groups by parent, so the siblings join up.
+    const blocks = [hit(s1, "Parent A"), hit(t1, "Parent B"), hit(s2, "Parent A")];
+    const { root, dispose } = mount(() => (
+      <LiveRefGroup page={page.name} kind={page.kind} blocks={blocks} surface="query" showBreadcrumb />
+    ));
+    try {
+      await expect.poll(() => root.querySelectorAll(".ref-breadcrumb").length).toBe(2);
+      const crumbs = [...root.querySelectorAll(".ref-breadcrumb")].map((c) => c.textContent?.replace(/\s+/g, "").trim());
+      expect(crumbs).toEqual(["ParentA", "ParentB"]);
+      const text = root.textContent ?? "";
+      expect(text.indexOf("Sibling one")).toBeLessThan(text.indexOf("Sibling two"));
+      expect(text.indexOf("Sibling two")).toBeLessThan(text.indexOf("Other"));
     } finally {
       dispose();
     }

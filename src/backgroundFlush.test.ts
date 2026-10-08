@@ -1,126 +1,93 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { installBackgroundFlush, type BackgroundFlushDeps } from "./backgroundFlush";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { backend } from "./backend";
+import { resetStore, setRaw, isDirty } from "./document";
+import { loadSingle } from "./document/workingSet";
+import { installBackgroundFlush } from "./backgroundFlush";
 
-type Handler = (event: Event) => void;
+let hidden = false;
+const handlers = new Map<string, () => void>();
 
-let hidden = true;
+beforeEach(() => { resetStore(); hidden = false; handlers.clear(); });
+afterEach(() => { vi.restoreAllMocks(); });
 
-function harness(overrides: Partial<BackgroundFlushDeps> = {}) {
-  const listeners = new Map<string, Set<Handler>>();
-  const flushAll = vi.fn(async () => true);
-  const endEdit = vi.fn();
-  const deps: BackgroundFlushDeps = {
-    endEdit,
-    flushAll,
-    closeInFlight: () => false,
+function install(closeInFlight = () => false) {
+  return installBackgroundFlush({
+    endEdit: () => {},
+    flushAll: () => import("./document").then((m) => m.flushAll()),
+    closeInFlight,
     isHidden: () => hidden,
-    addEventListener: ((type: string, handler: Handler) => {
-      if (!listeners.has(type)) listeners.set(type, new Set());
-      listeners.get(type)!.add(handler);
-    }) as unknown as typeof document.addEventListener,
-    removeEventListener: ((type: string, handler: Handler) => {
-      listeners.get(type)?.delete(handler);
-    }) as unknown as typeof document.removeEventListener,
-    ...overrides,
-  };
-  const dispose = installBackgroundFlush(deps);
-  const fire = (type: string) => {
-    for (const handler of [...(listeners.get(type) ?? [])]) handler(new Event(type));
-  };
-  return { fire, flushAll, endEdit, dispose, listeners };
+    addEventListener: ((name: string, fn: () => void) => { handlers.set(name, fn); }) as typeof document.addEventListener,
+    removeEventListener: ((name: string) => { handlers.delete(name); }) as typeof document.removeEventListener,
+  });
 }
 
-function setVisibility(state: "hidden" | "visible") {
-  hidden = state === "hidden";
-}
+describe("background durability", () => {
+  it("writes a dirty edit on hide before the debounce fires", async () => {
+    const write = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
+    loadSingle({ name: "Hide", kind: "page", title: "Hide", pre_block: null,
+      blocks: [{ id: "leaf", raw: "old", collapsed: false, children: [] }] });
+    setRaw("leaf", "new");
+    expect(isDirty("Hide")).toBe(true);
+    const dispose = install();
+    hidden = true;
+    handlers.get("visibilitychange")!();
+    await vi.waitFor(() => expect(write).toHaveBeenCalledOnce());
+    expect(write.mock.calls[0][0][0].page.blocks[0].raw).toBe("new");
+    dispose();
+  });
 
-afterEach(() => {
-  setVisibility("visible");
-  vi.restoreAllMocks();
+  it("deduplicates hide/pagehide/freeze, yields to close, and unregisters", async () => {
+    let finish!: (value: boolean) => void;
+    const flushAll = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    const closeInFlight = vi.fn(() => false);
+    const dispose = installBackgroundFlush({
+      endEdit: () => {}, flushAll, closeInFlight, isHidden: () => hidden,
+      addEventListener: ((name: string, fn: () => void) => { handlers.set(name, fn); }) as typeof document.addEventListener,
+      removeEventListener: ((name: string) => { handlers.delete(name); }) as typeof document.removeEventListener,
+    });
+    handlers.get("visibilitychange")!();
+    expect(flushAll).not.toHaveBeenCalled();
+    hidden = true;
+    for (const name of ["visibilitychange", "pagehide", "freeze"]) handlers.get(name)!();
+    expect(flushAll).toHaveBeenCalledOnce();
+    finish(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    handlers.get("pagehide")!();
+    expect(flushAll).toHaveBeenCalledTimes(2);
+    finish(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    closeInFlight.mockReturnValue(true);
+    handlers.get("pagehide")!();
+    expect(flushAll).toHaveBeenCalledTimes(2);
+    dispose();
+    expect(handlers.size).toBe(0);
+  });
 });
 
-// GH #255 ("Notes are randomly lost on Android and Windows 11"). Before this,
-// the only durability barrier in the whole app was a clean desktop window close.
-// Android/iOS never send one — the OS backgrounds the app and reclaims it later.
-describe("background flush", () => {
-  it("writes pending edits when the app is hidden", async () => {
-    setVisibility("hidden");
-    const { fire, flushAll, endEdit } = harness();
-    fire("visibilitychange");
-    expect(endEdit).toHaveBeenCalled();
-    expect(flushAll).toHaveBeenCalledTimes(1);
-  });
-
-  it("commits the in-flight keystroke BEFORE flushing", () => {
-    // Otherwise the character being typed at the moment of backgrounding is the
-    // one thing that still gets lost.
-    setVisibility("hidden");
-    const order: string[] = [];
-    const { fire } = harness({
-      endEdit: () => void order.push("endEdit"),
-      flushAll: async () => { order.push("flushAll"); return true; },
+describe("GH #622: a native picker's hide is part of the edit", () => {
+  it("flushes but does not end the edit while a picker holds external activity", async () => {
+    const { holdExternalActivity } = await import("./externalActivity");
+    const endEdit = vi.fn();
+    const flushAll = vi.fn(() => Promise.resolve(true));
+    const dispose = installBackgroundFlush({
+      endEdit, flushAll, closeInFlight: () => false, isHidden: () => hidden,
+      addEventListener: ((name: string, fn: () => void) => { handlers.set(name, fn); }) as typeof document.addEventListener,
+      removeEventListener: ((name: string) => { handlers.delete(name); }) as typeof document.removeEventListener,
     });
-    fire("visibilitychange");
-    expect(order).toEqual(["endEdit", "flushAll"]);
-  });
-
-  it("also fires on pagehide and freeze", () => {
-    // Android and iOS WebViews are inconsistent about which teardown event they
-    // deliver, so all three are wired and the in-flight guard dedupes.
-    setVisibility("hidden");
-    for (const event of ["pagehide", "freeze"]) {
-      const { fire, flushAll } = harness();
-      fire(event);
-      expect(flushAll, event).toHaveBeenCalledTimes(1);
-    }
-  });
-
-  it("does NOT flush when the app becomes visible", () => {
-    // visibilitychange fires on both edges; only hiding is a durability event.
-    setVisibility("visible");
-    const { fire, flushAll } = harness();
-    fire("visibilitychange");
-    expect(flushAll).not.toHaveBeenCalled();
-  });
-
-  it("yields to a close transaction instead of racing it", () => {
-    // The close path can prompt the user about an unsaved page; a second
-    // concurrent flushAll would resolve against a half-drained queue.
-    setVisibility("hidden");
-    const { fire, flushAll } = harness({ closeInFlight: () => true });
-    fire("visibilitychange");
-    expect(flushAll).not.toHaveBeenCalled();
-  });
-
-  it("does not stack overlapping flushes", () => {
-    setVisibility("hidden");
-    let resolve!: (ok: boolean) => void;
-    // NB: capture the spy locally — `harness` returns its own default flushAll,
-    // not the override.
-    const flushAll = vi.fn(() => new Promise<boolean>((done) => { resolve = done; }));
-    const { fire } = harness({ flushAll });
-    fire("visibilitychange");
-    fire("pagehide");
-    expect(flushAll).toHaveBeenCalledTimes(1);
-    resolve(true);
-  });
-
-  it("survives a flush that rejects", async () => {
-    // A rejected flush must not leave the guard latched, or the app never
-    // flushes again for the rest of its life.
-    setVisibility("hidden");
-    const flushAll = vi.fn(async () => { throw new Error("disk on fire"); });
-    const { fire } = harness({ flushAll });
-    fire("visibilitychange");
+    const release = holdExternalActivity();
+    hidden = true;
+    handlers.get("visibilitychange")!();
+    expect(flushAll).toHaveBeenCalledOnce();
+    expect(endEdit).not.toHaveBeenCalled();
+    release();
+    release();
     await Promise.resolve();
     await Promise.resolve();
-    fire("visibilitychange");
+    handlers.get("pagehide")!();
+    expect(endEdit).toHaveBeenCalledOnce();
     expect(flushAll).toHaveBeenCalledTimes(2);
-  });
-
-  it("unregisters every listener on dispose", () => {
-    const { dispose, listeners } = harness();
     dispose();
-    expect([...listeners.values()].every((set) => set.size === 0)).toBe(true);
   });
 });

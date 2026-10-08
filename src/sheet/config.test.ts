@@ -16,6 +16,12 @@ import { initParser } from "../render/parse";
 beforeAll(() => initParser());
 
 describe("sheetConfig", () => {
+  it("round-trips table widths by stable field identity and rejects malformed widths", () => {
+    const widths = new Map([["title", 240], ["prop:my field", 170]]);
+    const encoded = serializeTableColumnWidths(widths);
+    expect([...parseTableColumnWidths(encoded)]).toEqual([["prop:my field", 170], ["title", 240]]);
+    expect([...parseTableColumnWidths("title=0;title=99999;bad%escape=100")]).toEqual([]);
+  });
   it("reads grid view, header, and positional column widths", () => {
     const cfg = sheetConfig([
       ["tine.view", "grid"],
@@ -72,32 +78,6 @@ describe("sheetConfig", () => {
   it("serializes positional column widths in the parser-owned grammar", () => {
     expect(serializeColWidths(new Map([[2, 88], [0, 120]]))).toBe("0=120;2=88");
     expect(serializeColWidths(new Map([[1, 40.4], [-1, 20], [3, Number.NaN]]))).toBe("1=40");
-  });
-
-  it("round-trips bounded table widths by delimiter-safe stable field identity", () => {
-    const serialized = serializeTableColumnWidths(new Map([
-      ["prop:owner;team=blue", 244.6],
-      ["title", 320],
-      ["prop:too-wide", 99_999],
-    ]));
-
-    expect(serialized).toBe("prop%3Aowner%3Bteam%3Dblue=245;prop%3Atoo-wide=1600;title=320");
-    expect([...parseTableColumnWidths(serialized).entries()]).toEqual([
-      ["prop:owner;team=blue", 245],
-      ["prop:too-wide", 1600],
-      ["title", 320],
-    ]);
-  });
-
-  it("ignores malformed and out-of-range table-width entries without affecting grid widths", () => {
-    const cfg = sheetConfig([
-      ["tine.col-widths", "0=120;2=200"],
-      ["tine.table-widths", "title=240;bad-percent-%ZZ=300;prop%3Aowner=63;prop%3Ateam=1601;empty=NaN"],
-    ]);
-
-    expect([...cfg.tableColumnWidths.entries()]).toEqual([["title", 240]]);
-    expect([...cfg.colWidths.entries()]).toEqual([[0, 120], [2, 200]]);
-    expect(serializeColWidths(cfg.colWidths)).toBe("0=120;2=200");
   });
 
   it("serializes column aggregates in the parser-owned grammar", () => {

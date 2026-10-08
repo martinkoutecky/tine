@@ -7,7 +7,6 @@ function arg(name) {
 }
 
 const policy = JSON.parse(readFileSync(arg("--policy"), "utf8"));
-
 const candidate = JSON.parse(readFileSync(arg("--candidate"), "utf8"));
 const immutable = JSON.parse(readFileSync(arg("--immutable"), "utf8"));
 const previous = JSON.parse(readFileSync(arg("--previous"), "utf8"));
@@ -50,20 +49,27 @@ for (const [name, budget] of Object.entries(policy.metrics)) {
     failures.push(`${name}: missing or invalid median-of-round-mins measurement`);
     continue;
   }
-  const vsOld = ((value / old) - 1) * 100;
-  const vsPrev = ((value / prev) - 1) * 100;
-  const candidateSpread = candidate.metrics?.[name]?.roundSpreadPct;
+  // A metric may carry a fixed allowance for a deliberate, measured cost
+  // (bounded to one 60 Hz frame by check-bench-policy.mjs). It is subtracted
+  // from the candidate before the percentage budgets apply, so any growth
+  // beyond that one cost still fails against both unchanged anchors.
+  const allowance = budget.allowanceMs ?? 0;
+  if (allowance) console.log(`${name}: ${allowance} ms allowance (${budget.allowanceReason})`);
+  const vsOld = (((value - allowance) / old) - 1) * 100;
+  const vsPrev = (((value - allowance) / prev) - 1) * 100;
   const candidateRoundMins = candidate.metrics?.[name]?.roundMins;
   const candidateSlowest = Array.isArray(candidateRoundMins) && candidateRoundMins.length > 0
     ? Math.max(...candidateRoundMins)
     : Number.NaN;
-  const slowestVsOld = ((candidateSlowest / old) - 1) * 100;
-  const slowestVsPrev = ((candidateSlowest / prev) - 1) * 100;
-  // Spread is a reliability signal, not the release contract. A variable
-  // candidate is safe when even its slowest observed round remains within both
-  // regression budgets: faster outliers cannot conceal a bad tail in that
-  // case, and rejecting the run would add no performance protection.
-  const budgetSafeCandidateVariance = Number.isFinite(candidateSlowest)
+  const slowestVsOld = (((candidateSlowest - allowance) / old) - 1) * 100;
+  const slowestVsPrev = (((candidateSlowest - allowance) / prev) - 1) * 100;
+  // Full max/min spread is still useful diagnostic evidence, but it is
+  // symmetric: one unusually fast round can exceed the threshold even when
+  // every regression comparison is safe. Tolerate high spread only when the
+  // candidate median beats both anchors and even its slowest round remains
+  // inside both performance budgets. Slow or ambiguous variance still fails.
+  const favorableSafeEnvelope = vsOld <= 0 && vsPrev <= 0
+    && Number.isFinite(candidateSlowest)
     && slowestVsOld <= budget.maxVsImmutablePct
     && slowestVsPrev <= budget.maxVsPreviousPct;
   for (const [label, measurement] of Object.entries(measurements)) {
@@ -77,21 +83,9 @@ for (const [name, budget] of Object.entries(policy.metrics)) {
       );
       if (spread > budget.maxRoundSpreadPct) {
         const message = `${label}/${name}: ${spread.toFixed(1)}% round spread exceeds ${budget.maxRoundSpreadPct}% reliability limit`;
-        // Baseline spread is diagnostic rather than a release veto. The
-        // candidate's slowest observed round is the safety boundary: if it is
-        // still within both immutable and rolling regression budgets, noisy
-        // anchor rounds cannot conceal an adverse candidate delta. This also
-        // handles both anchors being noisy in the same run without turning
-        // favorable measurements into repeated rerun tax.
-        const baselineOnlyVariance = label !== "candidate"
-          && budgetSafeCandidateVariance;
-        if (label === "candidate" && budgetSafeCandidateVariance) {
+        if (favorableSafeEnvelope) {
           console.warn(
-            `warning: ${message}; every observed candidate round remains within both regression budgets`,
-          );
-        } else if (baselineOnlyVariance) {
-          console.warn(
-            `warning: ${message}; baseline-only variance accepted because every observed candidate round remains within both regression budgets`,
+            `warning: ${message}, but candidate median beats both anchors and its slowest round remains within both budgets`,
           );
         } else {
           failures.push(`${message}; investigate runner/metric variance`);

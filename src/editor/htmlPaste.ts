@@ -70,19 +70,12 @@ export function structuredHtmlOutline(html: string, plain: string, format: Forma
   // Tine's clipboard HTML is round-tripped Markdown (our own block copy, or a
   // rendered Logseq block), so Turndown's default text-node escaping would
   // double-escape already-literal punctuation — e.g. `a [b] c` -> `a \[b\] c`
-  // (GH: Martin; catalog row UI-PASTE-BRACKET-LITERAL-001). Keep `[ ] * _ \`
-  // # ~` literal; real structure (headings, lists, links, code) is emitted by
-  // dedicated rules, not this text escaper. Wave-2 packet F briefly restored
-  // escaping as an injection defense; that reverted Martin's catalogued
-  // decision and was undone on 2026-09-02. Pasted text that happens to be
-  // Markdown structure is still safe: outbound hrefs only ever open through
-  // `ExternalLink` -> `backend().openExternal`, whose native scheme allowlist
-  // rejects `javascript:` and every other non-file/http(s)/mailto scheme
-  // (docs/contracts/content-consumption-boundaries.md, "Outbound links").
+  // (GH: Martin). Keep `[ ] * _ \` # ~` literal; real structure (headings,
+  // lists, links, code) is emitted by dedicated rules, not this text escaper.
   service.escape = (value: string) => value;
   let markdown: string;
   try {
-    markdown = service.turndown(doc.body).replace(/\n{3,}/g, "\n\n").trim();
+    markdown = service.turndown(doc.body).trim();
   } catch {
     return null;
   }

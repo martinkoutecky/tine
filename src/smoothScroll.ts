@@ -14,6 +14,9 @@
 import { createSignal } from "solid-js";
 import Lenis from "lenis";
 import { backend } from "./backend";
+import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { readOwned, ownedWhen } from "./owned";
+import { pushToast } from "./toasts";
 
 const [enabled, setEnabled] = createSignal(false);
 /** Reactive: is smooth scrolling currently on? (drives the Settings toggle) */
@@ -57,17 +60,22 @@ function apply(on: boolean): void {
   else destroy();
 }
 
-/** Toggle from the UI: persist the choice, then apply it live. */
+/** Apply live immediately, then queue a device-local write. Failure restores
+ * the last confirmed value and scroller state and toasts. The scroller needs
+ * mounted feed DOM. Return does not confirm persistence. O(1) plus write. */
 export function setSmoothScroll(on: boolean): void {
-  apply(on);
-  void backend().setSmoothScroll(on).catch(() => {});
+  writePreference(enabled, apply, on, (next) => backend().setSmoothScroll(next), "smooth scrolling preference");
 }
 
-/** Read the persisted preference at startup and apply it. Default OFF. */
+/** Load the preference at startup (default OFF); read failure toasts and resolves.
+ * If feed DOM is absent, scroller installation waits for a later apply. */
 export async function initSmoothScroll(): Promise<void> {
+  const revision = preferenceRevision(enabled);
+  const owner = ownedWhen(() => preferenceReadCurrent(enabled, revision));
   try {
-    apply(await backend().getSmoothScroll());
+    const result = await readOwned(owner, backend().getSmoothScroll());
+    if (result.kind === "current") { apply(result.value); seedPreference(enabled); }
   } catch {
-    /* default off */
+    pushToast("Could not load smooth scrolling preference.", "error");
   }
 }

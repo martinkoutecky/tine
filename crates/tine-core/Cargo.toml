@@ -5,49 +5,26 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-ahash = "0.8.12"
-im = "=15.1.0"
+tine-search = { path = "../tine-search" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 sha2 = "0.10"
-caseless = "=0.2.2"
-postcard = { version = "1.1.3", features = ["alloc"] }
-smallvec = { version = "1.15.2", features = ["serde"] }
-slotmap = { version = "1", features = ["serde"] }
 ammonia = "4"
-lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.7" }
+lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.8" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-dirs = "6"
 regex = "1"
-ring = "0.17"
-crc32fast = "1"
-libc = "0.2"
-cap-std = "4.0.2"
-same-file = "1.0.6"
-fs2 = "0.4.3"
-rusqlite = { version = "0.37.0", features = ["bundled"] }
-unicode-normalization = "=0.1.25"
-sqlparser = { workspace = true }
-tine-search = { path = "../tine-search" }
-tine-storage = { git = "https://github.com/martinkoutecky/tine-storage", tag = "v0.28.2" }
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+memchr = "2"
+# TQL (`query::tql`) parses its filter grammar with sqlparser; pure Rust, no
+# SQLite. The version and `visitor` feature match master (0.62).
+sqlparser = { version = "0.62", features = ["visitor"] }
 
-[target.'cfg(windows)'.dependencies]
-cap-fs-ext = "=4.0.2"
-windows-sys = { version = "0.61.2", features = [
-    "Wdk_Storage_FileSystem",
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_Security_Authorization",
-    "Win32_Storage_FileSystem",
-    "Win32_System_IO",
-    "Win32_System_SystemInformation",
-    "Win32_System_SystemServices",
-] }
+[features]
+# Exposes allocation counters to downstream crates' tests (tine-store).
+test-counters = []
 
 [dev-dependencies]
-tempfile = "=3.27.0"
+libc = "0.2"
 pretty_assertions = "1"
-proc-macro2 = { version = "1", features = ["span-locations"] }
-syn = { version = "2", features = ["full", "visit"] }
-tine-storage = { git = "https://github.com/martinkoutecky/tine-storage", tag = "v0.28.2", features = ["test-support"] }

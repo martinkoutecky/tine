@@ -24,49 +24,13 @@ const BUILD_TIME = reproBuildTime();
 // can name the exact build. Empty string if git isn't available (e.g. a source
 // tarball build); the About tab hides the row when it's empty.
 function gitCommit(): string {
-  const explicit = process.env.TINE_BUILD_COMMIT;
-  if (explicit !== undefined) return explicit;
   try {
     return execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim();
   } catch {
     return "";
   }
 }
-const GIT_COMMIT = gitCommit();
-const RETAIN_SOURCE_MAPS = process.env.TINE_RETAIN_SOURCE_MAPS === "1";
-
-// Production diagnostics keep hidden source maps as private CI evidence. They
-// are copied out of dist after Rollup finishes, then removed before Tauri
-// embeds the frontend. A bug report can therefore be decoded by exact commit
-// without disclosing source paths or source content in the shipped app.
-function retainDiagnosticSourceMaps(): Plugin {
-  return {
-    name: "tine-retain-diagnostic-source-maps",
-    async closeBundle() {
-      if (!RETAIN_SOURCE_MAPS) return;
-      const dist = fileURLToPath(new URL("./dist", import.meta.url));
-      const destination = fileURLToPath(
-        new URL("./target/diagnostic-symbols/frontend", import.meta.url)
-      );
-      await fsp.rm(destination, { recursive: true, force: true });
-      const visit = async (directory: string): Promise<void> => {
-        for (const entry of await fsp.readdir(directory, { withFileTypes: true })) {
-          const source = path.join(directory, entry.name);
-          if (entry.isDirectory()) {
-            await visit(source);
-          } else if (entry.isFile() && entry.name.endsWith(".map")) {
-            const relative = path.relative(dist, source);
-            const target = path.join(destination, relative);
-            await fsp.mkdir(path.dirname(target), { recursive: true });
-            await fsp.copyFile(source, target);
-            await fsp.unlink(source);
-          }
-        }
-      };
-      await visit(dist);
-    },
-  };
-}
+const GIT_COMMIT = process.env.TINE_BUILD_COMMIT ?? gitCommit();
 
 // The @twemoji/svg package holds one <codepoint>.svg per emoji at its root.
 const twemojiDir = fileURLToPath(new URL("./node_modules/@twemoji/svg", import.meta.url));
@@ -111,10 +75,8 @@ function twemojiAssets(): Plugin {
 
 // Tauri expects a fixed port and serves the built assets from dist/.
 export default defineConfig({
-  // Relative asset URLs: the same `dist/` is served by Tauri at the origin root
-  // and by a published query export from an `app/` subfolder (Stage 2, D3).
   base: "./",
-  plugins: [solid(), twemojiAssets(), retainDiagnosticSourceMaps()],
+  plugins: [solid(), twemojiAssets()],
   define: {
     __BUILD_TIME__: JSON.stringify(BUILD_TIME),
     __GIT_COMMIT__: JSON.stringify(GIT_COMMIT),
@@ -128,9 +90,15 @@ export default defineConfig({
   server: {
     port: 5181,
     strictPort: true,
+    // Build output and toolchains are not sources. Rust `target/` holds tens of
+    // thousands of directories per worktree; watching them exhausts inotify
+    // (ENOSPC) and kills the dev server / vite-node. Guard:
+    // src/viteWatchIgnore.guard.test.ts.
+    watch: {
+      ignored: ["**/target/**", "**/.toolchain/**", "**/.cargo/**", "**/dist/**"],
+    },
   },
   build: {
-    sourcemap: RETAIN_SOURCE_MAPS ? "hidden" : false,
     target: "esnext",
     outDir: "dist",
     rollupOptions: {

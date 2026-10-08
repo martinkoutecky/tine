@@ -4,7 +4,9 @@ import { render } from "solid-js/web";
 import { editingId, startEditing } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore, undo } from "../store";
+import { pageByName, resetStore, undo } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
 import type { BlockDto } from "../types";
 import {
   clearTransientLayersForTest,
@@ -303,6 +305,45 @@ describe("selection toolbar overflow transient ownership", () => {
     } finally {
       lower.unregister();
       mounted.dispose();
+    }
+  });
+});
+
+// GH #375 (master b5894baba): native WebView selection updates the textarea
+// range without select/mouseup; the toolbar follows selectionchange.
+describe("selected-text toolbar follows native selectionchange (GH #375)", () => {
+  it("tracks native selectionchange without a select or mouseup event", () => {
+    const { root, textarea, dispose } = mountEditor();
+    try {
+      textarea.focus();
+      let start = 7;
+      let end = 15;
+      // Avoid jsdom's synthetic setSelectionRange events.
+      Object.defineProperty(textarea, "selectionStart", { configurable: true, get: () => start });
+      Object.defineProperty(textarea, "selectionEnd", { configurable: true, get: () => end });
+      document.dispatchEvent(new Event("selectionchange"));
+      expect(root.querySelector(".sel-toolbar")).not.toBeNull();
+      start = end;
+      textarea.dispatchEvent(new Event("selectionchange"));
+      expect(root.querySelector(".sel-toolbar")).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("ignores selection changes owned by another focused control", () => {
+    const { root, textarea, dispose } = mountEditor();
+    const other = document.createElement("textarea");
+    document.body.append(other);
+    try {
+      other.focus();
+      Object.defineProperty(textarea, "selectionStart", { configurable: true, get: () => 7 });
+      Object.defineProperty(textarea, "selectionEnd", { configurable: true, get: () => 15 });
+      document.dispatchEvent(new Event("selectionchange"));
+      expect(root.querySelector(".sel-toolbar")).toBeNull();
+    } finally {
+      other.remove();
+      dispose();
     }
   });
 });

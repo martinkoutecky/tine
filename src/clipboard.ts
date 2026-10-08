@@ -3,12 +3,14 @@
 
 import { backend } from "./backend";
 import type { Format, PageKind } from "./types";
-import { graphMeta } from "./ui";
+import { graphMeta } from "./graphSession";
 
 export const CLIPBOARD_PAYLOAD_MAX_BLOCKS = 10_000;
 export const CLIPBOARD_PAYLOAD_MAX_RAW_BYTES = 4 * 1024 * 1024;
 
 export interface ClipboardBlock {
+  /** Live store key, retained only for the first successful paste of a cut. */
+  key?: string;
   raw: string;
   children: ClipboardBlock[];
   sourceFormat: Format;
@@ -40,6 +42,12 @@ export interface ConsumedCutGrant {
 
 let slot: ClipboardPayloadSlot | null = null;
 let nextGeneration = 0;
+let writeRevision = 0;
+
+/** O(1) per-webview ownership token for every clipboard replacement, even without a private payload. */
+export function clipboardWriteRevision(): number {
+  return writeRevision;
+}
 
 /** Read the live private slot. Callers must treat the returned payload as immutable. */
 export function peekClipboardPayload(): ClipboardPayloadSlot | null {
@@ -49,6 +57,7 @@ export function peekClipboardPayload(): ClipboardPayloadSlot | null {
 /** Clear any private payload synchronously before replacing the OS clipboard. */
 export function clearClipboardPayload(): void {
   slot = null;
+  writeRevision++;
 }
 
 /**
@@ -61,6 +70,13 @@ export function consumeClipboardCutGrant(expectedGeneration: number): ConsumedCu
   const grant = { generation: slot.generation, sourcePages: slot.sourcePages };
   slot = { ...slot, op: "copy" };
   return grant;
+}
+
+/** Downgrade only a matching in-memory Cut grant to Copy. The caller decides
+ * whether the source still qualifies. This leaves OS clipboard text and source
+ * blocks alone; stale/missing grants are O(1) no-ops. */
+export function cancelClipboardCutGrant(expectedGeneration: number): void {
+  consumeClipboardCutGrant(expectedGeneration);
 }
 
 /** Native round trips observed by stage B normalize line endings and one final LF. */
@@ -115,33 +131,6 @@ export function writeClipboardText(text: string): Promise<void> {
   return backend().writeText(text);
 }
 
-function boundedClipboardWrite(write: Promise<void>, timeoutMs: number): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const deadline = setTimeout(() => reject(new Error("clipboard write timed out")), timeoutMs);
-    write.then(
-      () => { clearTimeout(deadline); resolve(); },
-      (error) => { clearTimeout(deadline); reject(error); },
-    );
-  });
-}
-
-/**
- * Recovery UI cannot depend exclusively on the native invoke bridge it is
- * diagnosing. Try the normal native transport first, then the browser clipboard,
- * bounding both so a Copy details button always settles and can report failure.
- */
-export async function writeClipboardTextResilient(text: string, timeoutMs = 1_000): Promise<void> {
-  clearClipboardPayload();
-  try {
-    await boundedClipboardWrite(backend().writeText(text), timeoutMs);
-    return;
-  } catch {
-    const browserWrite = globalThis.navigator?.clipboard?.writeText;
-    if (typeof browserWrite !== "function") throw new Error("clipboard recovery transport is unavailable");
-    await boundedClipboardWrite(browserWrite.call(globalThis.navigator.clipboard, text), timeoutMs);
-  }
-}
-
 /**
  * Strict text write for UI that reports clipboard rejection to the user.
  * This preserves ImproveTab's former navigator transport semantics while still
@@ -169,14 +158,12 @@ export function copyRich(text: string, html: string): Promise<void> {
   return writeClipboardRich(text, html);
 }
 
-export function copyOutline(md: string): Promise<void> {
-  return copyRich(md, outlineToHtml(md));
-}
-
 /**
  * Dedicated block copy/cut ordering boundary: clear old private state, start the
  * external write, then publish the fresh generation before returning. The write
  * uses the transport directly so it cannot clear the slot it just created.
+ * A rejected transport write clears that generation's private slot and
+ * rejects to the caller, which must keep the source block and report failure.
  */
 export function copyBlockOutline(
   op: "copy" | "cut",
@@ -195,7 +182,13 @@ export function copyBlockOutline(
       sourcePages: op === "cut" ? payload.sourcePages : [],
     };
   }
-  return write;
+  const pendingGeneration = slot?.generation;
+  return write.catch((error) => {
+    // A rejected external write must not leave a private cut grant behind.
+    // A newer clipboard action owns its own generation and must survive.
+    if (pendingGeneration !== undefined && slot?.generation === pendingGeneration) clearClipboardPayload();
+    throw error;
+  });
 }
 
 // Browser-native copy/cut paths (notably selected textarea text) have no JS

@@ -2,10 +2,10 @@
 // take on OG Logseq's "Copy / Export" modal (handler/export/text.cljs). The core
 // is pure (operates on an ExportNode tree) so it's unit-testable; the store
 // builds the tree from the live doc. The inline "remove" transforms are
-// pragmatic regexes (not a full inline parse) — enough for the common cases the
-// modal offers, matching OG's option set within reason.
+// policies over parser-owned spans, shared with markup export.
 
-import { isPropertyLine } from "../render/block";
+import { cleanInline, expandExportNodes } from "./exportMarkup";
+import { editBlock } from "../render/parse";
 import { renderedBlockText, type RenderedTextOptions } from "../render/renderedText";
 import type { Format } from "../render/ast";
 
@@ -17,7 +17,7 @@ export type MaxDepth = "all" | number;
 
 // rendered = the text as displayed (glyphs, no markup markers) — lsdoc-AST
 //            flattening via render/renderedText.ts, never a regex re-scan.
-// source   = the raw markdown/org, with the regex "remove" transforms below.
+// source   = markup-preserving Markdown/Org with resolved refs/embeds and parser-owned cleanup.
 export type ExportContent = "rendered" | "source";
 
 export interface ExportOptions {
@@ -27,7 +27,7 @@ export interface ExportOptions {
   stripLinks: boolean; // [[Foo]] -> Foo
   removeEmphasis: boolean; // **/__/*/_/~~/== markers dropped (source mode only — rendered has none)
   removeTags: boolean; // #tag and #[[tag]] removed
-  removeProperties: boolean; // drop `key:: value` lines
+  removeProperties: boolean; // omit parser-owned metadata, retaining literals and Org body drawers
   newlineAfterBlock: boolean; // blank line after each block
   /** Apply `->`→`→` glyphs in rendered mode; the modal sets this from the app's
    *  typography mode each time (not persisted — it must match what you see). */
@@ -38,6 +38,7 @@ export interface ExportOptions {
   resolveRefsFully?: boolean;
   resolveBlockRef?: RenderedTextOptions["resolveBlockRef"];
   resolveMacro?: RenderedTextOptions["resolveMacro"];
+  resolveEmbed?: (name: string, args: string[]) => ExportNode[] | null;
 }
 
 export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
@@ -61,28 +62,7 @@ export interface ExportNode {
   children: ExportNode[];
 }
 
-/** Apply the inline "remove" transforms to one content line. */
-function stripInline(text: string, opts: ExportOptions): string {
-  let s = text;
-  if (opts.removeTags) {
-    s = s.replace(/#\[\[[^\]]*\]\]/g, ""); // #[[Foo Bar]]
-    s = s.replace(/(^|\s)#[\w/-]+/g, "$1"); // #tag (keep the boundary char)
-    s = s.replace(/[ \t]{2,}/g, " "); // tidy gaps left by removed tags
-  }
-  if (opts.stripLinks) {
-    s = s.replace(/\[\[([^\]]*)\]\]/g, "$1"); // [[Foo]] -> Foo
-  }
-  if (opts.removeEmphasis) {
-    s = s.replace(/(\*\*|__)(.*?)\1/g, "$2"); // bold
-    s = s.replace(/(\*|_)(.*?)\1/g, "$2"); // italic
-    s = s.replace(/~~(.*?)~~/g, "$1"); // strikethrough
-    s = s.replace(/==(.*?)==/g, "$1"); // highlight
-  }
-  return s;
-}
-
-/** One block's export lines: rendered (AST flattening) or source (raw + regex
- *  transforms). Both honor removeProperties/stripLinks/removeTags; emphasis
+/** One block's export lines: rendered (AST flattening) or source (resolved markup + parser-owned cleanup). Both honor removeProperties/stripLinks/removeTags; emphasis
  *  markers only exist in source. */
 function blockExportLines(n: ExportNode, opts: ExportOptions): string[] {
   if (opts.content === "rendered") {
@@ -97,9 +77,8 @@ function blockExportLines(n: ExportNode, opts: ExportOptions): string[] {
       resolveMacro: opts.resolveMacro,
     }).split("\n");
   }
-  let lines = n.raw.split("\n");
-  if (opts.removeProperties) lines = lines.filter((l) => !isPropertyLine(l));
-  return lines.map((l) => stripInline(l, opts));
+  const raw = opts.removeProperties ? editBlock(n.raw, n.format ?? "md", { kind: "visible" }) : n.raw;
+  return cleanInline(raw, n.format ?? "md", {...opts, resolveBlockRef:undefined}).split("\n");
 }
 
 /** Serialize an export-node forest to text per `opts`. */
@@ -134,7 +113,7 @@ export function exportOutline(nodes: ExportNode[], opts: ExportOptions): string 
       for (const c of n.children) walk(c, level + 1);
     }
   };
-  for (const n of nodes) walk(n, 0);
+  for (const n of opts.content === "source" ? expandExportNodes(nodes, opts) : nodes) walk(n, 0);
   while (out.length && out[out.length - 1] === "") out.pop();
   return out.join("\n");
 }

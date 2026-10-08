@@ -3,7 +3,8 @@
 // the raw text + selection and returns the new text + selection, so Block.tsx
 // just applies the result to the textarea. Unit-testable.
 
-import { matchLeadingMarker } from "../markers";
+import { headerTokens } from "../markers";
+import { parseBlock, parserReady } from "../render/parse";
 
 export interface Edit {
   text: string;
@@ -88,20 +89,17 @@ export function toggleInlineFormat(
   return direction === undefined ? edit : { ...edit, direction };
 }
 
-/** Narrow transcription of mldoc-link? for the keyboard/link-toolbar boundary.
- * This is intentionally not the paste-url regex: page refs, block refs and
- * already formatted links are link nodes too. It accepts only one complete
- * inline link form, so surrounding prose is never silently promoted. */
-export function isMldocLink(text: string): boolean {
-  const value = text.trim();
-  if (!value || value !== text) return false;
-  try {
-    const url = new URL(value);
-    if (["http:", "https:", "mailto:"].includes(url.protocol)) return true;
-  } catch {
-    // The remaining mldoc inline forms are grammar-delimited, not URLs.
-  }
-  return /^(?:\[\[[^\]\n]+\]\]|\(\([^()\n]+\)\)|\[[^\]\n]*\]\([^\n)]*\)|\[\[[^\]\n]*\]\[[^\]\n]*\]\])$/u.test(value);
+/** Whether `text` is exactly one complete inline link in mldoc's own reading (`mldoc-link?`): the
+ * parser (I-12) parses it, and it must come back as a single non-image link node spanning the whole
+ * text. Page refs, block refs and already formatted links are link nodes too; surrounding prose is
+ * never silently promoted. Before the parser is ready nothing is recognized (the selection stays a
+ * label), which is the safe direction. */
+export function isMldocLink(text: string, format: "md" | "org" = "md"): boolean {
+  if (!text || text !== text.trim() || !parserReady()) return false;
+  const [block, ...rest] = parseBlock(text, format === "org");
+  if (rest.length || !block || !("inline" in block) || !Array.isArray(block.inline)) return false;
+  const [only, ...more] = block.inline;
+  return more.length === 0 && only?.k === "link" && !only.image && only.full === text;
 }
 
 /** Insert a format-aware external link. Selected parser-recognized inline links
@@ -109,7 +107,7 @@ export function isMldocLink(text: string): boolean {
  * label. This matches OG's no-argument html-link-format! branches. */
 export function insertLink(text: string, start: number, end: number, format: "md" | "org" = "md"): Edit {
   const sel = text.slice(start, end);
-  const recognizedLink = !!sel && isMldocLink(sel);
+  const recognizedLink = !!sel && isMldocLink(sel, format);
   if (format === "org") {
     const link = recognizedLink ? `[[${sel}][]]` : sel ? `[[][${sel}]]` : "[[][]]";
     const caret = recognizedLink ? start + sel.length + 4 : start + 2;
@@ -218,17 +216,23 @@ export function killWordBackward(text: string, caret: number): Edit {
 }
 
 // --- priority (sets/replaces `[#A]` after a leading task marker) ---
-// The shared leading-marker recognizer (src/markers.ts) is the marker anchor.
+// The marker and priority spans are the parser's accepted header tokens (src/markers.ts
+// `headerTokens`, I-12): this writer only splices at them.
 
-/** Set (or replace) the `[#X]` priority on a block's first line, placed after
- *  any task marker. Mirrors OG's add-or-update-priority. */
-export function setPriority(firstLine: string, level: "A" | "B" | "C"): string {
-  const m = matchLeadingMarker(firstLine);
-  const head = m ? firstLine.slice(0, m.end) : ""; // "TODO" (plus any lead ws)
-  let rest = firstLine.slice(m?.end ?? 0).replace(/^\s+/, ""); // body after marker
-  rest = rest.replace(/^\[#[ABC]\]\s*/, ""); // drop an existing priority token
+/** Set (`level`), replace, or remove (`null`) the `[#X]` priority on the first line of `raw`,
+ *  placed after any task marker. Mirrors OG's add-or-update-priority. Text after the first line
+ *  is returned unchanged. */
+export function setPriority(raw: string, level: "A" | "B" | "C" | null): string {
+  const lineEnd = raw.indexOf("\n") === -1 ? raw.length : raw.indexOf("\n");
+  const { marker, priority } = headerTokens(raw);
+  const onLine = (t: { end: number } | null) => (t && t.end <= lineEnd ? t : null);
+  const m = onLine(marker);
+  const p = onLine(priority);
+  const head = m ? raw.slice(0, m.end) : ""; // "TODO" (plus any lead ws)
+  const rest = raw.slice(p ? p.end : (m?.end ?? 0), lineEnd).replace(/^\s+/, ""); // body after the tokens
   const prefix = head ? `${head} ` : "";
-  return rest ? `${prefix}[#${level}] ${rest}` : `${prefix}[#${level}]`;
+  const title = level ? (rest ? `${prefix}[#${level}] ${rest}` : `${prefix}[#${level}]`) : `${prefix}${rest}`;
+  return title + raw.slice(lineEnd);
 }
 
 // A trimmed last line that is JUST an (empty) in-block list-item prefix — a bare

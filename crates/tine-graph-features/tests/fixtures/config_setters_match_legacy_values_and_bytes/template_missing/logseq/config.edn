@@ -1,0 +1,3 @@
+{
+ :default-templates {:journals "Daily \"A\""}
+:unrelated 42}

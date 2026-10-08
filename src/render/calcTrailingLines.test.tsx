@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { CalcBlock } from "./body";
 import { initParser } from "./parse";
-import { resetStore } from "../store";
+import { resetStore } from "../document";
 
 beforeAll(async () => {
   await initParser();

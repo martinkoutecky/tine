@@ -1,7 +1,6 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Serve the built frontend (mock backend) and capture screenshots for visual
 // review. Usage: node scripts/screenshot.mjs
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -16,9 +15,21 @@ const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--stric
   stdio: "inherit",
 });
 
+async function waitForServer(url, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) return;
+    } catch {
+      // not up yet
+    }
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 40, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({
     args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
   });

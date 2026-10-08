@@ -1,27 +1,26 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readAppStylesheet } from "../testSource";
 
-const app = readAppStylesheet();
+// Ported from master f5dbe8cdb: the in-page resolver gets the pane's wide
+// width whenever it is mounted, the same cap wide mode uses.
+const root = path.resolve(import.meta.dirname, "../..");
+const app = fs.readFileSync(path.join(root, "src/styles/app.css"), "utf8");
+const conflicts = fs.readFileSync(path.join(root, "src/styles/conflicts.css"), "utf8");
 
-function ruleBody(selectorPattern: RegExp): string {
-  return app.match(selectorPattern)?.[1] ?? "";
-}
+const maxWidth = (css: string, selector: RegExp) =>
+  css.match(selector)?.[1].match(/max-width:\s*([^;]+);/)?.[1];
 
 describe("Concord review width", () => {
   it("uses the pane's wide content cap whenever the resolver is mounted", () => {
-    const wide = ruleBody(/^\.wide-mode \.main-content-inner\s*\{([^}]*)\}/m);
-    const concord = ruleBody(
-      /^\.main-content-inner:has\(\.page-conflict-slot\)\s*\{([^}]*)\}/m,
-    );
-
-    expect(wide).toMatch(/max-width:\s*([^;]+);/);
-    expect(concord.match(/max-width:\s*([^;]+);/)?.[1]).toBe(
-      wide.match(/max-width:\s*([^;]+);/)?.[1],
-    );
+    const wide = maxWidth(app, /^\.wide-mode \.main-content-inner\s*\{([^}]*)\}/m);
+    expect(wide).toBeTruthy();
+    expect(maxWidth(conflicts, /^\.main-content-inner:has\(\.page-conflict-slot\)\s*\{([^}]*)\}/m)).toBe(wide);
   });
 
-  it("keys the width to the persistent slot so expanding the dock cannot collapse it", () => {
-    expect(app).toContain(".main-content-inner:has(.page-conflict-slot)");
-    expect(app).not.toContain(".main-content-inner:has(.page-conflict) {");
+  it("the width rule keys on the class the resolver actually renders", () => {
+    const source = fs.readFileSync(path.join(root, "src/components/ConflictResolution.tsx"), "utf8");
+    // The slot, not the panel: the dock reparents the panel into its sheet.
+    expect(source).toContain('class="page-conflict-slot"');
   });
 });

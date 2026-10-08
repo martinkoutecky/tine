@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>A fast, local, Logseq-compatible outliner.</b><br>
-  Reads and writes the <i>same</i> Markdown graph as Logseq — swap between the two on the same files.
+  Reads and writes the <i>same</i> markdown graph as Logseq — swap between the two on the same files.
 </p>
 
 <p align="center">
@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" alt="Tauri 2">
   <img src="https://img.shields.io/badge/SolidJS-1.9-2C4F7C?logo=solid&logoColor=white" alt="SolidJS">
   <img src="https://img.shields.io/badge/Rust-2021-000000?logo=rust&logoColor=white" alt="Rust">
-  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android%20%7C%20iOS-555" alt="Platforms">
+  <img src="https://img.shields.io/badge/platform-Linux%20(WebKitGTK)-555" alt="Linux">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="AGPL-3.0">
 </p>
 
@@ -25,19 +25,18 @@
 </p>
 
 <p align="center">
-  <b>▶ <a href="https://tine.page/guide/">Try it live in your browser</a></b> — the Guide, published with Tine's own live export: search, tabs and split view all work.<br>
-  <a href="https://tine.page/">Website</a> · <a href="https://tine.page/compare.html">Tine vs Logseq</a> · <a href="https://github.com/martinkoutecky/tine/discussions">Discussions</a> · <a href="#support">♥ Support</a>
+  <b>▶ <a href="https://tine.page/demo/">Browse a demo graph</a></b> — the onboarding graph, published with Tine's own HTML export.
 </p>
 
 ---
 
 ## What is Tine?
 
-Tine is an outliner for desktop and mobile, built to look and feel like [Logseq](https://logseq.com) while being
+Tine is a desktop outliner built to look and feel like [Logseq](https://logseq.com) while being
 much faster. It operates directly on the standard Logseq graph layout —
 `journals/`, `pages/`, `assets/`, and `logseq/config.edn` — so you can point it at the graph you
 already use and keep editing in either app (one at a time). Files are written back in
-Logseq-compatible Markdown, so there's **no import/export step and no lock-in**.
+Logseq-compatible markdown, so there's **no import/export step and no lock-in**.
 
 **Why build it?** Logseq's UI is Electron + DataScript with heavy re-rendering, and it gets
 sluggish on large graphs. Tine is a ground-up rewrite: a small native shell (Tauri/WebKitGTK), a
@@ -46,30 +45,29 @@ diffs a virtual DOM. The editor keeps the live block tree in the frontend, so ke
 round-trip to Rust, and whole-graph reads (search, backlinks, queries) hit an in-memory cache
 instead of re-parsing.
 
-> **Status:** a usable daily driver on Linux, macOS, Windows and Android, with an iOS beta.
-> Not yet 1.0 — see [Roadmap](#roadmap).
+> **Status:** a usable daily-driver for outlining, linking, tasks, journals, search, queries, and
+> PDF annotation. Linux is the primary, best-tested platform; macOS and Windows builds are produced
+> too but are newer. Not yet 1.0 — see [Roadmap](#roadmap--non-goals).
 
 ---
 
 ## Install
 
 Grab a prebuilt installer from the **[Releases](https://github.com/martinkoutecky/tine/releases)**
-page. macOS builds are signed and notarized; Windows builds aren't code-signed yet, so Windows may
-warn the first time — here's how to get past it:
+page. The builds aren't code-signed yet, so your OS may warn the first time — here's how to get past
+it:
 
 - **Linux** — the **AppImage** runs on any distro with no install: `chmod +x Tine_*.AppImage`, then
   run it. Or use the **`.deb`** (Debian/Ubuntu) or **`.rpm`** (Fedora/openSUSE).
-- **macOS** — open the universal **`.dmg`** and drag Tine into Applications.
+- **macOS** — open the **`.dmg`**; on first launch macOS says *"unidentified developer"*, so
+  **right-click the app → Open** (just once) and it opens normally after that. If Tine then
+  **keeps asking to access your Documents folder on every launch**, see the
+  [workaround](#macos-repeated-documents-permission-prompt) below.
 - **Windows** — run the **`.exe`** installer; if SmartScreen appears, click **More info → Run
   anyway**. Prefer no installer? Grab the portable **`Tine_*_x64-portable.zip`**, unzip, and run
   `Tine.exe` — it needs the WebView2 runtime, which is preinstalled on Windows 10/11.
-- **Android** — install from **[F-Droid](https://f-droid.org/packages/page.tine.app/)**, or sideload the **`.apk`** from the Releases
-  page.
-- **iPhone / iPad** — join the public beta on **[TestFlight](https://testflight.apple.com/join/rpGGpTVW)** (install Apple's TestFlight
-  app, then open the link). There is no App Store listing yet.
 
-(Want to hack on Tine instead? See [docs/DEVELOPING.md](docs/DEVELOPING.md). Something wrong? See
-[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).)
+(Want to hack on Tine instead? Build from source — see [Build & run](#build--run).)
 
 ### Command line
 
@@ -80,36 +78,62 @@ tine --version
 tine open ~/notes
 tine capture
 tine doctor ~/notes
-tine export static ~/notes
-tine export live ~/notes --all-pages --output public-site --name "My notes"
+tine export static ~/notes --output ~/Sites
+tine export live ~/notes --output ~/Sites --name "My notes" --all-pages
 ```
 
-Exports select pages using the graph's publication settings. Output directories are relative to
-the graph, and existing output is retained unless you explicitly pass `--replace`. Linux `.deb`
-and `.rpm` packages install the generated `man tine` page.
+`--output` is an existing absolute folder outside the graph; the export creates one new child
+there and never replaces an existing one. Linux `.deb` and `.rpm` packages install the generated
+`man tine` page.
+
+### macOS: repeated "Documents" permission prompt
+
+If your Logseq graph lives in `~/Documents` (the common default), macOS gates access to that
+folder behind a permission prompt. Because the build isn't notarized yet **and** is run with the
+download "quarantine" flag, macOS launches it from a randomized temporary location each time
+([Gatekeeper App Translocation](https://developer.apple.com/library/archive/technotes/tn2206/_index.html)),
+so it can't remember your answer — and re-asks on every launch. To make the grant stick:
+
+1. **Move `Tine.app` into `/Applications`** (drag it out of the disk image / Downloads).
+2. Clear the quarantine flag in Terminal:
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/Tine.app
+   ```
+3. Launch Tine from `/Applications` and **Allow** the Documents prompt once — it won't ask again.
+
+(Both this and the "unidentified developer" warning disappear once Tine ships notarized macOS
+builds.)
 
 ---
 
-## Highlights
+## What Tine adds on top of Logseq
 
-What Tine adds on top of Logseq — the things that started as *"I wish Logseq did this."*
+These are the things that started as *"I wish Logseq did this"* — Tine's reasons to exist beyond
+raw speed. (Comparisons are against current Logseq desktop core, no plugins.)
 
-- **⚡ Native speed** — a pure-Rust core and a tiny native runtime instead of Electron; typing
-  stays in the frontend, whole-graph reads hit an in-memory index.
-- **🪟 Split view and tabs** — panes with their own tabs and history, `Alt+click` to open beside,
-  middle-click for a background tab, pins, drag between panes, browser-style back/forward.
-- **🔎 Search that becomes a query** — open every Ctrl+K result in a persistent tab, refine it,
-  view it as a list/table/board, and name it to make it a query page. The visual query editor and
-  the query text stay in sync.
-- **▦ Sheets** — grids, typed field tables, boards, formula columns, filters, aggregates and CSV
-  import over plain bullets.
-- **🤝 Concord** — sync-conflict copies (Syncthing, Dropbox) and git conflict markers reviewed in
-  place, block by block, with a suggestion for each difference; conflicts are never silently
-  overwritten, and launch snapshots plus delete-to-trash back everything up.
-- **🌐 Live export** — publish pages as a static site that still searches, tabs and splits like
-  Tine ([the Guide](https://tine.page/guide/) is one); `tine export live` from the command line.
-- **⚡ Global quick-capture**, **🎯 focus mode + dim**, **🔁 carry unfinished tasks forward**, an
-  **📖 in-app Guide**, and a first-run **👋 demo graph** that opens in Logseq too.
+- **⚡ Native speed.** Pure-Rust core + SolidJS fine-grained reactivity + a tiny Tauri/WebKitGTK
+  runtime instead of Electron — typing stays in the frontend tree, reads hit an in-memory index.
+- **🗂️ Built-in tabs.** Middle-click anything to open it in a background tab; pin, drag-reorder,
+  `Mod+W` to close, and use the overflow overview when titles no longer fit. (Logseq core has none.)
+- **🔎 Search that grows into a query.** Open all Ctrl+K results in a persistent tab, switch the
+  same result set between search/list/table/board, refine it with friendly filters or the visual
+  builder, and name it only when it deserves to become an ordinary query page.
+- **🪟 Split view.** Panes have their own tabs/history, keyboard pane/seam navigation, `Ctrl+click`
+  open-to-side, and tab drag to pane or seam.
+- **⏯️ Browser-style back/forward** — `Alt+Left` / `Alt+Right`, per-tab history, works mid-edit.
+- **🎯 Focus mode + dim-inactive-blocks** (`t f` / `t b`) — fade everything but the block you're on.
+- **⚡ Global quick-capture** — bind `tine --capture` to a desktop hotkey and a small always-on-top
+  box pops from *any* app with the full editor, filing a bullet to today's journal.
+- **🔁 Carry unfinished tasks forward** to today (last 7 / 30 / 365 days, or a configurable N).
+- **▦ Sheets** — recursive grids, markdown databases, typed field tables, formula columns + filters with a visual builder, task/tag boards, aggregates, colors, and CSV import over plain bullets.
+- **📖 In-app Guide** — Help → Guide opens bundled, read-only how-to pages beside your own
+  graph, and **Copy the guide into your graph** creates an editable, interlinked
+  `tine-guide/…` sandbox without touching the originals.
+- **🛟 A real data-safety story** — conflict detection instead of silent overwrites, launch
+  snapshots with one-click restore, and delete-to-trash; built to live safely on a graph you also
+  edit from Logseq mobile over Syncthing.
+- **👋 First-run onboarding** — a Welcome screen that opens an existing graph or creates a new one
+  pre-loaded with a short, narrated demo graph (which opens in Logseq too).
 
 <p align="center">
   <img src="docs/img/quick-capture.png" alt="Global quick-capture mini-window" width="32%">
@@ -131,7 +155,7 @@ What Tine adds on top of Logseq — the things that started as *"I wish Logseq d
 ## Features
 
 A quick map of what's in the box — the **[full feature list lives in docs/FEATURES.md](docs/FEATURES.md)**,
-and the **[Guide](https://tine.page/guide/)** shows the rendered-content side of it in your browser.
+and the **[demo](https://tine.page/demo/)** shows the rendered-content side of it in your browser.
 
 | Area | Highlights |
 |------|-----------|
@@ -141,35 +165,159 @@ and the **[Guide](https://tine.page/guide/)** shows the rendered-content side of
 | **Tasks, journals & dates** | Task workflows + priorities, scheduled/deadline with a date picker, recurring tasks, carry-forward, a multi-day journal feed, agenda, and a calendar. |
 | **PDF** | Zoomable virtualized viewer, in-PDF find, text + area (image) highlights stored Logseq-compatibly, each a bullet you can annotate. |
 | **Search & nav** | `Ctrl+K` switcher (titles + full text) with persistent result tabs, bounded match evidence and query-page promotion; command palette, in-app Guide, namespace tree, tabs, split view, back/forward, focus mode, global quick-capture, page icons. |
-| **Your files** | Safe to run alongside Logseq mobile over Syncthing — Concord conflict review, format-preserving atomic saves, transactional rename, org-mode (byte-faithful or read-only), snapshots + trash. |
-| **Customize & export** | Remappable shortcuts with `?` help, built-in theme gallery + custom CSS, multi-language spell check, static and live HTML export, copy/export as Markdown, **export a page to PDF** (desktop). |
+| **Your files** | Safe to run alongside Logseq mobile over Syncthing — conflict detection, format-preserving atomic saves, transactional rename, org-mode (byte-faithful or read-only), snapshots + trash. |
+| **Customize & export** | Remappable shortcuts with `?` help, built-in theme gallery + custom CSS, multi-language spell check, static HTML export with offline search, copy/export as Markdown, **export a page to PDF**. |
 
-→ **[Every feature, with the details, in docs/FEATURES.md.](docs/FEATURES.md)**<br>
+→ **[See every feature, with the details, in docs/FEATURES.md.](docs/FEATURES.md)**
 → **[Tine vs Logseq, feature by feature](https://tine.page/compare.html)** — an honest, dated
 comparison: parity, scoped, not-yet, and what Tine deliberately doesn't do.
 
 ---
 
+## Built with
+
+| Layer | Tech | Notes |
+|------|------|-------|
+| Shell | [Tauri 2](https://tauri.app) (Rust) | OS webview (WebKitGTK on Linux) — tiny runtime vs Electron |
+| Frontend | [SolidJS](https://solidjs.com) + TypeScript + [Vite](https://vitejs.dev) | fine-grained reactivity, no virtual-DOM churn |
+| Core | `crates/tine-core` (pure Rust) | parse/serialize, model, indexing, queries, refs, dates, PDF/EDN, HTML publish |
+| Rendering | [pdf.js](https://mozilla.github.io/pdf.js/), [KaTeX](https://katex.org), highlight.js | PDF, math, code |
+
+The Rust core is GUI-free and unit-tested in isolation; the Tauri layer is a thin set of ~41 IPC
+commands over it. The frontend owns the live editing tree (normalized store) and pushes debounced,
+format-preserving saves; whole-graph reads hit an in-memory page cache (`RwLock<Arc<Graph>>` — read
+commands clone the Arc and release the lock immediately) keyed by a graph generation counter.
+
+The bigger architectural choices — Tauri/WebKitGTK over Electron, the pure-Rust core, in-browser
+WASM parsing, the data-safety invariants — are written up as short decision records in
+[`docs/adr/`](docs/adr/).
+
+## Project layout
+
+```
+crates/tine-core/    Rust core: parse/serialize, model, config, dates, refs, query, pdf, edn, publish
+src-tauri/           Tauri app — IPC commands + windows (main + quick-capture)
+src/                 SolidJS frontend (components, store, render pipeline, keybindings)
+scripts/             env.sh (toolchain paths), screenshot generators
+docs/                Logo, images, FEATURES.md, ADRs, feature notes
+samples/             Demo graph used by tests/screenshots
+```
+
+## Build & run
+
+```bash
+source scripts/env.sh        # toolchain env (CARGO_HOME/RUSTUP_HOME, lib paths)
+npm install                  # first time
+
+# Build the release binary (NOT plain `cargo build` — that produces a dev-mode
+# binary that can't connect to the bundled frontend):
+npx tauri build --no-bundle
+
+# Run it against your graph:
+TINE_GRAPH=/path/to/your/graph ./target/release/tine
+```
+
+### Release checklist
+
+Before tagging a release, run `npm run e2e:caret` against the release binary to
+guard the ADR 0013 duplicate-instance caret/focus invariant.
+
+- Point `TINE_GRAPH` at the same `journals/` + `pages/` + `logseq/config.edn` tree you use with
+  Logseq. **Run one app at a time** on a given graph.
+- **GPU compositing (smooth scrolling) is on by default.** On the rare GPU/compositor combo where
+  WebKitGTK's DMABUF renderer aborts (the window fails to appear, or you see
+  `EGL_BAD_PARAMETER` on the console), set `TINE_GPU=0` to fall back to software rendering — slower,
+  but it always starts. If Tine detects it's painting on the CPU it now says so with a banner.
+- Prefer the **raw binary** over an AppImage on Linux — an AppImage's bundled graphics libraries can
+  clash with the host GPU and silently drop you to (slow) software rendering. The `.deb`/`.rpm`
+  packages use your system's drivers and don't have this problem.
+
+### Troubleshooting a bad startup (debug mode)
+
+If Tine won't start cleanly (e.g. the window never appears), run it with debug logging on. It writes
+a timestamped trace to a file — the environment (renderer, session type, AppImage, graph), every
+startup milestone, any panic (with backtrace), and the frontend's own boot/errors — so one file is
+usually enough to diagnose it:
+
+```bash
+TINE_DEBUG=1 tine                 # or:  tine --debug
+TINE_DEBUG=1 ./Tine-*.AppImage    # AppImage
+```
+
+Tine prints the log path on startup; it defaults to `/tmp/tine-debug.log` (override with
+`TINE_DEBUG_LOG=/path`). Reproduce the problem, then send that file. The log records no note content
+— only startup diagnostics.
+
+**Quick capture** — at the top of the journal feed, a page-title field + a body composer: fill the
+title to capture a **new page**, leave it empty to **append to today**, then `Ctrl-Shift-Enter`.
+**Global quick-capture:** bind your desktop environment's keyboard settings to run
+`tine --capture` (a second launch is routed to the running instance via single-instance).
+
+### Develop
+
+```bash
+npm run dev                  # frontend only, in a browser, against an in-memory mock backend
+npm run app                  # full Tauri dev window  (alias for: tauri dev)
+node scripts/screenshot.mjs  # regenerate screenshots from the mock backend
+```
+
+## Testing
+
+```bash
+source scripts/env.sh
+cargo test -p tine-core      # Rust: parse/serialize round-trip, model, queries, search cache
+npm test                     # Frontend: Vitest (editor ops, outline, autocomplete, markers, …)
+```
+
+Round-trip parsing is validated against a real Logseq graph (0 structural diffs beyond accepted
+canonicalization); `tine-check` is a privacy-safe profiler that proves byte-faithful serialization
+without reading note content.
+
 ## Community
 
-Everything happens on GitHub. Questions, ideas, screenshots and show-and-tell go to
-**[GitHub Discussions](https://github.com/martinkoutecky/tine/discussions)**; concrete bugs and feature requests go to
-[issues](https://github.com/martinkoutecky/tine/issues).
+Questions, ideas, screenshots, and bug reports are welcome on the subreddit:
+**[r/TineOutline](https://www.reddit.com/r/TineOutline/)** — the best place to follow what's
+shipping and help shape what's next. For concrete bugs or feature requests you can also
+[open an issue](https://github.com/martinkoutecky/tine/issues).
 
 ## Contributing
 
 Tine is a single-maintainer project with an unusual contribution model: **the most valuable thing
 you can send is testing and bug reports**, and code changes come in as **proposals/specs the
 maintainer implements** rather than merged patches (docs/typo PRs excepted). The why, and how to
-file a good report, are in **[CONTRIBUTING.md](CONTRIBUTING.md)**. Building from source:
-**[docs/DEVELOPING.md](docs/DEVELOPING.md)**.
+file a good report, are in **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
-## Roadmap
+## Roadmap & non-goals
 
-Tine is at 0.6: Sheets, split view, the query engine, Concord, live export, mobile and an
-experimental [capability-limited plugin API](https://tine.page/plugins.html) have shipped. Next: 0.7
-rounds off the query engine and live export, then 0.8 brings localization; a graph view is under evaluation. **Out of scope by design:** whiteboards, flashcards, Logseq/Obsidian plugin
-compatibility, and built-in sync. The working backlog — next, deferred and WONTFIX — is
+**New — Sheets (2-D grids + databases):** render a block's children as a recursive,
+editable TreeSheets-style grid, field table, or board — while everything stays plain
+Logseq markdown/org (see [FEATURES.md](docs/FEATURES.md#sheets-2-d-grids)). It includes
+typed schemas, query-driven tables, task/tag boards, grouping, aggregates, markdown table
+conversion, computed columns with a visual formula builder, filters, and CSV/TSV import.
+
+**New — Split view:** panes with their own tabs/history, TreeSheets-style pane and seam
+navigation, `Ctrl+click` open-to-side, and tab drag to panes/seams (see
+[FEATURES.md](docs/FEATURES.md#split-view)).
+
+**New — capability-limited plugins:** Tine 0.6 adds an experimental native plugin API for
+bounded WebAssembly guests and inert token themes. Packages install disabled, declare exact
+capabilities, and use host-owned commands, decorations, settings, and write guards rather than
+unrestricted DOM/filesystem/network access. This is not Logseq or Obsidian plugin API
+compatibility; see [the user overview](https://tine.page/plugins.html) and
+[developer guide](docs/plugins/README.md).
+
+**Planned / under evaluation:** graph view.
+
+**Mobile:** Tine has a **native Android build** (Tauri v2) as of 0.4.0 — it opens and edits your real
+Logseq graph on the phone over your own sync, alongside the Logseq mobile app. iOS is being scoped.
+
+**Under discussion, not promised:** built-in git integration.
+
+**Out of scope (by design):** whiteboards, flashcards, and unrestricted in-process
+plugins. Tine's experimental plugin API instead uses capability-limited WebAssembly
+guests and inert token themes; see [the developer guide](docs/plugins/README.md).
+
+The full working backlog — what's next, what's deferred, and what's explicitly WONTFIX — lives in
 [`docs/BACKLOG.md`](docs/BACKLOG.md).
 
 ## Support
@@ -186,10 +334,6 @@ expectations, no obligations, either way. 🌱
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/martinkoutecky)
 · [GitHub Sponsors](https://github.com/sponsors/martinkoutecky)
-
-## Unofficial Tine resources
-
-- [Tana to Tine](https://github.com/mikob/tine/tree/converters) — convert Tana workspaces to Tine.
 
 ## Acknowledgements
 

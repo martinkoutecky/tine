@@ -1,6 +1,8 @@
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import type { ObjectiveMatchClass } from "./types";
+import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { pushToast } from "./toasts";
 
 const SETTING_KEY = "adaptive-launcher-ranking";
 const VERSION = 1;
@@ -36,17 +38,23 @@ export interface LauncherRankable {
 const [enabled, setEnabledSignal] = createSignal(true);
 export const launcherRankingEnabled = enabled;
 
+/** Load device setting (default ON). Read failure toasts and resolves; a newer
+ * local write wins. O(1) plus backend read. */
 export async function initLauncherRankingSetting(): Promise<void> {
+  const revision = preferenceRevision(enabled);
   try {
-    setEnabledSignal(await backend().getAppBool(SETTING_KEY, true));
+    const value = await backend().getAppBool(SETTING_KEY, true);
+    if (preferenceReadCurrent(enabled, revision)) { setEnabledSignal(value); seedPreference(enabled); }
   } catch {
-    setEnabledSignal(true);
+    if (preferenceReadCurrent(enabled, revision)) setEnabledSignal(true);
+    pushToast("Could not load adaptive launcher ranking preference.", "error");
   }
 }
 
+/** Apply now and queue a device-local write. Failure rolls back and toasts;
+ * return does not confirm persistence. O(1) plus backend write. */
 export function setLauncherRankingEnabled(value: boolean): void {
-  setEnabledSignal(value);
-  void backend().setAppBool(SETTING_KEY, value).catch(() => {});
+  writePreference(enabled, setEnabledSignal, value, (next) => backend().setAppBool(SETTING_KEY, next), "adaptive launcher ranking");
 }
 
 function graphKey(root: string): string {

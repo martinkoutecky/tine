@@ -13,13 +13,21 @@
 
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { latestOwner, readOwned } from "./owned";
+import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { pushToast } from "./toasts";
 
 const KEY_ENABLED = "spellcheck_enabled";
 const KEY_LANGS = "spellcheck_languages";
 
-const [enabled, setEnabledSig] = createSignal(true);
-const [languages, setLanguagesSig] = createSignal("");
+// Each default is spelled once: the initial signal and the startup read share it.
+const DEFAULT_ENABLED = true;
+const DEFAULT_LANGS = "";
+
+const [enabled, setEnabledSig] = createSignal(DEFAULT_ENABLED);
+const [languages, setLanguagesSig] = createSignal(DEFAULT_LANGS);
 const [dictionaries, setDictionaries] = createSignal<string[]>([]);
+const dictionaryScope = {};
 
 /** Reactive: locale codes of the spell-check dictionaries installed on this
  *  machine (from the backend), so the UI can offer a pick-list. */
@@ -38,24 +46,24 @@ export function parseLanguages(s: string): string[] {
 }
 
 function apply(): void {
-  void backend().applySpellcheck(enabled(), parseLanguages(languages())).catch(() => {});
+  void backend().applySpellcheck(enabled(), parseLanguages(languages()))
+    .catch(() => pushToast("Could not apply spellcheck settings.", "error"));
 }
 
+/** Apply immediately; native spellcheck runs without awaiting. Queue a device
+ * write; failure rolls back and toasts. Native failure also toasts. Return
+ * confirms neither asynchronous result. O(1) plus native and settings calls. */
 export function setSpellcheckEnabled(on: boolean): void {
-  setEnabledSig(on);
-  void backend().setAppBool(KEY_ENABLED, on).catch(() => {});
-  apply();
+  writePreference(enabled, (next) => { setEnabledSig(next); apply(); }, on,
+    (next) => backend().setAppBool(KEY_ENABLED, next), "spellcheck preference");
 }
 
+/** Apply immediately; native spellcheck runs without awaiting. Queue a device
+ * write; failure rolls back and toasts. Native failure also toasts. Return
+ * confirms neither asynchronous result. O(1) plus native and settings calls. */
 export function setSpellcheckLanguages(value: string): void {
-  setLanguagesSig(value);
-  void backend().setAppString(KEY_LANGS, value).catch(() => {});
-  apply();
-}
-
-/** Is this dictionary code currently selected? */
-export function isLanguageSelected(code: string): boolean {
-  return parseLanguages(languages()).includes(code);
+  writePreference(languages, (next) => { setLanguagesSig(next); apply(); }, value,
+    (next) => backend().setAppString(KEY_LANGS, next), "spellcheck languages");
 }
 
 /** Tick/untick one dictionary in the selection (preserving the others). */
@@ -85,26 +93,35 @@ export function languageDisplayName(code: string): string {
 /** (Re)load the installed dictionaries from the backend. Cheap; call on startup
  *  and from a "Rescan" button (the user may install a dictionary mid-session). */
 export async function loadDictionaries(): Promise<void> {
+  const owner = latestOwner(dictionaryScope, "dictionaries");
   try {
-    setDictionaries(await backend().listSpellcheckDictionaries());
+    const result = await readOwned(owner, backend().listSpellcheckDictionaries());
+    if (result.kind === "current") setDictionaries(result.value);
   } catch {
-    setDictionaries([]);
+    if (owner()) {
+      setDictionaries([]);
+      pushToast("Could not load spellcheck dictionaries.", "error");
+    }
   }
 }
 
-/** Load persisted prefs at startup and push them onto the webview. The Rust setup
- *  already applied them once from the same file; re-applying is idempotent and
- *  also sets this webview-context's signals (e.g. the separate capture window). */
+/** Read device preferences into this WebView unless superseded by local writes.
+ * Failed reads toast and resolve. Dictionary refresh and native application
+ * run without awaiting; native failures toast. O(1) backend and native calls. */
 export async function initSpellcheckSettings(): Promise<void> {
+  const enabledRevision = preferenceRevision(enabled);
+  const languageRevision = preferenceRevision(languages);
   try {
-    setEnabledSig(await backend().getAppBool(KEY_ENABLED, true));
+    const value = await backend().getAppBool(KEY_ENABLED, DEFAULT_ENABLED);
+    if (preferenceReadCurrent(enabled, enabledRevision)) { setEnabledSig(value); seedPreference(enabled); }
   } catch {
-    /* default on */
+    pushToast("Could not load spellcheck preference.", "error");
   }
   try {
-    setLanguagesSig(await backend().getAppString(KEY_LANGS, ""));
+    const value = await backend().getAppString(KEY_LANGS, DEFAULT_LANGS);
+    if (preferenceReadCurrent(languages, languageRevision)) { setLanguagesSig(value); seedPreference(languages); }
   } catch {
-    /* default: OS locale */
+    pushToast("Could not load spellcheck languages.", "error");
   }
   void loadDictionaries();
   apply();

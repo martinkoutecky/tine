@@ -2,61 +2,95 @@ icon:: 🛟
 
 - # Troubleshooting and recovery
 	- Only recovery paths Tine actually ships, each as numbered actions with the outcome to expect. For where everything lives, see [[Reference/Files, external edits, and backups]].
-- ## “Page changed on disk” banner
-	- Meaning: the file changed elsewhere (a sync tool or another editor) while you had unsaved edits. Nothing was written over — your unsaved text is still on screen.
+- ## “Changed on disk” banner
+	- Meaning: the file changed elsewhere (a sync tool or another editor) while you had unsaved edits. The banner reads “*Page* changed on disk. Your unsaved changes weren't written.” Nothing was written over — your unsaved text is still on screen.
+	- If the banner reads “*Page* changed on disk while you were editing it” and offers only **Review**, choose it and continue at step 3: Tine never overwrites the file with a draft you have not compared.
 	- 1. If the disk version is the one you want, choose **Use disk version** — Tine re-reads the file. Copy your unsaved text somewhere first if you still need parts of it.
 	- 2. If your version is right, choose **Keep mine (overwrite)** — Tine writes yours over the file.
-	- 3. What you should see: the banner clears and the page saves normally again. Until you choose, that page is skipped by saving rather than silently clobbered.
+	- 3. To keep parts of both, open the page: a panel at its top compares **Your unsaved edits** with **The file on disk now** block by block. Choose per block, then **Apply resolution**. When Tine still has the version you started editing from, it pre-selects each side's own change. If the file changes again before you apply, nothing is written and the comparison refreshes.
+	- 4. What you should see: the banner clears and the page saves normally again. Until you choose, that page is skipped by saving rather than silently clobbered. If Tine closes first, your unsaved text is kept, and the same comparison appears on that page after the next start (even when the page itself cannot be opened).
 - ## Restore a deleted page or journal
 	- 1. Open `logseq/.tine-trash/pages/` or `logseq/.tine-trash/journals/` inside your graph. Deleted files have a timestamp followed by `__` before their original name.
 	- 2. Remove the timestamp and `__`, then move the file into the configured pages or journals folder. For a page that originally lived elsewhere, you may return it to that location instead.
 	- 3. What you should see: Tine notices the restored file like any external change, and the page reappears.
 - ## Restore an earlier state of the graph
-	- 1. Open Settings (**t s**) → **Backups & recovery** and find the snapshot from before the damage. (Tine snapshots your Markdown/Org files on every launch; **Snapshots to keep** controls how many survive.)
+	- 1. Open Settings (**t s**) → **Backups & recovery** and find the snapshot from before the damage under **Available snapshots**. (Tine snapshots your Markdown/Org files on every launch; **Snapshots to keep** controls how many survive.)
 	- 2. Choose **Restore** beside it and confirm.
 	- 3. What you should see: your current state is snapshotted first, backed-up graph text returns to its original paths, config and sidecars are restored, and the graph reloads — so even a mistaken restore can be undone by restoring the snapshot it just made.
 - ## Resolve a sync or version-control conflict
-	- 1. Choose the **N conflicts** badge at the bottom of the sidebar to open the **Conflicts** page, then choose the page to resolve. Tine uses the same queue for sync-provider conflict copies and files carrying unresolved git or Fossil merge markers.
-	- 2. On the page, compare the complete versions in the block-by-block review. Each row previews its first differing line and can expand to full text. Accept or change each suggestion: when both sides edited separate parts of one block, Tine may offer a combined **Merged** version; otherwise choose either side or keep both. Choose page properties separately when needed, then **Apply resolution**. The review's slim pinned notice keeps it reachable while you scroll without losing your choices.
-	- 3. What you should see: the chosen page is saved through the normal guarded path. A provider conflict copy moves to the trash; before a version-control page is written without conflict markers, its exact pre-resolution file is kept in recoverable trash. If a conflict copy's original page no longer exists, discard the copy on the **Conflicts** page or restore the page in Logseq first.
+	- 1. Choose the **N conflicts** badge in the sidebar to open the **Conflicts** page, then choose the page to resolve. Tine uses the same queue for sync-provider conflict copies and files carrying unresolved git or Fossil merge markers.
+	- 2. On the page, compare the two versions block by block. For each differing block choose **Mine**, **Theirs**, or **Both**; when both sides edited separate parts of one block, Tine may offer a combined **Merged** version. **Apply all suggested** re-applies Tine's own suggestions, and the page's own properties have a separate choice. Then choose **Apply resolution**.
+	- 3. What you should see: the chosen page is saved through the normal guarded path. A provider conflict copy moves to the trash; before a version-control page is written without conflict markers, its exact pre-resolution file is kept in recoverable trash. If a conflict copy's original page no longer exists, use **Discard copy** on the **Conflicts** page.
 - ## Reconcile a duplicate journal day
-	- 1. Open the affected journal day from the **N conflicts** queue. Tine shows both files in the same block-by-block review used for provider conflicts; each file also has **Open**, **Rename**, and **Trash** actions. The same inventory remains in Settings → **Backups & recovery** → **Duplicate journal days**.
-	- 2. Choose which version of each differing block to keep (or keep both), then **Apply resolution**. The old Settings **Merge** action is the same keep-both outcome.
-	- 3. What you should see: the chosen content saved as the day and the other file moved to recoverable trash. Tine kept both source files until you decided rather than dropping one.
+	- 1. Choose the **N conflicts** badge and open the day from the **Duplicate journal days** group, or open the day itself. Tine compares its two files block by block, the same review as a sync conflict, and lists each file with **Open**, **Rename**, and **Trash** actions. The same list stays in Settings → **Backups & recovery** → **Duplicate journal days**, which also offers **Merge**.
+	- 2. Choose which version of each differing block to keep (or keep both), then **Apply resolution**. Where the two files hold different blocks, the pre-selected choice keeps everything, as **Merge** does. A Markdown file and an Org file for one day cannot be folded together; use the file actions instead.
+	- 3. What you should see: the kept content saved as the day and the other file moved to `logseq/.tine-trash/`, where you can still recover it. Tine kept both source files until you decided rather than dropping one.
+- ## Journal days look empty
+	- Meaning: the journal file may be named after its title (for example `Jun 18th, 2026.md`) instead of its date, so Tine cannot place it in the feed.
+	- 1. Open Settings → **Backups & recovery** → **Journal files named by title**.
+	- 2. Review the listed renames and choose **Rename to date names**.
+	- 3. What you should see: a snapshot is taken first, the files take their date names, and the days appear in the journal feed.
 - ## Tine will not start
-	- 1. Run it with debug logging: `TINE_DEBUG=1 tine` (or `tine --debug`; the AppImage the same way), reproduce the problem, then quit.
-	- 2. Tine prints the log path on startup. By default it is `tine-debug.log` in your platform's temporary folder; `TINE_DEBUG_LOG=/path` overrides it.
+	- 1. Set `TINE_DEBUG=1` in the environment when you launch Tine, reproduce the problem, then quit.
+	- 2. By default the log is `tine-debug.log` in your platform's temporary folder; `TINE_DEBUG_LOG=/path` overrides it.
 	- 3. What you should see: a timestamped trace covering the environment, startup milestones, and any panic with a backtrace. It records no note content — send that file with your report.
-	- 4. On Linux, if the window never appears at all, run `TINE_GPU=0 tine` once: a rare GPU/WebKitGTK rendering failure then falls back to software rendering.
-- ## A graph will not finish opening
-	- Meaning: Tine started, but the open itself is stuck or has failed. Once it takes longer than a moment you get a card naming the current phase and the elapsed time; if the open cannot complete, the same card becomes **Tine needs help opening this workspace** with actions.
-	- 1. **Retry lookup** — attempt the same open again. This is safe to repeat.
-	- 2. **Open another graph…** — pick a different folder and leave this one untouched.
-	- 3. **Copy details** — copies the phase and error text for an issue report. Use this before anything else if you plan to report it.
-	- 4. What you should see: nothing about the graph has been changed by the failure. Retrying, choosing another graph, or closing and relaunching Tine are all safe to try before any manual recovery.
+	- 4. On Linux, if the window never appears at all, launch once with `TINE_GPU=0`: a rare GPU/WebKitGTK rendering failure then falls back to software rendering.
+- ## Tine could not open your last graph
+	- Meaning: at launch Tine tried to reopen the graph you last used and failed. The Welcome screen shows **Tine could not open your last graph** with the graph's path and the reason.
+	- 1. **Try again** — attempt the same open again. This is safe to repeat.
+	- 2. **Copy details** — copies the path and reason for an issue report. Use this before anything else if you plan to report it.
+	- 3. Or open a different graph from the same screen and leave this one untouched.
+	- 4. What you should see: the card says nothing was changed on disk, and that is the case — retrying, opening another graph, or relaunching Tine are all safe before any manual recovery.
 - ## Part of the window says it could not be displayed
-	- Meaning: one region — the page, the sidebar, Linked or Unlinked References, the conflict panel — hit an error it could not render through. It is reported in place, with a **Retry**, and the rest of the window keeps working.
+	- Meaning: one region — a page or PDF pane, a sidebar item, query results, a dialog, plugin settings, or the conflict panel — hit an error it could not render through. Tine reports it in place with a **Retry** button instead of blanking the app, and the rest of the window keeps working.
+	- **Copy details** — copies the region and error details for a report. Review the copied text before sharing: an error may include a file path or your own content.
 	- 1. **Retry** — re-renders just that region. A failure caused by something transient, such as a command that lost a race with a slow startup, usually clears on the first retry.
-	- 2. If the message mentions that Tine is still waiting on operations that have been running for a while, give it a moment and retry again: the region is failing because the backend has not answered yet, not because anything is wrong with your notes.
-	- 3. If it comes back every time, use **Create diagnostic report** below and include the message shown in the region.
+	- 2. If the card says Tine is still waiting on operations that have been running for a while, give it a moment and retry again: the region is failing because the backend has not answered yet, not because anything is wrong with your notes.
+	- 3. If it comes back every time, use **Create a privacy-safe diagnostic report** below and include the message shown in the region.
 	- 4. What you should see: your notes on disk are untouched either way — a region that cannot be displayed is a display failure, not a data failure.
 - ## A panel says it could not load something
-	- Meaning: one panel could not fetch what it needed — references to a block, the results of a query, the list of pages. It says so instead of drawing itself empty, because an empty panel would tell you there is nothing there, which is a different thing from not being able to find out.
-	- 1. **Retry**, where the panel offers one, re-fetches just that panel. The rest of the page, and the rest of that panel, keep working.
-	- 2. Smaller pieces degrade quietly rather than saying anything: a code block that could not be highlighted shows as plain text, a formula that could not be typeset shows its LaTeX, a preview that could not load shows nothing in its place. These are display-only, and reopening the page re-tries them.
-	- 3. What you should see: the panel keeps its heading and its controls, and the rest of the window is unaffected. Nothing on disk changes.
-- ## References or queries say the search index couldn't be built
-	- Meaning: queries answer from Tine's search index. Building it failed several times in a row this session, so Tine stopped retrying and says so, with a short code, instead of showing "indexing…" forever. Linked and Unlinked References, **Ctrl+K** and search tabs keep answering by reading your pages, only more slowly. Your notes are untouched, and pages still open, edit and save normally.
-	- 1. Choose **Retry** in the panel. Tine reopens the graph and builds the index again. Relaunching Tine does the same.
-	- 2. If it fails again, choose **Create diagnostic report** and attach the report to an issue. It records each failed attempt with its code and no graph content.
-	- 3. What the code means: `file_in_use` — another program (often antivirus or a sync tool) held one of Tine's index files open; `disk_full` — the disk or quota is full; `permission_denied` — Tine may not write its index files; `out_of_memory` — the system ran out of memory; `busy` — another Tine window held the index; `corrupt` — the index file is damaged, and a Retry rebuilds it; other codes are for the report.
-	- 4. What you should see: after a successful Retry the panels fill in and queries answer again.
+	- Meaning: a panel could not fetch what it needed, and says so instead of drawing itself empty, because an empty panel would tell you there is nothing there, which is a different thing from not being able to find out. Linked and Unlinked References say “Couldn’t load references”; the references under a block say “Couldn’t load references to this block” with a **Retry** button; Search says “Couldn’t load search results” instead of “No matched results”; a page in the right sidebar says “Could not load this sidebar page. Collapse and expand to retry.”
+	- 1. Where the panel has a **Retry** button, press it: it re-fetches just that panel. For a sidebar page, collapse and expand its entry to try again. For Linked and Unlinked References, reopen the page or navigate away and back.
+	- 2. Smaller pieces degrade quietly rather than saying anything: a code block that could not be highlighted shows as plain text, a formula that could not be typeset shows its LaTeX, a preview that could not load shows nothing in its place. These are display-only, and reopening the page tries them again.
+	- 3. If it keeps failing, create a diagnostic report as described below.
+	- 4. What you should see: the rest of the window is unaffected, and nothing on disk changes.
+- ## A red error message appears
+	- Meaning: something actually went wrong — a save, a read, or a check Tine could not finish. A red message stays on screen until you close it, so there is time to read it; the brief states Tine passes through while it starts or opens a graph never show one.
+	- 1. Choose **Copy** on the message to copy its full text for a report.
+	- 2. Close it with **×** once you have what you need. If you closed it too soon, Settings → **Help & diagnostics** → **Recent error messages** lists the last 20 of this session, newest first, each with **Copy**; they are kept in memory only and are gone when Tine closes.
+	- 3. What you should see: the message stays until you close it; if the same error happens again it shows a count (×2, ×3) instead of a second message. The privacy-safe diagnostic report below notes that it appeared (not its text), and with `TINE_DEBUG=1` its full text is also in the detailed debug log.
 - ## Create a privacy-safe diagnostic report
-	- 1. Open Settings → **Help & diagnostics** and choose **Create diagnostic report**. Tine previews its bounded current-and-previous-run flight recorder: fixed operation names, outcomes, timings, counts, platform, version, and build information.
-	- 2. Review the JSON, then choose **Copy report** (or **Save report…** on desktop). Nothing is uploaded automatically. The recorder excludes graph content, paths, page titles, queries, URLs, credentials, and the opt-in detailed debug log.
-	- 3. For a suspected Syncthing/Dropbox mismatch, use **Verify synchronized graph** in the same tab on both devices, exchange the generated reports, and compare them. This check includes paths and page names but never note contents.
-	- 4. What you should see: a report you can attach to an issue without first setting up `adb`, SSH, or a terminal. **Clear recorded events** removes the retained flight-recorder history after you are done.
+	- 1. Open Settings → **Help & diagnostics** and choose **Create diagnostic report**. Tine previews its bounded flight recorder for the current and previous run: fixed operation names, outcomes, timings, counts, platform, version, and build information.
+	- 2. Review the report, then choose **Copy report** (or **Save report…** on desktop). Nothing is uploaded automatically. The recorder excludes graph content, paths, page titles, queries, URLs, credentials, and the opt-in detailed debug log.
+	- 3. What you should see: a report you can attach to an issue without first setting up `adb`, SSH, or a terminal. **Clear recorded events** removes the retained flight-recorder history after you are done.
+	- 4. For a graph that opens or saves slowly, the report's `graphs` section is the part to attach. It holds, for the last time the graph was opened, how long each step took (listing the folder, checking file dates, reading files, parsing, building the index, becoming ready) with how many files and bytes each step handled, so a slow disk or antivirus scan shows up as read time rather than parse time. It also lists how often opening restarted and why, the most recent full rescans and saves with their durations, and the shape of the graph: how many pages, journals, Windows line-ending files, non-normalized file names and sync-conflict files it has, and the spread (median, 90th and 99th percentile, largest) of file sizes, blocks per page, nesting depth, links, tags, embeds, block references, queries, properties, backlinks per page and namespace depth. These are numbers only: never a page name, any text, or a hash of either.
+- ## Opening a large graph is slow on Windows
+	- Meaning: Windows Defender real-time protection scans each file the first time Tine reads it. On a graph of tens of thousands of files the first open after install, or after Defender updates, can take several times longer than later opens; the time shows up as read time in the diagnostic report, not parse time. Nothing is wrong with the graph.
+	- 1. When a graph's first open is slow and real-time protection is on, Tine shows a one-time notice for that graph: “Opening this graph took a while, and Windows Defender is scanning each file as Tine reads it.” Close it with **×** to dismiss it for that graph.
+	- 2. To act on it, choose **Add an exclusion for this graph folder**. Windows asks for administrator approval; only then does Tine run `Add-MpPreference -ExclusionPath` for the graph's folder. Tine never changes Defender without that choice. You can also do the same yourself in Windows Security → Virus & threat protection → Manage settings → Exclusions.
+	- 3. What you should see: “Windows Defender now skips this graph's folder” on success. If you decline the prompt, nothing changes and the notice returns the next time this graph opens slowly. If Defender is managed by your organization or another antivirus, Tine says it did not accept the exclusion and changes nothing.
+	- 4. The exclusion tells Defender not to scan that folder, which is a security tradeoff: only exclude folders you trust. The diagnostic report records only whether real-time protection is on (`windowsDefenderRealtime`: on, off, unknown, or not-applicable), never any path.
+- ## Rescan the graph on demand
+	- Meaning: Tine notices files changed outside it (another app, Syncthing, Dropbox) by itself. If you suspect it missed a change, or want to time a full check for a diagnostic report, you can ask for one.
+	- 1. Open Settings → **Help & diagnostics** and choose **Rescan graph**. Tine ignores everything it has remembered about your files: it reads and parses every file of the open graph again from disk, rebuilds its pages, links and search index from them, and shows whatever changed outside Tine. It does not freeze the app and it does not overwrite what you are typing; a page you have open keeps its place, and saving over a file that changed on disk is refused as usual. It takes longer than the quick check Tine does whenever you return to the window, which is why it is a button.
+	- 2. What you should see: the button reads **Rescanning…** while it works, then **Last rescan finished at** followed by the time. Create a diagnostic report afterwards to see how long that rescan took.
+- ## Check that two devices hold the same graph
+	- Meaning: after syncing a graph with Syncthing, Dropbox or a similar service, you can confirm that both devices hold the same Markdown and Org files, byte for byte, and see exactly which files differ if they do not.
+	- 1. On each device, open Settings → **Help & diagnostics** and choose **Create graph verification report**. Tine reads every Markdown and Org file of the open graph, shows its progress, and lets you **Cancel**.
+	- 2. On one device choose **Copy graph report** (or **Save graph report…** on desktop) and paste it into the box **Report from the other device** on the other, then choose **Compare reports**.
+	- 3. What you should see: either “The source file sets and bytes match”, or lists named **Only on this device**, **Only on the other device** and **Different bytes** with the file paths. The report holds paths and checksums, never file contents; nothing is uploaded and nothing in your graph changes.
+	- 4. If a file changed while Tine was reading it, the report says **Incomplete** and no match is confirmed: let the sync settle and create the report again.
 - ## Something parses or renders wrong
-	- 1. Open Settings → **Help & diagnostics** → **Help improve Tine's parser**: Tine runs its own parser and Logseq's parser over your graph, locally, and lists every actionable place they disagree plus a parse-speed comparison. Known intentional parser differences are suppressed and shown only in the details count.
+	- 1. Open Settings → **Help & diagnostics** → **Help improve Tine's parser**, choose what to run (**Both**, **Divergences**, or **Speed**) and press **Run comparison**: Tine runs its own parser and Logseq's parser over your graph, locally, and lists the places they disagree. Known intentional parser differences are not offered as bugs; they are counted under the details.
 	- 2. Copy the report shown there — every snippet is anonymized (page names and words are scrubbed, markup shape kept) and re-verified to still reproduce the divergence before it is shown. Nothing is uploaded.
-	- 3. What you should see: a local report, including the Tine version, that you can paste into an issue.
+	- 3. What you should see: a local report that you can paste into an issue.
+- ## A graph file could not be read
+	- If **config.edn could not be read** appears, the graph opens read-only so a missing setting cannot send new files to the wrong folder. Read your available pages, repair the file or its permissions in `logseq/config.edn`, then reopen the graph. Settings shows the same problem until that reopen.
+	- If **custom.css could not be read** appears, Tine applies no custom CSS for that open. Repair `logseq/custom.css` or its permissions and reopen the graph to try again.
+	- A failed journal scan or page discovery does not mean those files are absent. The graph remains open; repair the unreadable file or folder and retry. A failed conflict refresh keeps the last successful conflict list, which may be out of date.
+	- An asset that gained a reference after an orphan scan is kept when you choose Trash. Refresh the orphan scan before trying again. With external editors or sync, wait for their changes to appear in Tine first: a change it has not observed can still race deletion.
+	- Cancelling graph verification makes no report and raises no error message. If a source file is replaced during verification, its report is incomplete; finish syncing or editing and create another report.
+- ## Switch between stable Tine and Tine Beta
+	- Master ships stable **Tine**; **Tine Beta** is a separate app for testing upcoming changes, with its own settings and Beta updates. Stable gets only stable updates, and Beta gets only Beta updates.
+	- Close Tine before switching builds. On its first configured desktop launch, Tine Beta copies compatible settings from stable Tine and leaves stable app data intact. If it opens Welcome, choose your existing graph folder; do not delete application data to recover it. Android's separate Beta app needs its graph folder selected again.
+	- To return to stable Tine, close Tine Beta and launch stable Tine; your graph files stay where they were. Save your edits before switching. In Settings → About, **Copy version** copies the app name and full version, including the Beta sequence, for a bug report.

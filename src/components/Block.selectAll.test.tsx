@@ -8,7 +8,9 @@ import { render } from "solid-js/web";
 import { startEditing, editingId } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { initParser } from "../render/parse";
-import { doc, hasSelection, loadSingle, pageByName, resetStore, selectedIds } from "../store";
+import { hasSelection, pageByName, resetStore, selectedIds } from "../document";
+import { doc } from "../document/model";
+import { loadSingle } from "../document/workingSet";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
 

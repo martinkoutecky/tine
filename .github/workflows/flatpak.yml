@@ -42,6 +42,11 @@ jobs:
           # Replace the Flathub git source (pinned to a released tag) with a local
           # `dir` source so CI builds THIS commit. The vendored cargo/node source
           # files are unchanged (referenced relative to the manifest dir).
+          import json, sys
+          # The Flatpak files carry the released identity (docs/app-identity.md);
+          # an experiment tree must not be packaged under it.
+          if json.load(open("src-tauri/app-identity.json"))["ship"] != "release":
+              sys.exit("Flatpak packages the released identity; this tree ships an experiment identity")
           src = open("flatpak/page.tine.Tine.yml").read()
           i = src.index("    sources:")
           src = src[:i] + (

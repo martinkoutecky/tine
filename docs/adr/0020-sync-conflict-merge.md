@@ -60,28 +60,3 @@ We will:
   id (becomes a fresh block), which is correct for an intentionally-duplicated block.
 - Scope stays bounded to detection + manual 2-way merge. It is explicitly **not** a
   sync engine; the op-log CRDT remains Deferred, with this item as its prerequisite.
-
-## Addendum (2026-08-17) — ADRs 0056, 0057
-
-- **0056** upgrades the diff to block-level 3-way when a base is known; the
-  alignment, row ids and `merge_blocks` semantics decided here are unchanged,
-  and the base only pre-selects a side.
-- **0057** moves the review to the page (this modal remains as the fallback
-  surface, rendered by the same shared row component) and routes a SECOND
-  artifact source — VCS marker sections, parsed into complete page texts —
-  through this same engine and, for its write, through an equivalent guarded
-  path. Nothing here was replaced; it was reused twice.
-
-## Addendum (2026-08-24) — suggested intra-block merge
-
-The "text-blob 3-way merge" rejection above is now PARTIALLY superseded — at
-row scope, not page scope. The block-tree alignment remains the frame; what
-changed is that a `BothChanged` row whose two edits touch provably disjoint
-character regions of the true ancestor may now carry a computed **merged**
-proposal as a fourth outcome next to mine/theirs/both. The original rejection's
-reasons stand where they applied: a page-level line diff still mangles nesting,
-and auto-merging is still rejected — the merged text is only ever a
-pre-selected suggestion behind the same explicit confirm, recomputed
-server-side at apply time (never trusted from the frontend), and gated on
-round-tripping as exactly one block. Design:
-`tine-agents/specs/concord-intrablock-merge.md`.

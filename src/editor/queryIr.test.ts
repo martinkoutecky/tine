@@ -10,14 +10,11 @@
 // So the mirror is checked, not asserted. `crates/tine-core/tests/fixtures/
 // query-ir/*.json` are the golden wire bytes Rust already round-trips
 // (`crates/tine-core/tests/query_ir_wire.rs`). This test reads the SAME files
-// and requires every variant in them to be (a) assignable to the mirror's types
-// and (b) exhaustively handled by the mirror's own visitor, which throws on an
+// and requires their variants to be exhaustively handled by the mirror's own visitor, which throws on an
 // unknown `kind` rather than skipping it.
 //
-// Type assignability is checked by the TypeScript compiler, not at runtime: each
-// fixture is bound to its mirror type below, so `npx tsc --noEmit` fails if a
-// shape drifts. The runtime half is what catches a variant the FIXTURES gained
-// and the mirror did not.
+// Runtime visitors check variant vocabulary; generic JSON reads below do not
+// establish compile-time assignability of fixture payloads.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -51,12 +48,11 @@ import type {
 } from "./queryIr";
 
 const FIXTURE_DIR = fileURLToPath(
-  new URL("../../crates/tine-core/tests/fixtures/query-ir", import.meta.url),
+  new URL("../../crates/tine-core/src/query/fixtures/query-ir", import.meta.url),
 );
 const read = <T>(name: string): T => JSON.parse(readFileSync(join(FIXTURE_DIR, `${name}.json`), "utf8"));
 
-// The compiler is half the test: if a fixture's shape stops matching its mirror
-// type, `tsc --noEmit` fails on these bindings.
+// Typed reads support the tests; assertMirrorsIr performs runtime variant checks.
 const query = read<Query>("query");
 const queryPageAnchor = read<Query>("query_page_anchor");
 const filter = read<Filter>("filter");

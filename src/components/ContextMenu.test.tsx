@@ -3,36 +3,17 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { ContextMenu, deletePageMenuLabel, pageMenuAvailability } from "./ContextMenu";
 import { initParser } from "../render/parse";
-import {
-  blockProperty,
-  doc,
-  extendSelectionTo,
-  markDirty,
-  pageByName,
-  resetStore,
-  selectBlock,
-  selectedIds,
-  setDoc,
-  type Node as StoreNode,
-} from "../store";
-import {
-  clearConflict,
-  closeContextMenu,
-  closeExportModal,
-  exportModal,
-  markConflict,
-  openContextMenu,
-  openPageContextMenu,
-  setToasts,
-  toasts,
-} from "../ui";
+import { blockProperty, pageByName, resetStore } from "../document";
+import { editingId, endEdit } from "../editorController";
+import { type Node as StoreNode } from "../document/model";
+import { doc, setDoc } from "../document/model";
+import { closeContextMenu, closeExportModal, closePageProps, exportModal, openContextMenu, openPageContextMenu, pagePropsPanel } from "../ui";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
 import { backend } from "../backend";
 import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";
-import { mainPaneRouter, tabs } from "../router";
-import { editingId, endEdit } from "../editorController";
-import { PUBLISHED_META_NAME } from "../publishedBackend";
-import { publishedPermalinkUrl } from "../publishedPermalink";
+import { setToasts, toasts } from "../toasts";
+import { focusedRouter } from "../panes";
+import { clearConflict, markConflict } from "../document/save/engine";
 
 describe("PageMenu page-kind availability", () => {
   it("keeps rename page-only but exposes delete for pages and journals", () => {
@@ -57,9 +38,8 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     closeContextMenu();
     closeExportModal();
     clearTransientLayersForTest();
-    document.querySelector(`meta[name="${PUBLISHED_META_NAME}"]`)?.remove();
-    setToasts([]);
     document.body.innerHTML = "";
+    setToasts([]);
   });
 
   function mount(node: () => JSX.Element): () => void {
@@ -84,7 +64,179 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
   }
   const menuLabels = () => [...document.querySelectorAll(".ctx-item")].map((e) => e.textContent?.trim() ?? "");
 
-  it("context Copy/Cut block each leave a fresh exact private payload", () => {
+  it("offers a durable new-tab destination for writable and read-only blocks", () => {
+    for (const readOnly of [false, true]) {
+      load(readOnly);
+      const dispose = mount(() => <ContextMenu />);
+      openContextMenu(10, 10, "leaf");
+      expect(menuLabels()).toContain("Open in new tab");
+      dispose();
+      closeContextMenu();
+      resetStore();
+    }
+  });
+
+  // The long-left swipe opens this menu on the selected block as the analogue of
+  // OG's mobile action bar (frontend/mobile/action_bar.cljs): Copy, Cut, Delete,
+  // Copy ref and (iPad) Right sidebar. Card (SRS) and Copy url have no Tine
+  // counterpart by decision (docs/BACKLOG.md: no flashcards; Tine registers no
+  // URL scheme), so they are deliberately absent here.
+  it("offers every OG action-bar action Tine can honour (Copy, Cut, Delete, Copy ref, Right sidebar)", () => {
+    load();
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "leaf");
+    expect(menuLabels()).toEqual(
+      expect.arrayContaining(["Copy block", "Cut block", "Delete block", "Copy block ref", "Copy link", "Open in sidebar"]),
+    );
+    dispose();
+  });
+
+  it("offers block Properties… only on a writable block, opening the block scope (GH #164)", () => {
+    load(true);
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "leaf");
+    expect(menuLabels()).not.toContain("Properties…");
+    closeContextMenu();
+    resetStore();
+    load();
+    openContextMenu(30, 40, "leaf");
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((el) => el.textContent?.trim() === "Properties…")!.click();
+    expect(pagePropsPanel()).toMatchObject({ scope: { kind: "block", id: "leaf" }, x: 30, y: 40 });
+    closePageProps();
+    dispose();
+  });
+
+  it("refuses Make a template when its name inventory cannot be read", async () => {
+    load();
+    vi.spyOn(backend(), "listTemplates").mockRejectedValue(new Error("io:PermissionDenied"));
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "leaf");
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Make a template"))!.click();
+    const input = document.querySelector<HTMLInputElement>(".ctx-template-name")!;
+    input.value = "New template";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLElement>(".ctx-template-submit")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(blockProperty("leaf", "template")).toBeNull();
+    expect(toasts().some((t) => t.kind === "error")).toBe(true);
+    dispose();
+  });
+
+  it("rechecks writability after reading names before Make a template", async () => {
+    load();
+    let finish!: (templates: []) => void;
+    vi.spyOn(backend(), "listTemplates").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "leaf");
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Make a template"))!.click();
+    const input = document.querySelector<HTMLInputElement>(".ctx-template-name")!;
+    input.value = "Read only";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLElement>(".ctx-template-submit")!.click();
+    setDoc("pages", 0, "readOnly", true);
+    finish([]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(blockProperty("leaf", "template")).toBeNull();
+    expect(toasts().some((t) => t.kind === "success")).toBe(false);
+    expect(toasts().some((t) => t.kind === "error")).toBe(true);
+    dispose();
+  });
+
+  it("I-20: finishes Make a template for the submitted block after its menu closed", async () => {
+    load();
+    let finish!: (templates: []) => void;
+    vi.spyOn(backend(), "listTemplates").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "leaf");
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Make a template"))!.click();
+    const input = document.querySelector<HTMLInputElement>(".ctx-template-name")!;
+    input.value = "Late template";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLElement>(".ctx-template-submit")!.click();
+    // Dismissing the menu retires the Match accessor that backs `props.id`.
+    closeContextMenu();
+    finish([]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(blockProperty("leaf", "template")).toBe("Late template");
+    expect(toasts().some((t) => t.kind === "success")).toBe(true);
+    dispose();
+  });
+
+  it("does not mark a colliding block in the new graph as a template", async () => {
+    load();
+    let finish!: (templates: Awaited<ReturnType<ReturnType<typeof backend>["listTemplates"]>>) => void;
+    vi.spyOn(backend(), "listTemplates").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "leaf");
+    const make = [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Make a template"));
+    expect(make).toBeDefined();
+    make!.click();
+    const input = document.querySelector<HTMLInputElement>(".ctx-template-name")!;
+    input.value = "Old graph template";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLElement>(".ctx-template-submit")!.click();
+    resetStore();
+    load();
+    finish([]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(blockProperty("leaf", "template")).toBeNull();
+    dispose();
+  });
+
+  it("does not delete a colliding page after an old graph confirmation", async () => {
+    load();
+    let finish!: (confirmed: boolean) => void;
+    vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined as never);
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "P", "page", true);
+    const action = [...document.querySelectorAll<HTMLElement>(".ctx-item")]
+      .find((item) => item.textContent?.includes("Delete page"));
+    expect(action).toBeDefined();
+    action!.click();
+    resetStore();
+    load();
+    finish(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(remove).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it.each([true, false])("pins the page file before Delete confirmation (explicit path %s)", async (explicit) => {
+    load();
+    setDoc("pages", 0, "id", "pages/one.md");
+    let finish!: (confirmed: boolean) => void;
+    vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue();
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, { name: "P", pageKind: "page", ...(explicit ? { path: "pages/one.md" } : {}) }, true);
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Delete page"))!.click();
+    // Same graph, new unique title claimant while native confirm is unanswered.
+    setDoc("pages", 0, "id", "pages/two.md");
+    finish(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(remove).not.toHaveBeenCalled();
+    expect(pageByName("P")?.id).toBe("pages/two.md");
+    dispose();
+  });
+
+  it("reopening a page menu replaces the previous file target", async () => {
+    load(); setDoc("pages", 0, "id", "pages/one.md");
+    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue();
+    vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, { name: "P", pageKind: "page", path: "pages/one.md" }, true);
+    setDoc("pages", 0, "id", "pages/two.md");
+    openPageContextMenu(10, 10, { name: "P", pageKind: "page", path: "pages/two.md" }, true);
+    const action = document.querySelector<HTMLElement>('[data-page-action-id="delete-page"]');
+    expect(action).not.toBeNull();
+    action!.click();
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith("P", "page", "pages/two.md"));
+    dispose();
+  });
+
+  it("context Copy/Cut block each leave a fresh exact private payload", async () => {
     load();
     setDoc("byId", "parent", "raw", "Parent\nid:: 11111111-1111-1111-1111-111111111111");
     setDoc("byId", "child", "raw", "Child\ncollapsed:: true\nid:: 22222222-2222-2222-2222-222222222222");
@@ -112,12 +264,71 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
 
     openContextMenu(10, 10, "parent");
     click("Cut block");
+    await vi.waitFor(() => expect(doc.byId.parent).toBeUndefined());
     expect(peekClipboardPayload()).toMatchObject({
       op: "cut",
       sourcePages: [{ name: "P", kind: "page", generation: expect.any(Number) }],
     });
     expect(peekClipboardPayload()?.blocks[0].children[0].raw).toContain("collapsed:: true");
     expect(doc.byId.parent).toBeUndefined();
+    dispose();
+  });
+
+  it("keeps a block when the clipboard rejects Cut", async () => {
+    load();
+    vi.spyOn(backend(), "writeRich").mockRejectedValue(new Error("clipboard denied"));
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "parent");
+    const cut = [...document.querySelectorAll<HTMLElement>(".ctx-item")]
+      .find((el) => el.textContent?.trim() === "Cut block");
+    cut!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(doc.byId.parent).toBeDefined();
+    expect(peekClipboardPayload()).toBeNull();
+    dispose();
+  });
+
+  it("keeps an edited block and its children when Cut resolves after the edit", async () => {
+    load();
+    let finish!: () => void;
+    vi.spyOn(backend(), "writeRich").mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "parent");
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")]
+      .find((el) => el.textContent?.trim() === "Cut block")!.click();
+    setDoc("byId", "child", "raw", "Edited during clipboard write");
+    finish();
+    await vi.waitFor(() => expect(peekClipboardPayload()?.op).toBe("copy"));
+    expect(doc.byId.parent).toBeDefined();
+    expect(doc.byId.child.raw).toBe("Edited during clipboard write");
+    dispose();
+  });
+
+  it("reports block Copy only after a successful clipboard write", async () => {
+    load();
+    let reject!: (error: Error) => void;
+    vi.spyOn(backend(), "writeRich").mockReturnValue(new Promise<void>((_, fail) => { reject = fail; }));
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "parent");
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")]
+      .find((el) => el.textContent?.trim() === "Copy block")!.click();
+    expect(toasts().some((toast) => toast.message === "Copied block")).toBe(false);
+    reject(new Error("clipboard denied"));
+    await vi.waitFor(() => expect(toasts().some((toast) => toast.kind === "error")).toBe(true));
+    expect(toasts().some((toast) => toast.message === "Copied block")).toBe(false);
+    dispose();
+  });
+
+  it("reports page Markdown Copy failure when the page read returns nothing", async () => {
+    load();
+    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const write = vi.spyOn(backend(), "writeText");
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "P", "page");
+    document.querySelector<HTMLButtonElement>('[data-page-action-id="copy-page-markdown"]')!.click();
+    await vi.waitFor(() => expect(toasts().some((toast) => toast.kind === "error")).toBe(true));
+    expect(write).not.toHaveBeenCalled();
+    expect(toasts().some((toast) => toast.message === "Copied page as Markdown")).toBe(false);
     dispose();
   });
 
@@ -169,7 +380,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       "open-sidebar",
       "open-new-tab",
       "favorite-toggle",
-      "copy-page-ref",
+      "copy-link", "copy-page-ref",
       "copy-export",
       "copy-page-markdown",
       "export-pdf",
@@ -203,7 +414,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     expect(activeId()).toBe("delete-page");
     press("Home");
     expect(activeId()).toBe("open");
-    expect(menu.querySelectorAll('[role="menuitem"]')).toHaveLength(13);
+    expect(menu.querySelectorAll('[role="menuitem"]')).toHaveLength(14);
     dispose();
   });
 
@@ -232,6 +443,54 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
+  // G3 finding 2 (og 12b follow-up): the rename's own refresh bumps the graph
+  // epoch, which retired the owner the menu captured before the rename, so a
+  // successful rename or merge from the menu neither opened the page nor said so.
+  it.each(["renamed", "merged"] as const)("opens the page and confirms after a menu rename that %s", async (outcome) => {
+    load();
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "P", "page", true);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    vi.spyOn(backend(), "resolvePage").mockImplementation(async (name) => name === "Q"
+      ? (outcome === "merged" ? { kind: "existing", id: "pages/Q.md", others: [] } : { kind: "absent", id: "pages/Q.md" })
+      : { kind: "existing", id: "pages/P.md", others: [] });
+    vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome, touched: [{ path: "pages/P.md", moved: true }] });
+    document.querySelector<HTMLButtonElement>('[data-page-action-id="rename-page"]')!.click();
+    await Promise.resolve();
+    const input = document.querySelector<HTMLInputElement>(".ctx-rename-name")!;
+    input.value = "Q";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(toasts().map((toast) => toast.message)).toContain(outcome === "merged" ? "Merged into “Q”" : "Renamed to “Q”"));
+    expect(rename).toHaveBeenCalledOnce();
+    expect(focusedRouter().route()).toMatchObject({ kind: "page", name: "Q" });
+    dispose();
+  });
+
+  it("keeps the route when the user moved on during a menu rename", async () => {
+    load();
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "P", "page", true);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/Q.md" });
+    let finish!: (value: { outcome: "renamed"; touched: [] }) => void;
+    vi.spyOn(backend(), "renamePage").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    document.querySelector<HTMLButtonElement>('[data-page-action-id="rename-page"]')!.click();
+    await Promise.resolve();
+    const input = document.querySelector<HTMLInputElement>(".ctx-rename-name")!;
+    input.value = "Q";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    focusedRouter().openPage("Elsewhere", "page");
+    finish({ outcome: "renamed", touched: [] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(focusedRouter().route()).toMatchObject({ kind: "page", name: "Elsewhere" });
+    expect(toasts().map((toast) => toast.message)).not.toContain("Renamed to “Q”");
+    dispose();
+  });
+
   it("restores the ellipsis after outside dismissal", async () => {
     load();
     const trigger = document.createElement("button");
@@ -256,7 +515,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "P", "page", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
+      "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
       "show-in-folder", "open-default-app",
     ]);
     closeContextMenu();
@@ -268,39 +527,10 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "2000-01-01", "journal", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
+      "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
       "show-in-folder", "open-default-app", "page-properties",
       "carry-unfinished", "delete-journal",
     ]);
-    dispose();
-  });
-
-  it("copies page and block permalinks from a published export", () => {
-    const meta = document.createElement("meta");
-    meta.name = PUBLISHED_META_NAME;
-    meta.content = "snapshot.json";
-    document.head.appendChild(meta);
-    load(true);
-    setDoc("byId", "parent", "raw", "Parent\nid:: parent-stable");
-    const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue();
-    const dispose = mount(() => <ContextMenu />);
-
-    openPageContextMenu(10, 10, "P", "page", true);
-    const pageAction = document.querySelector<HTMLButtonElement>('[data-page-action-id="copy-page-link"]');
-    expect(pageAction?.textContent?.trim()).toBe("Copy page link");
-    pageAction!.click();
-    expect(writeText).toHaveBeenCalledWith(publishedPermalinkUrl({ kind: "page", page: "P" }));
-    expect(toasts().at(-1)?.message).toBe("Copied page link");
-
-    openContextMenu(10, 10, "parent");
-    const blockAction = [...document.querySelectorAll<HTMLButtonElement>(".ctx-item")]
-      .find((item) => item.textContent?.trim() === "Copy block link");
-    expect(blockAction).toBeDefined();
-    blockAction!.click();
-    expect(writeText).toHaveBeenLastCalledWith(
-      publishedPermalinkUrl({ kind: "block", block: "parent-stable" }),
-    );
-    expect(toasts().at(-1)?.message).toBe("Copied block link");
     dispose();
   });
 
@@ -337,39 +567,6 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
-  it.each([false, true])(
-    "applies a heading to the active selection when the pointer block is %s read-only (GH #240)",
-    (pointerReadOnly) => {
-      setDoc({
-        byId: {
-          a: { ...node("a", "A", null, []), page: "Selected" },
-          b: { ...node("b", "B", null, []), page: "Selected" },
-          c: { ...node("c", "C", null, []), page: "Pointer" },
-        },
-        pages: [
-          { name: "Selected", kind: "page", title: "Selected", preBlock: null, roots: ["a", "b"], format: "md", readOnly: false, guide: false },
-          { name: "Pointer", kind: "page", title: "Pointer", preBlock: null, roots: ["c"], format: "md", readOnly: pointerReadOnly, guide: false },
-        ],
-        feed: ["Selected", "Pointer"],
-        loaded: true,
-      });
-      selectBlock("a");
-      extendSelectionTo("b");
-      const dispose = mount(() => <ContextMenu />);
-
-      openContextMenu(10, 10, "c");
-      const h2 = document.querySelector<HTMLButtonElement>('[title="Heading 2"]');
-      expect(h2).not.toBeNull();
-      h2!.click();
-
-      expect(doc.byId.a.raw).toBe("## A");
-      expect(doc.byId.b.raw).toBe("## B");
-      expect(doc.byId.c.raw).toBe("C");
-      expect(selectedIds()).toEqual(["a", "b"]);
-      dispose();
-    },
-  );
-
   it("offers only view/copy actions on a read-only page", () => {
     load(true);
     const dispose = mount(() => <ContextMenu />);
@@ -382,123 +579,6 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     expect(labels).not.toContain("Numbered list");
     expect(document.querySelector(".ctx-headings")).toBeNull();
     dispose();
-  });
-
-  it("offers 'Open in new tab' on an editable block after 'Zoom into block' and opens the block's page in a background tab", () => {
-    load();
-    setDoc("byId", "parent", "raw", "Parent\nid:: 11111111-1111-1111-1111-111111111111");
-    vi.spyOn(backend(), "writeRich").mockResolvedValue();
-    const dispose = mount(() => <ContextMenu />);
-    openContextMenu(10, 10, "parent");
-    const labels = menuLabels();
-    const zoomIdx = labels.indexOf("Zoom into block");
-    expect(zoomIdx).toBeGreaterThanOrEqual(0);
-    const newTabIdx = labels.indexOf("Open in new tab");
-    expect(newTabIdx).toBeGreaterThan(zoomIdx);
-
-    const before = tabs().length;
-    const item = [...document.querySelectorAll<HTMLElement>(".ctx-item")]
-      .find((el) => el.textContent?.trim() === "Open in new tab")!;
-    item.click();
-    expect(tabs().length).toBe(before + 1);
-    const newTab = tabs()[tabs().length - 1];
-    expect(newTab.history[0]).toMatchObject({
-      kind: "page",
-      name: "P",
-      pageKind: "page",
-      block: "11111111-1111-1111-1111-111111111111",
-    });
-    dispose();
-  });
-
-  it("offers 'Open in new tab' on a read-only block too (matches middle-click parity)", () => {
-    load(true);
-    setDoc("byId", "parent", "raw", "Parent\nid:: 11111111-1111-1111-1111-111111111111");
-    const dispose = mount(() => <ContextMenu />);
-    openContextMenu(10, 10, "parent");
-    const labels = menuLabels();
-    expect(labels).toContain("Open in new tab");
-    const zoomIdx = labels.indexOf("Zoom into block");
-    const newTabIdx = labels.indexOf("Open in new tab");
-    expect(newTabIdx).toBeGreaterThan(zoomIdx);
-    dispose();
-  });
-
-  // "The file moves to the graph's .tine-trash folder" reads as fully
-  // recoverable, and for a saved page it is. A page with unsaved edits — dirty,
-  // or parked with an unresolved conflict, which by definition never reached
-  // disk — trashes only its STALE file. The user's actual work is destroyed and
-  // is in no trash. Say so before they answer. (Direct Files data-safety audit,
-  // 2026-08-09, finding 18.)
-  async function confirmTextForDelete(): Promise<string> {
-    const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(false);
-    const dispose = mount(() => <ContextMenu />);
-    openPageContextMenu(10, 10, "P", "page");
-    [...document.querySelectorAll<HTMLElement>(".ctx-item")]
-      .find((el) => el.textContent?.trim() === "Delete page")!
-      .click();
-    await vi.waitFor(() => expect(confirm).toHaveBeenCalled());
-    dispose();
-    return confirm.mock.calls[0][0] as string;
-  }
-
-  it("warns that unsaved edits are not in the trash copy", async () => {
-    load();
-    markDirty("P");
-
-    const text = await confirmTextForDelete();
-
-    expect(text).toContain("unsaved");
-    expect(text).toContain(".tine-trash");
-    clearConflict("P");
-  });
-
-  it("warns for a conflicted page, whose edits provably never reached disk", async () => {
-    load();
-    markConflict("P");
-
-    const text = await confirmTextForDelete();
-
-    expect(text).toContain("unsaved");
-    clearConflict("P");
-  });
-
-  it("keeps the plain wording for a page with nothing unsaved", async () => {
-    load();
-
-    const text = await confirmTextForDelete();
-
-    expect(text).not.toContain("unsaved");
-    expect(text).toContain(".tine-trash");
-  });
-
-  it("retires the current route in the durable-delete continuation before purging its page", async () => {
-    load();
-    mainPaneRouter.resetTabsToJournals();
-    mainPaneRouter.openPage("P", "page", { inPlace: true });
-    vi.spyOn(backend(), "confirm").mockResolvedValue(true);
-    let resolveDelete!: () => void;
-    vi.spyOn(backend(), "deletePage").mockImplementation(() => new Promise<void>((resolve) => {
-      resolveDelete = resolve;
-    }));
-    const dispose = mount(() => <ContextMenu />);
-
-    openPageContextMenu(10, 10, "P", "page");
-    document.querySelector<HTMLElement>('[data-page-action-id="delete-page"]')!.click();
-    await vi.waitFor(() => expect(backend().deletePage).toHaveBeenCalledTimes(1));
-    expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "P" });
-    expect(pageByName("P")).toBeDefined();
-
-    resolveDelete();
-    // One continuation is the store's durable response. The menu's chained
-    // `.then` is deliberately still pending here: on Android WebView the DOM can
-    // paint between those two jobs, exposing an empty black current route.
-    await Promise.resolve();
-
-    expect(mainPaneRouter.route()).toEqual({ kind: "journals" });
-    expect(pageByName("P")).toBeUndefined();
-    dispose();
-    mainPaneRouter.resetTabsToJournals();
   });
 });
 
@@ -598,6 +678,9 @@ describe("BlockMenu — insert a block above (GH #480)", () => {
   });
 });
 
+// og I1d (port of master 6f8531344, GH #490 second half): opening or revealing
+// a conflicted page's file changes nothing on disk and is the recovery path a
+// stuck conflict needs, so it is not refused; the draft is not flushed.
 describe("page file actions on a conflicted page (GH #490)", () => {
   beforeAll(async () => {
     await initParser();
@@ -619,10 +702,10 @@ describe("page file actions on a conflicted page (GH #490)", () => {
     resetStore();
     setDoc({
       byId: { only: { id: "only", raw: "Body", collapsed: false, parent: null, page: "P", children: [] } },
-      pages: [{ name: "P", kind: "page", title: "P", preBlock: null, roots: ["only"], format: "md", readOnly: false, guide: false }],
+      pages: [{ id: "pages/P.md", name: "P", kind: "page", title: "P", preBlock: null, roots: ["only"], format: "md", readOnly: false, guide: false }],
       feed: ["P"],
       loaded: true,
-    });
+    } as never);
   }
   const clickItem = (label: string) => {
     const item = [...document.querySelectorAll<HTMLElement>(".ctx-item")]
@@ -631,40 +714,25 @@ describe("page file actions on a conflicted page (GH #490)", () => {
     item.click();
   };
 
-  // A page whose conflict view will not load is the reporter's worst case: the
-  // ONLY remaining way to see the text is to open the file outside Tine, and
-  // Tine used to refuse exactly that. Opening the file changes nothing on disk,
-  // so there was nothing for the refusal to protect.
-  it("still opens the file on disk, and says the draft is not in it", async () => {
-    loadPage();
-    markConflict("P");
-    const open = vi.spyOn(backend(), "openPageFile").mockResolvedValue(undefined as never);
-    setToasts([]);
-    const dispose = mount(() => <ContextMenu />);
-    openPageContextMenu(10, 10, "P", "page", true);
+  for (const [label, reveal] of [["Open with default app", false], ["Show in folder", true]] as const) {
+    it(`${label}: opens the file as it stands on disk and says the draft is not in it`, async () => {
+      loadPage();
+      markConflict("P");
+      const open = vi.spyOn(backend(), "openPageFile").mockResolvedValue(undefined as never);
+      const save = vi.spyOn(backend(), "savePages");
+      setToasts([]);
+      const dispose = mount(() => <ContextMenu />);
+      openPageContextMenu(10, 10, "P", "page", true);
 
-    clickItem("Open with default app");
-    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
-    expect(open.mock.calls[0][3]).toBe(false);
-    await vi.waitFor(() =>
-      expect(toasts().some((toast) => toast.kind === "info" && toast.message.includes("as it stands on disk"))).toBe(true),
-    );
-    expect(toasts().every((toast) => toast.kind !== "error")).toBe(true);
-    dispose();
-  });
-
-  it("still reveals the file in the folder", async () => {
-    loadPage();
-    markConflict("P");
-    const open = vi.spyOn(backend(), "openPageFile").mockResolvedValue(undefined as never);
-    setToasts([]);
-    const dispose = mount(() => <ContextMenu />);
-    openPageContextMenu(10, 10, "P", "page", true);
-
-    clickItem("Show in folder");
-    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
-    expect(open.mock.calls[0][3]).toBe(true);
-    expect(toasts().every((toast) => toast.kind !== "error")).toBe(true);
-    dispose();
-  });
+      clickItem(label);
+      await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+      expect(open.mock.calls[0][3]).toBe(reveal);
+      expect(save).not.toHaveBeenCalled();
+      await vi.waitFor(() =>
+        expect(toasts().some((toast) => toast.kind === "info" && toast.message.includes("as it stands on disk"))).toBe(true),
+      );
+      expect(toasts().every((toast) => toast.kind !== "error")).toBe(true);
+      dispose();
+    });
+  }
 });

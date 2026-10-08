@@ -2,7 +2,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { resetStore } from "../document";
+import { setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import { pluginManager } from "../plugins/manager";
 import { Block } from "./Block";
 
@@ -33,6 +34,9 @@ function page(roots: string[]): FeedPage {
   };
 }
 
+// Master ce9a796fb: `thread-lines` only decorates the children container below a
+// row, so a leaf (most blocks of a large flat page) must not subscribe to plugin
+// installation/settings changes at all.
 describe("plugin thread-lines decoration host", () => {
   it("does not subscribe leaf blocks, then decorates normally after a child is added", () => {
     const [enabled, setEnabled] = createSignal(true);

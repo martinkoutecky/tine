@@ -1,113 +1,21 @@
 // In-memory mock backend seeded with a fixture graph. Used only when running
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
-
-import { notifyGraphRebound } from "./modeHooks";
-import type { Backend, GpuEnv, DebugInfo, DiagnosticReport, GraphVerificationReport, InstalledPluginRecord, PluginRegistryCacheEnvelope, ReferencedPageNames } from "./backend";
-import type { ActivationExpectedRevision, BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PdfState, PublishOutcome, QueryExecution, QueryExportBatch, QueryExportSpec, QueryPublicationPlan, QueryPublicationRequest, RefGroup, RenameOutcome, SavePageResult, SyncConflictDiff } from "./types";
-import { sourceOptions, sourceOriginal } from "./editor/queryIr";
-import { groupingToViewValue, resolveQueryGrouping } from "./editor/queryViewProperties";
-import type {
-  ExplainEmptyResult,
-  ParsedQuery,
-  Query,
-  QueryPrintDialect,
-  QueryResult,
-  QueryTextDialect,
-  RegistrySnapshot,
-  Source,
-  ViewKind,
-  ViewSettings,
-} from "./editor/queryIr";
+import { split_linkable_property } from "./render/wasm/lsdoc_wasm.js";
+import type { GraphVerificationReport } from "./graphVerification";
+import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
+import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
+import { mockQueryCommands } from "./mockQuery";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, DraftRecord, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
+import { previewDtoSubtree } from "./previewProjection";
 import { hlsPageName } from "./pdf";
-import { leadingMarker } from "./markers";
+import { lazyHeaderFacets, leadingMarker } from "./markers";
 import { fuzzyScore } from "./editor/autocomplete";
-import { parseSearchQuery } from "./editor/searchQuery";
-import {
-  mockSearchFold,
-  mockSearchHighlights,
-  mockSearchMatches,
-  mockSearchSimpleTerm,
-} from "./mockSearchQuery";
+import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
+import { searchFold } from "./editor/searchFold";
 import { parseJournalWith } from "./journal";
-
-/** The dev preview's stand-in for `query_print`'s refusal (§7.1, I-9): the same
- *  JSON envelope the native command rejects with, so `classifyNativeCallError`
- *  decodes it into the same `QueryPrintRefusedError` a real refusal produces and
- *  callers cannot accidentally handle the two differently. */
-function mockPrintRefusal(reasonCode: "not_applicable" | "syntax", message: string): Error {
-  return new Error(JSON.stringify({
-    kind: "query-print-refused",
-    reason_code: reasonCode,
-    detail: { kind: reasonCode, message, suggestions: [], disabled: false },
-  }));
-}
-
-/**
- * **The one data-only fixture seam for the query commands (P3, T2 step 2).**
- *
- * The mock deliberately refuses to print or parse a query — a parser here would
- * be the frontend twin this campaign deleted (I-12, D-14). But the anchor-switch
- * preview in the sheet *is* a print-then-parse round trip through the engine, so
- * a jsdom test and the screenshot harness need the engine's ANSWERS without the
- * engine.
- *
- * So this takes canned VALUES — a printed string, a `ParsedQuery` with `raw`
- * leaves, a registry list, a result — and never callbacks. It cannot compute
- * anything, cannot become a parser, and answers the same bytes no matter what it
- * is asked. The engine's semantics are proven by the Rust cases in
- * `crates/tine-core/src/query/tql.rs` and by the native journey
- * `scripts/e2e-query-sheet.mjs`, never by this double.
- *
- * It is mock-only by construction: `src/mockQueryFixture.guard.test.ts` asserts
- * that no production module under `src/` imports it. `shot-query-sheet.mjs`
- * installs it through `page.addInitScript` on
- * `globalThis.__tineMockQueryFixture`, which is read here for the same reason.
- */
-export interface MockQueryFixture {
-  parse?: ParsedQuery;
-  print?: string;
-  registry?: RegistrySnapshot;
-  run?: QueryResult;
-}
-
-let installedQueryFixture: MockQueryFixture | null = null;
-
-/** Install (or, with `null`, clear) the canned query answers. Reset between
- *  tests; without one the mock keeps its ordinary refusal. */
-export function installMockQueryFixture(fixture: MockQueryFixture | null): void {
-  installedQueryFixture = fixture;
-}
-
-function queryFixture(): MockQueryFixture | null {
-  if (installedQueryFixture) return installedQueryFixture;
-  const injected = (globalThis as { __tineMockQueryFixture?: MockQueryFixture })
-    .__tineMockQueryFixture;
-  return injected ?? null;
-}
-
-/** The `tine.*` view properties a host block carries, as `ViewSettings` (§4.1).
- *  The real command merges these OVER the directives lifted from the query text;
- *  the mock has no directives to merge with, so the properties are the whole
- *  answer.
- *
- *  The GROUPING is not decided here. `tine.group-field` versus the legacy
- *  `tine.group-by`, and what a bare token means at each view, is one question
- *  with one answer — `resolveQueryGrouping`, the adapter the app itself uses —
- *  and a second `if` in the dev-preview backend is exactly the twin that would
- *  disagree with Rust on the inputs that matter. */
-function mockViewFromProperties(properties: [string, string][]): ViewSettings {
-  const view: ViewSettings = {};
-  for (const [key, value] of properties) {
-    if (key === "tine.view" && ["search", "list", "table", "board"].includes(value)) {
-      view.view = value as ViewKind;
-    }
-  }
-  const grouping = groupingToViewValue(resolveQueryGrouping(properties, { view: view.view }));
-  if (grouping !== undefined) view.group_by = grouping;
-  return view;
-}
+import { mockJournalFiles } from "./mockJournalFiles";
 
 /** Mock feed membership must use a Logseq journal-title parser, never the
  * host's permissive/non-portable Date string parser. Keep the same explicit
@@ -145,35 +53,15 @@ function blockRefIds(raw: string): string[] {
   while ((m = bare.exec(rest))) push(m[1]);
   return out;
 }
-// Marker recognition comes from the one shared recognizer (imported below), so
-// the demo graph facet synthesis agrees with the real (lsdoc) one.
-function priorityOf(raw: string): string | undefined {
-  const m = /(?:^|\s)\[#([ABC])\]/.exec(raw.split("\n", 1)[0] ?? "");
-  return m?.[1];
-}
 function planningOf(raw: string, tag: "SCHEDULED" | "DEADLINE"): string | undefined {
   const m = new RegExp(`^${tag}:\\s*<([^>]+)>`, "m").exec(raw);
   return m?.[1];
 }
-/** Exported for src/mockTags.test.ts: the GH #256 lookbehind removal had to
- *  preserve this function's exact match behaviour, so the guard has to call the
- *  real thing rather than a copy of its regex. */
+/** Tags in `raw`: first-seen, case-insensitively deduped, `[#A]` excluded. No lookbehind: pre-16.4 WebKit (GH #256). */
 export function tagsOf(raw: string): string[] {
   const out: string[] = [];
-  // No lookbehind on purpose: pre-16.4 Safari/WKWebView cannot PARSE one, and
-  // this module ships in the eagerly preloaded bundle, so a lookbehind here was
-  // a white screen at startup on macOS 12 (GH #256, guarded by
-  // src/webkitCompat.test.ts).
-  //
-  // The `[#A]` priority token must not leak a fake `#A` tag, which is what the
-  // lookbehind did. Checking the preceding character after the match keeps that
-  // test ZERO-WIDTH. Encoding it as a leading group instead — `(^|[^\[])#...` —
-  // looks equivalent but CONSUMES that character, so a tag immediately after
-  // another (`#a#b`, `#[[x]]#y`) is silently dropped: the next match has no
-  // character left to match its prefix against.
   const re = /#\[\[([^\]]+)\]\]|#([\w/_.-]+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(raw))) {
+  for (let m: RegExpExecArray | null; (m = re.exec(raw)); ) {
     if (m[2] !== undefined && m.index > 0 && raw[m.index - 1] === "[") continue;
     const tag = (m[1] ?? m[2]).trim();
     if (tag && !out.some((t) => t.toLowerCase() === tag.toLowerCase())) out.push(tag);
@@ -201,7 +89,7 @@ function mockReferencedPageNames(pages: PageDto[]): string[] {
       if (!/^(tags|alias|aliases)$/i.test(key)) continue;
       const quoted = value.trim();
       if (quoted.length >= 2 && quoted.startsWith('"') && quoted.endsWith('"')) continue;
-      for (const valuePart of value.split(/[,，]/)) {
+      for (const valuePart of split_linkable_property(value)) {
         const bare = valuePart.trim().replace(/^#/, "");
         const name = bare.startsWith("[[") && bare.endsWith("]]")
           ? bare.slice(2, -2).trim()
@@ -224,9 +112,8 @@ function mockReferencedPageNames(pages: PageDto[]): string[] {
 
 let _id = 0;
 const nid = () => `mock-${_id++}`;
-/** `onGraphReopened` subscribers: the mock's stand-in for the watcher's `graph-rebound`. */
-const graphReopenedListeners = new Set<() => void>();
 const mockPlugins: InstalledPluginRecord[] = [];
+const mockDiagnostics: DiagnosticFrontendKind[] = [];
 const mockPluginEntries = new Map<string, Uint8Array>();
 let mockPluginRegistryCache: PluginRegistryCacheEnvelope | null = null;
 
@@ -234,22 +121,20 @@ function b(raw: string, children: BlockDto[] = [], collapsed = false, properties
   // Mirror the real backend: a block carrying an `id::` property uses that uuid as
   // its store id (so block refs resolve to it and the count badge keys correctly).
   const m = raw.match(/^\s*id::\s*(.+)$/m);
-  return {
+  // Marker/priority are the parser's answer, read lazily: the wasm parser is not ready while PAGES builds at import.
+  return lazyHeaderFacets({
     id: m ? m[1].trim() : nid(),
     raw,
     collapsed,
     children,
-    marker: leadingMarker(raw) ?? undefined,
-    priority: priorityOf(raw),
     scheduled: planningOf(raw, "SCHEDULED"),
     deadline: planningOf(raw, "DEADLINE"),
     tags: tagsOf(raw),
     properties: properties ?? propertyLines(raw),
-  };
+  });
 }
 
 function mockPagePath(p: PageDto): string {
-  if (p.path) return p.path;
   const dir = p.kind === "journal" ? "journals" : "pages";
   const ext = p.format === "org" ? "org" : "md";
   return `${dir}/${p.name.replace(/\//g, "___")}.${ext}`;
@@ -315,9 +200,6 @@ const NAMED: PageDto[] = [
     name: "Tine",
     kind: "page",
     title: "Tine",
-    // Explicit path so the `?conflicts` VCS-marker demo entry below can
-    // reference this page (the banner matches by loaded file path).
-    path: "pages/Tine.md",
     pre_block: "title:: Tine\ntags:: project, tooling",
     blocks: [
       b("A fast clone of [[Logseq]] built with **Tauri** + *SolidJS*.", [
@@ -475,27 +357,6 @@ const NAMED: PageDto[] = [
   // Namespace + page-icon demo: {{namespace}} renders the nested descendant tree,
   // each page showing its `icon::`.
   {
-    // The page the mock's sync-conflict copy belongs to (the conflict queue
-    // points here); its body matches the diff's "mine" side so the in-page
-    // resolver reads coherently in demos/screenshots.
-    name: "Project Plan",
-    kind: "page",
-    title: "Project Plan",
-    pre_block: "title:: Project Plan\ntags:: launch",
-    blocks: [
-      b("Milestones for the launch"),
-      b("TODO ship the beta by Friday"),
-      b("write the release notes"),
-      b("DOING draft the announcement\ncollapsed:: false\nowner:: me"),
-      // Filler so the page actually SCROLLS: the conflict dock (slim pinned
-      // bar once the panel scrolls out of view) needs a long page to be
-      // demonstrable in demos and the screenshot harness.
-      ...Array.from({ length: 60 }, (_, i) =>
-        b(`launch checklist item ${i + 1} — status notes and follow-ups`),
-      ),
-    ],
-  },
-  {
     name: "Formula1",
     kind: "page",
     title: "Formula1",
@@ -559,10 +420,10 @@ function bigPageBlocks(n: number): BlockDto[] {
         break;
     }
   }
-  return out;
+  return out.map((block) => ({ ...block, has_id: false }));
 }
 if (typeof location !== "undefined" && /[?&]big\b/.test(location.search)) {
-  NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(2000) });
+  NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(Math.min(5000, Math.max(1, Number(new URLSearchParams(location.search).get("blocks")) || 2000))).map((v, i) => new URLSearchParams(location.search).has("long") ? { ...v, raw: `Paragraph ${i}: ` + "Long prose with ordinary words and wrapping lines. ".repeat(80) } : v) });
 }
 if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)) {
   NAMED.push(
@@ -604,11 +465,8 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
 const mockHighlights: Record<string, { label: string; highlights: Highlight[]; page?: number; scale?: number }> = {};
 // In-memory UI session for the browser mock (no backend file).
 let mockSession: string | null = null;
+const mockDrafts = new Map<string, DraftRecord>();
 let mockWorkspaces: string | null = null;
-/** The dev preview has no app-data dir, so "dismissed" lives for the session —
- *  which is the honest device-local answer for a browser preview. */
-let mockNotices = '{"dismissed":[]}';
-let mockLinkFirstMatch = false;
 let mockGuideAnnounced = false;
 const mockAssets: Record<string, Uint8Array> = {};
 const mockAppBools: Record<string, boolean> = {};
@@ -652,7 +510,11 @@ function decodeB64(b64: string): Uint8Array {
 }
 
 function cloneBlock(block: BlockDto): BlockDto {
-  return { ...block, children: block.children.map(cloneBlock) };
+  // Descriptors, not values: keeps the lazy marker/priority accessors lazy.
+  return Object.defineProperties({} as BlockDto, {
+    ...Object.getOwnPropertyDescriptors(block),
+    children: { value: block.children.map(cloneBlock), enumerable: true, writable: true, configurable: true },
+  });
 }
 
 function clonePage(page: PageDto): PageDto {
@@ -767,14 +629,31 @@ function cloneGuideBlockForCopy(block: BlockDto, copied: Map<string, string>): B
     properties: propertyLines(raw),
   };
 }
-
-let mockActivationSeq = 0;
-const mockActivations = new Map<string, number>();
-
-export function mockBackend(): Backend {
-  const all = [...PAGES, ...NAMED];
+/** Demo/test backend with mutable mock state. savePages is a no-op; writeHighlights replaces its list without three-way merge or production failures. */
+// Copy/Export's browser fixture retains local approximations. These are not
+// Backend operations and have no native command; only this mock calls them.
+type MockBackend = Backend & {
+  runQuery(query: string): Promise<RefGroup[]>;
+  runAdvancedQuery(query: string): Promise<{ groups: RefGroup[]; ran: string[]; ignored: string[]; supported: boolean }>;
+};
+export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((blocks): PageDto => ({ name: CONFLICT_DEMO_PAGE, kind: "page", title: CONFLICT_DEMO_PAGE, pre_block: "title:: Project Plan", blocks })), removeAccents = true): MockBackend {
+  const all = [...PAGES, ...NAMED, ...extraPages];
+  // Page ownership uses narrow identity; search membership uses the graph fold.
+  const identity = (name: string) => name.toLowerCase().normalize("NFC");
+  const fold = (text: string) => searchFold(text, removeAccents);
   const find = (name: string) =>
-    all.find((p) => p.name.toLowerCase() === name.toLowerCase()) ?? null;
+    all.find((p) => identity(p.name) === identity(name)) ?? null;
+  const mockResolve = (name: string, kind: "journal" | "page"): ResolvedPage => {
+    const page = all.find((p) => p.kind === kind && identity(p.name) === identity(name));
+    if (page) return { kind: "existing", id: mockPagePath(page), others: [] };
+    if (kind === "page") {
+      const owners = all.filter((p) => p.pre_block?.split(/\n/).some((line) =>
+        /^alias::\s*/i.test(line) && line.replace(/^alias::\s*/i, "").split(",").some((alias) => identity(alias.trim()) === identity(name))
+      )).map(mockPagePath).sort();
+      if (owners.length) return { kind: "alias", owners };
+    }
+    return { kind: "absent", id: mockPagePath({ name, kind, title: name, pre_block: null, blocks: [] }) };
+  };
 
   // Parse a block's `key:: value` property lines (mirrors the real backend's
   // block_to_dto), so query results carry `properties` for the table columns and
@@ -792,7 +671,7 @@ export function mockBackend(): Backend {
   const collect = (keep: (b: BlockDto) => boolean, exclude?: string): RefGroup[] => {
     const groups: RefGroup[] = [];
     for (const p of all) {
-      if (exclude && p.name.toLowerCase() === exclude.toLowerCase()) continue;
+      if (exclude && identity(p.name) === identity(exclude)) continue;
       const matched: BlockDto[] = [];
       // Track the ancestor chain so a matched nested block carries a breadcrumb
       // (like the real backend's query::collect), exercising the block-ref panel.
@@ -809,26 +688,23 @@ export function mockBackend(): Backend {
 
   return {
     async loadGraph() {
-      return {
-        kind: "loaded" as const,
-        binding_generation: 1,
-        application_page_admission: { binding_generation: 1 },
-        meta: {
+      return { kind: "loaded" as const, binding_generation: 1, meta: {
         root: "/mock/graph",
         journals_dir: "journals",
         pages_dir: "pages",
         preferred_workflow: "todo",
         shortcuts: {},
         start_of_week: 0,
-        block_hidden_properties: [],
-        linked_references_collapsed_threshold: 100,
+        block_hidden_properties: [], linked_references_collapsed_threshold: 100,
         default_journal_template: null,
         favorites: [],
+        mobile_gestures_disabled_in_block_with_tags: [],
         journal_page_title_format: "MMM do, yyyy",
         journal_file_name_format: "yyyy_MM_dd",
         preferred_format: "md",
         enable_timetracking: true,
         show_brackets: true,
+        enable_search_remove_accents: removeAccents,
         doc_mode_enter_for_new_block: false,
         logical_outdenting: false,
         logbook_with_second_support: true,
@@ -856,26 +732,16 @@ export function mockBackend(): Backend {
     async startupGraphPath() {
       return "/mock/graph";
     },
-    async onStorageTransition() {
-      return () => {};
-    },
     async captureTarget() {
       return "main";
     },
     async bindCaptureGraph() {},
     async forgetKnownGraph() {},
     async revealKnownGraph() {},
-    async localClock() {
-      const now = Date.now();
-      return { offset_minutes: -new Date(now).getTimezoneOffset(), unix_ms: now };
-    },
     async appPlatform(): Promise<"android" | "ios" | "desktop"> {
       const requested = new URLSearchParams(globalThis.location?.search ?? "").get("platform");
       if (requested === "android" || requested === "ios") return requested;
       return "desktop";
-    },
-    async appArchitecture(): Promise<string> {
-      return "x86_64";
     },
     async listInstalledPlugins() {
       return mockPlugins.map((plugin) => ({ ...plugin }));
@@ -946,15 +812,28 @@ export function mockBackend(): Backend {
     async defaultGraphParent(): Promise<string> {
       return "/mock";
     },
-    async referencedPageNames(knownDigest?: number | null): Promise<ReferencedPageNames> {
-      const names = mockReferencedPageNames(all);
-      // Same contract as the backend: a stable digest for a stable set, and no
-      // payload when the caller already has it.
-      const digest = names.length * 1000003 + names.join("\u0000").length;
-      return { digest, names: knownDigest === digest ? null : names };
-    },
-    async listPages(): Promise<PageEntry[]> {
-      return all.map(mockPageEntry);
+    async pageInventory(): Promise<PageInventory> {
+      // One row per (kind, folded name), like the real inventory: physical
+      // pages/journals first, then reference-only (and alias) names.
+      const key = (name: string) => name.trim().toLowerCase().normalize("NFC");
+      const rows = new Map<string, PageInventoryEntry>();
+      const add = (name: string, kind: "journal" | "page") => {
+        const slot = `${kind}:${key(name)}`;
+        if (!key(name) || rows.has(slot)) return;
+        rows.set(slot, {
+          key: key(name),
+          name,
+          is_journal: kind === "journal",
+          day: kind === "journal" ? mockJournalDayKey(name) : null,
+          target: mockResolve(name, kind),
+        });
+      };
+      for (const page of all) add(page.name, page.kind);
+      for (const name of mockReferencedPageNames(all)) {
+        if (!rows.has(`journal:${key(name)}`)) add(name, "page");
+      }
+      const entries = [...rows.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      return { rev: "0", entries, unreadable: [] };
     },
     async journalFeedPage(limit: number, beforeDay: number | null) {
       const now = new Date();
@@ -969,7 +848,7 @@ export function mockBackend(): Backend {
       const rows = candidates.slice(0, limit);
       const done = rows.length === candidates.length;
       return {
-        pages: rows.map(({ page }) => page),
+        pages: rows.map(({ page }) => ({ ...page, id: mockPagePath(page) })),
         next_before_day: done || !rows.length ? null : rows[rows.length - 1].day,
         done,
         as_of_day,
@@ -978,9 +857,12 @@ export function mockBackend(): Backend {
     async journalContentDays(): Promise<number[]> {
       return [];
     },
-    async getPage(name: string): Promise<PageDto | null> {
-      if (name.startsWith("hls__")) return hlsPageDto(name);
-      return find(name);
+    async getPage(name: string) {
+      const page = name.startsWith("hls__") ? hlsPageDto(name) : find(name);
+      return page ? { ...page, id: mockPagePath(page) } : null;
+    },
+    async resolvePage(name: string, kind: "journal" | "page") {
+      return mockResolve(name, kind);
     },
     async graphSourceFiles(includeJournals: boolean) {
       // Synthetic sources so the diff panel is exercisable against the mock
@@ -992,16 +874,14 @@ export function mockBackend(): Backend {
       if (includeJournals) {
         files.push({ rel: "journals/2026_07_04.md", text: "- met with [[Alice]] re: $$x^2$$\n", format: "md" as const });
       }
-      return files.map((f) => ({ ...f, bytes: new TextEncoder().encode(f.text).length }));
+      return {
+        files: files.map((f) => ({ ...f, bytes: new TextEncoder().encode(f.text).length })),
+        skipped: [],
+      };
     },
-    async savePage(_page: PageDto, _baseRev: string | null, _force?: boolean, _conflictEpoch?: number | null): Promise<SavePageResult> {
-      return { revision: "mock-rev" }; // no-op in mock (no activation)
-    },
-    async beginDirectCrossPageMove(_destination: PageDto, _sources: PageDto[]): Promise<string | null> {
-      return null; // the browser mock has no app-private root and no durable graph
-    },
-    async finishDirectCrossPageMove(_moveId: string): Promise<boolean> {
-      return false;
+    graphBindingGeneration: () => 1,
+    async savePages(entries) {
+      return { ok: entries.map(() => "mock-rev") }; // no-op in mock
     },
     async guidePages(): Promise<GuidePage[]> {
       return mockGuidePages().map((g) => ({ ...g, page: clonePage(g.page) }));
@@ -1033,7 +913,7 @@ export function mockBackend(): Backend {
       };
     },
     async setGuideAnnounced(announced: boolean): Promise<void> {
-      mockGuideAnnounced = announced; // presentation-only: no rebind (GH #543)
+      mockGuideAnnounced = announced;
     },
     async createGraph(_dir: string): Promise<string> {
       return "/mock/new-graph"; // no real scaffolding in the browser mock
@@ -1042,12 +922,8 @@ export function mockBackend(): Backend {
       const n = name.toLowerCase();
       return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n), name);
     },
-    async getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[], search: string): Promise<BacklinkFilterContext> {
+    async getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[]): Promise<BacklinkFilterContext> {
       const excluded = name.trim().toLowerCase();
-      // Browser preview only: production matching is native. This adapter keeps
-      // mirroring the shared TypeScript search grammar until the preview can
-      // call Rust directly.
-      const matcher = parseSearchQuery(search);
       const wanted = new Map(targets.map((item) => [
         `${item.kind}\0${item.page.toLowerCase()}\0${item.block_id}`,
         item,
@@ -1069,36 +945,23 @@ export function mockBackend(): Backend {
             node.children.forEach(subtree);
           };
           subtree(block);
-          const original = text.join("\n");
-          entries.push({
-            ...target,
-            facets: [...facets.values()],
-            text_matches: matcher.kind === "empty" || matcher.kind === "invalid"
-              || mockSearchMatches(matcher, original),
-          });
+          entries.push({ ...target, text: text.join("\n"), facets: [...facets.values()] });
         }
         block.children.forEach((child) => visit(page, child));
       };
       for (const page of all) page.blocks.forEach((block) => visit(page, block));
-      return {
-        entries,
-        search_error: matcher.kind === "invalid" ? matcher.error : undefined,
-        truncated: entries.length < wanted.size,
-      };
+      return { entries, truncated: entries.length < wanted.size };
     },
     async getUnlinkedRefs(name: string): Promise<RefGroup[]> {
       const n = name.toLowerCase();
-      const re = new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+      const matcher = parseSearchQuery(`/\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b/`);
       return collect(
-        (b) => re.test(b.raw.toLowerCase()) && !pageRefs(b.raw).some((r) => r.toLowerCase() === n),
+        (b) => matcherMatches(matcher, "", b.raw.toLowerCase()) && !pageRefs(b.raw).some((r) => r.toLowerCase() === n),
         name
       );
     },
     async warmDone(): Promise<boolean> {
       return true;
-    },
-    async indexingProgress() {
-      return null;
     },
     async getBlockRefCounts(): Promise<Record<string, number>> {
       const counts: Record<string, number> = {};
@@ -1114,39 +977,16 @@ export function mockBackend(): Backend {
       // No exclude → same-page referrers included (matches the backend).
       return collect((b) => blockRefIds(b.raw).includes(uuid));
     },
-    async setDefaultHome(): Promise<void> {
-      // Taken in place: the real backend keeps the Graph (GH #543).
-    },
     async deletePage(): Promise<void> {
       // no-op in mock
     },
-    async renamePage(): Promise<RenameOutcome> {
-      // no-op in mock; nothing is ever quarantined here
-      return { skippedConflictedReferrers: [], touched: [] };
+    async renamePage(): Promise<import("./types").RenameDone> {
+      return { outcome: "unchanged", touched: [] }; // no-op in mock
     },
     async publishHtml(): Promise<[string, number]> {
       return ["/mock/graph/publish", all.length];
     },
-    async publishQueryPlan(request: QueryPublicationRequest): Promise<QueryPublicationPlan> {
-      const folder = request.folder ?? (request.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "query");
-      return {
-        anchor: request.advanced ? "block" : "block",
-        rowCount: 3,
-        sampled: false,
-        boundPage: request.currentPage ?? null,
-        pages: all.slice(0, 3).map((p) => ({ path: `pages/${p.name}.md`, name: p.name, journal: false })),
-        folder,
-        path: `/mock/graph/published-queries/${folder}`,
-        exists: false,
-        suggestedFolder: null,
-        fingerprint: "mock-fingerprint",
-      };
-    },
-    async publishQuery(request: QueryPublicationRequest, _fingerprint: string): Promise<PublishOutcome> {
-      const folder = request.folder ?? "query";
-      return { path: `/mock/graph/published-queries/${folder}`, pages: 3, retired: null, warnings: [] };
-    },
-    async pagePrintHtml(name: string, _opts): Promise<string> {
+    async pagePrintHtml(name: string, _opts, _sheets): Promise<string> {
       // Dev-preview stub: a small self-contained doc so the print harness/flow can
       // render something without the real publish pipeline.
       return (
@@ -1174,126 +1014,7 @@ export function mockBackend(): Backend {
       }
       return { groups: [], ran: [], ignored: [], supported: false };
     },
-    // ---- The six query commands (SPEC §7.1, N23) ------------------------
-    //
-    // **These are deliberately NOT a second query engine** (D-14, I-12). The real
-    // parser, printer and walk live in `crates/tine-core/src/query/`; the browser
-    // dev-preview cannot call them, so these mocks answer the SHAPE of each
-    // command — enough for the screenshot harness and for a caller to be
-    // type-checked against the real contract — and say so when they cannot answer
-    // the substance. Growing them into a working OG/TQL parser here would
-    // reintroduce exactly the frontend twin this packet deleted.
-    async parseQuery(
-      text: string,
-      dialect: QueryTextDialect,
-      blockProperties?: [string, string][],
-    ): Promise<ParsedQuery> {
-      // **The mock does not split the options map, deliberately.** Splitting a
-      // macro argument is the ONE thing this packet moved into Rust (§7.1, X4);
-      // a copy here — even a "just for the dev preview" copy — is the second
-      // answer to "where does the options map start" that I-12 forbids, and it
-      // would disagree with Rust on exactly the input that matters. So the whole
-      // argument is retained verbatim as `original` with no options. That keeps
-      // the property the byte contract actually needs: a `preserveForm` print
-      // re-emits these exact bytes, so a title edit through the dev preview
-      // still cannot corrupt the author's query — it simply cannot separate the
-      // title out to edit it, which is the honest capability of a backend with
-      // no parser.
-      // A canned answer, when a test or the screenshot harness installed one.
-      const canned = queryFixture()?.parse;
-      if (canned) return { query: canned.query, view: { ...canned.view } };
-      const original = text;
-      const ogOptions = "";
-      const kind: Source["kind"] =
-        dialect === "macro_tql" || dialect === "tql"
-          ? "tql"
-          : dialect === "advanced"
-            ? "advanced"
-            : "og";
-      const query: Query = {
-        anchor: "block",
-        // A mock cannot know the filter, and inventing one would make callers
-        // "work" against an answer the real engine would never give. `raw` is the
-        // IR's own honest spelling for retained-but-not-understood text (§4.3.2),
-        // and it carries the payload losslessly so a print can still re-emit it.
-        filter: { kind: "raw", text: original, diagnostic_kind: "not_applicable" },
-        diagnostics: [{
-          kind: "not_applicable",
-          message: "The browser dev preview does not run the query engine.",
-          suggestions: [],
-          disabled: false,
-        }],
-        source: kind === "advanced"
-          ? { kind: "advanced", original, og_options: ogOptions }
-          : kind === "tql"
-            ? { kind: "tql", original, og_options: ogOptions }
-            : { kind: "og", original, og_options: ogOptions },
-      };
-      return { query, view: mockViewFromProperties(blockProperties ?? []) };
-    },
-    async printQuery(
-      query: Query,
-      _view: ViewSettings,
-      dialect: QueryPrintDialect,
-      preserveForm = false,
-    ): Promise<string> {
-      // Source-preserving printing is byte transport, not lowering, so the mock
-      // gets it exactly right (§4.3.1): the original form plus the options map,
-      // once.
-      const canned = queryFixture()?.print;
-      if (canned != null && !preserveForm) return canned;
-      const original = sourceOriginal(query.source);
-      if (preserveForm) {
-        if (original === null) {
-          throw mockPrintRefusal("not_applicable", "A builder query has no source form to preserve.");
-        }
-        const options = sourceOptions(query.source);
-        return options ? `${original} ${options}` : original;
-      }
-      // Re-lowering an IR to text IS the printer, and the printer is in Rust.
-      // Refuse in the command's own envelope rather than returning a plausible
-      // string the caller would then SAVE over the author's query.
-      if (dialect === "og") {
-        throw mockPrintRefusal(
-          "not_applicable",
-          "The browser dev preview cannot print the OG DSL from an IR.",
-        );
-      }
-      throw mockPrintRefusal(
-        "syntax",
-        "The browser dev preview cannot print a query from an IR.",
-      );
-    },
-    async queryOgExpressible(): Promise<boolean> {
-      // The mock's parse never produces an OG-expressible IR (its filter is a
-      // `raw` capsule), so this is not a guess — it is the true answer for the
-      // values this backend hands out.
-      return false;
-    },
-    async queryRegistry(): Promise<RegistrySnapshot> {
-      return queryFixture()?.registry ?? { rows: [], generation: 0 };
-    },
-    async queryRun(query: Query): Promise<QueryResult> {
-      const canned = queryFixture()?.run;
-      if (canned) return canned;
-      // An invalid query returns zero rows plus its diagnostics (§3.5) — which is
-      // precisely the mock's situation, so this arm is the contract, not a stub.
-      return {
-        anchor: "block",
-        groups: [],
-        diagnostics: query.diagnostics ?? [],
-        report: { ran: [], ignored: [], supported: false },
-        total: 0,
-        exceeded: false,
-      };
-    },
-    async queryExplainEmpty(query: Query): Promise<ExplainEmptyResult> {
-      return {
-        rows: [],
-        diagnostics: query.diagnostics ?? [],
-        report: { ran: [], ignored: [], supported: false },
-      };
-    },
+    ...mockQueryCommands,
     async runQuery(query: string): Promise<RefGroup[]> {
       // Simplified mock evaluator: task/todo filter or page-ref filter.
       if (/\b(todo|task)\b/i.test(query)) {
@@ -1357,7 +1078,10 @@ export function mockBackend(): Backend {
       };
       const results = [];
       for (const spec of specs.slice(0, 64)) {
-        const groups = spec.advanced
+        // Fixture approximation of the store's one answerer
+        // (`tine_core::query::is_advanced`); the real backend ignores callers.
+        const advanced = /^\s*(\[\s*:find\b|\{\s*:query\b)/.test(spec.query);
+        const groups = advanced
           ? (await this.runAdvancedQuery(spec.query)).groups
           : await this.runQuery(spec.query);
         const total = groups.reduce((sum, group) => sum + group.blocks.length, 0);
@@ -1390,9 +1114,6 @@ export function mockBackend(): Backend {
     async readCustomCss(): Promise<string> {
       return (globalThis as unknown as { __tineMockCustomCss?: string }).__tineMockCustomCss ?? "";
     },
-    async pageAliases(): Promise<[string, string][]> {
-      return [];
-    },
     async pageIcons(names: string[]): Promise<Record<string, string>> {
       const out: Record<string, string> = {};
       for (const name of names) {
@@ -1401,44 +1122,22 @@ export function mockBackend(): Backend {
       }
       return out;
     },
-    async existingPageNames(names: string[]): Promise<string[]> {
-      return names.filter((name) =>
-        all.some((p) => p.name.toLowerCase() === name.toLowerCase()));
-    },
-    async setFavorites(): Promise<void> {
-      // no-op in the browser mock
-    },
-    async setFavoritesPage(): Promise<void> {
-      // no-op in the browser mock
-    },
-    async setPreferredWorkflow(): Promise<void> {
-      // no-op in the browser mock
-    },
-    async setTimetrackingEnabled(): Promise<void> {
-      // Presentation-only: the real backend keeps the Graph (GH #543).
-    },
-    async setShowBrackets(): Promise<void> {
-      // Presentation-only: the real backend keeps the Graph (GH #543).
-    },
+    async setFavorites(): Promise<void> {},
+    async setDefaultHome(): Promise<void> {},
+    async setPreferredWorkflow(): Promise<void> {},
+    async setTimetrackingEnabled(): Promise<void> {},
+    async setShowBrackets(): Promise<void> {},
     async setDocModeEnterForNewBlock(): Promise<void> {
-      // Presentation-only: the real backend keeps the Graph (GH #543).
+      // no-op in the browser mock
     },
     async setLogicalOutdenting(): Promise<void> {
-      // Presentation-only: the real backend keeps the Graph (GH #543).
+      // no-op in the browser mock
     },
     async setPreferredFormat(): Promise<void> {
-      // Taken in place: the real backend keeps the Graph (GH #543).
+      // no-op in the browser mock
     },
-    // This setting reaches the graph in the real backend: the command's config
-    // write reopens it off the main thread, installing a FRESH Graph with an
-    // empty editor-activation registry, and announces that as `graph-rebound`
-    // -- not the command's return (GH #543, audits R9-15b and R10-07). Not a no-op even here: a mock that silently
-    // omits a contract lets every test that uses it prove the wrong thing.
-    // (GH #254 increment 3, round 15.)
     async setJournalTitleFormat(): Promise<void> {
-      queueMicrotask(() => {
-        for (const listener of [...graphReopenedListeners]) listener();
-      });
+      // no-op in the browser mock
     },
     async setDefaultJournalTemplate(): Promise<void> {
       // no-op in the browser mock
@@ -1472,20 +1171,20 @@ export function mockBackend(): Backend {
       return [...map.entries()].map(([k, vs]) => [k, [...vs].sort()] as [string, string[]]);
     },
     async search(query: string, limit: number): Promise<RefGroup[]> {
-      const q = mockSearchFold(query.trim());
+      const q = fold(query.trim());
       if (!q) return [];
       let n = limit;
-      const groups = collect((b) => mockSearchFold(b.raw).includes(q));
+      const groups = collect((b) => fold(b.raw).includes(q));
       for (const g of groups) {
         if (g.blocks.length > n) g.blocks = g.blocks.slice(0, n);
         n -= g.blocks.length;
       }
       return groups.filter((g) => g.blocks.length > 0);
     },
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope, _options?: import("./editor/queryIr").GraphSearchDisplayOptions, _consumer?: import("./editor/queryIr").GraphSearchConsumer): Promise<QueryExecution> {
+    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope, pageMatchScope: import("./editor/queryIr").FriendlyPageMatchScope = "names"): Promise<QueryExecution> {
       // Browser-preview approximation only (ADR 0016). Production matching,
       // diagnostics, and UTF-16 evidence come from Rust's QueryPlan evaluator.
-      const matcher = parseSearchQuery(source);
+      const matcher = parseSearchQuery(source, removeAccents);
       if (matcher.kind === "invalid") {
         return {
           hits: [],
@@ -1494,10 +1193,18 @@ export function mockBackend(): Backend {
           cancelled: false,
         };
       }
-      const bare = mockSearchSimpleTerm(matcher);
+      const bare = simpleTerm(matcher);
+      const contentOwners = pageMatchScope === "names" ? new Set<string>() : new Set(
+        collect((block) => matcherMatches(matcher, fold(block.raw), block.raw))
+          .map((group) => `${group.kind}:${identity(group.page)}`)
+      );
       const pageMatches = scope ? [] : all
-        .map((page) => ({ page, score: bare ? fuzzyScore(bare, mockSearchFold(page.name)) : 0 }))
-        .filter(({ page, score }) => bare ? score > 0 : mockSearchMatches(matcher, page.name))
+        .map((page) => ({ page, score: bare ? fuzzyScore(bare, fold(page.name)) : 0 }))
+        .filter(({ page, score }) => {
+          const nameHit = pageMatchScope !== "content" && (bare ? score > 0 : matcherMatches(matcher, fold(page.name), page.name));
+          const contentHit = contentOwners.has(`${page.kind}:${identity(page.name)}`);
+          return nameHit || contentHit;
+        })
         .sort((a, b) => b.score - a.score);
       const pages = pageMatches
         .slice(0, pageLimit)
@@ -1509,32 +1216,32 @@ export function mockBackend(): Backend {
             clause_id: 1,
             field: "page_name" as const,
             mode: bare ? "fuzzy" as const : matcher.kind === "regex" ? "regex" as const : "contains" as const,
-            spans: mockSearchHighlights(matcher, page.name),
+            spans: matchHighlights(matcher, page.name),
             score,
           }],
           score,
           match_class: bare
-            ? mockSearchFold(page.name) === bare ? "exact" as const
-              : mockSearchFold(page.name).startsWith(bare) ? "prefix" as const
-              : mockSearchFold(page.name).includes(bare) ? "substring" as const
+            ? fold(page.name) === bare ? "exact" as const
+              : fold(page.name).startsWith(bare) ? "prefix" as const
+              : fold(page.name).includes(bare) ? "substring" as const
               : "fuzzy" as const
             : undefined,
         }));
       const inScope = (group: RefGroup) => {
         if (!scope) return true;
-        const page = all.find((candidate) => candidate.kind === group.kind && mockSearchFold(candidate.name) === mockSearchFold(group.page));
+        const page = all.find((candidate) => candidate.kind === group.kind && identity(candidate.name) === identity(group.page));
         if (!page) return false;
         return scope.path
           ? mockPagePath(page) === scope.path
-          : page.kind === scope.pageKind && mockSearchFold(page.name) === mockSearchFold(scope.name);
+          : page.kind === scope.pageKind && identity(page.name) === identity(scope.name);
       };
-      const blockMatches = collect((block) => mockSearchMatches(matcher, block.raw))
+      const blockMatches = collect((block) => matcherMatches(matcher, fold(block.raw), block.raw))
         .filter(inScope)
         .flatMap((group) => group.blocks.map((block) => ({ group, block })));
       const blocks = blockMatches
         .slice(0, Math.max(0, blockLimit))
         .map(({ group, block }) => {
-          const owner = all.find((candidate) => candidate.kind === group.kind && mockSearchFold(candidate.name) === mockSearchFold(group.page));
+          const owner = all.find((candidate) => candidate.kind === group.kind && identity(candidate.name) === identity(group.page));
           return {
             entity: "block" as const,
             page: group.page,
@@ -1546,7 +1253,7 @@ export function mockBackend(): Backend {
               clause_id: 1,
               field: "visible_content" as const,
               mode: matcher.kind === "regex" ? "regex" as const : "contains" as const,
-              spans: mockSearchHighlights(matcher, block.raw),
+              spans: matchHighlights(matcher, block.raw),
             }],
           };
         });
@@ -1581,9 +1288,9 @@ export function mockBackend(): Backend {
       ];
     },
     async quickSwitch(query: string, limit: number): Promise<PageEntry[]> {
-      const q = mockSearchFold(query.trim());
+      const q = fold(query.trim());
       return all
-        .filter((p) => mockSearchFold(p.name).includes(q))
+        .filter((p) => fold(p.name).includes(q))
         .slice(0, limit)
         .map(mockPageEntry);
     },
@@ -1626,22 +1333,8 @@ export function mockBackend(): Backend {
         }
       }
       if (!group) return null;
-      let emitted = 0;
-      let truncated = 0;
-      const count = (blocks: BlockDto[]): number => blocks.reduce((n, b) => n + 1 + count(b.children), 0);
-      const copy = (blocks: BlockDto[]): BlockDto[] => {
-        const out: BlockDto[] = [];
-        for (const block of blocks) {
-          if (emitted >= Math.max(1, maxNodes)) {
-            truncated += count([block]);
-            continue;
-          }
-          emitted++;
-          out.push({ ...block, children: copy(block.children) });
-        }
-        return out;
-      };
-      return { group: { ...group, blocks: copy(group.blocks) }, truncated };
+      const { blocks, truncated } = previewDtoSubtree(group.blocks[0], maxNodes, "borrowed");
+      return { group: { ...group, blocks }, truncated };
     },
     async readAsset(name: string, maxBytes?: number): Promise<Uint8Array> {
       void maxBytes;
@@ -1663,9 +1356,6 @@ export function mockBackend(): Backend {
     async saveAsset(name: string, bytes: Uint8Array): Promise<string> {
       mockAssets[name] = bytes;
       return name;
-    },
-    async pasteImage(): Promise<string | null> {
-      return null; // no OS clipboard in the browser mock
     },
     async readClipboardImage(): Promise<Uint8Array | null> {
       return null; // no OS clipboard in the browser mock
@@ -1700,8 +1390,8 @@ export function mockBackend(): Backend {
         { name: "unused_clip_20260512_140233.mp4", size: 5_242_880, modified: 1_747_051_353 },
       ];
     },
-    async trashAsset(): Promise<void> {
-      // no-op in the browser mock
+    async trashAsset() {
+      return "trashed" as const; // no-op in the browser mock
     },
     async assetTrashStats() {
       return { count: 3, bytes: 1_572_864, pages: 1, journals: 0, conflicts: 0, other: 0 };
@@ -1709,108 +1399,10 @@ export function mockBackend(): Backend {
     async emptyAssetTrash(): Promise<number> {
       return 3;
     },
-    async duplicateJournalDiff(): Promise<SyncConflictDiff | null> {
-      // The mock day's two files hold disjoint content, so every row is
-      // one-sided — the shape that makes "keep both" reproduce a plain fold.
-      return {
-        rows: [
-          {
-            id: "dup-1",
-            kind: "removed",
-            mine: { id: "m1", text: "Tried out the Org demo graph in Tine today", level: 0 },
-            theirs: null,
-            children: [],
-          },
-          {
-            id: "dup-2",
-            kind: "added",
-            mine: null,
-            theirs: { id: "t1", text: "Evening notes written on the phone", level: 0 },
-            children: [],
-          },
-        ],
-        base_rev: "mock-canonical-rev",
-        conflict_rev: "mock-stray-rev",
-        three_way: false,
-      } as unknown as SyncConflictDiff;
-    },
-    async resolveDuplicateJournalDay(): Promise<PageDto> {
-      throw new Error("resolveDuplicateJournalDay is not wired in the mock backend");
-    },
-    async listJournalConflicts() {
-      // Default demo state is clean: no sticky "duplicate journal day" toast and no
-      // reconcile banner cluttering the marketing screenshots. The reconcile flow is
-      // demoed on demand via `?conflicts` (mirrors the `?big` virtualization gate).
-      if (typeof location !== "undefined" && !/[?&]conflicts\b/.test(location.search)) return [];
-      return [
-        {
-          title: "Friday, 26-06-2026",
-          files: [
-            { name: "2026_06_26.org", path: "journals/2026_06_26.org", preview: "Tried out the Org demo graph in Tine today", canonical: true },
-            { name: "Friday, 26-06-2026.org", path: "journals/Friday, 26-06-2026.org", preview: "something something", canonical: false },
-          ],
-        },
-      ];
-    },
-    async rescanGraphNow(): Promise<number> {
-      // no backend watcher in the browser mock
-      return 1;
-    },
-    async onGraphRescanComplete(_cb: (sequence: number) => void): Promise<() => void> {
-      return () => {};
-    },
-    async listJournalFilenameMigrations() {
-      // Same demo gate as the duplicate-day list: only under `?conflicts`.
-      if (typeof location !== "undefined" && !/[?&]conflicts\b/.test(location.search)) return [];
-      return [
-        { from: "journals/Thursday, 25-06-2026.org", to: "journals/2026_06_25.org" },
-      ];
-    },
-    async applyJournalFilenameMigrations(): Promise<number> {
-      return 1;
-    },
-    async trashJournalFile(): Promise<void> {
-      // no-op in the browser mock
-    },
-    async readJournalFile(name: string): Promise<string> {
-      return name.startsWith("Friday")
-        ? "* something something\n*\n"
-        : "* Tried out the Org demo graph in Tine today\n* TODO follow up on the [[kitchen-sink]] feature tour\nSCHEDULED: <2026-06-27 Sat>\n* DONE loaded the graph and clicked around\n";
-    },
-    // Activation is a real identity in the app; the mock backend hands out
-    // monotonic ones so store code that stamps and retires them behaves the same
-    // way here. (GH #254 increment 3.)
-    async activateEditor(path: string, intent: "reuse" | "replace", _expectedRevision: ActivationExpectedRevision) {
-      const live = mockActivations.get(path);
-      if (intent === "reuse" && live !== undefined) {
-        return { activation: live, target: path, prospective: false };
-      }
-      const activation = ++mockActivationSeq;
-      mockActivations.set(path, activation);
-      return { activation, target: path, prospective: false };
-    },
-    async activateAbsentEditor(name: string, kind: PageDto["kind"]) {
-      const target = kind === "journal" ? `journals/${name}.md` : `pages/${name}.md`;
-      const activation = ++mockActivationSeq;
-      mockActivations.set(target, activation);
-      return { activation, target, prospective: true };
-    },
-    async presentConflictOverride(
-      _path: string,
-      _baseRev: string | null,
-      _activation: number,
-      _conflictEpoch: number,
-    ): Promise<"authorised" | "superseded" | "withdrawn"> {
-      return "authorised";
-    },
-    async retireEditorActivation(path: string, activation: number) {
-      if (mockActivations.get(path) !== activation) return false;
-      mockActivations.delete(path);
-      return true;
-    },
-    async getPageByPath(path: string): Promise<PageDto | null> {
+    ...mockJournalFiles(),
+    async getPageByPath(path: string) {
       const page = all.find((p) => mockPagePath(p) === path);
-      if (page) return { ...page, path };
+      if (page) return { ...page, id: path };
       // The duplicate-day stray opens to its own content (#21); other paths fall
       // back to the canonical page by name.
       const stray = path.includes("Friday");
@@ -1823,7 +1415,7 @@ export function mockBackend(): Backend {
         rev: "mock-rev",
         format: "org",
         read_only: false,
-        path,
+        id: path,
       };
     },
     async mergePages(): Promise<void> {
@@ -1832,224 +1424,7 @@ export function mockBackend(): Backend {
     async renameFileToPage(): Promise<void> {
       // no-op in the browser mock
     },
-    async conflictInventory() {
-      // Gated on the same `?conflicts` flag as the journal-day demo, so the
-      // reconcile area stays out of the marketing screenshots by default. The
-      // queue is derived from exactly the two listings, as in core.
-      if (typeof location !== "undefined" && !/[?&]conflicts\b/.test(location.search)) {
-        return { sync_conflicts: [], vcs_markers: [], queue: [] };
-      }
-      return {
-        sync_conflicts: [
-          {
-            path: "pages/Project Plan.sync-conflict-20260705-141233-A2B2C3D.md",
-            base_name: "Project Plan",
-            base_path: "pages/Project Plan.md",
-            kind: "page" as const,
-            tag: "sync-conflict-20260705-141233-A2B2C3D",
-            preview: "Milestones for the launch",
-          },
-        ],
-        vcs_markers: [
-          {
-            path: "pages/Tine.md",
-            name: "Tine",
-            kind: "page" as const,
-            markers: ["<<<<<<<", "=======", ">>>>>>>"],
-          },
-        ],
-        queue: [
-          {
-            id: "copy:pages/Project Plan.sync-conflict-20260705-141233-A2B2C3D.md",
-            source: "sync-copy" as const,
-            page_name: "Project Plan",
-            page_path: "pages/Project Plan.md",
-            kind: "page" as const,
-            sides: [
-              { role: "mine" as const, label: "This device", path: "pages/Project Plan.md" },
-              {
-                role: "theirs" as const,
-                label: "sync-conflict-20260705-141233-A2B2C3D",
-                path: "pages/Project Plan.sync-conflict-20260705-141233-A2B2C3D.md",
-              },
-              { role: "base" as const, label: "Last agreed version" },
-            ],
-            block_conflicts: 4,
-          },
-          {
-            id: "markers:pages/Tine.md",
-            source: "vcs-markers" as const,
-            page_name: "Tine",
-            page_path: "pages/Tine.md",
-            kind: "page" as const,
-            sides: [
-              { role: "mine" as const, label: "HEAD" },
-              { role: "theirs" as const, label: "feature/concord" },
-            ],
-            block_conflicts: 1,
-            markers: ["<<<<<<<", "=======", ">>>>>>>"],
-          },
-          {
-            id: "journal:journals/2026_06_26.org",
-            source: "duplicate-journal" as const,
-            page_name: "Friday, 26-06-2026",
-            page_path: "journals/2026_06_26.org",
-            kind: "journal" as const,
-            sides: [
-              { role: "mine" as const, label: "2026_06_26.org", path: "journals/2026_06_26.org" },
-              {
-                role: "theirs" as const,
-                label: "Friday, 26-06-2026.org",
-                path: "journals/Friday, 26-06-2026.org",
-              },
-            ],
-            block_conflicts: 2,
-          },
-        ],
-      };
-    },
-    async syncConflictDiff() {
-      const v = (text: string) => ({ uuid: "", text, child_count: 0 });
-      // A 3-way diff (Concord base ledger): only the copy edited row 1, mine
-      // added row 2, the copy added row 3 — each row carries the suggestion
-      // the base justifies, which the modal pre-selects (never auto-applies).
-      return {
-        base_rev: "mock-sync-diff-rev",
-        conflict_rev: "mock-sync-copy-rev",
-        rows: [
-          { id: "0", kind: "unchanged" as const, mine: v("Milestones for the launch"), theirs: v("Milestones for the launch"), children: [] },
-          { id: "1", kind: "modified" as const, mine: v("TODO ship the beta by Friday"), theirs: v("TODO ship the beta by Thursday"), children: [], verdict: "theirs-only" as const, suggestion: "theirs" as const },
-          { id: "2", kind: "added" as const, mine: v("write the release notes"), theirs: null, children: [], verdict: "mine-only" as const, suggestion: "mine" as const },
-          { id: "3", kind: "removed" as const, mine: null, theirs: v("ask marketing for the banner"), children: [], verdict: "theirs-only" as const, suggestion: "theirs" as const },
-          // Row 4 is the fourth outcome: both sides edited ONE block, but in
-          // different places, so a merged body is offered (suggestion only).
-          // Its bodies are multi-line and agree on line 0, which is also what
-          // exercises the differing-line preview and the expander.
-          {
-            id: "4",
-            kind: "modified" as const,
-            mine: v("DOING draft the announcement\ncollapsed:: false\nowner:: me"),
-            theirs: v("DOING draft the announcement\ncollapsed:: false\ndue:: Friday"),
-            children: [],
-            verdict: "both-changed" as const,
-            suggestion: "merged" as const,
-            merged: { text: "DOING draft the announcement\ncollapsed:: false\nowner:: me\ndue:: Friday", source: "computed" as const },
-          },
-        ],
-        // The page's OWN properties differ too, so the resolver shows its
-        // pre-block choice — the one thing the retired Settings modal used to
-        // own exclusively (Concord P5).
-        mine_pre: "title:: Project Plan\ntags:: launch",
-        theirs_pre: "title:: Project Plan\ntags:: launch, marketing",
-        pre_differs: true,
-        blocks_identical: false,
-        three_way: true,
-      };
-    },
-    async textBlockDiff(mine: string, theirs: string) {
-      const v = (text: string) => ({ uuid: "", text, child_count: 0 });
-      const same = mine === theirs;
-      return {
-        base_rev: "mock-text-diff-mine",
-        conflict_rev: "mock-text-diff-theirs",
-        rows: [{ id: "0", kind: same ? ("unchanged" as const) : ("modified" as const), mine: v(mine), theirs: v(theirs), children: [] }],
-        mine_pre: null,
-        theirs_pre: null,
-        pre_differs: false,
-        blocks_identical: same,
-      };
-    },
-    async textBlockDiff3(base: string, mine: string, theirs: string) {
-      const v = (text: string) => ({ uuid: "", text, child_count: 0 });
-      const same = mine === theirs;
-      const mineChanged = mine !== base;
-      const theirsChanged = theirs !== base;
-      const suggestion = same || (mineChanged && theirsChanged) ? undefined : mineChanged ? ("mine" as const) : ("theirs" as const);
-      return {
-        base_rev: "mock-text-diff-mine",
-        conflict_rev: "mock-text-diff-theirs",
-        rows: [{ id: "0", kind: same ? ("unchanged" as const) : ("modified" as const), mine: v(mine), theirs: v(theirs), children: [], suggestion }],
-        mine_pre: null,
-        theirs_pre: null,
-        pre_differs: false,
-        blocks_identical: same,
-        three_way: true,
-      };
-    },
-    async liveSaveConflictDiff(page: PageDto) {
-      const v = (text: string) => ({ uuid: "", text, child_count: 0 });
-      const mine = page.blocks[0]?.raw ?? "";
-      return {
-        base_rev: "mock-live-disk",
-        conflict_rev: "mock-live-draft",
-        rows: [{ id: "0", kind: "modified" as const, mine: v(mine), theirs: v("Changed on disk"), children: [] }],
-        mine_pre: page.pre_block,
-        theirs_pre: page.pre_block,
-        pre_differs: false,
-        blocks_identical: false,
-        three_way: true,
-      };
-    },
-    async captureLiveSaveConflict(page: PageDto) {
-      const diff = await this.liveSaveConflictDiff(page, null, 1);
-      return { diff, base_text: null, disk_rev: diff.conflict_rev };
-    },
-    async durableLiveSaveConflictDiff(page: PageDto) {
-      return this.liveSaveConflictDiff(page, null, 1);
-    },
-    async resolveDurableLiveSaveConflict(page) {
-      return { ...page, rev: "mock-live-resolved" };
-    },
-    async resolveLiveSaveConflict(page) {
-      return { ...page, rev: "mock-live-resolved" };
-    },
-    async vcsMarkerConflictDiff(path: string) {
-      if (path !== "pages/Tine.md") return null;
-      const v = (text: string) => ({ uuid: "", text, child_count: 0 });
-      return {
-        mine_label: "HEAD",
-        theirs_label: "feature/concord",
-        regions: 1,
-        // A diff3-style marker block: it carried its own common ancestor, so
-        // rows only one side touched arrive already decided, and only the row
-        // both sides rewrote still needs a real choice (→ keep-both).
-        diff: {
-          base_rev: "mock-marker-rev",
-          conflict_rev: "mock-marker-rev",
-          rows: [
-            { id: "0", kind: "unchanged" as const, mine: v("A local-first outliner"), theirs: v("A local-first outliner"), children: [] },
-            { id: "1", kind: "modified" as const, mine: v("Fast on very big graphs"), theirs: v("Fast on big graphs"), children: [], verdict: "mine-only" as const, suggestion: "mine" as const },
-            { id: "2", kind: "modified" as const, mine: v("Reads a real Logseq graph"), theirs: v("Reads a real Logseq graph, Markdown and Org"), children: [], verdict: "theirs-only" as const, suggestion: "theirs" as const },
-            { id: "3", kind: "modified" as const, mine: v("Written in Rust and SolidJS"), theirs: v("Built on Tauri"), children: [], verdict: "both-changed" as const },
-          ],
-          // The page's own properties diverged too, so the resolver shows its
-          // pre-block choice — the one capability the retired Settings modal
-          // used to own exclusively (Concord P5).
-          mine_pre: "title:: Tine\ntags:: outliner",
-          theirs_pre: "title:: Tine\ntags:: outliner, concord",
-          pre_differs: true,
-          blocks_identical: false,
-          three_way: true,
-        },
-      };
-    },
-    async resolveVcsMarkerConflict(): Promise<void> {
-      // no-op in the browser mock
-    },
-    async resolveSyncConflict(winner: string): Promise<PageDto> {
-      return {
-        name: winner.split("/").pop()?.replace(/\.(md|org)$/i, "") ?? "Resolved",
-        kind: "page",
-        title: "Resolved",
-        pre_block: null,
-        path: winner,
-        rev: "mock-resolved-rev",
-        blocks: [],
-      };
-    },
-    async trashSyncConflict(): Promise<void> {
-      // no-op in the browser mock
-    },
+    ...mockConflictApi,
     async onConflictsChanged(): Promise<() => void> {
       return () => {};
     },
@@ -2065,9 +1440,6 @@ export function mockBackend(): Backend {
     },
     async pickGraphFolder() {
       return { status: "cancelled" as const };
-    },
-    async prepareGraphFolder(_path: string) {
-      return { status: "ready" as const, location: "local" as const };
     },
     async pickFile(): Promise<string | null> {
       return null;
@@ -2104,28 +1476,8 @@ export function mockBackend(): Backend {
     async onGraphChanged(): Promise<() => void> {
       return () => {}; // no external watcher in the browser mock
     },
-    async onGraphChangedBulk(): Promise<() => void> {
-      return () => {};
-    },
-    async onAssetChanged(): Promise<() => void> {
-      return () => {};
-    },
-    async onGraphConfigChanged(): Promise<() => void> {
-      return () => {};
-    },
-    async onGraphReopened(cb: () => void): Promise<() => void> {
-      graphReopenedListeners.add(cb);
-      return () => graphReopenedListeners.delete(cb);
-    },
-    async onQueryProjectionChanged(): Promise<() => void> {
-      return () => {};
-    },
-    async onGraphWatchError(): Promise<() => void> {
-      return () => {};
-    },
-    async onGraphUnreadablePages(): Promise<() => void> {
-      return () => {};
-    },
+    async onAssetChanged(): Promise<() => void> { return () => {}; },
+    async onGraphConfigChanged(): Promise<() => void> { return () => {}; },
     async getBackupKeep(): Promise<number> {
       return 12;
     },
@@ -2139,10 +1491,7 @@ export function mockBackend(): Backend {
       // no-op in the browser mock
     },
     async getLinkFirstMatch(): Promise<boolean> {
-      return mockLinkFirstMatch;
-    },
-    async setLinkFirstMatch(value: boolean): Promise<void> {
-      mockLinkFirstMatch = value;
+      return false; // the legacy key is read-only (migration source); never set
     },
     async getWatchMode(): Promise<string> {
       return "inotify";
@@ -2154,16 +1503,22 @@ export function mockBackend(): Backend {
       return [];
     },
     async restoreBackup(): Promise<void> {
-      notifyGraphRebound();
-    },
-    async retryIndex(): Promise<void> {
-      notifyGraphRebound();
+      // no-op in the browser mock
     },
     async loadSession(): Promise<string | null> {
       return mockSession;
     },
     async saveSession(data: string): Promise<void> {
       mockSession = data;
+    },
+    async loadDrafts(): Promise<DraftRecord[]> {
+      return [...mockDrafts.values()].map((record) => structuredClone(record));
+    },
+    async storeDraft(record: DraftRecord, _graphRoot?: string): Promise<void> {
+      mockDrafts.set(record.id, structuredClone(record));
+    },
+    async retireDraft(id: string): Promise<void> {
+      mockDrafts.delete(id);
     },
     async loadWorkspaces(): Promise<string> {
       if (!mockWorkspaces) {
@@ -2179,23 +1534,14 @@ export function mockBackend(): Backend {
       }
       return mockWorkspaces;
     },
-    async saveWorkspaces(data: string): Promise<void> {
-      mockWorkspaces = data;
-    },
-    async loadNotices(): Promise<string> {
-      return mockNotices;
-    },
-    async saveNotices(data: string): Promise<void> {
-      mockNotices = data;
-    },
-    async takeIdentifierMigrationNotice(): Promise<boolean> {
-      return false;
-    },
-    async takeDataHomeFallbackNotice(): Promise<string | null> {
-      return null;
+    async saveWorkspaces(data: string): Promise<"durable"> {
+      mockWorkspaces = data; return "durable";
     },
     async gpuEnv(): Promise<GpuEnv> {
       return { software_forced: false, appimage: false };
+    },
+    async takeDataHomeFallbackNotice(): Promise<string | null> {
+      return null;
     },
     async getSmoothScroll(): Promise<boolean> {
       return false;
@@ -2210,6 +1556,13 @@ export function mockBackend(): Backend {
     async setAppBool(key: string, value: boolean): Promise<void> {
       mockAppBools[key] = value;
     },
+    async defenderHint() {
+      return { show: false };
+    },
+    async dismissDefenderHint(): Promise<void> {},
+    async addDefenderExclusion() {
+      return { outcome: "declined" as const };
+    },
     async getAppString(key: string, fallback: string): Promise<string> {
       const v = mockAppStrings[key];
       return v === undefined ? fallback : v;
@@ -2217,91 +1570,49 @@ export function mockBackend(): Backend {
     async setAppString(key: string, value: string): Promise<void> {
       mockAppStrings[key] = value;
     },
-    async applySpellcheck(): Promise<void> {
-      /* no native webview in the mock */
-    },
-    async listSpellcheckDictionaries(): Promise<string[]> {
-      // A representative set so the picker renders in the browser mock / harness.
-      return ["cs_CZ", "de_DE", "en_GB", "en_US", "fr_FR", "sk_SK"];
-    },
-    async debugInfo(): Promise<DebugInfo> {
-      return { enabled: false, path: "", recorderActive: false, previousExitUnclean: false };
-    },
-    async debugLog(_line: string): Promise<void> {
-      // no-op in the browser mock
-    },
-    async diagnosticReport(): Promise<DiagnosticReport> {
-      return {
-        text: JSON.stringify({ schemaVersion: 1, mock: true }, null, 2),
-        suggestedFileName: "tine-diagnostics-mock.json",
-      };
-    },
-    async saveDiagnosticReport(): Promise<boolean> {
-      return false;
-    },
-    async clearDiagnostics(): Promise<void> {
-      // no-op in the browser mock
-    },
+    async applySpellcheck(): Promise<void> { /* no native webview in the mock */ },
+    // A representative set so the picker renders in the browser mock / harness.
+    async listSpellcheckDictionaries(): Promise<string[]> { return ["cs_CZ", "de_DE", "en_GB", "en_US", "fr_FR", "sk_SK"]; },
+    async debugInfo(): Promise<DebugInfo> { return { enabled: false, path: "", recorderActive: false, previousExitUnclean: false }; },
+    async debugLog(_line: string): Promise<void> { /* no-op in the browser mock */ },
+    async diagnosticReport(): Promise<DiagnosticReport> { return { text: JSON.stringify({ schemaVersion: 1, sessions: { current: mockDiagnostics.map((kind) => ({ event: "frontend", kind })) } }, null, 2), suggestedFileName: "tine-diagnostics.json" }; },
+    async saveDiagnosticReport(): Promise<boolean> { return false; },
+    async clearDiagnostics(): Promise<void> { mockDiagnostics.length = 0; },
     async createGraphVerification(): Promise<GraphVerificationReport> {
-      const text = JSON.stringify({
-        schemaVersion: 1,
-        tool: "tine-graph-bytes",
-        algorithm: "sha256",
-        complete: true,
-        generatedAtUnixMs: Date.now(),
-        files: [],
-        aggregateDigest: "0".repeat(64),
-        errors: [],
-      }, null, 2);
-      return {
-        text,
-        suggestedFileName: "tine-graph-verification-mock.json",
-        totalFiles: 0,
-        totalBytes: 0,
-        aggregateDigest: "0".repeat(64),
-        complete: true,
-      };
+      const aggregateDigest = "0".repeat(64);
+      const text = JSON.stringify({ schemaVersion: 1, tool: "tine-graph-bytes", algorithm: "sha256", complete: true, generatedAtUnixMs: Date.now(), files: [], aggregateDigest, errors: [] }, null, 2);
+      return { text, suggestedFileName: "tine-graph-verification-mock.json", totalFiles: 0, totalBytes: 0, aggregateDigest, complete: true };
     },
-    async cancelGraphVerification(): Promise<void> {
-      // no-op in the browser mock
+    async cancelGraphVerification(): Promise<void> { /* no-op in the browser mock */ },
+    async saveGraphVerificationReport(): Promise<boolean> { return false; },
+    async onGraphVerificationProgress(): Promise<() => void> { return () => {}; },
+    async diagnosticSessionActive(): Promise<void> { /* no session marker in the mock */ },
+    async diagnosticFrontendEvent(kind: DiagnosticFrontendKind): Promise<void> { mockDiagnostics.push(kind); },
+    async localClock() {
+      const now = Date.now();
+      return { offset_minutes: -new Date(now).getTimezoneOffset(), unix_ms: now };
     },
-    async saveGraphVerificationReport(): Promise<boolean> {
-      return false;
-    },
-    async onGraphVerificationProgress(): Promise<() => void> {
-      return () => {};
-    },
-    async diagnosticSessionActive(): Promise<void> {
-      /* no session marker in the browser dev shell */
-    },
-    async diagnosticFrontendEvent(): Promise<void> {
-      // no-op in the browser mock
-    },
+    async appArchitecture(): Promise<string> { return "x86_64"; },
+    async watcherLatencyRecent(): Promise<unknown[]> { return []; },
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
     },
     async openPdf(pdf: string, label: string): Promise<PdfState> {
       const current = mockHighlights[pdf] ?? { label, highlights: [] };
-      mockHighlights[pdf] = current;
       return {
         highlights: current.highlights,
         page: current.page ?? null,
         scale: current.scale ?? null,
       };
     },
-    async writeHighlights(pdf: string, label: string, highlights: Highlight[], _baseIds: string[]): Promise<void> {
-      mockHighlights[pdf] = { ...mockHighlights[pdf], label, highlights };
-    },
-    async writePdfViewState(pdf: string, page: number, scale: number): Promise<void> {
-      const current = mockHighlights[pdf] ?? { label: pdf, highlights: [] };
-      mockHighlights[pdf] = { ...current, page, scale };
+    async writeHighlights(pdf: string, label: string, highlights: Highlight[], _baseHighlights: Highlight[]): Promise<Highlight[]> {
+      return (mockHighlights[pdf] = { ...mockHighlights[pdf], label, highlights }).highlights;
     },
     async savePdfAreaImage(
       pdf: string,
       page: number,
       id: string,
-      stamp: number,
-      _bytes: Uint8Array,
+      stamp: number, _bytes: Uint8Array,
     ): Promise<string> {
       return `${pdf.replace(/\.pdf$/i, "")}/${page}_${id}_${stamp}.png`;
     },

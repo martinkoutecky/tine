@@ -5,7 +5,9 @@ import { backend } from "../backend";
 import { editingId, endEdit } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore } from "../store";
+import { resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc, pageByName } from "../document/model";
 import type { BlockDto, PageDto, RefGroup } from "../types";
 import { Block } from "./Block";
 

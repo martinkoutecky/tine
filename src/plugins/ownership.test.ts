@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { bumpGraphEpoch, graphEpoch, setGraphMeta, setGraphTransitioning } from "../ui";
-import { graphBinding, resetSaveState } from "../persistence";
+import { bindingIdentity, invalidateBinding } from "../binding";
+import { bumpGraphEpoch, graphEpoch, setGraphMeta } from "../graphSession";
+import { setGraphTransitioning } from "../ui";
 import type { GraphMeta } from "../types";
 import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCurrent } from "./ownership";
 
@@ -12,8 +13,7 @@ function meta(root: string): GraphMeta {
     preferred_workflow: "now",
     shortcuts: {},
     start_of_week: 6,
-    block_hidden_properties: [],
-    linked_references_collapsed_threshold: 100,
+    block_hidden_properties: [], linked_references_collapsed_threshold: 100,
     default_journal_template: null,
     favorites: [],
     journal_page_title_format: "MMM do, yyyy",
@@ -25,7 +25,7 @@ function meta(root: string): GraphMeta {
     logbook_with_second_support: true,
     logbook_enabled_in_timestamped_blocks: false,
     logbook_enabled_in_all_blocks: false,
-    guide_announced: true,
+    guide_announced: true, mobile_gestures_disabled_in_block_with_tags: [],
   };
 }
 
@@ -38,7 +38,7 @@ describe("plugin graph ownership", () => {
   it("captures a frozen host-only owner, ignores repaint, and rejects binding/root/transition changes", () => {
     setGraphMeta(meta("/graph-a"));
     const owner = capturePluginGraphOwner();
-    expect(owner).toEqual({ graphRoot: "/graph-a", generation: graphBinding() });
+    expect(owner).toEqual({ graphRoot: "/graph-a", generation: bindingIdentity() });
     expect(Object.isFrozen(owner)).toBe(true);
     expect(isPluginGraphOwnerCurrent(owner!)).toBe(true);
 
@@ -48,7 +48,7 @@ describe("plugin graph ownership", () => {
     bumpGraphEpoch();
     expect(graphEpoch()).toBeGreaterThan(0);
     expect(isPluginGraphOwnerCurrent(owner!)).toBe(true);
-    resetSaveState();
+    invalidateBinding();
     expect(isPluginGraphOwnerCurrent(owner!)).toBe(false);
     setGraphMeta(meta("/graph-b"));
     expect(isPluginGraphOwnerCurrent(owner!)).toBe(false);

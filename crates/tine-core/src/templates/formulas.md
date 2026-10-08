@@ -13,6 +13,11 @@ icon:: 🧮
 	  hours:: 5
 	  done:: false
 	- The **plan** column is a formula. Tine reads `hours` from each row and shows *focus block* or *quick task* — you never type it, and it updates the moment `hours` changes.
+- ## Add one yourself
+	- 1. Make a table (see [[Features/Sheets]]) with at least one field to compute from, for example a `hours=number` column.
+	- 2. **Right-click a table column header** — or right-click the table body / open its **⋮** menu — and choose **Add formula…**. Give it a short lowercase name like `plan`.
+	- 3. The **visual builder** opens. You build the value by clicking *faces* — no syntax to memorize. Press **Save** and a read-only column appears, filling in live.
+	- 4. To change it later, right-click the formula column and choose **Edit formula…**.
 - ## The building blocks
 	- **Value face** — click it to open a picker with these sections:
 		- **Field** — one of your own columns (or type a custom field name).
@@ -29,9 +34,8 @@ icon:: 🧮
 	- Anything more nested — a formula inside a THEN branch, or arithmetic of arithmetic like `(hours + extra) * 2` — shows up as a small raw box instead of pretty faces. Use **`</> raw`** to type those directly; they still evaluate exactly the same, they just do not get a visual face.
 	- Formula values are **read-only** and are never saved onto your rows, so they always reflect the current data and round-trip cleanly back to Logseq.
 - ### Create one yourself — formula
-	- 1. Make a table (see [[Features/Sheets]]) with at least one field to compute from, for example a `hours=number` column.
-	- 2. **Right-click a table column header** — or right-click the table body / open its **⋮** menu — and choose **Add formula…**. Give it a short lowercase name like `plan`.
-	- 3. The **visual builder** opens. You build the value by clicking *faces* — no syntax to memorize: pick a field, add a comparison, wrap it in IF / THEN / ELSE. Press **Save** and a read-only column appears, filling in live.
+	- 1. Start from a table with a numeric or enum field.
+	- 2. Right-click the column header and choose **Add/Edit formula**.
+	- 3. Build the value from the faces — pick a field, add a comparison, wrap it in IF / THEN / ELSE.
 	- 4. Use the `</> raw` toggle when you would rather type the expression, such as `hours * 2`.
-	- 5. To change it later, right-click the formula column and choose **Edit formula…**.
-	- 6. What you should see: a read-only computed column whose values evaluate live and are never written onto the rows.
+	- 5. What you should see: a read-only computed column whose values evaluate live and are never written onto the rows.

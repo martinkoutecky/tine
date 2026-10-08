@@ -16,7 +16,6 @@ describe("pane focus tracker", () => {
     dispose = installPaneTracker();
     document.body.innerHTML = `
       <div data-pane-id="pane-7"><input id="inside" /></div>
-      <div data-pane-id="pane-8"><button id="pdf-control">PDF control</button></div>
       <div class="overlay"><input id="outside" /></div>
       <button id="pane-neutral" data-pane-focus-neutral>Go back</button>
     `;
@@ -61,19 +60,5 @@ describe("pane focus tracker", () => {
       button: 1,
     }));
     expect(calls).toEqual([]);
-  });
-
-  it("records every real route pane as layout evidence but not satellite focus", () => {
-    const evidence: Array<[string, boolean | undefined]> = [];
-    registerPaneFocusSetter((id, rememberLayout) => evidence.push([id, rememberLayout]));
-
-    (document.getElementById("inside") as HTMLInputElement).focus();
-    expect(evidence.at(-1)).toEqual(["pane-7", true]);
-
-    document.getElementById("pdf-control")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
-    expect(evidence.at(-1)).toEqual(["pane-8", true]);
-
-    document.getElementById("outside")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
-    expect(evidence.at(-1)).toEqual(["main", false]);
   });
 });

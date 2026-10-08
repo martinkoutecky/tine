@@ -20,12 +20,7 @@ if [ -z "${TINE_TOOLCHAIN:-}" ]; then
   _toolchain_candidate="$(cd "$_repo_root/.." && pwd)/.toolchain"
   if [ ! -x "$_toolchain_candidate/cargo/bin/rustup" ]; then
     while IFS= read -r _worktree_root; do
-      # Stale worktree registrations (deleted dirs from concurrent agent lanes)
-      # must not abort sourcing under `set -e`: skip roots whose parent no
-      # longer exists instead of `cd`-ing into a missing directory.
-      _worktree_parent="$(dirname "$_worktree_root")"
-      if [ ! -d "$_worktree_parent" ]; then continue; fi
-      _worktree_candidate="$(cd "$_worktree_parent" && pwd)/.toolchain"
+      _worktree_candidate="$(cd "$(dirname "$_worktree_root")" && pwd)/.toolchain"
       if [ -x "$_worktree_candidate/cargo/bin/rustup" ]; then
         _toolchain_candidate="$_worktree_candidate"
         break

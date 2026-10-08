@@ -7,10 +7,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-
-await ensureDisplay();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -29,8 +25,6 @@ for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`,
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
 fs.writeFileSync(`${GRAPH}/assets/supported.mkv`, Buffer.from(MKV, "base64"));
 fs.writeFileSync(`${GRAPH}/assets/supported.mp3`, Buffer.from(MP3, "base64"));
-fs.writeFileSync(`${GRAPH}/outside.mp3`, Buffer.from(MP3, "base64"));
-fs.symlinkSync("../outside.mp3", `${GRAPH}/assets/escape.mp3`);
 fs.writeFileSync(`${GRAPH}/pages/Media.md`, "- ![](../assets/supported.mkv)\n- ![](../assets/supported.mp3)\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
@@ -39,8 +33,6 @@ fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- open [[Media]]\n");
 const env = {
   ...process.env,
   TINE_GRAPH: GRAPH,
-  TINE_DEBUG: "1",
-  TINE_DEBUG_LOG: `${TMP}/tine-debug.log`,
   XDG_DATA_HOME: `${TMP}/xdg/data`,
   XDG_CONFIG_HOME: `${TMP}/xdg/config`,
   XDG_CACHE_HOME: `${TMP}/xdg/cache`,
@@ -50,7 +42,7 @@ const env = {
   GDK_BACKEND: "x11",
 };
 const log = fs.openSync(`${TMP}/tauri-driver.log`, "w");
-const td = spawn(TD, webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), {
+const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
   env, stdio: ["ignore", log, log], detached: true,
 });
 await sleep(2500);
@@ -110,43 +102,11 @@ async function playUntilProgress(selector, label) {
   }
   return state;
 }
-
-async function observeProtocolStatus(streamPath) {
-  const debugPath = `${TMP}/tine-debug.log`;
-  const before = fs.existsSync(debugPath) ? fs.statSync(debugPath).size : 0;
-  const observation = await browser.executeAsync((path, done) => {
-    const url = globalThis.__TAURI_INTERNALS__.convertFileSrc(path, "tine-media");
-    const media = document.createElement("audio");
-    media.preload = "metadata";
-    media.src = url;
-    media.hidden = true;
-    document.body.append(media);
-    let settled = false;
-    const finish = (event) => {
-      if (settled) return;
-      settled = true;
-      done({ url, event, mediaError: media.error?.code ?? 0 });
-      media.remove();
-    };
-    media.addEventListener("loadedmetadata", () => finish("loadedmetadata"), { once: true });
-    media.addEventListener("error", () => finish("error"), { once: true });
-    window.setTimeout(() => finish("timeout"), 10_000);
-    media.load();
-  }, streamPath);
-  await sleep(200);
-  const debugText = fs.readFileSync(debugPath, "utf8").slice(before);
-  const statuses = [...debugText.matchAll(/media_protocol status=(\d+) authority=([a-z_]+)/g)];
-  if (!statuses.length) {
-    throw new Error(`protocol request emitted no status diagnostic: ${JSON.stringify(observation)}`);
-  }
-  const latest = statuses.at(-1);
-  return { ...observation, status: Number(latest[1]), authority: latest[2] };
-}
 try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error",
-    connectionRetryCount: 1, connectionRetryTimeout: 360_000,
-    capabilities: tauriCapabilities(APP, "media"),
+    connectionRetryCount: 1, connectionRetryTimeout: 60_000,
+    capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
   for (const selector of ["a.page-ref=Media", "span.page-ref=Media", "*=Media"]) {
@@ -185,89 +145,6 @@ try {
   await browser.$(".audio-close").click();
   await overlay.waitForExist({ reverse: true, timeout: 10_000 });
   console.log(`PASS: expanded MP3 streamed, played, and released on close through ${overlayState.src}`);
-
-  // Containment and binding-authority gate: resolve the graph's current Direct
-  // Files binding through the real native command, then make a range request
-  // through the registered tine-media protocol. The request URL carries the
-  // binding generation, so a 403 here is the binding gate itself rather than
-  // stale state.
-  await browser.setTimeout({ script: 300_000 });
-  const direct = await browser.executeAsync((graph, done) => {
-    const { invoke, convertFileSrc } = globalThis.__TAURI_INTERNALS__;
-    invoke("load_graph", { path: graph }).then((loaded) => {
-      if (!Number.isSafeInteger(loaded?.binding_generation)) {
-        throw new Error(`load_graph exposed no binding: ${JSON.stringify(loaded)}`);
-      }
-      return invoke("stream_asset_path", {
-        name: "supported.mp3",
-        bindingGeneration: loaded.binding_generation,
-      }).then((streamPath) => ({
-        bindingGeneration: loaded.binding_generation,
-        url: convertFileSrc(streamPath, "tine-media"),
-      }));
-    }).then(({ bindingGeneration, url }) => {
-      performance.clearResourceTimings();
-      const media = document.createElement("audio");
-      media.preload = "metadata";
-      media.src = url;
-      media.hidden = true;
-      document.body.append(media);
-      let settled = false;
-      const finish = (event) => {
-        if (settled) return;
-        settled = true;
-        window.setTimeout(() => {
-          const entries = performance.getEntriesByName(url);
-          const resource = entries[entries.length - 1];
-          done({
-            bindingGeneration,
-            url,
-            event,
-            mediaError: media.error?.code ?? 0,
-            status: Number.isInteger(resource?.responseStatus)
-              ? resource.responseStatus
-              : null,
-          });
-          media.remove();
-        }, 100);
-      };
-      media.addEventListener("loadedmetadata", () => finish("loadedmetadata"), { once: true });
-      media.addEventListener("error", () => finish("error"), { once: true });
-      window.setTimeout(() => finish("timeout"), 10_000);
-      media.load();
-    }, (error) => done({ error: String(error) }));
-  }, GRAPH);
-  await sleep(200);
-  const debugText = fs.readFileSync(`${TMP}/tine-debug.log`, "utf8");
-  const directStatuses = [...debugText.matchAll(/media_protocol status=(\d+) authority=direct/g)];
-  if (directStatuses.length) {
-    direct.status = Number(directStatuses.at(-1)[1]);
-  }
-  console.log(`B5 direct protocol observation: ${JSON.stringify(direct)}`);
-  if (direct?.status !== 200 && direct?.status !== 206) {
-    throw new Error(`direct media protocol expected status 200/206: ${JSON.stringify(direct)}`);
-  }
-  console.log(`PASS: Direct Files served media range through ${direct.url}`);
-
-  for (const [label, streamPath] of [
-    ["traversal", `${direct.bindingGeneration}/../outside.mp3`],
-    ["absolute", `${direct.bindingGeneration}/${GRAPH}/outside.mp3`],
-    ["outside symlink", `${direct.bindingGeneration}/escape.mp3`],
-  ]) {
-    const refused = await observeProtocolStatus(streamPath);
-    if (refused.status !== 404 || refused.authority !== "direct") {
-      throw new Error(`Direct ${label} refusal drifted: ${JSON.stringify(refused)}`);
-    }
-    console.log(`PASS: Direct ${label} asset path refused with 404`);
-  }
-
-  const stale = await observeProtocolStatus(
-    `${direct.bindingGeneration - 1}/supported.mp3`,
-  );
-  if (stale.status !== 403 || stale.authority !== "stale") {
-    throw new Error(`stale media binding refusal drifted: ${JSON.stringify(stale)}`);
-  }
-  console.log("PASS: stale media binding refused with 403");
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

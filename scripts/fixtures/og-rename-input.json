@@ -1,0 +1,9 @@
+{
+  "old": "Old Name",
+  "new": "New Name",
+  "files": [
+    { "path": "pages/Old Name.md", "bytes": "- the page body\n" },
+    { "path": "pages/Other.md", "bytes": "- see [[Old Name]] and #[[Old Name]]\n" },
+    { "path": "journals/2026_06_15.md", "bytes": "- ref [[Old Name]]\n" }
+  ]
+}

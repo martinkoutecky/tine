@@ -1,0 +1,544 @@
+/* Concord (og 8c): the conflict badge, the in-page resolver and the Conflicts
+   overview. Ported from master, with the dock bar (master 61ea6600c). */
+
+/* master f5dbe8cdb: Concord is a review workspace, not reading prose. While
+   the resolver is mounted the pane uses its wide-mode width, so both versions
+   and their controls fit without discovering wide mode; resolving removes the
+   panel and restores the reading width. Keyed to the persistent slot: the dock
+   moves the panel node itself into its sheet while unrolled. */
+.main-content-inner:has(.page-conflict-slot) {
+  max-width: var(--tine-wide-content-max-width, var(--ls-main-content-max-width-wide));
+}
+
+/* A 3-way pre-selection (Concord base ledger) the user hasn't overridden. */
+.sync-merge-suggested-tag {
+  font-size: 11px;
+  color: var(--link-color);
+}
+
+/* --- The fourth outcome (a suggested merged body) and the per-row expander. ---
+
+   The proposal is a full-width strip UNDER the two columns, never a third
+   column: three columns do not survive a phone. Collapsed rows stay one line
+   per column, so the panel's mobile footprint is unchanged until the user
+   expands a row. */
+.sync-merge-cell.merged {
+  flex: 0 0 100%;
+}
+.sync-merge-mergedtag {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-right: 6px;
+}
+/* Marks a preview that starts below line 0. Deliberately its own element: the
+   marker is never part of the previewed text. */
+.sync-merge-elided {
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+.sync-merge-expand {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-color);
+  background: none;
+  color: var(--text-muted);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.sync-merge-expand:hover {
+  color: var(--text-primary);
+}
+.sync-merge-expanded {
+  flex: 0 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 4px;
+}
+.sync-merge-fulltext-label {
+  margin-bottom: 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+/* Capped and independently scrollable: an expanded logbook must not push the
+   Apply button off the screen. */
+.sync-merge-fulltext-body {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 6px 8px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+.sync-merge-fulltext-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 1.35em;
+}
+.sync-merge-fulltext-line.differs {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--link-color) 14%, transparent);
+  color: var(--text-primary);
+}
+/* --- Concord L3/L4: the calm queue badge and the in-page resolver. --- */
+
+/* The badge waits in the sidebar footer. Deliberately quiet: no red, no count
+   bubble, no animation — a conflict is a thing to get to, not an alarm. */
+.conflict-queue-badge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  text-align: left;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.conflict-queue-badge:hover {
+  border-color: color-mix(in srgb, var(--link-color) 45%, var(--border-color));
+  color: var(--text-primary);
+}
+.conflict-queue-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #b45309;
+  flex-shrink: 0;
+}
+
+.page-conflict {
+  margin: 0 0 14px;
+  border: 1px solid var(--border-color);
+  border-left: 3px solid #b45309;
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  /* Narrow layout is driven by the PANEL's own width (container query), not
+     the viewport: a phone and a skinny desktop split-pane need the same fix. */
+  container: conflict / inline-size;
+}
+/* Side dots: tie a control to its side's hue where there is no room for the
+   side's name (the legend maps hue → name once). Hidden in row segments at
+   comfortable widths; the narrow rules below reveal them. */
+.sync-merge-seg-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.sync-merge-seg-dot[data-side="mine"] {
+  background: #2e7d32;
+}
+.sync-merge-seg-dot[data-side="theirs"] {
+  background: #1565c0;
+}
+.sync-merge-seg .sync-merge-seg-dot {
+  display: none;
+  margin-right: 5px;
+}
+/* On the active segment's filled background the bare hue almost vanishes;
+   a thin light ring keeps the side color legible. */
+.sync-merge-seg.active .sync-merge-seg-dot {
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.85);
+}
+.sync-merge-seg-short {
+  display: none;
+}
+.conflict-narrow {
+  display: none;
+}
+/* Narrow panel (phone sheet, skinny pane): the two-column row starved the
+   TEXT — the one thing the user must read to decide — because the per-row
+   segments carry side labels and don't shrink. Stack the cells full-width and
+   turn the segments into one compact equal-width strip: dot + short word. */
+@container conflict (max-width: 560px) {
+  .conflict-wide {
+    display: none;
+  }
+  .conflict-narrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .page-conflict-legend {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  /* Two-COLUMN headers make no sense over stacked cells; the color edges +
+     the legend carry side identity instead. */
+  .page-conflict .sync-merge-collabels {
+    display: none;
+  }
+  .page-conflict .sync-merge-cols {
+    flex: 1 1 100%;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .page-conflict .sync-merge-cell {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .page-conflict .sync-merge-controls {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .page-conflict .sync-merge-controls .sync-merge-seg {
+    flex: 1 1 0;
+    text-align: center;
+    padding: 4px 4px;
+    white-space: nowrap;
+  }
+  .page-conflict .sync-merge-controls .sync-merge-suggested-tag,
+  .page-conflict .sync-merge-controls .sync-merge-unchanged-tag,
+  .page-conflict .sync-merge-controls .sync-merge-expand {
+    flex: none;
+    align-self: center;
+  }
+  .sync-merge-seg .sync-merge-seg-dot {
+    display: inline-block;
+  }
+  .sync-merge-seg-long {
+    display: none;
+  }
+  .sync-merge-seg-short {
+    display: inline;
+  }
+}
+.page-conflict-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+}
+.page-conflict-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.page-conflict-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.page-conflict-count {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+/* The two (or three) sides get distinct, stable colours: the same hue names the
+   column label, the cell, and the segment button for that side. */
+.page-conflict-legend {
+  display: flex;
+  gap: 14px;
+  padding: 6px 14px 0;
+  font-size: 11px;
+}
+.page-conflict-side {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+}
+.page-conflict-side::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+.page-conflict-side.mine::before {
+  background: #2e7d32;
+}
+.page-conflict-side.theirs::before {
+  background: #1565c0;
+}
+.page-conflict-side.base::before {
+  background: var(--text-muted);
+}
+.page-conflict .sync-merge-cell.mine {
+  border-left: 3px solid color-mix(in srgb, #2e7d32 55%, transparent);
+}
+.page-conflict .sync-merge-cell.theirs {
+  border-left: 3px solid color-mix(in srgb, #1565c0 55%, transparent);
+}
+/* The merged proposal is neither side, so it gets its own hue rather than
+   borrowing one of theirs. */
+.page-conflict .sync-merge-cell.merged {
+  border-left: 3px solid color-mix(in srgb, #6f42c1 55%, transparent);
+}
+.page-conflict .sync-merge-fulltext[data-side="mine"] .sync-merge-fulltext-body {
+  border-left: 3px solid color-mix(in srgb, #2e7d32 55%, transparent);
+}
+.page-conflict .sync-merge-fulltext[data-side="theirs"] .sync-merge-fulltext-body {
+  border-left: 3px solid color-mix(in srgb, #1565c0 55%, transparent);
+}
+.page-conflict .sync-merge-fulltext[data-side="merged"] .sync-merge-fulltext-body {
+  border-left: 3px solid color-mix(in srgb, #6f42c1 55%, transparent);
+}
+.page-conflict-rows {
+  padding: 2px 14px 8px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+/* Brief highlight as "n conflicts ↑↓" walks between regions. */
+.page-conflict-row-focus {
+  background: color-mix(in srgb, var(--link-color) 14%, transparent);
+  border-radius: 5px;
+}
+.page-conflict-empty {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.page-conflict-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+}
+.page-conflict-foot button {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.page-conflict .sync-merge-toolbar,
+.page-conflict .sync-merge-collabels {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+/* Conflict overview (GH #536): the route the `N conflicts` badge opens. */
+.conflict-overview {
+  width: min(100%, 880px);
+  margin: 0 auto;
+  padding: 26px clamp(16px, 3vw, 34px) 48px;
+  box-sizing: border-box;
+}
+.conflict-overview-hint,
+.conflict-overview-empty {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.conflict-overview-group h2 {
+  margin: 22px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.conflict-overview-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.6fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.conflict-overview-open {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link-color, var(--text-primary));
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.conflict-overview-open:hover {
+  text-decoration: underline;
+}
+.conflict-overview-orphan {
+  color: var(--text-secondary);
+  cursor: default;
+  text-decoration: none;
+}
+.conflict-overview-source {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conflict-overview-count {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+@media (max-width: 640px) {
+  .conflict-overview-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .conflict-overview-source {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+/* A marker-bearing file is refused for saving until resolved; say so plainly. */
+.page-conflict-refusal {
+  padding: 6px 14px 0;
+}
+
+/* A focus rescan slower than 500 ms says what it is doing; it holds no input.
+   It sits in the lower-right status area, immediately left of the fixed help
+   "?" button (help.css .help-corner: 34px wide, 16px off the right edge, 12px
+   on small screens), shares that button's bottom rule so it lifts with it above
+   the mobile keyboard toolbar, and is dimmed so it stays peripheral. */
+.focus-refresh-status {
+  position: fixed;
+  right: calc(var(--overlay-inset-right, 0px) + 16px + 34px + 8px);
+  bottom: calc(max(calc(var(--overlay-inset-bottom, 0px) + 16px), var(--mobile-kb-toolbar-lift, 16px)) + 3px);
+  z-index: 10020;
+  max-width: calc(100vw - var(--overlay-inset-right, 0px) - 16px - 34px - 8px - 12px);
+  padding: 0.3rem 0.62rem;
+  /* ~60% dimmed: border and text are 60% of their colour over an OPAQUE pill,
+     so page text underneath is covered rather than read through it (a plain
+     `opacity: 0.6` made the pill see-through). */
+  border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: color-mix(in srgb, var(--text-muted) 60%, transparent);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  /* Same geometry as the help "?" FAB's small-screen rule (12px gutter). */
+  .focus-refresh-status {
+    right: calc(var(--overlay-inset-right, 0px) + 12px + 34px + 8px);
+    bottom: calc(max(calc(var(--overlay-inset-bottom, 0px) + 12px), var(--mobile-kb-toolbar-lift, 12px)) + 3px);
+    max-width: calc(100vw - var(--overlay-inset-right, 0px) - 12px - 34px - 8px - 12px);
+  }
+}
+
+/* Concord P5: an external change held for review ("always ask"). A calm bar
+   above the page, never a modal. */
+.external-change-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--accent, #3b82f6);
+  border-radius: 6px;
+  background: var(--bg-secondary, transparent);
+  font-size: 13px;
+}
+.external-change-text {
+  color: var(--text-muted);
+  flex: 1 1 320px;
+}
+.external-change-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Dock (master 61ea6600c): once the panel is scrolled entirely out of view a
+   slim bar pins to the top of this pane's scroller; tapping it unrolls the SAME
+   panel node as a pinned sheet. position: fixed, not sticky — WebKitGTK has no
+   scroll anchoring, so an in-flow height swap would jump the content below. */
+.page-conflict-sentinel {
+  height: 0;
+}
+.page-conflict-dock {
+  position: fixed;
+  z-index: 250;
+  display: flex;
+  flex-direction: column;
+  max-height: 78vh;
+  padding: 0 8px;
+  box-sizing: border-box;
+  /* the bar and sheet re-enable their own hits; the gutters stay clickable */
+  pointer-events: none;
+}
+.page-conflict-dockbar {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-left: 3px solid #b45309;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.page-conflict-dockbar-icon,
+.page-conflict-dockbar-count {
+  flex: none;
+  color: #b45309;
+}
+.page-conflict-dockbar-count {
+  font-weight: 600;
+}
+.page-conflict-dockbar-title {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.page-conflict-dockbar-chevron {
+  flex: none;
+  margin-left: auto;
+  opacity: 0.7;
+}
+.page-conflict-sheet {
+  pointer-events: auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+.page-conflict-sheet .page-conflict {
+  margin: 0;
+}
+@media (max-width: 640px) {
+  .page-conflict-dock {
+    padding: 0 4px;
+  }
+  .page-conflict-dockbar {
+    font-size: 12px;
+    padding: 6px 8px;
+  }
+  .page-conflict-sheet {
+    padding: 6px;
+  }
+}

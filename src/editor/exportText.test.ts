@@ -111,48 +111,18 @@ describe("exportOutline", () => {
       ),
     ).toBe("first\nsecond");
   });
+});
 
-  // GH #352 — the modal's explicit Content choice must preserve OR clean the
-  // source syntax; these pin the pure-transformation half of both directions.
-  // (The companion ExportModal.test.tsx cases pin that the choice is offered
-  // with explicit Plain text / Markdown(/Org) labels.)
-  describe("GH #352 content choice: preserve Markdown/Org source vs clean it", () => {
-    const FORMATTED: ExportNode[] = [
-      {
-        raw: "**bold** _it_ ~~strike~~ ==high== `code` [[Some Page]] #tag\nnote:: 7",
-        children: [{ raw: "nested **child**", children: [] }],
-      },
-    ];
+it("D16 source export preserves syntax inside parser literals", () => {
+  for (const raw of ["`[[literal]] #tag **bold**` [[Page]] #real **bold**", "```\n[[literal]] #tag **bold**\n```\n[[Page]] #real **bold**"]) {
+    const text = exportOutline([{raw, children: []}], opt({indent:"no-indent", stripLinks:true, removeTags:true, removeEmphasis:true}));
+    expect(text).toContain("[[literal]] #tag **bold**");
+    expect(text).not.toContain("[[Page]]");
+    expect(text).not.toContain("#real");
+  }
+});
 
-    it("preserve keeps inline markers and properties verbatim inside the exported outline (Markdown)", () => {
-      expect(exportOutline(FORMATTED, opt({}))).toBe(
-        "- **bold** _it_ ~~strike~~ ==high== `code` [[Some Page]] #tag\n  note:: 7\n\t- nested **child**",
-      );
-    });
-
-    it("clean (rendered plain text) drops the markup markers, keeps the words", () => {
-      const flat = exportOutline(FORMATTED, opt({ content: "rendered", indent: "no-indent" }));
-      expect(flat).toContain("bold");
-      expect(flat).toContain("strike");
-      expect(flat).toContain("high");
-      expect(flat).toContain("nested child");
-      expect(flat).not.toContain("**");
-      expect(flat).not.toContain("~~");
-      expect(flat).not.toContain("==");
-    });
-
-    it("preserve keeps Org emphasis, drawers, and structure (Org)", () => {
-      const nodes: ExportNode[] = [
-        { raw: "*bold* /ital/ _under_ +strike+\n:PROPERTIES:\n:foo: bar\n:END:", format: "org", children: [] },
-      ];
-      expect(exportOutline(nodes, opt({}))).toBe(
-        "- *bold* /ital/ _under_ +strike+\n  :PROPERTIES:\n  :foo: bar\n  :END:",
-      );
-    });
-
-    it("preserve keeps every raw content line while applying the requested outline layout", () => {
-      const nodes: ExportNode[] = [{ raw: "a\nb\n\n c", children: [] }];
-      expect(exportOutline(nodes, opt({ indent: "no-indent" }))).toBe("a\nb\n\n c");
-    });
-  });
+it("source cleanup also visits metadata values as inline syntax, preserving their literals", () => {
+  expect(exportOutline([{raw:"body\ntags:: [[Page]] #real `[[literal]] #tag **code**`",children:[]}], opt({indent:"no-indent",stripLinks:true,removeTags:true,removeEmphasis:true})))
+    .toBe("body\ntags:: Page `[[literal]] #tag **code**`");
 });

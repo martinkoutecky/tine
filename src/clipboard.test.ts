@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { backend } from "./backend";
+import { cutBlocks } from "./cut";
 import {
   clearClipboardPayload,
   consumeClipboardCutGrant,
@@ -10,7 +11,6 @@ import {
   writeClipboardImage,
   writeClipboardRich,
   writeClipboardText,
-  writeClipboardTextResilient,
   writeClipboardTextStrict,
   type ClipboardPayloadData,
 } from "./clipboard";
@@ -21,7 +21,6 @@ const payload: ClipboardPayloadData = {
 };
 
 afterEach(() => {
-  vi.useRealTimers();
   clearClipboardPayload();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -46,6 +45,17 @@ describe("outlineToHtml (text/html clipboard flavor)", () => {
 });
 
 describe("private clipboard slot + facade", () => {
+  it("text-only Cut keeps source when another clipboard write takes ownership", async () => {
+    let finish!: () => void;
+    vi.spyOn(backend(), "writeRich").mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    vi.spyOn(backend(), "writeText").mockResolvedValue();
+    const remove = vi.fn();
+    const pending = cutBlocks([], "- copied", () => "- copied", remove);
+    await writeClipboardText("new owner");
+    finish();
+    await pending;
+    expect(remove).not.toHaveBeenCalled();
+  });
   it("clears old state before starting a block write, then publishes a fresh generation", async () => {
     const observations: Array<ReturnType<typeof peekClipboardPayload>> = [];
     vi.spyOn(backend(), "writeRich").mockImplementation(async () => { observations.push(peekClipboardPayload()); });
@@ -85,19 +95,6 @@ describe("private clipboard slot + facade", () => {
 
     await expect(writeClipboardTextStrict("report")).rejects.toBe(failure);
     expect(peekClipboardPayload()).toBeNull();
-  });
-
-  it("bounds a stuck native diagnostic copy and falls back to the browser clipboard", async () => {
-    vi.useFakeTimers();
-    vi.spyOn(backend(), "writeText").mockImplementation(() => new Promise(() => {}));
-    const browserWrite = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", { clipboard: { writeText: browserWrite } });
-
-    const copying = writeClipboardTextResilient("safe diagnostics", 50);
-    await vi.advanceTimersByTimeAsync(50);
-    await copying;
-
-    expect(browserWrite).toHaveBeenCalledWith("safe diagnostics");
   });
 
   it("consumes a generation-tagged cut grant up front and downgrades the slot", () => {

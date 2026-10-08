@@ -6,11 +6,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { openPageByName } from "./lib/e2e-navigation.mjs";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-
-await ensureDisplay();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -44,7 +39,7 @@ async function withApp(index, fn) {
   const driverPort = DRIVER_BASE + index * 2;
   const nativePort = NATIVE_BASE + index * 2;
   const log = fs.openSync(`${TMP}/tauri-driver-${index}.log`, "w");
-  const td = spawn(TD, webdriverServerArgs(driverPort, nativePort, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), {
+  const td = spawn(TD, ["--port", String(driverPort), "--native-port", String(nativePort), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
     env: baseEnv, stdio: ["ignore", log, log], detached: true,
   });
   await sleep(2500);
@@ -52,7 +47,7 @@ async function withApp(index, fn) {
   try {
     browser = await remote({
       hostname: "127.0.0.1", port: driverPort, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
-      capabilities: tauriCapabilities(APP, "right-sidebar-collapse"),
+      capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
     });
     await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
     await fn(browser);
@@ -76,14 +71,24 @@ async function itemSelector(name) {
 }
 
 async function openPagesInSidebar(browser) {
-  // "Page A" then "Page B" share a prefix, so an intermediate Quick Switcher
-  // result set already contains a row whose name matches the final one exactly.
-  // The previous local helper captured that row and clicked it after the
-  // resource resolved and `<For>` had replaced it, which is the flake this
-  // journey kept producing ("Page B did not open"). openPageByName finds and
-  // activates in one round trip and retries against the routed title, so no
-  // handle outlives the re-render. See scripts/lib/e2e-navigation.mjs.
-  const navigate = (name) => openPageByName(browser, name);
+  const navigate = async (name) => {
+    await browser.keys(["Control", "k"]);
+    const input = await browser.$(".switcher-input");
+    await input.waitForExist({ timeout: 5000 });
+    await input.setValue(name);
+    // Ctrl-K initially contains recent rows and updates results asynchronously.
+    // Clicking the first row immediately after setValue can therefore select the
+    // preceding page while the requested query is still in flight. Wait for and
+    // physically click the exact non-block page row the user intended.
+    const row = await browser.$(
+      `//*[contains(concat(' ', normalize-space(@class), ' '), ' switcher-row ') and not(contains(concat(' ', normalize-space(@class), ' '), ' block-result '))][.//*[contains(concat(' ', normalize-space(@class), ' '), ' switcher-name ') and normalize-space(.)='${name}']]`,
+    );
+    await row.waitForExist({ timeout: 10_000 });
+    await row.click();
+    await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === name, {
+      timeout: 10_000, timeoutMsg: `${name} did not open`,
+    });
+  };
   const shiftOpenCurrentTitle = async (name) => {
     const opened = await browser.execute((expected) => {
       const title = document.querySelector("h1.page-title");

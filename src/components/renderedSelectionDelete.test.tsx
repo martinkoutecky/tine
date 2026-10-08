@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { doc, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { resetStore } from "../document";
+import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import { editingId } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { deleteRenderedTextSelection } from "../editor/renderedSelectionDelete";

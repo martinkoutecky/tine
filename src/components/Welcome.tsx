@@ -1,23 +1,18 @@
-import { createEffect, createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
-import { switchGraph, createNewGraph } from "../graph";
+import { createEffect, createSignal, onCleanup, Show, type JSX } from "solid-js";
+import { switchGraph, createNewGraph, loadGraphPath } from "../graph";
+import { graphMeta, startupOpenFailure, setStartupOpenFailure } from "../graphSession";
+import { writeClipboardText } from "../clipboard";
+import { pushToast } from "../toasts";
 import { isTauri } from "../backend";
 import { WindowControls } from "./WindowChrome";
 import { osDrawsWindowControls } from "../nativeChrome";
 import { registerTransientLayer } from "../transientLayers";
-import { platformKind } from "../platform";
 
 /** First-run onboarding. Shown (as a full-cover layer) when the app starts with
  *  no graph configured: choose to open an existing Logseq graph, or create a new
  *  one that comes pre-loaded with a short guided demo. */
 export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
   const [busy, setBusy] = createSignal<null | "open" | "create">(null);
-  const [ios, setIos] = createSignal(false);
-
-  onMount(() => {
-    void platformKind()
-      .then((platform) => setIos(platform === "ios"))
-      .catch(() => setIos(false));
-  });
 
   const run = (which: "open" | "create", fn: () => Promise<unknown>) => async () => {
     if (busy()) return;
@@ -30,6 +25,27 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
       // picker was cancelled, re-enable the buttons.
       setBusy(null);
     }
+  };
+
+  // A graph chosen at launch that would not open: say which one and why, and
+  // offer the way out (retry it, pick another, copy the details) instead of a
+  // silent first-run screen that looks as if the graph were never configured.
+  const failure = () => (graphMeta() ? null : startupOpenFailure());
+  const retry = run("open", async () => {
+    const failed = startupOpenFailure();
+    if (!failed) return;
+    try {
+      await loadGraphPath(failed.path);
+      setStartupOpenFailure(null);
+    } catch (e) {
+      setStartupOpenFailure({ path: failed.path, message: String(e) });
+    }
+  });
+  const copyDetails = () => {
+    const failed = failure();
+    if (!failed) return;
+    void writeClipboardText(`Could not open ${failed.path}\n${failed.message}`)
+      .catch((e) => pushToast(`Could not copy: ${String(e)}`, "error"));
   };
 
   return (
@@ -61,13 +77,22 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
           same Markdown files — so you can keep using Logseq too, on the same notes.
         </p>
 
+        <Show when={failure()}>
+          {(failed) => (
+            <div class="welcome-recovery" role="alert">
+              <p class="welcome-recovery-title">Tine could not open your last graph</p>
+              <p class="welcome-recovery-path">{failed().path}</p>
+              <p class="welcome-recovery-reason">{failed().message}</p>
+              <div class="welcome-recovery-actions">
+                <button disabled={!!busy()} onClick={retry}>Try again</button>
+                <button onClick={copyDetails}>Copy details</button>
+              </div>
+              <p class="welcome-recovery-note">Nothing was changed on disk. You can also open another graph below.</p>
+            </div>
+          )}
+        </Show>
+
         <div class="welcome-actions">
-          <Show when={ios()}>
-            <p class="welcome-busy">
-              On iPhone and iPad, graphs can live in On My iPhone or iCloud Drive → TineOutline.
-              Other Files providers aren't supported yet.
-            </p>
-          </Show>
           <button
             class="welcome-choice"
             disabled={!!busy()}

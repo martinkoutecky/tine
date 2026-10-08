@@ -6,6 +6,8 @@
 
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { pushToast } from "./toasts";
 
 const KEY = "allow_local_file_images";
 
@@ -14,16 +16,20 @@ const [allow, setAllowSig] = createSignal(false);
 /** Reactive: raw-HTML `<img>` may load images from arbitrary local paths. */
 export const allowLocalFileImages = allow;
 
+/** Permit raw HTML img elements to load absolute local paths; enable only for
+ * trusted graphs. Apply now and queue a device-local write. Failure rolls back
+ * and toasts; return does not confirm persistence. O(1) plus backend write. */
 export function setAllowLocalFileImages(on: boolean): void {
-  setAllowSig(on);
-  void backend().setAppBool(KEY, on).catch(() => {});
+  writePreference(allow, setAllowSig, on, (next) => backend().setAppBool(KEY, next), "local image access preference");
 }
 
-/** Load the persisted preference at startup. Default OFF. */
+/** Load the device preference at startup (default OFF); read failure toasts and resolves. */
 export async function initLocalFileSettings(): Promise<void> {
+  const revision = preferenceRevision(allow);
   try {
-    setAllowSig(await backend().getAppBool(KEY, false));
+    const value = await backend().getAppBool(KEY, false);
+    if (preferenceReadCurrent(allow, revision)) { setAllowSig(value); seedPreference(allow); }
   } catch {
-    /* default off */
+    pushToast("Could not load local image access preference.", "error");
   }
 }

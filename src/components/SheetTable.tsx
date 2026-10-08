@@ -1,28 +1,15 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup, onMount, useContext, type JSX } from "solid-js";
-import {
-  blockPageReadOnly,
-  blockProperty,
-  blockWritable,
-  applyPageMutationPlan,
-  createPageMutationPlan,
-  doc,
-  formatForBlock,
-  formatForPage,
-  insertEmptyChildBlock,
-  pageByName,
-  pageWritable,
-  readPageProperty,
-  setBlockProperty,
-  setPageProperty,
-  withUndoUnit,
-  type PageMutationAuthority,
-} from "../store";
+import { sheetSourceRows } from "../sheet/sheetRows";
+import { sheetClickOffset, sheetCellMenu, displayLimitThrough } from "../sheet/interactions";
+import { cellIsSelected } from "../sheet/selection";
+import { formulaReferenceName } from "../sheet/boardColumns";
+import { clearOnBindingInvalidated } from "../binding";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
+import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
-import { pageProperties } from "../render/block";
 import { InlineText } from "../render/inline";
 import { observeNear, unobserveNear } from "../lazyObserve";
-import { editorOffsetFromRenderedRange } from "../render/spans";
 import { isBuiltinHidden } from "../editor/properties";
+import { isLegacyBareColumnList } from "../editor/queryViewProperties";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { editingId, editingOwner } from "../editorController";
 import { SheetCellContext, type SheetCellCtx } from "../sheet/context";
@@ -32,162 +19,79 @@ import {
   cellSel,
   cellSurfaceKey,
   handleCellSelectionKey,
-  aggregateFooterPinned,
   clearSelectedSheetInstance,
   registerSheetViewAdapter,
   rebaseSelectedCell,
   rebaseSelectedRange,
   setCellSel,
-  setAggregateFooterPinned,
   startCellEditing,
-  toggleAggregateFooterPinned,
   type CellSel,
 } from "../sheet/selection";
 import { beginCellPointerSelection, isSheetPointerInteractive, sheetGridIdFromEventTarget } from "../sheet/pointerSelection";
 import {
   cycleField,
-  fieldIdsForRecords,
   fieldIdsForBlocks,
-  fieldLabel,
-  formulaReferenceName,
-  isFormulaField,
-  queryColumnFieldId,
-  queryAggregateFieldName,
-  queryColumnName,
-  querySortFieldName,
-  readField,
-  recordFacets,
-  rowRaw,
-  rowTitle,
   toggleStateMarkerLabel,
-  writeField,
+  fieldLabel,
+  isFormulaField,
+  readField,
+  writeFieldVisibly,
   type FieldId,
   type FieldValue,
 } from "../sheet/fields";
-import {
-  parseFields,
-  parseTableColumnWidths,
-  serializeFields,
-  serializeTableColumnWidths,
-  sheetConfig,
-  TABLE_COLUMN_MAX_WIDTH,
-  type FieldSpec,
-  type FieldType,
-} from "../sheet/config";
+import { parseFields, serializeFields, sheetConfig, type FieldSpec, type FieldType } from "../sheet/config";
 import { planSheetFieldRename } from "../sheet/renameField";
-import {
-  isLegacyBareColumnList,
-  selectedQueryColumns,
-  serializeQuerySort,
-  type QueryDisplayControl,
-} from "../editor/queryViewProperties";
-import { querySummary, type QueryAggFn } from "../editor/queryAggregate";
-import type { ViewSettings } from "../editor/queryIr";
 import { formulaFieldId, formulaNameFromField, formulasOf, mergeFormulas } from "../sheet/formulaFields";
 import {
   createFormulaFilterMemo,
   createFormulaResultsMemo,
   formulaResultKey,
   formulaRowKey,
-  formulaValueText,
   formulaValueToFieldValue,
   readFormulaRowField,
   liveFormulaRowNode,
   type FormulaEvalRow,
 } from "../sheet/formulaEval";
 import type { FormulaValue } from "../sheet/formula";
-import { isPlainDecimalNumber, parseIsoDateLike } from "../sheet/typed";
-import { markerLabelClickable } from "../editor/repeat";
-import {
-  openActionContextMenu,
-  openDatePicker,
-  openFormulaEditor,
-  openSheetCellContextMenu,
-  openSheetContextMenu,
-  pushToast,
-  type ContextMenuAction,
-} from "../ui";
+import { isPlainDecimalNumber } from "../sheet/typed";
+import { openActionContextMenu, openDatePicker, openFormulaEditor, openSheetContextMenu, type ContextMenuAction } from "../ui";
+import { pushToast } from "../toasts";
 import { blockBackgroundColor } from "../blockColors";
 import type { RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
-import { SheetAggregateCornerToggle, SheetAggregateFooterCell } from "./SheetAggregateFooter";
+import { SheetAggregateFooterCell, useSheetFooterCorner } from "./SheetAggregateFooter";
 import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
 import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydration";
+import { compareSortKeys, measuredGridTracks, queryColumnFieldId, queryColumnName, querySortFieldName, reorderedQueryColumns,
+  SCHEMA_PROP_TYPES, type SchemaMenuType, type SortKey, type SortState } from "../sheet/tablePresentation";
+import { queryTableFooter, type QueryDisplayControl } from "../sheet/queryTableFooter";
+import { FieldValueView } from "./SheetFieldValue";
+import { displayFieldValue, isEnumFieldType } from "../sheet/cellPresentation";
+import { fieldIdsForRecords, recordFacets, rowRaw, tableFieldOrder, tableRowTitle } from "../sheet/tableFields";
+import { createTableColumnResize } from "../sheet/tableColumnResize";
 
 interface RowRecord extends FormulaEvalRow {}
 
-export const __sheetTableTestHooks: {
-  onIndexRow?: (rowId: string) => void;
-  /** Fires once per EFFECTIVE sort-key derivation, whichever branch (title /
-   *  formula / ordinary property) produced it. One seam, so a test counting it
-   *  cannot be satisfied by moving an equivalent derivation elsewhere. */
-  onSortKey?: (rowId: string) => void;
-} = {};
+export const __sheetTableTestHooks: { onIndexRow?: (rowId: string) => void } = {};
 
-type SortState = { col: number; dir: 1 | -1 } | null;
-type SortKey = { kind: "number"; value: number; text: string } | { kind: "text"; text: string };
 type SchemaHome = { kind: "block"; id: string; value: string } | { kind: "page"; name: string; value: string };
 type FormulaHome = { kind: "block"; id: string } | { kind: "page"; name: string };
-type SchemaMenuType = "text" | "number" | "date" | "datetime" | "checkbox" | "list" | "ref";
 type FieldHeaderDrop = { field: FieldId; before: boolean };
-type TableColumn = "title" | FieldId;
-type TableWidthHome =
-  | { kind: "block"; id: string; page: string; widths: ReadonlyMap<string, number> }
-  | { kind: "page"; name: string; widths: ReadonlyMap<string, number> };
 
 const BUILTIN_FIELDS = new Set<FieldId>(["state", "priority", "scheduled", "deadline", "tags", "page"]);
 const FIELD_HEADER_DRAG_THRESHOLD_PX = 4;
-const TABLE_TITLE_RENDERED_MIN_WIDTH = 180;
-const TABLE_FIELD_RENDERED_MIN_WIDTH = 90;
-const SCHEMA_PROP_TYPES: SchemaMenuType[] = [
-  "text",
-  "number",
-  "date",
-  "datetime",
-  "checkbox",
-  "list",
-  "ref",
-];
-
-function tableColumnRenderedMinWidth(column: TableColumn): number {
-  return column === "title" ? TABLE_TITLE_RENDERED_MIN_WIDTH : TABLE_FIELD_RENDERED_MIN_WIDTH;
-}
-
-function clampTableColumnRenderedWidth(column: TableColumn, width: number): number {
-  return Math.min(
-    TABLE_COLUMN_MAX_WIDTH,
-    Math.max(tableColumnRenderedMinWidth(column), Math.round(width)),
-  );
-}
-
-function measuredGridTracks(grid: HTMLElement, count: number): string | null {
-  const cells = [...grid.children].filter((child): child is HTMLElement =>
-    child instanceof HTMLElement && child.classList.contains("sheet-cell")
-  );
-  const tracks: string[] = [];
-  for (const cell of cells.slice(0, count)) {
-    const width = cell.getBoundingClientRect().width;
-    if (width <= 0) return null;
-    tracks.push(`${Math.round(width)}px`);
-  }
-  return tracks.length === count ? tracks.join(" ") : null;
-}
-
-function compareSortKeys(a: SortKey, b: SortKey): number {
-  if (a.kind === "number" && b.kind === "number") return a.value - b.value;
-  return a.text.localeCompare(b.text);
-}
-
+/** Render children or query rows as a table. A query display controller owns
+ * saved columns, sorts and aggregates; without it headers keep their local arrangement.
+ * Resizing reads one owner's widths and writes one property through document
+ * on commit; row and field work scales with the supplied table, never a graph. */
 export function SheetTable(props: {
   ownerId: string;
   rowSource: "children" | "query";
-  /** Present only on a QUERY table: the resolved view, and the ONE writer its
-   *  header sorts, column order and aggregate footer route through. */
-  queryDisplay?: QueryDisplayControl;
   groups?: readonly RefGroup[];
   addRow?: () => void | Promise<void>;
   addRowLabel?: string;
   schemaPage?: string;
+  queryDisplay?: QueryDisplayControl;
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
   let tableRef: HTMLDivElement | undefined;
@@ -196,70 +100,33 @@ export function SheetTable(props: {
   const [addingColumn, setAddingColumn] = createSignal(false);
   const [renamingField, setRenamingField] = createSignal<{ field: FieldId; value: string } | null>(null);
   const [editingProp, setEditingProp] = createSignal<{ rowId: string; field: FieldId; initial: string } | null>(null);
+  onCleanup(pinPageWhileDrafting(() => { const edit = editingProp(); return edit && docNode(edit.rowId)?.page; })); // K17a: eviction keeps the draft
   const [hovering, setHovering] = createSignal(false);
   const [stableColumns, setStableColumns] = createSignal<string | null>(null);
-  const [previewTableColumnWidths, setPreviewTableColumnWidths] = createSignal<ReadonlyMap<string, number> | null>(null);
-  const [resizingColumn, setResizingColumn] = createSignal<TableColumn | null>(null);
   const [draggingFieldHeader, setDraggingFieldHeader] = createSignal<FieldId | null>(null);
   const [fieldHeaderDrop, setFieldHeaderDrop] = createSignal<FieldHeaderDrop | null>(null);
   let sortBeforePotentialHeaderDoubleClick: SortState | undefined;
   let cancelFieldHeaderDrag: (() => void) | undefined;
-  let cancelColumnResize: (() => void) | undefined;
   let suppressFieldHeaderClick = false;
-  let mounted = true;
   const sheetOverlay = useContext(SheetContainerOverlayContext);
   const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
   const config = createMemo(() => {
-    const owner = doc.byId[props.ownerId];
+    const owner = docNode(props.ownerId);
     return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
   });
-  const tableWidthHome = createMemo<TableWidthHome | null>(() => {
-    const owner = doc.byId[props.ownerId];
-    if (owner) return { kind: "block", id: props.ownerId, page: owner.page, widths: config().tableColumnWidths };
-    if (!props.schemaPage) return null;
-    return {
-      kind: "page",
-      name: props.schemaPage,
-      widths: parseTableColumnWidths(readPageProperty(props.schemaPage, "tine.table-widths") ?? ""),
-    };
-  });
-  const tableWidthWriteAllowed = () => {
-    const home = tableWidthHome();
-    return home?.kind === "block" ? blockWritable(home.id) : home?.kind === "page" ? pageWritable(home.name) : false;
-  };
-  const effectiveTableColumnWidths = () => previewTableColumnWidths() ?? tableWidthHome()?.widths ?? new Map<string, number>();
-  const writeTableColumnWidths = (widths: ReadonlyMap<string, number>) => {
-    const home = tableWidthHome();
-    if (!home || !tableWidthWriteAllowed()) return;
-    const value = serializeTableColumnWidths(widths) || null;
-    const page = home.kind === "block" ? home.page : home.name;
-    withUndoUnit("sheet:table-column-width", [page], () => {
-      if (home.kind === "block") setBlockProperty(home.id, "tine.table-widths", value);
-      else setPageProperty(home.name, "tine.table-widths", value);
-    });
-  };
-  /** **A pre-split bare column list is not a declared schema** (P5A).
-   *
-   *  `tine.fields::` used to carry two unrelated things: a typed sheet schema
-   *  (`name=type`) and, on query blocks, the list of columns to show. A value
-   *  with no `=` anywhere is the second one, and reading it as a schema made
-   *  `schemaHome` non-null over an EMPTY parse — which marked every column a
-   *  stray, disabled header reordering, and let the next schema write silently
-   *  replace the column list. Such a value is now treated exactly as if the
-   *  property were absent, which also preserves page-vs-block schema ownership:
-   *  the page's declared schema governs when the block carries no schema. */
+  // A pre-split bare column list on a QUERY block is the column selection, not a
+  // declared schema: reading it as one marked every column stray and let the next
+  // schema write replace the list (master P5A). It reads as an absent schema.
+  const isSchemaValue = (value: string | null): value is string =>
+    value !== null && (props.rowSource !== "query" || !isLegacyBareColumnList(value));
   const schemaHome = createMemo<SchemaHome | null>(() => {
-    if (doc.byId[props.ownerId]) {
+    if (docNode(props.ownerId)) {
       const value = blockProperty(props.ownerId, "tine.fields");
-      if (value !== null && (props.rowSource !== "query" || !isLegacyBareColumnList(value))) {
-        return { kind: "block", id: props.ownerId, value };
-      }
+      if (isSchemaValue(value)) return { kind: "block", id: props.ownerId, value };
     }
     if (props.schemaPage) {
       const value = readPageProperty(props.schemaPage, "tine.fields");
-      if (value !== null && (props.rowSource !== "query" || !isLegacyBareColumnList(value))) {
-        return { kind: "page", name: props.schemaPage, value };
-      }
+      if (isSchemaValue(value)) return { kind: "page", name: props.schemaPage, value };
     }
     return null;
   });
@@ -275,11 +142,10 @@ export function SheetTable(props: {
   });
   const pageFormulas = createMemo<ReadonlyMap<string, string>>(() => {
     if (!props.schemaPage) return new Map();
-    const page = pageByName(props.schemaPage);
-    return page ? formulasOf(pageProperties(page.preBlock, page.format)) : new Map();
+    return formulasOf(readPageProperties(props.schemaPage));
   });
   const blockFormulas = createMemo<ReadonlyMap<string, string>>(() => {
-    const owner = doc.byId[props.ownerId];
+    const owner = docNode(props.ownerId);
     return owner ? formulasOf(facetsOf(owner.raw, formatForBlock(props.ownerId)).properties) : new Map();
   });
   const formulas = createMemo(() => mergeFormulas(pageFormulas(), blockFormulas()));
@@ -292,17 +158,8 @@ export function SheetTable(props: {
     return out;
   });
   const formulaFields = createMemo<FieldId[]>(() => [...formulas().keys()].map(formulaFieldId));
-  const formulaFieldSet = createMemo(() => new Set<FieldId>(formulaFields()));
 
-  const allRows = createMemo<RowRecord[]>(() => {
-    if (props.rowSource === "children") {
-      return (doc.byId[props.ownerId]?.children ?? []).map((id) => ({
-        id,
-        page: doc.byId[id]?.page ?? doc.byId[props.ownerId]?.page ?? "",
-      }));
-    }
-    return (props.groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, kind: g.kind, dto: b })));
-  });
+  const allRows = createMemo<RowRecord[]>(() => sheetSourceRows(props.rowSource, props.ownerId, props.groups));
   const filterState = createFormulaFilterMemo({
     rows: allRows,
     formulas,
@@ -325,63 +182,19 @@ export function SheetTable(props: {
     return isFormulaField(field) ? formulaValueToFieldValue(formulaValue(row, field)) : readFormulaRowField(row, field);
   };
 
-  /** Every field this table KNOWS: declared schema first, then formulas, then
-   *  whatever the rows carry. Independent of which columns are shown — a field
-   *  definition is not lost because its column is hidden. */
-  const allFields = createMemo<FieldId[]>(() => {
+  const fields = createMemo<FieldId[]>(() => {
+    const selected = props.rowSource === "query" ? props.queryDisplay?.view.columns : undefined;
+    if (selected?.length) return selected.map(queryColumnFieldId);
     const loadedIds = rows().filter((r) => liveFormulaRowNode(r)).map((r) => r.id);
     const observed = loadedIds.length === rows().length
       ? fieldIdsForBlocks(loadedIds, { includePage: props.rowSource === "query" })
       : fieldIdsForRecords(rows(), props.rowSource === "query");
-    const seen = new Set(observed);
-    const extra = extraFields().filter((f) => !seen.has(f));
-    const inferred = [...observed, ...extra];
-    const schema = schemaFields();
-    const declared = schema.map((s) => s.field);
-    const declaredSet = new Set(declared);
-    const formulas = formulaFields();
-    const formulasSet = formulaFieldSet();
-    return [
-      ...declared,
-      ...formulas,
-      ...inferred.filter((f) => !declaredSet.has(f) && !formulasSet.has(f)),
-    ];
-  });
-  /** **The columns this table SHOWS** (P5A).
-   *
-   *  A query block's `tine.columns::` selects, in order, which of the known
-   *  fields are visible; the selection is applied AFTER the schema/type lookup
-   *  above, so a shown column keeps the type its `tine.fields::` declaration
-   *  gave it and a hidden one keeps its definition. A selected column no row
-   *  carries is still a column: it renders empty cells rather than shifting its
-   *  neighbours. No selection (absent, or an explicit empty/invalid one) leaves
-   *  the default column set exactly as it was. The title column and the action
-   *  column are outside the selection and stay reachable.
-   *
-   *  Children-backed sheets are not a query face and ignore the property. */
-  const fields = createMemo<FieldId[]>(() => {
-    const known = allFields();
-    if (props.rowSource !== "query") return known;
-    const owner = doc.byId[props.ownerId];
-    if (!owner) return known;
-    const selection = selectedQueryColumns(
-      facetsOf(owner.raw, formatForBlock(props.ownerId)).properties,
-    );
-    if (!selection) return known;
-    const seen = new Set<FieldId>();
-    const out: FieldId[] = [];
-    for (const name of selection) {
-      const field = queryColumnFieldId(name);
-      if (seen.has(field)) continue;
-      seen.add(field);
-      out.push(field);
-    }
-    return out;
+    return tableFieldOrder(observed, extraFields(), schemaFields().map((s) => s.field), formulaFields());
   });
   const formulaHintFields = createMemo(() => {
     const out: string[] = [];
     const seen = new Set<string>();
-    for (const field of allFields()) {
+    for (const field of fields()) {
       const name = formulaReferenceName(field);
       if (!name || seen.has(name)) continue;
       seen.add(name);
@@ -391,7 +204,8 @@ export function SheetTable(props: {
   });
   const formulaEntries = () => [...formulas().entries()];
 
-  const columns = createMemo<TableColumn[]>(() => ["title", ...fields()]);
+  const columns = createMemo(() => ["title" as const, ...fields()]);
+  const tableWidths = createTableColumnResize(props.ownerId, props.schemaPage);
   const columnIndex = createMemo(() => new Map(columns().map((column, index) => [column, index] as const)));
   const hasActionColumn = () => props.rowSource === "children" || !!props.addRow;
   const actionColumn = () => hasActionColumn() ? "96px" : "";
@@ -399,193 +213,38 @@ export function SheetTable(props: {
   // white-space) instead of stretching its column to the full unwrapped line —
   // an uncapped `max-content` track made one long value blow the table out
   // horizontally. Users can still resize wider (stableColumns overrides this).
-  const baseGridColumns = createMemo(() => {
-    const widths = effectiveTableColumnWidths();
-    const tracks = columns().map((column, index) => {
-      const width = widths.get(column);
-      if (width !== undefined) return `${clampTableColumnRenderedWidth(column, width)}px`;
-      // NB: fit-content() is NOT valid inside minmax() — that voids the whole
-      // grid-template-columns and collapses the table to one column.
-      return index === 0 ? "fit-content(420px)" : "fit-content(320px)";
-    });
-    if (hasActionColumn()) tracks.push(actionColumn());
-    return tracks.join(" ");
-  });
+  const baseGridColumns = createMemo(() => [...columns().map((column, index) =>
+    tableWidths.widths().has(column) ? `${tableWidths.widths().get(column)}px`
+      : index === 0 ? "fit-content(420px)" : "fit-content(320px)"), actionColumn()].join(" "));
   const editingInThisTable = () => editingOwner()?.startsWith(`sheet:${surfaceId}:${props.ownerId}:`) ?? false;
   const gridColumns = createMemo(() => {
-    if (resizingColumn()) return baseGridColumns();
     const stable = stableColumns();
-    if (!stable) return baseGridColumns();
-    // Editing stabilization freezes measured auto tracks, but an explicit
-    // identity-keyed width remains authoritative (including a commit from a
-    // duplicate split/sidebar surface). Overlay those widths on the measured
-    // tracks instead of letting a stale positional snapshot hide the update.
+    if (!stable || tableWidths.resizing()) return baseGridColumns();
     const tracks = stable.trim().split(/\s+/);
-    const widths = effectiveTableColumnWidths();
     columns().forEach((column, index) => {
-      const width = widths.get(column);
-      if (width !== undefined && index < tracks.length) {
-        tracks[index] = `${clampTableColumnRenderedWidth(column, width)}px`;
-      }
+      const width = tableWidths.widths().get(column);
+      if (width !== undefined) tracks[index] = `${width}px`;
     });
     return tracks.join(" ");
   });
-  const queryAggregateFn = (field: FieldId): QueryAggFn | null => {
-    const key = queryAggregateFieldName(field);
-    if (key === null) return null;
-    return (props.queryDisplay?.statisticsView?.aggregates ?? props.queryDisplay?.view.aggregates ?? []).find(([k]) => k === key)?.[1] ?? null;
-  };
-  const setQueryAggregate = (field: FieldId, fn: QueryAggFn | null) => {
-    const control = props.queryDisplay;
-    const key = queryAggregateFieldName(field);
-    if (!control || key === null) return;
-    // Edited IN PLACE. The list is ordered and repeats are meaningful, so a
-    // change to one column's function must not reshuffle the others.
-    const entries = [...(control.view.aggregates ?? [])];
-    const at = entries.findIndex(([k]) => k === key);
-    if (fn === null) {
-      if (at < 0) return;
-      entries.splice(at, 1);
-    } else if (at >= 0) entries[at] = [key, fn];
-    else entries.push([key, fn]);
-    control.apply({ ...control.view, aggregates: entries });
-  };
-  /** The value, through the ONE query summary — never the sheet's `aggregate`,
-   *  whose vocabulary has no `avg` and whose numbers are its own. */
-  const queryAggregateText = (field: FieldId, fn: QueryAggFn): string => {
-    const key = queryAggregateFieldName(field);
-    if (key === null) return "";
-    const statistics = props.queryDisplay?.statistics;
-    const at = statistics?.aggregates.findIndex(([field, op]) => field === key && op === fn) ?? -1;
-    return querySummary({ statistics })?.overall[at]?.text ?? "";
-  };
+  const queryFooter = (field: FieldId) => queryTableFooter(props.queryDisplay, field);
   const hasAggregates = createMemo(() =>
     props.queryDisplay
-      ? fields().some((field) => queryAggregateFn(field) !== null)
+      ? fields().some((field) => queryFooter(field)?.fn != null)
       : config().colAggregates.size > 0,
   );
-  const footerPinned = createMemo(() => aggregateFooterPinned(props.ownerId));
-  const showFooter = createMemo(() => hasAggregates() || footerPinned());
-  const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned()));
-
-  const toggleFooter = (e: MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    toggleAggregateFooterPinned(props.ownerId);
-  };
-
-  const footerToggle = () => (
-    <SheetAggregateCornerToggle
-      active={footerPinned()}
-      onClick={toggleFooter}
-    />
-  );
-
-  createEffect(() => {
-    if (hasAggregates() && footerPinned()) setAggregateFooterPinned(props.ownerId, false);
+  const { footerPinned, showFooter, showFooterToggle, footerToggle } = useSheetFooterCorner({
+    ownerId: () => props.ownerId,
+    hasAggregates,
+    overlay: sheetOverlay,
+    hovering: sheetHovering,
   });
-
-  createEffect(() => {
-    if (!sheetOverlay) return;
-    sheetOverlay.setCorner(showFooterToggle() ? footerToggle() : null);
-  });
-
-  onCleanup(() => sheetOverlay?.setCorner(null));
 
   const captureStableColumns = () => {
     if (!tableRef) return;
     const tracks = measuredGridTracks(tableRef, columns().length + (hasActionColumn() ? 1 : 0));
     if (tracks) setStableColumns(tracks);
   };
-
-  const beginColumnResize = (column: TableColumn, event: PointerEvent) => {
-    if (event.button !== 0 || !tableWidthWriteAllowed()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    cancelColumnResize?.();
-    cancelFieldHeaderDrag?.();
-    const header = (event.currentTarget as HTMLElement).parentElement;
-    const measured = header?.getBoundingClientRect().width ?? 0;
-    const startWidth = measured > 0
-      ? measured
-      : effectiveTableColumnWidths().get(column) ?? tableColumnRenderedMinWidth(column);
-    const startX = event.clientX;
-    const pointerId = event.pointerId;
-    let moved = false;
-    let active = true;
-    setStableColumns(null);
-    setResizingColumn(column);
-
-    const cleanup = () => {
-      if (!active) return;
-      active = false;
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel);
-      window.removeEventListener("keydown", onKeyDown);
-      if (cancelColumnResize === cancel) cancelColumnResize = undefined;
-    };
-    const finish = (commit: boolean) => {
-      const preview = previewTableColumnWidths();
-      cleanup();
-      setResizingColumn(null);
-      setPreviewTableColumnWidths(null);
-      if (commit && moved && preview) writeTableColumnWidths(preview);
-    };
-    const ownsPointer = (pointer: PointerEvent) => pointer.pointerId === pointerId;
-    const onMove = (move: PointerEvent) => {
-      if (!ownsPointer(move)) return;
-      move.preventDefault();
-      moved = true;
-      const next = new Map(tableWidthHome()?.widths ?? []);
-      next.set(column, clampTableColumnRenderedWidth(column, startWidth + move.clientX - startX));
-      setPreviewTableColumnWidths(next);
-    };
-    const onUp = (up: PointerEvent) => {
-      if (ownsPointer(up)) finish(true);
-    };
-    const onCancel = (cancelEvent: PointerEvent) => {
-      if (ownsPointer(cancelEvent)) finish(false);
-    };
-    const onKeyDown = (key: KeyboardEvent) => {
-      if (key.key !== "Escape") return;
-      key.preventDefault();
-      finish(false);
-    };
-    const cancel = () => finish(false);
-
-    cancelColumnResize = cancel;
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onCancel);
-    window.addEventListener("keydown", onKeyDown);
-  };
-  const resetColumnWidth = (column: TableColumn, event: MouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!tableWidthWriteAllowed()) return;
-    const next = new Map(tableWidthHome()?.widths ?? []);
-    if (!next.delete(column)) return;
-    writeTableColumnWidths(next);
-  };
-  const columnResizeHandle = (column: TableColumn) => (
-    <Show when={tableWidthWriteAllowed()}>
-      <button
-        type="button"
-        class="sheet-table-column-resize-handle"
-        classList={{ "sheet-table-column-resize-handle-active": resizingColumn() === column }}
-        data-sheet-resize-handle={column}
-        aria-label={`Resize ${column === "title" ? "Block" : fieldLabel(column)} column`}
-        title="Drag to resize; double-click to reset"
-        onPointerDown={(event) => beginColumnResize(column, event)}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-        }}
-        onDblClick={(event) => resetColumnWidth(column, event)}
-      />
-    </Show>
-  );
 
   let wasEditing = false;
   createEffect(() => {
@@ -598,7 +257,7 @@ export function SheetTable(props: {
       return;
     }
     wasEditing = editing;
-    if (!tableRef || editing || resizingColumn()) return;
+    if (!tableRef || editing) return;
     if (sel && sel.gridId === props.ownerId && sel.kind !== "row-seam" && sel.kind !== "col-seam") captureStableColumns();
     else setStableColumns(null);
   });
@@ -608,29 +267,18 @@ export function SheetTable(props: {
     const rs = rows();
     if (!s) return rs;
     const col = columns()[s.col];
-    const types = fieldTypes();
-    // The ONE seam that derives a row's effective sort key, whichever branch
-    // answers. Deriving it inside the comparator cost ~2·(R log R) derivations
-    // per sort — each one a `visibleBody(rowRaw(row))` parse, a formula-result
-    // lookup, or a property read. Harvest W4-P1 item 1.
     const value = (r: RowRecord): SortKey => {
-      __sheetTableTestHooks.onSortKey?.(r.id);
-      if (col === "title") return { kind: "text", text: rowTitle(r, "joined-with-placeholder") };
+      if (col === "title") return { kind: "text", text: tableRowTitle(r) };
       const formula = formulaValue(r, col);
       if (formula?.kind === "number") return { kind: "number", value: formula.value, text: String(formula.value) };
       const field = rowFieldValue(r, col);
       const text = field?.raw ?? field?.text ?? "";
-      if (types.get(col) === "number" && isPlainDecimalNumber(text.trim())) {
+      if (fieldTypes().get(col) === "number" && isPlainDecimalNumber(text.trim())) {
         return { kind: "number", value: Number(text.trim()), text };
       }
       return { kind: "text", text };
     };
-    // Decorate–sort–undecorate: exactly R derivations, then a comparator that
-    // only compares. `Array.prototype.sort` is stable, so equal keys keep their
-    // document order exactly as they did when the comparator derived in place.
-    const decorated = rs.map((row) => ({ row, key: value(row) }));
-    decorated.sort((a, b) => compareSortKeys(a.key, b.key) * s.dir);
-    return decorated.map((entry) => entry.row);
+    return [...rs].sort((a, b) => compareSortKeys(value(a), value(b)) * s.dir);
   });
   const [renderLimit, setRenderLimit] = createSignal(SHEET_RENDER_PAGE);
   createEffect(() => {
@@ -654,8 +302,8 @@ export function SheetTable(props: {
   });
   const sortedRowIndex = () => rowIndexes().byRowKey;
   const ensureDisplayedThrough = (row: number) => {
-    if (row < 0 || row < displayedRows().length) return;
-    setRenderLimit(Math.min(sortedRows().length, Math.ceil((row + 1) / SHEET_RENDER_PAGE) * SHEET_RENDER_PAGE));
+    const limit = displayLimitThrough(row, displayedRows().length, sortedRows().length, SHEET_RENDER_PAGE);
+    if (limit !== null) setRenderLimit(limit);
   };
   createEffect(() => {
     const sel = cellSel();
@@ -689,62 +337,17 @@ export function SheetTable(props: {
     }
   });
 
-  /** The name a header sort can be SAVED under, or `null` when it cannot be.
-   *
-   *  The engine's `sort_key` understands `priority`, `page`, `scheduled`,
-   *  `deadline` and any property name — and nothing else. Sorting a query table
-   *  by its title, state, tags or a formula column is a real thing to want, and
-   *  this table can do it over the rows it already has; but the note cannot
-   *  carry it, and a control that looked like it saved and came back unsorted
-   *  would be lying. So those stay local and say so. */
-  const persistableSortField = (col: number): string | null => {
-    if (!props.queryDisplay) return null;
-    const column = columns()[col];
-    if (!column || column === "title") return null;
-    return querySortFieldName(column);
-  };
-  /** The SAVED sort, as a column of this table — so the header arrow shows the
-   *  order the engine actually returned the rows in. */
   const persistedSort = createMemo<SortState>(() => {
-    const entries = props.queryDisplay?.view.sort ?? [];
-    if (entries.length !== 1) return null;
-    const [name, dir] = entries[0];
-    const col = columns().findIndex(
-      (column) => column !== "title" && querySortFieldName(column) === name,
-    );
-    return col < 0 ? null : { col, dir: dir === "desc" ? -1 : 1 };
+    const entries = props.queryDisplay?.view.sort;
+    if (entries?.length !== 1) return null;
+    const col = columns().findIndex((field) => querySortFieldName(field) === entries[0][0]);
+    return col < 0 ? null : { col, dir: entries[0][1] === "desc" ? -1 : 1 };
   });
-  /** A table-only arrangement belongs to the rows it was chosen for. A new
-   *  result revision or a newly saved sort replaces those rows, so the override
-   *  is dropped rather than silently re-applied to a set nobody sorted.
-   *
-   *  Only where there IS a saved sort to be second to. A query-sourced table
-   *  with no query display control — the tag page's reference table — has the
-   *  local arrangement as its ONLY sort, and dropping it on every refresh of the
-   *  references would be a reset the user never asked for. */
-  createEffect(
-    on(
-      [() => props.groups, () => serializeQuerySort(props.queryDisplay?.view.sort)],
-      () => {
-        if (props.queryDisplay) setSort(null);
-      },
-      { defer: true },
-    ),
-  );
+  /** Clicking a header sorts THIS VIEW only (D8, D11): a header click is browsing
+   * and never writes the query or its display properties. A saved sort is set
+   * from the query's own sort control; a local sort here lays over it and the
+   * third click returns to the saved order. */
   const sortHeader = (col: number) => {
-    const name = persistableSortField(col);
-    const control = props.queryDisplay;
-    if (name && control) {
-      const saved = persistedSort();
-      // asc → desc → no saved sort, the same three-step cycle the local one has.
-      const next: ViewSettings["sort"] =
-        saved?.col !== col ? [[name, "asc"]] : saved.dir > 0 ? [[name, "desc"]] : [];
-      // A saved sort is the order the engine returns; a local arrangement of the
-      // previous rows on top of it would be a second, invisible answer.
-      setSort(null);
-      control.apply({ ...control.view, sort: next });
-      return;
-    }
     setSort((cur) => {
       if (!cur || cur.col !== col) return { col, dir: 1 };
       if (cur.dir === 1) return { col, dir: -1 };
@@ -755,21 +358,16 @@ export function SheetTable(props: {
     const s = sort() ?? persistedSort();
     return s?.col === col ? (s.dir > 0 ? " ▲" : " ▼") : "";
   };
-  /** Shown while a query table is arranged by something the note cannot carry,
-   *  so the difference between "sorted" and "saved as sorted" is visible rather
-   *  than discovered after a reload. */
-  const tableOnlySortLabel = createMemo(() => {
-    if (props.rowSource !== "query" || !props.queryDisplay) return null;
-    const s = sort();
-    if (!s) return null;
-    const column = columns()[s.col];
-    return column === undefined
-      ? null
-      : `Table-only sort: ${column === "title" ? "Title" : fieldLabel(column)}`;
-  });
+
+  const tableOnlySortLabel = () => {
+    const current = sort();
+    if (props.rowSource !== "query" || !current) return null;
+    const field = columns()[current.col];
+    return `Table-only sort: ${field === "title" ? "Title" : fieldLabel(field)}`;
+  };
 
   const createSchemaHome = (): SchemaHome | null => {
-    if (doc.byId[props.ownerId]) return { kind: "block", id: props.ownerId, value: "" };
+    if (docNode(props.ownerId)) return { kind: "block", id: props.ownerId, value: "" };
     return props.schemaPage ? { kind: "page", name: props.schemaPage, value: "" } : null;
   };
   const schemaWriteAllowed = () => {
@@ -778,37 +376,21 @@ export function SheetTable(props: {
     if (home.kind === "block") return !blockPageReadOnly(home.id);
     return !(pageByName(home.name)?.readOnly ?? false);
   };
-  /** A pre-split bare column list about to be overwritten by a declared schema,
-   *  and the block it lives on — or `null` when there is nothing to rescue.
-   *
-   *  Declaring a schema writes `tine.fields`, which on a query block may still
-   *  be holding the note's column list. That list is the user's visible choice,
-   *  so it moves to `tine.columns` in the SAME undo unit as the schema write.
-   *  It moves only when `tine.columns` is ABSENT: a present value — including a
-   *  present empty or invalid one — is an explicit statement, and its presence
-   *  wins over a rescue. Only a QUERY face has columns to rescue; an ordinary
-   *  children sheet's inert bare list is not a column choice. */
-  const legacyColumnRescue = (): { id: string; value: string } | null => {
-    if (props.rowSource !== "query") return null;
-    const owner = doc.byId[props.ownerId];
-    if (!owner) return null;
-    if (blockProperty(props.ownerId, "tine.columns") !== null) return null;
-    const legacy = blockProperty(props.ownerId, "tine.fields");
-    if (!isLegacyBareColumnList(legacy)) return null;
-    const columns = selectedQueryColumns(facetsOf(owner.raw, formatForBlock(props.ownerId)).properties);
-    return columns && columns.length > 0 ? { id: props.ownerId, value: columns.join(";") } : null;
-  };
   const writeSchemaFields = (next: readonly FieldSpec[]) => {
     const home = schemaHome() ?? createSchemaHome();
     if (!home || !schemaWriteAllowed()) return;
     const value = serializeFields(next);
-    const rescue = legacyColumnRescue();
-    const page = home.kind === "block" ? doc.byId[home.id]?.page : home.name;
-    // ONE undo unit: the rescue and the declaration are a single user action,
-    // and each `setBlockProperty` would otherwise push its own entry.
-    const affected = [...new Set([page, rescue ? doc.byId[rescue.id]?.page : undefined].filter((name): name is string => !!name))];
-    withUndoUnit("sheet:schema-fields", affected, () => {
-      if (rescue) setBlockProperty(rescue.id, "tine.columns", rescue.value);
+    // Declaring a schema writes `tine.fields`, which on a query block may still
+    // hold the note's column list. Rescue it into `tine.columns` in the same undo
+    // unit, only when `tine.columns` is absent (a present value always wins).
+    const legacy = props.rowSource === "query" && docNode(props.ownerId)
+      && blockProperty(props.ownerId, "tine.columns") === null
+      && isLegacyBareColumnList(blockProperty(props.ownerId, "tine.fields"));
+    const columns = legacy ? props.queryDisplay?.view.columns : undefined;
+    const pages = [home.kind === "block" ? docNode(home.id)?.page : home.name, docNode(props.ownerId)?.page]
+      .filter((name, i, all): name is string => !!name && all.indexOf(name) === i);
+    withUndoUnit("sheet:schema-fields", pages, () => {
+      if (columns && columns.length > 0) setBlockProperty(props.ownerId, "tine.columns", columns.join(";"));
       if (home.kind === "block") setBlockProperty(home.id, "tine.fields", value || null);
       else setPageProperty(home.name, "tine.fields", value || null);
     });
@@ -852,18 +434,11 @@ export function SheetTable(props: {
     writeSchemaFields([...schemaFields(), spec]);
   };
   const declareFreshSchema = () => {
-    // Every field the table knows, not only the shown ones: declaring a schema
-    // must not silently drop the definition of a column a selection hides.
-    const specs = allFields().map((field) => specForField(field)).filter((spec): spec is FieldSpec => !!spec);
+    const specs = fields().map((field) => specForField(field)).filter((spec): spec is FieldSpec => !!spec);
     writeSchemaFields(specs);
   };
   const canDragFieldHeader = (field: FieldId) =>
-    props.queryDisplay
-      // A query table's column ORDER is `tine.columns`, so anything that key can
-      // spell can be dragged — the six builtins included. What it cannot spell
-      // (a formula column) stays put rather than being silently dropped from the
-      // order it appears to be part of.
-      ? queryColumnName(field) !== null && !blockPageReadOnly(props.ownerId)
+    props.queryDisplay ? queryColumnName(field) !== null && !blockPageReadOnly(props.ownerId)
       : field.startsWith("prop:") && schemaWriteAllowed() && (!schemaHome() || schemaFieldSet().has(field));
   const canDropFieldHeader = (field: FieldId, dragged: FieldId) => {
     if (field === dragged) return false;
@@ -874,62 +449,13 @@ export function SheetTable(props: {
     if (isFormulaField(field)) return true;
     return schemaHome() ? schemaFieldSet().has(field) : !!specForField(field);
   };
-  /** A query table's header reorder edits the VISIBLE COLUMN ORDER through the
-   *  query's own writer — never `tine.fields`, which is the typed schema and
-   *  says nothing about order or visibility.
-   *
-   *  **`tine.columns` is a complete selection, not a hint.** Whatever it lists
-   *  is what the table shows, so an order written from only the columns the
-   *  grammar can spell would not "leave the others where they are" — it would
-   *  HIDE them. The grammar has no token for a formula column, nor for a
-   *  property named like one of the six builtins (P5A, unchanged here), so when
-   *  one of those is on screen the order is left exactly as it was and the
-   *  reason is said out loud. Coercing it into another field identity is the
-   *  one thing that is never an option: that is a silent data change. */
-  const reorderQueryColumns = (field: FieldId, drop: FieldHeaderDrop) => {
-    const control = props.queryDisplay;
-    if (!control) return;
-    const order = [...fields()];
-    const from = order.indexOf(field);
-    if (from < 0) return;
-    const [moved] = order.splice(from, 1);
-    const target = order.indexOf(drop.field);
-    order.splice(target < 0 ? order.length : target + (drop.before ? 0 : 1), 0, moved);
-    const names: string[] = [];
-    const unrepresentable: FieldId[] = [];
-    for (const column of order) {
-      const name = queryColumnName(column);
-      if (name === null) unrepresentable.push(column);
-      else names.push(name);
-    }
-    if (unrepresentable.length > 0) {
-      const labels = unrepresentable.map(fieldLabel).join(", ");
-      pushToast(
-        unrepresentable.length > 1
-          ? `${labels} are computed columns with no name in a saved column list, so this order cannot be saved`
-          : `${labels} is a computed column with no name in a saved column list, so this order cannot be saved`,
-        "info",
-      );
-      return;
-    }
-    control.apply({ ...control.view, columns: names });
-  };
   const reorderFieldHeader = (field: FieldId, drop: FieldHeaderDrop) => {
     if (props.queryDisplay) {
-      reorderQueryColumns(field, drop);
+      const columns = reorderedQueryColumns(fields(), field, drop.field, drop.before);
+      if (columns) props.queryDisplay.apply({ ...props.queryDisplay.view, columns });
+      else pushToast("This order cannot be saved while a computed column is visible.", "info");
       return;
     }
-    const owner = doc.byId[props.ownerId];
-    const page = owner?.page ?? props.schemaPage;
-    // A reorder that has to declare a schema first is still ONE user action, so
-    // the freshly declared schema and the reordered one share an undo entry
-    // (nested `withUndoUnit`s collapse into the outermost).
-    const home = schemaHome();
-    const schemaPage = home?.kind === "page" ? home.name : home ? doc.byId[home.id]?.page : undefined;
-    const affected = [...new Set([page, schemaPage].filter((name): name is string => !!name))];
-    withUndoUnit("sheet:schema-reorder", affected, () => reorderFieldHeaderIn(field, drop));
-  };
-  const reorderFieldHeaderIn = (field: FieldId, drop: FieldHeaderDrop) => {
     if (!schemaHome()) declareFreshSchema();
     const next = [...schemaFields()];
     const from = next.findIndex((spec) => spec.field === field);
@@ -1004,11 +530,7 @@ export function SheetTable(props: {
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onCancel);
   };
-  onCleanup(() => {
-    mounted = false;
-    cancelFieldHeaderDrag?.();
-    cancelColumnResize?.();
-  });
+  onCleanup(() => cancelFieldHeaderDrag?.());
   const changeFieldType = (field: FieldId, type: SchemaMenuType) => {
     writeSchemaFields(schemaFields().map((spec) => (spec.field === field ? { ...spec, type } : spec)));
   };
@@ -1032,10 +554,10 @@ export function SheetTable(props: {
     setRenamingField({ field, value: field.slice("prop:".length) });
   };
   const commitFieldRename = (field: FieldId, value: string): boolean => {
-    const owner = doc.byId[props.ownerId];
+    const owner = docNode(props.ownerId);
     const home = schemaHome();
     if (!owner || home?.kind !== "block") return false;
-    const rowNodes = owner.children.map((id) => doc.byId[id]).filter((row): row is NonNullable<typeof row> => !!row);
+    const rowNodes = owner.children.map((id) => docNode(id)).filter((row): row is NonNullable<typeof row> => !!row);
     if (rowNodes.length !== owner.children.length) {
       pushToast("Some direct rows are not loaded; no fields were renamed.", "error");
       return false;
@@ -1059,7 +581,7 @@ export function SheetTable(props: {
         format: formatForBlock(row.id),
         recognizedProperties: facetsOf(row.raw, formatForBlock(row.id)).properties,
       })),
-      pageProperties: page ? pageProperties(page.preBlock, page.format) : [],
+      pageProperties: page ? readPageProperties(page.name) : [],
       recognizeProperties: (raw, format) => facetsOf(raw, format).properties,
       oldField: field,
       newName: value,
@@ -1068,35 +590,14 @@ export function SheetTable(props: {
       pushToast(result.error, "error");
       return false;
     }
-    const renamePlan = result.plan;
-    const authority: PageMutationAuthority<true> = {
-      token: {
-        ownerId: props.ownerId,
-        surfaceId,
-        oldField: renamePlan.oldField,
-        newField: renamePlan.newField,
-        input: value,
-      },
-      isCurrent: () => {
-        const current = renamingField();
-        return mounted
-          && current?.field === field
-          && current.value === value;
-      },
-    };
-    const mutationPlan = createPageMutationPlan(renamePlan.page, "sheet:rename-field", (draft) => {
-      if (!draft.setRaw(renamePlan.ownerId, renamePlan.ownerRaw)) return null;
-      for (const row of renamePlan.rows) if (!draft.setRaw(row.id, row.raw)) return null;
-      return true;
-    }, authority);
-    if (!mutationPlan) return false;
-    const dispatch = applyPageMutationPlan(mutationPlan, () => {
-      setExtraFields((current) => current.filter(
-        (candidate) => candidate !== renamePlan.oldField && candidate !== renamePlan.newField,
-      ));
-      setRenamingField(null);
+    const plan = result.plan;
+    withUndoUnit("sheet:rename-field", [plan.page], () => {
+      setRaw(plan.ownerId, plan.ownerRaw, { timetracking: false });
+      for (const row of plan.rows) setRaw(row.id, row.raw, { timetracking: false });
     });
-    return dispatch.kind !== "refused";
+    setExtraFields((current) => current.filter((candidate) => candidate !== plan.oldField && candidate !== plan.newField));
+    setRenamingField(null);
+    return true;
   };
   const openFieldHeaderMenu = (e: MouseEvent, field: FieldId) => {
     e.preventDefault();
@@ -1172,14 +673,7 @@ export function SheetTable(props: {
     if (actions.length) openActionContextMenu(e.clientX, e.clientY, actions);
   };
 
-  const selected = (row: number, col: number) => {
-    const sel = cellSel();
-    if (!sel || sel.gridId !== props.ownerId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
-    if (sel.kind === "cell") return sel.row === row && sel.col === col;
-    if (sel.kind === "range") return sel.focus.row === row && sel.focus.col === col;
-    return false;
-  };
-  const inRange = (row: number, col: number) => cellIsInRange(props.ownerId, row, col, surfaceId);
+  const selected = (row: number, col: number) => cellIsSelected(props.ownerId, row, col, surfaceId);  const inRange = (row: number, col: number) => cellIsInRange(props.ownerId, row, col, surfaceId);
 
   const openPropInput = (rowId: string, field: FieldId, initial?: string) => {
     setEditingProp({ rowId, field, initial: initial ?? readField(rowId, field)?.text ?? "" });
@@ -1190,7 +684,7 @@ export function SheetTable(props: {
   };
   const addChildRow = () => {
     if (props.rowSource !== "children") return;
-    const owner = doc.byId[props.ownerId];
+    const owner = docNode(props.ownerId);
     if (!owner || blockPageReadOnly(props.ownerId)) return;
     const at = owner.children.length;
     const id = withUndoUnit("sheet:table-add-row", [owner.page], () => insertEmptyChildBlock(props.ownerId, at));
@@ -1235,7 +729,7 @@ export function SheetTable(props: {
     if (!row || !col) return true;
     if (col === "title") return false;
     if (propUsesInlineInput(col) && liveFormulaRowNode(row)) openPropInput(row.id, col, text);
-    else if ((col === "scheduled" || col === "deadline") && liveFormulaRowNode(row)) writeField(row.id, col, text);
+    else if ((col === "scheduled" || col === "deadline") && liveFormulaRowNode(row)) writeFieldVisibly(row.id, col, text);
     return true;
   };
 
@@ -1280,7 +774,7 @@ export function SheetTable(props: {
   };
 
   const openSheetMenu = (e: MouseEvent) => {
-    if (!doc.byId[props.ownerId]) return;
+    if (!docNode(props.ownerId)) return;
     e.preventDefault();
     e.stopPropagation();
     openSheetContextMenu(e.clientX, e.clientY, props.ownerId, "table", props.rowSource, null, {
@@ -1310,10 +804,7 @@ export function SheetTable(props: {
               title={props.addRowLabel ?? "Add row"}
               onClick={runAddRow}
             >
-              <span class="sheet-ghost-sticky">
-                <span class="sheet-ghost-plus">+</span>
-                <span>{props.addRowLabel ?? "Add row"}</span>
-              </span>
+              <span class="sheet-ghost-sticky"><span class="sheet-ghost-plus">+</span><span>{props.addRowLabel ?? "Add row"}</span></span>
             </button>
           </Show>
         </div>
@@ -1324,7 +815,7 @@ export function SheetTable(props: {
           tableRef = el;
         }}
         class="sheet-table"
-        classList={{ "sheet-table-resizing": resizingColumn() !== null }}
+        classList={{ "sheet-table-resizing": tableWidths.resizing() !== null }}
         data-sheet-grid-id={props.ownerId}
         data-sheet-surface-id={surfaceId}
         style={{ "grid-template-columns": gridColumns() }}
@@ -1336,6 +827,10 @@ export function SheetTable(props: {
       >
         <div class="sheet-cell sheet-header-cell sheet-title-header sheet-sticky-left" onClick={() => sortHeader(0)}>
           Block{sortArrow(0)}
+          <Show when={tableOnlySortLabel()}>
+            {(label) => <button type="button" class="sheet-table-only-sort" title="Clear table-only sort"
+              onClick={(event) => { event.stopPropagation(); setSort(null); }}>{label()} ×</button>}
+          </Show>
           <Show when={filterError()}>
             {(err) => (
               <span class="sheet-filter-error" title={err()}>
@@ -1343,25 +838,7 @@ export function SheetTable(props: {
               </span>
             )}
           </Show>
-          {/* Say when the arrangement is this table's own and not the note's,
-              rather than let a reload look like a bug. */}
-          <Show when={tableOnlySortLabel()}>
-            {(label) => (
-              <button
-                type="button"
-                class="sheet-table-only-sort"
-                title="This order is not saved with the query. Click to clear it."
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSort(null);
-                }}
-              >
-                {label()} ✕
-              </button>
-            )}
-          </Show>
-          {columnResizeHandle("title")}
+          {tableWidths.handle("title", "Block")}
         </div>
         <For each={fields()}>
           {(field, i) => (
@@ -1430,7 +907,7 @@ export function SheetTable(props: {
                   }}
                 />
               </Show>
-              {columnResizeHandle(field)}
+              {tableWidths.handle(field, fieldLabel(field))}
             </div>
           )}
         </For>
@@ -1564,20 +1041,9 @@ export function SheetTable(props: {
                 ownerId={props.ownerId}
                 columnKey={field}
                 fn={props.queryDisplay ? null : config().colAggregates.get(field) ?? null}
-                query={
-                  props.queryDisplay && queryAggregateFieldName(field) !== null
-                    ? {
-                        fn: queryAggregateFn(field),
-                        text: (() => {
-                          const fn = queryAggregateFn(field);
-                          return fn ? queryAggregateText(field, fn) : "";
-                        })(),
-                        set: (fn) => setQueryAggregate(field, fn),
-                      }
-                    : undefined
-                }
-                values={sortedRows().map((row) => rowFieldValue(row, field))}
-                showEmpty={footerPinned() && (!props.queryDisplay || queryAggregateFieldName(field) !== null)}
+                query={queryFooter(field)}
+                values={props.queryDisplay ? [] : sortedRows().map((row) => rowFieldValue(row, field))}
+                showEmpty={footerPinned() && (!props.queryDisplay || queryFooter(field) !== undefined)}
               />
             )}
           </For>
@@ -1596,10 +1062,7 @@ export function SheetTable(props: {
               runAddRow();
             }}
           >
-            <span class="sheet-ghost-sticky">
-              <span class="sheet-ghost-plus">+</span>
-              <span class="sheet-ghost-label">{props.addRowLabel ?? "Add row"}</span>
-            </span>
+            <span class="sheet-ghost-sticky"><span class="sheet-ghost-plus">+</span><span class="sheet-ghost-label">{props.addRowLabel ?? "Add row"}</span></span>
           </button>
         </Show>
         <Show when={!sheetOverlay && showFooterToggle()}>
@@ -1610,13 +1073,7 @@ export function SheetTable(props: {
   );
 }
 
-function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw: string): number | null {
-  if (!contentRef) return null;
-  const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
-  const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
-  if (!range) return null;
-  return editorOffsetFromRenderedRange(contentRef, range, raw, isBuiltinHidden);
-}
+
 
 // Lazy-mount virtualization (P2): a table row's heavy cell CONTENT (title
 // InlineText parse, value-view chips, the hover handle) is deferred until the
@@ -1629,6 +1086,7 @@ function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw:
 // Module-level so it survives remount and is shared across surfaces; bounded by
 // the working set of rows ever brought near the viewport.
 const renderedSheetRows = new Set<string>();
+clearOnBindingInvalidated(() => renderedSheetRows.clear());
 
 // Test seam: reset the render-once latch so a fresh mount defers again.
 export function resetSheetRowVirtualizationForTests() {
@@ -1673,22 +1131,15 @@ function TitleCell(props: {
       setCellSel(cell());
       return;
     }
-    startCellEditing(cell(), clickOffset(e, contentRef, raw()) ?? undefined);
+    startCellEditing(cell(), sheetClickOffset(e, contentRef, raw(), isBuiltinHidden) ?? undefined);
   };
   const openCellMenu = (e: MouseEvent) => {
     if (!liveFormulaRowNode(props.row)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setCellSel(cell());
-    openSheetCellContextMenu(e.clientX, e.clientY, props.row.id);
+    sheetCellMenu(e, () => setCellSel(cell()), props.row.id, undefined);
   };
   const openCellMenuFromHandle = (e: MouseEvent) => {
     if (!liveFormulaRowNode(props.row)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setCellSel(cell());
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    openSheetCellContextMenu(rect.right, rect.bottom + 2, props.row.id);
+    sheetCellMenu(e, () => setCellSel(cell()), props.row.id, undefined, true);
   };
 
   return (
@@ -1734,9 +1185,9 @@ function TitleCell(props: {
           fallback={
             <Show
               when={props.near}
-              fallback={<span class="sheet-cell-defer">{rowTitle(props.row, "joined-with-placeholder")}</span>}
+              fallback={<span class="sheet-cell-defer">{tableRowTitle(props.row)}</span>}
             >
-              <InlineText text={rowTitle(props.row, "joined-with-placeholder")} format={fmt()} />
+              <InlineText text={tableRowTitle(props.row)} format={fmt()} />
             </Show>
           }
         >
@@ -1770,11 +1221,7 @@ function FieldCell(props: {
   freezeColumns: () => void;
 }): JSX.Element {
   const value = () => isFormulaField(props.field) ? formulaValueToFieldValue(props.formulaValue) : readFormulaRowField(props.row, props.field);
-  const displayValue = (): FieldValue | null => {
-    const current = value();
-    if (current) return current;
-    return props.field.startsWith("prop:") && props.fieldType === "checkbox" ? { text: "false", raw: "false" } : null;
-  };
+  const displayValue = (): FieldValue | null => displayFieldValue(props.field, props.fieldType, value());
   const editable = () => !!liveFormulaRowNode(props.row) && !isFormulaField(props.field);
   const select = () => setCellSel({
     gridId: props.ownerId,
@@ -1801,7 +1248,7 @@ function FieldCell(props: {
       setInputInvalid(true);
       return false;
     }
-    if (editable()) writeField(props.row.id, props.field, value);
+    if (editable()) writeFieldVisibly(props.row.id, props.field, value);
     props.closePropInput();
     setInputInvalid(false);
     return true;
@@ -1811,9 +1258,9 @@ function FieldCell(props: {
     openActionContextMenu(rect.left, rect.bottom + 4, [
       ...values.map((label): ContextMenuAction => ({
         label,
-        run: () => writeField(props.row.id, props.field, label),
+        run: () => writeFieldVisibly(props.row.id, props.field, label),
       })),
-      { label: "Clear", run: () => writeField(props.row.id, props.field, "") },
+      { label: "Clear", run: () => writeFieldVisibly(props.row.id, props.field, "") },
     ]);
   };
 
@@ -1835,7 +1282,7 @@ function FieldCell(props: {
       const type = props.fieldType;
       if (type === "checkbox") {
         const cur = (value()?.raw ?? value()?.text ?? "").trim().toLowerCase();
-        writeField(props.row.id, props.field, cur === "true" ? "false" : "true");
+        writeFieldVisibly(props.row.id, props.field, cur === "true" ? "false" : "true");
       } else if (type === "date" || type === "datetime") {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         openDatePicker(props.row.id, { field: props.field as `prop:${string}`, fieldType: type }, rect.left, rect.bottom + 4);
@@ -1869,18 +1316,11 @@ function FieldCell(props: {
   };
   const openCellMenu = (e: MouseEvent) => {
     if (!editable()) return;
-    e.preventDefault();
-    e.stopPropagation();
-    select();
-    openSheetCellContextMenu(e.clientX, e.clientY, props.row.id, { rowId: props.row.id });
+    sheetCellMenu(e, select, props.row.id, { rowId: props.row.id });
   };
   const openCellMenuFromHandle = (e: MouseEvent) => {
     if (!editable()) return;
-    e.preventDefault();
-    e.stopPropagation();
-    select();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    openSheetCellContextMenu(rect.right, rect.bottom + 2, props.row.id, { rowId: props.row.id });
+    sheetCellMenu(e, select, props.row.id, { rowId: props.row.id }, true);
   };
 
   return (
@@ -1990,168 +1430,4 @@ function FieldCell(props: {
       </Show>
     </div>
   );
-}
-
-function FieldValueView(props: {
-  field: FieldId;
-  fieldType?: FieldType;
-  value: FieldValue | null;
-  formulaValue?: FormulaValue | null;
-  page: string;
-  onControlClick?: (e: MouseEvent) => void;
-}): JSX.Element {
-  if (isFormulaField(props.field)) return <FormulaValueView value={props.formulaValue ?? null} />;
-  const text = () => props.value?.text ?? "";
-  const stopControlDoubleClick = (e: MouseEvent) => {
-    if (!props.onControlClick) return;
-    e.preventDefault();
-    e.stopPropagation();
-  };
-  return (
-    <Show when={props.value}>
-      <Show when={props.field === "state"}>
-        <span
-          class={`block-marker marker-${(props.value?.raw ?? "").toLowerCase()}`}
-          classList={{ "marker-clickable": markerLabelClickable(props.value?.raw) }}
-          onClick={props.onControlClick}
-          onDblClick={stopControlDoubleClick}
-        >
-          {props.value?.text}
-        </span>
-      </Show>
-      <Show when={props.field === "priority"}>
-        <span
-          class={`block-priority priority-${props.value?.raw}`}
-          onClick={props.onControlClick}
-          onDblClick={stopControlDoubleClick}
-        >
-          {props.value?.text}
-        </span>
-      </Show>
-      <Show when={props.field === "scheduled"}>
-        <span class="date-chip scheduled" onClick={props.onControlClick} onDblClick={stopControlDoubleClick}>{text()}</span>
-      </Show>
-      <Show when={props.field === "deadline"}>
-        <span class="date-chip deadline" onClick={props.onControlClick} onDblClick={stopControlDoubleClick}>{text()}</span>
-      </Show>
-      <Show when={props.field === "tags"}>
-        <For each={(props.value?.raw ?? "").split(/\s+/).filter(Boolean)}>
-          {(tag) => <span class="sheet-tag-chip">#{tag}</span>}
-        </For>
-      </Show>
-      <Show when={props.field.startsWith("prop:")}>
-        <PropValueView type={props.fieldType} value={props.value!} page={props.page} onControlClick={props.onControlClick} />
-      </Show>
-      <Show when={props.field === "page"}>
-        <InlineText text={text()} format={formatForPage(props.page)} />
-      </Show>
-    </Show>
-  );
-}
-
-function FormulaValueView(props: { value: FormulaValue | null }): JSX.Element {
-  return (
-    <Switch>
-      <Match when={props.value?.kind === "error"}>
-        <span class="sheet-formula-error" title={props.value?.kind === "error" ? props.value.message : ""}>
-          ⚠
-        </span>
-      </Match>
-      <Match when={props.value?.kind === "number"}>
-        {formulaValueText(props.value)}
-      </Match>
-      <Match when={props.value?.kind === "date"}>
-        <span class="date-chip scheduled">{formulaValueText(props.value)}</span>
-      </Match>
-      <Match when={props.value?.kind === "boolean"}>
-        <input
-          class="sheet-checkbox"
-          type="checkbox"
-          checked={props.value?.kind === "boolean" ? props.value.value : false}
-          disabled
-        />
-      </Match>
-      <Match when={props.value?.kind === "list"}>
-        <For each={props.value?.kind === "list" ? props.value.values : []}>
-          {(value) => <span class="sheet-tag-chip">{formulaValueText(value)}</span>}
-        </For>
-      </Match>
-      <Match when={props.value?.kind === "text" || props.value?.kind === "duration"}>
-        {formulaValueText(props.value)}
-      </Match>
-    </Switch>
-  );
-}
-
-function PropValueView(props: { type?: FieldType; value: FieldValue; page: string; onControlClick?: (e: MouseEvent) => void }): JSX.Element {
-  const text = () => props.value.text;
-  const raw = () => props.value.raw ?? props.value.text;
-  const stopControlDoubleClick = (e: MouseEvent) => {
-    if (!props.onControlClick) return;
-    e.preventDefault();
-    e.stopPropagation();
-  };
-  const checkbox = () => {
-    if (props.type !== "checkbox") return null;
-    const lower = raw().trim().toLowerCase();
-    if (lower === "true") return true;
-    if (lower === "false") return false;
-    return null;
-  };
-  const dateValue = () => {
-    if (props.type !== "date" && props.type !== "datetime") return null;
-    const value = raw().trim();
-    return validDateLike(value) ? value : null;
-  };
-  const enumValue = () => {
-    if (!isEnumFieldType(props.type)) return null;
-    const value = raw().trim();
-    return props.type.enum.includes(value) ? value : null;
-  };
-  const listValues = () =>
-    props.type === "list"
-      ? raw()
-          .split(",")
-          .map((v) => v.trim())
-          .filter(Boolean)
-      : [];
-  const refValue = () => {
-    if (props.type !== "ref") return null;
-    const value = raw().trim();
-    return /^\[\[[^\]\n\r]+\]\]$/.test(value) ? value : null;
-  };
-  return (
-    <Switch fallback={<InlineText text={text()} format={formatForPage(props.page)} />}>
-      <Match when={checkbox() !== null}>
-        <input
-          class="sheet-checkbox"
-          type="checkbox"
-          checked={checkbox() === true}
-          readOnly
-          onClick={props.onControlClick}
-          onDblClick={stopControlDoubleClick}
-        />
-      </Match>
-      <Match when={dateValue()}>
-        {(value) => <span class="date-chip scheduled" onClick={props.onControlClick} onDblClick={stopControlDoubleClick}>{value()}</span>}
-      </Match>
-      <Match when={enumValue()}>
-        {(value) => <span class="sheet-tag-chip" onClick={props.onControlClick} onDblClick={stopControlDoubleClick}>{value()}</span>}
-      </Match>
-      <Match when={props.type === "list" && listValues().length > 0}>
-        <For each={listValues()}>{(value) => <span class="sheet-tag-chip">{value}</span>}</For>
-      </Match>
-      <Match when={refValue()}>
-        {(value) => <InlineText text={value()} format={formatForPage(props.page)} />}
-      </Match>
-    </Switch>
-  );
-}
-
-function isEnumFieldType(type: FieldType | undefined): type is { enum: readonly string[] } {
-  return typeof type === "object" && type !== null && "enum" in type;
-}
-
-function validDateLike(value: string): boolean {
-  return parseIsoDateLike(value) !== null;
 }

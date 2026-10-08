@@ -36,8 +36,10 @@ Update both dependencies to the same tag:
 Do not update only one of them. The backend indexes through `tine-core`; the
 renderer parses through the vendored WASM wrapper.
 
-Local `path = "/aux/koutecky/logseq/lsdoc"` testing is acceptable for a quick
-developer smoke test, but it is weaker. The current scripts
+Local path testing against a sibling lsdoc checkout is acceptable for a quick
+developer smoke test, but it is weaker. Cargo resolves `path` relative to the
+manifest: use `path = "../lsdoc"` from a root manifest, or adjust the relative
+path for a crate manifest. The current scripts
 `scripts/check-wasm-pin.mjs` and `scripts/build-wasm.mjs` expect a Cargo
 `tag = "..."` pin. If using a path or rev temporarily, update those scripts in
 the same test branch or treat the result as non-release-equivalent.

@@ -1,0 +1,484 @@
+{
+  "cases": [
+    {
+      "expected": {
+        "blocks": [],
+        "pre_block": "tags:: books"
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "tags:: books"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_0",
+        "pre_block": null,
+        "title": "I12_0"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [],
+        "pre_block": "title:: Note\ntags:: books"
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-1",
+            "raw": "title:: Note\ntags:: books"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_1",
+        "pre_block": null,
+        "title": "I12_1"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "id:: 66aa\nfoo:: bar"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-2",
+            "raw": "id:: 66aa\nfoo:: bar"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_2",
+        "pre_block": null,
+        "title": "I12_2"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "foo:: bar\nbody"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-3",
+            "raw": "foo:: bar\nbody"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_3",
+        "pre_block": null,
+        "title": "I12_3"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "foo:: bar"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [
+              {
+                "children": [],
+                "collapsed": false,
+                "id": "child",
+                "raw": "child"
+              }
+            ],
+            "collapsed": false,
+            "id": "root-4",
+            "raw": "foo:: bar"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_4",
+        "pre_block": null,
+        "title": "I12_4"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "logseq.order-list-type:: number"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-5",
+            "raw": "logseq.order-list-type:: number"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_5",
+        "pre_block": null,
+        "title": "I12_5"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "heading:: 2"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-6",
+            "raw": "heading:: 2"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_6",
+        "pre_block": null,
+        "title": "I12_6"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "collapsed:: true"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-7",
+            "raw": "collapsed:: true"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_7",
+        "pre_block": null,
+        "title": "I12_7"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "background-color:: yellow"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-8",
+            "raw": "background-color:: yellow"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_8",
+        "pre_block": null,
+        "title": "I12_8"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [],
+        "pre_block": "alias:: novel"
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-9",
+            "raw": "alias:: novel"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_9",
+        "pre_block": null,
+        "title": "I12_9"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "alias:: book\n\nplugin.key::value"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-10",
+            "raw": "alias:: book\n\nplugin.key::value"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_10",
+        "pre_block": null,
+        "title": "I12_10"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "title:: A\n```\nx:: y\n```"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-11",
+            "raw": "title:: A\n```\nx:: y\n```"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_11",
+        "pre_block": null,
+        "title": "I12_11"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "klic::value"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-12",
+            "raw": "klic::value"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_12",
+        "pre_block": null,
+        "title": "I12_12"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "ID:: 66aa"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "ID:: 66aa"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_13",
+        "pre_block": null,
+        "title": "I12_13"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "Collapsed:: true"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "Collapsed:: true"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_14",
+        "pre_block": null,
+        "title": "I12_14"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "alias:: a\nfoo:: multi\n  line"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "alias:: a\nfoo:: multi\n  line"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_15",
+        "pre_block": null,
+        "title": "I12_15"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [],
+        "pre_block": "tags::"
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "tags::"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_16",
+        "pre_block": null,
+        "title": "I12_16"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "tags:: a\n\nbody"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "tags:: a\n\nbody"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_17",
+        "pre_block": null,
+        "title": "I12_17"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "LOGSEQ.ORDER-LIST-TYPE:: number"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "LOGSEQ.ORDER-LIST-TYPE:: number"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_18",
+        "pre_block": null,
+        "title": "I12_18"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "tags:: a\n  \nfoo:: b"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "tags:: a\n  \nfoo:: b"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_19",
+        "pre_block": null,
+        "title": "I12_19"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [],
+        "pre_block": "tags:: [[a]], [[b]]\nalias:: \u02bbx"
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "tags:: [[a]], [[b]]\nalias:: \u02bbx"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_20",
+        "pre_block": null,
+        "title": "I12_20"
+      }
+    }
+  ]
+}

@@ -8,6 +8,650 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-08
+
+Tine 0.7.0 makes the Tine Beta line stable. It is Tine Beta 0.7.0-beta.2 (the
+two Beta sections below list everything it changed) plus the three fixes in
+this section. Your settings, graphs and sessions carry over from 0.6.x. The
+new Beta features since beta.2 (Flatpak, tray icon, Open in new window, custom
+CSS theming) stay in Beta for now.
+
+### Changed
+- Stable Tine is now built from the Beta line: plain Markdown/Org files are the only storage, with no on-disk search index to build or repair. Beta keeps its separate app and update channel and continues with 0.7.x betas.
+
+### Fixed
+- Opening pages: a single page whose properties were followed by a blank line and then a `#+` directive (for example `title:: X`, a blank line, `#+description: y`, or an Org file-level property drawer before `#+title:`) made every link and tag fail with "Couldn't open this page: task N panicked with message \"byte range starts at N+1 but ends at N\"" and left `[[` completion with no pages. Such pages now open and keep their title, and a page whose title cannot be read no longer stops the rest of the graph from loading (GH #644, REG-OG-GH644).
+- External edits: a page changed on disk (by Syncthing, Dropbox or another editor) stayed stale while one of its blocks was open in the editor, which includes leaving Tine for another app with the caret still in a block; it updated only after you pressed Escape or navigated away and back, and typing into the stale block then raised a conflict. The page now updates in place and the editor stays on the same block (found by its `id::`, else by its place in the outline), with the caret kept; if the change deleted that block the editor closes. A change still waits while text is being composed with an input method, and a different file taking the page's name is still refused while you edit (REG-OG-RELOAD-WHILE-EDITING).
+- Android (GH #654): the copy button on an image (on the picture itself and in the full-screen view) always answered "Couldn't copy the image", because the system clipboard plugin Tine used cannot put an image on the Android clipboard. Tine now stages the picture in its cache and puts it on the Android clipboard through the app's own file provider, which is how Android apps share images. What could not be checked without a device is whether pasting that clipboard image into a block adds it as a picture on every Android version (UI-OG-GH654).
+
+## [0.7.0-beta.2] - 2026-10-05
+
+### Added
+- Added open-only `tine://` graph, page and block links, with Copy link actions and lazy stable graph identity (GH #181).
+- Code blocks show line numbers and a language label; Settings → Appearance offers one device-wide wrap preference shared by reading and editing (GH #474).
+- Beta releases now include the experimental Windows 32-bit installer and portable ZIP, with manual updates as on stable (GH #275).
+- Guide page **Reference/Tine query model**: every way a query's answer can differ from Logseq's, and why — the "find more, never less; browsing never writes" rule, the one exception, what Tine refuses, and how Tine 0.6 differs (GH #422).
+- Added TQL `parent`, `ancestors`, and unbounded `descendants` relations with `any`, `none`, and `every` quantifiers (GH #551).
+- `/Date picker`, `/Tomorrow`, and `/Yesterday` insert journal date links in the graph's configured title format (GH #485).
+- Wide Markdown, Org, query and sheet tables now use free space on both sides of the text column before scrolling at the pane boundary (UI-OG-QBG-TABLE-BLEED).
+- Added remappable, initially unbound commands to grow/shrink either sidebar width (GH #425) and open a persistent search tab directly (GH #437).
+- Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
+- Touch gestures on a phone (GH #492, GH #501): swipe a block right to indent it, a short way left to outdent it, or a long way left to select it and open its action menu; swipe in from the left edge to open the left drawer (a mostly-vertical swipe is ordinary scrolling and does nothing); on iOS the same edge swipe goes Back when there is something to go back to, following your finger and snapping back if you let go early; and the image viewer takes pinch-to-zoom, double-tap zoom, drag-to-pan, a sideways swipe between the page's images and a drag up or down to close (modelled on Logseq's PhotoSwipe viewer: a tap shows or hides the buttons instead of closing, a new × button closes, and dragging a zoomed image past its edge turns to the next image). Swiping is off while typing, in tables, code, queries, drawings and media, and with more than one finger. Logseq's `:mobile {:gestures/disabled-in-block-with-tags [...]}` setting in `config.edn` also turns the block swipe off in any block that references a listed page, and in the blocks nested under it. Documented in Reference > Platforms and mobile.
+- Windows: the diagnostic report now records whether Windows Defender real-time protection is on (`windowsDefenderRealtime`: on, off, unknown or not-applicable; a flag only, never a path). When a graph's first open is slow and real-time protection is on, a one-time notice per graph says so and offers **Add an exclusion for this graph folder**, which asks for administrator approval and only then runs `Add-MpPreference -ExclusionPath`; nothing changes without that click, and a declined or refused attempt is reported (GH #623).
+- Settings → Help & diagnostics: the diagnostic report now carries launch timings (listing, file dates, reading vs parsing, index build, ready), recent full rescans and saves, and statistics-only graph-shape numbers (sizes and quantiles, never names or text), so a slow graph can be diagnosed without sharing it; **Rescan graph** forces a full rebuild: it ignores every remembered file date, size and checksum, re-reads and re-parses every file, and rebuilds the page, link and search state without blocking the app or touching what you are editing, then shows when it finished; the quick check on returning to the window is unchanged (GH #623).
+- Query sheet, from hestratos's design list (GH #619, UI-OG-GH619-*): the Task field has **Any status** (writes every task marker OG knows) and a new **In a journal page** condition (writes `(between -2000y +2000y)`, which Logseq reads as journal-only); a condition can be dragged into another group and a group left with one condition dissolves; the query text is hidden behind an **Edit as text** toggle that is remembered across restarts (stored in the app settings, not localStorage); results show and follow your edits inside the open sheet before you save (debounced, latest answer only); page results show the page's own properties and a pencil that edits them through the page's property panel; and the Find menu has **Pages and blocks**, showing both answers with Pages above Blocks (the sentence reads *Pages and blocks where …*, the Blocks section follows your List/Table/Board choice, a sample that cuts a section short says so, and the open sheet previews both), stored as `tine.result-kinds:: pages-and-blocks` which Logseq ignores.
+- Settings → About: **Check for updates automatically** can disable startup update checks and notifications on this device; manual checks remain available (GH #618).
+
+### Changed
+- Large outlines window offscreen block shells, speeding page open, revisit and cleanup while retaining editing and navigation (GH #623).
+- Android Back follows the one Back ladder used everywhere (GH #492): it dismisses an open dialog, menu or image first, then closes an open drawer, then steps back through page history, and exits only at the root; a failed exit keeps the screen shield up and the next Back retries only the exit.
+- Launch: Tine reopens a graph from a checkpoint of its last state in app data, then checks every file's date and size and rereads only what changed before the graph is ready; the checkpoint includes remembered query and backlinks answers, and is written about a minute after editing pauses (at most every 5 minutes), or 5 seconds after a launch that had none (GH #623).
+- Query sheet rows no longer say *advanced* for anything the builder wrote, and Scheduled/Deadline/journal date ranges read as Scheduled, Deadline or journal date instead of *Between dates* (GH #619, UI-OG-GH619-NO-ADVANCED).
+- REG-OG-P12B-PAGE-HEADER: A Markdown page header is now exactly the leading properties the parser accepts, so a no-space `key::value` line is page text rather than a property, in the editor, page promotion on save and alias lookup alike.
+- REG-OG-P12B-FENCES: Fence-aware editing (property and language autocomplete, code-body editing, calc blocks, hidden metadata) follows Logseq's parser instead of CommonMark: any fence run closes a fence, whatever its length.
+
+### Fixed
+- Text you type while Tine is still writing an earlier version of the same page now keeps its crash-safe copy when that earlier write lands, until the text itself is saved; before, a crash in that moment could lose it (REG-OG-DRAFTRISK-MS).
+- When a page file that briefly disappeared (an editor's save-by-rename, a sync gap) comes back unchanged, the edit Tine held for it keeps its crash-safe copy until it is saved again (REG-OG-DRAFTRISK-LIFT).
+- A sync client delivering back exactly the text you are editing (often Tine's own earlier write) no longer raises a conflict; Tine adopts the file and still saves your text (REG-OG-DRAFTRISK-EQUAL-BYTES).
+- An edit typed while another graph is opening is no longer lost if Tine cannot store its crash-safe copy: the switch waits for that copy, and if the store refuses it the text stays in this window under Review unsaved with an error that says so (REG-OG-DRAFTRISK-SWITCH).
+- When Tine cannot store a crash-safe copy of a page, every such page is now named in its own error; before, only the first one was (REG-OG-DRAFTRISK-REFUSED).
+- Opening a graph that is already open in another window can no longer freeze the app when another window opens or closes at the same moment (REG-OG-C5-FLOW3-DEADLOCK).
+- Toggling typography, changing the journal title format or renaming another page while a save is in flight no longer loses track of that save: a successful save no longer makes your next edit conflict with Tine's own write, and a failed save stays unsaved and is reported (REG-OG-C5-FLOW3-SAVE-EPOCH).
+- Saving a page, changing a setting, storing a draft, importing an asset or resolving a sync conflict no longer freezes the window while the write waits for the disk; repeated writes still land in the order you made them (REG-OG-C5-FLOW3-SYNC-WRITES).
+- A damaged or replaced settings, session or workspaces file, or a plugin manifest or module that is a pipe or device, is read with a size limit and never waits on a writer; an opener or external editor that was launched is always reaped (REG-OG-C5-C2-APPDATA-READ). A page whose property header the parser cannot read now says so instead of silently showing ordinary text (REG-OG-C5-C2-HEADER-READ).
+- The Guide now matches the query sheet and the conflicts list: `/query` opens the condition list (press **+ Add condition** for the field chooser), the query text is behind **Edit as text**, a condition can be dragged into another group, scheduled and deadline ranges are written as Logseq `(between scheduled …)`, and the conflicts list is described with its launch cache; the repeated Code blocks tip is one paragraph (REG-OG-C5-G-GUIDE-TRUTH).
+- A tine:// block link keeps the block id exactly as written and opens the page that actually holds the block, also when two files share a page name (REG-OG-C5-O-DEEPLINK).
+- Late results no longer land on the wrong surface: the first-load flag, the About tab, Make a template, graph verification, Guide navigation, follow link, reference evidence and the home page each ignore a completion that arrives after their view was retired (UI-OG-C5-O-OWNERS). Journal-template and native-frame preference writes are applied in order and a failure is always shown (UI-OG-C5-O-PREFS); dragging or overtyping in a sheet no longer leaks listeners or writes into another editor (UI-OG-C5-O-SHEET).
+- A failing clipboard or opener helper is no longer reported as a successful copy and is always reaped (REG-OG-C5-O-CLIPBOARD). An unreadable graph asset, a failed crash-safe draft write or removal, a failed PDF-notes refresh, an export preview or sheet export read, a logbook entry and a task marker that cannot be parsed now show a sticky error instead of failing silently (REG-OG-C5-O-ASSET-READ, UI-OG-C5-O-FAILURES).
+- A fenced `public:: true` example no longer publishes a page and a fenced `public:: false` example no longer vetoes a real public page; the static export hides the same property chips as the app (including `:block-hidden-properties`); page embeds and published links find their page by the same Unicode identity the store uses (REG-OG-C5-R-PUBLIC-FENCE, REG-OG-C5-R-HIDDEN-PROPS, REG-OG-C5-R-IDENTITY).
+- An Org page now prints and publishes as Org instead of being rendered as Markdown, and printing one page no longer rescans the whole graph directory (REG-OG-C5-R-ORG-RENDER, REG-OG-C5-R-PRINT-COST); the app's task checkbox, ordered-list key and property facets now share one definition with the export (REG-OG-C5-R-FACET-TWINS).
+- Sidebar, breadcrumb and reference labels hide exactly the property, planning and drawer lines the parser recognised (UI-OG-C5-R-VISIBLE-BODY); a published site lists only real block-reference referrers, reports a missing asset as an error, and refuses an oversized snapshot or asset instead of loading it (UI-OG-C5-R-PUBLISHED-READS).
+- A tag written with spaces (`[[big idea]]`) is one tag in sheet formulas, table cells and board cards instead of being split into one tag per word (REG-OG-C5-Q-MULTIWORD-TAG).
+- Copy and Export now expand a `{{tine-query …}}` macro into its result blocks like a `{{query}}` macro, instead of leaving the macro text (REG-OG-C5-Q-EXPORT-TINE-QUERY).
+- A `#+BEGIN_QUERY` block whose raw text ends with a line ending, or uses CRLF delimiters, is now recognised as a query in the editor exactly as the native renderer already did (REG-OG-C5-Q-BEGIN-QUERY-TWIN).
+- A `tine.col-aggregates` value with spaces after the equals sign (`cost = sum`) is now recognised by the Display editor as the engine already reads it, instead of being treated as foreign text and duplicated on the next edit (REG-OG-C5-Q-COL-AGG-TWIN).
+- Saving a page no longer re-walks every alias in the graph for each remembered backlinks answer, and an authored alias still appears in the quick switcher under its own spelling on its owning page (REG-OG-C5-Q-ALIAS-EDGES).
+- A query with a now bound (for example created_at between -1d and now) is recomputed on each run instead of repeating a stale answer for the rest of the day (REG-OG-C5-Q-MEMO-NOW).
+- Copying or exporting a block query result now includes the page-properties row when the query matched it, instead of reporting it as omitted (REG-OG-C5-Q-EXPORT-HEADER).
+- Editing a page so it gains a property that many pages already have no longer copies the whole list of those pages in the query index (REG-OG-C5-Q-POSTINGS-COST).
+- A used_as_tag query's remembered answer now counts its tag-key set toward the memory budget (REG-OG-C5-Q-MEMO-TAGSET).
+- Quick-switcher page search with more candidates than slots no longer evicts a better name match in favour of a content match (REG-OG-C5-Q-PAGE-HEAP-ORDER).
+- Asking why a query with thousands of conditions returned nothing no longer builds a quadratic explanation plan; queries over 64 conditions are explained as one whole condition (REG-OG-C5-Q-EXPLAIN-COST).
+- A property condition written with two keys, or with a nested group around its key, is no longer evaluated as if the extra key or condition were not there; the query builder reads property conditions with the same rule as the engine (REG-OG-C5-Q-PROPS-READER-TWIN).
+- A property column named in a legacy query table's `query-properties::` now finds the engine's key when the name has a space or a non-ASCII capital, matching how Tine stores property keys (REG-OG-C5-Q-KEY-NORM-TWIN).
+- The 128-level nesting limit on opened pages now follows the parser's own rule for where a code fence closes, so a very deep outline placed after a short fence closer can no longer slip past the limit (REG-OG-C5-Q-FENCE-DEPTH).
+- A query for scheduled or deadline blocks no longer matches a block that only shows the `SCHEDULED: <date>` / `DEADLINE: <date>` syntax inside a code fence or after a longer word such as `UNSCHEDULED:` (REG-OG-C5-Q-PLANNING-TEXT).
+- A query's `like ... escape 'c'` clause is now applied instead of silently ignored (a pattern such as `'100!%' escape '!'` matches a literal percent sign); an escape that is not one character is reported (REG-OG-C5-Q-TQL-ESCAPE).
+- The query builder's date-range preview now resolves a typed bound exactly as the query engine does: `-7D` is no longer previewed as a date, `2026_01_05` and `2026-1-5` now are, and offsets past 10,000 years or a month clamp in year 0 no longer disagree (REG-OG-C5-Q-DATE-TWIN).
+- Clicking a query table column header now sorts only the view you are looking at. It no longer rewrites the query block and its display properties; a saved sort is still set from the query's sort control (UI-OG-C5-Q-HEADER-SORT).
+- A query row switched off with `-- ` no longer invalidates the whole query when it holds an unquoted relative date, a stray `@page`/`@block` or another refused shape (REG-OG-C5-Q-TQL-DISABLED).
+- Searching for a page alias (Ctrl+K and the page autocomplete) lists the page that owns the alias once, with an "aka" hint, and no longer also lists a separate page named after the alias when that text is referenced elsewhere; ASCII and fullwidth comma alias lists both work (GH #623, GH #353; REG-OG-GH623-ALIAS-353).
+- Trashing an image from its hover action no longer fails with "asset is referenced; refresh the orphan inventory": the block is saved without the image first, then the file moves to the trash. A file other pages still use is kept and you are told so instead of getting an error (GH #623; UI-OG-GH623-TRASH-ASSET, REG-OG-GH623-TRASH-REFERENCED).
+- An advanced query is refused for a `:result-transform` only when it declares one (a title, string, comment or discarded form that mentions the word no longer blocks it), and a BEGIN_QUERY block that declares a transform now shows the "clauses Tine cannot run" refusal instead of silently running without it (REG-OG-C5-Q-RESULT-TRANSFORM).
+- Saving a page no longer fails with "refusing to move page-header property into outline content" when a code block shows `key:: value` syntax; the guard asks the parser which lines are properties (REG-OG-C5-Q-REFUSAL1).
+- A PDF link into a nested assets folder (`../assets/nested/report.pdf`) opens that PDF, not a same-named one in the assets root, and highlights made in it are saved under the nested PDF's own page and sidecar; opening the PDF from a highlight's page does the same (UI-OG-C5-P6-PDFLINK).
+- Image `{:width ...}` / `{:height ...}` metadata is read as EDN, so a quoted title that contains `:width 999` no longer sets the image width (UI-OG-C5-P6-IMAGEMETA).
+- PDF Find shows an error and clears stale results when a page cannot be read, and closing Find or changing the query stops a pending search from moving the reader (UI-OG-C5-P6-FIND); a PDF text layer that finishes after its page was re-rendered or the reader closed no longer installs, and a failed text render shows the PDF error (UI-OG-C5-P6-TEXTLAYER).
+- A rejected native window request (minimize, maximize, close, resize drag) now shows an error instead of failing silently, and a resize listener registered after the window chrome was removed is released (UI-OG-C5-P6-WINDOW).
+- A Favorites (or other) settings edit no longer deletes an unrelated `config.edn` setting when an earlier entry's value is the same keyword; config keys are found only at key positions (REG-OG-C5-L01-S1).
+- Saving a PDF highlight keeps `file::`/`file-path::` example lines inside a code fence at the top of the annotation page; a failed cleanup of a leftover legacy sidecar, page or area image is now logged instead of silent (REG-OG-C5-L01-S2).
+- The Favorites page now recognises a favorite the way the parser reads it: links with `]` in the name, links with a block property, and Org links are kept, and asset links are no longer mistaken for pages (REG-OG-C5-L12-FAV-LINK).
+- Switching graphs right after Tine recovered an interrupted Favorites save no longer rewrites the new graph's Favorites page and config (REG-OG-C5-L12-FAV-TIMER).
+- Opening a favorite page through a different capitalization (a link, a restored tab, or a saved path) no longer rewrites the graph's favorites config; only an explicit rename changes it (REG-OG-C5-L14-FAV-CASE).
+- Opening Journals no longer replaces today's journal with the default template when it already holds text: Org heading prose such as `memo:: …`, a block id, or text nested under an empty bullet is kept; Org journals with such prose now count as written days for the calendar and carry (REG-OG-C5-L12-S1).
+- Renaming a namespace parent whose title and a child's title use different Unicode forms of the same letters moves the child to `New/child`, not `Newchild` (REG-OG-C5-L03-S1).
+- Merging pages keeps a fenced `key:: value` example in the merged page's preamble inside its fence instead of dropping it or turning it into a page property (REG-OG-C5-L03-S2).
+- Merging a page into one that already ends with the same blocks keeps the merged-in copies instead of silently dropping them (REG-OG-C5-L03-S3).
+- One unreadable journal or page (undecodable text, an oversized file, a filename that is not UTF-8) no longer blanks the journal feed, the duplicate-journal list, the conflict review or the parser comparison: the readable files are shown and the skipped ones are named (REG-OG-C5-P2-BAD-FILE).
+- Editing code no longer rewrites it: Backspace after `+ ` inside a code body or fence deletes one character instead of the list prefix, on-type typography (`->`, `--`) leaves inline code (including double-backtick and Org `~code~`) alone, and a task-list checkbox click toggles that checkbox rather than a lookalike `[ ]` in its label. Pasting text keeps a fenced block whole across blank lines, and heading, `$$` display-math Enter, block-reference and tab labels now read literal source and markup from the parser instead of regexes.
+- A failed template listing now reports a sticky error toast and is retried on the next slash menu instead of being silently treated as having no templates.
+- Restore makes its recovery copies durable before writing backup files, and trash/move into a new folder syncs that folder, so a power cut cannot lose the original (REG-OG-C5-L06-S1).
+- Importing or saving an asset whose name is taken by a large file no longer reads that file into memory (REG-OG-C5-L06-S2).
+- A backup that cannot read the graph, and a focus or Settings rescan that fails, now report the real error instead of a generic failure or a silent success (REG-OG-C5-L07-B1, REG-OG-C5-L08-B1).
+- Page rename publication skips reparsing the old document and repeated transaction-record searches; loaded-page refresh uses one path lookup per touched page (GH #623).
+- Page renames open each rewritten referrer four times instead of eight and plan without building the whole-graph name list, with every revision and pre-rename guard kept (GH #623).
+- Ordinary focus refreshes enumerate graph metadata outside the page/save writer and sort only changed paths, reducing waits while preserving freshness; config changes and failed-load recovery retain their full writer-ordered scans (GH #623).
+- Graph search measures text rank only for matches, avoiding a full Unicode-length pass over rejected blocks (GH #623).
+- Page-search results read properties only for their selected pages, avoiding unrelated graph-query initialization (GH #623).
+- Page-scoped simple and TQL queries select owners through the existing name map and derive facts only for those pages (GH #623).
+- Closing or switching PDFs no longer shows an annotation-loading error from a retired reader (GH #557).
+- Image picker, camera and Upload keep the initiating editor through asset import, so neither a delayed native blur nor the app being hidden behind the full-screen picker discards the saved image link; the background save still runs (GH #622, GH #493).
+- Journal date-format parity: honor legacy `:date-formatter` after the modern key, offer all Logseq formats, and render `E`/`EE` as abbreviated weekdays while keeping old titles readable (GH #332 follow-ups).
+- Plain-text search skips Unicode normalization for ASCII text while preserving search results and highlight spans (GH #623).
+- Query property commas now follow Logseq's configured keys; query text matches raw content with exact case and accents, while Search keeps folding (GH #624). Imported `query-table::` and trailing `table` choices are honored without writing Logseq view properties.
+- GH #510: edit a code region inside a mixed text block without exposing its fences; boundary navigation returns to source editing and preserves surrounding text.
+- Find searches main and split panes plus expanded right-sidebar items, with next/previous traversing them in order (GH #559).
+- Search-tab results open in new tabs while keeping Search; middle-click and modifiers choose background tabs, sidebar or another pane, and page results share the Quick Switcher context menu (GH #416).
+- Opening and reading graph PDFs leaves annotation files untouched; create the highlight sidecar and notes page on the first annotation (GH #577).
+- Date pickers keep a selected day open for time/repeat edits; Done or clicking outside applies the complete choice, while Escape cancels (GH #30).
+- GH #407: Markdown/Org copy export preserves formatting while resolving block refs and expanding embeds; HTML/OPML share resolution, hidden IDs are omitted, and plain text retains user property separators.
+- Changing only page-name capitalization updates filename spelling, title and references in one guarded rename (GH #609).
+- PDF `file://` links now open in the desktop's default viewer with their full path, without redirecting to graph assets or creating annotation pages (GH #577).
+- Android and iOS startup no longer shows “Couldn’t read the window state” from an unsupported desktop maximize query (GH #621).
+- Journals feed days now show Linked References with counts and the shared collapse/filter controls, loading as you scroll and hiding empty sections (GH #481).
+- Code cards keep their surrounding layout on entering/leaving edit, including empty code and long lines (GH #474, layout only). Empty code wrappers can be removed with Backspace, and right-click at a desktop code caret offers the existing block deletion action (GH #488).
+- Android's keyboard toolbar shows distinct return arrows for Undo and Redo (GH #599).
+- Linux deb/rpm installations no longer gain a second visible launcher on startup; the app-ID entry remains available for Wayland icon lookup (stable and Beta, GH #626).
+- Deleting a page or journal now succeeds if its file was deleted externally while the confirmation was open; a changed title or replacement file still cannot be deleted through a stale page target (GH #620).
+- First opens of large pages skip unnecessary offscreen body parses for property-free blocks, using the properties already computed by the backend (GH #623).
+- Mobile block swipes reveal distinct indent, outdent and more icons before release; left swipes now have a wider outdent band (40–139 px), with actions at 140 px, so a natural swipe is less likely to open the menu (UI-OG-QBF-SWIPE).
+- Render block properties as linked keys on separate rows with OG duplicate/group precedence, shade block embeds in both themes, and show pages tagged with the current page before references (GH #612, GH #610, GH #214).
+- An unexpected rendering failure in a PDF pane, sidebar item, query result, plugin settings view or dialog now reports its error within that surface with **Retry** and **Copy details**, while sibling surfaces remain usable (GH #490, GH #332; UI-OG-GH490-QBE).
+- Contributor instructions, harness scripts and historical records use portable paths, with a tracked-file guard against personal checkout paths (GH #579).
+- Multi-block context-menu copy, cut, references, embeds and delete now act on the whole selection and use plural labels (GH #591).
+- Scheduled and Deadline slash calendars take keyboard focus for date navigation and return to the editor after picking or cancelling (GH #596).
+- Fixed query grouping summaries to name their field and offer Clear, hide a sole missing-value group table, and keep Search/List page results uncluttered with properties one click away (UI-OG-QBV-QUERY-DISPLAY).
+- External asset replacements, creations and deletions made while the graph watch is being installed now refresh the open graph (REG-OG-QBW-ASSET-WATCH-STARTUP).
+- Linux YouTube embeds now provide native client identification and initialize without configuration error 153 (GH #600); video playback still requires supported system codecs.
+- Query blocks with title options no longer leave a stray `}` below their results. A damaged macro now reports that its source could not be parsed and stays editable, instead of showing All pages or failing a builder edit with “The block changed while saving” (UI-OG-QUERY-MACRO-BRACE).
+- A page containing a lone carriage return (a CR not followed by LF, for example `key::` ended by CR) no longer shows "This page could not be displayed. Unreachable code should not be executed" and no longer breaks every later page: the lsdoc parser (v0.5.8) now handles bare CRs as Logseq's parser does, and any future parser panic is confined to the one call that caused it.
+- Saving on a network or FUSE filesystem that cannot sync directories (some NFS mounts, Android shared storage) no longer fails: as on master, the errors such filesystems give for a directory sync (EBADF, EACCES, EISDIR, EINVAL) are tolerated, while a real I/O failure or a full disk still fails the save.
+- A save that fails for a passing reason (a disk hiccup, a file briefly locked by another program) is retried automatically after 100 ms and 300 ms before Tine reports it; the page stays marked unsaved until it is saved (REG-OG-XPORT-SAVE-TRANSIENT-RETRY).
+- Creating a page is refused, naming the file, when a file Tine cannot read (for example one with broken text encoding delivered by sync or an editor) may already be that page, instead of creating a second file for the same page; your edits stay in the editor (REG-OG-XPORT-CREATE-UNREADABLE-OWNER).
+- A graph that fails to open now shows a red notice that stays until dismissed, with a **Retry** button that reopens the same graph (from the folder picker, the graph list or its right-click menu) (REG-OG-XPORT-GRAPH-OPEN-RETRY).
+- Opening or switching graphs no longer freezes the window: the graph now opens in the background, and closing the previous graph (about 0.2 s) no longer holds up other requests (REG-OG-XPORT-LOAD-GRAPH-OFF-UI).
+- The linked and unlinked references error banner says what actually went wrong instead of a generic message (REG-OG-XPORT-REFS-BACKEND-ERROR-TEXT); a reference filter whose page-header tags were cut short now says the list is incomplete (REG-OG-XPORT-PAGEPROP-FILTER-TRUNCATED).
+- Browsing no longer writes to your graph (GH #623): zooming into a block, jumping to one from Ctrl-K, and opening a block in the sidebar, a tab or a pane used to stamp an `id::` property into the block's page file just to remember where you were. Those places are now remembered by their position in the page (kept in the session file, not the graph), and a block gets an `id::` only when something actually references it. A saved session with an older block reference still restores.
+- Opening a page on a large graph no longer stalls (GH #623): the first page open after launch or after a page was created, deleted or delivered by sync read every page file's header under the store's lock (about 2.8 s on an 11,000-page graph on Windows); it now reads only that page, and a page whose file is named for it opens while the graph is still loading. Folding or unfolding a block saves the file without rebuilding graph-wide state or rewriting the launch checkpoint (a save went from about 20 ms to about 3 ms on a 13,000-page graph). Launching no longer freezes while Tine lists the installed spell-check dictionaries: that ran a helper program on the window's main thread and held every other request behind it (seconds on a slow disk or network drive); it, and opening links, assets and folders in other programs, now run in the background.
+- Launch and focus return on large graphs (GH #623): the conflicts list no longer reads every page file (the store remembers which pages carry merge-conflict marker lines, kept in the launch checkpoint), the asset scan no longer opens every asset file while holding the store's writer lock, and the "Refreshing changes from disk…" notice moved beside the help button, dimmed and shown only after half a second; the diagnostic report now also carries per-command latency histograms and the focus-return phase split (numbers only).
+- Query builder usable again (GH #619, UI-OG-GH619-*): presses and keys inside the open query sheet no longer reach the block behind it (before, a press entered edit mode and tore the sheet down, so the Find pages/blocks control and the other buttons never acted); every floating panel now shares one portal that keeps events inside it, guarded against a bare portal; field-chooser rows no longer shrink to slivers and the list scrolls, with dropdowns that flip or clamp to the viewport; the sheet opens beside its query instead of at the top-left and stays inside the window (it flips above a query near the bottom); typing `/query` opens the sheet on its condition list without also opening the field chooser; and the drag-reorder bar is no longer drawn at slots where a drop changes nothing.
+- Queries answer like Logseq, round two (Discussion #617 query audit): an advanced query with any clause Tine cannot read is refused whole, with a notice naming the clauses, instead of running part of it and showing a wrong answer (REG-OG-Q617-QFIX-WHOLE-REFUSAL); printing a query back to Logseq text keeps `page-property` as page-level (REG-OG-Q617-QFIX-ROUNDTRIP, with a permanent 760-form round-trip test); `(all-page-tags)` lists the pages some page uses as a tag; `(task [TODO DOING])`, `(priority #{A B})` and `(page-tags (x y))` accept set and list forms; `not` takes several operands; `sort-by` is descending unless `asc`, `sample` picks a random subset before sorting, and a query made only of those directives shows nothing; `(between created-at -7d now)` and `last-modified-at` filter by timestamp properties; the page-property header block counts as a referrer and in block-reference counts, and its properties appear in the property picker; `(namespace X)` matches only the pages directly under `X` (advanced queries stay recursive); journal result groups run newest day first; and a legacy `{:table-view? true}` table honours the block's `query-properties`, `query-sort-by` and `query-sort-desc` (REG-OG-Q617-QFIX-*).
+- Queries answer like Logseq (Discussions #617/#619, issue #624): `(priority [A])`, `(task [TODO])` and `(page-tags [x])` accept Logseq's vector form; a plain text search also finds text that sits in a property line; sibling matches under one parent show that parent's breadcrumb once and sit together; the query builder's pages/blocks choice now sticks (REG-OG-Q617B-VECTOR-FORMS, -PROPERTY-LINE-TEXT, -GROUP-BY-PARENT, -BUILDER-ANCHOR).
+- Simple queries such as `(property type [[Person]])` now find pages whose properties are in the page header, as Logseq does: the page-property block takes part in `property`, `page`, `between`, page-reference and boolean queries and appears as a read-only page-property row (REG-OG-Q617-PREBLOCK-QUERY, Discussion #617).
+- **Raw HTML resources (UI-OG-DUPBL2-D29):** local images and sandboxed iframes use actual DOM attributes, so image text in comments and `data-src` lookalikes cannot select the wrong resource.
+- Uppercase `.ORG` files retain Org format in conflict diffs, PDF annotations and page rename/merge (REG-OG-DUPAL2-F12).
+- Keep code examples in a user’s Favorites page from being adopted as favorites arrangement metadata (UI-OG-DUPBL1-FAVORITES-LITERAL-MARKER).
+- Preserve code literals during text, HTML and OPML export cleanup; recognize standalone embeds from parsed content; preserve early journal years and advance timed repeaters (REG-OG-DUPD2-D15–D19).
+- Typing in an expanded parent block no longer recomputes the visible order of every loaded journal page on each keystroke (REG-OG-C5-C-TYPING-ORDER).
+- Backspace or Delete at a block edge no longer merges a block whose children would land deeper than the 128-level outline limit, which left the page unsavable; the merge is refused with an error (UI-OG-C5-C-MERGE-DEPTH).
+- A session or workspace whose saved pane layout is nested thousands of splits deep no longer loses the whole restore; the panes within the depth and pane bounds are restored (UI-OG-C5-C-LAYOUT-DEPTH).
+- Convert to pipe table on a grid with more than 200 rows shows its size refusal instead of failing with an internal error (UI-OG-C5-C-GRID-PIPE-BOUND).
+- The formula editor opens and saves a valid formula with a very long sum or transform chain instead of failing with an internal error (UI-OG-C5-C-FORMULA-CHAIN).
+- Importing a dropped or picked file that is a named pipe is refused at once instead of hanging the app (REG-OG-C5-C-ASSET-FIFO).
+- A draft store file past its 64-record bound (for example delivered by a sync tool from another build) is set aside with its bytes kept, instead of being loaded into a store that then refused every draft write (REG-OG-C5-C-DRAFT-RECORDS).
+- Sheet date footers skip impossible calendar dates, and typed cells and formulas preserve years below 100 (UI-OG-DUPD3-DATE-FOOTER, REG-OG-DUPD3-CALENDAR).
+- REG-OG-DUPF05-UNICODE-IDENTITY: Page-name lookup and query grouping use the native Unicode whitespace policy in the frontend too, so U+0085 and BOM no longer produce different identities or accepted grouping fields.
+- Annotation editing and PDF targets respect parsed properties, including empty results, and ignore metadata inside code (UI-OG-DUPD1-D08).
+- Outline insertion no longer treats literal `id::` examples as live block identities; merge identity recovery also uses accepted properties (REG-OG-DUPD1-D09).
+- Caret link navigation ignores code and follows parser-accepted tag boundaries, including punctuation (UI-OG-DUPD1-D10).
+- REG-OG-P12B-CONFLICT-PREAMBLE: Merging a conflict copy's page preamble no longer treats property-looking lines inside code blocks as page properties, and keeps differing code blocks whole instead of merging them line by line.
+- REG-OG-P12B-MARKERS: Task markers and priorities share one parser-derived span for reading and writing, and the demo graph reads them once the parser is ready.
+- Published block previews copy only the requested nodes, avoiding full-subtree allocation while keeping snapshot metadata independent (REG-OG-DUPF03-PREVIEW).
+- Property readers and sheet field rename now use accepted parser properties and source spans, including Unicode keys and literal-code protection (REG-OG-P12-PROPERTY-SPANS).
+- Page aliases and titles ignore metadata-looking source-block contents (REG-OG-P12-PREAMBLE-LITERALS).
+- Page-reference candidates share native target classification, exclude unlabeled local assets, and include nested links; Org filename candidates retain their existing selection policy (REG-OG-P12-REFERENCE-TARGETS).
+- REG-OG-P11B-BEGIN-QUERY: Static BEGIN_QUERY export uses the live EDN inspector, preserving escaped titles, discarded forms and typed positional inputs.
+- REG-OG-P11B-OUTLINE-LITERALS: Outline paste keeps parser-owned literal blocks and bullet continuations intact while preserving ordered list recognition.
+
+### Tests
+- Added native coverage for Ctrl+K alias navigation with ASCII/fullwidth commas and LF/CRLF headers (GH #623); the reported Windows failure was not reproduced on current og under Linux.
+- Added native Shift+click coverage across journals, main, sidebar and split panes, plus rendered modifier checks for page refs, tags, property values and block refs (GH #623); current og passes without a production change.
+
+## [0.7.0-beta.1] - 2026-09-30
+
+### Changed
+- UI-OG-BETA-VERSION: About and copied reports identify **Tine Beta**; Copy version includes the full version, and update notifications retain the Beta sequence. The updater refuses a stable payload before offering or installing it.
+- REG-OG-BETA-CHANNEL: The separate preview app is now **Tine Beta**, with the `beta` update/release channel and `-beta.N` prerelease versions. Stable Tine and Beta keep separate app data and update channels; the local deploy filename remains `tine-og`.
+- REG-OG-R6-PREVIEW: Preview candidates and AppImage update metadata stay on `og-preview`; manual candidate builds do not publish, and preview publication cannot become the stable latest release.
+
+### Fixed
+- UI-OG-E2EB-WORKSPACE-LIFETIME: Editing a query workspace's source, presentation or Display keeps its live answers; replacing the route object no longer closes the active workspace's search.
+- REG-OG-P11-ASSET-LIVENESS: Unused-media discovery and trash protect linked filenames containing parentheses and percent escapes, using parser-owned targets.
+- REG-OG-P11-PROPERTIES: Cross-format paste preserves parser-accepted Unicode and custom property keys, duplicate entries, and their order.
+- Title rename avoids reading temporary navigation destinations while refreshing the graph (UI-OG-P10C-RENAME-READS).
+- REG-OG-P10B-IDENTITY-COST: Loaded blocks reuse parser-owned identity absence through the shared answerer for editor and reference badges, avoiding offscreen identity parses on large pages.
+- REG-OG-P10-QUERY-PRIORITY: Background List mounting yields while the search picker covers it, retains existing rows, and resumes on a later frame when the picker closes.
+- REG-OG-P10-QUERY-FRAMES: Broad List queries mount at most 32 new keyed groups per frame, reserve pending scroll height, and cancel queued rendering when their owner retires.
+- REG-OG-P10-QUERY-VIEWPORT / REG-OG-P10-DATE-PARSE: Large List queries defer group headers and live subtrees until viewport approach; compiled journal date patterns parse without allocating temporary token strings.
+- REG-OG-P10-LAZY-GROUPS / REG-OG-P10-JOURNAL-SCAN: Offscreen query and reference groups defer row state until they approach the viewport; journal inventories validate relative paths without repeatedly allocating configured directory prefixes.
+- REG-OG-P10-BLOCK-MEMORY / REG-OG-P10-QUERY-PRESENTATION / REG-OG-P10-JOURNAL-FORMAT: Large graphs share sparse parser edit regions and compiled journal formats; List queries avoid building excerpts for inactive presentations.
+- REG-OG-P10-HOSTED-PERF: Hosted OG performance checks retain the fixed v0.6.5 campaign anchor after stable releases, with unchanged performance budgets.
+- REG-OG-R6B-PREFLIGHT: Preview preflight uses the OG v0.6.5 performance baseline with unchanged budgets.
+- UI-OG-R6B-GRAPH-NOTICES / UI-OG-R6B-MIGRATION-TOAST: Query notice dismissals follow the current graph, and startup explains completed legacy app-data migration once.
+- REG-OG-R6-IDENTITY: Read released Tine’s graph notice dismissals, restore legacy desktop app data before startup, and seed desktop preview browser preferences without changing the released source.
+
+
+### Fixed
+
+- Windows validation uses portable structural-ratchet keys and exercises page-merge races across alternate path spellings (og-W1; test harness only).
+
+- **Page saves reuse their checked parse when publishing, and renames use the known page-name index** (og-R5; REG-OG-R5-SAVE-PARSE, REG-OG-R5-RENAME-COST). Saves retain their existing byte-preservation checks; a rename no longer rereads unrelated page headers for its same-name check.
+- **Browser and native query rewrites use the same macro extent reader**, preserving authored arguments and rejecting malformed closing braces consistently (og-R4C; REG-OG-R4C-MACRO-EXTENTS).
+
+- **Org typing keeps hidden IDs in the parser-accepted drawer after CLOSED planning and leaves source blocks intact** (og-R4C; UI-OG-R4C-ORG-REATTACH).
+
+- Query table footers show complete backend totals and save Count, Sum, Average, or None through Display without reordering repeated entries. Static export totals summarize exported rows (UI-OG-R3A3-QUERY-FOOTER).
+
+- **Splitting an Org block keeps its own ID on the original block after CLOSED planning** (og-R4B; UI-OG-R4B-OWN-PROPERTIES). The editor hides properties from the parser's own property region and keeps body drawers visible.
+
+- **Nested queries in a query export no longer report how many matches were left out on other pages** (og-R3C; REG-OG-R3C-NESTED-COUNTS). This applies to the static fallback as well as the read-only app.
+
+### Added
+
+- **Query export writes a movable site inside the graph** at `published-queries/<folder>/` (og-R3C2; UI-OG-R3C2-QUERY-DESTINATION, REG-OG-R3C2-QUERY-PORTABILITY). A collision offers Replace or a separate folder; replacement preserves and reports the previous export in recovery. Referenced assets travel with the folder, missing assets warn, and Settings → Graph → Query export size limit sets a device-local copied-asset budget (default 1 GiB), with a direct Settings action when it is exceeded. Live and command-line exports keep their external destinations.
+
+- **An old system web engine shows an update card before startup** (GH #572; og-R2). On macOS it explains the macOS 12.3 requirement and why updating Safari alone does not update the embedded engine.
+
+- **Missing page links are muted with a dotted underline** (tags are not) (og-R2; UI-OG-R2-MISSING-LINKS). They still open their destination, and become live when a page or alias is created; deletion dims them again without reloading. This deliberately differs from Logseq, which dims only untitled pages.
+
+- **Parser-owned structural edits** (og-D1): metadata edits and template/conflict copies share native/wasm block regions, preserving parser-recognized literal contents. Empty code cards retain their body/wrapper separator after typing, code-body typing preserves literal typography, and calendar edits retain glued body text. Published block identities, logbook and repeaters use the block's format.
+- **An image replaced outside Tine refreshes where it is shown** (master d017d1afc, 2f54a8d5e, og-J2).
+  A picture changed by an editor, Syncthing, Dropbox or another Tine window updates in place without reloading the page,
+  and one deleted outside shows its missing-image placeholder. This includes an `assets` link to an approved folder outside the
+  graph, even when it is reached through symlinked folders. An open PDF, audio or video is not swapped while you use it;
+  it shows the new file the next time you open it. Tine's own asset writes never echo back as outside changes, and the extra
+  watch is released when the graph closes.
+- **A query shown as a table or board exports as that table or board** (og E, 22c open item).
+  A block whose whole body is one `{{query …}}` with `tine.view:: table` or `board` (a query `as table`/`as board` may override it)
+  now publishes with the query's own columns and rows, on the page each row came from, computed by the
+  app's own sheet code; a result on a page the export does not publish is left out (and never counted), and if the results changed while the
+  export was prepared it stays the usual result list. The command-line export still writes the outline.
+- **A TQL query with a page reference after a comma saves as a macro** (og E).
+  A form such as `any(children, [[a]])` used to be refused when Tine wrote it into a
+  `{{tine-query …}}` block, because the document parser read the comma-separated `[[a]])` as a
+  page reference; the saved macro now spells that operand in parentheses, and it reads back as the same query.
+- **Verify a synchronized graph** (master 749bfb2b1, og-D). Settings → Help &
+  diagnostics can now fingerprint the exact bytes of your Markdown and Org files
+  and compare them with the report from another device, naming every file that
+  exists on only one side or differs. It reads files only, reports paths and
+  checksums (never contents), can be cancelled, and never confirms a match from
+  a scan that was disturbed while it ran.
+- **Recent error messages in Diagnostics** (og-D). Settings → Help & diagnostics
+  lists the last 20 red error messages of this session, newest first, with the
+  time, a ×N count for repeats and a Copy button, so a message can still be
+  reported after you closed it. It lives in memory only: never written to disk,
+  and not part of the diagnostic report, because messages can name pages.
+- **A command line you can rely on** (master e7af4db9c, og-D). `tine --help`,
+  `tine --version`, `tine open GRAPH`, `tine capture`, `tine doctor GRAPH` and
+  `tine export static|live GRAPH --output PARENT` share one documented schema,
+  and Linux `.deb` and `.rpm` packages install a generated `man tine`. On Windows
+  the terminal commands now print into the console that launched them. See the
+  new Guide page Reference/Command line.
+- **A conflict can no longer scroll out of sight** (master 61ea6600c, og A).
+  Once the in-page review scrolls above the window, a slim bar pins to the top
+  of the pane; tapping it unrolls the same review in place, with your choices
+  kept. Tap again, press Escape, or scroll back up to fold it away.
+- **A duplicate journal day resolves on the day itself** (master 9dc54e4a7, og A).
+  A day with two files (a date-named one and a title-named one) joins the
+  conflict badge and the Conflicts page, and its page compares the two files
+  block by block: the pre-selected choice keeps everything, and applying folds
+  the other file in and moves it to the recoverable trash. Each file keeps its
+  Open, Rename and Trash actions; the startup toast is gone, and Settings keeps
+  the list as a fallback.
+- **Right-sidebar items can be reordered by dragging their header** (GH #211, og 22b); a short press still opens the item.
+- **External changes stay fresh without interrupting you.** Returning to Tine
+  asks the watcher for a fresh pass before you type; a large checkout or sync
+  burst arrives as one change; `.git/` and `.stfolder/` are ignored; and if the
+  system refuses live file notifications, Tine says so and checks every 3
+  seconds instead. An optional "always ask" policy (Settings → Backups &
+  recovery) holds even clean external changes for **Reload from disk** /
+  **Keep mine**.
+- **A live-draft conflict offers Review, not a blind overwrite.** Its banner opens
+  the in-page comparison, and the Conflicts page lists such pages under
+  **Unsaved drafts**.
+- **Sheets come out of Export as the tables, boards and grids you see in the app.**
+  Export HTML and read-only app, a query's Export and Export to PDF write each
+  `tine.view` table, board or grid with its rows, groups, formula columns and
+  aggregate footers. Tine computes them with the app's own sheet code and hands
+  the publisher plain data, so the export cannot disagree with the screen. The
+  command-line export has no app to compute them and keeps the plain outline; a
+  sheet that cannot be computed is written as the outline with a visible note
+  instead of failing the export.
+- **A "changed on disk" conflict can be merged block by block at the page.** The
+  panel at the top of the page compares your unsaved edits with the file as it is
+  now, pre-selecting each side's own change when Tine still has the version you
+  started from. Apply writes only if the file is still the version shown; a newer
+  change refreshes the comparison. If Tine closes first, the draft is kept and the
+  same comparison appears after the next start, even when the page cannot be
+  opened (GH #541).
+- **Alt+click opens an internal link in the other pane** (GH #438), and **Ctrl/Cmd+click opens a background tab** (GH #283), on page links, block references, reference headers, namespaces, the sidebars, zoom breadcrumbs and query results, next to Shift+click (right sidebar) and middle-click (background tab). Middle-button autoscroll and Shift range-selection are suppressed on every one of those surfaces (GH #207). Ctrl/Cmd+click no longer opens the other pane; that is now Alt+click.
+- **Ctrl+Y also redoes** on Windows and Linux (GH #491). It is a second default for the same Redo command, shown beside the binding in the shortcuts list; remapping or unbinding Redo replaces both chords.
+- **Dropping a block on the right of another block's text nests it** as that block's last child (GH #326), with a drop marker showing where it will land.
+- **The Guide grows thirteen task pages.** Start (Where things are, Bring an
+  existing graph), Workflows (Keep context visible, Structure repeated
+  information, Capture and plan your day, Find and revisit, Research a document,
+  Extend Tine) and Reference (Files, external edits and backups; Troubleshooting
+  and recovery; Journals, tasks and scheduling; Pages, links, references and
+  search; Platforms and mobile). Each describes only what this build does.
+- **A part of Tine that fails now says so, where it failed, with a Retry — instead
+  of leaving the window blank.** The page, the sidebar, Linked and Unlinked
+  References and the conflict panel each fail on their own; the message says how
+  many backend operations are still outstanding and for how long when that is the
+  likely cause (GH #490, GH #332).
+- **When the graph you last used will not open, the Welcome screen says which one
+  and why**, with Try again, Copy details and Open another graph.
+- **Page width is configurable per device** (Settings → Appearance → Advanced):
+  a standard reading width, and a fill-pane or custom maximum for Wide mode
+  (GH #382).
+
+### Fixed
+
+- **PDF highlight reads run on a blocking worker** (og-R4A; REG-OG-R4A-HIGHLIGHT-READ-WORKER), returning worker panics as errors instead of aborting the app.
+- **Query title edits preserve unrelated authored EDN** (og-R4A; UI-OG-R4A-QUERY-TITLE-SPANS). Nested titles and discarded forms stay intact; unreadable options refuse the edit visibly. Option reads and edits share one Rust span reader across native and wasm.
+
+- Sheet field rename preserves ordered query aggregates, including repeated keys, average, whole-result count and unrelated configuration (UI-OG-R3A2-AGGREGATE-RENAME).
+- Starting another PDF export supersedes pending preparation; graph changes and window teardown discard stale output (UI-OG-R3A2-PRINT-SUPERSESSION).
+- Guide explains table-only sort clearing, search Retry and block-picker states, aggregate rename preservation, and Print query-limit refusal.
+- **Cold Quick Capture waits for its graph before showing the editor** (UI-OG-CAPTURE-COLD-R3B): graph-backed suggestions and the first captured entry work on `tine --capture` startup; superseded shows cannot focus or retarget the window.
+- **Launch backups wait until startup is idle** (REG-OG-LAUNCH-BACKUP-IDLE-R3B): warm completion signals the background snapshot after a quiet period, with a safety deadline and immediate graph-switch cancellation.
+
+- **Custom journal titles apply before graph activation and live settings refresh** (REG-OG-CUSTOM-JOURNAL-TITLE-R3B): journal-template lookup reads a sync-delivered journal under its configured title. Missing-baseline saves remain guarded.
+- **Unicode regex search agrees across native queries and browser filters** (REG-OG-R1-REGEX-001): matching and highlights use the same bounded Rust engine. `\d`, `\w`, and `\b` recognize Unicode text; inline flags such as `(?i)` work in friendly search, while backreferences, look-around, and programs above 1 MiB are refused.
+- **Caret selection follows code editors with wrapping disabled** (og-R3A, master 587bdc431).
+  The shared caret mirror copies shaping and wrapping styles instead of inventing wrapped rows.
+- **Search failures can be retried in place** (og-R3A, master 371241774).
+  The quick switcher offers Retry, and the block-reference picker distinguishes Searching, a failed
+  read with Retry, and an empty answer while preserving the editor text.
+- **PDF export stops at the Print query limit** (og-R3A, master e04b0e7f).
+  A renderer-declared source, nesting or match limit now stops preparation with its reason instead
+  of opening the print dialog over a placeholder.
+- **A local query-table sort identifies itself as Table-only sort** (og-R3A, master a9c8b2596).
+  Its label clears that local order without changing the saved query sort.
+
+- **Percent-escaped Org file links resolve to their page names** (REG-OG-PAGE-FILENAME-001, og-B-TAIL). Reference extraction now uses the native filename codec through wasm, including escaped punctuation and namespace separators.
+- **Saves keep reference counts and names live without full refetches** (og-B-SIG2): native save and watcher signals update changed count targets and refresh names only when their sources change; ordinary text edits avoid both graph-wide reads.
+- **Published queries use their owning page** (og-B-SIG2): current-page queries, template substitutions, and query sheets share the baked publication context; identical queries on different pages keep separate static cache answers.
+- **Saves reuse parser-owned formatting** (og-B-SIG2): old page content and serialization layout come from one parse, removing two redundant parses from ordinary saves.
+
+- **Code examples do not set a page's saved indentation** (REG-OG-SIG-LAYOUT-001).
+  Formatting detection now uses the parser's actual outline headers, so a
+  bullet inside a literal code block cannot supply a false indentation unit.
+
+- Failed journal scans report incomplete reads, and a page file whose name cannot be read is reported while the rest of the graph stays usable; unreadable graph config opens read-only, unreadable custom CSS reports its safe fallback, failed conflict refreshes keep their last inventory, and verification cancellation stays silent through a typed outcome.
+
+- **Graph read failures preserve user data** (REG-OG-B-FAIL2-CONFIG-WRITE, REG-OG-B-FAIL2-ASSET-TRASH, REG-OG-B-FAIL2-VERIFICATION-REPLACE): an unreadable config blocks writes into guessed directories, asset trash rechecks published references under the writer, and graph verification detects a source replaced while its old descriptor is being hashed.
+- Long flat TQL boolean queries no longer exhaust the stack; genuine nesting is bounded (REG-OG-B-DOOR2-TQL-FLAT-DEPTH).
+- Org drawer and directive properties retain backlinks; page icons ignore prose and literal examples (REG-OG-B-DOOR2-ORG-PAGE-PROPERTIES, REG-OG-B-DOOR2-PAGE-ICON-OWNERSHIP).
+- Org blocks documenting VCS conflict markers remain editable, and plain references keep decomposed Unicode accents with their letters (REG-OG-B-DOOR2-ORG-MARKER-LITERALS, REG-OG-B-DOOR2-NFD-REFERENCE-BOUNDARY).
+- Fullwidth commas separate tag references consistently with Logseq (REG-OG-B-DOOR2-FRONT-TAG-SEPARATOR).
+- **Saving with retained graph views avoids graph-wide copies** (REG-OG-B-COST-SNAPSHOT, REG-OG-B-COST-NAMES): page slots, timestamps, reference counts and name/signature/icon indexes share untouched tree branches. Save preservation checks also reuse the old parsed document (REG-OG-B-COST-PARSE).
+- Published query snapshots retain reviewed source documents across external edits; draft loading and CSV/TSV imports bound their reads before decoding (REG-OG-B-W3-PUBLICATION-SNAPSHOT, REG-OG-B-W3-BOUNDED-DRAFT-READ, REG-OG-B-W3-BOUNDED-CSV-READ).
+- Sheet row virtualization clears its visited-row state on graph reset (UI-OG-B-W3-SHEET-BINDING-RESET).
+
+- Sheet formulas memoize shared references, reject inherited member names, and refuse excessive field-rename depth without crashing (UI-OG-B-W3-FORMULA-DAG, UI-OG-B-W3-FORMULA-OWN-MEMBERS, UI-OG-B-W3-FORMULA-RENAME-DEPTH).
+
+
+- **Published permalinks share page and block identity** (UI-OG-PERMALINK-IDENTITY-001, UI-OG-PERMALINK-BLOCK-ID-001): equivalent Unicode page/alias names resolve, and Markdown/Org block links ignore code examples of IDs.
+- **Expanded audio shares inline asset decoding** (UI-OG-AUDIO-ASSET-PATH-001), including normalized asset-directory case and separators. Native streams, cached images and media fallbacks use one Rust MIME answer through the existing wasm module.
+- **Export retains literal metadata and Org body drawers** (UI-OG-EXPORT-LITERAL-METADATA-001): HTML, OPML and source Text strip canonical properties through the parser-owned region door.
+- Fixed namespace and published-backend identity drift, published search highlights and block-ID lookup, and deeply nested namespace/snapshot handling (OG-B-FRONT).
+- Fixed recursive embed exports, oversized scientific-zero output, rejected registry response cleanup, broad table rendering, and media labels containing a literal percent. Search excerpts and query-macro scans avoid repeated input work (OG-B-FRONT).
+
+- **Exported grids show the same bounded rows their footer totals**, and count their full area against export limits (og B-SHEET).
+
+- **Sheet cell operations preserve their own configuration**, query sheets keep the physical page already open, and field rename accepts Unicode property siblings (og B-SHEET).
+- Kept-draft conflict resolution and publication remain with their original graph; saving retires a pending first-write crash-safe draft in order, and uninstall stops a plugin still starting.
+- Asset versions, rendered block and board markers, readiness listeners, audio scrub gestures and updater handles retire with their owner. Query builder edits compose while print/parse work is pending, completed workspace searches release their cancellation lanes, parser comparisons stop on retirement, and visible PDF pages share a bounded tile budget.
+- **Failed native reads keep their errors and recovery details** (OG-B-FAIL): plugin and asset inventories
+  propagate disk failures, unreadable sessions cannot create blank workspaces, and incomplete transaction recovery
+  remains visible through conflict resolution. Launch-backup failures appear in the graph window.
+
+- **Failed reads stay visible** (OG-B-FAIL): page and reference refreshes keep their last successful data,
+  journal-feed and session reads report failures, template creation refuses a failed name check or a read-only block,
+  and the journal-template picker offers Retry. Quick Capture now shows block-action feedback with copyable errors.
+
+- Org pages with long directive preambles open without reparsing every growing prefix (REG-OG-ORG-DIRECTIVE-OPEN-001). Page moves sync each affected directory once, and both journal navigation doors share the absent-path rule (og-B-STORE).
+
+- Graph settings read their top-level EDN entries and decode authored string escapes consistently (REG-OG-CONFIG-ROOT-READ-001, REG-OG-CONFIG-EDN-ESCAPES-001).
+
+- **Query memo limits include statistics and compiled patterns** (REG-OG-QUERY-MEMO-001): oversized entries are returned without caching, and program reservations count toward both entry and total memory budgets.
+
+- **Large query property lists and macro blocks stay responsive** (REG-OG-QUERY-ATOMS-001, REG-OG-QUERY-MACROS-001): atom uniqueness uses one ordered set, and raw query macros are scanned once. TQL LIKE prefix shortcuts now share the matcher’s escaping rules, including `\a` (REG-OG-QUERY-LIKE-001); query printers share literal escaping and numeric spelling.
+
+- **Faster graph startup and first search** (og-P1). Journal-first reads avoid ordinary-page title discovery,
+  completed claimant discovery is reused by direct reads, and a search without page results skips page-property hydration.
+  Startup graph loading begins in the background while the frontend starts; open failures still reach the Welcome error card.
+
+- **Delayed actions retain their original targets and newer input** (OG-K3).
+  Quick Capture refuses delivery after its destination graph changes and keeps
+  scratch/title edits made while saving. Page-menu deletion retains its file
+  target through confirmation, alias saves preserve active editor/IME drafts,
+  and cancelled or unmounted image/video resizes cannot edit another graph.
+- **Content survives disabled-query edits, Unicode Org conflict resolution, and raced page merges** (OG-K1).
+  Editing another query operand preserves rejected conditions inside `off(...)` byte for byte.
+  Keeping both Org block versions and renaming an Org reference tolerate non-ASCII prefixes.
+  An unchanged transaction step checks its revision before a merge can retire the source page.
+- **Edits preserve unrelated authored content** (OG-K2). HTML paste keeps blank code lines; query-builder edits keep untouched empty boolean groups; sidebar arrangement edits keep the Favorites page preamble; sheet Flatten keeps group notes and properties as rows.
+- **A second file holding a page's name is never shown or written as that page** (master 7bd793bd0, og J1).
+  When a duplicate journal day (left by sync or a date-format change) or a same-named page opened by path
+  was open with unsaved input, the journals feed showed it as the requested day, so what was typed there
+  saved to the wrong file; quick capture and "add to today" could append into it and report success; a
+  sidebar item pinned to the other file stayed blank; and a PDF-notes refresh declined during an edit was
+  dropped, leaving the notes stale. The feed now keeps its previous days (or, on first open, says why in place) and fills in once
+  that input is finished; capture and carry go into today's real file, or, when the other file has unsaved
+  input, refuse and name both files (capture keeps its text in the capture window); the sidebar says why and retries;
+  the notes refresh applies once the edit ends.
+- **The preview build never offers the released Tine as an update** (og J3). The updater and the
+  Check for updates button ask the Tauri updater plugin what the `og-preview` release offers (its
+  `releases/download/og-preview/latest.json`, the same manifest the installer uses), never `releases/latest`,
+  whose higher version number would have offered to replace the preview with the shipped app. With no
+  `og-preview` release, an unreachable or invalid manifest, or nothing newer, there is no toast and About says it
+  could not check or that you are current. The manual releases link opens the `og-preview` page.
+- **Plugin settings: an operation finishing no longer re-enables controls under a later one.** The Plugins
+  tab's busy state is held per operation (also while the uninstall confirmation is open) and released only by
+  its owner (master cdd0eda4b).
+- **A `file:` link opens the file** (GH #444, master c817fb150, og I3). A link written
+  `[Test](file://D:\test.txt)` (Logseq) or `[Test](<file:///D:\test.txt>)` (Obsidian) rendered
+  as a link and did nothing; it now opens that file or folder in the application your system uses
+  for it, on desktop. A file that is gone, a link that names no local file, and any other refused
+  link now show an error message instead of doing nothing. Other schemes stay refused.
+- **Clicking or dragging a code block's own scrollbar no longer starts editing it** (master
+  8d404e9c1, og I3). Scrolling a wide code block by its native horizontal scrollbar entered edit
+  mode on press.
+- **Published exports ask for no refused writes; the workspace name field survives typing**
+  (GH #549 siblings and GH #498, master 4aadb1407, og I3). A read-only published export no longer
+  attempts the tag-table toggle query or the PDF view-position save it must refuse, and the
+  workspace name field is no longer rebuilt on every keystroke, so an input-method composition
+  is not dropped.
+- **Unlinked References: the highlighted mention is the jump control** (GH #200, master
+  552d988c9 and 54c00e2d6, og I3). Clicking the highlighted mention opens its page with that
+  mention selected; the numbered jump row appears only for mentions beyond the excerpt, and Show
+  full block marks every mention.
+- **Faster large pages and lists** (master a2789cc0f, 0350c00b6, 023c986b0, ce9a796fb, b3fc9c813,
+  8c495c1ce, og I3). The All Pages list labels its rows in one pass; each block derives its
+  heading, task and macro state once and only enters the marker/priority chip groups when it has
+  one; leaf blocks skip plugin thread-line subscriptions; indenting or outdenting a selection, and
+  redoing or pasting cut blocks that keep their ids, do one pass of work instead of one per block.
+
+- **Plugin calls survive a rename or a format change** (master cdd0eda4, og-I2).
+  A plugin's ownership of the open graph followed the render epoch, which a page rename, a typography
+  change or a journal-title-format change bumps, so a call in flight across one of those was dropped as
+  if the graph had changed. It now follows the graph binding only; switching graph still retires it.
+- **Creating a page from the Quick Switcher after a graph switch says so** (og-I2). Alt+Enter and the
+  new-pane paths used to open nothing, or the wrong graph's page, when the graph changed under a
+  create in flight; they now show "The graph changed before the page was created. Try again."
+- **Restore can no longer be clicked twice while its confirmation is open** (og-I2).
+- **Arrow-key pane selection steps across the seam between panes correctly** (master 91d102fb, og-I2):
+  the candidate's near edge, not its centre, is tested against the current pane's boundary.
+- **Search regular expressions accept `\d \w \s \b`** (master f02af3ef, og-I2). Only back-references
+  `\1`–`\9` are refused. Note: the native search reads `\d \w \b` as Unicode classes and the frontend
+  as ASCII, so a non-ASCII digit or letter can match on one and not the other.
+- **The HTML export no longer prints a sheet's `tine.*` view settings as property chips** (og-I2).
+- **The reference filter summary says filtering is pending while the descendant index loads** (og-I2):
+  "Indexing N references… the filter applies when this finishes" instead of a count over an unfiltered list.
+- **The graph switcher says when it could not load the other graphs, and offers Retry** (og-I2).
+- **Diagnostics report watcher-batch timings, and `__tineWatcherLatency()` prints them in the devtools console** (og-I2).
+- **The Guide names the left and right sidebar link areas, the embed root-bullet drag versus click, and the
+  search-fold examples** (`か`/`が`, `и`/`й`, `क`/`कु`, `елка`/`ёлка`) (og-I2).
+
+- **`tine doctor` reports unreadable pages and duplicate page names** (og I1f, GH #35, master e7af4db9c).
+  It used to print OK and exit 0 while a page could not be read, or while two files claimed the same page name.
+  It now lists each, prints the configured home page, and exits 1 when it finds a problem.
+- **A live export opens on the graph's home page** (og I1f, GH #35). The published app, from the command line
+  or the app, now starts on the configured home page when that page is exported, then Welcome to Tine, then the
+  first page; `tine export live --home "Page name"` chooses one explicitly and refuses a page that is not exported.
+- **Tine starts when its usual application-data folder cannot be written** (og I1a, master 8e1ea0bfd).
+  On Linux, a root-owned or read-only `~/.local/share` made every launch crash before a window appeared.
+  Tine now keeps settings and the web view's data in `~/.tine-data` (or another private writable
+  folder) for that session and says so; if nothing is writable it prints one sentence explaining why.
+- **A conflict banner goes away by itself once the file is back to what you loaded** (og I1c, master c68c0b6e7).
+  Some editors and sync clients briefly remove a file while replacing it; Tine treated the gap as a
+  conflict that only a click could clear, and held the edit unsaved behind it. If the file comes back
+  matching what your editor started from, the banner clears and your edit saves normally; a file that
+  comes back changed still raises the conflict.
+- **A page with an unresolved save conflict can be opened on disk again** (og I1d, master 6f8531344, GH #490).
+  "Open with default app" and "Show in folder" refused while a conflict was pending. Both now open the
+  file as it stands on disk and say so; your unsaved changes stay in Tine until you resolve the conflict.
+- **Carrying tasks no longer moves them into a second file for today** (og I1e).
+  When two files existed for today (a duplicate day from sync or a changed journal date format) and the
+  other one was open under today's name, carry moved the tasks into it and said "Carried", while
+  today's journal in the feed never got them. Carry now stops and names both files.
+- **Closing no longer offers to throw away a save that is still running** (og I1b, master fea3c314b).
+  If writing your changes took more than four seconds — a slow or network drive is enough — the close
+  asked whether to lose them. It now says it is still saving and waits up to another 26 seconds; it
+  only asks once the save has failed or stalled, in words that say which.
+- **Ctrl+F scrolls to the exact occurrence, not just its block** (GH #253, master
+  46a5290a2, og H). In a block taller than the window, in-page find used to center
+  only the block, leaving the match off-screen; it now centers the active occurrence
+  in the pane, falling back to the block while it is being edited.
+- **An HTML export of 0 pages says why** (GH #560, master 350efef1f, og H). With no
+  `public:: true` page (and "Include every page" unticked), Settings → Graph →
+  **Export HTML and read-only app…** now reports "only pages with `public:: true` are
+  exported" instead of a bare "Exported 0 pages".
+- **A phone toolbar keeps calendar, journals and theme on the bar** (GH #205,
+  master a006f1308, og H). On a 390px phone they had moved into the "…" menu; they
+  now collapse only below a 345px toolbar. A narrow desktop window, whose tab strip
+  needs room, still collapses them at 460px and below a 440px window also moves
+  Back/Forward into "…", so the tab title stays readable instead of shrinking to a
+  couple of letters, and the "Show all tabs" button never covers the next button.
+- **The parser comparison no longer offers known intentional differences as bugs**
+  (master c0c2ff11b, og H). Dollar math inside Markdown emphasis (`**…$x$…**`),
+  which Tine keeps on purpose, is re-verified in isolation and listed under a
+  "known intentional parser difference(s) suppressed" count instead of a reportable
+  divergence.
+- **The "new sync conflicts need review" notice goes away once they are resolved**
+  (master 042054c1b, og H). It used to stay beside the green "Merged" confirmation
+  until dismissed by hand; it now closes when none of the conflicts it announced is
+  left, whether resolved in Tine or cleared on disk.
+- **A voice memo stopped from another block is kept** (master b3d64add, og H). On
+  mobile, starting a recording in one block and tapping Stop while editing another
+  used to discard the recording silently; it is now saved to `assets/` and Tine says
+  it was not inserted. A failed stop or import is always reported. A recording or
+  photo that finishes after you switched graphs is saved to the `assets/` of the graph
+  it was started in, never the new one, and Tine names that graph and the file.
+- **An edit typed while another graph is opening is kept** (og-T). It is saved
+  as a draft of the graph you left and offered for review when you reopen it,
+  instead of being dropped by the switch.
+- **Editing a block keeps its blank and under-indented lines byte for byte**
+  (og-T). A whitespace-only line inside the edited block was written empty, and
+  a continuation line indented less than usual was re-indented.
+- **A broken `:hidden` setting fails safe** (master, og-T). If `:hidden` in
+  `config.edn` cannot be read, Tine shows no graph pages until it is fixed,
+  rather than showing pages you meant to hide; entries with Unicode spaces at
+  either edge are ignored.
+- **A page's `title::` is read from the page's own preamble only** (og-T).
+  Properties after a leading `# heading` belong to that heading block, so
+  opening, renaming and linking agree on the page's name.
+- **Android follows external file changes with native events by default**
+  (master, og-T), like every other platform; polling stays a setting.
+- **The conflict badge is always reachable, and closes the phone drawer** (og-F).
+  The sidebar's footer (the conflict badge and New page) sat one header-height below
+  the bottom of a short window, so a pending conflict could be invisible until you
+  scrolled the sidebar. It now fits, and on a phone tapping the badge closes the
+  navigation drawer so the Conflicts page opens in view instead of behind it.
+- **A failing tag table or conflict comparison no longer blanks the page** (og-F).
+  If reading them fails, the page shows a retryable error in that panel instead of
+  throwing while it renders.
+- **Query board and table settings survive and apply** (master P5A/P5B, og E).
+  A board now groups by the query's own Display grouping (it ignored it before), and its Group by
+  control changes that setting. A `tine.fields` list of column names on a query block is no longer
+  mistaken for a typed schema: its columns are not marked stray, and declaring a schema moves the
+  list to `tine.columns` in the same undo step. A saved query tab or window state with one malformed
+  display setting keeps the tab and drops only that setting. "No grouping" on a query board now shows one column of every result
+  instead of falling back to the task-state columns.
+
+- **Red error messages stay until you close them, and offer Copy.** Every error
+  is also noted in the privacy-safe diagnostic report (not its text) and, with
+  `TINE_DEBUG=1`, written in full to the debug log (og OG-TOAST).
+- **No false "couldn't finish checking for external changes" at launch.**
+  Returning to the window before the graph finished opening (or on the Welcome
+  screen) no longer reports the not-yet-open graph as a failure; the same holds
+  for the session save and inline page icons (og OG-TOAST).
+- **A panel whose data fails to load no longer blanks itself** (master c5279d186,
+  og-D). When a background fetch fails, backlinks, the Quick Switcher, the
+  calendar, Settings, the sidebar and the other panels that read one now keep
+  what they had or show "Couldn’t load …" instead of throwing; the block
+  references panel and Search add a Retry. Details go to the debug log only.
+- `tine open GRAPH` while Tine is already running now opens that graph in a new
+  window; the second launch used to be read as a page called "open" and opened the
+  wrong folder (master e7af4db9c, og-D).
+- **An edit made while a graph switch was already under way is no longer
+  dropped** (og A). Tine saves once more right before it opens the other graph,
+  and stays on the current graph if that edit cannot be saved.
+- **Files with very long names can be imported, deleted and resolved.** An asset
+  or page whose name is close to the 255-byte limit (an 84-character CJK title)
+  could not be imported, re-imported under a numbered name, moved to trash,
+  resolved after a VCS merge, or created: the helper files and trash copies Tine
+  names after it were too long. Trash copies now shorten the name and keep its
+  extension. Merging a page also no longer repeats an alias written after a
+  full-width comma, and a drag that would nest the outline too deep now says so.
+- **A page marked `public:: false` stays out of every export.** With
+  `:publishing/all-pages-public? true` in `config.edn`, or **Include every page**
+  ticked, Tine published such pages anyway; like Logseq it now leaves them out,
+  and their blocks no longer reach another page's embeds, queries or references.
+  A query's own **Export…** is unchanged.
+- **An outside edit to `logseq/config.edn` now applies while the graph is open**
+  (og 22b). A change made in Logseq, a text editor or delivered by a sync
+  provider was taken in only after a rename or a reopen; the store watcher now
+  reloads it in both notify and poll modes, only when its bytes changed.
+- **A settings change edits only its own top-level entry of `config.edn`** and is
+  refused, leaving the file untouched, when the file is half-written or not a map;
+  a key nested inside another setting is never overwritten (og 22b).
+- **Renaming the home page keeps it the home page**, as in Logseq; merging it
+  into another page does not (og 22b).
+- **Choosing "Keep mine" after a conflicted alias save no longer duplicates the
+  alias's content on its owner page.** The retry replaces what already landed,
+  and refuses rather than guessing if the owner changed meanwhile (og L13).
+
+- **Hostile content cannot crash a table formula or navigate the app away** (I-22): formulas that nest past 128 levels, counting references, show an error in the cell instead of overflowing the stack, video and tweet macro links open in the system browser, and on Android and iOS a link with any other scheme (for example `intent:` or `javascript:`) no longer navigates the app.
+- **A save that fails on the disk now says which step failed** (GH #538, #590): the message names the platform call (for example the no-replace rename, or syncing the temporary file) and its OS error number, so a report can be acted on. Diagnosis only; it does not make such a save succeed.
+- **The vendored parser WASM matches a clean source rebuild again** (GH #392), so F-Droid's from-source build reproduces the shipped parser; CI now rebuilds it and fails on any difference.
+- A page rename no longer rewrites links inside a file that still carries
+  unresolved git or Fossil merge markers; the file keeps its bytes and a message
+  lists it.
+- Tine's Concord ledger now lives in its own app-data folder, so it no longer
+  deletes, or is deleted by, the ledger of a mainline Tine build on the same machine.
+- **Middle-clicking a link opens a background tab without switching panes** (GH #87): the click no longer makes the pane under it the active one, so the tab opens where you are working.
+- **Ctrl/Cmd+click and Alt+click on an outline bullet** go where the same modifier on a link goes (GH #456): a background tab and the other pane. Bullets in linked references do the same.
+- **A split pane's only tab keeps its close button** (GH #207), unless that tab shows the journals; closing it closes the pane.
+- **A file change that arrives while you are editing that page is applied when you finish** (GH #337), instead of being dropped until the next change.
+- **Block embeds follow their source's fold state live** (GH #360). Folding the embedded block inside one embed is remembered by that embed alone, and folding rows inside an embed yields to the next fold of the source.
+- **Filter chips and groups in linked and unlinked references** treat differently-normalized spellings of one page name as the same page.
+- **Saving a search or query as a page in an Org graph writes its view properties where Org reads them** (a `:PROPERTIES:` drawer, not a body line that was never read back), and a save the workspace has since moved on from is refused instead of publishing an obsolete search: if the write had already begun, the page is kept and the workspace stays put with a note.
+- **Dragging a block embed by its bullet moves the embed itself** (GH #514), not the source block it shows. Rows nested inside the embed still drag as the source's own outline.
+- **Arrow keys move between bullets inside linked references, block references, query results and embeds** (GH #341). Up/Down and Left/Right at a block edge now step through the blocks as rendered in that view instead of jumping the caret to the source page's outline, where the editor is usually not on screen; merges and indents there still act on the real page outline.
+- **Code blocks**: the caret no longer jumps when you click into a code block or leave it with the arrow keys, the language line and fence markers are editable as text, and clicking a code card places the caret where you clicked (GH #489).
+- **Property autocomplete** follows Logseq's keyboard flow (GH #306): typing `::` at the start of a line puts the caret before the delimiter so you type the name, "Create" is offered first, values already on the line are not suggested again in a comma-separated list, and a failed facet lookup no longer raises an error toast.
+- **Context-menu submenus** open on the side that stays on screen near the window's right edge (GH #471).
+- **Block text and bullet share one first line**, so the bullet, the reference-count badge and the first text line line up in the default and serif themes (GH #459, GH #454).
+- **Default task styling**: done tasks are struck through and dimmed, and the checkbox colours follow the theme (GH #394).
+- **Typing into a page in the right sidebar** no longer reseeds an empty trailing block over your text (GH #483).
+- **Clicking into a block** starts editing on mouse-down, so the caret lands under the pointer even when a re-render follows (GH #368).
+- **IME composition** keeps a block in its edit transaction when the composing input arrives without a `compositionstart`, so a composed character is not lost.
+- **Android**: the on-screen keyboard no longer covers the block being edited (the app's bottom inset accounts for the IME).
+- **The static HTML export shows a block's clocked time and the numbering of
+  numbered blocks.** A block with LOGBOOK clock rows keeps its elapsed-time badge
+  (the drawer itself stays hidden), and blocks marked as own-numbered lists show
+  their `1.` / `a.` / `i.` markers as the app does.
+- **Journal days and "Today" follow the calendar zone the backend uses**
+  (GH #607). The frontend no longer trusts a WebView clock that can disagree
+  with the system zone; it applies the measured backend offset, refreshed
+  periodically and on focus.
+- **Opening a page by a differently cased name lands on the spelling that
+  exists on disk** (GH #597), and renaming an Org page keeps `file:` links to
+  it valid under the graph's filename format.
+- **Switching Settings sections no longer makes the whole dialog vanish and
+  reappear**, and the maximized size is remembered across restarts (GH #409,
+  GH #427).
+- **The right sidebar's spare header width is no longer a link** and the left
+  sidebar's whole row opens its page (GH #464, GH #468).
+- **The fold arrow on a block is no longer partly covered by the fold-all guide**
+  (GH #423), and **the left sidebar's scrollbar can be grabbed** with the resize
+  strip beside it instead of over it (GH #435).
+- **Application chrome no longer starts a text selection** while page content
+  and editors stay selectable.
+
 ## [0.6.987] - 2026-09-28
 
 ### Fixed
@@ -5909,7 +6553,7 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.6.98...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.7.0...HEAD
 [0.6.98]: https://github.com/martinkoutecky/tine/compare/v0.6.97...v0.6.98
 [0.6.90]: https://github.com/martinkoutecky/tine/compare/v0.6.5...v0.6.90
 [0.6.0]: https://github.com/martinkoutecky/tine/compare/v0.5.10...v0.6.0

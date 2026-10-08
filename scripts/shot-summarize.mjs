@@ -1,10 +1,9 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Verify + screenshot the query-builder "+ summarize" control (result
 // aggregation + group-by). Headless Chromium over the mock backend — the top
 // journal has a `{{query (todo TODO DOING)}}` block whose builder bar now shows a
 // "+ summarize" pill. We open the popover, apply Count, then Group by page, then
 // Sum of a (non-numeric) property to confirm the skip surfacing.
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -12,6 +11,13 @@ const PORT = 5259;
 const OUT = "screenshots";
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 
+async function waitForServer(url, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try { const r = await fetch(url); if (r.ok) return; } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 const shot = async (page, name, loc) => {
   await loc.scrollIntoViewIfNeeded();
@@ -26,7 +32,7 @@ const shot = async (page, name, loc) => {
 };
 
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 40, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   const page = await browser.newPage({ viewport: { width: 1200, height: 1300 }, deviceScaleFactor: 2 });
   page.on("pageerror", (e) => console.log("pageerror:", String(e).split("\n")[0]));
@@ -35,16 +41,10 @@ try {
   await page.waitForSelector(".page-title", { timeout: 8000 });
   await sleep(500);
 
-  // Summarize lives in the SHEET's footer, so open the first query's sheet from
-  // its resting sentence and keep it open for the whole run.
-  await page.locator(".qs-gear").first().scrollIntoViewIfNeeded();
-  await page.locator(".qs-gear").first().click();
-  await page.waitForSelector(".qs-sheet", { timeout: 6000 });
-
-  // The sheet's summarize pill (label flips "+ summarize" → "∑ …" once active,
-  // so match either). Only this query gets a summary, so read the summary
-  // elements globally; screenshot the query block that owns the summary.
-  const pill = () => page.locator(".qs-sheet .qb-sort").filter({ hasText: /summarize|∑/ }).first();
+  // The first builder bar's summarize pill (label flips "+ summarize" → "∑ …"
+  // once active, so match either). Only this query gets a summary, so read the
+  // summary elements globally; screenshot the query block that owns the summary.
+  const pill = () => page.locator(".qb-sort").filter({ hasText: /summarize|∑/ }).first();
   const summaryBlock = () =>
     page.locator(".query-block").filter({ has: page.locator(".query-summary, .query-summary-table") }).first();
 

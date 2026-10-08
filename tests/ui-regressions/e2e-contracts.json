@@ -1,1420 +1,408 @@
 {
- "schemaVersion": 1,
- "scenarios": {
-  "scripts/e2e-query-result-scroll.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Completing a TODO in a long multiline query shows DONE immediately, briefly keeps that live row available for reversal, then removes it while preserving surviving result components and the reader's visible place.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Subpixel layout rounding within the harness tolerance."
-   ],
-   "nonRequirements": [
-    "This synthetic control is not proof of the cause of every reported query scroll jump."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-alias.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "First-block aliases and page properties remain editable, persist, and resolve their page.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Autocomplete ranking and editor layout may evolve while the saved alias still resolves the page."
-   ],
-   "nonRequirements": [
-    "Exact picker dimensions, animation, or DOM shape."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-block-embed.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Embedded blocks persist each occurrence's root disclosure on its host across reload without changing the source, while keyboard navigation, deletion, and caret ownership stay in the visible embed.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Embed styling and control placement may evolve without changing the focused editing surface."
-   ],
-   "nonRequirements": [
-    "Exact indentation pixels or disclosure-icon artwork."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-compat-home-current-page.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "A Logseq-compatible config.edn home page controls startup without losing sibling configuration, and an advanced :inputs [:current-page] query resolves against that focused page through the native query engine.",
-     "blocking": true,
-     "authority": "Logseq config.edn :default-home and advanced query input compatibility contract"
-    }
-   ],
-   "acceptableVariations": [
-    "Settings layout and query-result presentation may evolve while graph-owned home configuration and focused-page binding remain exact."
-   ],
-   "nonRequirements": [
-    "Exact control geometry, startup timing, or query result styling."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-block-ref-count.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Copy block ref gives a fresh target one durable identity; a pasted reference updates its badge and referrer panel before reload, survives reload, and follows later source changes.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Refresh timing may vary within the completed save lifecycle."
-   ],
-   "nonRequirements": [
-    "Exact badge typography, panel layout, animation, or generated UUID value."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-blockselect.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Escape and arrow keys transition between editing and block selection without losing the live selection.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Selection affordance styling may evolve while keyboard ownership remains intact."
-   ],
-   "nonRequirements": [
-    "Exact selection highlight color or transition timing."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-selection-actions.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "A routed page keeps an active B+C block selection authoritative for an H2 command opened on A and for a real bullet drag begun on A; one undo removes both headings and the moved order survives a native relaunch.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Menu presentation, pointer threshold, drop-marker styling, and animation may evolve while selection ownership, rendered content, root order, and durable reload remain intact."
-   ],
-   "nonRequirements": [
-    "Exact pixels, menu geometry, coordinate values, CSS/DOM nesting, timing, palette/order, or animation."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-capabilities.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "The E2E runner can discover native-driver capabilities, retain browser-specific evidence, bound session-level calls, and reap only the orphaned native process tree owned by the same scenario and ports.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Driver feature detection, timeout duration, and cleanup signal timing may vary by supported platform and browser version while session ownership remains exact."
-   ],
-   "nonRequirements": [
-    "Any end-user product workflow by itself, or cleanup of processes not carrying the exact scenario-and-ports ownership token."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-capabilities.test.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Shared E2E harness helpers keep one exact capability spelling, one launch-arg shape, one preview-server readiness wait, and one frame-extents parse core across every suite.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Helper signatures and per-suite session names may evolve while the shared spellings stay byte-identical to the platform contracts and the strict/lax frame-extents policy stays an explicit call-site choice."
-   ],
-   "nonRequirements": [
-    "Any product UI journey, a live WebDriver session, or a live window manager by itself."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-capture.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Quick Capture activates, accepts first-show typing, saves the journal entry, and supports a safe second-instance handoff.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Native focus timing and frame decoration may vary by window manager."
-   ],
-   "nonRequirements": [
-    "Exact window position, border pixels, or focus-animation timing."
-   ],
-   "stability": "quarantined",
-   "quarantineReason": "2026-08-04: exact staged Linux binary 716056889fa7d1bad905b32b5255a05b724f0d3d intermittently accepted [[Fz]] after the fresh-process Quick Capture handoff while autocomplete labels stayed empty. The retained Xvfb/Openbox failure includes an X11 BadWindow error, while the unchanged-binary retry passed, so the current timing is not a deterministic readiness predicate. Keep running this semantic journey for artifacts; restore release blocking only with a proven test-visible frontend-ready boundary."
-  },
-  "scripts/e2e-clipboard-roundtrip.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "app's own block copy is recognized on paste (private payload association)",
-     "blocking": false
-    }
-   ],
-   "acceptableVariations": [
-    "any OS/engine transformation that normalize() equates"
-   ],
-   "nonRequirements": [
-    "Payload insertion behavior, exact clipboard flavor order, or clipboard-manager implementation details."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-caret.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Arrow navigation preserves a usable caret across wrapped blocks and journal entries.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Line wrapping may differ with fonts and viewport width while visual-row caret navigation remains correct."
-   ],
-   "nonRequirements": [
-    "Exact glyph metrics or line height."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-clickcaret-repro.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "A click maps to the intended source caret, including after trailing links, inside inline code, and past the last glyph of a block that ends in markup the reader cannot see, in a plain block and in one carrying a reference-count badge.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Layout and coordinates may differ, but mapping a click to the intended source caret is blocking."
-   ],
-   "nonRequirements": [
-    "Exact text rasterization, font metrics, or pointer coordinate values."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-delete-selection-timing.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Delete and Backspace remove a selected range of block text regardless of how quickly the selection was made or how it was made (keyboard, drag, double-click).",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "WebKit's own smart-delete may additionally consume a trailing space on native word selections, uniformly at any speed."
-   ],
-   "nonRequirements": [
-    "Exact pointer coordinates, drag timings, or which DOM node holds the selection endpoints."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-empty-query-workspace.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Empty or invalid friendly searches open independent virtual workspaces without querying or writing the graph.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Empty-state wording and tab presentation may evolve."
-   ],
-   "nonRequirements": [
-    "Exact modal geometry or tab animation."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-external-assets.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "An approved external asset directory is read and written through its exact canonical graph and target identity.",
-     "blocking": true,
-     "authority": "Tine external-asset consent and canonical-path contract"
-    }
-   ],
-   "acceptableVariations": [
-    "The native file-picker implementation and media presentation may vary after consent is established."
-   ],
-   "nonRequirements": [
-    "Exact dialog appearance or host file-manager behavior."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-file-poll.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Disk-backed E2E journeys observe an atomically replaced file within a bounded wait without treating its transient absence as a product failure.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "The number and timing of transient missing-file observations may vary within the bounded save window."
-   ],
-   "nonRequirements": [
-    "Retrying permission errors, malformed paths, persistent absence, or content that never satisfies the journey predicate."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-file-poll.test.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "The atomic-save polling contract retries only transient missing files and remains fail-closed for persistent absence and other I/O errors.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "The helper implementation and test clock may evolve while the three error-class boundaries remain proved."
-   ],
-   "nonRequirements": [
-    "Any product UI journey or exact polling interval by itself."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-process-group.test.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "A scenario that leaves a process behind is reported and its orphan killed, so one leaking journey cannot exhaust the machine for every later journey in the run.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "The polling attempts and interval that separate ordinary teardown lag from a real orphan may change."
-   ],
-   "nonRequirements": [
-    "Any product behaviour; zombie (reaped-but-unwaited) processes, which hold no memory and no port."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-journal-format.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Custom journal filename and title formats load and render the corresponding journal feed entries.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Locale rendering and feed layout may vary while configured dates remain discoverable."
-   ],
-   "nonRequirements": [
-    "Exact locale punctuation or date-label spacing."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-journal-future-feed.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Future journals stay out of the feed while remaining directly reachable without changing their file bytes.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Feed ordering and date formatting may evolve around the inclusion boundary."
-   ],
-   "nonRequirements": [
-    "Exact feed row height or clock display."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-machine-probe.test.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "A journey that failed while waiting says whether the machine itself was answering, so a starved disk or saturated CPU is named as the cause instead of being read as a product regression, and a healthy machine hands the failure back to the product.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "The sample count, the thresholds that separate a starved machine from a healthy one, and the wording of the verdict."
-   ],
-   "nonRequirements": [
-    "Any product behaviour; any absolute latency figure, which is machine-specific by construction."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-main-window.test.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "A journey whose session attached to an auxiliary window (Quick Capture) moves to the application window instead of reporting the app's content as missing.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Which auxiliary windows exist, and the order the driver enumerates window handles in."
-   ],
-   "nonRequirements": [
-    "Any product behaviour, and any claim about which window the driver attaches to first."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-media.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Supported graph audio and MKV media render and play through the real media path.",
-     "blocking": true
+  "schemaVersion": 1,
+  "scenarios": {
+    "scripts/e2e-gh623-link-navigation.mjs": {
+      "contracts": [
+        {"class":"core-operation","userOutcome":"Ctrl+K activations using ASCII and fullwidth comma-separated aliases offer the owning page first and never a separate row named after the alias (also when the alias is referenced on another page), and open the owning page's title and body without creating alias files or changing page bytes.","blocking":false},
+        {"class":"stateful-ux","userOutcome":"Native Shift+click opens page references in the right sidebar from journals, a named page, the sidebar and a split pane; the named source page stays open.","blocking":false}
+      ],
+      "acceptableVariations":["Alias search ranking, tab labels, sidebar item order, wrapping and navigation timing may vary while final destinations remain correct."],
+      "nonRequirements":["Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.","Exact pixels, sidebar widths, animation or incidental DOM nesting."],
+      "stability":"stable"
     },
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "Media fallback and expanded audio remain bounded rather than retaining unbounded whole files.",
-     "blocking": true,
-     "authority": "Tine media resource-budget contract"
+    "scripts/e2e-gh623-asset-trash.mjs": {
+      "contracts": [
+        {"class":"core-operation","userOutcome":"Trashing an image from its hover action removes it from its block on disk and moves a file no other page uses to the recoverable trash without a failure message.","blocking":false},
+        {"class":"core-operation","userOutcome":"Trashing an image whose file another page still uses keeps the file, keeps the block edit, leaves the other page's bytes unchanged, and tells the user the file is still used elsewhere.","blocking":false}
+      ],
+      "acceptableVariations":["Toast wording, trash entry naming and timing may vary while the file ends in the recoverable trash or stays in assets/ as stated."],
+      "nonRequirements":["Windows file-system behavior from a Linux WebKitGTK run.","Hover-bar geometry, icons or animation."],
+      "stability":"stable"
     },
-    {
-     "class": "core-operation",
-     "userOutcome": "Graph media is served and plays through the native media protocol under the graph's current Direct Files binding resolved by the real native command.",
-     "blocking": true
+    "scripts/e2e-large-page.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A 2,000-block page opens with bounded rendering, Find reveals a far-down row, its edit is saved, and Back restores the edited row and scroll position.","blocking":true}],
+      "acceptableVariations":["Window sizes, spacer estimates and initial layout may vary while the same edited location returns to view."],
+      "nonRequirements":["Exact DOM shell count, pixel-identical caret geometry or cross-platform timing from Linux evidence."],
+      "stability":"stable"
     },
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "Asset containment and binding authority hold: traversal, absolute, and symlink asset paths refuse, and a stale binding generation refuses.",
-     "blocking": true,
-     "authority": "Media protocol containment (Graph::stream_asset_path) and binding-generation gate"
-    }
-   ],
-   "acceptableVariations": [
-    "Native codec availability and player chrome may vary for the supported fixture."
-   ],
-   "nonRequirements": [
-    "Exact playback controls, waveform styling, or decoder implementation.",
-    "Exact HTTP status codes for refusals (403 vs 404 split may evolve while refusal itself is blocking)."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-mobile-drawers.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "On compact viewports, sidebars behave as modal overlays with safe dismissal.",
-     "blocking": true
+    "scripts/e2e-tine-links.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Cold and forwarded Tine URLs open existing graph/page/block targets, graph copies ask once, and menu copies publish only durable identities.","blocking":false}],
+      "acceptableVariations":["Pane tab placement, toast wording and chooser styling may vary."],
+      "nonRequirements":["Logseq schemes, capture, or native runtime certification outside Linux."],
+      "stability":"burn-in"
     },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "On roomy viewports, sidebars remain persistent rather than becoming modal overlays.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Breakpoint and geometry may evolve, but modal overlay behavior on compact viewports and persistent sidebar behavior on roomy viewports are blocking."
-   ],
-   "nonRequirements": [
-    "Exact breakpoint pixel value, drawer width, overlay opacity, or transition duration.",
-    "Exact pane coordinates or DOM parentage once the persistent-sidebar mode and workspace containment are proven."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-multigraph.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "One app process keeps two graph windows distinct and routes Quick Capture to the intended open graph.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Window placement and OS activation order may vary while graph routing remains correct."
-   ],
-   "nonRequirements": [
-    "Exact native window coordinates or stacking order."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-native-titlebar.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "A native Linux titlebar close uses Tine's safe persistence path and closes the real window.",
-     "blocking": true
+
+    "scripts/e2e-page-file-identity.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "External namespace-file deletion removes its abandoned namespace, and accepting a pending page-menu Delete succeeds when that file is already gone.", "blocking": true }],
+      "acceptableVariations": ["Watcher latency, navigation destination after deletion and confirmation styling may vary."],
+      "nonRequirements": ["Removing a namespace still needed by surviving descendants or references.", "Case-only rename behavior, which remains an unresolved QC1 product question."],
+      "stability": "stable"
     },
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "The production app creates a schema-v1 diagnostic report without the fixture graph path or content and without automatic upload.",
-     "blocking": true,
-     "authority": "ADR 0058 and docs/diagnostics-contract.md"
-    }
-   ],
-   "acceptableVariations": [
-    "Window-manager decoration details and button geometry may vary."
-   ],
-   "nonRequirements": [
-    "Exact titlebar theme, icon size, or frame border width."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-og-parity-references.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Slash page and tag references can be authored, selected, rendered, and persisted through the real editor.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Completion ranking and popup layout may evolve while explicit reference authoring remains intact."
-   ],
-   "nonRequirements": [
-    "Exact popup dimensions, suggestion order for unrelated items, or DOM structure."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-outline-guide.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "The outline guide toggles collapsible descendants in one accessible action and preserves the parent state.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Guide visual treatment and control placement may evolve."
-   ],
-   "nonRequirements": [
-    "Exact guide-line thickness, color, or animation."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-page-file-actions.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "Page actions reveal or open the exact Markdown or Org source file that backs the visible page.",
-     "blocking": true,
-     "authority": "Tine page-file action source-identity contract"
-    }
-   ],
-   "acceptableVariations": [
-    "The host opener and menu presentation may vary while the resolved source identity stays exact."
-   ],
-   "nonRequirements": [
-    "Exact menu order, iconography, or external application launch behavior."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-page-properties.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Page property actions preserve literal header structure through edit, guarded save, reload, and keyboard traversal.",
-     "blocking": true
+    "scripts/e2e-cross-page-move.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "A keyboard move across journal days, undo, redo, and relaunch leave the block exactly once in the expected saved file and rendered day.", "blocking": true, "authority": "Tine E-B2 destination-before-source hold-barrier and undo durability" }],
+      "acceptableVariations": ["Journal styling and shortcut feedback may vary while the moved block remains durably owned by the expected day."],
+      "nonRequirements": ["Exact block position within the destination day, pixel geometry, or save timing."],
+      "stability": "burn-in"
     },
-    {
-     "class": "core-operation",
-     "userOutcome": "An arbitrary property added to a BLOCK from that block's context menu, on a routed named page, reaches the file under that block without disturbing the block's own text, and is still there after the page is reopened.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Panel layout and native form-control styling may evolve.",
-    "Which properties a page contributes to the form, and therefore how many controls sit between the last preset and Done.",
-    "Whether the first-run Guide announcement is showing at startup: the journey clears only the KNOWN startup notices before it clicks anything, and an unexpected toast is still allowed to intercept a click and fail the run."
-   ],
-   "nonRequirements": [
-    "Exact section spacing, control dimensions, or debounce timing.",
-    "Field order beyond the five presets, the number of rows a page contributes, or the exact stop list of the Tab traversal after Public.",
-    "The wording, kind, or screen position of startup notices."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-page-trailing-block.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "The quiet target below page content always adds a new writable trailing block, even when the page already ends in an empty (possibly indented) bullet.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Target affordance styling and scroll position may evolve."
-   ],
-   "nonRequirements": [
-    "Exact target height, cursor blink timing, or focus-ring style."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-pdf-logseq.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "PDF highlights, links, annotations, outline destinations, and restored view state interoperate with Logseq data.",
-     "blocking": true
+    "scripts/e2e-file-poll.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Native journeys can wait for the expected persisted file contents before checking user outcomes.", "blocking": false }],
+      "acceptableVariations": ["Filesystem polling intervals and save latency may vary."],
+      "nonRequirements": ["An end-user journey by itself."],
+      "stability": "stable"
     },
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "PDF asset switches and target navigation isolate reader state without crashes or runaway resource use.",
-     "blocking": true,
-     "authority": "Tine PDF interoperability and reader resource-safety contract"
-    }
-   ],
-   "acceptableVariations": [
-    "Reader layout, coordinate normalization, theme presentation, and annotation menu placement may evolve while the persisted interoperability outcomes remain intact."
-   ],
-   "nonRequirements": [
-    "Exact drag threshold.",
-    "Exact theme palette/RGB.",
-    "Exact CSS filter/DOM strategy."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-pdf-routes.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Opening graph PDFs preserves the source in a structural companion, treats each PDF as an ordinary tab, closes the selected PDF tab, and opens Notes in the adjacent pane.",
-     "blocking": true
+    "scripts/e2e-alias.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "First-block aliases and page properties remain editable, persist, and resolve their page.", "blocking": true }],
+      "acceptableVariations": ["Autocomplete ranking and editor layout may evolve while the saved alias still resolves the page."],
+      "nonRequirements": ["Exact picker dimensions, animation, or DOM shape."],
+      "stability": "stable"
     },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "PDF pane routes and reader position survive relaunch.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Pane identifiers, split ratios, tab styling, and reader zoom percentages may vary while the route ownership and restored user state remain intact."
-   ],
-   "nonRequirements": [
-    "Exact PDF pixels, pane dimensions, DOM nesting, drag geometry, or mobile navigation.",
-    "Migration of a legacy dedicated-PDF session layout \u2014 Martin, 2026-09-04: not worth a release gate. src/session.test.ts covers the migration, including that an existing pane layout survives."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-pdf-scroll-resources.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "A long PDF keeps stable page geometry as offscreen canvases are evicted, gentle scrolling visits consecutive pages, and rapid zoom/scroll settles on a rendered destination without concurrent full-page raster work or an unbounded canvas neighborhood.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Page dimensions, cache policy, scheduler implementation, prefetch distance, and the number of simultaneously visible pages may evolve while scroll order, readable zoom transitions, and bounded rendering remain intact."
-   ],
-   "nonRequirements": [
-    "Exact pixels, canvas count, process memory, frame duration, PDF contents, DOM nesting, or scrollbar styling."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-pdf-ownership.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "An in-place graph switch and ordinary safe close persist PDF work only through the window-local graph generation that created it.",
-     "blocking": true,
-     "authority": "Tine PDF graph-owner generation and safe-close persistence contract"
+    "scripts/e2e-browse-never-writes.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "Zooming into a block by its bullet and jumping to a block from Ctrl-K leave the page file byte-for-byte unchanged, and after a restart the zoomed block is restored while the file is still unchanged.", "blocking": true, "authority": "Browsing must never mutate the user's graph (GH #623): a Logseq graph is shared with other tools and sync, so a stamped id:: is an unwanted file change." }],
+      "acceptableVariations": ["Which navigation entry reaches the block (bullet click or Ctrl-K), as long as the block ends up zoomed.", "Timing of the session write, which is awaited by polling for the recorded position."],
+      "nonRequirements": ["Exact breadcrumb markup or zoom animation.", "How the session encodes an ID-less block, only that the page file is not changed.", "Startup toasts unrelated to navigation."],
+      "stability": "burn-in"
     },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "A PDF left open is restored automatically after a clean relaunch, while an explicitly closed PDF stays closed.",
-     "blocking": true,
-     "authority": "Tine graph-session UI state lifetime contract"
-    }
-   ],
-   "acceptableVariations": [
-    "PDF rendering and graph-switch presentation may vary while the old graph is drained, the viewer is remounted, and sidecar bytes remain owner-isolated.",
-    "The restored PDF may become visible at any point after graph binding, as long as it appears without another user open gesture."
-   ],
-   "nonRequirements": [
-    "Exact PDF pixels, graph-switch animation, or debounce completion time."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-plugins.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "Signed community plugin and theme metadata remains bound to the reviewed package identity, and executable plugins install disabled until explicitly enabled.",
-     "blocking": true,
-     "authority": "Tine signed plugin registry and capability-review contract"
+    "scripts/e2e-block-embed.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Embedded blocks keep local disclosure, keyboard navigation, deletion, and caret ownership in the visible embed.", "blocking": true }],
+      "acceptableVariations": ["Embed styling and control placement may evolve without changing the focused editing surface."],
+      "nonRequirements": ["Exact indentation pixels or disclosure-icon artwork."],
+      "stability": "stable"
     },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Users can inspect safety evidence, install, enable, configure, and uninstall a community plugin or theme on desktop and compact settings layouts.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Catalogue card layout, explanatory wording, and settings geometry may evolve while provenance, review state, lifecycle controls, and compact usability remain available."
-   ],
-   "nonRequirements": [
-    "Exact screenshot pixels, toast stacking, card dimensions, or animation timing."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-plugin-revocation.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "A persisted enabled plugin activates under a verified non-revoking cache, while a verified cached revocation atomically migrates the signed cache, prevents every guest contribution, durably disables the installed version, and keeps it disabled after later cache unavailability.",
-     "blocking": true,
-     "authority": "Tine signed plugin launch-revocation and cache-atomicity contract"
-    }
-   ],
-   "acceptableVariations": [
-    "The reserved signed fixture may use a host-owned command or thread-lines block-decoration contribution, provided the positive control makes activation observable.",
-    "Catalogue wording and settings-row presentation may vary while the native envelope, disable bit, and non-execution outcomes remain exact."
-   ],
-   "nonRequirements": [
-    "Exact styling, worker implementation details, or live-request timing before the abort deadline."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-plugin-graph-ownership.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "A delayed plugin command or completion can mutate and focus only the graph generation and editor that invoked it, even when another graph has identical block UUID and raw bytes.",
-     "blocking": true,
-     "authority": "Tine host-only plugin graph generation and editor ownership contract"
-    }
-   ],
-   "acceptableVariations": [
-    "Plugin command presentation and graph-switch animation may evolve while stale effects stay inert and the current-graph positive control persists normally."
-   ],
-   "nonRequirements": [
-    "Exact worker delay, DOM nesting, switch timing, or plugin cancellation."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-print-security.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "Page-menu PDF export includes complete OG/TQL query descendants, private matches and query tables in a static, script-disabled print frame.",
-     "blocking": true,
-     "authority": "Tine print-export script isolation contract"
-    }
-   ],
-   "acceptableVariations": [
-    "Platform print integration and visual page layout may vary after the isolated frame is created."
-   ],
-   "nonRequirements": [
-    "Exact print-dialog appearance, paper margins, or font rasterization."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-guide-site.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "The published Guide served over HTTP opens the read-only app on its home page, page links navigate, Copy page link copies the page's own address, and a block permalink opens that block in context.",
-     "blocking": true
+    "scripts/e2e-block-ref-count.mjs": {
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "Copy block ref gives a fresh target one durable identity; a pasted reference updates its badge and referrer panel before reload, survives reload, and follows later source changes.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "The ((uuid)) that Copy block ref puts on the native clipboard names an id:: already present in the target's file at the moment the reference becomes available.", "blocking": true, "authority": "og batch 10 durable block-ref receipt (id persisted before the reference is handed out)" }
+      ],
+      "acceptableVariations": ["Refresh timing may vary within the completed save lifecycle."],
+      "nonRequirements": ["Exact badge typography, panel layout, animation, or generated UUID value."],
+      "stability": "stable"
     },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Returning to the Guide tab raises no external-change or editing warning, since the read-only app can never edit (GH #549).",
-     "blocking": true
+    "scripts/e2e-blockselect.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Escape and arrow keys transition between editing and block selection without losing the live selection.", "blocking": true }],
+      "acceptableVariations": ["Selection affordance styling may evolve while keyboard ownership remains intact."],
+      "nonRequirements": ["Exact selection highlight color or transition timing."],
+      "stability": "stable"
     },
-    {
-     "class": "core-operation",
-     "userOutcome": "Adding ?static to the address shows the plain static site instead of redirecting to the app.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Page wording, Guide content order, layout and timing may change while the named pages and links exist.",
-    "The block highlight may be any visible in-context marker of the addressed block."
-   ],
-   "nonRequirements": [
-    "Exact pixels, fonts, theme, or DOM nesting of the app shell.",
-    "Behaviour of the Guide when opened straight from disk (file://)."
-   ],
-   "stability": "burn-in"
-  },
-  "scripts/e2e-publish-security.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "Generated sites preserve source capability, safe URL handling, contextual anchors, and CSP at the export boundary.",
-     "blocking": true,
-     "authority": "Tine published-site capability and CSP contract"
-    }
-   ],
-   "acceptableVariations": [
-    "Generated markup organization and browser rendering may vary while the security boundary holds."
-   ],
-   "nonRequirements": [
-    "Exact generated whitespace, CSS class names, or visual theme."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-query-sheet.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "A query block rests as one plain-English sentence with its result count, expands into a sheet of editable rows over the blocks below it, and what the sheet writes reopens as the same sentence after a restart while an untouched query block stays byte-identical.",
-     "blocking": true
+    "scripts/e2e-main-window.test.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Every Windows smoke session, including a process relaunch, selects the application WebView before exercising the main-window journey.", "blocking": false }],
+      "acceptableVariations": ["WebDriver may attach initially to any WebView and enumerate its handles in any order."],
+      "nonRequirements": ["An end-user journey by itself; changing any smoke outcome or retrying a failed journey."],
+      "stability": "stable"
     },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Escape peels exactly one layer at a time (the sheet's own open menu, then the sheet), the sheet stays inside the viewport at the narrowest window the app allows, and a deeply nested query still opens as a short sentence and a small sheet rather than growing with its nesting.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "The wording of the sentence, the row labels and the field vocabulary may evolve while the query the sheet writes stays the same.",
-    "Sheet padding, shadow and the exact scrim opacity may change, as may where the sheet is placed relative to the sentence, as long as it stays on screen."
-   ],
-   "nonRequirements": [
-    "Pixel geometry of the sheet on a wide screen, animation, or the order of the rows within one group."
-   ],
-   "stability": "burn-in"
-  },
-  "scripts/e2e-query-vocabulary.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Adding a condition and changing a row's field open one list of this graph's own vocabulary \u2014 built-in fields plus every property key, commonest first, each with its observed type and its authoritative count \u2014 a rare key stays reachable by typing and by the keyboard however many keys the graph has, and the condition the picked key writes survives a restart.",
-     "blocking": true
+    "scripts/e2e-capabilities.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "The E2E runner can discover native-driver capabilities and retain browser-specific evidence.", "blocking": true }],
+      "acceptableVariations": ["Driver feature detection may vary by supported platform and browser version."],
+      "nonRequirements": ["Any end-user product workflow by itself."],
+      "stability": "stable"
     },
-    {
-     "class": "core-operation",
-     "userOutcome": "The query text at the foot of an open sheet is always editable, reports the engine's own diagnostic for text it cannot read while the last reading stays on screen and greyed, never saves a parse of text that has since changed, and the \u27e8advanced\u27e9 row puts the cursor in it rather than dead-ending.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "The wording of the row metadata, the section headings and the order within one section may evolve while the count and the type shown stay the registry's own.",
-    "How many rows the list keeps mounted, and the pane's debounce, may change as long as a distant key stays reachable and a stale answer is never shown."
-   ],
-   "nonRequirements": [
-    "Pixel geometry of the popover, the scroll animation, or the exact set of values previewed on a row."
-   ],
-   "stability": "burn-in"
-  },
-  "scripts/e2e-query-display.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "One Display panel beside a query's conditions states all six of its display facts \u2014 view, grouping field, sort order, visible columns, footer totals and row sample \u2014 each write lands in the block's own plain-text properties, and the settings the panel wrote are the settings that come back after a restart.",
-     "blocking": true
+    "scripts/e2e-capture.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing, saves the journal entry, and supports a safe second-instance handoff.", "blocking": true }],
+      "acceptableVariations": ["Native focus timing and frame decoration may vary by window manager."],
+      "nonRequirements": ["Exact window position, border pixels, or focus-animation timing."],
+      "stability": "stable"
     },
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "A query's grouping is one canonical field identity: an existing note spelled with the older ambiguous key keeps grouping by the same field it always did, and the first save that states the grouping writes the canonical key and removes the ambiguous one rather than leaving two answers in the file.",
-     "blocking": true,
-     "authority": "docs/contracts/query-display.md \u00a73 (the grouping resolution and its precedence), pinned across both languages by crates/tine-core/tests/fixtures/query-grouping/resolution.json"
+    "scripts/e2e-clipboard-roundtrip.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "app's own block copy is recognized on paste (private payload association)", "blocking": false }],
+      "acceptableVariations": ["any OS/engine transformation that normalize() equates"],
+      "nonRequirements": ["Payload insertion behavior, exact clipboard flavor order, or clipboard-manager implementation details."],
+      "stability": "burn-in"
     },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "A search that answers with both pages and blocks shows them as two named sections, each with its own display settings and its own way back: the Pages section can be shown as a table while the Blocks section is a board, page membership can be matched by name, by content or by both, and after a restart a section given no settings of its own is still distinguishable from one whose settings were cleared.",
-     "blocking": true,
-     "authority": "docs/contracts/query-display.md \u00a715 (mixed results: two families, one operation)"
-    }
-   ],
-   "acceptableVariations": [
-    "Section headings, control labels and the summary line on the panel's own button may evolve while the six facts stay editable in one place.",
-    "Where the panel is placed relative to its trigger may change, as long as it stays on screen at the narrowest window the desktop app allows."
-   ],
-   "nonRequirements": [
-    "Pixel geometry of the panel on a wide screen, animation, or the order of rows within one ordered list beyond what the user set."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-query-workspace.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Graph search, query workspaces, references, evidence, filters, and materialization preserve their visible query state.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Result presentation and pane layout may evolve while membership, predicates, evidence, and safe materialization remain correct."
-   ],
-   "nonRequirements": [
-    "Exact row heights, result-card DOM structure, or tab animation."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-rendered-delete-verify.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "Deleting a selection made over a rendered (not-editing) block removes exactly the selected source bytes and nothing else; ambiguous selections leave the source untouched.",
-     "blocking": true,
-     "authority": "Tine block-source round-trip: rendered spans map back to exact source offsets"
-    }
-   ],
-   "acceptableVariations": [
-    "Where the caret lands after the deletion, and whether the block opens in the editor."
-   ],
-   "nonRequirements": [
-    "Rendered DOM structure of links, chips, or other inline constructs."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-rename.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Renaming a page updates the real graph and keeps linked-reference behavior coherent.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Navigation timing and rendered reference layout may vary after rename."
-   ],
-   "nonRequirements": [
-    "Exact file-list ordering or transition animation."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-right-sidebar-collapse.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Right-sidebar disclosures, bulk controls, edit-safe unmounting, and restart restoration retain their state correctly.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Disclosure icons and collection layout may evolve."
-   ],
-   "nonRequirements": [
-    "Exact panel width, transition duration, or icon artwork."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-scrollbars.mjs": {
-   "contracts": [
-    {
-     "class": "flexible-presentation-heuristic",
-     "userOutcome": "Primary panes retain independently usable, theme-aware scrolling affordances.",
-     "blocking": false
-    }
-   ],
-   "acceptableVariations": [
-    "Scrollbar thickness, palette, overlay behavior, and platform rendering may evolve."
-   ],
-   "nonRequirements": [
-    "Exact scrollbar palette/RGB, thumb dimensions, CSS selector, or DOM structure."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-search-parity.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Ctrl-K search preserves canonical Unicode matching, current-page scope, evidence, Shift-Enter sidebar opening, and the selected physical owner for same-name page and block results.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Search result layout and ranking among equally valid matches may evolve."
-   ],
-   "nonRequirements": [
-    "Exact result-row geometry, highlight palette, or animation."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-selectwrap.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Real editor selection wrapping preserves Logseq-compatible literal delimiter and Alt-modified behavior.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Selection painting and browser key-event timing may vary."
-   ],
-   "nonRequirements": [
-    "Exact selection color, caret blink, or editor DOM nesting."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-sheets.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Sheet cells commit before navigation, arrow keys follow the real event path, table columns resize durably by field identity inside a horizontal scroller and reset, and field rename migrates dependent data atomically.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Grid dimensions, cell styling, and focus-ring presentation may evolve."
-   ],
-   "nonRequirements": [
-    "Exact cell pixel size, column widths, or formula-editor layout."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-sidebar-sections.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Favorites and Recent collapse independently, retain per-graph state, and restore correctly.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Sidebar ordering and disclosure visuals may evolve."
-   ],
-   "nonRequirements": [
-    "Exact sidebar width, icon artwork, or transition duration."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-split-history.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Global Back and Forward preserve the focused split pane's history and promote the user-activated Recent page.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Toolbar styling and split geometry may evolve."
-   ],
-   "nonRequirements": [
-    "Exact button placement, tab width, or transition animation."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-structured-paste.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "userOutcome": "Structured HTML and Markdown paste preserves approved outline structure atomically without unsafe interpretation.",
-     "blocking": true,
-     "authority": "Tine structured-paste safety and persistence contract"
-    }
-   ],
-   "acceptableVariations": [
-    "Browser clipboard plumbing and rendered formatting may vary while the persisted safe structure is preserved."
-   ],
-   "nonRequirements": [
-    "Exact clipboard-event implementation, indentation pixels, or paste animation."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-tab-overflow.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Overflowing pane tabs expose an accessible overview that activates, closes, and restores focus without unintended drag capture.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Tab widths, overflow trigger placement, and overview layout may evolve."
-   ],
-   "nonRequirements": [
-    "Exact truncation glyphs, animation, or drag threshold."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-tag-autocomplete.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "IME-committed Unicode hashtag text keeps bare-tag autocomplete active across editor surfaces.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "IME composition timing and picker layout may vary by platform."
-   ],
-   "nonRequirements": [
-    "Exact candidate ordering for unrelated tags or popup geometry."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-theme-presentation.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "An installed Theme API 0.2 preset can apply host-owned content typography, journal-header presentation, and a compact Today task summary on desktop and mobile without horizontal overflow.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Exact preset metrics and summary wording may evolve together with the documented bounded Theme API while the selected presentation remains distinct, legible, and responsive."
-   ],
-   "nonRequirements": [
-    "Theme-authored arbitrary markup, scripts, layout ownership, or unbounded CSS behavior."
-   ],
-   "stability": "stable",
-   "notes": "Catalog neighbor for the Theme API 0.2 real-app journey introduced on master in 74b4c41e."
-  },
-  "scripts/e2e-wayland-app-id.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "The real GTK/Tauri window advertises Tine's desktop-entry identity on the Wayland wire.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Compositor diagnostics and task-switcher presentation may vary."
-   ],
-   "nonRequirements": [
-    "Exact task-switcher icon size, title text layout, or compositor animation."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-windows-direct-large-open.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "A reporter-scale Direct Files graph opens through the real Windows WebView2 and native backend without the severe 45-second load-call delay.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Hosted Windows storage throughput and individual phase timings may vary below the severe-regression ceiling."
-   ],
-   "nonRequirements": [
-    "Matching the reporter's physical disk, antivirus configuration, or 24.6 GB of asset payload bytes."
-   ],
-   "stability": "burn-in"
-  },
-  "scripts/e2e-windows-page-reference-latency.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "On the reporter-scale Windows fixture, literal page-reference typing reaches the editor and paints autocomplete candidates while collecting per-key and backend timing evidence.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Hosted Windows scheduling, WebView2 startup, disk throughput, and individual timing samples may vary."
-   ],
-   "nonRequirements": [
-    "Exact popup geometry, candidate styling, or equality to one machine's millisecond timings."
-   ],
-   "stability": "burn-in"
-  },
-  "scripts/e2e-windows-smoke.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "The real Windows WebView2 app can complete its core smoke workflow with real backend and disk state.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Windows chrome, WebView2 startup timing, and native control rendering may vary."
-   ],
-   "nonRequirements": [
-    "Exact titlebar palette, DPI-scaled geometry, or startup animation."
-   ],
-   "stability": "burn-in"
-  },
-  "scripts/probe-formula-builder.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Formula value pickers dismiss an active child before their editor without changing the formula draft.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Picker layout and formula-editor presentation may evolve while dismissal ownership remains correct."
-   ],
-   "nonRequirements": [
-    "Exact option-row geometry, menu animation, or iconography."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-external-graph-wide-changes.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "While the app is open, an external edit or delete of a page that lives outside journals/ and pages/ -- at the graph root or in a custom folder -- reaches the open page, exactly as it already did for pages under pages/.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "How long the update takes (watch backend, debounce and poll cadence all differ by platform and filesystem), and whether the update arrives as an incremental reconcile or a full rescan."
-   ],
-   "nonRequirements": [
-    "Any particular DOM shape for the page body, the order in which the three pages are visited, or which watch backend the platform selects."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-page-identity-links.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "A page whose file carries `title::` is reachable under that title, matching Logseq's title:: > filename > first-block naming order.",
-     "blocking": true
+    "scripts/e2e-caret.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Arrow navigation preserves a usable caret across wrapped blocks and journal entries.", "blocking": true }],
+      "acceptableVariations": ["Line wrapping may differ with fonts and viewport width while visual-row caret navigation remains correct."],
+      "nonRequirements": ["Exact glyph metrics or line height."],
+      "stability": "stable"
     },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "A [[link]] naming no existing page is visibly distinguished before it is clicked, and still navigates and still creates the page.",
-     "blocking": true
+    "scripts/e2e-clickcaret-repro.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "A click maps to the intended source caret, including after trailing links and inside inline code; an in-block drag selects the intended text, while a cross-block drag selects blocks.", "blocking": true }],
+      "acceptableVariations": ["Layout and coordinates may differ, and mousedown may enter the editor before a drag; source caret mapping and the resulting text or block selection remain blocking."],
+      "nonRequirements": ["Exact text rasterization, font metrics, or pointer coordinate values.", "Keeping rendered content mounted during a text-selection drag."],
+      "stability": "stable"
     },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "A #tag whose page has no file is NOT distinguished; fileless tag pages are ordinary Logseq usage.",
-     "blocking": true
+    "scripts/e2e-empty-query-workspace.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Empty or invalid friendly searches open independent virtual workspaces without querying or writing the graph.", "blocking": true }],
+      "acceptableVariations": ["Empty-state wording and tab presentation may evolve."],
+      "nonRequirements": ["Exact modal geometry or tab animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-external-assets.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "An approved external asset directory is read and written through its exact canonical graph and target identity.", "blocking": true, "authority": "Tine external-asset consent and canonical-path contract" },
+        { "class": "stateful-ux", "userOutcome": "An image replaced outside the app refreshes where it is shown, and one deleted outside shows the missing-image placeholder, without reloading the page.", "blocking": true, "authority": "og-J2 (master d017d1afc: external asset observation)" }],
+      "acceptableVariations": ["The native file-picker implementation and media presentation may vary after consent is established."],
+      "nonRequirements": ["Exact dialog appearance or host file-manager behavior."],
+      "stability": "stable"
+    },
+    "scripts/e2e-journal-format.mjs": {
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "Custom journal filename and title formats load and render the corresponding journal feed entries.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "A title-named journal file is never renamed by opening the graph; Backups & recovery lists the exact rename, declining the native confirmation changes nothing, and accepting renames it with identical bytes after a snapshot that keeps the original name.", "blocking": true, "authority": "og batch 11 journal filename proposals (master e6f9b6e1ceae: open proposes, never renames)" },
+        { "class": "stateful-ux", "userOutcome": "Opening the app on a graph shows no journal-feed failure when nothing failed: a feed read the window makes before its graph is bound is not reported as an error.", "blocking": true, "authority": "og 12e P2 (false startup toast; master shows none)" }
+      ],
+      "acceptableVariations": ["Locale rendering and feed layout may vary while configured dates remain discoverable."],
+      "nonRequirements": ["Exact locale punctuation or date-label spacing.", "Panel wording, list layout, or snapshot directory naming beyond the pre-journal-rename tag."],
+      "stability": "stable"
+    },
+    "scripts/e2e-journal-future-feed.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Future journals stay out of the feed while remaining directly reachable without changing their file bytes.", "blocking": true }],
+      "acceptableVariations": ["Feed ordering and date formatting may evolve around the inclusion boundary."],
+      "nonRequirements": ["Exact feed row height or clock display."],
+      "stability": "stable"
+    },
+    "scripts/e2e-media.mjs": {
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "Supported graph audio and MKV media render and play through the real media path.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "Media fallback and expanded audio remain bounded rather than retaining unbounded whole files.", "blocking": true, "authority": "Tine media resource-budget contract" }
+      ],
+      "acceptableVariations": ["Native codec availability and player chrome may vary for the supported fixture."],
+      "nonRequirements": ["Exact playback controls, waveform styling, or decoder implementation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-mobile-drawers.mjs": {
+      "contracts": [
+        { "class": "stateful-ux", "userOutcome": "On compact viewports, sidebars behave as modal overlays with safe dismissal.", "blocking": true },
+        { "class": "stateful-ux", "userOutcome": "On roomy viewports, sidebars remain persistent rather than becoming modal overlays.", "blocking": true }
+      ],
+      "acceptableVariations": ["Breakpoint and geometry may evolve, but modal overlay behavior on compact viewports and persistent sidebar behavior on roomy viewports are blocking.", "A PDF may be a routed split-pane tab while remaining contained beside the persistent sidebar."],
+      "nonRequirements": ["Exact breakpoint pixel value, drawer width, overlay opacity, or transition duration.", "The PDF being an immediate child of the workspace element."],
+      "stability": "stable"
+    },
+    "scripts/e2e-multigraph.mjs": {
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "One app process keeps two graph windows distinct and routes Quick Capture to the intended open graph.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "An edit still unsaved when a window switches to another graph lands in the graph it was typed in, never in the new graph, and no old-graph content paints into the switched window.", "blocking": true, "authority": "I-20 late landing (og batches 7-10)" }
+      ],
+      "acceptableVariations": ["Window placement and OS activation order may vary while graph routing remains correct.", "The switch may save the pending edit before or after the new graph paints, and the switched window may show any route of the new graph."],
+      "nonRequirements": ["Exact native window coordinates or stacking order."],
+      "stability": "stable"
+    },
+    "scripts/e2e-native-titlebar.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "A native Linux titlebar close uses Tine's safe persistence path and closes the real window.", "blocking": true }],
+      "acceptableVariations": ["Window-manager decoration details and button geometry may vary."],
+      "nonRequirements": ["Exact titlebar theme, icon size, or frame border width."],
+      "stability": "stable"
+    },
+    "scripts/e2e-og-parity-references.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Slash page and tag references can be authored, selected, rendered, and persisted through the real editor.", "blocking": true }],
+      "acceptableVariations": ["Completion ranking and popup layout may evolve while explicit reference authoring remains intact; Query may use one command opening the visual sheet."],
+      "nonRequirements": ["Exact popup dimensions, suggestion order for unrelated items, DOM structure, or successful capture of a supplemental reload screenshot after the text and disk assertions pass."],
+      "stability": "stable"
+    },
+    "scripts/e2e-og-published-guide.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "The generated live Guide opens a reviewed page permalink in the read-only app, and a baked query block shows its rows without a backend.", "blocking": true }, { "class": "exact-safety-interoperability", "authority": "og published-export read-only contract: the published backend refuses every write verb (src/publishedBackend.ts)", "userOutcome": "The published Guide offers no New page or Settings control, and ?static=1 keeps the static site.", "blocking": true }],
+      "acceptableVariations": ["Guide page wording, layout and styling may change while the permalink, baked query rows, missing write controls and static fallback hold."],
+      "nonRequirements": ["No screenshots, geometry, row order, or bundle file names are asserted."],
+      "stability": "stable"
+    },
+    "scripts/e2e-outline-guide.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "The outline guide toggles collapsible descendants in one accessible action and preserves the parent state.", "blocking": true }],
+      "acceptableVariations": ["Guide visual treatment and control placement may evolve."],
+      "nonRequirements": ["Exact guide-line thickness, color, or animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-page-file-actions.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "Page actions reveal or open the exact Markdown or Org source file that backs the visible page.", "blocking": true, "authority": "Tine page-file action source-identity contract" }],
+      "acceptableVariations": ["The host opener and menu presentation may vary while the resolved source identity stays exact."],
+      "nonRequirements": ["Exact menu order, iconography, or external application launch behavior."],
+      "stability": "stable"
+    },
+    "scripts/e2e-page-properties.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Page property actions preserve literal header structure through edit, guarded save, reload, and keyboard traversal.", "blocking": true }],
+      "acceptableVariations": ["Panel layout and native form-control styling may evolve.", "Custom property and add-property controls may participate in native Tab traversal before Done; Done can be activated by keyboard."],
+      "nonRequirements": ["Exact section spacing, control dimensions, or debounce timing.", "A fixed five-preset-only Tab sequence."],
+      "stability": "stable"
+    },
+    "scripts/e2e-page-trailing-block.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "The quiet target below page content always adds a new writable trailing block, even when the page already ends in an empty (possibly indented) bullet.", "blocking": true }],
+      "acceptableVariations": ["Target affordance styling and scroll position may evolve."],
+      "nonRequirements": ["Exact target height, cursor blink timing, or focus-ring style."],
+      "stability": "stable"
+    },
+    "scripts/e2e-pdf-logseq.mjs": {
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "PDF highlights, links, annotations, outline destinations, and restored view state interoperate with Logseq data.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "PDF asset switches and target navigation isolate reader state without crashes or runaway resource use.", "blocking": true, "authority": "Tine PDF interoperability and reader resource-safety contract" }
+      ],
+      "acceptableVariations": ["Reader layout, coordinate normalization, theme presentation, and annotation menu placement may evolve while the persisted interoperability outcomes remain intact.", "Reader tools may move from the toolbar into a visible overflow menu in narrow panes.", "Highlight references may open in a companion notes tab; returning to Journals need not use Back history.", "Closing one PDF resource may reveal a different retained PDF tab."],
+      "nonRequirements": ["Exact drag threshold.", "Exact theme palette/RGB.", "Exact CSS filter/DOM strategy.", "Outline and Area being direct toolbar buttons at every pane width.", "A newly opened notes tab inheriting journal back-history.", "Closing one reader leaving no other PDF viewer mounted.", "Writing reader page or zoom into the sidecar :extra: since GH #577 (Martin 2026-10-04) reading and zooming write no graph files, the position lives in the pane route, and an existing :extra still loads."],
+      "stability": "stable"
+    },
+    "scripts/e2e-pdf-ownership.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "An in-place graph switch and ordinary safe close persist PDF work only through the window-local graph generation that created it.", "blocking": true, "authority": "Tine PDF graph-owner generation and safe-close persistence contract" }],
+      "acceptableVariations": ["PDF rendering and graph-switch presentation may vary while the old graph is drained, the viewer is remounted, and sidecar bytes remain owner-isolated."],
+      "nonRequirements": ["Exact PDF pixels, graph-switch animation, or debounce completion time.", "Writing the reader position into the sidecar: since GH #577 (Martin 2026-10-04) it persists in the creating graph's session route instead, and reading or zooming leaves both sidecars byte-identical."],
+      "stability": "stable"
+    },
+    "scripts/e2e-plugins.mjs": {
+      "contracts": [
+        { "class": "exact-safety-interoperability", "userOutcome": "Signed community plugin and theme metadata remains bound to the reviewed package identity, and executable plugins install disabled until explicitly enabled.", "blocking": true, "authority": "Tine signed plugin registry and capability-review contract" },
+        { "class": "stateful-ux", "userOutcome": "Users can inspect safety evidence, install, enable, configure, and uninstall a community plugin or theme on desktop and compact settings layouts.", "blocking": true }
+      ],
+      "acceptableVariations": ["Catalogue card layout, explanatory wording, and settings geometry may evolve while provenance, review state, lifecycle controls, and compact usability remain available."],
+      "nonRequirements": ["Exact screenshot pixels, toast stacking, card dimensions, or animation timing."],
+      "stability": "stable"
+    },
+    "scripts/e2e-plugin-revocation.mjs": {
+      "contracts": [
+        { "class": "exact-safety-interoperability", "userOutcome": "A persisted enabled plugin activates under a verified non-revoking cache, while a verified cached revocation retains its exact signed envelope, prevents every guest contribution, durably disables the installed version, and keeps it disabled after later cache unavailability.", "blocking": true, "authority": "Tine signed plugin launch-revocation and cache-atomicity contract" }
+      ],
+      "acceptableVariations": ["The reserved signed fixture may use a host-owned command or thread-lines block-decoration contribution, provided the positive control makes activation observable.", "Catalogue wording and settings-row presentation may vary while the native envelope, disable bit, and non-execution outcomes remain exact."],
+      "nonRequirements": ["Exact styling, worker implementation details, or live-request timing before the abort deadline. Retired split-cache migration is not required (master 4b752120f; D-1)."],
+      "stability": "stable"
+    },
+    "scripts/e2e-plugin-graph-ownership.mjs": {
+      "contracts": [
+        { "class": "exact-safety-interoperability", "userOutcome": "A delayed plugin command or completion can mutate and focus only the graph generation and editor that invoked it, even when another graph has identical block UUID and raw bytes.", "blocking": true, "authority": "Tine host-only plugin graph generation and editor ownership contract" }
+      ],
+      "acceptableVariations": ["Plugin command presentation and graph-switch animation may evolve while stale effects stay inert and the current-graph positive control persists normally."],
+      "nonRequirements": ["Exact worker delay, DOM nesting, switch timing, or plugin cancellation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-print-security.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "Page-menu PDF export creates only a static, script-disabled print frame.", "blocking": true, "authority": "Tine print-export script isolation contract" }],
+      "acceptableVariations": ["Platform print integration and visual page layout may vary after the isolated frame is created."],
+      "nonRequirements": ["Exact print-dialog appearance, paper margins, or font rasterization."],
+      "stability": "stable"
+    },
+    "scripts/e2e-publish-security.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "Generated sites preserve source capability, safe URL handling, contextual anchors, and CSP at the export boundary.", "blocking": true, "authority": "Tine published-site capability and CSP contract" }],
+      "acceptableVariations": ["Generated markup organization and browser rendering may vary while the security boundary holds."],
+      "nonRequirements": ["Exact generated whitespace, CSS class names, or visual theme."],
+      "stability": "stable"
+    },
+    "scripts/e2e-query-workspace.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Graph search, query workspaces, references, evidence, filters, and materialization preserve their visible query state.", "blocking": true }],
+      "acceptableVariations": ["Result presentation and pane layout may evolve while membership, predicates, evidence, and safe materialization remain correct; a highlighted unlinked mention may itself open and select the exact source occurrence without a redundant numbered jump row."],
+      "nonRequirements": ["Exact row heights, result-card DOM structure, or tab animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-query-sheet.mjs": {
+      "contracts": [
+        { "class": "stateful-ux", "userOutcome": "A query block rests as one sentence and answers with blocks or, for a page-level filter, pages; a query the engine cannot read shows what it did not understand instead of an empty result, and an empty result explains which condition emptied it.", "blocking": true },
+        { "class": "core-operation", "userOutcome": "A query created with /query and saved from the sheet's query text lands in the page file as an ordinary query block without touching the other query blocks, and reopens with the same answers after a restart.", "blocking": true },
+        { "class": "stateful-ux", "userOutcome": "While the query sheet is open its results show inside it and follow the conditions as they are edited, before anything is saved, and previewing writes nothing to the page.", "blocking": true },
+        { "class": "stateful-ux", "userOutcome": "A query's results group sibling matches under one parent breadcrumb, builder-made conditions (scheduled and deadline ranges included) read in plain words with no advanced label, the query text stays closed or open as last left across a restart, and the journal range condition answers journal blocks only.", "blocking": true },
+        { "class": "stateful-ux", "userOutcome": "A page result row's pencil opens the page's property panel; a property changed there is written to the page's file and the row's properties show the new value.", "blocking": true, "authority": "Martin 2026-10-03 (GH #619 item 8); Search/List rows are title-only with properties one pencil-click away since Martin 2026-10-04 (UI-OG-QBV-QUERY-DISPLAY); the write is the existing guarded setPageProperty path" },
+        { "class": "stateful-ux", "userOutcome": "Choosing Pages and blocks shows a Pages section above a Blocks section for the same conditions, stores the choice as the tine.result-kinds block property, and still shows both after a restart.", "blocking": true, "authority": "Martin 2026-10-03 (GH #619 item 9); the stored property is Tine-only and OG ignores it" }
+      ],
+      "acceptableVariations": ["The sentence wording, the macro name the engine prints (query or tine-query) and the why-empty table layout may evolve while the query and its answers stay the same; offscreen result groups may hydrate when scrolled into view."],
+      "nonRequirements": ["Sheet geometry, animation, or the order of rows inside the why-empty table."],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-query-sheet-input.mjs": {
+      "contracts": [
+        { "class": "stateful-ux", "userOutcome": "With a query's builder sheet open, real pointer presses and key presses on the sheet's own controls (the + Add condition button, the field chooser's filter and rows, its operator list) act on the sheet: the block behind does not enter edit mode, the sheet stays open, typed keys reach the filter, and Escape peels the chooser then the sheet without editing or changing any other block.", "blocking": true },
+        { "class": "stateful-ux", "userOutcome": "The sheet opens next to the query sentence it belongs to and the field chooser's rows are readable and on screen.", "blocking": true }
+      ],
+      "acceptableVariations": ["Which side of the sentence the sheet opens on, the chooser's row height, the wording of rows and operators, and how many Escape presses it takes while the chooser and sheet are both open."],
+      "nonRequirements": ["Exact sheet or popover geometry, animation, or the order of fields in the chooser."],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-rename.mjs": {
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "Renaming a page updates the real graph and keeps linked-reference behavior coherent.", "blocking": true },
+        { "class": "core-operation", "userOutcome": "A page whose title:: differs from its filename is found and renamed by its title: the file moves to the new title's name, title:: and every [[title]] reference are rewritten, and the filename is not offered as a separate page.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "Renaming onto an existing page asks for confirmation; declining leaves every file byte-identical, accepting merges the source into the survivor (aliases and blocks), rewrites references, and keeps the source's exact bytes recoverable once.", "blocking": true, "authority": "og rename-merge contract (batches 8/12); title-owned rename bytes equal master (og 11e)" },
+        { "class": "stateful-ux", "userOutcome": "After a rename or merge the user is on the renamed or surviving page, whatever page they came from.", "blocking": true }
+      ],
+      "acceptableVariations": ["Navigation timing and rendered reference layout may vary after rename.", "The merged alias order and the trash location of the source copy may vary while both aliases survive and exactly one copy of the source bytes remains under logseq/."],
+      "nonRequirements": ["Exact file-list ordering or transition animation.", "The wording or button labels of the native merge confirmation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-right-sidebar-collapse.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Right-sidebar disclosures, bulk controls, edit-safe unmounting, and restart restoration retain their state correctly.", "blocking": true }],
+      "acceptableVariations": ["Disclosure icons and collection layout may evolve."],
+      "nonRequirements": ["Exact panel width, transition duration, or icon artwork."],
+      "stability": "stable"
+    },
+    "scripts/e2e-scrollbars.mjs": {
+      "contracts": [{ "class": "flexible-presentation-heuristic", "userOutcome": "Primary panes retain independently usable, theme-aware scrolling affordances.", "blocking": false }],
+      "acceptableVariations": ["Scrollbar thickness, palette, overlay behavior, and platform rendering may evolve."],
+      "nonRequirements": ["Exact scrollbar palette/RGB, thumb dimensions, CSS selector, or DOM structure."],
+      "stability": "stable"
+    },
+    "scripts/e2e-search-parity.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Ctrl-K search preserves canonical Unicode matching and default accent folding, current-page scope, evidence, Shift-Enter sidebar opening, and the selected physical owner for same-name page and block results; search folding does not broaden exact page identity.", "blocking": true }],
+      "acceptableVariations": ["Search result layout and ranking among equally valid matches may evolve."],
+      "nonRequirements": ["Exact result-row geometry, highlight palette, or animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-selectwrap.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Real editor selection wrapping preserves Logseq-compatible literal delimiter and Alt-modified behavior.", "blocking": true }],
+      "acceptableVariations": ["Selection painting and browser key-event timing may vary."],
+      "nonRequirements": ["Exact selection color, caret blink, or editor DOM nesting."],
+      "stability": "stable"
+    },
+    "scripts/e2e-sheets.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Sheet cells commit before navigation, arrow keys follow the real event path, and field rename migrates dependent data atomically.", "blocking": true }],
+      "acceptableVariations": ["Grid dimensions, cell styling, and focus-ring presentation may evolve."],
+      "nonRequirements": ["Exact cell pixel size, column widths, or formula-editor layout."],
+      "stability": "stable"
+    },
+    "scripts/e2e-sidebar-sections.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Favorites and Recent collapse independently, retain per-graph state, and restore correctly.", "blocking": true }],
+      "acceptableVariations": ["Sidebar ordering and disclosure visuals may evolve."],
+      "nonRequirements": ["Exact sidebar width, icon artwork, or transition duration."],
+      "stability": "stable"
+    },
+    "scripts/e2e-split-history.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Global Back and Forward preserve the focused split pane's history and promote the user-activated Recent page.", "blocking": true }],
+      "acceptableVariations": ["Toolbar styling and split geometry may evolve."],
+      "nonRequirements": ["Exact button placement, tab width, or transition animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-structured-paste.mjs": {
+      "contracts": [
+        { "class": "exact-safety-interoperability", "userOutcome": "Structured HTML and Markdown paste preserves approved outline structure atomically without unsafe interpretation.", "blocking": true, "authority": "Tine structured-paste safety and persistence contract" },
+        { "class": "core-operation", "userOutcome": "Keyboard Copy of a selected block leaves its page unchanged; keyboard Cut removes the selected subtree only after the native clipboard holds it, and a keyboard paste on another page reproduces the nested outline.", "blocking": true }
+      ],
+      "acceptableVariations": ["Browser clipboard plumbing and rendered formatting may vary while the persisted safe structure is preserved.", "With Tine's default copy setting the public clipboard text may hold only the selected block while the subtree travels in Tine's private payload; the pasted outline is the oracle."],
+      "nonRequirements": ["Exact clipboard-event implementation, indentation pixels, or paste animation.", "Exact clipboard text or HTML flavour for block Cut/Copy."],
+      "stability": "stable"
+    },
+    "scripts/e2e-tab-overflow.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Overflowing pane tabs expose an accessible overview that activates, closes, and restores focus without unintended drag capture.", "blocking": true }],
+      "acceptableVariations": ["Tab widths, overflow trigger placement, and overview layout may evolve."],
+      "nonRequirements": ["Exact truncation glyphs, animation, or drag threshold."],
+      "stability": "stable"
+    },
+    "scripts/e2e-tag-autocomplete.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "IME-committed Unicode hashtag text keeps bare-tag autocomplete active across editor surfaces.", "blocking": true }],
+      "acceptableVariations": ["IME composition timing and picker layout may vary by platform."],
+      "nonRequirements": ["Exact candidate ordering for unrelated tags or popup geometry."],
+      "stability": "stable"
+    },
+    "scripts/e2e-wayland-app-id.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "The real GTK/Tauri window advertises Tine's desktop-entry identity on the Wayland wire.", "blocking": true }],
+      "acceptableVariations": ["Compositor diagnostics and task-switcher presentation may vary."],
+      "nonRequirements": ["Exact task-switcher icon size, title text layout, or compositor animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-windows-smoke.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "The real Windows WebView2 app can complete its core smoke workflow with real backend and disk state.", "blocking": true }],
+      "acceptableVariations": ["Windows chrome, WebView2 startup timing, and native control rendering may vary."],
+      "nonRequirements": ["Exact titlebar palette, DPI-scaled geometry, or startup animation."],
+      "stability": "burn-in"
+    },
+    "scripts/probe-formula-builder.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Formula value pickers dismiss an active child before their editor without changing the formula draft.", "blocking": true }],
+      "acceptableVariations": ["Picker layout and formula-editor presentation may evolve while dismissal ownership remains correct."],
+      "nonRequirements": ["Exact option-row geometry, menu animation, or iconography."],
+      "stability": "stable"
+    },
+    "scripts/e2e-journal-rollover.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "When the local day changes during editing, the new day appears at the top of the Journals feed while the open editor keeps its textarea, unsaved text, selection and focus, and the text saves to the day it was typed in.", "blocking": true }],
+      "acceptableVariations": ["The new day may appear a moment after midnight (timer margin), before or after the older day's save."],
+      "nonRequirements": ["Whether the new day's journal file is created at rollover.", "Exact scroll position of the feed.", "Startup error toasts other than a journal-feed load failure."],
+      "stability": "stable"
+    },
+    "scripts/e2e-touch-gestures.mjs": {
+      "contracts": [
+        { "class": "stateful-ux", "userOutcome": "On a phone, a left-edge swipe opens the left drawer (on iOS, with history to pop, it goes Back instead), while short, vertical or mid-screen swipes do nothing.", "blocking": true },
+        { "class": "core-operation", "userOutcome": "Swiping a block right indents it, swiping it left outdents it or opens its action menu, and the result is saved to the page file; short or vertical swipes change nothing.", "blocking": true }
+      ],
+      "acceptableVariations": ["Thresholds, snap-back animation, finger-tracking feel and swipe distances may evolve; blocking is that a deliberate swipe does the action and a clearly short or vertical one does not.", "The action-bar analogue may be a different menu or toolbar as long as it selects the block and offers its actions."],
+      "nonRequirements": ["Exact pixel thresholds, animation timing or haptics.", "The OS delivering real touches: this journey injects synthetic touch events into the WebKitGTK webview.", "Android hardware Back, which is an OS gesture covered by unit tests and a device check."],
+      "stability": "burn-in"
     }
-   ],
-   "acceptableVariations": [
-    "How an unresolved link is distinguished (colour, opacity, underline style) may change; the journey asserts the marker class, not its rendered appearance.",
-    "Whether the marker appears on first paint or once the batched existence lookup resolves."
-   ],
-   "nonRequirements": [
-    "Exact dimming colour, opacity value, underline geometry, or CSS custom-property names.",
-    "The order in which references on a page resolve their existence."
-   ],
-   "stability": "stable",
-   "notes": "Added 2026-08-09 after a generated graph linked 29 papers by filename while every file declared a different title::; every link opened a blank page with nothing on screen to explain it. Logseq does NOT dim unresolved links (components/block.cljs:548 dims only untitled-page?, meaning a page existing under a uuid name), so the dimming is a deliberate, Martin-approved divergence and this journey is its contract."
-  },
-  "scripts/e2e-concord-sync-copy.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "authority": "Concord sync-copy handoff contract approved by Martin on 2026-08-22.",
-     "userOutcome": "A delivered conflict copy on today's journal is discovered in native-event and polling modes; applying keep-both or a same-content keep-mine result installs and durably retains the exact committed page, keeps today in the Journals feed, retires its notice, and ordinary post-resolution editing saves without reopening Concord before or after restart.",
-     "blocking": true
-    },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "A newly delivered sync conflict becomes discoverable without first navigating to its page, while resolution remains explicit and non-modal.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "The native event or focus fallback may discover the conflict before the other, provided the same derived queue and resolver result.",
-    "Notice wording and resolver labels may evolve while the conflict is actionable and both page versions are preserved."
-   ],
-   "nonRequirements": [
-    "Exact watcher event count, delivery latency within the generous wait, toast geometry, colors, or DOM nesting.",
-    "Generated block identities and conflict-trash filename."
-   ],
-   "stability": "burn-in",
-   "notes": "Added after field sequences where Apply wrote the merge but the pre-merge editor remained installed, then expanded when a current-journal resolution disappeared from the live feed and its sticky notice survived. The journey asserts the file, visible current journal, notice retirement, save-debounce settlement, copy retirement, and process restart in both watcher modes; TINE_E2E_CONCORD_DECISION=mine additionally proves that same-content handoff adopts the returned revision before ordinary editing resumes."
-  },
-  "scripts/e2e-concord-focus-freshness.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "authority": "Concord live-focus contract: focus freshness is established before a stale editor can acquire input authority.",
-     "userOutcome": "After another device atomically replaces a page while Tine is backgrounded, returning and clicking immediately opens the editor on the external winner; the subsequent local edit preserves both changes.",
-     "blocking": true
-    },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "The ordinary clean-page journey does not surface the retired Direct Files Keep mine / Use current conflict bar.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "The watcher may notice the external replacement before the explicit focus rescan, provided the editor still opens on the external winner.",
-    "A perceptible refresh may show a small progress status before the editor activates."
-   ],
-   "nonRequirements": [
-    "Exact refresh-indicator styling, duration, DOM nesting, or watcher event count.",
-    "Exact pixel geometry or animation."
-   ],
-   "stability": "stable",
-   "notes": "Added for the suspended-laptop/Syncthing Concord redesign. It asserts rendered editor content and durable file bytes, not timing or DOM trivia."
-  },
-  "scripts/e2e-concord-live-save.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "authority": "Concord live-save contract and Harvest B3: a guarded save refusal retains the exact editor draft, load baseline, and graph/page binding in one app-private durable capsule.",
-     "userOutcome": "A local draft racing an external replacement survives SIGKILL and restart with its exact draft, baseline, and graph/page binding; a newer owner arriving during the outage is re-observed, both resolution actions use one semantic surface, and the on-disk capsule is removed before success is shown.",
-     "blocking": true
-    },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "After restart the current owner is re-observed before resolution rather than restored as stale overwrite authority.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Three-way suggestions may select one side where the common base proves it changed alone; the user can still choose either side or both.",
-    "Labels and explanatory wording may evolve while both texts remain visible and the guarded apply remains explicit."
-   ],
-   "nonRequirements": [
-    "Exact conflict colors, pixel geometry, button ordering, DOM nesting, or animation; pane-width coverage remains in the dedicated render contract.",
-    "Exact generated block identities or save debounce duration."
-   ],
-   "stability": "quarantined",
-   "quarantineReason": "2026-09-04 (Claude): the two harness defects behind the previous quarantine are now FIXED in this file \u2014 (1) openPage() compared a .page-ref's visible text to the bare title, but .page-ref renders OG's [[ ]] decoration inside the anchor whenever :ui/show-brackets? is on, which is the default (src/render/inline.tsx, pinned by src/render/showBrackets.test.tsx); (2) resolveEverywhere() probed for a VISIBLE button labelled 'All mine'/'All theirs', but those buttons carry two responsive labels and CSS shows exactly one, so the probe was really an assertion about pane width, which the full-pane-width Concord default legitimately flipped. STILL QUARANTINED FOR A PRODUCT DEFECT, NOT A HARNESS ONE: with those fixed, the Direct Files leg reaches 'Apply resolution' and the click is a no-op. The capsule stays (count 1, text byte-identical, '2 conflicts', '2 of 2 pre-selected') and the app raises two toasts: \"Couldn't resolve it: Direct Files could not save (reason code: unknown).\" and \"'B3EUseCurrent' still has unresolved conflicts\". Reproduced 3/3 on a clean build; not a permissions problem (graph 755, both page files present and writable). The user cannot complete conflict resolution, and the failure is surfaced as an UNCLASSIFIED reason code. Do NOT spend further attempts on the harness: fix the product first. Entry points: src/components/ConflictResolution.tsx:342 apply(); src/backend.ts:319 DirectSaveFailureError; src-tauri/src/command_error.rs reason_code 'unknown'. Unquarantine once Apply resolution actually saves. 2026-09-23 (Claude, v0.6.985 release): the missing-target branch still expected the N conflicts badge to open the page review directly; since GH #536 (b64b7160) the badge opens the Conflicts overview, so the journey now opens the page's overview row (atomic find-and-click). Linux release run on 0c6197b3 failed there ('conflict entry did not open its review'); quarantine kept pending burn-in.",
-   "notes": "B3E changed the intended journey to kill the actual Tine PID with SIGKILL, restart under a fresh driver, inspect exact capsule draft/baseline/graph-page binding, introduce a newer external owner during the outage, and exercise both resolution sides on both backends. The current quarantined run stops at its journal-link harness selector before those assertions. Exact pixels and filesystem timing are non-contractual."
-  },
-  "scripts/e2e-dirty-editor-replacement.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "authority": "GH #254 increment 3 spec v24, contract rule 2 (Preservation): a loaded instance holding unsaved work is never replaced. Losing it is silent data loss in the user's own graph.",
-     "userOutcome": "Unsaved edits survive when a different file with the same page name is opened; the edit is never destroyed to show the other file.",
-     "blocking": true
-    },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "The user is told which page's unsaved changes are holding the requested file back, rather than being left on a blank or unchanged surface.",
-     "blocking": true
-    },
-    {
-     "class": "core-operation",
-     "userOutcome": "After resolving the incumbent, the originally requested file actually arrives \u2014 refusal is never a dead end.",
-     "blocking": true
-    },
-    {
-     "class": "exact-safety-interoperability",
-     "authority": "GH #254 increment 3 spec v24, contract rule 1 (Authority): a save belongs to the file its editor was activated for. Writing it elsewhere corrupts a file the user never edited.",
-     "userOutcome": "The unsaved edit is written to the file it belonged to, never to the file that was requested instead.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "How the message is presented (toast, inline banner, empty-state text) and its exact wording, as long as it names the page holding the unsaved changes.",
-    "Whether the incumbent is resolved by saving, discarding, or answering a conflict banner \u2014 any of them must release the requested file.",
-    "Whether the requested file arrives on re-navigation or automatically once the incumbent is clean."
-   ],
-   "nonRequirements": [
-    "Exact toast styling, position, duration, or DOM nesting.",
-    "The precise number of ticks between resolving the incumbent and the requested file appearing.",
-    "Which of the two same-named files the router treats as canonical."
-   ],
-   "stability": "quarantined",
-   "quarantineReason": "2026-08-10 (464a8ed4): Harness debt, not a product defect. No user gesture opens a chosen file by path: the Quick Switcher row renders kind and name only, so two files sharing a page name are indistinguishable, and positional selection would be the brittle oracle the semantic-E2E contract forbids. See notes for the source-level confirmation.",
-   "notes": "GH #304, fixed in GH #254 increment 3. Two files legitimately share one page name (the duplicate-day stray of #21, or same-titled pages in different folders). Replacing the loaded instance destroyed the unsaved edit, and the dirty mark SURVIVED to describe the replacement's content, so the next save wrote the wrong file's bytes under the user's intent. The journey deliberately continues past 'the edit survived' to prove the refusal is not a trap: a survival-only assertion would pass on an implementation that never shows the requested file at all, which is why the non-wedging half is blocking rather than advisory. QUARANTINED 2026-08-10, harness debt. The first two assertions run green against the branch binary \u2014 the unsaved edit survives \u2014 but the journey drives the second file through an invented `#/page-path/...` hash route that the router does not implement, so the navigation never happens and the survival assertion passes VACUOUSLY. It is quarantined rather than deleted because the journey shape is right; what is missing is a real UI affordance for opening a same-named file by path (the duplicate-day journal conflicts list is the honest candidate). ROOT CAUSE CONFIRMED AT SOURCE 2026-08-10: no user gesture opens a chosen file by path. The router does support a path-pinned route (Page.tsx uses r.path -> getPageByPath), and the Quick Switcher is the only UI carrying a per-file path into openFile, but its row renders kind and name ONLY (QuickSwitcher.tsx Row), so two files sharing a page name are visually identical and a user cannot choose between them; selecting positionally would be exactly the brittle oracle the semantic-E2E contract forbids. No duplicates/conflicts list exists, and the router is not exposed on window, so browser.execute cannot reach openFile without adding a production test hook. The journey stays quarantined until such an affordance exists - which is itself the product gap GH #304's scenario implies. Until then the composition-level regressions in src/instanceReplacement.test.ts carry this contract; they drive the real store and both fail against the pre-fix code."
-  },
-  "scripts/e2e-editor-interactions.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "A complete code wrapper exposes only its payload to native select-all, three backticks create a complete scaffold that offers the language picker on its visible opener line and puts the caret inside when that picker is declined, and ArrowUp at an embed root exits to the preceding host-page block.",
-     "blocking": true
-    },
-    {
-     "class": "exact-safety-interoperability",
-     "authority": "Markdown and Org wrapper bytes remain file-owned structure while the editor mutates only the projected code payload.",
-     "userOutcome": "Editing the code payload preserves exactly one opening and closing wrapper in the Direct Files page.",
-     "blocking": true
-    },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "Dragging from rendered multiline text into lower wrapped rows keeps the selection endpoint at the same native textarea caret position as the pointer.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Code-card styling, autocomplete presentation, and embed decoration may evolve while native selection, persisted wrapper bytes, scaffold shape, and caret destination remain exact."
-   ],
-   "nonRequirements": [
-    "Exact code-card pixels, syntax colors, caret animation, DOM nesting, or generated runtime block ids."
-   ],
-   "stability": "stable",
-   "notes": "2026-09-13: Three sequential native runs passed on unchanged fb10683605ce8b5f8a61b27cb0a319b9e66af377 executable SHA256 fa58eb8e4d0f585eb851402b994c4e92149592a8575c460de369e2ca142dea71. The combined cf0c2d5761c0f0dfc805f8558d2e32d50eda918c executable also passed the same journey. Covers native code payload/select-all, scaffold bytes, embed-root ArrowUp, and rendered wrapped drag endpoints. 2026-09-15 (GH #507): the scaffold step now asserts the language picker on the opener line first, then Escape for the interior caret; re-run natively on the candidate."
-  },
-  "scripts/e2e-conflict-keep-mine.mjs": {
-   "contracts": [
-    {
-     "class": "exact-safety-interoperability",
-     "authority": "GH #254 increment 2, conflict-override authority: an override is bound to the exact bytes the user was shown. Discarding an unseen external write is irrecoverable loss of another writer's work.",
-     "userOutcome": "Clicking \"Keep mine\" cannot overwrite an external write that landed after the banner appeared \u2014 bytes the user was never shown are never discarded by a click answering an older conflict.",
-     "blocking": true
-    },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "When that click is refused, a live banner returns for the conflict the user now actually has, so they are never left holding an unsaved edit with nothing to act on.",
-     "blocking": true
-    }
-   ],
-   "acceptableVariations": [
-    "Banner wording, styling, and whether it re-renders in place or is replaced.",
-    "How long the refused override takes to surface the fresh banner.",
-    "Whether the second external write is delivered by the watcher or by a save-time re-read."
-   ],
-   "nonRequirements": [
-    "Exact banner DOM nesting, button order, or CSS classes beyond the ones this journey selects.",
-    "The precise observation-epoch numbering."
-   ],
-   "stability": "quarantined",
-   "quarantineReason": "2026-08-10 (464a8ed4): Harness debt, not a product defect. The forbidden shape is a force that RACES the watcher re-observation; this journey waits 8s first, so it observes increment 2's designed outcome instead. Constructing the race needs a deterministic hook the harness lacks; gh254_a_second_force_under_one_banner_cannot_spend_authority_for_an_unseen_winner covers it at the core boundary.",
-   "notes": "GH #254. This is the sequence increment 2's adversarial rounds 3 and 4 each found broken in different places, and which nothing outside a mocked backend has ever driven. The failure is silent: \"Keep mine\" appears to work, and what is lost is someone else's write that the user cannot see was ever there. The non-wedging half is blocking because a refusal that leaves no live banner strands the edit \u2014 a conflicted page is skipped by the ordinary save path, so the user has no route back. QUARANTINED 2026-08-10, harness debt, NOT a product defect. Run against the branch binary it reproducibly showed \"Keep mine\" overwriting the second external winner. That is increment 2's DESIGNED outcome for this timing: a conflicted page is skipped by the ordinary save path, so the only thing that mints authority for a newer winner is the watcher's re-observation \u2014 and once that runs, the banner is re-armed and the click legitimately answers the CURRENT conflict. The harm the contract actually forbids is answering with authority minted for a DIFFERENT winner, i.e. a click that RACES the re-observation, which this journey does not construct: it waits 8s first. Fixing it means driving the stale-click shape (issue the force while a re-observation is in flight), which needs a deterministic hook the harness does not have. gh254_a_second_force_under_one_banner_cannot_spend_authority_for_an_unseen_winner covers that shape at the core boundary meanwhile."
-  },
-  "scripts/e2e-query-export.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Copy / Export of a query page expands matching Markdown and Org roots with their descendants, without nonmatching siblings or literal unresolved query text.",
-     "blocking": false
-    }
-   ],
-   "acceptableVariations": [
-    "Export punctuation and indentation may vary while subtree membership remains correct."
-   ],
-   "nonRequirements": [
-    "No clipboard permissions, screenshots, download dialogs or exact geometry are asserted."
-   ],
-   "stability": "quarantined",
-   "quarantineReason": "2026-09-09: Initial parallel Direct run timed out creating its WebDriver session before the app launched; unchanged binary and script passed when rerun sequentially. Retain as nonblocking until startup instability is resolved and sequential burn-in is recorded."
-  },
-  "scripts/e2e-publish-query.mjs": {
-   "contracts": [
-    {
-     "class": "core-operation",
-     "userOutcome": "Export\u2026 on a block query publishes the whole owner pages of its results (and only those) into published-queries/<name>/, with outside page links inert and referenced assets copied into the folder.",
-     "blocking": false
-    },
-    {
-     "class": "stateful-ux",
-     "userOutcome": "The dialog lists the owner pages before anything is written and will not export a block query until whole-page export is acknowledged.",
-     "blocking": false
-    }
-   ],
-   "acceptableVariations": [
-    "Exact HTML structure, ordering and styling of the exported pages may vary while page membership, link inertness and asset copying hold."
-   ],
-   "nonRequirements": [
-    "No screenshots, geometry, toast wording or search-index contents are asserted."
-   ],
-   "stability": "stable"
-  },
-  "scripts/e2e-published-app.mjs": {
-   "contracts": [
-    {
-     "class": "stateful-ux",
-     "userOutcome": "A query export served over HTTP opens as the read-only Tine app: the root redirects to app/, the export's home page shows the exported query's rows, the Quick Switcher opens an exported page, and Linked References are the export's own.",
-     "blocking": false
-    },
-    {
-     "class": "exact-safety-interoperability",
-     "authority": "Tine published query export read-only contract (docs/contracts/typed-errors.md, Published query exports; ADR 0065)",
-     "userOutcome": "Nothing in the export can be edited: clicking a block opens no editor and keystrokes leave the exported text unchanged; ?static keeps the static site.",
-     "blocking": false
-    }
-   ],
-   "acceptableVariations": [
-    "The app's layout, styling and the exact row rendering may vary while page membership, query rows, navigation and read-only behaviour hold."
-   ],
-   "nonRequirements": [
-    "No screenshots, geometry, toast wording, search ranking or bundle file names are asserted."
-   ],
-   "stability": "stable"
   }
- }
 }

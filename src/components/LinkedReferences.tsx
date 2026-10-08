@@ -1,37 +1,29 @@
+import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
 import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { classifyReferenceLoadError, referenceLoadErrorMessage, type ReferenceLoadError } from "../referenceLoadError";
+import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
-import { graphMeta, openPageInSidebar, openPageContextMenu } from "../ui";
-import { LiveRefGroup } from "./LiveRefGroup";
-import type { BacklinkFilterContext, BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, RefGroup } from "../types";
-import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
-import {
-  referenceLoadErrorMessage,
-  type ReferenceLoadError,
-} from "../lib/referenceLoadError";
-import { createReferenceFetcher, referenceRead, referenceIndexPendingMessage } from "../lib/referenceFetch";
-import { IndexFailedNotice } from "./IndexFailedNotice";
-import type { QueryNotReadyError } from "../backend";
-import {
-  collapsedGroupsFor,
-  sectionOverride,
-  setCollapsedGroupsFor,
-  setSectionOverride,
-} from "../referenceSectionState";
-import { pageIdentityKey } from "../pageIdentity";
-import { mergeReferenceGroups } from "../lib/referenceGroups";
-import { ReferenceExportChooser } from "./ReferenceExportChooser";
+import { openPageInSidebar, openPageContextMenu, searchRemoveAccents } from "../ui";
+import { graphMeta } from "../graphSession";
+import { LiveRefGroup } from "./LiveRefGroup";
+import type { BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, RefGroup } from "../types";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { createLongPress } from "../render/longPress";
+import { matcherMatches, parseSearchQuery } from "../editor/searchQuery";
+import { searchFold } from "../editor/searchFold";
+import { ReferenceExportChooser } from "./ReferenceExportChooser";
+import { pageIdentityKey } from "../pageIdentity";
+import { mergeReferenceGroups } from "../referenceGroups";
+import { sectionOverride, setSectionOverride } from "../referenceSectionState";
 import { readOr } from "../resourceRead";
-import { componentLifetime, runQueryWhenCurrent } from "../queryReadiness";
-import { backlinkFilterFacets } from "../lib/backlinkFilterFacets";
 
-// One identity fold for chips, filters, and group merging (DUP-2/DUP-8): the
-// old private `norm` (trim+toLowerCase) split NFC/NFD and boundary-slash
-// spellings of one page into separate chips whose filters missed each other,
-// and mismatched the backend, which keys the same request with refs::normalize.
+// One identity fold for chips, filters and group merging: the old private `norm`
+// (trim + toLowerCase) split NFC/NFD and boundary-slash spellings of one page
+// into separate chips whose filters missed each other, and disagreed with the
+// backend, which keys the same request with refs::normalize.
 const norm = (s: string) => pageIdentityKey(s);
 
 type BoundedEvidence = NonNullable<RefGroup["evidence"]>[number] & {
@@ -61,85 +53,81 @@ function saveFilters(page: string, f: FilterMap) {
 }
 const filterKey = (page: string, kind: string, blockId: string) => `${kind}\0${norm(page)}\0${blockId}`;
 
-type FilterEntry = Pick<BacklinkFilterEntry, "facets" | "text_matches">;
+type SearchableFilterEntry = Pick<BacklinkFilterEntry, "text" | "facets"> & {
+  normalizedText: string;
+};
+
+function searchableFilterEntry(
+  entry: Pick<BacklinkFilterEntry, "text" | "facets">
+): SearchableFilterEntry {
+  return {
+    text: entry.text,
+    facets: entry.facets,
+    normalizedText: searchFold(entry.text, searchRemoveAccents()),
+  };
+}
 
 /** A bounded fallback while native context is loading or stale. It intentionally
  *  uses only DTO-owned semantic facets (never a raw reference regex); the native
  *  context replaces it with parser-owned descendant refs as soon as it arrives. */
-function fallbackFilterEntry(block: BlockDto): FilterEntry {
-  return { facets: backlinkFilterFacets(block), text_matches: true };
+function fallbackFilterEntry(block: BlockDto): SearchableFilterEntry {
+  const text: string[] = [];
+  const facets = new Map<string, string>();
+  const visit = (current: BlockDto) => {
+    text.push(current.raw);
+    for (const tag of current.tags ?? []) if (!facets.has(norm(tag))) facets.set(norm(tag), tag);
+    if (current.marker) {
+      const key = norm(current.marker);
+      if (!facets.has(key)) facets.set(key, current.marker);
+    }
+    for (const child of current.children) visit(child);
+  };
+  visit(block);
+  return searchableFilterEntry({ text: text.join("\n"), facets: [...facets.values()] });
 }
-
-interface BacklinkRootInventory {
-  groups: RefGroup[];
-  targets: BacklinkFilterTarget[];
-}
-
-interface BacklinkFilterRequest {
-  name: string;
-  search: string;
-  inventory: BacklinkRootInventory;
-}
-
-interface BacklinkFilterResponse {
-  request: BacklinkFilterRequest;
-  context: BacklinkFilterContext;
-}
-
-/** How many backlinks a page needs before its Linked References open collapsed.
- *
- *  The graph decides: `:ref/linked-references-collapsed-threshold` in config.edn,
- *  which Tine used to ignore in favour of a hard-wired 100 (GH #479). The
- *  constant survives only as OG's own fallback for a graph that does not set the
- *  key. Zero is a real setting — "always collapsed", which is what the users in
- *  the Logseq thread behind that key wanted — so this must not treat a falsy
- *  threshold as "unset". */
-const OG_REFERENCE_COLLAPSE_THRESHOLD = 100;
-const referenceCollapseThreshold = () =>
-  graphMeta()?.linked_references_collapsed_threshold ?? OG_REFERENCE_COLLAPSE_THRESHOLD;
 
 // The "Linked References" section (backlinks). Live, editable, collapsible, and
 // filterable by co-referenced page (click a chip: include → exclude → off),
 // mirroring OG's reference filter.
+// GH #479: the graph's `:ref/linked-references-collapsed-threshold` decides;
+// 100 is OG's fallback when the key is absent. Zero is a real setting
+// ("always collapsed"), so this never treats a falsy threshold as unset.
+const OG_REFERENCE_COLLAPSE_THRESHOLD = 100;
+const referenceCollapseThreshold = () =>
+  graphMeta()?.linked_references_collapsed_threshold ?? OG_REFERENCE_COLLAPSE_THRESHOLD;
 
+/** Show bounded backlinks for one page. Text filters and OR include / cumulative
+ * exclude chips use the same source-root context; export snapshots visible rows.
+ * One backend read per target; a fixed result-limit token selects the bounded
+ * alert, other failures a generic alert. */
 export function LinkedReferences(props: { name: string }): JSX.Element {
+  const readScope = {};
+  let alive = true;
+  onCleanup(() => { alive = false; });
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
-  // The section renders nothing until it has groups. While the index is still
-  // building it says so instead: hidden, it read as "no linked references"
-  // for as long as the index took, or for ever (GH #594, index liveness L4).
-  const [indexPending, setIndexPending] = createSignal<QueryNotReadyError | null>(null);
-  const fetchReferences = createReferenceFetcher({
-    currentRead: () => referenceRead(props.name),
-    setLoadError,
-    setIndexPending,
-  });
   const [groupsResource] = createResource(
-    () => referenceRead(props.name),
-    (read) => fetchReferences(read, () => backend().getBacklinks(read.name))
+    () => props.name,
+    async (n) => {
+      const owner = latestOwner(readScope, "backlinks", graphOwner(() => alive && props.name === n));
+      setLoadError(null);
+      try {
+        const result = await readOwned(owner, backend().getBacklinks(n));
+        return result.kind === "current" ? result.value : [];
+      } catch (error) {
+        if (owner()) setLoadError(classifyReferenceLoadError(error));
+        return [];
+      }
+    }
   );
-  // `createReferenceFetcher` already routes a failure to `loadError` (rendered
-  // below), so this covers the read itself rather than replacing that channel.
+  // The resource loader reports failures through loadError; readOr covers reads.
   const groups = () => readOr(groupsResource, undefined, "linked references");
   const mergedGroups = createMemo(() => mergeReferenceGroups(groups() ?? []));
-  // GH #272: held outside the component so a remount cannot silently re-collapse
-  // a section the user expanded. See referenceSectionState.
-  const [collapsedOverrideSignal, setCollapsedOverrideSignal] =
-    createSignal<boolean | null>(sectionOverride("linked", props.name) ?? null);
-  const collapsedOverride = collapsedOverrideSignal;
+  const [collapsedOverride, setCollapsedOverrideSignal] = createSignal<boolean | null>(sectionOverride("linked", props.name) ?? null);
   const setCollapsedOverride = (value: boolean) => {
     setSectionOverride("linked", props.name, value);
     setCollapsedOverrideSignal(value);
   };
-  const [collapsedGroupsSignal, setCollapsedGroupsSignal] =
-    createSignal<Set<string>>(collapsedGroupsFor("linked", props.name));
-  const collapsedGroups = collapsedGroupsSignal;
-  const setCollapsedGroups = (next: Set<string> | ((current: Set<string>) => Set<string>)) => {
-    setCollapsedGroupsSignal((current) => {
-      const value = typeof next === "function" ? next(current) : next;
-      setCollapsedGroupsFor("linked", props.name, value);
-      return value;
-    });
-  };
+  const { groupCollapsed, setGroupCollapsed, setAll, reload: reloadGroupCollapse } = createReferenceGroupCollapse("linked", () => props.name);
   const [filterOpen, setFilterOpen] = createSignal(false);
   const [exportChooserOpen, setExportChooserOpen] = createSignal(false);
   const [searchDraft, setSearchDraft] = createSignal("");
@@ -150,101 +138,33 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   });
   // page name -> "in" (must also reference) | "out" (must not reference).
   const [filters, setFilters] = createSignal<FilterMap>(loadFilters(props.name));
-  // Reload the saved per-page state when the page changes. The section's own
-  // expand/collapse is RESTORED here, not reset (GH #272): a pane can route to
-  // another page without remounting, and coming back must not silently discard
-  // the choice the user made on the first page.
+  // Reload the saved filter when the page changes.
   createEffect(() => {
     const page = props.name;
+    reloadGroupCollapse();
     setCollapsedOverrideSignal(sectionOverride("linked", page) ?? null);
-    setCollapsedGroupsSignal(collapsedGroupsFor("linked", page));
     setFilters(loadFilters(props.name));
     setFilterOpen(false);
     setSearchDraft("");
     setSearchQuery("");
   });
 
-  // One immutable identity binds the exact page/root inventory to every native
-  // reply. Search changes reuse this inventory; page or backlink refreshes make
-  // a new one even when the same block ids survive with different content.
-  const rootInventory = createMemo<BacklinkRootInventory>(() => {
-    const snapshot = mergedGroups();
-    return {
-      groups: snapshot,
-      targets: snapshot.flatMap((group) =>
-        group.blocks.map((block) => ({ page: group.page, kind: group.kind, block_id: block.id }))
-      ),
-    };
-  });
-  const nativeContextRequest = createMemo<BacklinkFilterRequest | null>((previous) => {
-    const activeFilter = searchDraft().trim() !== "" || searchQuery().trim() !== ""
-      || Object.keys(filters()).length > 0;
-    if ((!filterOpen() && !activeFilter) || !groups() || groupsResource.loading) return null;
-    const name = props.name;
-    const search = searchQuery();
-    const inventory = rootInventory();
-    if (previous?.name === name && previous.search === search && previous.inventory === inventory) {
-      return previous;
-    }
-    return { name, search, inventory };
-  });
-  const [nativeResponse, setNativeResponse] = createSignal<BacklinkFilterResponse>();
-  const [nativeContextLoading, setNativeContextLoading] = createSignal(false);
-  const [nativeContextError, setNativeContextError] = createSignal<unknown>();
-  let nativeRequestVersion = 0;
-  const lifetime = componentLifetime();
-  createEffect(() => {
-    const request = nativeContextRequest();
-    const version = ++nativeRequestVersion;
-    setNativeContextError(undefined);
-    if (!request) {
-      setNativeContextLoading(false);
-      return;
-    }
-    setNativeContextLoading(true);
-    void runQueryWhenCurrent(
-      lifetime,
-      () => backend().getBacklinkFilterContext(
-        request.name,
-        request.inventory.targets,
-        request.search,
-      ),
-      () => version === nativeRequestVersion,
+  const targets = createMemo<BacklinkFilterTarget[]>(() =>
+    mergedGroups().flatMap((group) =>
+      group.blocks.map((block) => ({ page: group.page, kind: group.kind, block_id: block.id }))
     )
-      .then(
-        (context) => {
-          if (version !== nativeRequestVersion) return;
-          setNativeResponse({ request, context });
-          setNativeContextLoading(false);
-        },
-        (error) => {
-          if (version !== nativeRequestVersion) return;
-          setNativeResponse(undefined);
-          setNativeContextError(() => error);
-          setNativeContextLoading(false);
-        }
-      );
-  });
-  onCleanup(() => {
-    nativeRequestVersion += 1;
-  });
-  const currentNativeResponse = () => {
-    const request = nativeContextRequest();
-    const response = nativeResponse();
-    return request && response?.request === request ? response : undefined;
-  };
-  // While a new search is pending, keep the last settled rendering only when
-  // it belongs to this exact page/root snapshot. It is never re-applied to a
-  // replacement inventory, and late promises are rejected by request version.
-  const displayedNativeResponse = () => {
-    const request = nativeContextRequest();
-    const response = nativeResponse();
-    return request
-      && response?.request.name === request.name
-      && response.request.inventory === request.inventory
-      ? response
-      : undefined;
-  };
+  );
+  const needsNativeContext = () => filterOpen() || Object.keys(filters()).length > 0;
+  const [nativeContextResource] = createResource(
+    () => {
+      if (!needsNativeContext() || !groups()) return null;
+      return { name: props.name, targets: targets() };
+    },
+    ({ name, targets }) => backend().getBacklinkFilterContext(name, targets)
+  );
+  // The "Couldn't index descendant text" row below was unreachable: reading a
+  // rejected `nativeContext` threw before any Show could render it.
+  const nativeContext = () => readOr(nativeContextResource, undefined, "reference filter index");
   const fallbackByRoot = createMemo(() =>
     new Map(
       mergedGroups().flatMap((group) =>
@@ -257,9 +177,9 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   );
   const nativeByRoot = createMemo(() =>
     new Map(
-      (displayedNativeResponse()?.context.entries ?? []).map((entry) => [
+      (nativeContext()?.entries ?? []).map((entry) => [
         filterKey(entry.page, entry.kind, entry.block_id),
-        entry,
+        searchableFilterEntry(entry),
       ] as const)
     )
   );
@@ -267,34 +187,24 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     nativeByRoot().get(filterKey(group.page, group.kind, block.id))
       ?? fallbackByRoot().get(filterKey(group.page, group.kind, block.id))!;
 
-  const searchError = () => currentNativeResponse()?.context.search_error ?? null;
-
-  /** Filter backlink roots, trim each group's evidence to the survivors, and
-   *  drop groups that lose every root. Shared so the text pass runs ONCE and
-   *  both the facet chips and the reference list read the same result. */
-  const filterGroups = (
-    groups: RefGroup[],
-    keep: (group: RefGroup, block: BlockDto) => boolean
-  ): RefGroup[] =>
-    groups
-      .map((g) => ({ ...g, blocks: g.blocks.filter((b) => keep(g, b)) }))
-      .map((g) => {
-        const ids = new Set(g.blocks.map((block) => block.id));
-        return { ...g, evidence: g.evidence?.filter((item) => ids.has(item.block_id)) };
-      })
-      .filter((g) => g.blocks.length > 0);
-
-  // The text query applied on its own, WITHOUT the facet chips. The chips are
-  // the list the user picks from, so they must follow the typed text (GH #173
-  // follow-up — OG's "Search in linked pages" narrows exactly this) but must
-  // NOT follow the chip selections, or selecting a chip would remove the
-  // controls needed to undo it.
+  const parsedSearch = createMemo(() => parseSearchQuery(searchQuery(), searchRemoveAccents()));
+  const searchError = createMemo(() => {
+    const parsed = parsedSearch();
+    return parsed.kind === "invalid" ? parsed.error : null;
+  });
+  const filterGroups = (source: RefGroup[], keep: (group: RefGroup, block: BlockDto) => boolean): RefGroup[] =>
+    source.map((group) => ({ ...group, blocks: group.blocks.filter((block) => keep(group, block)) }))
+      .map((group) => {
+        const ids = new Set(group.blocks.map((block) => block.id));
+        return { ...group, evidence: group.evidence?.filter((item) => ids.has(item.block_id)) };
+      }).filter((group) => group.blocks.length > 0);
   const textMatchedGroups = createMemo<RefGroup[]>(() => {
-    const response = displayedNativeResponse();
-    if (!response) return mergedGroups();
-    return filterGroups(response.request.inventory.groups, (group, block) =>
-      rootEntry(group, block).text_matches
-    );
+    const parsed = parsedSearch();
+    if (nativeContextResource.loading || parsed.kind === "empty" || parsed.kind === "invalid") return mergedGroups();
+    return filterGroups(mergedGroups(), (group, block) => {
+      const entry = rootEntry(group, block);
+      return matcherMatches(parsed, entry.normalizedText, entry.text);
+    });
   });
 
   // Co-referenced pages/tags and task states in each backlink tree, with counts.
@@ -314,57 +224,40 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   });
 
-  // An active include/exclude chip whose last backlink the text query filtered
-  // away still has to be reachable, or the user is stranded with an invisible
-  // filter and zero results. These are listed after the matching chips at zero.
-  // Deliberately a SEPARATE memo: folding them into coRefs() would make the
-  // whole chip list depend on filters(), so every click would re-create every
-  // chip node mid-cycle.
   const orphanFilters = createMemo(() => {
     const present = new Set(coRefs().map(([name]) => norm(name)));
     return Object.keys(filters()).filter((name) => !present.has(norm(name)));
   });
-
   const filterState = (name: string): "in" | "out" | undefined => {
     const key = norm(name);
     return Object.entries(filters()).find(([candidate]) => norm(candidate) === key)?.[1];
   };
 
+  // A filter is asked for but the descendant index it needs is still in flight,
+  // so the list is deliberately UNFILTERED (descendant-only matches must not
+  // flash away) and the summary says so instead of reporting "N of N references".
+  // Once the index arrives, filtering is synchronous.
+  const filterPending = () => {
+    if (!nativeContextResource.loading) return false;
+    const parsed = parsedSearch();
+    return (parsed.kind !== "empty" && parsed.kind !== "invalid") || Object.keys(filters()).length > 0;
+  };
   const shown = createMemo<RefGroup[]>(() => {
     const f = filters();
     const ins = Object.keys(f).filter((k) => f[k] === "in").map(norm);
     const outs = Object.keys(f).filter((k) => f[k] === "out").map(norm);
-    // Do not flash descendant-only matches away while their on-demand native
-    // answer is still in flight. A settled answer for the same immutable root
-    // inventory stays displayed; a replacement inventory remains unfiltered.
-    if ((searchQuery().trim() !== "" || ins.length || outs.length)
-        && nativeContextLoading() && !displayedNativeResponse()) return mergedGroups();
+    if (filterPending()) return mergedGroups();
     if (!ins.length && !outs.length) return textMatchedGroups();
-    // GH #273: positive include chips OR — a backlink stays when ANY included
-    // page/tag is present, and zero positive chips leaves the facet side
-    // unconstrained. Exclude chips stay cumulative, and because this runs over
-    // textMatchedGroups() the text filter stays conjunctive with the facets.
     return filterGroups(textMatchedGroups(), (group, block) => {
       const facets = new Set(rootEntry(group, block).facets.map(norm));
-      return (ins.length === 0 || ins.some((i) => facets.has(i)))
-        && outs.every((o) => !facets.has(o));
+      return (ins.length === 0 || ins.some((name) => facets.has(name)))
+        && outs.every((name) => !facets.has(name));
     });
   });
 
   const groupKey = (group: RefGroup) => pageIdentityKey(group.page);
   const shownByKey = createMemo(() => new Map(shown().map((group) => [groupKey(group), group] as const)));
-  const groupCollapsed = (group: RefGroup) => collapsedGroups().has(groupKey(group));
-  const setGroupCollapsed = (group: RefGroup, value: boolean) => {
-    setCollapsedGroups((current) => {
-      const next = new Set(current);
-      if (value) next.add(groupKey(group));
-      else next.delete(groupKey(group));
-      return next;
-    });
-  };
-  const setAllGroups = (value: boolean) => {
-    setCollapsedGroups(value ? new Set<string>(shown().map(groupKey)) : new Set<string>());
-  };
+  const setAllGroups = (value: boolean) => setAll(shown(), value);
 
   const cycle = (name: string) => {
     const key = norm(name);
@@ -377,8 +270,6 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   };
   const count = () => shown().reduce((acc, g) => acc + g.blocks.length, 0);
   const totalCount = () => mergedGroups().reduce((acc, g) => acc + g.blocks.length, 0);
-  // OG: `default-collapsed? (>= total threshold)` over the TOTAL backlink count,
-  // not the filtered one (components/reference.cljs at 6e7afa8e).
   const collapsed = () => collapsedOverride() ?? totalCount() >= referenceCollapseThreshold();
   const occurrenceLimit = createMemo(() => {
     let shown = 0;
@@ -392,13 +283,6 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     return { shown, total, truncated: total > shown };
   });
   const hasActiveFilter = () => searchDraft().trim() !== "" || Object.keys(filters()).length > 0;
-  /** A filter is asked for but the descendant index it needs has not arrived,
-   *  so the list below is deliberately UNFILTERED. Say that instead of
-   *  reporting "N of N references", which asserts a finished filter. */
-  const filterPending = () => {
-    if (!nativeContextLoading()) return false;
-    return searchQuery().trim() !== "" || Object.keys(filters()).length > 0;
-  };
   const updateSearch = (value: string) => {
     setSearchDraft(value);
     if (searchTimer !== undefined) clearTimeout(searchTimer);
@@ -418,40 +302,15 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
       fallback={
         <div class="linked-references reference-error" role="alert">
           <div class="references-header">Linked References</div>
-          <Show
-            when={loadError()!.kind === "index_failed"}
-            fallback={
-              <div class="reference-filter-error">
-                {referenceLoadErrorMessage(loadError()!)}
-              </div>
-            }
-          >
-            <IndexFailedNotice subject="Linked References" failure={loadError()!.indexFailure ?? "other"} />
-          </Show>
+          <div class="reference-filter-error">
+            {referenceLoadErrorMessage(loadError()!)}
+          </div>
         </div>
       }
     >
-    <Show
-      when={groups() && mergedGroups().length > 0}
-      fallback={
-        <Show when={groupsResource.loading && indexPending()}>
-          <div class="linked-references">
-            <div class="references-header">
-              Linked References
-              <span class="references-loading"> {referenceIndexPendingMessage(indexPending())}</span>
-            </div>
-          </div>
-        </Show>
-      }
-    >
+    <Show when={groups() && mergedGroups().length > 0}>
       <Show when={exportChooserOpen()}>
-        {/* GH #348: batch export honors the visible (filtered) set, matching
-            what the section actually shows the user right now. */}
-        <ReferenceExportChooser
-          subject="Linked References"
-          groups={shown()}
-          onClose={() => setExportChooserOpen(false)}
-        />
+        <ReferenceExportChooser subject="Linked References" groups={shown()} onClose={() => setExportChooserOpen(false)} />
       </Show>
       <div class="linked-references">
         <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
@@ -461,9 +320,6 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
             </svg>
           </span>
           Linked References <span class="references-count">{count()}</span>
-          {/* Copy is rendered LAST so it lands on the same right edge as the
-              Unlinked References copy button, which has no filter beside it
-              (GH #475). Do not reorder without checking that section too. */}
           <button
             type="button"
             class="reference-filter-toggle"
@@ -478,18 +334,10 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7.1v5.4l-3.6 1.8v-7.2z" /></svg>
           </button>
-          <button
-            type="button"
-            class="reference-export-toggle"
-            aria-label="Copy / export linked references"
-            title="Copy / export selected linked references"
-            onClick={(event) => {
-              event.stopPropagation();
-              setExportChooserOpen(true);
-            }}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z" fill="currentColor" /></svg>
-          </button>
+          <button type="button" class="reference-export-toggle"
+            aria-label="Copy / export linked references" title="Copy / export selected linked references"
+            onClick={(event) => { event.stopPropagation(); setExportChooserOpen(true); }}
+          ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z" /></svg></button>
         </div>
         <Show when={!collapsed()}>
           <Show when={occurrenceLimit().truncated}>
@@ -521,7 +369,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                   fallback={
                     <>
                       {count()} of {totalCount()} references
-                      <Show when={nativeContextLoading()}> · indexing…</Show>
+                      <Show when={nativeContextResource.loading}> · indexing…</Show>
                     </>
                   }
                 >
@@ -531,11 +379,10 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
               <Show when={searchError()}>
                 {(error) => <div class="reference-filter-error">Invalid search: {error()}</div>}
               </Show>
-              <Show when={nativeContextError()}>
-                <div class="reference-filter-error">Couldn’t search descendant text; showing all references.</div>
+              <Show when={nativeContextResource.error}>
+                <div class="reference-filter-error">Couldn’t index descendant text; searching visible root text only.</div>
               </Show>
-              <Show when={displayedNativeResponse()?.context.truncated
-                  || displayedNativeResponse()?.context.entries.some((entry) => entry.truncated)}>
+              <Show when={nativeContext()?.truncated || nativeContext()?.entries.some((entry) => entry.truncated)}>
                 <div class="reference-filter-warning">Some very large reference trees are searched partially.</div>
               </Show>
               <Show when={coRefs().length > 0 || orphanFilters().length > 0}>
@@ -554,14 +401,11 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                   </For>
                   <For each={orphanFilters()}>
                     {(name) => (
-                      <button
-                        class="ref-filter-chip"
+                      <button class="ref-filter-chip"
                         classList={{ "f-in": filterState(name) === "in", "f-out": filterState(name) === "out" }}
                         title="No match in the current text search · click to cycle or clear"
                         onClick={() => cycle(name)}
-                      >
-                        {name} <span class="ref-filter-count">0</span>
-                      </button>
+                      >{name} <span class="ref-filter-count">0</span></button>
                     )}
                   </For>
                 </div>
@@ -596,7 +440,6 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                     ref={pageButton}
                     type="button"
                     class="reference-page"
-                    onMouseDown={internalLinkMouseDown}
                     onClick={(e) => {
                       if (longPress.consumeClick(e)) {
                         e.preventDefault();
@@ -609,11 +452,12 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                       else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: group().page, pageKind: group().kind });
                       else openPage(group().page, group().kind);
                     }}
+                    onMouseDown={internalLinkMouseDown}
+                    onAuxClick={(e) => internalLinkAuxClick(e, () => openPageInNewTab(group().page, group().kind))}
                     onPointerDown={longPress.onPointerDown}
                     onPointerMove={longPress.onPointerMove}
                     onPointerUp={longPress.onPointerUp}
                     onPointerCancel={longPress.onPointerCancel}
-                    onAuxClick={(e) => internalLinkAuxClick(e, () => openPageInNewTab(group().page, group().kind))}
                     onContextMenu={(e) => {
                       if (!shouldOpenTextContextMenu(e)) return;
                       e.preventDefault();

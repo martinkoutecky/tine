@@ -1,0 +1,14 @@
+{
+  "old": "Old",
+  "new": "New",
+  "src": "pages/Old.md",
+  "dst": "pages/New.md",
+  "files": [
+    { "path": "logseq/config.edn", "bytes": "{:file/name-format :triple-lowbar}\n" },
+    { "path": "pages/Old.md", "bytes": "alias:: Former\nicon:: star\n\n- old body links [[Old]] and [[Old/Child]]\n  - nested #Old\n" },
+    { "path": "pages/New.md", "bytes": "alias:: Kept\n\n- new body links [[Old]]\n" },
+    { "path": "pages/Old___Child.md", "bytes": "- child of [[Old]]\n" },
+    { "path": "pages/Referrer.md", "bytes": "tags:: Old, Other\n\n- see [[Old]] and #Old and [[Former]]\n" },
+    { "path": "journals/2026_06_15.md", "bytes": "- journal ref [[Old/Child]]\n" }
+  ]
+}

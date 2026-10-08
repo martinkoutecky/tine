@@ -3,9 +3,12 @@ import { createResource, createRoot } from "solid-js";
 import { render } from "solid-js/web";
 import { readLatestOr, readOr, resetResourceReportsForTests } from "./resourceRead";
 
+const dbgLines = vi.hoisted(() => [] as string[]);
+vi.mock("./debug", () => ({ dbg: (line: string) => dbgLines.push(line) }));
+
 beforeEach(() => {
   resetResourceReportsForTests();
-  vi.spyOn(console, "warn").mockImplementation(() => {});
+  dbgLines.length = 0;
 });
 
 afterEach(() => {
@@ -45,17 +48,15 @@ describe("readOr (GH #490/#332: a rejected resource must not throw into render)"
     expect(readLatestOr(resource, [], "linked references")).toEqual(["a", "b"]);
   });
 
-  it("records the failure once, content-free, and never the message", async () => {
-    const resource = await settled(() => Promise.reject(new Error("page /home/me/graph/Secret.md is unreadable")));
+  it("records the failure once, in the opt-in debug log only, never the always-on console", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const resource = await settled(() => Promise.reject(new Error("page unreadable")));
     readOr(resource, undefined, "page inventory");
     readOr(resource, undefined, "page inventory");
-    readOr(resource, undefined, "page inventory");
+    readLatestOr(resource, undefined, "page inventory");
 
-    const calls = vi.mocked(console.warn).mock.calls;
-    expect(calls).toHaveLength(1);
-    expect(calls[0][0]).toBe("tine.resource-failed");
-    expect(JSON.stringify(calls[0][1])).not.toContain("Secret");
-    expect(calls[0][1]).toMatchObject({ what: "page inventory", kind: "Error" });
+    expect(dbgLines).toEqual(["resource failed: page inventory: Error: page unreadable"]);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("keeps a sibling rendering, where the bare read took the whole tree down", async () => {

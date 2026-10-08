@@ -1,24 +1,30 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { readAppStylesheet } from "./testSource";
 
 /**
- * The system-inset contract for viewport-fixed overlays, checked as text.
- *
- * `scripts/check-mobile-safe-area.mjs` measures the real thing in a headless
- * browser and stays the authority; it needs a working Chromium, which not
- * every machine has. These assertions are the part that can run anywhere.
+ * The system-inset contract (GH #205, master a0afeb665 + e3b1c3868), checked
+ * as text: jsdom applies no layout, so these pin the stylesheet shape that the
+ * headless-Chromium harness (scripts/check-mobile-safe-area.mjs) measures.
  */
 describe("mobile safe-area insets", () => {
-  const css = readAppStylesheet();
+  const sheets = readdirSync("src/styles").filter((f) => f.endsWith(".css"));
+  const allCss = sheets.map((f) => readFileSync(`src/styles/${f}`, "utf8")).join("\n");
+  const css = readFileSync("src/styles/app.css", "utf8");
+  const help = readFileSync("src/styles/help.css", "utf8");
   const main = readFileSync("src/main.tsx", "utf8");
+  const block = (sheet: string, selector: string) => {
+    const at = sheet.startsWith(`${selector} {`) ? 0 : sheet.indexOf(`\n${selector} {`);
+    expect(at, `${selector} exists`).toBeGreaterThanOrEqual(0);
+    return sheet.slice(at, sheet.indexOf("\n}", at));
+  };
 
   it("centralizes each platform inset behind one system token", () => {
     for (const side of ["top", "right", "bottom", "left"]) {
       expect(css).toContain(`--system-inset-${side}: env(safe-area-inset-${side}, 0px);`);
       expect(css).toContain(`--overlay-inset-${side}: var(--system-inset-${side});`);
     }
-    expect(css.match(/env\(safe-area-inset-(?:top|right|bottom|left)(?:, 0px)?\)/gu)).toHaveLength(4);
+    // Every call site reads a token; env() appears only in the four definitions.
+    expect(allCss.match(/env\(safe-area-inset-(?:top|right|bottom|left)(?:, 0px)?\)/gu)).toHaveLength(4);
   });
 
   it("gives Android's already-inset native viewport sole ownership", () => {
@@ -31,13 +37,38 @@ describe("mobile safe-area insets", () => {
     }
   });
 
-  it("puts a phone-width modal's top edge on the inset and not below it", () => {
-    // Martin, Aug 18: with `+ 2vh` the sheet sat noticeably under the status
-    // bar and a lit strip of the workspace showed through the scrim above it.
-    // A desktop-shaped breathing gap is wrong for a full-height sheet.
+  it("reapplies the insets on every viewport-fixed overlay that lays out content", () => {
+    for (const selector of [
+      ".modal-overlay",
+      ".switcher-overlay",
+      ".welcome-overlay",
+      ".audio-overlay",
+      ".lightbox-overlay",
+      // og 19A retired the Settings sync-merge modal (.sync-merge-overlay): the
+      // resolver is in-page now and has no viewport-fixed overlay to inset.
+    ]) {
+      // Rules may live in any split sheet (e.g. .welcome-overlay moved to
+      // pdf-workspace.css); allCss joins every src/styles sheet.
+      const rule = block(allCss, selector);
+      for (const side of ["top", "right", "bottom", "left"]) {
+        expect(rule, `${selector} ${side}`).toContain(`var(--overlay-inset-${side})`);
+      }
+    }
+    // A reintroduced viewport-fixed conflict modal must rejoin the list above.
+    expect(allCss).not.toContain(".sync-merge-overlay");
+    expect(block(css, ".toast-stack")).toContain("calc(var(--overlay-inset-bottom) + 18px)");
+    expect(block(css, ".parser-error-banner")).toContain("calc(var(--overlay-inset-top) + 8px)");
+    expect(block(help, ".help-corner")).toContain("var(--overlay-inset-bottom, 0px) + 16px");
+    const narrowHelp = help.slice(help.indexOf("@media (max-width: 720px)"));
+    expect(narrowHelp.slice(0, narrowHelp.indexOf("\n  }"))).toContain("var(--overlay-inset-bottom, 0px) + 12px");
+  });
+
+  it("puts a phone-width modal's top edge on the inset and fills the inset box", () => {
     const phone = css.slice(css.indexOf("@media (max-width: 480px)"));
     const overlay = phone.slice(phone.indexOf(".modal-overlay"), phone.indexOf(".settings-modal"));
     expect(overlay).toContain("padding-top: var(--overlay-inset-top);");
-    expect(overlay).not.toMatch(/padding-top:\s*calc\(/u);
+    const modal = phone.slice(phone.indexOf(".settings-modal"), phone.indexOf(".settings-nav"));
+    expect(modal).toContain("height: 100%;");
+    expect(modal).not.toMatch(/height:\s*96vh/u);
   });
 });

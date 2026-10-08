@@ -3,17 +3,19 @@ import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { startEditing } from "../editorController";
-import { doc, loadSingle, pageByName, resetStore } from "../store";
+import { pageByName, resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
 import { initParser } from "../render/parse";
-import type { BlockDto, PageDto, PageEntry } from "../types";
+import { refreshPageIndex, resetPageIndex } from "../pageIndex";
+import type { BlockDto, PageDto, PageEntry, PageRead } from "../types";
 import { Block } from "./Block";
-import { setAliasMap } from "../ui";
 
 beforeAll(() => initParser());
 
 afterEach(() => {
   vi.restoreAllMocks();
-  setAliasMap({});
+  resetPageIndex();
   resetStore();
   document.body.innerHTML = "";
 });
@@ -151,34 +153,6 @@ describe("reference authoring", () => {
     }
   });
 
-  it("labels an alias suggestion with the page it belongs to and inserts the alias (GH #558, GH #482)", async () => {
-    // Core returns an authored alias as its own row, on its owner's file.
-    vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
-      { name: "Tine greet", kind: "page", date_key: null, path: "pages/Welcome to Tine.md" },
-      entry("Tinsel"),
-    ]);
-    setAliasMap({ "tine greet": "Welcome to Tine", "welcome to tine": "Welcome to Tine", tinsel: "Tinsel" });
-    loadSingle(page("[[Tin]]"));
-    startEditing("reference-authoring", 5);
-    const { root, dispose } = mount(() => (
-      <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
-    ));
-    try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      inputAt(textarea, "[[Tin]]", 5);
-      const rowFor = (label: string) => [...document.body.querySelectorAll(".autocomplete .ac-label")]
-        .find((row) => row.textContent === label)?.parentElement;
-      await vi.waitFor(() => expect(rowFor("Tine greet")).toBeTruthy());
-      expect(rowFor("Tine greet")?.querySelector(".ac-sub")?.textContent).toBe("alias of Welcome to Tine");
-      // An ordinary page carries no alias badge.
-      expect(rowFor("Tinsel")?.querySelector(".ac-sub")).toBeNull();
-      (rowFor("Tine greet") as HTMLElement).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-      await vi.waitFor(() => expect(textarea.value.trim()).toBe("[[Tine greet]]"));
-    } finally {
-      dispose();
-    }
-  });
-
   it("requests OG's 20-result inline block-reference pool", async () => {
     const search = vi.spyOn(backend(), "search").mockResolvedValue([{
       page: "Source",
@@ -219,6 +193,11 @@ describe("reference authoring", () => {
       }],
       evidence: [],
     }]);
+    vi.spyOn(backend(), "getPage").mockResolvedValue({
+      id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null,
+      blocks: [{ id: "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add", raw: properties ? `test\nid:: ${expectedId}` : "test", collapsed: false, children: [] }],
+    });
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
     loadSingle(page("((test"));
     startEditing("reference-authoring", 6);
     const { root, dispose } = mount(() => (
@@ -233,6 +212,61 @@ describe("reference authoring", () => {
     } finally {
       dispose();
     }
+  });
+
+  it("keeps the paired reference visible for conflict resolution when the grouped save fails", async () => {
+    const uuid = "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add";
+    vi.spyOn(backend(), "search").mockResolvedValue([{
+      page: "Source", kind: "page", blocks: [{ id: uuid, raw: "test", collapsed: false, children: [] }], evidence: [],
+    }]);
+    vi.spyOn(backend(), "getPage").mockResolvedValue({
+      id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null,
+      blocks: [{ id: uuid, raw: "test", collapsed: false, children: [] }],
+    });
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ failed: { index: 0, family: "conflict", undoFailed: [] } });
+    loadSingle(page("((test"));
+    startEditing("reference-authoring", 6);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, "((test", 6);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
+      accept(textarea);
+      await vi.waitFor(() => expect(backend().savePages).toHaveBeenCalled());
+      expect(doc.byId["reference-authoring"].raw).toBe(`((${uuid})) `);
+      expect(vi.mocked(backend().savePages).mock.calls[0][0].map((item) => item.page.name).sort())
+        .toEqual(["Reference authoring", "Source"]);
+    } finally { dispose(); }
+  });
+
+  it("does not stamp a target ID when the editor intent expires during target lookup", async () => {
+    const uuid = "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add";
+    let finish!: (page: PageRead) => void;
+    vi.spyOn(backend(), "search").mockResolvedValue([{
+      page: "Source", kind: "page", blocks: [{ id: uuid, raw: "test", collapsed: false, children: [] }], evidence: [],
+    }]);
+    vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
+    loadSingle(page("((test"));
+    startEditing("reference-authoring", 6);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, "((test", 6);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
+      accept(textarea);
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      inputAt(textarea, "changed", 7);
+      finish({ id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null,
+        blocks: [{ id: uuid, raw: "test", collapsed: false, children: [] }] });
+      await vi.waitFor(() => expect(pageByName("Source")).toBeTruthy());
+      expect(save).not.toHaveBeenCalled();
+      expect(doc.byId[uuid].raw).toBe("test");
+    } finally { dispose(); }
   });
 
   it("does not let an older same-location page lookup overwrite newer results", async () => {
@@ -259,6 +293,41 @@ describe("reference authoring", () => {
       await Promise.resolve();
       await Promise.resolve();
       expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity New");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("labels an alias suggestion with the page it belongs to and inserts the alias (GH #558, GH #482)", async () => {
+    // Core returns an authored alias as its own row, on its owner's file; the
+    // page inventory says whose alias it is (an existing file would win).
+    vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
+      { name: "Tine greet", kind: "page", date_key: null, path: "pages/Welcome to Tine.md" },
+      entry("Tinsel"),
+    ]);
+    vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [
+      { key: "welcome to tine", name: "Welcome to Tine", is_journal: false, day: null, target: { kind: "existing", id: "pages/Welcome to Tine.md", others: [] } },
+      { key: "tine greet", name: "Tine greet", is_journal: false, day: null, target: { kind: "alias", owners: ["pages/Welcome to Tine.md"] } },
+      { key: "tinsel", name: "Tinsel", is_journal: false, day: null, target: { kind: "existing", id: "pages/Tinsel.md", others: [] } },
+    ] });
+    resetPageIndex();
+    await refreshPageIndex();
+    loadSingle(page("[[Tin]]"));
+    startEditing("reference-authoring", 5);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, "[[Tin]]", 5);
+      const rowFor = (label: string) => [...document.body.querySelectorAll(".autocomplete .ac-label")]
+        .find((row) => row.textContent === label)?.parentElement;
+      await vi.waitFor(() => expect(rowFor("Tine greet")).toBeTruthy());
+      expect(rowFor("Tine greet")?.querySelector(".ac-sub")?.textContent).toBe("alias of Welcome to Tine");
+      // An ordinary page carries no alias badge.
+      expect(rowFor("Tinsel")?.querySelector(".ac-sub")).toBeNull();
+      (rowFor("Tine greet") as HTMLElement).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      await vi.waitFor(() => expect(textarea.value.trim()).toBe("[[Tine greet]]"));
     } finally {
       dispose();
     }

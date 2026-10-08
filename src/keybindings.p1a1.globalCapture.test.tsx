@@ -4,11 +4,12 @@ import { render } from "solid-js/web";
 import { editingId, startEditing } from "./editorController";
 import { installKeybindings, setKeybindingsSuspended } from "./keybindings";
 import { initParser } from "./render/parse";
-import { clearSelection, loadSingle, resetStore } from "./store";
+import { clearSelection, resetStore } from "./document";
+import { loadSingle } from "./document/workingSet";
 import type { BlockDto, PageDto } from "./types";
 import { focusMode, setFocusMode } from "./ui";
 import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
-import { pageByName } from "./store";
+import { pageByName } from "./document";
 import { Block } from "./components/Block";
 
 beforeAll(async () => {

@@ -10,34 +10,13 @@
 // Loading: the wasm bytes are base64-inlined in ./wasm/lsdoc_wasm_bytes.ts and
 // handed to the wasm-bindgen glue's async init as an explicit buffer — NO fetch,
 // so it works under Tauri's custom protocol and offline. `initParser()` is awaited
-// once at app boot (main.tsx + capture.tsx) before the first render.
+// once at app boot. Main awaits it; Capture paints its seeded empty editor while
+// initialization is pending, deferring structural identity reads until ready.
 
 import { createSignal } from "solid-js";
-import init, { parse_block_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
-import * as lsdocWasm from "./wasm/lsdoc_wasm.js";
+import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
-import type { Block } from "./ast";
-
-export interface SearchFoldSource {
-  start: number;
-  end: number;
-}
-
-export interface SearchFoldMap {
-  text: string;
-  sources: SearchFoldSource[];
-}
-
-export interface SearchMatchBatch {
-  matches: boolean[];
-  search_error: string | null;
-}
-
-interface SearchWasmExports {
-  search_fold(text: string): string;
-  search_fold_map_json(text: string): string;
-  search_match_batch_json(query: string, textsJson: string): string;
-}
+import type { Block, MacroInline, Inline } from "./ast";
 
 // `ready` is a Solid signal so components (AstBody) reactively render once the
 // parser is loaded. In the normal flow init is awaited before mount, so it's
@@ -45,7 +24,6 @@ interface SearchWasmExports {
 // path that renders before init resolves.
 const [ready, setReady] = createSignal(false);
 const [failed, setFailed] = createSignal(false);
-let initError: unknown = null;
 let initPromise: Promise<void> | null = null;
 
 function base64ToBytes(b64: string): Uint8Array {
@@ -55,8 +33,9 @@ function base64ToBytes(b64: string): Uint8Array {
   return bytes;
 }
 
-/** Instantiate the wasm parser once (idempotent). Awaited before first paint in
- *  every window. Async (not `initSync`) so the ~189 KB module compiles off the
+/** Instantiate the wasm parser once (idempotent). Main awaits it before paint;
+ *  Capture starts it before paint and defers structural reads until ready.
+ *  Async (not `initSync`) so the vendored module compiles off the
  *  synchronous-compile size limit some engines enforce on the main thread. */
 export function initParser(): Promise<void> {
   if (ready()) return Promise.resolve();
@@ -70,11 +49,10 @@ export function initParser(): Promise<void> {
         if (typeof document !== "undefined") document.documentElement.dataset.lsdocParser = "ready";
         // Diagnostic only — the hard stale-wasm guard is in build-wasm.mjs.
         if (lsdoc_tag() !== LSDOC_TAG) {
-          console.warn(`lsdoc-wasm tag mismatch: wasm=${lsdoc_tag()} bytes=${LSDOC_TAG}`);
+          console.warn("lsdoc-wasm tag mismatch");
         }
       })
       .catch((e) => {
-        initError = e;
         setFailed(true);
         if (typeof document !== "undefined") document.documentElement.dataset.lsdocParser = "failed";
         throw e;
@@ -89,47 +67,10 @@ export function parserReady(): boolean {
   return ready();
 }
 
-/** The init error, if `initParser()` rejected (used to surface a visible banner
- *  rather than a silently blank app). Null while pending or on success. */
-export function parserInitError(): unknown {
-  return initError;
-}
-
 /** True (reactive) if the wasm parser failed to load — drives the app-level
  *  "renderer failed" banner so a failure isn't a silently degraded app. */
 export function parserFailed(): boolean {
   return failed();
-}
-
-function searchWasm(): SearchWasmExports {
-  if (!ready()) throw new Error("search Wasm called before initParser() resolved");
-  const exports = lsdocWasm as unknown as Partial<SearchWasmExports>;
-  if (
-    typeof exports.search_fold !== "function"
-    || typeof exports.search_fold_map_json !== "function"
-    || typeof exports.search_match_batch_json !== "function"
-  ) {
-    throw new Error("lsdoc-wasm search exports are unavailable");
-  }
-  return exports as SearchWasmExports;
-}
-
-/** Apply the shared native search fold exactly once. Page/reference identity
- *  deliberately does not use this fold. */
-export function searchFold(text: string): string {
-  return searchWasm().search_fold(text);
-}
-
-/** Fold text while retaining one original UTF-16 source range for each output
- *  Unicode scalar. Used for evidence only; ordinary membership needs no map. */
-export function searchFoldMap(text: string): SearchFoldMap {
-  return JSON.parse(searchWasm().search_fold_map_json(text)) as SearchFoldMap;
-}
-
-/** Compile one shared Rust Matcher and apply it to the supplied original-text
- *  corpus. Empty/invalid policy and regex semantics remain native-owned. */
-export function searchMatchBatch(query: string, texts: string[]): SearchMatchBatch {
-  return JSON.parse(searchWasm().search_match_batch_json(query, JSON.stringify(texts))) as SearchMatchBatch;
 }
 
 // Pure parse cache: text+format fully determine the AST (independent of graph
@@ -139,6 +80,38 @@ export function searchMatchBatch(query: string, texts: string[]): SearchMatchBat
 const cache = new Map<string, Block[]>();
 const CACHE_MAX = 8000;
 const quarantined = new WeakSet<Block[]>();
+export type ByteRange = [number, number];
+export interface RegionProperty {
+  key: string; value: string; line: ByteRange; key_range: ByteRange; value_range: ByteRange; region: number; primary: boolean;
+}
+/** A block-level literal container lsdoc accepted; offsets are UTF-8 bytes. `close_start` begins the
+ * container's last non-blank line (its closer); `delim_end` ends the opener's delimiter token. */
+export interface RegionLiteralBlock {
+  kind: "src" | "example" | "other"; lang: string; range: ByteRange; open_end: number; close_start: number; delim_end: number;
+}
+/** The editor-state policy for a fence still being typed (named policy in `block_regions.rs`). */
+export interface RegionOpenFence { lang: string; start: number; open_end: number; delim_end: number }
+export interface BlockRegions {
+  header: {
+    marker: string | null; priority: string | null; heading: number | null;
+    marker_range: ByteRange | null; priority_range: ByteRange | null;
+  };
+  literals: ByteRange[];
+  property_regions: ByteRange[];
+  properties: RegionProperty[];
+  planning: { kind: string; line: ByteRange; timestamp: ByteRange; date: unknown }[];
+  drawers: { name: string; range: ByteRange; close: number; clocks: ByteRange[] }[];
+  id: RegionProperty | null;
+  quarantined: boolean;
+  literal_blocks: RegionLiteralBlock[];
+  open_fence: RegionOpenFence | null;
+}
+/** An accepted identity value carried with the exact editor buffer that owns
+ * it. Coordinates are deliberately absent: inserting hidden rows moves spans. */
+export interface BlockIdentityFacts { raw: string; format: "md" | "org"; value: string | null }
+const soleMacroCache = new WeakMap<Block[], MacroInline | null>();
+const regionCache = new WeakMap<Block[], BlockRegions>();
+
 
 function remember(key: string, blocks: Block[]): Block[] {
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
@@ -149,6 +122,9 @@ function remember(key: string, blocks: Block[]): Block[] {
 function quarantine(key: string, text: string): Block[] {
   const blocks: Block[] = [{ kind: "paragraph", inline: [{ k: "plain", text }] }];
   quarantined.add(blocks);
+  regionCache.set(blocks, { header: { marker: null, priority: null, heading: null, marker_range: null, priority_range: null },
+    literals: [[0, new TextEncoder().encode(text).length]], property_regions: [], properties: [],
+    planning: [], drawers: [], id: null, quarantined: true, literal_blocks: [], open_fence: null });
   return remember(key, blocks);
 }
 
@@ -195,15 +171,54 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
   if (statsEnabled()) bumpParseStats(false);
   let json: string;
   try {
-    json = parse_block_json(text, isOrg);
+    json = parse_block_bundle_json(text, isOrg);
   } catch {
     __tineReinstantiate();
     try {
-      json = parse_block_json(text, isOrg);
+      json = parse_block_bundle_json(text, isOrg);
     } catch {
       __tineReinstantiate();
       return quarantine(key, text);
     }
   }
-  return remember(key, JSON.parse(json) as Block[]);
+  const bundle = JSON.parse(json) as { blocks: Block[]; regions: BlockRegions; sole_macro: MacroInline | null };
+  soleMacroCache.set(bundle.blocks, bundle.sole_macro);
+  regionCache.set(bundle.blocks, bundle.regions);
+  return remember(key, bundle.blocks);
+}
+
+/** Raw UTF-8 regions from the render cache: O(block bytes) on a cold miss,
+ * zero additional parses on a warm AST. Never call from a typing handler. */
+export function blockRegions(raw: string, format: "md" | "org" = "md"): BlockRegions {
+  if (!parserReady()) throw new Error("Structural edit refused: parser is not ready");
+  return regionCache.get(parseBlock(raw, format === "org"))!;
+}
+/** Parser-owned splice for one block. Warm regions avoid parsing; parse traps
+ * refuse visibly by throwing. Callers must retain raw on refusal. */
+export function editBlock(raw: string, format: "md" | "org", request: object): string {
+  const regions = blockRegions(raw, format);
+  if (regions.quarantined) throw new Error("Structural edit refused: block parsing is quarantined");
+  return edit_block_regions_json(raw, format === "org", regions, request);
+}
+
+/** Sole visible macro from the native AST policy (standalone_macro::sole_macro).
+ * O(1) on a warm block; cold parsing is O(block bytes), with no second parse. */
+export function soleBlockMacro(raw: string, format: "md" | "org" = "md"): MacroInline | null {
+  // Candidate admission only: without an opening token there cannot be a macro.
+  // Positive classification still belongs entirely to the native AST policy.
+  if (!parserReady() || !raw.includes("{{")) return null;
+  return soleMacroCache.get(parseBlock(raw, format === "org")) ?? null;
+}
+
+const propertyInlineCache = new WeakMap<RegionProperty, Inline[]>();
+/** Inline syntax of one accepted property value, using lsdoc's bounded inline
+ * door. O(value bytes) cold, O(1) warm; coordinates start at the value's byte 0.
+ * Refusal throws, preserving source rather than dropping unreadable content. */
+export function propertyValueInline(property: RegionProperty, format: "md" | "org"): Inline[] {
+  const cached = propertyInlineCache.get(property);
+  if (cached) return cached;
+  const inline = JSON.parse(parse_inline_json(property.value, format === "org")) as Inline[] | null;
+  if (!inline) throw new Error("Inline export refused: property value is too deep");
+  propertyInlineCache.set(property, inline);
+  return inline;
 }

@@ -4,8 +4,10 @@
 // presets. Kept dependency-free and on the frontend so the date picker never
 // blocks on IPC. Journal-page-title tokens are NOT resolved here (that needs the
 // graph); they pass through to the backend verbatim.
+// The grammar is the engine's, not a second one: dateExpr.test.ts reads the same
+// golden file as the Rust resolver (tests/fixtures/i12-date-token-golden.json).
 
-import { journalTitle, appNow } from "../journal";
+import { journalTitle, appNow, localCalendarDate } from "../journal";
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
@@ -14,23 +16,26 @@ function addDays(d: Date, n: number): Date {
   r.setDate(r.getDate() + n);
   return r;
 }
-// Build a Date only if the y/m/d round-trip exactly (rejects 2026-02-31 etc.).
-// Use setFullYear so years 0–99 aren't reinterpreted as 1900-based by the Date ctor.
-function validDate(y: number, m: number, d: number): Date | null {
-  const dt = new Date(2000, 0, 1);
-  dt.setFullYear(y, m, d);
-  return dt.getFullYear() === y && dt.getMonth() === m && dt.getDate() === d ? dt : null;
+function daysInMonth(year: number, month0: number): number {
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  return month0 === 1 ? (leap ? 29 : 28) : [3, 5, 8, 10].includes(month0) ? 30 : 31;
 }
+/** Mirrors `JournalDate::add_months`: carry into years, clamp the day to the
+ *  target month. Pure arithmetic then one `setFullYear(y, m, d)`, so years 0-99
+ *  stay literal (a `new Date(y, ...)` constructor would remap them to 19xx). */
 function addMonths(d: Date, n: number): Date {
+  const total = d.getMonth() + n;
+  const year = d.getFullYear() + Math.floor(total / 12);
+  const month = ((total % 12) + 12) % 12;
   const r = new Date(d);
-  const day = r.getDate();
-  r.setDate(1);
-  r.setMonth(r.getMonth() + n);
-  // Clamp to the last valid day of the target month (mirrors add_months).
-  const last = new Date(r.getFullYear(), r.getMonth() + 1, 0).getDate();
-  r.setDate(Math.min(day, last));
+  r.setFullYear(year, month, Math.min(d.getDate(), daysInMonth(year, month)));
   return r;
 }
+
+/** The largest relative offset, in years (the same span in days, weeks and
+ *  months): `MAX_DATE_OFFSET_YEARS` in advanced_patterns.rs. */
+const MAX_OFFSET_YEARS = 10_000;
+const UNITS_PER_YEAR = { d: 366, w: 53, m: 12, y: 1 } as const;
 
 /** Resolve a bound token to a concrete date, or null if it needs the graph
  *  (a journal page title) or is malformed. `today` defaults to the real today. */
@@ -47,11 +52,15 @@ export function resolveDateToken(tok: string, today = appNow()): Date | null {
     case "tomorrow":
       return addDays(today, 1);
   }
-  // Signed relative duration: ±N[dwmy].
-  const rel = /^([+-]?)(\d+)([dwmy])$/i.exec(t);
+  // Signed relative duration: [+-]N[dwmy], ASCII digits and a LOWERCASE unit
+  // (`-7D` is not one), bounded like the engine's `DateToken::relative`.
+  const rel = /^([+-]?)(\d+)([dwmy])$/.exec(t);
   if (rel) {
-    const n = (rel[1] === "-" ? -1 : 1) * parseInt(rel[2], 10);
-    switch (rel[3].toLowerCase()) {
+    const unit = rel[3] as keyof typeof UNITS_PER_YEAR;
+    const magnitude = Number(rel[2]);
+    if (!(magnitude <= MAX_OFFSET_YEARS * UNITS_PER_YEAR[unit])) return null;
+    const n = (rel[1] === "-" ? -1 : 1) * magnitude;
+    switch (unit) {
       case "d":
         return addDays(today, n);
       case "w":
@@ -62,17 +71,20 @@ export function resolveDateToken(tok: string, today = appNow()): Date | null {
         return addMonths(today, n * 12);
     }
   }
-  // ISO yyyy-MM-dd. Reject impossible dates (e.g. 2026-02-31) rather than letting
-  // JS Date silently roll them over to a wrong day.
-  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
-  if (iso) {
-    return validDate(+iso[1], +iso[2] - 1, +iso[3]);
+  // A `yyyy-MM-dd` or `yyyy_MM_dd` stem, zero padding optional
+  // (`JournalDate::from_file_stem`). Impossible dates (2026-02-31) are rejected
+  // rather than letting JS Date roll them over to a wrong day.
+  const parts = t.split(t.includes("_") ? "_" : "-");
+  if (parts.length === 3 && parts.every((part) => /^\d+$/.test(part))) {
+    const [y, m, d] = parts.map(Number);
+    if (y <= 2_147_483_647) return localCalendarDate(y, m - 1, d);
   }
-  // "MMM do, yyyy" journal title (e.g. "Jun 16th, 2026") — resolvable locally.
-  const jt = /^([a-z]{3})\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})$/i.exec(t);
+  // "MMM do, yyyy" journal title (e.g. "Jun 16th, 2026"): the default title
+  // format, one space after the month and after the comma, 1-4 year digits.
+  const jt = /^([a-z]{3}) (\d{1,2})(?:st|nd|rd|th), (\d{1,4})$/i.exec(t);
   if (jt) {
     const m = MONTHS.indexOf(jt[1].toLowerCase());
-    if (m >= 0) return validDate(+jt[3], m, +jt[2]);
+    if (m >= 0) return localCalendarDate(+jt[3], m, +jt[2]);
   }
   return null;
 }

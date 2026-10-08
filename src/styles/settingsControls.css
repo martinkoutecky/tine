@@ -1,0 +1,91 @@
+/* Settings appearance and window-size controls. Loaded after app.css. */
+@media (min-width: 481px) {
+  .modal-overlay.settings-maximized { padding: 4vh 4vw; }
+  .settings-maximized .settings-modal {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+  }
+}
+@media (max-width: 480px) {
+  .settings-maximize { display: none; }
+}
+
+.theme-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+}
+.theme-opt {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 68px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.theme-ico { display: inline-block; width: 13px; text-align: center; }
+.theme-switch .theme-opt[aria-checked="true"] { color: var(--text-primary); font-weight: 600; }
+.theme-knob {
+  position: absolute;
+  z-index: 0;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc(33.3333% - 2px);
+  border-radius: 999px;
+  background: var(--bg-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  transition: transform 0.16s ease;
+}
+.theme-switch.is-system .theme-knob { transform: translateX(100%); }
+.theme-switch.is-dark .theme-knob { transform: translateX(200%); }
+
+.settings-width-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: min(100%, 520px);
+}
+.settings-width-range {
+  width: 150px;
+  accent-color: var(--accent);
+}
+.settings-width-number {
+  width: 76px;
+}
+.settings-width-unit {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .settings-field-row:has(.settings-width-control) {
+    flex-wrap: wrap;
+  }
+  .settings-field-row:has(.settings-width-control) .settings-field-control,
+  .settings-width-control {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+  .settings-width-range {
+    flex: 1 1 120px;
+    min-width: 100px;
+  }
+}

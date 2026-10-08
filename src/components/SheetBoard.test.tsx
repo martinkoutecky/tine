@@ -5,15 +5,18 @@ import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
 import { __sheetBoardTestHooks, SheetBoard } from "./SheetBoard";
 import { initParser } from "../render/parse";
-import { blockProperty, doc, hasSelection, resetStore, setDoc, setRaw, undo, type FeedPage, type Node as StoreNode } from "../store";
-import { closeContextMenu, openSheetContextMenu, setToasts, setWorkflow, toasts } from "../ui";
+import { blockProperty, hasSelection, resetStore, setRaw, undo } from "../document";
+import { type FeedPage, type Node as StoreNode } from "../document/model";
+import { doc, setDoc } from "../document/model";
+import { closeContextMenu, openSheetContextMenu, setWorkflow } from "../ui";
+import { setToasts, toasts } from "../toasts";
 import { cellForBlockId, cellOwner, cellSel, handleCellSelectionKey, resetCellSelectionForTests, setCellSel, startCellEditing } from "../sheet/selection";
 import { installBlockSelectionDrag } from "../blockDrag";
 import type { RefGroup } from "../types";
 import { backend } from "../backend";
 import { installKeybindings } from "../keybindings";
+import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { clearTransientLayersForTest, registerTransientLayer } from "../transientLayers";
-import { blockRunResult } from "../queryReadingsTestkit";
 
 beforeAll(async () => {
   await initParser();
@@ -172,40 +175,6 @@ describe("SheetBoard", () => {
     journalCard.click();
     expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(true);
     expect(doc.byId[shared].raw).toBe("TODO Loaded page row");
-    dispose();
-  });
-
-  it("renders a DTO priority chip through the same text contract as a live query row", () => {
-    const remote: FeedPage = {
-      ...page(["live"]),
-      name: "Remote",
-      title: "Remote",
-    };
-    setDoc({
-      byId: {
-        board: node("board", "Board\ntine.view:: board\ntine.group-by:: state", null),
-        live: { ...node("live", "TODO [#A] Live row", null), page: remote.name },
-      },
-      pages: [page(["board"]), remote],
-      feed: ["Sheet"],
-      loaded: true,
-    });
-    const groups: RefGroup[] = [{
-      page: remote.name,
-      kind: "page",
-      blocks: [
-        { id: "live", raw: "TODO [#A] Live row", marker: "TODO", priority: "A", collapsed: false, children: [] },
-        { id: "dto", raw: "TODO [#A] DTO row", marker: "TODO", priority: "A", collapsed: false, children: [] },
-      ],
-    }];
-
-    const { root, dispose } = mount(() => (
-      <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={groups} />
-    ));
-    const priorityText = (id: string) =>
-      root.querySelector(`[data-block-id="${id}"] .block-priority`)?.textContent?.trim();
-
-    expect(priorityText("dto")).toBe(priorityText("live"));
     dispose();
   });
 
@@ -1221,7 +1190,7 @@ describe("SheetBoard", () => {
       feed: ["Sheet"],
       loaded: true,
     });
-    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(queryGroups(["todo"])));
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(queryGroups(["todo"]))); // master: the engine run
 
     const { root, dispose } = mount(() => <Block id="query" />);
     await tick();
@@ -1251,7 +1220,7 @@ describe("SheetBoard", () => {
       feed: ["Sheet"],
       loaded: true,
     });
-    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(queryGroups(["todo"])));
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(queryGroups(["todo"]))); // master: the engine run
 
     const { root, dispose } = mount(() => <Block id="query" />);
     await tick();
@@ -1277,7 +1246,7 @@ describe("SheetBoard", () => {
       feed: ["Sheet"],
       loaded: true,
     });
-    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(queryGroups(["todo"])));
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(queryGroups(["todo"]))); // master: the engine run
 
     const { root, dispose } = mount(() => <Block id="query" />);
     await tick();

@@ -1,3 +1,5 @@
+import { IDENTITY } from "./lib/app-identity.mjs";
+import { BETA_TAG, STABLE_CHANNEL, releaseVersion } from "./release-policy.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -12,116 +14,121 @@ export const RELEASE_LANES = [
 ];
 
 export function assertReleaseVersion(version) {
-  if (!/^\d+\.\d+\.\d+$/.test(version ?? "")) {
-    throw new Error(`invalid release version: ${version}`);
-  }
+  releaseVersion(version);
 }
 
-export function releaseLayout(version) {
+export function releaseLayout(version, identity = IDENTITY) {
+  const product = identity.productName.replace(/\s+/g, "-");
   assertReleaseVersion(version);
   const lanes = {
     "linux-x64": {
       assets: [
-        `Tine_${version}_amd64.AppImage`,
-        `Tine_${version}_amd64.AppImage.sig`,
-        `Tine_${version}_amd64.AppImage.zsync`,
-        `Tine_${version}_amd64.deb`,
-        `Tine_${version}_amd64.deb.sig`,
-        `Tine-${version}-1.x86_64.rpm`,
-        `Tine-${version}-1.x86_64.rpm.sig`,
+        `${product}_${version}_amd64.AppImage`,
+        `${product}_${version}_amd64.AppImage.sig`,
+        `${product}_${version}_amd64.AppImage.zsync`,
+        `${product}_${version}_amd64.deb`,
+        `${product}_${version}_amd64.deb.sig`,
+        `${product}-${version}-1.x86_64.rpm`,
+        `${product}-${version}-1.x86_64.rpm.sig`,
       ],
       platforms: {
-        "linux-x86_64": [`Tine_${version}_amd64.AppImage`, `Tine_${version}_amd64.AppImage.sig`],
+        "linux-x86_64": [`${product}_${version}_amd64.AppImage`, `${product}_${version}_amd64.AppImage.sig`],
         "linux-x86_64-appimage": [
-          `Tine_${version}_amd64.AppImage`,
-          `Tine_${version}_amd64.AppImage.sig`,
+          `${product}_${version}_amd64.AppImage`,
+          `${product}_${version}_amd64.AppImage.sig`,
         ],
-        "linux-x86_64-deb": [`Tine_${version}_amd64.deb`, `Tine_${version}_amd64.deb.sig`],
+        "linux-x86_64-deb": [`${product}_${version}_amd64.deb`, `${product}_${version}_amd64.deb.sig`],
         "linux-x86_64-rpm": [
-          `Tine-${version}-1.x86_64.rpm`,
-          `Tine-${version}-1.x86_64.rpm.sig`,
+          `${product}-${version}-1.x86_64.rpm`,
+          `${product}-${version}-1.x86_64.rpm.sig`,
         ],
       },
     },
     "linux-arm64": {
       assets: [
-        `Tine_${version}_aarch64.AppImage`,
-        `Tine_${version}_aarch64.AppImage.sig`,
-        `Tine_${version}_aarch64.AppImage.zsync`,
-        `Tine_${version}_arm64.deb`,
-        `Tine_${version}_arm64.deb.sig`,
-        `Tine-${version}-1.aarch64.rpm`,
-        `Tine-${version}-1.aarch64.rpm.sig`,
+        `${product}_${version}_aarch64.AppImage`,
+        `${product}_${version}_aarch64.AppImage.sig`,
+        `${product}_${version}_aarch64.AppImage.zsync`,
+        `${product}_${version}_arm64.deb`,
+        `${product}_${version}_arm64.deb.sig`,
+        `${product}-${version}-1.aarch64.rpm`,
+        `${product}-${version}-1.aarch64.rpm.sig`,
       ],
       platforms: {
         "linux-aarch64": [
-          `Tine_${version}_aarch64.AppImage`,
-          `Tine_${version}_aarch64.AppImage.sig`,
+          `${product}_${version}_aarch64.AppImage`,
+          `${product}_${version}_aarch64.AppImage.sig`,
         ],
         "linux-aarch64-appimage": [
-          `Tine_${version}_aarch64.AppImage`,
-          `Tine_${version}_aarch64.AppImage.sig`,
+          `${product}_${version}_aarch64.AppImage`,
+          `${product}_${version}_aarch64.AppImage.sig`,
         ],
-        "linux-aarch64-deb": [`Tine_${version}_arm64.deb`, `Tine_${version}_arm64.deb.sig`],
+        "linux-aarch64-deb": [`${product}_${version}_arm64.deb`, `${product}_${version}_arm64.deb.sig`],
         "linux-aarch64-rpm": [
-          `Tine-${version}-1.aarch64.rpm`,
-          `Tine-${version}-1.aarch64.rpm.sig`,
+          `${product}-${version}-1.aarch64.rpm`,
+          `${product}-${version}-1.aarch64.rpm.sig`,
         ],
       },
     },
     "macos-universal": {
-      assets: [`Tine_${version}_universal.dmg`],
+      assets: [`${product}_${version}_universal.dmg`],
       platforms: {},
     },
     "windows-x64": {
       assets: [
-        `Tine_${version}_x64-setup.exe`,
-        `Tine_${version}_x64-setup.exe.sig`,
-        `Tine_${version}_x64-portable.zip`,
+        `${product}_${version}_x64-setup.exe`,
+        `${product}_${version}_x64-setup.exe.sig`,
+        `${product}_${version}_x64-portable.zip`,
       ],
       platforms: {
         "windows-x86_64": [
-          `Tine_${version}_x64-setup.exe`,
-          `Tine_${version}_x64-setup.exe.sig`,
+          `${product}_${version}_x64-setup.exe`,
+          `${product}_${version}_x64-setup.exe.sig`,
         ],
         "windows-x86_64-nsis": [
-          `Tine_${version}_x64-setup.exe`,
-          `Tine_${version}_x64-setup.exe.sig`,
+          `${product}_${version}_x64-setup.exe`,
+          `${product}_${version}_x64-setup.exe.sig`,
         ],
       },
     },
     "windows-x86": {
       assets: [
-        `Tine_${version}_x86-setup.exe`,
-        `Tine_${version}_x86-setup.exe.sig`,
-        `Tine_${version}_x86-portable.zip`,
+        `${product}_${version}_x86-setup.exe`,
+        `${product}_${version}_x86-setup.exe.sig`,
+        `${product}_${version}_x86-portable.zip`,
       ],
-      // Pilot lane for GH #275.  Keep it out of latest.json until real 32-bit
-      // hardware has proved the installer, WebView2 runtime and graph workflow.
+      // Experimental GH #275 lane: updates remain manual, as on stable.
       platforms: {},
     },
     "windows-arm64": {
       assets: [
-        `Tine_${version}_arm64-setup.exe`,
-        `Tine_${version}_arm64-setup.exe.sig`,
-        `Tine_${version}_arm64-portable.zip`,
+        `${product}_${version}_arm64-setup.exe`,
+        `${product}_${version}_arm64-setup.exe.sig`,
+        `${product}_${version}_arm64-portable.zip`,
       ],
       platforms: {
         "windows-aarch64": [
-          `Tine_${version}_arm64-setup.exe`,
-          `Tine_${version}_arm64-setup.exe.sig`,
+          `${product}_${version}_arm64-setup.exe`,
+          `${product}_${version}_arm64-setup.exe.sig`,
         ],
         "windows-aarch64-nsis": [
-          `Tine_${version}_arm64-setup.exe`,
-          `Tine_${version}_arm64-setup.exe.sig`,
+          `${product}_${version}_arm64-setup.exe`,
+          `${product}_${version}_arm64-setup.exe.sig`,
         ],
       },
     },
     android: {
-      assets: [`Tine_${version}_android-arm64.apk`],
+      assets: [`${product}_${version}_android-arm64.apk`],
       platforms: {},
     },
   };
+  for (const spec of Object.values(lanes)) {
+    // Tauri uses productName verbatim; our own zip/APK are already canonical.
+    spec.sourceAssets = Object.fromEntries(spec.assets.map((name) => [name,
+      name.endsWith("-portable.zip") || name.endsWith(".apk") ? name
+        : identity.productName + name.slice(product.length),
+    ]));
+  }
   const platformAssets = RELEASE_LANES.flatMap((lane) => lanes[lane].assets);
   return {
     lanes,
@@ -145,7 +152,7 @@ export function releaseNotes(root, version) {
   return lines.slice(start + 1, end).join("\n").trim();
 }
 
-export function candidateProblems(directory, version) {
+export function candidateProblems(directory, version, channel = "stable") {
   const layout = releaseLayout(version);
   const names = new Set(
     fs.readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => entry.name)
@@ -174,6 +181,30 @@ export function candidateProblems(directory, version) {
   for (const platform of expectedPlatforms) {
     const entry = updater.platforms?.[platform];
     const [asset] = layout.updaterPlatforms[platform];
+    if (entry && channel === BETA_TAG) {
+      let inBeta = false;
+      try {
+        const url = new URL(entry.url);
+        const parts = url.pathname.split("/");
+        inBeta = url.protocol === "https:" && url.hostname === "github.com"
+          && parts.at(-3) === "download" && parts.at(-2) === BETA_TAG && parts.at(-1) === asset;
+      } catch {
+        inBeta = false;
+      }
+      if (!inBeta) problems.push(`latest.json ${platform} escapes beta`);
+    }
+    if (entry && channel === STABLE_CHANNEL) {
+      let stable = false;
+      try {
+        const url = new URL(entry.url);
+        const parts = url.pathname.split("/");
+        stable = url.protocol === "https:" && url.hostname === "github.com"
+          && parts.at(-4) === "releases" && parts.at(-3) === "latest" && parts.at(-2) === "download" && parts.at(-1) === asset;
+      } catch {
+        stable = false;
+      }
+      if (!stable) problems.push(`latest.json ${platform} is not a stable latest/download URL`);
+    }
     if (entry && !entry.url?.endsWith(`/${asset}`)) problems.push(`latest.json ${platform} points at the wrong asset`);
     if (entry && (typeof entry.signature !== "string" || entry.signature.length === 0)) {
       problems.push(`latest.json ${platform} has no signature`);

@@ -1,6 +1,5 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Capture Tine itself using the two launch theme packages.
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -27,6 +26,19 @@ const server = spawn(
 let serverSpawnError;
 server.once("error", (error) => { serverSpawnError = error; });
 
+async function waitForServer(url) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (serverSpawnError) throw serverSpawnError;
+    try {
+      if ((await fetch(url)).ok) return;
+    } catch {
+      // Preview is still starting.
+    }
+    await sleep(250);
+  }
+  if (serverSpawnError) throw serverSpawnError;
+  throw new Error("preview server did not start");
+}
 
 async function openAppearance(page) {
   await page.getByTitle("Settings (t s)").click();
@@ -39,9 +51,7 @@ async function installAndUse(page, root) {
   await page.locator(".toast-msg", { hasText: `${manifest.name} ${manifest.version} installed` }).waitFor();
   const installed = page.locator(".installed-theme-row", { hasText: manifest.name });
   await installed.getByRole("button", { name: "Use colors", exact: true }).click();
-  await installed.getByRole("button", { name: "Use style", exact: true }).click();
-  await installed.getByRole("button", { name: "Colors selected", exact: true }).waitFor();
-  await installed.getByRole("button", { name: "Style selected", exact: true }).waitFor();
+  await installed.getByRole("button", { name: "Selected", exact: true }).waitFor();
 }
 
 async function navigate(page, name) {
@@ -60,11 +70,7 @@ async function closeToasts(page) {
 
 try {
   const url = `http://127.0.0.1:${PORT}/`;
-  await waitForHttpServer(url, 40, 250, {
-      beforeAttempt: () => { if (serverSpawnError) throw serverSpawnError; },
-      beforeFailure: () => { if (serverSpawnError) throw serverSpawnError; },
-      failureMessage: "preview server did not start",
-    });
+  await waitForServer(url);
   const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   const page = await browser.newPage({ viewport: { width: 1280, height: 860 }, deviceScaleFactor: 2 });
   page.setDefaultTimeout(10_000);
@@ -78,17 +84,16 @@ try {
   await page.waitForSelector(".page-title");
   await openAppearance(page);
   await installAndUse(page, DEV_ROOT);
-  if (!(await page.locator('.theme-opt[title="Dark theme"][aria-checked="true"]').count()))
-    await page.locator('.theme-opt[title="Dark theme"]').click();
-  await page.locator('.theme-opt[title="Dark theme"][aria-checked="true"]').waitFor();
-  await page.locator(".settings-pane-head .icon-btn:not(.settings-maximize)").click();
+  if (await page.locator('.theme-switch[aria-checked="false"]').count()) await page.locator(".theme-switch").click();
+  await page.locator('.theme-switch[aria-checked="true"]').waitFor();
+  await page.locator(".settings-pane-head .icon-btn").click();
   await navigate(page, "Jun 14th, 2026");
   await closeToasts(page);
   await page.screenshot({ path: `${DEV_SHOTS}/tine-dev-colors.png` });
 
   await openAppearance(page);
   await installAndUse(page, THINGS_ROOT);
-  await page.locator(".settings-pane-head .icon-btn:not(.settings-maximize)").click();
+  await page.locator(".settings-pane-head .icon-btn").click();
   await navigate(page, "Jun 14th, 2026");
   await closeToasts(page);
   await page.screenshot({ path: `${THINGS_SHOTS}/tine-things-colors.png` });

@@ -1,11 +1,14 @@
 //! The advanced (datalog) query's `:where` clauses as text: the clause
 //! scanner, and (GH #542) the DataScript attribute patterns lowered from it —
 //! `[?b :block/marker "TODO"]`, value variables narrowed by a predicate, the
-//! block's journal page, and `(not [..])` of one of those. The clause heads
-//! (`task`, `between`, ...) are lowered in the parent module.
+//! block's journal page, and `(not [..])` of one of those — and the clause
+//! heads (`task`, `between`, ...) with their typed `:inputs`, lowered by
+//! [`advanced_pred`], the ONE advanced → IR lowerer (master's QA1 join-free
+//! subset; transcribed from master `query.rs` 5dfc84503).
 
-use super::ir::{Attr, CmpOp, Filter, Quant, Rel, Value};
-use super::AdvancedInput;
+use super::ir::{Anchor, Attr, CmpOp, Filter, Quant, Query, Rel, Source, Value};
+use super::{og, query_nesting_within_limit, query_source_within_limit, QUERY_NESTING_MAX};
+use crate::date::JournalDate;
 
 /// Collect balanced `(...)`/`[...]` groups at the top level of `s` (string-aware),
 /// stopping at the first top-level *closing* bracket (so scanning after `:where`
@@ -25,6 +28,17 @@ pub(super) fn scan_groups(s: &str) -> Vec<String> {
             while i < b.len() && b[i] != b'\n' {
                 i += 1;
             }
+            continue;
+        }
+        // A top-level string is one literal, as `query_nesting_within_limit`
+        // reads it: collecting the brackets inside it as groups handed an
+        // unguarded nest to the recursive consumers (og C3 L01, I-22).
+        if c == '"' {
+            i += 1;
+            while i < b.len() && b[i] != b'"' {
+                i += if b[i] == b'\\' { 2 } else { 1 };
+            }
+            i += 1;
             continue;
         }
         if c == '(' || c == '[' {
@@ -175,8 +189,11 @@ pub(super) fn advanced_find_var(src: &str) -> Option<String> {
 /// contributes its clauses, and an `(or ..)`/`(or-join [..] ..)` with exactly
 /// one branch IS that branch. Both are the same query; only the shape differs.
 pub(super) fn flatten_single_branch_groups(groups: Vec<String>) -> Vec<String> {
+    // An explicit stack, not recursion: the nesting is authored text, so the
+    // walk must not spend a native frame per level (I-22).
     let mut out = Vec::new();
-    for group in groups {
+    let mut pending: Vec<String> = groups.into_iter().rev().collect();
+    while let Some(group) = pending.pop() {
         let Some(body) = edn_body(&group, '(', ')') else {
             out.push(group);
             continue;
@@ -191,7 +208,7 @@ pub(super) fn flatten_single_branch_groups(groups: Vec<String>) -> Vec<String> {
             _ => None,
         };
         match branches {
-            Some(branches) => out.extend(flatten_single_branch_groups(branches)),
+            Some(branches) => pending.extend(branches.into_iter().rev()),
             None => out.push(group),
         }
     }
@@ -483,4 +500,828 @@ pub(super) fn lower_attribute_patterns(
         );
     }
     (lowered, consumed)
+}
+
+/// Lower one datalog source to the simple IR, with its clause report
+/// (`ran`, `ignored`). `None` means nothing in the supported subset matched,
+/// or a size/depth limit refused the source. Pure; O(source length).
+pub(crate) fn advanced_pred(
+    query_src: &str,
+    current_page: Option<&str>,
+    today: JournalDate,
+) -> (Option<Query>, Vec<String>, Vec<String>) {
+    // Both limits live here, not only at the two `run_advanced_*` entry points,
+    // because `page_affects_advanced_query` reaches this function directly. It
+    // used to skip the byte ceiling entirely, which made scoped invalidation the
+    // one caller that could hand an unbounded graph-authored string to the
+    // parser — the exact thing QUERY_SOURCE_MAX_BYTES exists to prevent.
+    if !query_source_within_limit(query_src) {
+        return (None, Vec::new(), vec!["query-too-large".to_string()]);
+    }
+    if !query_nesting_within_limit(query_src) {
+        return (None, Vec::new(), vec!["query-nesting-too-deep".to_string()]);
+    }
+    let inputs = resolve_inputs(query_src, current_page, today);
+    let mut ran = Vec::new();
+    let mut ignored = Vec::new();
+    let groups = flatten_single_branch_groups(where_groups(query_src));
+    let (lowered_page_properties, consumed_patterns) = lower_page_property_patterns(&groups);
+    let (lowered_current_pages, current_page_patterns) =
+        lower_current_page_patterns(&groups, &inputs);
+    let consumed_patterns = consumed_patterns
+        .into_iter()
+        .chain(current_page_patterns)
+        .collect::<std::collections::HashSet<_>>();
+    let taken = consumed_patterns
+        .iter()
+        .copied()
+        .chain(lowered_current_pages.keys().copied())
+        .chain(lowered_page_properties.keys().copied())
+        .collect::<std::collections::HashSet<_>>();
+    let (lowered_attributes, attribute_patterns) = lower_attribute_patterns(
+        &groups,
+        &taken,
+        advanced_find_var(query_src).as_deref(),
+        &inputs,
+    );
+    let preds: Vec<Filter> = groups
+        .iter()
+        .enumerate()
+        .filter_map(|(index, group)| {
+            if let Some((pred, label)) = lowered_current_pages.get(&index) {
+                ran.push((*label).into());
+                return Some(pred.clone());
+            }
+            if let Some(pred) = lowered_page_properties.get(&index) {
+                ran.push("page-property".into());
+                return Some(pred.clone());
+            }
+            if let Some((pred, label)) = lowered_attributes.get(&index) {
+                ran.push((*label).into());
+                return Some(pred.clone());
+            }
+            if consumed_patterns.contains(&index) || attribute_patterns.contains(&index) {
+                return None;
+            }
+            let ignored_before = ignored.len();
+            let lowered = parse_adv_group(group, &inputs, today, &mut ran, &mut ignored, 0);
+            if lowered.is_none() && ignored.len() == ignored_before {
+                // Every clause that does not lower is named: refusing is the
+                // contract (below), so a silent drop would be a silent widening.
+                ignored.push("clause".into());
+            }
+            lowered
+        })
+        .collect();
+    // An `:in` variable the `:inputs` do not bind to a value Tine resolves
+    // (`:current-block`, `:parent-block`, a `:current-page` with no current
+    // page, ...) leaves every clause that reads it unevaluable.
+    let where_text = groups.join("\n");
+    for variable in declared_input_vars(query_src) {
+        if !inputs.contains_key(&variable) && advanced_var_uses(&where_text, &variable) > 0 {
+            ignored.push(format!("input {variable}"));
+        }
+    }
+    // GH #542: a `:result-transform` is a Clojure function (ADR 0042 keeps
+    // scripting out). It reorders or reshapes the answer, so say it did not run.
+    if crate::query_edn::declares_option(query_src, ":result-transform") {
+        ignored.push("result-transform".into());
+    }
+    if ignored.iter().any(|item| item == "query-nesting-too-deep") {
+        return (None, Vec::new(), ignored);
+    }
+    // OG executes the whole DataScript query. A clause Tine cannot lower can
+    // only be dropped by answering a different (broader or narrower) question,
+    // so the query is refused as a whole and the report names what it could not
+    // lower (Martin, 2026-10-03). `ran` is empty: nothing ran.
+    if !ignored.is_empty() {
+        return (None, Vec::new(), ignored);
+    }
+    if preds.is_empty() {
+        return (None, ran, ignored);
+    }
+    let filter = if preds.len() == 1 {
+        preds.into_iter().next().expect("one")
+    } else {
+        Filter::and(preds)
+    };
+    // The advanced context and report survive verbatim (M5): `current_page` is
+    // already folded into the lowered clauses above, and the caller keeps
+    // `ran`/`ignored`/`supported`.
+    let query = Query::new(
+        Anchor::Block,
+        filter,
+        Source::Advanced {
+            original: query_src.to_string(),
+            og_options: String::new(),
+        },
+    );
+    (Some(query), ran, ignored)
+}
+
+/// Lower the exact DataScript relationship Logseq uses to connect the typed
+/// `:current-page` input to blocks. This is deliberately not a general join
+/// engine: one page-name identity pattern must feed one `:block/refs` or
+/// `:block/page` pattern, and every other shape remains visibly unsupported.
+fn lower_current_page_patterns(
+    groups: &[String],
+    inputs: &std::collections::HashMap<String, AdvancedInput>,
+) -> (
+    std::collections::HashMap<usize, (Filter, &'static str)>,
+    std::collections::HashSet<usize>,
+) {
+    let triples = groups
+        .iter()
+        .enumerate()
+        .filter_map(|(index, group)| {
+            let inner = group.trim().strip_prefix('[')?.strip_suffix(']')?.trim();
+            let tokens = inner.split_whitespace().collect::<Vec<_>>();
+            (tokens.len() == 3).then_some((index, tokens))
+        })
+        .collect::<Vec<_>>();
+
+    let mut candidates = Vec::new();
+    for (identity_index, identity) in &triples {
+        if identity[1] != ":block/name" || !identity[0].starts_with('?') {
+            continue;
+        }
+        let Some(AdvancedInput::Page(page)) = inputs.get(identity[2]) else {
+            continue;
+        };
+        for (relation_index, relation) in &triples {
+            if relation[0] == identity[0]
+                || !relation[0].starts_with('?')
+                || relation[2] != identity[0]
+            {
+                continue;
+            }
+            let lowered = match relation[1] {
+                ":block/refs" => Some((Filter::page_ref(page.clone()), "current-page-ref")),
+                ":block/page" => Some((
+                    Filter::rel(
+                        Rel::Page,
+                        Quant::Any,
+                        Filter::attr(Attr::Name, CmpOp::Eq, Value::text(page.clone())),
+                    ),
+                    "current-page",
+                )),
+                _ => None,
+            };
+            if let Some(lowered) = lowered {
+                candidates.push((*identity_index, *relation_index, lowered));
+            }
+        }
+    }
+    if candidates.len() != 1 {
+        return Default::default();
+    }
+    let (identity_index, relation_index, lowered) = candidates.pop().unwrap();
+    (
+        std::collections::HashMap::from([(relation_index, lowered)]),
+        std::collections::HashSet::from([identity_index]),
+    )
+}
+
+/// Conservatively lower only the exact DataScript relationship used by the
+/// released BEGIN_QUERY page-property form. The entity/property-map pattern and
+/// `(get ...)` predicate must share the literal `?props` binding; every other
+/// bracket form remains visible as an unsupported `pattern` in `parse_adv_group`.
+fn lower_page_property_patterns(
+    groups: &[String],
+) -> (
+    std::collections::HashMap<usize, Filter>,
+    std::collections::HashSet<usize>,
+) {
+    let relations = groups
+        .iter()
+        .enumerate()
+        .filter_map(|(index, group)| {
+            let inner = group.trim().strip_prefix('[')?.strip_suffix(']')?.trim();
+            (inner.split_whitespace().collect::<Vec<_>>() == ["?p", ":block/properties", "?props"])
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    if relations.len() != 1 {
+        return Default::default();
+    }
+
+    let mut lowered = std::collections::HashMap::new();
+    let mut consumed = std::collections::HashSet::new();
+    for (index, group) in groups.iter().enumerate() {
+        let Some(inner) = group
+            .trim()
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+        else {
+            continue;
+        };
+        let Some(call) = inner
+            .trim()
+            .strip_prefix('(')
+            .and_then(|s| s.strip_suffix(')'))
+        else {
+            continue;
+        };
+        let tokens = call.split_whitespace().collect::<Vec<_>>();
+        if tokens.len() != 3 || tokens[0] != "get" || tokens[1] != "?props" {
+            continue;
+        }
+        let Some(key) = tokens[2].strip_prefix(':').filter(|key| !key.is_empty()) else {
+            continue;
+        };
+        if key
+            .chars()
+            .any(|c| c.is_whitespace() || "()[]{}".contains(c))
+        {
+            continue;
+        }
+        lowered.insert(
+            index,
+            Filter::rel(
+                Rel::Page,
+                Quant::Any,
+                og::property_leaf(og::normalize_prop_key(key), None),
+            ),
+        );
+        consumed.insert(relations[0]);
+    }
+    (lowered, consumed)
+}
+
+/// Map one `:where` group to a `Pred` (or None → ignored). Recurses for and/or/not.
+fn parse_adv_group(
+    group: &str,
+    inputs: &std::collections::HashMap<String, AdvancedInput>,
+    today: JournalDate,
+    ran: &mut Vec<String>,
+    ignored: &mut Vec<String>,
+    depth: usize,
+) -> Option<Filter> {
+    if depth > QUERY_NESTING_MAX {
+        ignored.push("query-nesting-too-deep".into());
+        return None;
+    }
+    let c = group.trim();
+    if !c.starts_with('(') {
+        ignored.push("pattern".into()); // `[?e :a ?v]` joins, etc. — not in the subset
+        return None;
+    }
+    // A lone `(` has no body; slicing `1..0` would panic on hostile input.
+    let inner = c.get(1..c.len().saturating_sub(1)).unwrap_or("");
+    let head = inner
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match head.as_str() {
+        "and" | "or" | "not" => {
+            let ignored_before = ignored.len();
+            let kids: Vec<Filter> = scan_groups(inner)
+                .iter()
+                .filter_map(|g| parse_adv_group(g, inputs, today, ran, ignored, depth + 1))
+                .collect();
+            // GH #542: dropping a clause Tine does not understand only ever
+            // WIDENS a conjunction. Under `not` it narrows the answer, and an
+            // `or` missing a branch drops blocks the query returns; neither is
+            // a superset with a notice. Such a group is dropped whole instead,
+            // which widens the enclosing conjunction like any other ignored
+            // clause.
+            if head != "and" && ignored.len() > ignored_before {
+                ignored.push(head.clone());
+                return None;
+            }
+            if kids.is_empty() {
+                None
+            } else if head == "not" {
+                // `(not A B)` excludes blocks matching A AND B.
+                Some(Filter::not(if kids.len() == 1 {
+                    kids.into_iter().next().expect("one")
+                } else {
+                    Filter::and(kids)
+                }))
+            } else if head == "or" {
+                Some(Filter::or(kids))
+            } else {
+                Some(Filter::and(kids))
+            }
+        }
+        "task" | "todo" => {
+            ran.push("task".into());
+            Some(Filter::attr(
+                Attr::Task,
+                CmpOp::In,
+                adv_text_list(adv_strings(inner)),
+            ))
+        }
+        "priority" => {
+            ran.push("priority".into());
+            Some(Filter::attr(
+                Attr::Priority,
+                CmpOp::In,
+                adv_text_list(adv_strings(inner)),
+            ))
+        }
+        "page-ref" => adv_strings(inner).into_iter().next().map(|n| {
+            ran.push("page-ref".into());
+            Filter::page_ref(n)
+        }),
+        "property" | "page-property" => inner
+            .split_whitespace()
+            .skip(1)
+            .find(|t| t.starts_with(':'))
+            .map(|t| t.trim_start_matches(':').to_string())
+            .map(|k| {
+                let val = adv_strings(inner).into_iter().next();
+                ran.push(head.clone());
+                let leaf = og::property_leaf(og::normalize_prop_key(&k), val);
+                if head == "property" {
+                    leaf
+                } else {
+                    Filter::rel(Rel::Page, Quant::Any, leaf)
+                }
+            }),
+        "page" => adv_strings(inner).into_iter().next().map(|n| {
+            ran.push("page".into());
+            Filter::rel(
+                Rel::Page,
+                Quant::Any,
+                Filter::attr(Attr::Name, CmpOp::Eq, Value::text(n)),
+            )
+        }),
+        "namespace" => adv_strings(inner).into_iter().next().map(|n| {
+            ran.push("namespace".into());
+            Filter::rel(
+                Rel::Page,
+                Quant::Any,
+                Filter::attr(Attr::Name, CmpOp::StartsWith, Value::text(format!("{n}/"))),
+            )
+        }),
+        "page-tags" | "tags" => {
+            let ts = adv_strings(inner);
+            if ts.is_empty() {
+                ignored.push(head.clone());
+                None
+            } else {
+                ran.push("page-tags".into());
+                Some(Filter::rel(
+                    Rel::Page,
+                    Quant::Any,
+                    Filter::rel(
+                        Rel::Props,
+                        Quant::Any,
+                        Filter::and(vec![
+                            Filter::attr(Attr::Key, CmpOp::Eq, Value::text("tags")),
+                            Filter::attr(Attr::Value, CmpOp::In, adv_text_list(ts)),
+                        ]),
+                    ),
+                ))
+            }
+        }
+        "scheduled" => {
+            ran.push("scheduled".into());
+            Some(Filter::attr(Attr::Scheduled, CmpOp::IsSet, Value::None))
+        }
+        "deadline" => {
+            ran.push("deadline".into());
+            Some(Filter::attr(Attr::Deadline, CmpOp::IsSet, Value::None))
+        }
+        "journal" => {
+            ran.push("journal".into());
+            Some(Filter::rel(
+                Rel::Page,
+                Quant::Any,
+                Filter::attr(Attr::Journal, CmpOp::Eq, Value::Bool { value: true }),
+            ))
+        }
+        "between" => {
+            // (between [FIELD] ?b ?start ?end): the last two args are always the
+            // bounds. An optional field keyword (journal|scheduled|deadline) may
+            // appear among the earlier args — matching the simple parser. The bare
+            // `(between ?b lo hi)` keeps OG's journal-day semantics.
+            let args: Vec<&str> = inner.split_whitespace().skip(1).collect();
+            if args.len() < 2 {
+                ignored.push("between".into());
+                return None;
+            }
+            let attr = args
+                .iter()
+                .take(args.len() - 2)
+                .find_map(
+                    |a| match a.trim_start_matches(':').to_ascii_lowercase().as_str() {
+                        "scheduled" => Some(Attr::Scheduled),
+                        "deadline" => Some(Attr::Deadline),
+                        "journal" => Some(Attr::Day),
+                        _ => None,
+                    },
+                )
+                .unwrap_or(Attr::Day);
+            let lo = adv_bound(args[args.len() - 2], inputs, today);
+            let hi = adv_bound(args[args.len() - 1], inputs, today);
+            if lo.is_none() && hi.is_none() {
+                ignored.push("between".into());
+                return None;
+            }
+            ran.push("between".into());
+            // The advanced dialect resolves its bounds eagerly: `:inputs` may
+            // bind a bound to an already-resolved ordinal, and an advanced query
+            // is never re-printed as OG DSL, so the IR carries the ordinals.
+            let range = adv_range(attr, lo, hi);
+            Some(if attr == Attr::Day {
+                Filter::rel(Rel::Page, Quant::Any, range)
+            } else {
+                range
+            })
+        }
+        other => {
+            if !other.is_empty() {
+                ignored.push(other.to_string());
+            }
+            None
+        }
+    }
+}
+
+/// All double-quoted string literals in a clause (markers, page names, values).
+fn adv_strings(s: &str) -> Vec<String> {
+    let b = s.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'"' {
+            let start = i + 1;
+            i += 1;
+            while i < b.len() && b[i] != b'"' {
+                if b[i] == b'\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            out.push(s[start..i.min(s.len())].to_string());
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Resolve a `between` bound: an input `?var` (looked up) or a literal token.
+fn adv_bound(
+    tok: &str,
+    inputs: &std::collections::HashMap<String, AdvancedInput>,
+    today: JournalDate,
+) -> Option<i64> {
+    let t = tok.trim();
+    if t.starts_with('?') {
+        return match inputs.get(t) {
+            Some(AdvancedInput::Date(value)) => Some(*value),
+            _ => None,
+        };
+    }
+    // A literal bound may be written as a bare token (`2026-06-24`) or a quoted
+    // string (`"2026-06-24"`); `split_whitespace` keeps the quotes, so strip them.
+    resolve_date_token(t.trim_matches('"').trim_start_matches(':'), today)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum AdvancedInput {
+    Date(i64),
+    Page(String),
+}
+
+/// The `?var`s an `:in` clause declares, in order.
+fn declared_input_vars(src: &str) -> Vec<String> {
+    match src.find(":in") {
+        Some(i) => {
+            let rest = &src[i + 3..];
+            let end = rest
+                .find(":where")
+                .or_else(|| rest.find(']'))
+                .unwrap_or(rest.len());
+            rest[..end]
+                .split_whitespace()
+                .filter(|t| t.starts_with('?'))
+                .map(String::from)
+                .collect()
+        }
+        None => Vec::new(),
+    }
+}
+
+/// Build a typed positional input map by zipping `:in $ ?a ?b …` with
+/// `:inputs [ … ]`. Dates stay numeric; Logseq's typed `:current-page` keyword
+/// receives the caller's focused page. Unknown keywords remain unbound.
+fn resolve_inputs(
+    src: &str,
+    current_page: Option<&str>,
+    today: JournalDate,
+) -> std::collections::HashMap<String, AdvancedInput> {
+    let mut map = std::collections::HashMap::new();
+    let vars = declared_input_vars(src);
+    let vals: Vec<String> = match src.find(":inputs") {
+        Some(i) => {
+            let rest = &src[i + ":inputs".len()..];
+            match (rest.find('['), rest.find(']')) {
+                (Some(a), Some(b)) if b > a => rest[a + 1..b]
+                    .split_whitespace()
+                    .map(String::from)
+                    .collect(),
+                _ => Vec::new(),
+            }
+        }
+        None => Vec::new(),
+    };
+    for (v, val) in vars.iter().zip(vals.iter()) {
+        if val.eq_ignore_ascii_case(":current-page") {
+            if let Some(page) = current_page.map(str::trim).filter(|page| !page.is_empty()) {
+                map.insert(v.clone(), AdvancedInput::Page(page.to_lowercase()));
+            }
+        } else if let Some(ord) = resolve_date_token(val.trim_start_matches(':'), today) {
+            map.insert(v.clone(), AdvancedInput::Date(ord));
+        }
+    }
+    map
+}
+
+/// A `(between …)` range whose bounds the advanced dialect already resolved to
+/// `yyyymmdd` ordinals.
+pub(super) fn adv_range(attr: Attr, low: Option<i64>, high: Option<i64>) -> Filter {
+    let number = |value: i64| Value::Number {
+        number: value as f64,
+    };
+    match (low, high) {
+        (Some(low), Some(high)) => {
+            // OG's `build-between-two-arg` sorts its two bounds, so
+            // `(between END START)` is the same inclusive interval.
+            let (low, high) = if low > high { (high, low) } else { (low, high) };
+            Filter::attr(
+                attr,
+                CmpOp::Between,
+                Value::List {
+                    items: vec![number(low), number(high)],
+                },
+            )
+        }
+        (Some(low), None) => Filter::attr(attr, CmpOp::Ge, number(low)),
+        (None, Some(high)) => Filter::attr(attr, CmpOp::Le, number(high)),
+        (None, None) => Filter::attr(attr, CmpOp::IsSet, Value::None),
+    }
+}
+
+fn adv_text_list(values: Vec<String>) -> Value {
+    Value::List {
+        items: values.into_iter().map(Value::text).collect(),
+    }
+}
+
+/// The largest relative offset a date token may carry, in years (and the
+/// same span in days, weeks and months). Within it every resolved date keeps a
+/// monotone `yyyymmdd` ordinal; beyond it the token is [`DateToken::OutOfRange`].
+pub const MAX_DATE_OFFSET_YEARS: i64 = 10_000;
+
+/// The unit of a relative date token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateUnit {
+    /// `d`
+    Day,
+    /// `w`
+    Week,
+    /// `m`
+    Month,
+    /// `y`
+    Year,
+}
+
+/// A date-literal token (a `between` bound, a TQL date, an advanced input),
+/// read WITHOUT `today`. The ONE date-token grammar: the resolver
+/// ([`resolve_date_token`]) and the OG printer's bare-or-`[[ ]]` choice both
+/// read it (Rule 3), and the parsers diagnose [`DateToken::OutOfRange`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateToken {
+    /// `today`/`now` (0), `yesterday` (−1), `tomorrow` (+1), any case: a day
+    /// offset.
+    Keyword(i64),
+    /// `[+|-]N[dwmy]`: ASCII digits, a lowercase unit (`-7D` is not one).
+    Relative {
+        /// The signed count of units.
+        n: i64,
+        /// The unit.
+        unit: DateUnit,
+    },
+    /// A relative token past ±[`MAX_DATE_OFFSET_YEARS`] years (or past `i64`):
+    /// never resolves; parsers report it instead of answering a garbage day.
+    OutOfRange,
+    /// A `yyyy_MM_dd` or `yyyy-MM-dd` stem (zero padding optional), calendar
+    /// valid.
+    Stem(JournalDate),
+    /// A journal title in the default `MMM do, yyyy` format. The OG printer
+    /// writes it inside `[[ ]]`; every other shape prints bare.
+    Title(JournalDate),
+}
+
+impl DateToken {
+    /// Read `tok` (trimmed). `None`: not a date token.
+    pub fn parse(tok: &str) -> Option<DateToken> {
+        let t = tok.trim();
+        for (keyword, offset) in [("today", 0), ("now", 0), ("yesterday", -1), ("tomorrow", 1)] {
+            if t.eq_ignore_ascii_case(keyword) {
+                return Some(DateToken::Keyword(offset));
+            }
+        }
+        if let Some(token) = Self::relative(t) {
+            return Some(token);
+        }
+        if let Some(date) = JournalDate::from_file_stem(t) {
+            return Some(DateToken::Stem(date));
+        }
+        // master `journal_ordinal`: a default-format journal title literal.
+        JournalDate::from_title(t).map(DateToken::Title)
+    }
+
+    fn relative(t: &str) -> Option<DateToken> {
+        let (sign, rest) = match t.as_bytes().first()? {
+            b'+' => (1i64, &t[1..]),
+            b'-' => (-1i64, &t[1..]),
+            _ => (1i64, t),
+        };
+        let unit = match rest.as_bytes().last()? {
+            b'd' => DateUnit::Day,
+            b'w' => DateUnit::Week,
+            b'm' => DateUnit::Month,
+            b'y' => DateUnit::Year,
+            _ => return None,
+        };
+        let digits = &rest[..rest.len() - 1];
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let per_year = match unit {
+            DateUnit::Day => 366,
+            DateUnit::Week => 53,
+            DateUnit::Month => 12,
+            DateUnit::Year => 1,
+        };
+        match digits.parse::<i64>() {
+            Ok(n) if n <= MAX_DATE_OFFSET_YEARS * per_year => {
+                Some(DateToken::Relative { n: sign * n, unit })
+            }
+            _ => Some(DateToken::OutOfRange),
+        }
+    }
+
+    /// The `yyyymmdd` ordinal this token names on `today`. Offsets are bounded
+    /// at parse, so the arithmetic cannot overflow.
+    pub fn resolve(self, today: JournalDate) -> Option<i64> {
+        let date = match self {
+            DateToken::Keyword(offset) => today.add_days(offset),
+            DateToken::Relative { n, unit } => match unit {
+                DateUnit::Day => today.add_days(n),
+                DateUnit::Week => today.add_days(n * 7),
+                DateUnit::Month => today.add_months(n),
+                DateUnit::Year => today.add_months(n * 12),
+            },
+            DateToken::OutOfRange => return None,
+            DateToken::Stem(date) | DateToken::Title(date) => date,
+        };
+        Some(date.ordinal_key())
+    }
+
+    /// Whether the OG printer may write this token bare (a title needs `[[ ]]`).
+    pub fn prints_bare(self) -> bool {
+        !matches!(self, DateToken::Title(_))
+    }
+}
+
+/// Resolve a date-literal token to a `yyyymmdd` ordinal against `today`: the
+/// [`DateToken`] grammar. `None` for a non-date or an out-of-range offset.
+/// The ONE date-literal resolver: the advanced lowering and the executor's
+/// date comparisons both call it (I-12).
+pub fn resolve_date_token(tok: &str, today: JournalDate) -> Option<i64> {
+    DateToken::parse(tok)?.resolve(today)
+}
+
+/// Milliseconds in one day.
+const MS_PER_DAY: i64 = 86_400_000;
+
+/// The largest `h`/`n` offset a timestamp bound may carry. Hours and minutes
+/// beyond this span (about 10 000 years) read as no bound, exactly as an
+/// out-of-range day offset does, so the arithmetic cannot overflow.
+const MAX_CLOCK_OFFSET: i64 = MAX_DATE_OFFSET_YEARS * 366 * 24 * 60;
+
+/// UTC midnight of `date`, in epoch milliseconds (OG `tc/to-long (t/today)`).
+fn midnight_ms(date: JournalDate) -> i64 {
+    date.to_days() * MS_PER_DAY
+}
+
+/// A `[+|-]N` count followed by the `h` (hours) or `n` (minutes) unit letter:
+/// the two units only a TIMESTAMP bound has. `None` for any other shape.
+fn clock_offset_ms(token: &str) -> Option<Option<i64>> {
+    let (sign, rest) = match token.as_bytes().first()? {
+        b'+' => (1i64, &token[1..]),
+        b'-' => (-1i64, &token[1..]),
+        _ => (1i64, token),
+    };
+    let per_unit = match rest.as_bytes().last()? {
+        b'h' => 3_600_000,
+        b'n' => 60_000,
+        _ => return None,
+    };
+    let digits = &rest[..rest.len() - 1];
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(match digits.parse::<i64>() {
+        Ok(n) if n <= MAX_CLOCK_OFFSET => Some(sign * n * per_unit),
+        _ => None,
+    })
+}
+
+/// Whether `tok` is a bound of a `created_at` / `last_modified_at` range:
+/// everything [`DateToken`] reads, plus `now` and the `h`/`n` clock offsets.
+pub fn is_timestamp_token(tok: &str) -> bool {
+    let tok = tok.trim();
+    match clock_offset_ms(tok) {
+        Some(offset) => offset.is_some(),
+        None => matches!(DateToken::parse(tok), Some(token) if token != DateToken::OutOfRange),
+    }
+}
+
+/// Resolve a `created_at` / `last_modified_at` bound to epoch milliseconds,
+/// OG `->timestamp` (query_dsl.cljs:81-113): `now` is the instant `now_ms`;
+/// every other keyword, a journal title or stem, and every signed offset is
+/// anchored at UTC midnight of `today` (`d`/`w`/`m`/`y` move whole days, `h`
+/// and `n` add hours and minutes to that midnight, NOT to the current time).
+/// `None` when the token is not a timestamp bound.
+pub fn resolve_timestamp_token(tok: &str, today: JournalDate, now_ms: i64) -> Option<i64> {
+    let tok = tok.trim();
+    if tok.eq_ignore_ascii_case("now") {
+        return Some(now_ms);
+    }
+    if let Some(offset) = clock_offset_ms(tok) {
+        return offset.map(|offset| midnight_ms(today) + offset);
+    }
+    let day = DateToken::parse(tok)?.resolve(today)?;
+    Some(midnight_ms(JournalDate::from_ordinal(day)))
+}
+
+#[cfg(test)]
+mod date_token_tests {
+    use super::*;
+
+    /// Reader B (og 14 Q2): an offset past the admitted range neither panics
+    /// (debug overflow in `to_days() + n`, `n * 7`, `n * 12`) nor resolves to a
+    /// garbage day in release; it does not resolve at all.
+    #[test]
+    fn an_out_of_range_offset_resolves_to_nothing_and_never_panics() {
+        let today = JournalDate::from_ordinal(20260904);
+        for token in [
+            "+9223372036854775807d",
+            "-9223372036854775807w",
+            "1537228672809129302m",
+            "-768614336404564651y",
+            "+99999999999999999999999d",
+            "-99999y",
+        ] {
+            assert_eq!(
+                DateToken::parse(token),
+                Some(DateToken::OutOfRange),
+                "{token}"
+            );
+            assert_eq!(resolve_date_token(token, today), None, "{token}");
+        }
+        assert!(
+            resolve_date_token("-10000y", today).is_some(),
+            "the admitted limit resolves"
+        );
+        assert_eq!(resolve_date_token("+2w", today), Some(20260918));
+        assert_eq!(
+            resolve_date_token("-7D", today),
+            None,
+            "units are lowercase"
+        );
+        assert_eq!(resolve_date_token("2026_01_05", today), Some(20260105));
+    }
+
+    /// The grammar golden shared with the frontend preview (`dateExpr.ts`,
+    /// I-12): this resolver is authoritative and `src/editor/dateExpr.test.ts`
+    /// reads the same file, so the TypeScript twin cannot drift from it.
+    #[test]
+    fn the_shared_date_token_golden_resolves_as_recorded() {
+        let golden: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/i12-date-token-golden.json"
+        ))
+        .expect("golden parses");
+        let mut mismatches = Vec::new();
+        for case in golden["cases"].as_array().expect("cases") {
+            let today = JournalDate::from_ordinal(case["today"].as_i64().expect("today"));
+            let token = case["token"].as_str().expect("token");
+            let expected = case["ordinal"].as_i64();
+            let actual = resolve_date_token(token, today);
+            if actual != expected {
+                mismatches.push(format!(
+                    "today {} token {token:?}: golden {expected:?}, resolver {actual:?}",
+                    case["today"]
+                ));
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    }
 }

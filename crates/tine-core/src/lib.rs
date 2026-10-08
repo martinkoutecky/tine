@@ -1,76 +1,51 @@
-//! tine-core: parsing, serialization, and the graph model for a
-//! Logseq-compatible outliner. Pure Rust, no GUI dependencies — fully unit
+//! tine-core: parsing, serialization, DTOs and pure evaluators for a
+//! Logseq-compatible outliner. Pure Rust, no file I/O (og batch 1: graph files
+//! belong to `tine-store`), no GUI dependencies — fully unit
 //! testable without the Tauri shell.
 
-// A discarded `#[must_use]` result is an error, not a warning: a readiness
-// wait whose timeout a test ignored let a query run before the index was
-// ready and fail as a flake, not as a finding (GH #543, audit R9-15e).
-#![deny(unused_must_use)]
-
-pub mod backend_error;
-pub mod concord_ledger;
+pub mod block_regions;
 pub mod concord_queue;
 pub mod config;
-/// Test-only: every `Config` field either reaches `GraphMeta` (Rust and TS) or
-/// says why it does not.
-#[cfg(test)]
-mod config_projection_parity;
+pub mod corpus;
 pub mod date;
-pub mod direct_move_recovery;
-#[cfg(test)]
-#[path = "direct_move_recovery_corpus_tests.rs"]
-mod direct_move_recovery_corpus_tests;
-mod direct_projection;
-pub use direct_projection::{set_index_failure_observer, IndexFailureEvent};
-pub mod directory_identity;
+pub mod diag_line;
 pub mod doc;
 pub mod edn;
-mod filesystem_durability;
-
-pub mod durability_counters;
-pub mod graph_text_path;
-pub mod graph_text_scope;
+pub mod guide;
 pub mod html_sanitize;
-pub mod indexing_progress;
-pub mod journal_feed;
 pub mod logbook;
+pub mod media_mime;
 pub mod model;
-pub mod onboarding;
 pub mod org;
 mod outline;
 pub mod pdf;
-pub(crate) mod projection_budget;
-#[cfg(test)]
-pub(crate) mod projection_producer_census;
+pub mod projection;
 mod property_line;
-pub mod publish;
 pub mod query;
-pub(crate) mod query_cursor;
-mod query_jobs;
+pub mod query_edn;
 pub mod query_plan;
-mod reference_evidence;
+pub mod reference_evidence;
 pub mod refs;
 pub mod render;
+pub mod render_facets;
 pub mod search_query;
 pub mod sync_diff;
-#[cfg(test)]
-mod test_support;
 pub mod text_merge;
-pub mod vocab;
 
 /// Re-export the lsdoc parser so the Tauri shell can name its AST types
 /// (`tine_core::lsdoc::ast::Block`) without depending on lsdoc directly.
 pub use lsdoc;
 
 pub use config::{Config, Workflow};
+pub use corpus::{Corpus, CorpusPage};
 pub use date::JournalDate;
 pub use doc::{DocBlock, Document};
-pub use graph_text_scope::{
-    GraphTextScope, GraphTextScopeBinding, GraphTextScopeBindingError,
-    GRAPH_TEXT_SCOPE_BINDING_SCHEMA_VERSION, GRAPH_TEXT_SCOPE_VERSION,
-};
-pub use model::{
-    ActivationIntent, BlockDto, BlockPreview, ConflictOverride, ConflictPresentation,
-    EditorActivation, EditorActivationHandle, Graph, GraphMeta, LiveSaveConflictCapture,
-    LiveSaveConflictReviewAuthority, PageDto, PageEntry, PageKind, RefGroup, ReferencedPageNames,
-};
+pub use model::{BlockDto, BlockPreview, GraphMeta, PageDto, PageEntry, PageKind, RefGroup};
+
+pub mod standalone_macro;
+
+pub mod ordinal;
+pub mod pdf_key;
+/// Pure policy of the lsdoc-wasm panic hook, tested here (the wasm crate includes it by path).
+#[cfg(test)]
+mod wasm_panic_report;

@@ -1,9 +1,8 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Visual regression for GH #88: a whole-block `{{embed ((uuid))}}` presents the
 // referenced root as the one interactive root bullet, with a heavier descendant
 // guide instead of an extra host bullet or enclosing box.
 // Usage: npm run build && node scripts/shot-block-embed.mjs
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -21,10 +20,19 @@ const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--stric
 let browser;
 let failed = false;
 
+async function waitForServer(url) {
+  for (let i = 0; i < 60; i++) {
+    try {
+      if ((await fetch(url)).ok) return;
+    } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 try {
   mkdirSync(OUT, { recursive: true });
-  await waitForHttpServer(`http://localhost:${PORT}/?regressions`, 60, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/?regressions`);
   browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 900, height: 600 } });
   page.setDefaultTimeout(5000);

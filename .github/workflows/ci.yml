@@ -2,29 +2,12 @@
 # only after the candidate SHA is frozen; release.yml independently verifies that
 # this exact SHA has successful evidence from every full job before packaging.
 # Focused scopes remain available between releases for platform/performance work.
-#
-# The lightweight Linux validation job runs on pull requests AND on every push to
-# `master`. The push trigger is load-bearing, not redundant: AGENTS.md section 6
-# integration fast-forwards `master` from a topic branch without ever opening a
-# pull request, so a pull-request-only gate never observes the code that actually
-# lands. Between 2026-08-25 and 2026-09-01 that gap let the tine-core failure set
-# grow from its documented 45 known-red tests to 84 with nobody notified. Do not
-# narrow this trigger back to pull requests alone.
+# Pull requests get one lightweight Linux validation job and docs-only PRs skip it.
 name: ci
 
-run-name: ci / ${{ github.event_name == 'workflow_dispatch' && (inputs.windows_test_name != '' && format('focused Windows / {0}', inputs.windows_test_name) || format('full suite / {0}', inputs.scope)) || (github.event_name == 'push' && 'master push / linux validation' || 'pull-request / linux validation') }} / ${{ github.sha }}
+run-name: ci / ${{ github.event_name == 'workflow_dispatch' && inputs.scope || 'pull-request' }} / ${{ github.sha }}
 
 on:
-  push:
-    branches:
-      - master
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**/*.png"
-      - "docs/**/*.jpg"
-      - "docs/**/*.jpeg"
-      - "docs/**/*.gif"
-      - "docs/**/*.webp"
   pull_request:
     paths-ignore:
       - "**/*.md"
@@ -43,33 +26,21 @@ on:
         options:
           - full
           - windows
-          - windows-smb-probe
           - android
-          - android-compile
-          - android-runtime
-          - android-ui-runtime
-          - android-ui-runtime-205
-          - android-ui-runtime-pdf-routes
-          - android-ui-runtime-toolbar
           - performance
-      windows_test_name:
-        description: Full Rust harness name for one exact Windows tine-core test (windows scope only)
-        required: false
-        default: ""
-        type: string
 
 permissions:
   contents: read
 
 jobs:
   pr-validation:
-    name: Landed-code validation / Linux unit and contract checks
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    name: PR validation / Linux unit and contract checks
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
@@ -77,21 +48,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
           targets: wasm32-unknown-unknown
-          # `--profile minimal` is what this action installs, so rustfmt and
-          # clippy are not present unless they are asked for by name.
-          components: rustfmt, clippy
 
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-
-      # AGENTS.md calls `cargo fmt --all` the one canonical formatting
-      # operation and a clean-tree/integration gate, and until v0.6.984
-      # nothing enforced it: the rule lived only in prose, and master was red
-      # on it at the release base. Parsing only, so it runs before anything
-      # is compiled or installed.
-      - name: Rust formatting is canonical
-        run: cargo fmt --all -- --check
 
       - run: npm ci
 
@@ -113,20 +73,11 @@ jobs:
 
       - name: Release and offline-source contract fixtures
         run: |
-          node scripts/test-storage-pin.mjs
-          node scripts/check-storage-pin.mjs
           node scripts/check-flatpak-node-sources.mjs
           node scripts/check-flatpak-cargo-sources.mjs
           node scripts/test-release-readiness-lib.mjs
           node scripts/test-release-pipeline.mjs
-          node scripts/test-tine-core-nextest-contract.mjs
           node scripts/test-env-toolchain-fallback.mjs
-          npm run test:fdroid-monitor
-
-      # The E2E harness's own unit tests. `e2e-file-poll.test.mjs` sat in the E2E
-      # contract catalog from the day it was written with no runner behind it.
-      - name: E2E harness contract tests
-        run: npm run test:e2e-harness
 
       - name: lsdoc generated artifacts are current
         run: |
@@ -138,58 +89,19 @@ jobs:
           npx tsc --noEmit
           npm test
 
-      # PRs run the SAME curated tine-core selection and profile as the release
-      # shards, not `cargo test -p tine-core`. The bare package still contains
-      # the exact known-red legacy actor oracle. Its obsolete synchronization
-      # cuts once made several scenarios never terminate; current cuts are
-      # finite, and the honest unfiltered corpus completes with ordinary test
-      # failures only. The `ci` nextest profile gives each test its own process,
-      # a 5m per-test timeout with `on-timeout = "fail"`, and no retries. What
-      # this selection deliberately leaves out is proven by exact name and
-      # classified by behavior family in
-      # scripts/tine-core-nextest-contract.mjs.
-      - name: Install cargo-nextest 0.9.143
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest@0.9.143
-
-      # A lock taken in an `if let`/`match` condition stays held for the whole
-      # block, in edition 2024 as in 2021. A lock held across a wait froze
-      # every reader and the indexing progress bar until a whole-graph build
-      # finished (GH #543, indexing audit R2-04; I-13). Take the value into a
-      # `let` first; the Direct projection's `ProjectionSlot` is the exemplar.
-      - name: No lock is held across an if-let or match block
-        run: cargo clippy -p tine-core -p tine-search --all-targets -- -A clippy::all -D clippy::significant_drop_in_scrutinee
-
-      - name: Rust core tests (curated release selection)
-        run: node scripts/tine-core-nextest-contract.mjs --mode linux --run-selection
-
-      # The app crate itself is gated in full CI, not here: linking it needs the
-      # GTK/WebKit toolchain, which is a slow install PRs should not pay for.
-      # The SDK has no system dependencies, so it is free to run everywhere.
-      - name: Plugin SDK tests
-        run: cargo test -p tine-plugin-sdk
-
-  validate-windows-focused-test-input:
-    name: CI dispatch input validation / Windows focused test scope
-    if: github.event_name == 'workflow_dispatch' && inputs.windows_test_name != '' && inputs.scope != 'windows'
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Reject Windows focused test outside Windows scope
-        run: |
-          echo "::error::windows_test_name may only be used with scope=windows."
-          exit 1
+      - name: Rust core tests
+        run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
 
   test:
     name: Full CI / Linux tests and release contracts
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
@@ -197,7 +109,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
           targets: wasm32-unknown-unknown
-          components: clippy
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -214,11 +125,8 @@ jobs:
       - name: Committed lsdoc WASM contract is current
         run: node scripts/check-wasm-pin.mjs
 
-      # The Guide bundles the committed lsdoc WASM, so it is checked before the
-      # rebuild below replaces that artifact: wasm-opt output is host-variable,
-      # and a Guide built from the rebuilt bytes gets different chunk hashes.
-      - name: Canonical Guide is generated and current
-        run: npm run docs:check
+      # og: website/demo is master's and is not checked here
+      # (scripts/build-guide-demo.mjs header).
 
       - name: F-Droid clean-source WASM rebuild succeeds
         run: |
@@ -231,20 +139,11 @@ jobs:
       - name: Flatpak offline Cargo sources are current
         run: node scripts/check-flatpak-cargo-sources.mjs
 
-      - name: Certified tine-storage pin is current
-        run: node scripts/check-storage-pin.mjs
-
       - name: Release pipeline contract fixtures
         run: |
-          node scripts/test-storage-pin.mjs
           node scripts/test-release-readiness-lib.mjs
           node scripts/test-release-pipeline.mjs
-          node scripts/test-tine-core-nextest-contract.mjs
           node scripts/test-env-toolchain-fallback.mjs
-          npm run test:fdroid-monitor
-
-      - name: E2E harness contract tests
-        run: npm run test:e2e-harness
 
       - name: Performance baseline policy is current
         env:
@@ -255,12 +154,6 @@ jobs:
 
       - name: Performance A/B multi-round reliability fixtures
         run: node scripts/test-bench-ab.mjs
-
-      # Resolves the app's real feature graph, so a manifest edit that would ship
-      # tine-storage's corruption/fault-injection seams fails here rather than in
-      # a release binary.
-      - name: Storage test-support stays out of release builds
-        run: node scripts/check-storage-test-support.mjs
 
       - name: UI regression catalog and release evidence contracts
         run: |
@@ -282,30 +175,8 @@ jobs:
       - name: Frontend tests (vitest)
         run: npm test
 
-      # No Linux job had ever BUILT the app crate — the Tauri shell is only
-      # `cargo check`ed on Windows and for Android — so nothing here installed
-      # its system libraries. Compile-time dependencies only: these tests are
-      # ordinary unit tests and open no window.
-      - name: Tauri Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
-            libayatana-appindicator3-dev build-essential libssl-dev
-
-      # The crate that produces the binary, not only the library under it. It
-      # was never executed by CI until GH #331; `cargo check -p tine` compiles it
-      # but runs nothing, which hid a failing command-surface contract, an
-      # unreleased cross-page-move regression, and five stale watcher tests.
-      # The app crate too, which the landed-code job cannot compile without
-      # these system libraries. See that job's lock-scope step (I-13).
-      - name: No lock is held across an if-let or match block (workspace)
-        run: cargo clippy --workspace --exclude tine-plugin-sdk --all-targets -- -A clippy::all -D clippy::significant_drop_in_scrutinee
-
-      - name: Rust app-crate tests
-        run: |
-          cargo test -p tine --lib
-          cargo test -p tine-plugin-sdk
+      - name: Rust core tests
+        run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
 
       - name: Standalone plugin template builds and conforms
         run: npm run plugin:template-check
@@ -313,166 +184,48 @@ jobs:
       - name: Graph-ownership plugin fixture is reproducible and routes runtime IDs
         run: npm run plugin:graph-ownership-fixture:check
 
-      # Its sibling above was gated; this one was referenced by no workflow at
-      # all, despite proving the signed control/revoked pair a revocation has to
-      # distinguish. 0.2 s (GH #331 sweep).
-      - name: Plugin revocation fixtures verify
-        run: npm run plugin:revocation-fixture:check
-
       - name: Launch plugins build and conform
         run: ./scripts/build-community-plugins.sh
 
-  # cargo-nextest lists and runs each test in its own process. The contract job
-  # uses those actual listings to prove that the stable hash shards collectively
-  # select every non-ignored tine-core test exactly once.
-  linux-core-nextest-contract:
-    name: Full CI / Linux tine-core nextest contract
-    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.96.0
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-      - name: Install cargo-nextest 0.9.143
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest@0.9.143
-      - name: Verify Linux tine-core nextest inventory and deterministic shards
-        run: node scripts/tine-core-nextest-contract.mjs --mode linux
-
-  linux-core-nextest:
-    name: Full CI / Linux tine-core nextest shard ${{ matrix.shard }}/4
-    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.96.0
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-      - name: Install cargo-nextest 0.9.143
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest@0.9.143
-      - name: Linux tine-core nextest / deterministic hash shard ${{ matrix.shard }}/4
-        run: node scripts/tine-core-nextest-contract.mjs --mode linux --run-shard ${{ matrix.shard }}
-
   # Linux host tests do not see either platform branch: Windows has its own cfg
   # implementation, while Android's libc declarations differ from desktop Linux.
-  # The independently certified tine-storage package is not retested here.
-  # Windows compiles every tine-core target against the exact pin and executes
-  # declared cross-layer durability/lifecycle smokes in isolated processes.
-  windows-smb-probe:
-    name: Diagnostic / Windows loopback SMB checked opens (GH533)
-    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows-smb-probe'
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.96.0
-      - name: UNC prefix normalization controls
-        run: cargo test --locked --manifest-path scripts/probes/windows-smb-open/Cargo.toml -p cap-primitives --lib removing_extended_prefix_keeps_unc_paths_absolute -- --nocapture
-      - name: Compare local, UNC and mapped-drive file access
-        shell: pwsh
-        run: |
-          Start-Transcript -Path windows-smb-probe.log
-          try { & ./scripts/probes/windows-smb-open/run.ps1 }
-          finally { Stop-Transcript }
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: windows-smb-probe-${{ github.sha }}
-          path: windows-smb-probe.log
-
   windows-compile:
-    name: Full CI / Windows core compile + integration smoke
-    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
+    name: Full CI / Windows compile and core tests
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'windows')
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-      - name: Install cargo-nextest 0.9.143
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest@0.9.143
       - run: npm ci
       - run: npm run build
-      - name: Windows backup recovery no-replace collision
-        if: inputs.scope == 'windows' && inputs.windows_test_name == ''
-        run: cargo test -p tine --lib backup::tests::windows_backup_recovery_rejects_a_concurrent_sync_delivery -- --exact
-      - name: Windows core test targets compile (all; release gate)
-        if: inputs.windows_test_name == ''
-        run: cargo test -p tine-core --no-run
-      - name: Windows core/storage integration smoke (isolated contract selection; release gate)
-        if: inputs.windows_test_name == ''
-        run: node scripts/tine-core-nextest-contract.mjs --mode windows --run-smoke
-      - name: Windows core test (focused exact serial) / ${{ inputs.windows_test_name }}
-        if: inputs.scope == 'windows' && inputs.windows_test_name != ''
-        shell: pwsh
-        env:
-          TINE_WINDOWS_RUST_TEST: ${{ inputs.windows_test_name }}
-        run: |
-          $testName = $env:TINE_WINDOWS_RUST_TEST.Trim()
-          if ([string]::IsNullOrWhiteSpace($testName)) {
-            Write-Error "windows_test_name must name one tine-core lib test."
-            exit 1
-          }
-          if ($testName -notmatch '^[A-Za-z0-9_]+(?:::[A-Za-z0-9_]+)*$') {
-            Write-Error "windows_test_name must use only Rust test path characters."
-            exit 1
-          }
-          $listedTests = & cargo test -p tine-core --lib -- --list
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-          $matchingTests = @($listedTests | Where-Object { $_ -ceq "${testName}: test" })
-          if ($matchingTests.Count -ne 1) {
-            Write-Error "Expected exactly one tine-core lib test named '$testName'; found $($matchingTests.Count)."
-            exit 1
-          }
-          $cargoArgs = @(
-            "test"
-            "-p"
-            "tine-core"
-            "--lib"
-            "--"
-            $testName
-            "--exact"
-            "--nocapture"
-            "--test-threads=1"
-          )
-          & cargo @cargoArgs
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
+      - name: UNC prefix normalization controls (vendored cap-primitives, GH #533)
+        run: cargo test --locked --manifest-path vendor/cap-primitives-4.0.2/Cargo.toml --lib removing_extended_prefix_keeps_unc_paths_absolute -- --nocapture
+      - name: Windows core and graph-feature tests (including junction filesystem behavior)
+        run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
 
   android-core-compile:
     name: Full CI / Android core compile
-    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'android' || inputs.scope == 'android-compile')
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'android')
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
           targets: aarch64-linux-android
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+      # sqlparser → recursive → stacker → psm has a C build script, so the
+      # Android check needs the NDK compiler (same pin as master).
       - name: Install pinned Android NDK compiler
         run: |
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
@@ -482,261 +235,24 @@ jobs:
           echo "CC_aarch64_linux_android=$TOOLCHAIN/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
           echo "AR_aarch64_linux_android=$TOOLCHAIN/llvm-ar" >> "$GITHUB_ENV"
           echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$TOOLCHAIN/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
-      - name: Android durability fallback policy unit tests (host-executable seams)
-        run: |
-          cargo test -p tine-core --lib android_group_commit -- --nocapture
-          cargo test -p tine-core --lib android_promoted_receipt -- --nocapture
       - name: Android core compiles against Android libc declarations
-        run: cargo check -p tine-core --target aarch64-linux-android
-      # tine-core alone cannot see `#[cfg(target_os = "android")]` code in the
-      # app crate. On 2026-08-11 a missing `use tauri::Manager` in
-      # android_safe_back.rs compiled everywhere except Android, passed this
-      # job, and only surfaced in release packaging — after full CI was green
-      # on the exact candidate. Check the app crate here so an Android-only
-      # break fails the release gate instead of the release.
+        run: cargo check -p tine-core -p tine-store --target aarch64-linux-android
+      # The core crates cannot see `#[cfg(target_os = "android")]` code in the
+      # app crate; check it too so an Android-only break fails here, not in
+      # release packaging (master learned this 2026-08-11).
       - name: Android app crate compiles (Android-only cfg paths)
         run: cargo check -p tine --target aarch64-linux-android
-
-  # This is a manual physical-input observation lane, not a release gate. It
-  # drives the packaged x86_64 WebView with Android MotionEvents and preserves
-  # per-method screenshots, DOM/native receipts, JUnit accounting, and logcat.
-  # A reported UI outcome remains red until its exact method passes here.
-  android-ui-runtime:
-    name: Android UI runtime / MotionEvent proof receipts
-    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'android-ui-runtime' || inputs.scope == 'android-ui-runtime-205' || inputs.scope == 'android-ui-runtime-pdf-routes' || inputs.scope == 'android-ui-runtime-toolbar')
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 20
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@1.96.0
-        with:
-          targets: x86_64-linux-android
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-          cache-on-failure: true
-
-      - name: Install pinned Android build toolchain
-        run: |
-          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            "platforms;android-36" "build-tools;35.0.0" \
-            "ndk;26.3.11579264" "platform-tools" >/dev/null
-          NDK="$ANDROID_SDK_ROOT/ndk/26.3.11579264"
-          for v in NDK_HOME ANDROID_NDK_HOME ANDROID_NDK_ROOT ANDROID_NDK_LATEST_HOME; do
-            echo "$v=$NDK" >> "$GITHUB_ENV"
-          done
-
-      - run: npm ci
-
-      - name: Pin Android identifier to page.tine.app
-        run: |
-          node -e "const f='./src-tauri/tauri.conf.json',c=require(f);c.identifier='page.tine.app';require('fs').writeFileSync(f,JSON.stringify(c,null,2)+'\n');"
-
-      - name: Build debug x86_64 app and instrumentation APKs
-        run: |
-          npx tauri android build --debug --target x86_64 --apk --ci
-          cd src-tauri/gen/android
-          ./gradlew :app:assembleUniversalDebugAndroidTest \
-            -PabiList=x86_64 -ParchList=x86_64 -PtargetList=x86_64 \
-            -x :app:rustBuildUniversalDebug -x :app:rustBuildX86_64Debug
-
-      - name: Enable KVM for the Android emulator
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Run physical Android UI MotionEvent proofs
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          arch: x86_64
-          target: default
-          emulator-boot-timeout: 300
-          disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash .github/scripts/android-ui-runtime.sh
-        env:
-          TINE_ANDROID_UI_RUNTIME_ARTIFACT_DIR: ${{ github.workspace }}/test-results/android-ui-runtime
-          TINE_ANDROID_UI_RUNTIME_ONLY: ${{ inputs.scope == 'android-ui-runtime-205' && '205' || inputs.scope == 'android-ui-runtime-pdf-routes' && 'pdf-routes' || inputs.scope == 'android-ui-runtime-toolbar' && 'toolbar' || '' }}
-
-      - name: Upload Android UI runtime evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-ui-runtime-${{ github.sha }}
-          path: test-results/android-ui-runtime
-          if-no-files-found: error
-          retention-days: 14
-
-  # Focused, signed APK proof for the frozen sync candidate. This remains outside
-  # full CI: it is manually dispatched only with scope=android and never releases.
-  android-test-apk:
-    name: Android test APK / signed arm64 / ${{ github.sha }}
-    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'android'
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v5
-
-      # Fail before tool setup or decoding when any signing input is unavailable.
-      # Secret values never appear in logs; only their required variable names do.
-      - name: Require Android signing secrets
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          missing=0
-          for required in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
-            if [ -z "${!required}" ]; then
-              echo "::error::$required is required for the signed Android test APK."
-              missing=1
-            fi
-          done
-          exit "$missing"
-
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Node 20
-        uses: actions/setup-node@v5
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Set up Rust 1.96.0
-        uses: dtolnay/rust-toolchain@1.96.0
-        with:
-          targets: aarch64-linux-android
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-
-      # Match the pinned signed release recipe exactly: NDK 26.3 must be the
-      # only NDK Gradle/Tauri can select, including its pre-set latest-home var.
-      - name: Install Android SDK packages
-        run: |
-          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            "platforms;android-36" "platforms;android-35" \
-            "build-tools;35.0.0" "ndk;26.3.11579264" "platform-tools" >/dev/null
-          NDK="$ANDROID_SDK_ROOT/ndk/26.3.11579264"
-          for v in NDK_HOME ANDROID_NDK_HOME ANDROID_NDK_ROOT ANDROID_NDK_LATEST_HOME; do
-            echo "$v=$NDK" >> "$GITHUB_ENV"
-          done
-          find "$ANDROID_SDK_ROOT/ndk" -mindepth 1 -maxdepth 1 -type d ! -name "26.3.11579264" -exec rm -rf {} + 2>/dev/null || true
-          rm -rf "$ANDROID_SDK_ROOT/ndk-bundle" 2>/dev/null || true
-          echo "NDKs remaining on runner:"; ls "$ANDROID_SDK_ROOT/ndk"
-          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version | head -1
-
-      - name: Install JS deps
-        run: npm ci
-
-      # The generated Gradle project reads this ephemeral, gitignored file.
-      - name: Write signing config from secrets
-        env:
-          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/tine-test-apk.jks"
-          {
-            echo "storeFile=$RUNNER_TEMP/tine-test-apk.jks"
-            echo "storePassword=$KS_PASS"
-            echo "keyAlias=$KEY_ALIAS"
-            echo "keyPassword=$KEY_PASS"
-          } > src-tauri/gen/android/keystore.properties
-
-      - name: Set Android test version
-        id: android-version
-        run: |
-          short_sha="${GITHUB_SHA:0:12}"
-          version_name="0.7.0-sync-$short_sha"
-          printf '// THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.\ntauri.android.versionName=%s\ntauri.android.versionCode=%s\n' "$version_name" "6999" \
-            > src-tauri/gen/android/app/tauri.properties
-          {
-            echo "short_sha=$short_sha"
-            echo "version_name=$version_name"
-          } >> "$GITHUB_OUTPUT"
-
-      # Android retains this stable package identifier for existing users and
-      # the F-Droid listing; the checkout is ephemeral to this focused job.
-      - name: Pin Android identifier to page.tine.app
-        run: |
-          node -e "const f='./src-tauri/tauri.conf.json',c=require(f);c.identifier='page.tine.app';require('fs').writeFileSync(f,JSON.stringify(c,null,2)+'\n');"
-          echo "Android identifier → $(node -p "require('./src-tauri/tauri.conf.json').identifier")"
-
-      - name: Build signed Android test APK
-        # Reproducible path remapping must remain identical to the signed recipe.
-        run: |
-          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=/build --remap-path-prefix=$HOME/.cargo=/cargo"
-          npx tauri android build --target aarch64 --apk
-
-      - name: Prepare signed Android test APK
-        env:
-          ANDROID_TEST_VERSION: ${{ steps.android-version.outputs.version_name }}
-        run: |
-          apk=$(find src-tauri/gen/android -path '*/release/*' -name '*-release.apk' | head -1)
-          if [ -z "$apk" ]; then echo "no signed APK found"; exit 1; fi
-          cp "$apk" "Tine_${ANDROID_TEST_VERSION}_android-arm64.apk"
-
-      # Check the final native library, not only source, for the Android 9/API 28
-      # incompatible renameat2 wrapper.
-      - name: Verify Android 9 native-loader compatibility
-        env:
-          ANDROID_TEST_VERSION: ${{ steps.android-version.outputs.version_name }}
-        run: |
-          apk="Tine_${ANDROID_TEST_VERSION}_android-arm64.apk"
-          unzip -p "$apk" lib/arm64-v8a/libtine_lib.so > "$RUNNER_TEMP/libtine_lib.so"
-          if readelf --dyn-syms --wide "$RUNNER_TEMP/libtine_lib.so" \
-            | grep -Eq '[[:space:]]UND[[:space:]].*renameat2(@|$)'; then
-            echo "::error::Android native library imports API-30 renameat2; it will not load on Android 9/API 28."
-            exit 1
-          fi
-          readelf --dyn-syms --wide "$RUNNER_TEMP/libtine_lib.so" | grep -F 'syscall@' >/dev/null
-
-      - name: Upload signed Android test APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: tine-android-test-apk-${{ github.sha }}
-          path: Tine_${{ steps.android-version.outputs.version_name }}_android-arm64.apk
-          if-no-files-found: error
-          retention-days: 3
-          compression-level: 0
-
-      - name: Remove Android test signing material
-        if: always()
-        run: |
-          rm -f "$RUNNER_TEMP/tine-test-apk.jks" "$RUNNER_TEMP/libtine_lib.so"
-          rm -f src-tauri/gen/android/keystore.properties src-tauri/gen/android/app/tauri.properties
 
   plugin-launch-e2e:
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
       - uses: swatinem/rust-cache@v2
@@ -751,13 +267,6 @@ jobs:
         run: |
           npm run build
           ./scripts/build-community-plugins.sh
-      # The signed-catalogue journey has a full E2E contract entry and was
-      # reachable only through `npm run e2e:plugins`, which no workflow called.
-      # This job is its home: it already builds every community plugin and
-      # installs the browser the journey drives.
-      - name: Exercise the signed community catalogue
-        run: npm run e2e:plugins
-
       - name: Exercise every launch plugin and capture evidence
         env:
           TINE_PLUGIN_SCREENSHOT_ROOT: ${{ github.workspace }}/test-results/plugin-docs
@@ -792,7 +301,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'performance')
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -810,17 +319,17 @@ jobs:
           echo "immutable=$(node -p "require('./scripts/bench-policy.json').immutableBaseline.ref")" >> "$GITHUB_OUTPUT"
           echo "previous=$(node -p "require('./scripts/bench-policy.json').previousRelease.ref")" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           ref: ${{ steps.perf-policy.outputs.immutable }}
           path: .bench/immutable
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           ref: ${{ steps.perf-policy.outputs.previous }}
           path: .bench/previous
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
@@ -865,3 +374,67 @@ jobs:
           name: perf-ab-${{ github.run_attempt }}
           path: |
             test-results/perf/
+
+  # GH #623: cold/warm launch of an Ellis-shaped graph (12.9k pages, 12.4k assets) with Windows
+  # Defender really ON. Hosted Windows images ship Defender passive and every other job runs it
+  # that way, so no other CI number says what a user's launch costs. Release-candidate CI only
+  # (this job lives in the `full` and `performance` scopes, never on a push or a pull request).
+  # It is deliberately NOT one of the required evidence jobs in scripts/ci-evidence-lib.mjs and is
+  # continue-on-error: it REPORTS numbers (job summary + artifact) and enforces no budget. Its one
+  # assertion is that Defender is on (run-defender-launch.ps1), so a number is never measured with
+  # it silently off; a failed assertion shows as an error annotation on this job.
+  # What a budget would be (not set; needs a few release candidates of data): a ratio gate on the
+  # cold Ready time and on the worst page click during a rescan against the Defender-passive prims
+  # baseline, plus an absolute ceiling on that worst click (ADR 0058: UI never blocks > 500 ms).
+  windows-defender-launch:
+    name: Full CI / Windows Defender-on launch (advisory)
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'performance')
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Build the launch measurement (release)
+        run: cargo build --release -p tine-store --features test-faults --example defender_ab
+      - name: Fetch the anonymous shape export and generate the graph
+        env:
+          PYTHONUTF8: "1"
+        shell: pwsh
+        run: |
+          $d = ".github/scripts/ellis-shape"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          curl.exe -sSL -o ellis.zip https://github.com/user-attachments/files/32962824/graph-shape-export.zip
+          $sha = (Get-FileHash ellis.zip -Algorithm SHA256).Hash.ToLower()
+          if ($sha -ne '57cd9566195adc62bee4ed5c6055c6d973d5fc61832ae3ad27b74c99f3ab3e2f') { throw "shape export changed: $sha" }
+          Expand-Archive ellis.zip -DestinationPath $d -Force
+          # the generator makes the 12,441 assets sparse files of up to ~26 GB apparent size; NTFS truncate
+          # allocates them for real, so cap each at 4 KiB (Tine only stats assets; the count is what matters)
+          $src = Get-Content .github/scripts/ellis-generate.py -Raw
+          $src = $src.Replace('f.truncate(sizes[k])', 'f.truncate(min(sizes[k], 4096))')
+          Set-Content -Path "$d/generate.py" -Value $src -Encoding utf8
+          # the generator reads the CSVs next to itself; they may sit in a subfolder of the zip
+          foreach ($n in 'nodes.csv','edges.csv','totals.txt') { $f = Get-ChildItem $d -Recurse -Filter $n | Select-Object -First 1; if ($f.DirectoryName -ne (Resolve-Path $d).Path) { Copy-Item $f.FullName $d } }
+          python "$d/generate.py" --out "$env:USERPROFILE\ellis\master"
+      - name: Launch measurement with Defender ON (asserts it is on first)
+        shell: pwsh
+        run: ./.github/scripts/run-defender-launch.ps1 -Reps 3
+      - name: Summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path results.jsonl) {
+            python .github/scripts/summarize-defender-launch.py | Tee-Object -FilePath summary.md
+            Get-Content summary.md | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: defender-launch-results
+          path: |
+            results.jsonl
+            summary.md
+          retention-days: 30

@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const policy = JSON.parse(fs.readFileSync(path.join(root, "scripts/bench-policy.json"), "utf8"));
-const version = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8")).version;
+const app = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8"));
+const version = app.version;
 const problems = [];
 
 if (policy.schemaVersion !== 2) problems.push(`bench policy schema is ${policy.schemaVersion}; expected 2`);
@@ -21,6 +22,16 @@ for (const [name, budget] of Object.entries(policy.metrics ?? {})) {
   if (!Number.isFinite(budget.maxRoundSpreadPct) || budget.maxRoundSpreadPct <= 0) {
     problems.push(`${name} is missing a positive maxRoundSpreadPct reliability budget`);
   }
+  if (budget.allowanceMs !== undefined) {
+    // One frame at 60 Hz, for a deliberate cost recorded in an ADR; never a
+    // general loosening.
+    if (!Number.isFinite(budget.allowanceMs) || budget.allowanceMs <= 0 || budget.allowanceMs > 17) {
+      problems.push(`${name} allowanceMs must be in (0, 17]`);
+    }
+    if (!/ADR \d{4}/.test(budget.allowanceReason ?? "")) {
+      problems.push(`${name} allowanceMs needs an allowanceReason citing its ADR`);
+    }
+  }
 }
 
 function argument(name) {
@@ -28,26 +39,30 @@ function argument(name) {
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
-function gitOutput(args) {
-  const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
-  // Some restricted process supervisors report EPERM on the wrapper wait even
-  // though the child completed, returned status 0, and supplied its output.
-  // The exit status remains the authority; a real git failure is still fatal.
-  if (result.status !== 0 || result.signal || typeof result.stdout !== "string") {
-    const detail = result.stderr || result.error?.message || `status ${result.status}`;
-    throw new Error(`git ${args.join(" ")} failed: ${detail}`);
-  }
-  return result.stdout;
-}
-
 function reachableReleaseTags() {
-  const output = gitOutput(["tag", "--merged", "HEAD", "--sort=-version:refname"]);
+  const output = execFileSync("git", ["tag", "--merged", "HEAD", "--sort=-version:refname"], {
+    cwd: root,
+    encoding: "utf8",
+  });
   return output
     .split(/\r?\n/)
     .filter((tag) => /^v\d+\.\d+\.\d+$/.test(tag));
 }
 
 let expectedPrevious = argument("--expected-previous");
+const selection = policy.previousRelease?.selection ?? "latest-release";
+if (selection === "og-campaign") {
+  // A master's latest release is not this line's performance anchor; the line
+  // (Beta, and stable since 0.7.0) keeps v0.6.5. This selector cannot advance the
+  // anchor, and the configured application must be the switch's shipped identity.
+  const identity = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/app-identity.json"), "utf8"));
+  if (app.identifier !== identity.identities[identity.ship]?.identifier) {
+    problems.push("og-campaign performance selection requires the shipped application identity");
+  }
+  expectedPrevious = "v0.6.5";
+} else if (selection !== "latest-release") {
+  problems.push(`unknown previousRelease.selection: ${selection}`);
+}
 if (!expectedPrevious) {
   const candidateTag = `v${version}`;
   const workflowTag = process.env.GITHUB_REF?.startsWith("refs/tags/")
@@ -57,7 +72,10 @@ if (!expectedPrevious) {
 
   // A tagged candidate still compares with the release before itself. Manual
   // candidate runs and ordinary master builds have no candidate tag at HEAD.
-  const candidateAtHead = gitOutput(["tag", "--points-at", "HEAD"])
+  const candidateAtHead = execFileSync("git", ["tag", "--points-at", "HEAD"], {
+    cwd: root,
+    encoding: "utf8",
+  })
     .split(/\r?\n/)
     .includes(candidateTag);
   if (workflowTag === candidateTag || candidateAtHead) tags = tags.filter((tag) => tag !== candidateTag);
@@ -71,7 +89,7 @@ if (!expectedPrevious) {
   problems.push("could not determine the most recent published release tag; fetch full tag history");
 } else if (policy.previousRelease?.ref !== expectedPrevious) {
   problems.push(
-    `previousRelease.ref is ${policy.previousRelease?.ref ?? "missing"}; expected most recent published release ${expectedPrevious}`
+    `previousRelease.ref is ${policy.previousRelease?.ref ?? "missing"}; expected ${selection === "og-campaign" ? "fixed OG campaign anchor" : "most recent published release"} ${expectedPrevious}`
   );
 }
 if (policy.immutableBaseline?.ref !== "v0.4.7") {

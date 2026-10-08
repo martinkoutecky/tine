@@ -1,8 +1,11 @@
+import { sheetSourceRows } from "../sheet/sheetRows";
+import { displayLimitThrough, sheetCellMenu } from "../sheet/interactions";
+import { cellIsSelected } from "../sheet/selection";
+import { clearOnBindingInvalidated } from "../binding";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { observeNear, unobserveNear } from "../lazyObserve";
-import { blockPageReadOnly, doc, formatForBlock, formatForPage, pageByName, readPageProperty } from "../store";
+import { blockPageReadOnly, formatForBlock, formatForPage, readPageProperty, readPageProperties, node as docNode } from "../document";
 import { facetsOf } from "../render/facets";
-import { pageProperties } from "../render/block";
 import { InlineText } from "../render/inline";
 import { editingId, editingOwner } from "../editorController";
 import { SheetCellContext, type SheetCellCtx } from "../sheet/context";
@@ -24,42 +27,35 @@ import {
 } from "../sheet/selection";
 import {
   boardGroupByOptions,
-  fieldIdsForRecords,
   fieldIdsForBlocks,
-  formulaReferenceName,
   cycleField,
   fieldLabel,
   groupKeysForBlock,
-  isFieldId,
   isFormulaField,
-  recordFacets,
-  rowTitle,
   writeTagDelta,
-  writeField,
+  writeFieldVisibly,
   type FieldId,
-  type QueryGroupingControl,
 } from "../sheet/fields";
 import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
 import { formulasOf, mergeFormulas } from "../sheet/formulaFields";
-import { createFormulaFilterMemo, formulaRowKey, liveFormulaRowNode, readFormulaRowField, type FormulaEvalRow } from "../sheet/formulaEval";
+import { formulaReferenceName, boardCardChips, boardGroupField, boardRowTitle, buildBoardColumns, type BoardColumn as BoardColumnOf } from "../sheet/boardColumns";
+import { fieldIdsForRecords, recordFacets } from "../sheet/tableFields";
+import { createFormulaFilterMemo, formulaRowKey, liveFormulaRowNode, type FormulaEvalRow } from "../sheet/formulaEval";
 import { setBoardGroupBy } from "../sheet/mutations";
-import { MARKERS } from "../markers";
-import { graphEpoch, openDatePicker, openSheetCellContextMenu, openSheetContextMenu, pushToast, workflow } from "../ui";
+import { graphEpoch } from "../graphSession";
+import { openDatePicker, openSheetContextMenu, workflow } from "../ui";
+import { pushToast } from "../toasts";
 import { blockBackgroundColor } from "../blockColors";
 import type { RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
 import { isBareTagName } from "../tags";
 import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydration";
 import { registerTransientLayer } from "../transientLayers";
-import { appNow } from "../journal";
 
+import { appNow } from "../journal";
 interface RowRecord extends FormulaEvalRow {}
 
-interface BoardColumn {
-  key: string | null;
-  label: string;
-  rows: RowRecord[];
-}
+type BoardColumn = BoardColumnOf<RowRecord>;
 
 interface BoardDragCoordinator {
   start(pointerId: number, cancel: () => void): void;
@@ -74,8 +70,6 @@ function boardColumnId(key: string | null): string {
   return JSON.stringify(key);
 }
 
-const NONE_LABEL = "(none)";
-
 export const __sheetBoardTestHooks: {
   onGroupingRowWalk?: (rowId: string) => void;
   onPointIndexRow?: (rowId: string) => void;
@@ -87,34 +81,16 @@ export function SheetBoard(props: {
   groupBy?: string | null;
   groups?: readonly RefGroup[];
   schemaPage?: string;
-  /** Present only on a QUERY board: the grouping the query resolved, the
-   *  options its own rows justify, and the one writer both this toolbar and the
-   *  context menu route through. */
-  queryGrouping?: QueryGroupingControl;
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
-  /** A query can say "no grouping" and mean it; a children board cannot, and
-   *  falls back to the task marker as it always has.
-   *
-   *  Only an EXPLICIT clear is ungrouped. A query that states no grouping at all
-   *  is the silence ADR 0030's default fills, exactly as it did before the
-   *  grouping key was split — otherwise every existing `tine.view:: board` note
-   *  with no group property would quietly lose its columns. */
-  const ungrouped = () =>
-    !!props.queryGrouping && props.queryGrouping.field === null && props.queryGrouping.cleared;
-  const groupBy = createMemo<FieldId>(() => {
-    const control = props.queryGrouping;
-    if (control) return control.field ?? "state";
-    const raw = props.groupBy || "state";
-    const normalized = raw.startsWith("formula.") ? `formula:${raw.slice("formula.".length)}` : raw;
-    return isFieldId(normalized) ? normalized : "state";
-  });
+  const groupBy = createMemo<FieldId>(() => boardGroupField(props.groupBy));
+  /** A query's explicit "No grouping" (the engine's `Cleared`, `group_by === ""`):
+   *  one column holding every result. An ordinary board has no such state. */
+  const ungrouped = () => props.rowSource === "query" && props.groupBy === "";
   const groupByOptions = createMemo<FieldId[]>(() => {
-    const options = props.queryGrouping
-      ? [...props.queryGrouping.options]
-      : boardGroupByOptions(props.ownerId);
+    const options = boardGroupByOptions(props.ownerId);
     const current = groupBy();
-    return options.includes(current) || ungrouped() ? options : [...options, current];
+    return options.includes(current) ? options : [...options, current];
   });
   const [drag, setDrag] = createSignal<{ id: string; col: number; row: number; overCol: number | null } | null>(null);
   let boardElement: HTMLDivElement | undefined;
@@ -145,7 +121,7 @@ export function SheetBoard(props: {
   const [addingTag, setAddingTag] = createSignal(false);
   const [tagInputInvalid, setTagInputInvalid] = createSignal(false);
   const config = createMemo(() => {
-    const owner = doc.byId[props.ownerId];
+    const owner = docNode(props.ownerId);
     return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
   });
   const schemaFields = createMemo<readonly FieldSpec[]>(() => {
@@ -155,24 +131,15 @@ export function SheetBoard(props: {
   });
   const pageFormulas = createMemo<ReadonlyMap<string, string>>(() => {
     if (!props.schemaPage) return new Map();
-    const page = pageByName(props.schemaPage);
-    return page ? formulasOf(pageProperties(page.preBlock, page.format)) : new Map();
+    return formulasOf(readPageProperties(props.schemaPage));
   });
   const blockFormulas = createMemo<ReadonlyMap<string, string>>(() => {
-    const owner = doc.byId[props.ownerId];
+    const owner = docNode(props.ownerId);
     return owner ? formulasOf(facetsOf(owner.raw, formatForBlock(props.ownerId)).properties) : new Map();
   });
   const formulas = createMemo(() => mergeFormulas(pageFormulas(), blockFormulas()));
 
-  const allRows = createMemo<RowRecord[]>(() => {
-    if (props.rowSource === "children") {
-      return (doc.byId[props.ownerId]?.children ?? []).map((id) => ({
-        id,
-        page: doc.byId[id]?.page ?? doc.byId[props.ownerId]?.page ?? "",
-      }));
-    }
-    return (props.groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, kind: g.kind, dto: b })));
-  });
+  const allRows = createMemo<RowRecord[]>(() => sheetSourceRows(props.rowSource, props.ownerId, props.groups));
   const filterState = createFormulaFilterMemo({
     rows: allRows,
     formulas,
@@ -196,15 +163,18 @@ export function SheetBoard(props: {
   });
 
   const baseColumns = createMemo<BoardColumn[]>(() => {
-    const now = appNow();
-    // An explicitly ungrouped query is ONE column holding the whole result —
-    // not the task-marker board that the ABSENCE of a grouping produces.
     if (ungrouped()) return [{ key: null, label: "All results", rows: rows() }];
-    return buildColumns(rows(), groupBy(), schemaFields(), { formulas: formulas(), now });
+    const now = appNow();
+    return buildBoardColumns(rows(), groupBy(), schemaFields(), {
+      formulas: formulas(),
+      now,
+      workflow: workflow(),
+      onRow: __sheetBoardTestHooks.onGroupingRowWalk,
+    });
   });
   const columns = createMemo<BoardColumn[]>(() => {
     const cols = baseColumns();
-    if (ungrouped() || groupBy() !== "tags") return cols;
+    if (groupBy() !== "tags") return cols;
     const existing = new Set(cols.map((col) => col.key));
     const empty = emptyTagColumnsForBoard(props.ownerId)
       .filter((tag) => !existing.has(tag))
@@ -278,8 +248,8 @@ export function SheetBoard(props: {
     return columns().map((column) => ({ ...column, rows: column.rows.filter((row) => ids.has(formulaRowKey(row))) }));
   });
   const ensureDisplayedThrough = (row: number) => {
-    if (row < 0 || row < displayedRows().length) return;
-    setRenderLimit(Math.min(rows().length, Math.ceil((row + 1) / SHEET_RENDER_PAGE) * SHEET_RENDER_PAGE));
+    const limit = displayLimitThrough(row, displayedRows().length, rows().length, SHEET_RENDER_PAGE);
+    if (limit !== null) setRenderLimit(limit);
   };
   createEffect(() => {
     const sel = cellSel();
@@ -319,13 +289,7 @@ export function SheetBoard(props: {
   });
   const formulaEntries = () => [...formulas().entries()];
 
-  const selected = (col: number, row: number) => {
-    const sel = cellSel();
-    if (!sel || sel.gridId !== props.ownerId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
-    if (sel.kind === "cell") return sel.col === col && sel.row === row;
-    if (sel.kind === "range") return sel.focus.col === col && sel.focus.row === row;
-    return false;
-  };
+  const selected = (col: number, row: number) => cellIsSelected(props.ownerId, row, col, surfaceId);
 
   const noteQueryMove = (row: RowRecord) => {
     if (props.rowSource !== "query") return;
@@ -429,17 +393,14 @@ export function SheetBoard(props: {
   };
 
   const openSheetMenu = (e: MouseEvent) => {
-    if (!doc.byId[props.ownerId]) return;
+    if (!docNode(props.ownerId)) return;
     e.preventDefault();
     e.stopPropagation();
-    openSheetContextMenu(e.clientX, e.clientY, props.ownerId, "board", props.rowSource, groupBy(), {
+    openSheetContextMenu(e.clientX, e.clientY, props.ownerId, "board", props.rowSource, ungrouped() ? "" : groupBy(), {
       schemaPage: props.schemaPage,
       fields: formulaHintFields(),
       formulas: formulaEntries(),
       filter: config().filter,
-      // The menu gets the SAME control the toolbar uses, so a query's grouping
-      // cannot be written through two different paths that disagree.
-      queryGrouping: props.queryGrouping,
     });
   };
 
@@ -468,15 +429,9 @@ export function SheetBoard(props: {
             aria-label="Group by"
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
-            onChange={(e) => {
-              const value = e.currentTarget.value;
-              const control = props.queryGrouping;
-              if (control) control.set(value ? (value as FieldId) : null);
-              else setBoardGroupBy(props.ownerId, value as FieldId);
-            }}
+            onChange={(e) => setBoardGroupBy(props.ownerId, e.currentTarget.value as FieldId | "")}
           >
-            {/* Only a query can be ungrouped, and only a query can say so. */}
-            <Show when={props.queryGrouping}>
+            <Show when={props.rowSource === "query"}>
               <option value="">No grouping</option>
             </Show>
             <For each={groupByOptions()}>
@@ -526,7 +481,7 @@ export function SheetBoard(props: {
                         rowIndex={rowIndex()}
                         selected={selected(colIndex(), rowIndex())}
                         dragging={drag()?.id === row.id && drag()?.col === colIndex() && drag()?.row === rowIndex()}
-                        canMove={!ungrouped() && !isFormulaField(groupBy())}
+                        canMove={!isFormulaField(groupBy()) && !ungrouped()}
                         dragVersion={dragVersion()}
                         dragCoordinator={dragCoordinator}
                         hydrate={props.rowSource === "query"
@@ -541,7 +496,7 @@ export function SheetBoard(props: {
               </section>
             )}
           </For>
-          <Show when={!ungrouped() && groupBy() === "tags"}>
+          <Show when={groupBy() === "tags"}>
             <section class="sheet-board-column sheet-board-add-tag-column">
               <Show
                 when={addingTag()}
@@ -602,97 +557,17 @@ export function SheetBoard(props: {
   );
 }
 
-function buildColumns(
-  rows: readonly RowRecord[],
-  groupBy: FieldId,
-  schema: readonly FieldSpec[] = [],
-  opts: { formulas?: ReadonlyMap<string, string>; now?: Date } = {}
-): BoardColumn[] {
-  const rowsByKey = new Map<string | null, RowRecord[]>();
-  const keys: (string | null)[] = [];
-  const allKeys: (string | null)[] = [];
-  const seenAllKeys = new Set<string | null>();
-  let hasNull = false;
-  let hasFormulaError = false;
-  for (const row of rows) {
-    __sheetBoardTestHooks.onGroupingRowWalk?.(row.id);
-    const rowKeys = groupKeysForBlock(row, groupBy, opts);
-    keys.push(rowKeys[0] ?? null);
-    const seenForRow = new Set<string | null>();
-    for (const key of rowKeys) {
-      hasNull ||= key === null;
-      hasFormulaError ||= key === "(error)";
-      if (!seenAllKeys.has(key)) {
-        seenAllKeys.add(key);
-        allKeys.push(key);
-      }
-      if (seenForRow.has(key)) continue;
-      seenForRow.add(key);
-      const bucket = rowsByKey.get(key);
-      if (bucket) bucket.push(row);
-      else rowsByKey.set(key, [row]);
-    }
-  }
-  let order: (string | null)[];
-  const enumValues = enumValuesFor(schema, groupBy);
-  if (isFormulaField(groupBy)) {
-    const present = new Set(keys.filter((key): key is string => key !== null));
-    const booleanish = present.has("true") || present.has("false");
-    order = [];
-    if (booleanish) {
-      if (present.has("true")) order.push("true");
-      if (present.has("false")) order.push("false");
-    }
-    for (const key of keys) {
-      if (key === null || key === "(error)") continue;
-      if (booleanish && (key === "true" || key === "false")) continue;
-      if (!order.includes(key)) order.push(key);
-    }
-  } else if (groupBy === "tags") {
-    order = [];
-    for (const key of allKeys) if (key !== null) order.push(key);
-  } else if (enumValues) {
-    order = [...enumValues];
-    for (const key of keys) if (key !== null && !order.includes(key)) order.push(key);
-    order.push(null);
-  } else if (groupBy === "state") {
-    const standard = workflow() === "todo" ? ["TODO", "DOING", "DONE"] : ["LATER", "NOW", "DONE"];
-    order = [
-      ...standard,
-      ...MARKERS.filter((m) => !standard.includes(m) && keys.includes(m)),
-    ];
-  } else if (groupBy === "priority") {
-    order = ["A", "B", "C"];
-  } else {
-    order = [];
-    for (const key of keys) if (key !== null && !order.includes(key)) order.push(key);
-  }
-  if (hasNull && !order.includes(null)) order.push(null);
-  if (isFormulaField(groupBy) && hasFormulaError && !order.includes("(error)")) {
-    order.push("(error)");
-  }
-  if (order.length === 0) order = [null];
-  return order.map((key) => ({
-    key,
-    label: key === null ? NONE_LABEL : groupBy === "priority" ? `[#${key}]` : key,
-    rows: rowsByKey.get(key) ?? [],
-  }));
-}
-
-function enumValuesFor(schema: readonly FieldSpec[], field: FieldId): readonly string[] | null {
-  const spec = schema.find((s) => s.field === field);
-  return spec && typeof spec.type === "object" && "enum" in spec.type ? spec.type.enum : null;
-}
-
 function observedFieldsForRows(rows: readonly RowRecord[], includePage: boolean): FieldId[] {
   const loadedIds = rows.filter((r) => liveFormulaRowNode(r)).map((r) => r.id);
   if (loadedIds.length === rows.length) return fieldIdsForBlocks(loadedIds, { includePage });
   return fieldIdsForRecords(rows, includePage);
 }
 
+
+
 function moveRowToColumn(row: RowRecord, from: string | null, target: string | null, field: FieldId): boolean {
   if (isFormulaField(field)) return false;
-  if (field !== "tags") return writeField(row.id, field, target ?? "");
+  if (field !== "tags") return writeFieldVisibly(row.id, field, target ?? "");
   const tags = groupKeysForBlock(row, "tags").filter((key): key is string => key !== null);
   if (from === null) return target !== null && writeTagDelta(row.id, { add: target });
   if (target === null) return tags.length === 1 && writeTagDelta(row.id, { remove: from });
@@ -708,6 +583,7 @@ function moveRowToColumn(row: RowRecord, from: string | null, target: string | n
 // Render-once-keep: a card rendered once (latched by block id) renders eagerly
 // forever. Module-level, shared across surfaces, bounded by the working set.
 const renderedBoardCards = new Set<string>();
+clearOnBindingInvalidated(() => renderedBoardCards.clear());
 
 export function resetBoardCardVirtualizationForTests() {
   renderedBoardCards.clear();
@@ -925,18 +801,11 @@ function BoardCard(props: {
   };
   const openCellMenu = (e: MouseEvent) => {
     if (!liveFormulaRowNode(props.row)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    select();
-    openSheetCellContextMenu(e.clientX, e.clientY, props.row.id);
+    sheetCellMenu(e, select, props.row.id, undefined);
   };
   const openCellMenuFromHandle = (e: MouseEvent) => {
     if (!liveFormulaRowNode(props.row)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    select();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    openSheetCellContextMenu(rect.right, rect.bottom + 2, props.row.id);
+    sheetCellMenu(e, select, props.row.id, undefined, true);
   };
 
   return (
@@ -990,10 +859,10 @@ function BoardCard(props: {
         fallback={
           <Show
             when={near()}
-            fallback={<div class="sheet-board-card-title sheet-cell-defer">{rowTitle(props.row, "first-line")}</div>}
+            fallback={<div class="sheet-board-card-title sheet-cell-defer">{boardRowTitle(props.row)}</div>}
           >
             <div class="sheet-board-card-title">
-              <InlineText text={rowTitle(props.row, "first-line")} format={fmt()} />
+              <InlineText text={boardRowTitle(props.row)} format={fmt()} />
             </div>
             <CardChips row={props.row} groupBy={props.groupBy} onFieldClick={onChipClick} />
           </Show>
@@ -1010,52 +879,44 @@ function BoardCard(props: {
 }
 
 function CardChips(props: { row: RowRecord; groupBy: FieldId; onFieldClick: (field: FieldId, e: MouseEvent) => void }): JSX.Element {
-  const value = (field: FieldId) => readFormulaRowField(props.row, field)?.text ?? "";
-  const priority = () => props.groupBy === "priority" ? "" : value("priority");
-  const scheduled = () => props.groupBy === "scheduled" ? "" : value("scheduled");
-  const deadline = () => props.groupBy === "deadline" ? "" : value("deadline");
-  const tags = () => props.groupBy === "tags" ? "" : value("tags");
+  const chips = createMemo(() => boardCardChips(props.row, props.groupBy));
   const stopDoubleClick = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
   };
   return (
     <div class="sheet-board-card-chips">
-      <Show when={priority()}>
+      <Show when={chips().priority}>
         <span
           class="block-priority"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => props.onFieldClick("priority", e)}
           onDblClick={stopDoubleClick}
         >
-          {priority()}
+          {chips().priority}
         </span>
       </Show>
-      <Show when={scheduled()}>
+      <Show when={chips().scheduled}>
         <span
           class="date-chip scheduled"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => props.onFieldClick("scheduled", e)}
           onDblClick={stopDoubleClick}
         >
-          {scheduled()}
+          {chips().scheduled}
         </span>
       </Show>
-      <Show when={deadline()}>
+      <Show when={chips().deadline}>
         <span
           class="date-chip deadline"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => props.onFieldClick("deadline", e)}
           onDblClick={stopDoubleClick}
         >
-          {deadline()}
+          {chips().deadline}
         </span>
       </Show>
-      <Show when={tags()}>
-        <For each={tags().split(/\s+/).filter(Boolean)}>
-          {(tag) => <span class="sheet-tag-chip">{tag}</span>}
-        </For>
-      </Show>
+      <For each={chips().tags}>{(tag) => <span class="sheet-tag-chip">{tag}</span>}</For>
     </div>
   );
 }

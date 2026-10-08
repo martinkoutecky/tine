@@ -3,7 +3,6 @@
 // micros) lives in the comparison worker; these functions just reduce the
 // collected samples into the report numbers (best-of-3 total, p50/p95/max,
 // 5 slowest). Timings are parser-reported in-process parse micros.
-import type { ParserDiagnostic } from "./diagnostic";
 
 export interface BenchSample {
   rel: string;
@@ -12,7 +11,7 @@ export interface BenchSample {
 export interface BenchFailure {
   rel: string;
   status: string;
-  diagnostic: ParserDiagnostic;
+  detail: string;
 }
 export interface BenchRun {
   samples: BenchSample[];
@@ -70,7 +69,7 @@ export function summarizeBenchRuns(runs: BenchRun[]): BenchSummary {
  *  benchFromResults, 980-996). `overTimeout` results are treated as failures. */
 export function benchFromResults(
   files: { id: string; rel: string }[],
-  results: Map<string, { ok?: boolean; overTimeout?: boolean; parseMicros?: number; status?: string; diagnostic?: ParserDiagnostic }>,
+  results: Map<string, { ok?: boolean; overTimeout?: boolean; parseMicros?: number; status?: string; detail?: string }>,
 ): BenchRun {
   const samples: BenchSample[] = [];
   const failures: BenchFailure[] = [];
@@ -82,7 +81,7 @@ export function benchFromResults(
       failures.push({
         rel: file.rel,
         status: res?.status || (res?.overTimeout ? "timeout" : "failed"),
-        diagnostic: res?.diagnostic ?? { offset: null, inputBytes: 0, inputHash: "0000000000000000" },
+        detail: res?.detail || (res?.overTimeout ? "parse time exceeded timeout" : "parser failed"),
       });
     }
   }

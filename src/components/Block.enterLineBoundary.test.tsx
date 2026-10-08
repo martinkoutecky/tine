@@ -6,7 +6,9 @@ import { For } from "solid-js";
 import { render } from "solid-js/web";
 import { endEdit, startEditing } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore } from "../store";
+import { pageByName, resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
 

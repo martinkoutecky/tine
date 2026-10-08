@@ -1,0 +1,21 @@
+[package]
+name = "tine-graph-features"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tine-core = { path = "../tine-core" }
+tine-store = { path = "../tine-store" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+tempfile = "3"
+time = { version = "0.3.49", features = ["formatting"] }
+
+[dev-dependencies]
+lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.8" }
+tine-store = { path = "../tine-store", features = ["test-faults"] }
+serde_json = { workspace = true }
+sha2 = "0.10"
+tempfile = "3"

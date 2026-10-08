@@ -1,589 +1,734 @@
-use crate::command_error::CommandError;
 #[cfg(desktop)]
-use crate::debug::diag;
+use crate::debug::diag_private;
 #[cfg(desktop)]
-use crate::platform::{open_page_source, opener_command, reveal_page_source};
+use crate::platform::{open_page_source, opener_command, reveal_page_source, spawn_reaped};
 use crate::state::{
-    capture_display_read, display_read, owned_graph_context, slot_for_bound_window,
-    slot_for_context, with_filesystem_graph, with_trash_graph, AppState, GraphContext,
+    capture_quick_switch_slot, slot_for_context, AppState, GraphContext, GraphSlot,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::sync::Arc;
-use std::time::Instant;
-use tauri::{Emitter, Manager, State, WebviewWindow};
-use tine_core::date::JournalDate;
-use tine_core::journal_feed::{collect_journal_feed_page, journal_feed_candidate_in_window};
+use tauri::{State, WebviewWindow};
 use tine_core::model::{
-    BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
+    AssetInfo, BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
 };
-#[tauri::command]
-pub(crate) fn load_workspaces(
-    app: tauri::AppHandle,
-    state: GraphContext<'_>,
-) -> Result<String, CommandError> {
-    crate::settings::load_workspaces(app, state).map_err(CommandError::prose)
+use tine_graph_features::journals::{self, JournalFilenameMigration};
+use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
+use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
+#[cfg(test)]
+use tine_store::{SaveOutcome, SavePagesOutcome};
+mod discovery;
+mod save_wire;
+use discovery::{page_inventory_wire, resolve_name, PageInventoryWire};
+use save_wire::SavePagesWire;
+#[cfg(test)]
+use save_wire::{save_outcome_to_wire, save_pages_outcome_to_wire};
+
+fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
+    tine_graph_features::assets::error_for_user(&slot.store, error)
+}
+fn feature_pdf_error(error: std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+        "conflict".to_string()
+    } else {
+        error.to_string()
+    }
 }
 
-#[tauri::command]
-pub(crate) fn save_workspaces(
-    data: String,
-    app: tauri::AppHandle,
-    state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    crate::settings::save_workspaces(data, app, state).map_err(CommandError::prose)
+#[derive(Serialize)]
+pub(crate) struct PageWire {
+    id: String,
+    #[serde(flatten)]
+    doc: PageDto,
 }
 
-const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
-const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
-const AUTOCOMPLETE_FACET_MAX_ITEMS: usize = 2_000;
-const AUTOCOMPLETE_FACET_MAX_BYTES: usize = 2 * 1024 * 1024;
-const QUERY_EXPORT_MAX_QUERIES: usize = 64;
-const QUERY_EXPORT_REQUEST_MAX_QUERIES: usize = 1_024;
-const QUERY_EXPORT_MAX_QUERY_BYTES: usize = 64 * 1024;
-const QUERY_EXPORT_MAX_ROOTS: usize = 50;
-const QUERY_EXPORT_MAX_NODES: usize = 2_000;
-const QUERY_EXPORT_MAX_BYTES: usize = 8 * 1024 * 1024;
+impl std::ops::Deref for PageWire {
+    type Target = PageDto;
 
-fn validate_query_source(query: &str) -> Result<(), CommandError> {
-    if !tine_core::query::query_source_within_limit(query) {
-        return Err(CommandError::coded(
-            "query-too-large",
-            format!(
-                "query source is {} bytes (limit: {} bytes)",
-                query.len(),
-                tine_core::query::QUERY_SOURCE_MAX_BYTES
-            ),
-        ));
+    fn deref(&self) -> &PageDto {
+        &self.doc
     }
-    if !tine_core::query::query_nesting_within_limit(query) {
-        return Err(CommandError::coded(
-            "query-nesting-too-deep",
-            "simplify nested boolean clauses",
-        ));
-    }
-    Ok(())
 }
 
-fn enforce_result_bridge_budget(groups: &[RefGroup]) -> Result<(), CommandError> {
-    let rows = groups.iter().map(|group| group.blocks.len()).sum::<usize>();
-    let bytes = tine_core::model::ref_groups_estimated_bytes(groups);
-    if rows > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES {
-        return Err(CommandError::coded(
-            "result-too-large",
-            format!("{rows} matching blocks (~{bytes} bytes); narrow the query or add (sample N) (limits: {RESULT_BRIDGE_MAX_ROWS} blocks / {RESULT_BRIDGE_MAX_BYTES} bytes)"),
-        ));
+fn page_dto(read: tine_store::PageRead) -> PageWire {
+    let mut doc = read.doc;
+    doc.rev = Some(read.rev.into());
+    doc.read_only = read.read_only.is_some();
+    PageWire {
+        id: read.id.into(),
+        doc,
     }
-    Ok(())
 }
 
-fn bounded_groups_or_error(
-    result: tine_core::model::BoundedRefGroups,
-) -> Result<Arc<Vec<RefGroup>>, CommandError> {
-    if result.exceeded {
-        return Err(CommandError::coded(
-            "result-too-large",
-            format!("{} matching blocks; narrow the query or add (sample N) (construction limits: {RESULT_BRIDGE_MAX_ROWS} blocks / {RESULT_BRIDGE_MAX_BYTES} bytes)", result.total),
-        ));
-    }
-    Ok(result.groups)
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ResolvedWire {
+    Existing { id: String, others: Vec<String> },
+    Alias { owners: Vec<String> },
+    Absent { id: String },
 }
 
-fn enforce_query_execution_budget(
-    execution: &tine_core::query_plan::QueryExecution,
-) -> Result<(), CommandError> {
-    use tine_core::query_plan::QueryHit;
-    let bytes = execution.hits.iter().fold(0usize, |total, hit| {
-        total.saturating_add(match hit {
-            QueryHit::Page {
-                page,
-                display_text,
-                evidence,
-                matched_alias,
-                row,
-                ..
-            } => {
-                page.name.len()
-                    + page.rel_path.len()
-                    + display_text.len()
-                    + matched_alias.as_ref().map_or(0, String::len)
-                    + evidence.len() * 128
-                    // The hydrated page row is real payload crossing the same
-                    // bridge, so it is counted here. A Display setting cannot
-                    // buy capacity the ceiling does not have.
-                    + row.as_ref().map_or(0, |row| {
-                        row.name.len()
-                            + row.path.len()
-                            + row
-                                .properties
-                                .iter()
-                                .map(|(name, value)| name.len() + value.len() + 8)
-                                .sum::<usize>()
-                    })
-                    + 256
-            }
-            QueryHit::Block {
-                page,
-                block,
-                display_text,
-                evidence,
-                ..
-            } => {
-                page.len()
-                    + tine_core::model::block_dto_estimated_bytes(block)
-                    + display_text.len()
-                    + evidence.len() * 128
-                    + 256
-            }
-        })
-    });
-    if execution.hits.len() > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES {
-        return Err(CommandError::coded(
-            "result-too-large",
-            format!("{} search hits (~{bytes} bytes); narrow the search (limits: {RESULT_BRIDGE_MAX_ROWS} hits / {RESULT_BRIDGE_MAX_BYTES} bytes)", execution.hits.len()),
-        ));
+impl From<Resolved> for ResolvedWire {
+    fn from(value: Resolved) -> Self {
+        Self::from(&value)
     }
-    Ok(())
+}
+
+impl From<&Resolved> for ResolvedWire {
+    fn from(value: &Resolved) -> Self {
+        let id = |id: &PageId| id.as_str().to_owned();
+        match value {
+            Resolved::Existing { id: first, others } => Self::Existing {
+                id: id(first),
+                others: others.iter().map(id).collect(),
+            },
+            Resolved::Alias { owners } => Self::Alias {
+                owners: owners.iter().map(id).collect(),
+            },
+            Resolved::Absent { id: absent } => Self::Absent { id: id(absent) },
+        }
+    }
+}
+
+fn store_error(error: StoreError) -> String {
+    match error {
+        StoreError::NotFound => std::io::ErrorKind::NotFound.to_string(),
+        StoreError::InvalidTarget(_) | StoreError::PageSource(_) | StoreError::StreamSymlink(_) => {
+            "invalid page path".into()
+        }
+        StoreError::Undecodable => "stream did not contain valid UTF-8".into(),
+        StoreError::Unparseable(reason) => reason,
+        StoreError::TooLarge { .. } => "asset-too-large".into(),
+        StoreError::Io(error) => error.to_string(),
+        StoreError::Closed => "store closed".into(),
+    }
+}
+
+fn asset_error(error: StoreError) -> String {
+    match error {
+        StoreError::NotFound => std::io::Error::from_raw_os_error(2).to_string(),
+        StoreError::InvalidTarget(_) | StoreError::PageSource(_) | StoreError::StreamSymlink(_) => {
+            "invalid asset".into()
+        }
+        StoreError::TooLarge { .. } => "asset-too-large".into(),
+        other => store_error(other),
+    }
+}
+
+pub(crate) fn sync_conflict_error(error: std::io::Error) -> String {
+    if error.get_ref().is_some_and(|e| e.is::<IncompleteTx>()) {
+        return error.to_string();
+    }
+    if error.kind() == std::io::ErrorKind::AlreadyExists {
+        "conflict".into()
+    } else {
+        format!("io:{:?}", error.kind())
+    }
+}
+
+fn feature_asset_access_error(error: tine_graph_features::assets::AssetAccessError) -> String {
+    match error {
+        tine_graph_features::assets::AssetAccessError::BadName => "bad asset name".into(),
+        tine_graph_features::assets::AssetAccessError::StreamSymlink => {
+            "asset symlinks cannot be streamed".into()
+        }
+        tine_graph_features::assets::AssetAccessError::Store(error) => asset_error(error),
+    }
+}
+
+fn asset_handoff_target(slot: &GraphSlot, name: &str) -> Result<std::path::PathBuf, String> {
+    tine_graph_features::assets::path_for_os_handoff(&slot.store, name)
+        .map_err(feature_asset_access_error)
+}
+
+fn feature_page_read_error(error: tine_graph_features::pages::PageReadError) -> String {
+    match error {
+        tine_graph_features::pages::PageReadError::Load(error) => format!("{error:?}"),
+        tine_graph_features::pages::PageReadError::Source(reason) => reason,
+        tine_graph_features::pages::PageReadError::Store(error) => store_error(error),
+        tine_graph_features::pages::PageReadError::EmptyAlias => "alias has no owner".into(),
+    }
 }
 
 #[cfg(test)]
-mod result_bridge_budget_tests {
-    use super::{
-        enforce_result_bridge_budget, validate_query_source, RESULT_BRIDGE_MAX_BYTES,
-        RESULT_BRIDGE_MAX_ROWS,
-    };
-    use tine_core::{BlockDto, PageKind, RefGroup};
+mod device_read_tests {
+    use super::*;
 
-    fn group(blocks: Vec<BlockDto>) -> RefGroup {
-        RefGroup {
-            page: "Budget".into(),
-            kind: PageKind::Page,
-            blocks,
-            evidence: Vec::new(),
+    #[test]
+    fn read_text_file_refuses_bound_graph_csv() {
+        let temp = tempfile::tempdir().unwrap();
+        let graph = temp.path().join("graph");
+        std::fs::create_dir_all(graph.join("pages")).unwrap();
+        let csv = graph.join("private.csv");
+        std::fs::write(&csv, "secret").unwrap();
+        let state = test_bound_state(&graph);
+        assert!(read_text_file_from_path(&csv, &state).is_err());
+        assert!(read_text_file_from_path(&graph.join("pages/../private.csv"), &state).is_err());
+        #[cfg(unix)]
+        {
+            let alias = temp.path().join("alias.csv");
+            std::os::unix::fs::symlink(&csv, &alias).unwrap();
+            assert!(read_text_file_from_path(&alias, &state).is_err());
         }
     }
 
     #[test]
-    fn rejects_oversized_result_count_before_ipc() {
-        let groups = [group(vec![BlockDto::default(); RESULT_BRIDGE_MAX_ROWS + 1])];
-        assert!(enforce_result_bridge_budget(&groups)
-            .unwrap_err()
-            .to_string()
-            .starts_with("result-too-large:"));
+    fn read_local_image_requires_a_bound_root_check_before_metadata() {
+        let source = include_str!("commands.rs");
+        let image = source
+            .rsplit("pub(crate) fn read_local_image(")
+            .next()
+            .unwrap();
+        let image = image
+            .split("pub(crate) async fn import_asset(")
+            .next()
+            .unwrap();
+        assert!(image.contains("refuse_bound_graph_path"));
+    }
+
+    fn test_bound_state(root: &std::path::Path) -> AppState {
+        let (store, _, _) =
+            tine_store::Store::open(root, tine_store::OpenOptions::default()).unwrap();
+        let mut graphs = crate::state::GraphRegistry::default();
+        graphs
+            .bind(
+                "main".into(),
+                Arc::new(GraphSlot::new(store, root.to_path_buf())),
+            )
+            .unwrap();
+        AppState {
+            graphs: std::sync::RwLock::new(graphs),
+            graph_load: std::sync::Mutex::new(()),
+            last_focused: std::sync::Mutex::new(None),
+            capture_graph: std::sync::Mutex::new(Default::default()),
+            #[cfg(desktop)]
+            next_window: std::sync::atomic::AtomicU64::new(1),
+        }
     }
 
     #[test]
-    fn rejects_oversized_result_bytes_before_ipc() {
-        let mut block = BlockDto::default();
-        block.raw = "x".repeat(RESULT_BRIDGE_MAX_BYTES + 1);
-        assert!(enforce_result_bridge_budget(&[group(vec![block])])
-            .unwrap_err()
-            .to_string()
-            .starts_with("result-too-large:"));
-    }
-
-    #[test]
-    fn rejects_oversized_query_source_before_cache_or_parser() {
-        let source = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
-        assert!(validate_query_source(&source)
-            .unwrap_err()
-            .to_string()
-            .starts_with("query-too-large:"));
-
-        let nested = format!("{}(task TODO){}", "(and ".repeat(65), ")".repeat(65));
-        assert!(validate_query_source(&nested)
-            .unwrap_err()
-            .to_string()
-            .starts_with("query-nesting-too-deep:"));
+    fn read_local_image_refuses_bound_graph_through_alias_and_parent() {
+        let temp = tempfile::tempdir().unwrap();
+        let graph = temp.path().join("graph");
+        std::fs::create_dir_all(graph.join("pages")).unwrap();
+        let image = graph.join("pages/private.png");
+        std::fs::write(&image, b"private").unwrap();
+        let state = test_bound_state(&graph);
+        assert!(
+            refuse_bound_graph_path(&graph.join("pages/../pages/private.png"), &state).is_err()
+        );
+        #[cfg(unix)]
+        {
+            let alias = temp.path().join("alias.png");
+            std::os::unix::fs::symlink(&image, &alias).unwrap();
+            assert!(refuse_bound_graph_path(&alias, &state).is_err());
+        }
     }
 }
 
-/// Write a PNG image to the OS clipboard. The lightbox encodes the shown image to
-/// PNG and sends the bytes. On Linux we prefer `wl-copy`/`xclip` (see above) and
-/// fall back to the Tauri clipboard plugin; elsewhere the plugin is reliable.
-/// Decode a base64 asset payload. The frontend sends bytes as one base64 string
-/// rather than a JSON number[] (which inflated the IPC payload ~4-5x and forced a
-/// per-element parse + a giant throwaway array on the webview thread).
-const ASSET_INGRESS_MAX_BYTES: usize = 64 * 1024 * 1024;
-
-fn decoded_base64_len(input: &str) -> Option<usize> {
-    if input.len() % 4 != 0 {
-        return None;
-    }
-    let padding = input
-        .as_bytes()
+fn refuse_bound_graph_path(
+    path: &std::path::Path,
+    state: &AppState,
+) -> Result<std::path::PathBuf, String> {
+    let resolved = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
+    if state
+        .graphs
+        .read()
+        .unwrap()
+        .entries()
         .iter()
-        .rev()
-        .take_while(|byte| **byte == b'=')
-        .count()
-        .min(2);
-    input
-        .len()
-        .checked_div(4)?
-        .checked_mul(3)?
-        .checked_sub(padding)
+        .any(|(_, slot)| resolved.starts_with(&slot.root_key))
+    {
+        return Err("device read of a bound graph file is forbidden; use tine-store".into());
+    }
+    Ok(resolved)
 }
 
-pub(crate) fn decode_asset_b64(b64: &str) -> Result<Vec<u8>, CommandError> {
-    use base64::Engine;
-    let max_encoded = ASSET_INGRESS_MAX_BYTES.div_ceil(3) * 4;
-    if b64.len() > max_encoded
-        || decoded_base64_len(b64).is_some_and(|len| len > ASSET_INGRESS_MAX_BYTES)
-    {
-        return Err(CommandError::prose(
-            "asset payload exceeds 64 MiB ingress limit",
-        ));
+mod query_error_wire;
+use query_error_wire::{query_error, reference_error};
+
+#[tauri::command]
+pub(crate) fn load_workspaces(
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<String, String> {
+    crate::settings::load_workspaces(app, state)
+}
+
+#[tauri::command]
+pub(crate) async fn save_workspaces(
+    data: String,
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<crate::settings::WorkspaceSaveOutcome, String> {
+    crate::settings::save_workspaces(data, app, state).await
+}
+
+fn feature_search_error(error: tine_graph_features::search::SearchError) -> String {
+    match error {
+        tine_graph_features::search::SearchError::Load(error) => {
+            format!("graph load failed: {error:?}")
+        }
+        tine_graph_features::search::SearchError::Query(error) => query_error(error),
     }
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(b64)
-        .map_err(|error| CommandError::coded("bad base64 asset payload", error.to_string()))?;
-    if decoded.len() > ASSET_INGRESS_MAX_BYTES {
-        return Err(CommandError::prose(
-            "asset payload exceeds 64 MiB ingress limit",
-        ));
-    }
-    Ok(decoded)
 }
 
 #[cfg(test)]
-mod asset_ingress_tests {
-    use super::{decoded_base64_len, ASSET_INGRESS_MAX_BYTES};
+mod result_bridge_budget_tests {
+    use super::query_error;
+    use tine_store::{Budget, QueryError};
 
     #[test]
-    fn base64_size_gate_accounts_for_padding_before_decode() {
-        let encoded = ASSET_INGRESS_MAX_BYTES.div_ceil(3) * 4;
-        assert!(encoded / 4 * 3 > ASSET_INGRESS_MAX_BYTES);
-        assert_eq!(decoded_base64_len("AAAA"), Some(3));
-        assert_eq!(decoded_base64_len("AA=="), Some(1));
-        assert_eq!(decoded_base64_len("AAA="), Some(2));
+    fn moved_read_errors_keep_the_existing_wire_text() {
+        assert_eq!(
+            query_error(QueryError::RequestTooLarge {
+                what: Budget::BacklinkFilterRoots,
+                count: 20_001,
+                limit: 20_000,
+            }),
+            "too many backlink filter roots: 20001 (limit: 20000)"
+        );
+        assert_eq!(
+            query_error(QueryError::ExportRequestTooLarge {
+                macros: 1_025,
+                bytes: 12,
+                macro_limit: 1_024,
+                byte_limit: 65_536,
+                processing_cap: 64,
+            }),
+            "query-export-request-too-large: 1025 macros / 12 bytes (request limits: 1024 macros / 65536 bytes; processing cap: 64 macros)"
+        );
+        assert_eq!(
+            query_error(QueryError::ResultTooLarge {
+                what: Budget::BridgeMatchingBlocks,
+                count: 5,
+                limit: 20_000,
+                bytes: Some(33_554_433),
+                byte_limit: 33_554_432,
+            }),
+            "result-too-large: 5 matching blocks (~33554433 bytes); narrow the query or add (sample N) (limits: 20000 blocks / 33554432 bytes)"
+        );
+        assert_eq!(
+            query_error(QueryError::bridge_search_hits(20_001, 10).unwrap()),
+            "result-too-large: 20001 search hits (~10 bytes); narrow the search (limits: 20000 hits / 33554432 bytes)"
+        );
     }
 }
 
-/// Save transport result. Includes the activation at its resolved target when
-/// an absent editor successfully becomes present.
-#[derive(Serialize)]
-pub(crate) struct SavePageResult {
-    revision: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    activation: Option<tine_core::EditorActivationHandle>,
-}
+mod asset_ingress;
+pub(crate) use asset_ingress::decode_asset_b64;
 
+/// The whole name inventory: physical pages and journals, aliases, and names
+/// that are only referenced. A thin adapter over `WholeGraph::inventory`; the
+/// frontend caches it in `pageIndex.ts` and keeps no other name map.
+///
+/// Graph-wide off-thread; unreadable files are listed, never fail the inventory.
 #[tauri::command]
-pub(crate) async fn list_pages(state: GraphContext<'_>) -> Result<Vec<PageEntry>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+pub(crate) async fn page_inventory(state: GraphContext<'_>) -> Result<PageInventoryWire, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            graph.list_pages()
-        })
+        slot.store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))
+            .map(|view| page_inventory_wire(&view))
     })
     .await
-    .map_err(CommandError::worker)?
-}
-
-#[tauri::command]
-pub(crate) async fn referenced_page_names(
-    known_digest: Option<u64>,
-    state: GraphContext<'_>,
-) -> Result<tine_core::ReferencedPageNames, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            Ok(graph.referenced_page_names_versioned(known_digest))
-        })?
-    })
-    .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 #[derive(Serialize)]
 pub(crate) struct JournalFeedPage {
-    pages: Vec<PageDto>,
+    pages: Vec<PageWire>,
     next_before_day: Option<i64>,
     done: bool,
     as_of_day: i64,
+    /// Journals this page skipped as unreadable (`path: reason`); omitted when
+    /// none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unreadable: Vec<String>,
 }
 
-/// The Journals feed: one window selected from the warmed page cache through
-/// the `tine_core::journal_feed` rules, so a feed open costs a window lookup
-/// plus `limit` page loads rather than the complete page inventory.
+/// Feed-only pagination by ordinal day.
 #[tauri::command]
 pub(crate) async fn journal_feed_page(
     limit: usize,
     before_day: Option<i64>,
     state: GraphContext<'_>,
-) -> Result<JournalFeedPage, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<JournalFeedPage, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            let as_of_day = JournalDate::today().ordinal_key();
-            {
-                let entries =
-                    graph.feed_journals_desc_through(JournalDate::from_ordinal(as_of_day));
-                let selection = collect_journal_feed_page(
-                    entries.into_iter().filter(|entry| {
-                        journal_feed_candidate_in_window(entry, as_of_day, before_day)
-                    }),
-                    limit,
-                    // A journal deleted from disk between selection and load is
-                    // skipped, but its day still advances the cursor.
-                    |entry| graph.load_page(entry),
-                )
-                .map_err(CommandError::prose)?;
-                Ok(JournalFeedPage {
-                    pages: selection.pages,
-                    next_before_day: selection.next_before_day,
-                    done: selection.done,
-                    as_of_day,
-                })
-            }
-        })?
+        let feed = tine_graph_features::journals::feed_page(&slot.store, limit, before_day)
+            .map_err(|error| error.to_string())?;
+        Ok(JournalFeedPage {
+            pages: feed.pages.into_iter().map(page_dto).collect(),
+            next_before_day: feed.next_before_day,
+            done: feed.done,
+            as_of_day: feed.as_of_day,
+            unreadable: feed.unreadable,
+        })
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
-
 #[tauri::command]
 pub(crate) async fn get_page(
     name: String,
     kind: PageKind,
     state: GraphContext<'_>,
-) -> Result<Option<PageDto>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<Option<PageWire>, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            graph.load_named(&name, kind).map_err(CommandError::from)
-        })?
+        tine_graph_features::pages::get_page(&slot.store, &name, kind)
+            .map(|read| read.map(page_dto))
+            .map_err(feature_page_read_error)
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
-/// One raw source file of the open graph, for the in-app lsdoc↔mldoc diff panel.
-#[derive(serde::Serialize)]
-pub(crate) struct GraphSourceFile {
-    /// graph-root-relative, forward-slashed path (stable id shown in the report)
-    rel: String,
-    /// the file's raw UTF-8 text (fed to both parsers exactly as on disk)
-    text: String,
-    /// "md" | "org" — selects the parser grammar
-    format: String,
-    bytes: u64,
+/// Waits for the initial load, so it runs on the blocking pool.
+#[tauri::command]
+pub(crate) async fn resolve_page(
+    name: String,
+    kind: PageKind,
+    state: GraphContext<'_>,
+) -> Result<ResolvedWire, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        slot.store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))
+            .map(|view| resolve_name(view, &name, kind == PageKind::Journal))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Raw text of every Markdown/Org file in the open graph (`pages/`, plus
 /// `journals/` when `include_journals`), for the "Help improve Tine" diff panel.
 /// Mirrors `lsdoc/tools/graph-check.mjs`'s file scan: skips files over 8 MB, tags
 /// format by extension, returns graph-root-relative paths sorted for stable
-/// output. Read-only and local — the panel makes no network calls.
+/// output, and names every file it skipped. Read-only and local — the panel
+/// makes no network calls.
 #[tauri::command]
 pub(crate) async fn graph_source_files(
     include_journals: bool,
     state: GraphContext<'_>,
-) -> Result<Vec<GraphSourceFile>, CommandError> {
-    const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<tine_graph_features::sources::GraphSources, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let g = slot_for_bound_window(&state, &label, Some(binding_generation))?.graph();
-        let mut out: Vec<GraphSourceFile> = Vec::new();
-        let mut roots = vec![g.pages_path()];
-        if include_journals {
-            roots.push(g.journals_path());
-        }
-        for root in roots {
-            collect_graph_text(&g, &root, MAX_FILE_BYTES, &mut out);
-        }
-        out.sort_by(|a, b| a.rel.cmp(&b.rel));
-        Ok(out)
+        tine_graph_features::sources::graph_source_files(&slot.store, include_journals)
+            .map_err(|error| error.to_string())
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
-mod direct_save_helpers;
-
-pub(crate) use direct_save_helpers::direct_save_error_message;
-use direct_save_helpers::{collect_graph_text, report_direct_save_diagnostics};
-
-#[tauri::command]
-pub(crate) async fn save_page(
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SavePageEntry {
+    id: String,
     page: PageDto,
     base_rev: Option<String>,
-    force: Option<bool>,
-    // Which conflict observation a forced save is answering. Required for a
-    // force; a request that cannot name one is refused rather than allowed to
-    // consume whatever authority happens to be current (GH #254 increment 2,
-    // adversarial implementation verification, finding 1).
-    conflict_epoch: Option<u64>,
-    state: GraphContext<'_>,
-) -> Result<SavePageResult, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let benchmark_started = std::env::var_os("TINE_ISSUE248_BENCH").map(|_| Instant::now());
-        let result = {
-            let state = app.state::<AppState>();
-            let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-            {
-                let graph = slot.graph();
-                let first_save_activation = base_rev
-                    .is_none()
-                    .then_some(page.activation)
-                    .flatten()
-                    .map(tine_core::EditorActivation::from_u64);
-                // Always timed, not just under the issue-248 benchmark env
-                // var. A save that takes minutes is the thing users report,
-                // and a measurement that only exists when someone thought to
-                // set an environment variable beforehand is not available at
-                // the moment it is needed.
-                let started = Instant::now();
-                let result = if force.unwrap_or(false) {
-                    match conflict_epoch {
-                        Some(observation_epoch) => graph.force_save_page_at_revision(
-                            &page,
-                            base_rev.as_deref(),
-                            tine_core::ConflictOverride { observation_epoch },
-                        ),
-                        None => Err(tine_core::model::DirectSaveError::into_io(
-                            tine_core::model::DirectSaveFailureCode::ConflictAuthoritySpent,
-                            std::io::Error::new(
-                                std::io::ErrorKind::PermissionDenied,
-                                "conflict override authority is missing or already consumed",
-                            ),
-                        )),
-                    }
-                } else {
-                    graph.save_page(&page, base_rev.as_deref())
-                };
-                let elapsed = started.elapsed();
-                if benchmark_started.is_some() {
-                    let _ = app.emit_to(
-                        &label,
-                        "issue-248-legacy-save-page-ms",
-                        elapsed.as_secs_f64() * 1_000.0,
-                    );
-                }
-                report_direct_save_diagnostics(&graph, elapsed, result.as_ref().err());
-                result.map_err(direct_save_error_message).map(|revision| {
-                    let activation = first_save_activation
-                        .and_then(|activation| graph.finish_saved_editor_activation(activation));
-                    SavePageResult {
-                        revision,
-                        activation,
-                    }
-                })
-            }
-        };
-        if let Some(started) = benchmark_started {
-            let _ = app.emit_to(
-                &label,
-                "issue-248-backend-save-ms",
-                started.elapsed().as_secs_f64() * 1_000.0,
+    #[serde(default)]
+    force: bool,
+    kinds: Vec<tine_store::EditKind>,
+}
+
+fn log_save_kinds(entries: &[SavePageEntry]) {
+    if crate::debug::debug_enabled() {
+        for entry in entries {
+            crate::debug::diag_private(
+                "edit-kinds",
+                format!("{}: {:?}", entry.page.name, entry.kinds),
             );
         }
-        result
+    }
+}
+
+/// Require a current graph binding and nonempty edit kinds, then prepare
+/// bases and run one ordered guarded page transaction. A missing/stale
+/// binding or empty kinds returns command Err; preparation and transaction
+/// failures return a Failed wire value. Force reads current UTF-8 bytes for
+/// each affected base. Empty input returns Failed at placeholder index 0.
+/// A failed or slow call is recorded as a fixed-shape `direct.save` event.
+///
+/// The transaction takes the store writer, which waits behind a watcher cycle
+/// or a checkpoint capture, so it runs on the blocking pool (R3, og-flow3; the
+/// shape of 96531bd2a). Save ordering is unchanged: the frontend serializes
+/// each page's saves (and a group behind its members) and issues `save_pages`
+/// through its ordered lane, and the per-page base-revision guard inside
+/// `save_pages_wire` is untouched.
+#[tauri::command]
+pub(crate) async fn save_pages(
+    entries: Vec<SavePageEntry>,
+    state: GraphContext<'_>,
+) -> Result<SavePagesWire, String> {
+    let slot = slot_for_context(&state)?;
+    if entries.iter().any(|entry| entry.kinds.is_empty()) {
+        return Err("OG-RULES Rule 8: every page write declares a non-empty edit kind list; exemplar src/document/save/engine.ts".into());
+    }
+    log_save_kinds(&entries);
+    let entries: Vec<_> = entries
+        .into_iter()
+        .map(|entry| {
+            (
+                PageId::from(entry.id),
+                entry.page,
+                entry.base_rev,
+                entry.force,
+                entry.kinds,
+            )
+        })
+        .collect();
+    crate::state::off_ui(move || {
+        Ok(save_wire::save_pages_wire(
+            &slot.store,
+            &entries,
+            tine_graph_features::pages::save_pages,
+        ))
     })
     .await
-    .map_err(CommandError::worker)?
+}
+
+#[cfg(test)]
+mod save_wire_tests {
+    use super::*;
+
+    #[test]
+    fn save_wire_families_are_distinct() {
+        const RULE: &str = "I-9: save failure families stay fixed while recovery locations remain explicit; exemplar commands::save_outcome_to_wire";
+        assert_eq!(
+            save_outcome_to_wire(SaveOutcome::Conflict {
+                disk: String::from("rev").into()
+            }),
+            Err("conflict".into()),
+            "{RULE}"
+        );
+        assert_eq!(
+            save_outcome_to_wire(SaveOutcome::Deleted),
+            Err("deleted".into()),
+            "{RULE}"
+        );
+        assert_eq!(
+            save_outcome_to_wire(SaveOutcome::Twin {
+                existing: PageId::from("pages/secret.md".to_string())
+            }),
+            Err("twin".into()),
+            "{RULE}"
+        );
+        assert_eq!(
+            save_outcome_to_wire(SaveOutcome::Io(
+                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/secret/path").into()
+            )),
+            Err("io:PermissionDenied".into()),
+            "{RULE}"
+        );
+        let wire = save_pages_outcome_to_wire(SavePagesOutcome::Failed {
+            index: 2,
+            outcome: SaveOutcome::Repeated,
+            undo_failed: vec![tine_store::FileId::from("pages/A.md".to_string())],
+            publication_errors: Vec::new(),
+        });
+        let encoded = serde_json::to_string(&wire).unwrap();
+        assert_eq!(
+            encoded, r#"{"failed":{"index":2,"family":"repeated","undoFailed":["pages/A.md"]}}"#,
+            "{RULE}"
+        );
+        let incomplete = save_pages_outcome_to_wire(SavePagesOutcome::Failed {
+            index: 0,
+            outcome: SaveOutcome::Io(std::io::Error::other("publication failed").into()),
+            undo_failed: Vec::new(),
+            publication_errors: vec![tine_store::FileId::from("pages/A.md".to_string())],
+        });
+        assert_eq!(
+            serde_json::to_string(&incomplete).unwrap(),
+            r#"{"failed":{"index":0,"family":"publication-incomplete","undoFailed":[],"publicationErrors":["pages/A.md"]}}"#,
+            "{RULE}"
+        );
+        let families = [
+            (
+                SaveOutcome::Conflict {
+                    disk: "private-rev".to_string().into(),
+                },
+                "conflict",
+            ),
+            (SaveOutcome::Deleted, "deleted"),
+            (
+                SaveOutcome::Twin {
+                    existing: PageId::from("pages/private-title.md"),
+                },
+                "twin",
+            ),
+            (SaveOutcome::Repeated, "repeated"),
+            (SaveOutcome::ReadOnly("private title".into()), "read-only"),
+            (
+                SaveOutcome::InvalidTarget("/private/path".into()),
+                "invalid-target",
+            ),
+            (SaveOutcome::Closed, "closed"),
+            (
+                SaveOutcome::Io(
+                    std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/private/path")
+                        .into(),
+                ),
+                "io:PermissionDenied",
+            ),
+        ];
+        // R-CREATE-UNREADABLE-OWNER: its own family, and the unreadable file
+        // travels as an explicit recovery location the toast can name.
+        let owner = serde_json::to_string(&save_pages_outcome_to_wire(SavePagesOutcome::Failed {
+            index: 0,
+            outcome: SaveOutcome::UnreadableOwner {
+                file: tine_store::FileId::from("pages/Other.md".to_string()),
+            },
+            undo_failed: Vec::new(),
+            publication_errors: Vec::new(),
+        }))
+        .unwrap();
+        assert_eq!(
+            owner,
+            r#"{"failed":{"index":0,"family":"unreadable-owner","undoFailed":[],"unreadableOwner":"pages/Other.md"}}"#,
+            "{RULE}"
+        );
+        let mut seen = std::collections::HashSet::new();
+        assert!(seen.insert("unreadable-owner"), "{RULE}");
+        for (outcome, family) in families {
+            let encoded =
+                serde_json::to_string(&save_pages_outcome_to_wire(SavePagesOutcome::Failed {
+                    index: 1,
+                    outcome,
+                    undo_failed: vec![tine_store::FileId::from("pages/A.md".to_string())],
+                    publication_errors: Vec::new(),
+                }))
+                .unwrap();
+            let rev_field = if family == "conflict" {
+                r#","diskRev":"private-rev""#
+            } else {
+                ""
+            };
+            assert_eq!(
+                encoded,
+                format!(
+                    r#"{{"failed":{{"index":1,"family":"{family}"{rev_field},"undoFailed":["pages/A.md"]}}}}"#
+                ),
+                "{RULE}"
+            );
+            assert!(seen.insert(family), "{RULE}");
+        }
+        assert_eq!(
+            asset_error(StoreError::TooLarge { limit: 12, len: 13 }),
+            "asset-too-large",
+            "{RULE}"
+        );
+        assert_eq!(
+            read_asset_error(tine_graph_features::assets::AssetAccessError::Store(
+                StoreError::NotFound
+            )),
+            "not-found",
+            "{RULE}"
+        );
+        assert_eq!(
+            sync_conflict_error(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "secret"
+            )),
+            "conflict",
+            "{RULE}"
+        );
+        assert_eq!(
+            sync_conflict_error(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "/secret/path"
+            )),
+            "io:PermissionDenied",
+            "{RULE}"
+        );
+    }
+    #[test]
+    fn fail_read_concord_adapter_keeps_recovery_evidence() {
+        let token = sync_conflict_error(std::io::Error::other(
+            tine_graph_features::IncompleteTransaction::Rollback(
+                "recovery: logseq/.tine-trash/a.md".into(),
+            ),
+        ));
+        assert!(
+            token.contains("rollback-incomplete"),
+            "I-2/I-9: an adapter must retain incomplete transaction evidence"
+        );
+        assert!(token.contains("logseq/.tine-trash/a.md"));
+    }
 }
 
 #[tauri::command]
-pub(crate) fn guide_pages() -> Result<Vec<tine_core::onboarding::GuidePage>, CommandError> {
-    tine_core::onboarding::bundled_guide_pages().map_err(CommandError::from)
-}
-
-pub(crate) fn copy_guide_into_bound_graph(
-    app: &tauri::AppHandle,
-    label: &str,
-    binding_generation: u64,
-    title: String,
-) -> Result<tine_core::onboarding::GuideCopyResult, CommandError> {
-    let state = app.state::<AppState>();
-    let slot = slot_for_bound_window(&state, label, Some(binding_generation))?;
-    {
-        let graph = slot.graph();
-        tine_core::onboarding::copy_guide_into_graph(&graph, &title).map_err(CommandError::from)
-    }
+pub(crate) fn guide_pages() -> Vec<tine_core::guide::GuidePage> {
+    tine_core::guide::bundled_guide_pages()
 }
 
 #[tauri::command]
 pub(crate) async fn copy_guide_into_graph(
     title: String,
     state: GraphContext<'_>,
-) -> Result<tine_core::onboarding::GuideCopyResult, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<tine_graph_features::guide::GuideCopyResult, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        copy_guide_into_bound_graph(&app, &label, binding_generation, title)
+        tine_graph_features::guide::copy_guide_into_graph(&slot.store, &title)
+            .map_err(|error| error.to_string())
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn get_backlinks(
     name: String,
     state: GraphContext<'_>,
-) -> Result<Arc<Vec<RefGroup>>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<Arc<Vec<RefGroup>>, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            bounded_groups_or_error(graph.backlinks_bounded_indexed(
-                &name,
-                RESULT_BRIDGE_MAX_ROWS,
-                RESULT_BRIDGE_MAX_BYTES,
-            )?)
-        })?
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        view.backlinks(&name).map_err(reference_error)
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn get_backlink_filter_context(
     name: String,
     targets: Vec<BacklinkFilterTarget>,
-    search: String,
     state: GraphContext<'_>,
-) -> Result<BacklinkFilterContext, CommandError> {
-    if targets.len() > RESULT_BRIDGE_MAX_ROWS {
-        return Err(CommandError::prose(format!(
-            "too many backlink filter roots: {} (limit: {RESULT_BRIDGE_MAX_ROWS})",
-            targets.len()
-        )));
-    }
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<BacklinkFilterContext, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            tine_core::query::backlink_filter_context(graph, &name, &targets, &search)
-        })?
-        .map_err(CommandError::from)
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        view.backlink_filter_context(&name, &targets)
+            .map_err(query_error)
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn get_unlinked_refs(
     name: String,
     state: GraphContext<'_>,
-) -> Result<Arc<Vec<RefGroup>>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<Arc<Vec<RefGroup>>, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            bounded_groups_or_error(graph.unlinked_refs_bounded_indexed(
-                &name,
-                RESULT_BRIDGE_MAX_ROWS,
-                RESULT_BRIDGE_MAX_BYTES,
-            )?)
-        })?
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        view.unlinked_references(&name).map_err(reference_error)
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 /// `block uuid → # of referrers` over the whole graph (drives the per-block
@@ -592,17 +737,16 @@ pub(crate) async fn get_unlinked_refs(
 #[tauri::command]
 pub(crate) async fn block_ref_counts(
     state: GraphContext<'_>,
-) -> Result<Arc<std::collections::HashMap<String, usize>>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<Arc<std::collections::HashMap<String, usize>>, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            graph.block_ref_counts()
-        })?
-        .map_err(CommandError::from)
+        slot.store
+            .whole_graph()
+            .map(|view| view.block_ref_counts())
+            .map_err(|e| format!("graph load failed: {e:?}"))
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 /// The blocks that reference block `uuid`, grouped by page (the badge's referrers
@@ -611,45 +755,39 @@ pub(crate) async fn block_ref_counts(
 pub(crate) async fn block_referrers(
     uuid: String,
     state: GraphContext<'_>,
-) -> Result<Arc<Vec<RefGroup>>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<Arc<Vec<RefGroup>>, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            bounded_groups_or_error(graph.block_referrers_bounded(
-                &uuid,
-                RESULT_BRIDGE_MAX_ROWS,
-                RESULT_BRIDGE_MAX_BYTES,
-            ))
-        })?
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        view.block_referrers(&uuid).map_err(query_error)
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
-/// Deleting one page is graph-wide work: it re-derives the page inventory and
-/// rebuilds three O(pages) indexes. Measured at ~95 µs/file, linear — 757 ms at
-/// 8,006 files. This was the only such command still running on the command
-/// thread; its neighbours `get_page`, `save_page` and `rename_page` already
-/// cross the blocking pool, and the guard test below simply did not list it.
-/// (Direct Files perf audit, 2026-08-09, F3.)
 #[tauri::command]
 pub(crate) async fn delete_page(
     name: String,
     kind: PageKind,
     expected_path: Option<String>,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph()
-            .delete_page_expected(&name, kind, expected_path.as_deref())
-            .map_err(CommandError::from)
+        tine_graph_features::pages::delete_page_expected(
+            &slot.store,
+            &name,
+            kind,
+            expected_path.as_deref(),
+            None,
+        )
+        .map_err(|error| error.to_string())
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -657,56 +795,38 @@ pub(crate) async fn rename_page(
     old: String,
     new: String,
     expected_path: Option<String>,
+    merge_into: Option<String>,
     unsaved_paths: Option<Vec<String>>,
     state: GraphContext<'_>,
-) -> Result<tine_core::model::RenameOutcome, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<tine_graph_features::pages::RenameReport, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph()
-            .rename_page_guarded(
-                &old,
-                &new,
-                expected_path.as_deref(),
-                unsaved_paths.as_deref().unwrap_or_default(),
-            )
-            .map_err(CommandError::from)
+        tine_graph_features::pages::rename_or_merge_page(
+            &slot.store,
+            &old,
+            &new,
+            expected_path.as_deref(),
+            merge_into.as_deref(),
+            unsaved_paths.as_deref().unwrap_or_default(),
+        )
+        .map_err(|e| e.to_string())
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 #[cfg(test)]
 mod graph_wide_command_boundary_tests {
     #[test]
     fn expensive_reference_and_rename_commands_cross_the_blocking_pool() {
-        let source = crate::test_support::rust_module_production_source("commands.rs");
-        // `delete_page` was omitted here until the 2026-08-09 perf audit (F3)
-        // measured it at 757 ms on an 8,006-file graph, on the command thread.
+        let source = include_str!("commands.rs");
         for name in [
             "get_backlinks",
             "get_unlinked_refs",
-            "block_ref_counts",
-            "block_referrers",
-            "get_backlink_filter_context",
-            "list_templates",
-            "query_facets",
-            "run_query",
-            "run_advanced_query",
-            "export_query_subtrees",
-            "list_orphan_assets",
-            "open_pdf",
-            "page_print_html",
-            "run_graph_search",
-            "search",
-            "write_pdf_view_state",
             "rename_page",
             "delete_page",
             "merge_pages",
             "rename_file_to_page",
-            "trash_journal_file",
-            "resolve_sync_conflict",
         ] {
             let signature = format!("pub(crate) async fn {name}(");
             let start = source.find(&signature).expect("command stays async");
@@ -721,63 +841,13 @@ mod graph_wide_command_boundary_tests {
 }
 
 #[tauri::command]
-pub(crate) async fn publish_html(state: GraphContext<'_>) -> Result<(String, usize), CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+pub(crate) async fn publish_html(state: GraphContext<'_>) -> Result<(String, usize), String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph().publish_html().map_err(CommandError::from)
+        tine_graph_features::publish::publish_html(&slot.store).map_err(|error| error.to_string())
     })
     .await
-    .map_err(CommandError::worker)?
-}
-
-/// Plan a query export: resolve the pages that own the query's results, without
-/// writing anything. The dialog shows the plan and echoes its fingerprint back.
-#[tauri::command]
-pub(crate) async fn publish_query_plan(
-    request: tine_core::publish::query_export::QueryPublicationRequest,
-    state: GraphContext<'_>,
-) -> Result<tine_core::publish::query_export::QueryPublicationPlan, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        tine_core::publish::plan_query_publication(&*slot.graph(), &request)
-            .map_err(query_publication_error)
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// The frontend bundle this binary embeds, filtered to what a published
-/// export ships (`index.html` + `assets/*`). A dev build without embedded
-/// assets yields an empty bundle, which the exporter reports as a warning.
-mod publication_helpers;
-
-use publication_helpers::{embedded_app_bundle, query_publication_error};
-
-/// Commit a reviewed query export. `fingerprint` is the plan's; the export is
-/// refused if the reviewed page set moved.
-#[tauri::command]
-pub(crate) async fn publish_query(
-    mut request: tine_core::publish::query_export::QueryPublicationRequest,
-    fingerprint: String,
-    state: GraphContext<'_>,
-) -> Result<tine_core::publish::PublishOutcome, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    // Stage 2: the export also carries the read-only app — this binary's own
-    // embedded frontend. Tauri stores embedded assets compressed, so each
-    // shipped path is read back through the resolver, never from `iter()`.
-    request.app_bundle = Some(std::sync::Arc::new(embedded_app_bundle(&app)));
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        tine_core::publish::publish_query(&*slot.graph(), &request, &fingerprint)
-            .map_err(query_publication_error)
-    })
-    .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 /// Render one page to a self-contained HTML document (assets inlined, no sidebar)
@@ -786,52 +856,18 @@ pub(crate) async fn publish_query(
 #[tauri::command]
 pub(crate) async fn page_print_html(
     name: String,
-    opts: tine_core::publish::PrintOpts,
+    opts: tine_graph_features::print::PrintOpts,
+    sheets: Vec<tine_graph_features::SheetExport>,
     state: GraphContext<'_>,
-) -> Result<String, CommandError> {
-    fn print_error(error: tine_core::publish::PrintPreparationError) -> CommandError {
-        match error {
-            tine_core::publish::PrintPreparationError::Io(error) => CommandError::from(error),
-            tine_core::publish::PrintPreparationError::Query(error) => CommandError::from(error),
-            tine_core::publish::PrintPreparationError::Budget(message) => CommandError::tagged(
-                "query-unavailable",
-                Some("print_query_budget_exceeded"),
-                Some(serde_json::json!({ "message": message })),
-            ),
-        }
-    }
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<String, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph()
-            .page_print_html(&name, opts)
-            .map_err(print_error)?
-            .ok_or_else(|| CommandError::prose("no-page"))
+        tine_graph_features::print::page_print_html_with_sheets(&slot.store, &name, opts, sheets)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "no-page".to_string())
     })
     .await
-    .map_err(CommandError::worker)?
-}
-
-#[tauri::command]
-pub(crate) async fn run_query(
-    query: String,
-    state: GraphContext<'_>,
-) -> Result<Arc<Vec<RefGroup>>, CommandError> {
-    validate_query_source(&query)?;
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            bounded_groups_or_error(graph.run_query_bounded(
-                &query,
-                RESULT_BRIDGE_MAX_ROWS,
-                RESULT_BRIDGE_MAX_BYTES,
-            )?)
-        })?
-    })
-    .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 /// Resolve every query macro in one Copy / Export session under one cumulative
@@ -841,91 +877,26 @@ pub(crate) async fn run_query(
 pub(crate) async fn export_query_subtrees(
     specs: Vec<tine_core::query::QueryExportSpec>,
     state: GraphContext<'_>,
-) -> Result<tine_core::query::QueryExportBatch, CommandError> {
-    let query_bytes = specs.iter().fold(0usize, |total, spec| {
-        total
-            .saturating_add(spec.key.len())
-            .saturating_add(spec.query.len())
-    });
-    if specs.len() > QUERY_EXPORT_REQUEST_MAX_QUERIES || query_bytes > QUERY_EXPORT_MAX_QUERY_BYTES
-    {
-        return Err(CommandError::prose(format!(
-            "query-export-request-too-large: {} macros / {} bytes (request limits: {} macros / {} bytes; processing cap: {} macros)",
-            specs.len(),
-            query_bytes,
-            QUERY_EXPORT_REQUEST_MAX_QUERIES,
-            QUERY_EXPORT_MAX_QUERY_BYTES,
-            QUERY_EXPORT_MAX_QUERIES,
-        )));
-    }
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<tine_core::query::QueryExportBatch, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        let batch = {
-                let graph = slot.graph();
-                graph.export_query_subtrees(
-                    &specs,
-                    QUERY_EXPORT_MAX_QUERIES,
-                    QUERY_EXPORT_MAX_ROOTS,
-                    QUERY_EXPORT_MAX_NODES,
-                    QUERY_EXPORT_MAX_BYTES,
-                )?
-            };
-        let bytes = batch
-            .results
-            .iter()
-            .map(|result| {
-                result.key.len()
-                    + result
-                        .groups
-                        .iter()
-                        .map(|group| {
-                            tine_core::model::ref_groups_estimated_bytes(std::slice::from_ref(
-                                group,
-                            ))
-                        })
-                        .sum::<usize>()
-                    + 128
-            })
-            .sum::<usize>();
-        if bytes > QUERY_EXPORT_MAX_BYTES {
-            return Err(CommandError::prose(format!(
-                "query-export-result-too-large: ~{bytes} bytes (limit: {QUERY_EXPORT_MAX_BYTES} bytes)"
-            )));
-        }
-        Ok(batch)
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        view.export_query_subtrees(&specs).map_err(query_error)
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
-/// The Display half of a graph-search request (SPEC §7.6, Q3).
-///
-/// One optional trailing object, with every member optional: a caller that
-/// states nothing sends `null` and gets exactly the search it got before this
-/// packet. Members are serialized explicitly rather than flattened so the
-/// physical `QueryPageScope` — a different question, answered by a different
-/// request member — can never be confused with page MEMBERSHIP scope.
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct GraphSearchDisplayOptions {
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QueryPageScope {
+    name: String,
+    page_kind: PageKind,
     #[serde(default)]
-    page_match_scope: Option<tine_core::query::ir::FriendlyPageMatchScope>,
-    #[serde(default)]
-    page_view: Option<tine_core::query::ir::ViewSettings>,
-    #[serde(default)]
-    block_view: Option<tine_core::query::ir::ViewSettings>,
-}
-
-impl From<GraphSearchDisplayOptions> for tine_core::query_plan::FriendlyDisplayOptions {
-    fn from(options: GraphSearchDisplayOptions) -> Self {
-        Self {
-            page_match_scope: options.page_match_scope,
-            page_view: options.page_view,
-            block_view: options.block_view,
-        }
-    }
+    path: Option<String>,
 }
 
 #[tauri::command]
@@ -935,512 +906,221 @@ pub(crate) async fn run_graph_search(
     block_limit: usize,
     lane: Option<String>,
     explain: bool,
-    scope: Option<tine_core::query_plan::QueryPageScope>,
-    options: Option<GraphSearchDisplayOptions>,
-    consumer: Option<tine_core::query_plan::FriendlyConsumer>,
+    scope: Option<QueryPageScope>,
+    page_match_scope: Option<tine_core::query::ir::FriendlyPageMatchScope>,
+    page_view: Option<tine_core::query::ir::ViewSettings>,
+    block_view: Option<tine_core::query::ir::ViewSettings>,
     state: GraphContext<'_>,
-) -> Result<tine_core::query_plan::QueryExecution, CommandError> {
-    let display: tine_core::query_plan::FriendlyDisplayOptions = options.unwrap_or_default().into();
-    let consumer = consumer.unwrap_or_default();
-    let page_limit = page_limit.min(RESULT_BRIDGE_MAX_ROWS);
-    let block_limit = block_limit.min(RESULT_BRIDGE_MAX_ROWS - page_limit);
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    let execution = tauri::async_runtime::spawn_blocking(move || -> Result<_, CommandError> {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            (match lane.as_deref() {
-                Some(lane) => graph.run_graph_search_latest_displayed_for(
-                    lane,
-                    &source,
-                    page_limit,
-                    block_limit,
-                    scope.clone(),
-                    explain,
-                    display.clone(),
-                    consumer,
-                ),
-                None => graph.run_graph_search_displayed_for(
-                    &source,
-                    page_limit,
-                    block_limit,
-                    scope.clone(),
-                    explain,
-                    display.clone(),
-                    consumer,
-                ),
-            })
-            .map_err(CommandError::from)
-        })?
-    })
-    .await
-    .map_err(CommandError::worker)??;
-    enforce_query_execution_budget(&execution)?;
-    Ok(execution)
-}
-
-#[tauri::command]
-pub(crate) async fn run_advanced_query(
-    query: String,
-    current_page: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<tine_core::query::AdvancedResult, CommandError> {
-    validate_query_source(&query)?;
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<tine_core::query_plan::QueryExecution, String> {
+    let slot = slot_for_context(&state)?;
+    let scope = scope.map(|scope| tine_graph_features::search::Scope {
+        name: scope.name,
+        kind: scope.page_kind,
+        path: scope.path,
+    });
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            let (result, exceeded, total) = graph.run_advanced_query_bounded_cached(
-                &query,
-                current_page.as_deref(),
-                RESULT_BRIDGE_MAX_ROWS,
-                RESULT_BRIDGE_MAX_BYTES,
-            )?;
-            if exceeded {
-                Err(CommandError::prose(format!(
-                    "result-too-large: {total} advanced-query matches; narrow the query"
-                )))
-            } else {
-                Ok(result)
-            }
-        })?
+        tine_graph_features::search::run_graph_search(
+            &slot.store,
+            &slot.block_search_lanes,
+            source,
+            page_limit,
+            block_limit,
+            lane.as_deref(),
+            explain,
+            scope,
+            page_match_scope,
+            page_view,
+            block_view,
+        )
+        .map_err(feature_search_error)
     })
     .await
-    .map_err(CommandError::worker)?
-}
-
-// ---------------------------------------------------------------------------
-// The query-language command surface (SPEC §7.1).
-//
-// Six commands over ONE engine. `query_parse`, `query_print` and
-// `query_og_expressible` are pure functions of their arguments plus (for
-// suggestions) the graph's property registry; `query_registry`, `query_run` and
-// `query_explain_empty` read the graph. The old `run_query` /
-// `run_advanced_query` / `query_facets` / `export_query_subtrees` commands stay
-// and keep working: P0-ts moves the frontend, and their deletion is a P1 item.
-
-/// The INPUT a `query_parse` caller has, on the wire (SPEC §7.1), and the
-/// `{query, view}` pair it answers with. Both live in tine-core
-/// (`query::wire_parse`) because the query publisher bakes the exact
-/// `parseQuery` answer into an exported app; the command layer only re-exports
-/// them.
-pub(crate) use tine_core::query::wire_parse::{ParsedQuery, QueryTextDialect};
-
-/// The printed form a `query_print` caller wants (SPEC §4.3, §7.1).
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum QueryPrintDialect {
-    Og,
-    /// The text pane's multi-line editing layout.
-    Tql,
-    /// The persisted single-line `{{tine-query …}}` form.
-    TqlMacro,
-    /// A `{{query [:find …]}}` advanced macro, printed from its authored source.
-    AdvancedMacro,
-}
-
-fn core_print_dialect(dialect: QueryPrintDialect) -> tine_core::query::print::PrintDialect {
-    use tine_core::query::print::PrintDialect;
-    match dialect {
-        QueryPrintDialect::Og => PrintDialect::Og,
-        QueryPrintDialect::Tql => PrintDialect::Tql,
-        QueryPrintDialect::TqlMacro => PrintDialect::TqlMacro,
-        QueryPrintDialect::AdvancedMacro => PrintDialect::AdvancedMacro,
-    }
-}
-
-pub(crate) use tine_core::query::wire_parse::parse_query_pair;
-
-/// The whole of `query_print` that is not `#[tauri::command]`: print, and turn
-/// a printer refusal into the one `CommandError` carrying the diagnostic.
-fn print_query_text(
-    query: &tine_core::query::ir::Query,
-    view: &tine_core::query::ir::ViewSettings,
-    dialect: QueryPrintDialect,
-    preserve_form: bool,
-) -> Result<String, CommandError> {
-    tine_core::query::print::query_print(query, view, core_print_dialect(dialect), preserve_form)
-        .map_err(|diagnostic| {
-            let reason_code = match diagnostic.kind {
-                tine_core::query::ir::DiagnosticKind::NotApplicable => "not_applicable",
-                _ => "syntax",
-            };
-            CommandError::tagged(
-                "query-print-refused",
-                Some(reason_code),
-                Some(serde_json::to_value(&diagnostic).unwrap_or(serde_json::Value::Null)),
-            )
-        })
-}
-
-/// A result the WebView cannot be handed is a refusal, not a truncation: the
-/// same rule `run_query` applies, over the §7.1 shape.
-fn query_result_or_error(
-    result: tine_core::query::ir::QueryResult,
-) -> Result<tine_core::query::ir::QueryResult, CommandError> {
-    if result.exceeded {
-        let complete = result.matched_total.unwrap_or(result.total);
-        return Err(CommandError::coded(
-            "result-too-large",
-            format!(
-                "{} matching rows; narrow the query or add a sample (construction limits: {RESULT_BRIDGE_MAX_ROWS} rows / {RESULT_BRIDGE_MAX_BYTES} bytes)",
-                complete
-            ),
-        ));
-    }
-    Ok(result)
-}
-
-/// Fetch the registry snapshot the parse reads for its `UnknownIdent`
-/// suggestions, through whichever storage mode this slot is bound to.
-fn query_registry_snapshot(
-    graph: &tine_core::Graph,
-) -> Result<tine_core::query::ir::RegistrySnapshot, CommandError> {
-    Ok(graph.query_registry_snapshot_ready()?)
-}
-
-/// SPEC §7.1 `query_parse`: text → `{query, view}`, with the §4.1 precedence
-/// merge of the host block's `tine.*` properties applied here and nowhere else
-/// (M14).
-#[tauri::command]
-pub(crate) async fn query_parse(
-    text: String,
-    dialect: QueryTextDialect,
-    block_properties: Option<Vec<(String, String)>>,
-    state: GraphContext<'_>,
-) -> Result<ParsedQuery, CommandError> {
-    validate_query_source(&text)?;
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            // The registry read lives in `query_registry_snapshot`, shared with
-            // `query_registry`.
-            //
-            // **RET2 removed the `unwrap_or(empty snapshot)` that used to sit
-            // here.** The registry decides `UnknownIdent` SUGGESTIONS, and an empty
-            // table produces a parse that confidently reports a declared property
-            // as unknown — a wrong answer the caller could not distinguish from a
-            // real one, because the refusal never reached it. A metadata read that
-            // cannot answer is now the parse's answer, and the frontend's existing
-            // readiness owner retries it under the same binding/generation
-            // cancellation as every other query read.
-            let snapshot = query_registry_snapshot(graph)?;
-            let registry = tine_core::query::registry::Registry::from_snapshot(&snapshot);
-            Ok(parse_query_pair(
-                &text,
-                dialect,
-                block_properties.as_deref().unwrap_or_default(),
-                &registry,
-            ))
-        })?
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// SPEC §7.1 `query_print` (A4). `Ok(text)` for a printable IR; the OG printer
-/// is partial, so a non-OG-expressible IR **rejects**, carrying the whole
-/// `NotApplicable` diagnostic — never an empty string and never a stringified
-/// message. The one caller entitled to see it is the save path, which switches
-/// dialect; every other caller asked the OG printer without first checking
-/// `query_og_expressible`, and that is a bug.
-///
-/// **Reconciliation with §7.1, recorded:** the spec says the command rejects
-/// with the serialized `Diagnostic`. I-9 says every fallible command returns
-/// the ONE `CommandError`. Both hold here: the rejection is a `CommandError`
-/// whose structured `detail` IS the serialized diagnostic, so the frontend
-/// reads `kind`, `message` and `suggestions` as objects rather than parsing
-/// prose.
-#[tauri::command]
-pub(crate) async fn query_print(
-    query: tine_core::query::ir::Query,
-    view: tine_core::query::ir::ViewSettings,
-    dialect: QueryPrintDialect,
-    preserve_form: Option<bool>,
-) -> Result<String, CommandError> {
-    print_query_text(&query, &view, dialect, preserve_form.unwrap_or(false))
-}
-
-/// SPEC §7.1 `query_og_expressible`: whether the OG DSL can say this query, so
-/// the save path can choose the macro name (Q3) without provoking a rejection.
-#[tauri::command]
-pub(crate) async fn query_og_expressible(
-    query: tine_core::query::ir::Query,
-    view: tine_core::query::ir::ViewSettings,
-) -> bool {
-    tine_core::query::print::og_expressible(&query, &view)
-}
-
-/// SPEC §7.1 `query_registry`: the observed property registry (§6.1).
-#[tauri::command]
-pub(crate) async fn query_registry(
-    state: GraphContext<'_>,
-) -> Result<tine_core::query::ir::RegistrySnapshot, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            query_registry_snapshot(graph)
-        })?
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// SPEC §7.1 `query_run`: the IR, already parsed, evaluated by the one walk.
-/// `@page` rows carry `{name, kind, journal_day?}` and need no document load
-/// (K16).
-#[tauri::command]
-pub(crate) async fn query_run(
-    query: tine_core::query::ir::Query,
-    view: tine_core::query::ir::ViewSettings,
-    context: Option<tine_core::query::ir::ExecutionContext>,
-    state: GraphContext<'_>,
-) -> Result<tine_core::query::ir::QueryResult, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    let context = context.unwrap_or_default();
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            let bounds = tine_core::query::ir::Bounds {
-                max_rows: RESULT_BRIDGE_MAX_ROWS,
-                max_bytes: RESULT_BRIDGE_MAX_BYTES,
-            };
-            let result =
-                { tine_core::query::run_query_result_ir(graph, &query, &view, bounds, &context)? };
-            query_result_or_error(result)
-        })?
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// SPEC §7.1 `query_explain_empty` (Q14, N19): why the query returned nothing.
-#[tauri::command]
-pub(crate) async fn query_explain_empty(
-    query: tine_core::query::ir::Query,
-    view: tine_core::query::ir::ViewSettings,
-    context: Option<tine_core::query::ir::ExecutionContext>,
-    state: GraphContext<'_>,
-) -> Result<tine_core::query::ir::ExplainEmptyResult, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    let context = context.unwrap_or_default();
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            let bounds = tine_core::query::ir::Bounds {
-                max_rows: RESULT_BRIDGE_MAX_ROWS,
-                max_bytes: RESULT_BRIDGE_MAX_BYTES,
-            };
-            {
-                Ok(tine_core::query::explain_empty_query(
-                    graph, &query, &view, bounds, &context,
-                )?)
-            }
-        })?
-    })
-    .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn query_facets(
     state: GraphContext<'_>,
     autocomplete: Option<bool>,
-) -> Result<Vec<(String, Vec<String>)>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<Vec<(String, Vec<String>)>, String> {
+    let policy = if autocomplete.unwrap_or(false) {
+        FacetPolicy::Truncated
+    } else {
+        FacetPolicy::Budgeted
+    };
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            let autocomplete = autocomplete.unwrap_or(false);
-            {
-                if autocomplete {
-                    return Ok(graph
-                        .autocomplete_property_facets_bounded(
-                            AUTOCOMPLETE_FACET_MAX_ITEMS,
-                            AUTOCOMPLETE_FACET_MAX_BYTES,
-                        )
-                        .0);
-                }
-                let (facets, exceeded) =
-                    graph.property_facets_bounded(RESULT_BRIDGE_MAX_ROWS, RESULT_BRIDGE_MAX_BYTES);
-                if exceeded {
-                    Err(CommandError::coded(
-                        "result-too-large",
-                        "property facets exceed the construction budget",
-                    ))
-                } else {
-                    Ok(facets)
-                }
-            }
-        })?
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        view.property_facets(policy).map_err(query_error)
     })
     .await
-    .map_err(CommandError::worker)?
-}
-
-#[tauri::command]
-pub(crate) async fn page_aliases(
-    state: GraphContext<'_>,
-) -> Result<Vec<(String, String)>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            graph.page_aliases()
-        })
-    })
-    .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn page_icons(
     names: Vec<String>,
     state: GraphContext<'_>,
-) -> Result<std::collections::HashMap<String, String>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            graph.page_icons(&names)
-        })
+        slot.store
+            .whole_graph()
+            .map(|view| view.page_icons(&names))
+            .map_err(|e| format!("graph load failed: {e:?}"))
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
+}
+
+/// A config read or write on the bound graph's store, off the main thread: a
+/// config write takes the store writer (R3). O(config) plus the writer wait.
+async fn with_config_store<T: Send + 'static>(
+    state: &GraphContext<'_>,
+    f: impl FnOnce(&tine_store::Store) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let slot = slot_for_context(state)?;
+    crate::state::off_ui(move || f(&slot.store)).await
 }
 
 #[tauri::command]
-pub(crate) async fn existing_page_names(
-    names: Vec<String>,
-    state: GraphContext<'_>,
-) -> Result<Vec<String>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            Ok(graph.existing_page_names(&names))
-        })?
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-#[tauri::command]
-pub(crate) fn set_favorites(
-    names: Vec<String>,
-    state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    crate::state::apply_config_write(&state, |g| g.set_favorites(&names))
-}
-
-#[tauri::command]
-pub(crate) fn set_favorites_page(
-    name: String,
-    state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    crate::state::apply_config_write(&state, |g| g.set_favorites_page(&name))
-}
-
-#[tauri::command]
-pub(crate) fn set_default_home(
-    name: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    crate::state::apply_config_write(&state, |graph| graph.set_default_home_page(name.as_deref()))
-}
-
-#[tauri::command]
-pub(crate) fn set_preferred_workflow(
+pub(crate) async fn set_preferred_workflow(
     workflow: String,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    crate::state::apply_config_write(&state, |g| g.set_preferred_workflow(&workflow))
+) -> Result<(), String> {
+    with_config_store(&state, move |store| {
+        tine_graph_features::config::set_preferred_workflow(store, &workflow)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn set_timetracking_enabled(
+pub(crate) async fn set_timetracking_enabled(
     enabled: bool,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    crate::state::apply_config_write(&state, |g| g.set_timetracking_enabled(enabled))
+) -> Result<(), String> {
+    with_config_store(&state, move |store| {
+        tine_graph_features::config::set_timetracking_enabled(store, enabled)
+            .map_err(|e| e.to_string())
+    })
+    .await?;
+    Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn set_show_brackets(
+pub(crate) async fn set_show_brackets(
     enabled: bool,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    crate::state::apply_config_write(&state, |g| g.set_show_brackets(enabled))
+) -> Result<(), String> {
+    with_config_store(&state, move |store| {
+        tine_graph_features::config::set_show_brackets(store, enabled).map_err(|e| e.to_string())
+    })
+    .await?;
+    Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn set_doc_mode_enter_for_new_block(
+pub(crate) async fn set_doc_mode_enter_for_new_block(
     enabled: bool,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    crate::state::apply_config_write(&state, |g| g.set_doc_mode_enter_for_new_block(enabled))
+) -> Result<(), String> {
+    with_config_store(&state, move |store| {
+        tine_graph_features::config::set_doc_mode_enter_for_new_block(store, enabled)
+            .map_err(|e| e.to_string())
+    })
+    .await?;
+    Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn set_logical_outdenting(
+pub(crate) async fn set_logical_outdenting(
     enabled: bool,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    crate::state::apply_config_write(&state, |g| g.set_logical_outdenting(enabled))
+) -> Result<(), String> {
+    with_config_store(&state, move |store| {
+        tine_graph_features::config::set_logical_outdenting(store, enabled)
+            .map_err(|e| e.to_string())
+    })
+    .await?;
+    Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn set_guide_announced(
+pub(crate) async fn set_guide_announced(
     announced: bool,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    crate::state::apply_config_write(&state, |g| g.set_guide_announced(announced))
+) -> Result<(), String> {
+    with_config_store(&state, move |store| {
+        tine_graph_features::config::set_guide_announced(store, announced)
+            .map_err(|e| e.to_string())
+    })
+    .await?;
+    Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn set_default_journal_template(
+pub(crate) async fn set_default_journal_template(
     name: Option<String>,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    crate::state::apply_config_write(&state, |g| g.set_default_journal_template(name.as_deref()))
+) -> Result<(), String> {
+    with_config_store(&state, move |store| {
+        tine_graph_features::config::set_default_journal_template(store, name.as_deref())
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn set_start_of_week(n: u32, state: GraphContext<'_>) -> Result<(), CommandError> {
-    crate::state::apply_config_write(&state, |g| g.set_start_of_week(n))
+pub(crate) async fn set_start_of_week(n: u32, state: GraphContext<'_>) -> Result<(), String> {
+    with_config_store(&state, move |store| {
+        tine_graph_features::config::set_start_of_week(store, n).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Set the graph's `:preferred-format` for new pages/journals ("md" or "org").
 #[tauri::command]
-pub(crate) fn set_preferred_format(
+pub(crate) async fn set_preferred_format(
     format: String,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
+) -> Result<(), String> {
     let fmt = if format.eq_ignore_ascii_case("org") {
         tine_core::model::Format::Org
     } else {
         tine_core::model::Format::Md
     };
-    crate::state::apply_config_write(&state, |g| g.set_preferred_format(fmt))
+    with_config_store(&state, move |store| {
+        tine_graph_features::config::set_preferred_format(store, fmt).map_err(|e| e.to_string())
+    })
+    .await?;
+    Ok(())
 }
 
-/// Set the graph's `:journal/page-title-format` (journal display-title format,
-/// e.g. "MMM do, yyyy"). Display-only — does not rename journal files. Like
-/// every setting that reaches the graph (`Config::reach`),
-/// `apply_config_write` reopens it once and announces `graph-rebound`
-/// (GH #543, audits R9-15b and R10-07).
+/// Set `:journal/page-title-format` (e.g. "MMM do, yyyy") in config.edn,
+/// unvalidated. Renames no files: title-named journals are only proposed and
+/// applied through the journal filename commands (master e6f9b6e1ceae).
 #[tauri::command]
-pub(crate) fn set_journal_title_format(
+pub(crate) async fn set_journal_title_format(
     format: String,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    crate::state::apply_config_write(&state, |g| g.set_journal_page_title_format(&format))
+) -> Result<(), String> {
+    with_config_store(&state, move |store| {
+        tine_graph_features::config::set_journal_page_title_format(store, &format)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn read_custom_css(state: GraphContext<'_>) -> Result<String, CommandError> {
-    with_filesystem_graph(&state, |g| Ok(g.custom_css()))
+pub(crate) async fn read_custom_css(state: GraphContext<'_>) -> Result<String, String> {
+    with_config_store(&state, move |store| {
+        config::custom_css(store).map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1449,23 +1129,20 @@ pub(crate) async fn search(
     limit: usize,
     lane: Option<String>,
     state: GraphContext<'_>,
-) -> Result<Vec<RefGroup>, CommandError> {
-    let limit = limit.min(RESULT_BRIDGE_MAX_ROWS);
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    let groups = tauri::async_runtime::spawn_blocking(move || -> Result<_, CommandError> {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            (match lane.as_deref() {
-                Some(lane) => graph.search_latest(lane, &query, limit),
-                None => graph.search(&query, limit),
-            })
-            .map_err(CommandError::from)
-        })?
+) -> Result<Vec<RefGroup>, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::search::find_blocks(
+            &slot.store,
+            &slot.block_search_lanes,
+            &query,
+            limit,
+            lane.as_deref(),
+        )
+        .map_err(feature_search_error)
     })
     .await
-    .map_err(CommandError::worker)??;
-    enforce_result_bridge_budget(&groups)?;
-    Ok(groups)
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1473,36 +1150,37 @@ pub(crate) async fn quick_switch(
     query: String,
     limit: usize,
     state: GraphContext<'_>,
-) -> Result<Vec<PageEntry>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<Vec<PageEntry>, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            Ok(graph.quick_switch(&query, limit))
-        })?
+        slot.store
+            .whole_graph()
+            .map(|view| view.complete_page_names(&query, limit))
+            .map_err(|e| format!("graph load failed: {e:?}"))
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
+#[cfg(test)]
 fn capture_quick_switch_for(
     state: &AppState,
     caller: &str,
     binding_generation: Option<u64>,
     query: &str,
     limit: usize,
-) -> Result<Vec<PageEntry>, CommandError> {
-    capture_display_read(state, caller, binding_generation, |graph| {
-        graph.quick_switch(query, limit.min(8))
-    })
+) -> Result<Vec<PageEntry>, String> {
+    let slot = capture_quick_switch_slot(state, caller, binding_generation)?;
+    let view = slot
+        .store
+        .whole_graph()
+        .map_err(|e| format!("graph load failed: {e:?}"))?;
+    Ok(view.complete_page_names(query, limit.min(8)))
 }
 
 /// The sole graph-backed capability exposed to Quick Capture. It is deliberately
 /// not a `GraphContext` command: capture may ask for bounded page/tag candidates
 /// but cannot save, delete, trash, or invoke any other graph command.
-///
-/// Async for the same reason as `quick_switch`: while the graph is being
-/// indexed the page list waits for the index (GH #543, R6-02).
 #[tauri::command]
 pub(crate) async fn capture_quick_switch(
     query: String,
@@ -1510,104 +1188,190 @@ pub(crate) async fn capture_quick_switch(
     binding_generation: Option<u64>,
     window: WebviewWindow,
     state: State<'_, AppState>,
-) -> Result<Vec<PageEntry>, CommandError> {
-    let app = window.app_handle().clone();
-    let caller = window.label().to_string();
-    drop((window, state));
+) -> Result<Vec<PageEntry>, String> {
+    let slot = capture_quick_switch_slot(&state, window.label(), binding_generation)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        capture_quick_switch_for(&state, &caller, binding_generation, &query, limit)
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        Ok(view.complete_page_names(&query, limit.min(8)))
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 #[cfg(test)]
-mod capture_quick_switch_tests;
+mod capture_quick_switch_tests {
+    use super::*;
+    use crate::state::{slot_for_bound_window, GraphRegistry, GraphSlot};
+    use std::path::PathBuf;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::{Mutex, RwLock};
+
+    fn state_with_selected_graph() -> (AppState, PathBuf) {
+        let base = std::env::temp_dir().join(format!(
+            "tine-capture-quick-switch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let selected = base.join("selected");
+        let other = base.join("other");
+        for (root, page) in [
+            (&selected, "Selected Capture Target"),
+            (&other, "Other Target"),
+        ] {
+            std::fs::create_dir_all(root.join("pages")).unwrap();
+            std::fs::create_dir_all(root.join("journals")).unwrap();
+            std::fs::write(root.join("pages").join(format!("{page}.md")), "- fixture\n").unwrap();
+        }
+        let state = AppState {
+            graphs: RwLock::new(GraphRegistry::default()),
+            graph_load: Mutex::new(()),
+            last_focused: Mutex::new(Some("main".into())),
+            capture_graph: Mutex::new(Default::default()),
+            #[cfg(desktop)]
+            next_window: AtomicU64::new(2),
+        };
+        let (selected_store, _, _) =
+            tine_store::Store::open(&selected, tine_store::OpenOptions::default()).unwrap();
+        let selected_slot = Arc::new(GraphSlot::new(selected_store, selected.clone()));
+        let generation = selected_slot.binding_generation;
+        state
+            .graphs
+            .write()
+            .unwrap()
+            .bind("main".into(), selected_slot)
+            .unwrap();
+        state
+            .graphs
+            .write()
+            .unwrap()
+            .bind(
+                "other".into(),
+                Arc::new(GraphSlot::new(
+                    tine_store::Store::open(&other, tine_store::OpenOptions::default())
+                        .unwrap()
+                        .0,
+                    other,
+                )),
+            )
+            .unwrap();
+        state.bind_capture_graph("main".into(), generation);
+        (state, base)
+    }
+
+    #[test]
+    fn returns_candidates_from_the_selected_capture_graph() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        let result =
+            capture_quick_switch_for(&state, "capture", Some(generation), "Selected Capture", 8)
+                .unwrap();
+        assert!(result
+            .iter()
+            .any(|page| page.name == "Selected Capture Target"));
+        assert!(!result.iter().any(|page| page.name == "Other Target"));
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_stale_capture_binding_generation() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        assert_eq!(
+            capture_quick_switch_for(&state, "capture", Some(generation + 1), "Selected", 8)
+                .unwrap_err(),
+            "stale-graph-binding"
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn rejects_non_capture_callers() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        assert_eq!(
+            capture_quick_switch_for(&state, "main", Some(generation), "Selected", 8).unwrap_err(),
+            "capture quick switch is only available to quick capture"
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn capture_binding_never_grants_generic_graphcontext_mutation_access() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        // `save_pages` and other mutations resolve through GraphContext, which
+        // uses this normal window-slot path and therefore has no capture fallback.
+        assert_eq!(
+            slot_for_bound_window(&state, "capture", Some(generation))
+                .err()
+                .unwrap(),
+            "no graph loaded for window capture"
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+}
+
+/// Run a whole-graph read on the blocking pool. `Store::whole_graph` waits for
+/// the initial parse (seconds on a 10k-page graph); a synchronous Tauri command
+/// runs on the main thread and would freeze the webview for that whole wait.
+async fn off_ui_graph_read<T: Send + 'static>(
+    state: &GraphContext<'_>,
+    read: impl FnOnce(WholeGraph) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let slot = slot_for_context(state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        read(view)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
 
 #[tauri::command]
 pub(crate) async fn list_templates(
     state: GraphContext<'_>,
-) -> Result<Vec<tine_core::model::TemplateDto>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            graph.templates()
-        })
-    })
-    .await
-    .map_err(CommandError::worker)?
+) -> Result<Vec<tine_core::model::TemplateDto>, String> {
+    off_ui_graph_read(&state, |view| Ok(view.templates())).await
 }
 
 #[tauri::command]
-pub(crate) async fn journal_content_days(
-    state: GraphContext<'_>,
-) -> Result<Vec<i64>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            graph.journal_content_days()
-        })
+pub(crate) async fn journal_content_days(state: GraphContext<'_>) -> Result<Vec<i64>, String> {
+    off_ui_graph_read(&state, |view| {
+        Ok(view
+            .journal_content_days()
+            .into_iter()
+            .map(|day| day.0)
+            .collect())
     })
     .await
-    .map_err(CommandError::worker)?
 }
 
 #[tauri::command]
 pub(crate) async fn resolve_block(
     uuid: String,
     state: GraphContext<'_>,
-) -> Result<Option<RefGroup>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            let group = graph.resolve_block(&uuid);
-            if let Some(group) = &group {
-                enforce_result_bridge_budget(std::slice::from_ref(group))?;
-            }
-            Ok(group)
-        })?
+) -> Result<Option<RefGroup>, String> {
+    off_ui_graph_read(&state, move |view| {
+        Ok(view.blocks(&[uuid]).map_err(query_error)?.pop().flatten())
     })
     .await
-    .map_err(CommandError::worker)?
 }
 
 #[tauri::command]
 pub(crate) async fn resolve_blocks(
     uuids: Vec<String>,
     state: GraphContext<'_>,
-) -> Result<Vec<Option<RefGroup>>, CommandError> {
-    if uuids.len() > RESULT_BRIDGE_MAX_ROWS {
-        return Err(CommandError::prose(format!(
-            "result-too-large: {} requested block references (limit: {RESULT_BRIDGE_MAX_ROWS})",
-            uuids.len()
-        )));
-    }
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            let (groups, exceeded, total) = tine_core::query::resolve_blocks_bounded(
-                graph,
-                &uuids,
-                RESULT_BRIDGE_MAX_ROWS,
-                RESULT_BRIDGE_MAX_BYTES,
-            );
-            if exceeded {
-                Err(CommandError::coded(
-                    "result-too-large",
-                    format!("{total} resolved block-reference rows exceed the construction budget"),
-                ))
-            } else {
-                Ok(groups)
-            }
-        })?
-    })
-    .await
-    .map_err(CommandError::worker)?
+) -> Result<Vec<Option<RefGroup>>, String> {
+    off_ui_graph_read(&state, move |view| view.blocks(&uuids).map_err(query_error)).await
 }
 
 /// Explicit, bounded subtree resolution for hover previews. Ordinary
@@ -1618,77 +1382,63 @@ pub(crate) async fn preview_block(
     uuid: String,
     max_nodes: usize,
     state: GraphContext<'_>,
-) -> Result<Option<tine_core::BlockPreview>, CommandError> {
-    const MAX_PREVIEW_NODES: usize = 2_000;
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            let max_nodes = max_nodes.clamp(1, MAX_PREVIEW_NODES);
-            let max_bytes = RESULT_BRIDGE_MAX_BYTES.saturating_sub(4 * 1024);
-            let preview = graph.preview_block_with_budget(&uuid, max_nodes, max_bytes);
-            if let Some(preview) = &preview {
-                enforce_result_bridge_budget(std::slice::from_ref(&preview.group))?;
-            }
-            Ok(preview)
-        })?
+) -> Result<Option<tine_core::BlockPreview>, String> {
+    off_ui_graph_read(&state, move |view| {
+        view.preview_block(&uuid, max_nodes).map_err(query_error)
     })
     .await
-    .map_err(CommandError::worker)?
 }
 
 #[tauri::command]
-pub(crate) async fn read_asset(
+pub(crate) fn read_asset(
     name: String,
     max_bytes: Option<u64>,
     state: GraphContext<'_>,
-) -> Result<tauri::ipc::Response, CommandError> {
+) -> Result<tauri::ipc::Response, String> {
     // Return RAW bytes (not a JSON number[]), so a multi-MB PDF/image isn't
     // serialized element-by-element and re-parsed on the JS side — the frontend
     // receives an ArrayBuffer directly.
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let g = slot_for_bound_window(&state, &label, Some(binding_generation))?.graph();
-        let path = g.asset_file_for_read(&name).map_err(CommandError::from)?;
-        let bytes = max_bytes
-            .map_or_else(
-                || g.read_asset(&name),
-                |limit| g.read_asset_limited(&name, limit),
-            )
-            .map_err(CommandError::from)?;
-        crate::watcher::note_asset_read(&label, &path);
-        crate::state::poke_watcher(&state);
-        Ok(tauri::ipc::Response::new(bytes))
-    })
-    .await
-    .map_err(CommandError::worker)?
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::assets::read_asset(&slot.store, &name, max_bytes)
+        .map(tauri::ipc::Response::new)
+        .map_err(read_asset_error)
+}
+
+/// Wire form of a failed `read_asset`. A missing file is the exact token
+/// `not-found` (the frontend treats it as a normal state and shows the
+/// broken-image placeholder); every other failure keeps its wire text and is
+/// reported to the user.
+fn read_asset_error(error: tine_graph_features::assets::AssetAccessError) -> String {
+    match error {
+        tine_graph_features::assets::AssetAccessError::Store(StoreError::NotFound) => {
+            "not-found".into()
+        }
+        other => feature_asset_access_error(other),
+    }
 }
 
 /// Validate one graph media file and return its top-level asset name for the
 /// range-aware `tine-media:` protocol. The protocol revalidates against the
 /// requesting window's current graph on every request.
 #[tauri::command]
-pub(crate) fn stream_asset_path(
-    name: String,
-    state: GraphContext<'_>,
-) -> Result<String, CommandError> {
+pub(crate) fn stream_asset_path(name: String, state: GraphContext<'_>) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
-    slot.with_filesystem_graph(|graph| graph.stream_asset_path(&name).map_err(CommandError::from))?;
+    tine_graph_features::assets::validate_stream_asset(&slot.store, &name)
+        .map_err(feature_asset_access_error)?;
     Ok(format!("{}/{}", slot.binding_generation, name))
 }
 
-/// Quit the app cleanly. Linux first SIGKILLs WebKitGTK's helper subprocesses
-/// so they do not run their buggy GL-driver atexit teardown and dump a SIGABRT
-/// core on exit (GH #28). The JS close handler calls this only after
-/// `flushAll()`/`flushSession()` resolve, so tearing the web process down hard
-/// loses no edits.
+/// Quit the app cleanly. On Linux, first SIGKILL WebKitGTK's helper subprocesses so
+/// they don't run their buggy GL-driver atexit teardown and dump a SIGABRT core on
+/// exit (GH #28). The JS close handler calls this only AFTER `flushAll()`/
+/// `flushSession()` have resolved, so tearing the web process down hard loses no
+/// edits. Then hand off to Tauri's normal exit (the main process still tears down
+/// the way it always has — no dump there). On non-Linux this is just `app.exit(0)`.
 #[tauri::command]
-pub(crate) fn tine_quit(app: tauri::AppHandle) -> Result<(), CommandError> {
+pub(crate) fn tine_quit(app: tauri::AppHandle) {
     #[cfg(target_os = "linux")]
     crate::platform::kill_webkit_children();
     app.exit(0);
-    Ok(())
 }
 
 /// Close only the calling graph window. The final graph window still performs
@@ -1699,14 +1449,14 @@ pub(crate) fn close_graph_window(
     window: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::state::AppState>,
-) -> Result<(), CommandError> {
+) -> Result<(), String> {
     if state.graphs.read().unwrap().len() <= 1 {
         #[cfg(target_os = "linux")]
         crate::platform::kill_webkit_children();
         app.exit(0);
         return Ok(());
     }
-    window.destroy().map_err(CommandError::from)
+    window.destroy().map_err(|e| e.to_string())
 }
 
 /// Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS
@@ -1765,27 +1515,23 @@ pub(crate) fn tine_open_devtools(window: tauri::WebviewWindow) {
     }
 }
 
+/// Read an opted-in local image by absolute path outside every bound graph.
+/// Symlinks resolve before the graph-scope check; non-image extensions,
+/// non-regular files and files over 64 MiB fail with a string error. The
+/// bounded read also stops if a regular file grows after metadata was read.
 #[tauri::command]
-pub(crate) async fn read_local_image(
+pub(crate) fn read_local_image(
     path: String,
     app: tauri::AppHandle,
-) -> Result<tauri::ipc::Response, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || read_local_image_blocking(path, app))
-        .await
-        .map_err(CommandError::worker)?
-}
-
-fn read_local_image_blocking(
-    path: String,
-    app: tauri::AppHandle,
-) -> Result<tauri::ipc::Response, CommandError> {
+    state: State<'_, AppState>,
+) -> Result<tauri::ipc::Response, String> {
     // Read an image from an ABSOLUTE path OUTSIDE the graph, for raw-HTML `<img>`
     // srcs the user has explicitly opted into (Settings → "Load local-file images").
     // OFF by default; gated here too (defense in depth — the frontend also checks),
     // restricted to image extensions + a size cap so an allowed note can't slurp an
     // arbitrary file. Returns RAW bytes like `read_asset`. See ADR 0019.
-    if !crate::settings::get_app_bool("allow_local_file_images".into(), false, app) {
-        return Err(CommandError::prose("local-file images are disabled"));
+    if !crate::settings::device_bool(&app, "allow_local_file_images", false) {
+        return Err("local-file images are disabled".into());
     }
     let p = std::path::Path::new(&path);
     let ext_ok = matches!(
@@ -1796,19 +1542,11 @@ fn read_local_image_blocking(
         Some("png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "apng")
     );
     if !ext_ok {
-        return Err(CommandError::prose("not an image file"));
+        return Err("not an image file".into());
     }
-    let meta = std::fs::metadata(p).map_err(CommandError::from)?;
-    if !meta.is_file() {
-        return Err(CommandError::prose("not a file"));
-    }
+    let p = refuse_bound_graph_path(p, &state)?;
     const MAX_BYTES: u64 = 64 * 1024 * 1024;
-    if meta.len() > MAX_BYTES {
-        return Err(CommandError::prose("image too large"));
-    }
-    std::fs::read(p)
-        .map(tauri::ipc::Response::new)
-        .map_err(CommandError::from)
+    crate::device_io::read_regular_file_bounded(&p, MAX_BYTES).map(tauri::ipc::Response::new)
 }
 
 #[tauri::command]
@@ -1816,19 +1554,19 @@ pub(crate) async fn import_asset(
     path: String,
     name: Option<String>,
     state: GraphContext<'_>,
-) -> Result<String, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let g = slot_for_bound_window(&state, &label, Some(binding_generation))?.graph();
-        let stored = g
-            .import_asset(std::path::Path::new(&path), name.as_deref())
-            .map_err(CommandError::from)?;
-        crate::watcher::note_asset_self_write(&label, &g.assets_path().join(&stored));
-        Ok(stored)
+) -> Result<String, String> {
+    let slot = slot_for_context(&state)?;
+    crate::state::off_ui(move || {
+        crate::device_io::import_asset_from_path(&slot.store, &path, name.as_deref()).map_err(
+            |error| match error {
+                crate::device_io::DeviceAssetImportError::Name(message) => message,
+                crate::device_io::DeviceAssetImportError::Io(error) => {
+                    feature_asset_error(error, &slot)
+                }
+            },
+        )
     })
     .await
-    .map_err(CommandError::worker)?
 }
 
 /// Import a bounded Android photo or voice memo by native cache-file capability.
@@ -1838,136 +1576,134 @@ pub(crate) async fn import_asset(
 pub(crate) async fn import_native_capture(
     path: String,
     name: String,
+    graph_root: Option<String>,
+    app: tauri::AppHandle,
     state: GraphContext<'_>,
-) -> Result<String, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        import_native_capture_blocking(&path, &name, &app, &label, binding_generation)
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-fn import_native_capture_blocking(
-    path: &str,
-    name: &str,
-    app: &tauri::AppHandle,
-    label: &str,
-    binding_generation: u64,
-) -> Result<String, CommandError> {
+) -> Result<String, String> {
     use cap_std::{ambient_authority, fs::Dir};
     use tauri::Manager;
+    let target = crate::capture_target::pick(slot_for_context(&state)?, graph_root, &app, &state)?;
+    // The copy into the graph takes the store writer and fsyncs (R3): off the
+    // main thread. Choosing the target (registry + settings reads) stays here.
+    crate::state::off_ui(move || {
+        const MAX_PHOTO_BYTES: u64 = 64 * 1024 * 1024;
+        const MAX_RECORDING_BYTES: u64 = 32 * 1024 * 1024;
+        let source = std::path::Path::new(&path);
+        let filename = source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| "invalid native capture token".to_string())?;
+        let (max_bytes, media_label) =
+            if filename.starts_with("tine_memo_") && filename.ends_with(".m4a") {
+                (MAX_RECORDING_BYTES, "recording")
+            } else if filename.starts_with("tine_photo_") && filename.ends_with(".jpg") {
+                (MAX_PHOTO_BYTES, "photo")
+            } else {
+                return Err("invalid native capture token".into());
+            };
+        let cache_path = app
+            .path()
+            .app_cache_dir()
+            .map_err(|error| error.to_string())?;
+        let token_parent = source
+            .parent()
+            .ok_or_else(|| "recording has no cache parent".to_string())?;
+        let cache_dir = Dir::open_ambient_dir(&cache_path, ambient_authority())
+            .map_err(|error| error.to_string())?;
+        let token_dir = Dir::open_ambient_dir(token_parent, ambient_authority())
+            .map_err(|error| error.to_string())?;
+        let cache_identity = same_file::Handle::from_file(
+            cache_dir
+                .try_clone()
+                .map_err(|error| error.to_string())?
+                .into_std_file(),
+        )
+        .map_err(|error| error.to_string())?;
+        let token_identity = same_file::Handle::from_file(
+            token_dir
+                .try_clone()
+                .map_err(|error| error.to_string())?
+                .into_std_file(),
+        )
+        .map_err(|error| error.to_string())?;
+        if token_identity != cache_identity {
+            return Err("capture is outside Tine's native cache".into());
+        }
 
-    const MAX_PHOTO_BYTES: u64 = 64 * 1024 * 1024;
-    const MAX_RECORDING_BYTES: u64 = 32 * 1024 * 1024;
-    let source = std::path::Path::new(path);
-    let filename = source
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| CommandError::prose("invalid native capture token"))?;
-    let (max_bytes, media_label) =
-        if filename.starts_with("tine_memo_") && filename.ends_with(".m4a") {
-            (MAX_RECORDING_BYTES, "recording")
-        } else if filename.starts_with("tine_photo_") && filename.ends_with(".jpg") {
-            (MAX_PHOTO_BYTES, "photo")
-        } else {
-            return Err(CommandError::prose("invalid native capture token"));
-        };
-    let cache_path = app.path().app_cache_dir().map_err(CommandError::from)?;
-    let token_parent = source
-        .parent()
-        .ok_or_else(|| CommandError::prose("recording has no cache parent"))?;
-    let cache_dir =
-        Dir::open_ambient_dir(&cache_path, ambient_authority()).map_err(CommandError::from)?;
-    let token_dir =
-        Dir::open_ambient_dir(token_parent, ambient_authority()).map_err(CommandError::from)?;
-    let cache_identity = same_file::Handle::from_file(
-        cache_dir
-            .try_clone()
-            .map_err(CommandError::from)?
-            .into_std_file(),
-    )
-    .map_err(CommandError::from)?;
-    let token_identity = same_file::Handle::from_file(
-        token_dir
-            .try_clone()
-            .map_err(CommandError::from)?
-            .into_std_file(),
-    )
-    .map_err(CommandError::from)?;
-    if token_identity != cache_identity {
-        return Err(CommandError::prose(
-            "capture is outside Tine's native cache",
-        ));
-    }
-
-    let capture = token_dir.open(filename).map_err(CommandError::from)?;
-    let metadata = capture.metadata().map_err(CommandError::from)?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > max_bytes {
-        return Err(CommandError::prose(format!(
-            "{media_label} is empty or exceeds the {} MiB limit",
-            max_bytes / (1024 * 1024)
-        )));
-    }
-    let mut capture = capture.into_std();
-    let slot = slot_for_bound_window(&app.state::<AppState>(), label, Some(binding_generation))?;
-    let stored = slot.with_filesystem_graph(|graph| {
-        let stored = graph
-            .import_asset_file(&mut capture, name, max_bytes)
-            .map_err(CommandError::from)?;
-        crate::watcher::note_asset_self_write(label, &graph.assets_path().join(&stored));
+        let capture = token_dir
+            .open(filename)
+            .map_err(|error| error.to_string())?;
+        let metadata = capture.metadata().map_err(|error| error.to_string())?;
+        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > max_bytes {
+            return Err(format!(
+                "{media_label} is empty or exceeds the {} MiB limit",
+                max_bytes / (1024 * 1024)
+            ));
+        }
+        let stored = tine_graph_features::assets::import_asset_file(
+            target.store(),
+            &name,
+            tine_store::Content::Stream {
+                source: capture.into_std(),
+                max_bytes,
+            },
+        )
+        .map_err(|error| target.asset_error(error))?;
+        // The graph asset is authoritative now. Cleanup failure is harmless cache
+        // litter and must not make the frontend omit the already-durable reference.
+        let _ = cache_dir.remove_file(filename);
         Ok(stored)
-    })?;
-    // The graph asset is authoritative now. Cleanup failure is harmless cache
-    // litter and must not make the frontend omit the already-durable reference.
-    let _ = cache_dir.remove_file(filename);
-    Ok(stored)
+    })
+    .await
 }
 
 /// Read a dropped delimited-text file for the CSV/TSV → grid drop path.
-/// Deliberately NARROW: this is the only webview-reachable read of a
-/// caller-chosen path (everything else is gated to the graph/assets dirs),
-/// so it refuses anything that isn't the drop feature's file types — it must
-/// not grow into a general file-read primitive.
+/// Deliberately narrow: this caller-chosen path is restricted to the drop
+/// feature's delimited text types. `read_local_image` has a separate image gate.
 #[tauri::command]
-pub(crate) fn read_text_file(path: String) -> Result<String, CommandError> {
+pub(crate) fn read_text_file(path: String, state: State<'_, AppState>) -> Result<String, String> {
+    read_text_file_from_path(std::path::Path::new(&path), &state)
+}
+
+fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<String, String> {
     fn delimited_ext(p: &std::path::Path) -> bool {
         p.extension()
             .and_then(|e| e.to_str())
             .map(|e| e.eq_ignore_ascii_case("csv") || e.eq_ignore_ascii_case("tsv"))
             .unwrap_or(false)
     }
-    let p = std::path::Path::new(&path);
     if !delimited_ext(p) {
-        return Err(CommandError::prose("unsupported file type"));
+        return Err("unsupported file type".into());
     }
     // Re-check on the RESOLVED path too — a symlink named x.csv pointing at an
     // arbitrary file must not pass the extension gate (review finding).
-    let resolved = std::fs::canonicalize(p).map_err(CommandError::from)?;
+    let resolved = refuse_bound_graph_path(p, state)?;
     if !delimited_ext(&resolved) {
-        return Err(CommandError::prose("unsupported file type"));
-    }
-    let meta = std::fs::metadata(&resolved).map_err(CommandError::from)?;
-    if !meta.is_file() {
-        return Err(CommandError::prose("not a file"));
+        return Err("unsupported file type".into());
     }
     const MAX_BYTES: u64 = 10 * 1024 * 1024;
-    if meta.len() > MAX_BYTES {
-        return Err(CommandError::prose("text file too large"));
-    }
-    std::fs::read_to_string(&resolved).map_err(CommandError::from)
+    let bytes = crate::device_io::read_regular_file_bounded(&resolved, MAX_BYTES)?;
+    String::from_utf8(bytes).map_err(|e| e.to_string())
 }
 
-/// Open a graph asset (by its `assets/`-relative name) in the OS default app —
-/// a file in its system viewer, a directory (or the empty name, i.e. the
-/// assets root itself like OG's `[...](./assets/)`) in the file manager.
-/// Path-gated to the assets dir (canonicalized) so a crafted name can't open
-/// anything outside the graph.
+/// Open an `assets/`-relative file, directory, or (empty name) the assets root (GH #367)
+/// in the OS default app / file manager. Gated to the canonical assets dir.
+///
+/// The path check and the opener start (PATH search, exec) run on the blocking
+/// pool, off the UI thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), CommandError> {
-    let target = with_filesystem_graph(&state, |g| {
-        g.asset_path_for_open(&name).map_err(CommandError::from)
-    })?;
+pub(crate) async fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = tine_graph_features::assets::path_for_os_open(&slot.store, &name)
+            .map_err(feature_asset_access_error)?;
+        open_asset_with_os(&name, &target, false)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn open_asset_with_os(name: &str, target: &std::path::Path, editing: bool) -> Result<(), String> {
     #[cfg(desktop)]
     {
         #[cfg(target_os = "linux")]
@@ -1976,23 +1712,20 @@ pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), Co
         let prog = "open";
         #[cfg(target_os = "windows")]
         let prog = "explorer";
-        diag(format!(
-            "open_asset: {name} -> {} ({prog})",
-            target.display()
-        ));
-        opener_command(prog)
-            .arg(&target)
-            .spawn()
-            .map_err(CommandError::from)?;
-        Ok(())
+        let (tag, action, q) = if editing {
+            ("edit-asset", "edit_asset_external", "opener ")
+        } else {
+            ("open-asset", "open_asset", "")
+        };
+        let shown = target.display();
+        diag_private(tag, format!("{action}: {name} -> {shown} ({q}{prog})"));
+        spawn_reaped(opener_command(prog).arg(&target))
     }
     // Mobile: opening an asset in an external app uses a platform intent; stub for now (M1).
     #[cfg(not(desktop))]
     {
-        let _ = (&name, &target);
-        Err(CommandError::prose(
-            "open asset externally is not supported on this platform",
-        ))
+        let _ = (name, target, editing);
+        Err("open asset externally is not supported on this platform".into())
     }
 }
 
@@ -2006,31 +1739,35 @@ pub(crate) async fn open_page_file(
     path: Option<String>,
     reveal: bool,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    let target = tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph()
-            .page_source_file(&name, kind, path.as_deref())
-            .map_err(CommandError::from)
+) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = tine_graph_features::pages::source_path_for_os_handoff(
+            &slot.store,
+            &name,
+            kind,
+            path.as_deref(),
+        )
+        .map_err(feature_page_read_error)?;
+        open_page_source_with_os(&target, reveal)
     })
     .await
-    .map_err(CommandError::worker)??;
+    .map_err(|error| error.to_string())?
+}
+
+fn open_page_source_with_os(target: &std::path::Path, reveal: bool) -> Result<(), String> {
     #[cfg(desktop)]
     {
         if reveal {
-            reveal_page_source(&target).map_err(CommandError::prose)
+            reveal_page_source(&target)
         } else {
-            open_page_source(&target).map_err(CommandError::prose)
+            open_page_source(&target)
         }
     }
     #[cfg(not(desktop))]
     {
         let _ = (target, reveal);
-        Err(CommandError::prose(
-            "page file actions are available on desktop only",
-        ))
+        Err("page file actions are available on desktop only".into())
     }
 }
 
@@ -2046,50 +1783,41 @@ pub(crate) async fn open_page_file(
 /// Double quotes group a program/argument containing whitespace; backslashes are
 /// literal so Windows paths such as `"C:\Program Files\draw.io\draw.io.exe" {}`
 /// survive unchanged.
+/// The handoff check and the editor start run on the blocking pool, off the UI
+/// thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) fn edit_asset_external(
+pub(crate) async fn edit_asset_external(
     name: String,
     command: String,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    let target = with_filesystem_graph(&state, |g| {
-        g.asset_file_for_read(&name).map_err(CommandError::from)
-    })?;
+) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = asset_handoff_target(&slot, &name)?;
+        edit_asset_with_os(&name, &command, &target)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn edit_asset_with_os(name: &str, command: &str, target: &std::path::Path) -> Result<(), String> {
     #[cfg(desktop)]
     {
         let target_str = target.to_string_lossy().to_string();
-        let trimmed = command.trim();
-        if trimmed.is_empty() {
-            // No editor configured → same OS opener as open_asset.
-            #[cfg(target_os = "linux")]
-            let prog = "xdg-open";
-            #[cfg(target_os = "macos")]
-            let prog = "open";
-            #[cfg(target_os = "windows")]
-            let prog = "explorer";
-            diag(format!(
-                "edit_asset_external: {name} -> {target_str} (opener {prog})"
-            ));
-            opener_command(prog)
-                .arg(&target)
-                .spawn()
-                .map_err(CommandError::from)?;
-            return Ok(());
+        if command.trim().is_empty() {
+            return open_asset_with_os(name, target, true);
         }
-        let (prog, args) = build_editor_argv(trimmed, &target_str)?;
-        diag(format!("edit_asset_external: {name} -> {prog} {args:?}"));
-        opener_command(&prog)
-            .args(&args)
-            .spawn()
-            .map_err(CommandError::from)?;
-        Ok(())
+        let (prog, args) = build_editor_argv(command.trim(), &target_str)?;
+        diag_private(
+            "edit-asset",
+            format!("edit_asset_external: {name} -> {prog} {args:?}"),
+        );
+        spawn_reaped(opener_command(&prog).args(&args))
     }
     #[cfg(not(desktop))]
     {
         let _ = (&name, &command, &target);
-        Err(CommandError::prose(
-            "editing an asset externally is not supported on this platform",
-        ))
+        Err("editing an asset externally is not supported on this platform".into())
     }
 }
 
@@ -2100,7 +1828,7 @@ pub(crate) fn edit_asset_external(
 /// (the caller then leaves the setting empty = OS opener). Currently knows
 /// `drawio`; other ids return empty.
 #[tauri::command]
-pub(crate) fn detect_media_editor(id: String) -> Result<String, CommandError> {
+pub(crate) fn detect_media_editor(id: String) -> Result<String, String> {
     #[cfg(desktop)]
     {
         if id == "drawio" {
@@ -2115,598 +1843,402 @@ pub(crate) fn detect_media_editor(id: String) -> Result<String, CommandError> {
     }
 }
 
-mod editor_helpers;
-
+/// Probe common drawio install sites without executing. Order: Flatpak exported
+/// launcher (checked as a FILE, per the reporter's note — not via `flatpak run`,
+/// which would inherit our env), then snap, then a `drawio` on PATH, then the
+/// platform app bundle. Returns a command template or "".
 #[cfg(desktop)]
-use editor_helpers::{build_editor_argv, detect_drawio};
+fn detect_drawio() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        // Flatpak: the exported bin is a plain wrapper file we can stat.
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        let flatpak_bins = [
+            home.as_ref()
+                .map(|h| h.join(".local/share/flatpak/exports/bin/com.jgraph.drawio.desktop")),
+            Some(std::path::PathBuf::from(
+                "/var/lib/flatpak/exports/bin/com.jgraph.drawio.desktop",
+            )),
+        ];
+        for b in flatpak_bins.into_iter().flatten() {
+            if b.exists() {
+                return "flatpak run com.jgraph.drawio.desktop {}".to_string();
+            }
+        }
+        if std::path::Path::new("/snap/bin/drawio").exists() {
+            return "/snap/bin/drawio {}".to_string();
+        }
+        if let Some(p) = which_on_path("drawio") {
+            return format!("{} {{}}", p.display());
+        }
+        String::new()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if std::path::Path::new("/Applications/draw.io.app").exists() {
+            return "open -a draw.io {}".to_string();
+        }
+        String::new()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        detect_drawio_windows()
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn detect_drawio_windows() -> String {
+    detect_drawio_windows_with(
+        |name: &'static str| std::env::var_os(name),
+        |path| path.is_file(),
+    )
+}
+
+/// Windows installers can be per-user (`LOCALAPPDATA`) or per-machine
+/// (`ProgramFiles`, including 32-bit installs). Keep the environment/filesystem
+/// inputs injectable so this platform-specific discovery policy is covered by
+/// host tests without mutating the process environment.
+#[cfg(any(target_os = "windows", test))]
+fn detect_drawio_windows_with<V, F>(mut var: V, mut is_file: F) -> String
+where
+    // Every probed environment name below is a string literal. Expressing that
+    // lifetime avoids passing the generic `std::env::var_os` function item
+    // through a higher-ranked `FnMut(&str)` bound, which MSVC rejects as "not
+    // general enough" even though host builds accept it.
+    V: FnMut(&'static str) -> Option<std::ffi::OsString>,
+    F: FnMut(&std::path::Path) -> bool,
+{
+    let locations = [
+        ("LOCALAPPDATA", Some("Programs")),
+        ("ProgramFiles", None),
+        ("ProgramFiles(x86)", None),
+    ];
+    for (variable, extra) in locations {
+        let Some(root) = var(variable) else {
+            continue;
+        };
+        let mut exe = std::path::PathBuf::from(root);
+        if let Some(component) = extra {
+            exe.push(component);
+        }
+        exe.push("draw.io");
+        exe.push("draw.io.exe");
+        if is_file(&exe) {
+            // Windows executable paths commonly contain spaces. The tokenizer
+            // below strips these grouping quotes before direct argv spawning.
+            return format!("\"{}\" {{}}", exe.display());
+        }
+    }
+    String::new()
+}
+
+/// Find an executable by name on `$PATH` (stat only, no exec). Linux/macOS.
+#[cfg(all(desktop, unix))]
+fn which_on_path(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|cand| cand.is_file())
+}
+
+/// Split a user command template into (program, args) for an editor launch.
+/// Double quotes group whitespace but are not passed to the child; backslashes
+/// are always literal, which is required for ordinary Windows paths. This is a
+/// deliberately small argv tokenizer, not a shell: there is no expansion,
+/// interpolation, or escape syntax. Unmatched quotes and an empty program are
+/// rejected. `{}` is substituted in arguments; otherwise the target path is
+/// appended as the final argument.
+#[cfg(any(desktop, test))]
+fn build_editor_argv(command: &str, target: &str) -> Result<(String, Vec<String>), String> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut token_started = false;
+    let mut quoted = false;
+    for ch in command.chars() {
+        match ch {
+            '"' => {
+                quoted = !quoted;
+                token_started = true;
+            }
+            ch if ch.is_whitespace() && !quoted => {
+                if token_started {
+                    tokens.push(std::mem::take(&mut token));
+                    token_started = false;
+                }
+            }
+            _ => {
+                token.push(ch);
+                token_started = true;
+            }
+        }
+    }
+    if quoted {
+        return Err("unclosed double quote in editor command".to_string());
+    }
+    if token_started {
+        tokens.push(token);
+    }
+
+    let (prog, rest) = tokens
+        .split_first()
+        .ok_or_else(|| "empty editor command".to_string())?;
+    if prog.is_empty() {
+        return Err("editor command program is empty".to_string());
+    }
+    let mut args: Vec<String> = Vec::new();
+    let mut substituted = false;
+    for tok in rest {
+        if tok.contains("{}") {
+            args.push(tok.replace("{}", target));
+            substituted = true;
+        } else {
+            args.push((*tok).to_string());
+        }
+    }
+    if !substituted {
+        args.push(target.to_string());
+    }
+    Ok((prog.clone(), args))
+}
+
+#[cfg(test)]
+mod editor_argv_tests {
+    use super::{build_editor_argv, detect_drawio_windows, detect_drawio_windows_with};
+    use std::{ffi::OsString, path::PathBuf};
+
+    #[test]
+    fn appends_path_when_no_placeholder() {
+        let (p, a) = build_editor_argv("drawio", "/g/assets/x.drawio.svg").unwrap();
+        assert_eq!(p, "drawio");
+        assert_eq!(a, vec!["/g/assets/x.drawio.svg"]);
+    }
+
+    #[test]
+    fn substitutes_a_placeholder_token() {
+        let (p, a) =
+            build_editor_argv("flatpak run com.jgraph.drawio.desktop {}", "/g/x.svg").unwrap();
+        assert_eq!(p, "flatpak");
+        assert_eq!(a, vec!["run", "com.jgraph.drawio.desktop", "/g/x.svg"]);
+    }
+
+    #[test]
+    fn substitutes_inside_a_token() {
+        let (p, a) = build_editor_argv("app --file={}", "/g/x.svg").unwrap();
+        assert_eq!(p, "app");
+        assert_eq!(a, vec!["--file=/g/x.svg"]);
+    }
+
+    #[test]
+    fn quoted_windows_program_path_is_one_argv_token() {
+        let (p, a) = build_editor_argv(
+            r#""C:\Program Files\draw.io\draw.io.exe" {}"#,
+            r#"C:\graph\assets\x.drawio.svg"#,
+        )
+        .unwrap();
+        assert_eq!(p, r#"C:\Program Files\draw.io\draw.io.exe"#);
+        assert_eq!(a, vec![r#"C:\graph\assets\x.drawio.svg"#]);
+    }
+
+    #[test]
+    fn quoted_argument_with_spaces_is_one_argv_token() {
+        let (p, a) = build_editor_argv(
+            r#"drawio --profile "C:\Users\Me\Drawio Profile" {}"#,
+            r#"C:\graph\assets\x.drawio.svg"#,
+        )
+        .unwrap();
+        assert_eq!(p, "drawio");
+        assert_eq!(
+            a,
+            vec![
+                r#"--profile"#,
+                r#"C:\Users\Me\Drawio Profile"#,
+                r#"C:\graph\assets\x.drawio.svg"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn malformed_or_empty_commands_are_rejected() {
+        assert_eq!(
+            build_editor_argv("   ", "/g/x.svg").unwrap_err(),
+            "empty editor command"
+        );
+        assert_eq!(
+            build_editor_argv(r#""C:\Program Files\draw.io\draw.io.exe {}"#, "/g/x.svg")
+                .unwrap_err(),
+            "unclosed double quote in editor command"
+        );
+        assert_eq!(
+            build_editor_argv(r#""" {}"#, "/g/x.svg").unwrap_err(),
+            "editor command program is empty"
+        );
+    }
+
+    #[test]
+    fn windows_autodetect_checks_per_machine_install_locations() {
+        for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
+            let root = PathBuf::from(format!("/{variable}"));
+            let expected = root.join("draw.io").join("draw.io.exe");
+            let command = detect_drawio_windows_with(
+                |key| (key == variable).then(|| OsString::from(&root)),
+                |path| path == expected,
+            );
+            assert_eq!(command, format!("\"{}\" {{}}", expected.display()));
+        }
+    }
+
+    #[test]
+    fn windows_autodetect_keeps_per_user_install_first() {
+        let local = PathBuf::from("/Local App Data");
+        let machine = PathBuf::from("/Program Files");
+        let expected = local.join("Programs").join("draw.io").join("draw.io.exe");
+        let command = detect_drawio_windows_with(
+            |key| match key {
+                "LOCALAPPDATA" => Some(OsString::from(&local)),
+                "ProgramFiles" => Some(OsString::from(&machine)),
+                _ => None,
+            },
+            |path| path == expected || path == machine.join("draw.io").join("draw.io.exe"),
+        );
+        assert_eq!(command, format!("\"{}\" {{}}", expected.display()));
+    }
+
+    #[test]
+    fn windows_autodetect_returns_empty_when_no_candidate_is_a_file() {
+        let command = detect_drawio_windows_with(|_| Some(OsString::from("/missing")), |_| false);
+        assert!(command.is_empty());
+    }
+
+    #[test]
+    fn windows_autodetect_real_callbacks_compile_and_run() {
+        // This wrapper is the exact Windows call site. Keeping it compiled in
+        // host tests catches callback lifetime regressions even before the
+        // Windows CI runner builds the cfg(target_os = "windows") branch.
+        let _ = detect_drawio_windows();
+    }
+}
 
 /// Orphaned `assets/` files (no block references them) for the cleanup UI.
 #[tauri::command]
-pub(crate) async fn list_orphan_assets(
-    state: GraphContext<'_>,
-) -> Result<Vec<tine_core::model::AssetInfo>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+pub(crate) async fn list_orphan_assets(state: GraphContext<'_>) -> Result<Vec<AssetInfo>, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph().orphan_assets().map_err(CommandError::from)
+        tine_graph_features::assets::orphan_assets(&slot.store).map_err(sync_conflict_error)
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
-/// Move an orphaned asset to the recoverable trash.
+/// Result of [`trash_asset`]: `referenced` means the published graph still uses
+/// the file, so it was kept (GH #623). A normal outcome, not an error.
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum TrashAssetWire {
+    Trashed,
+    Referenced,
+}
+
+impl From<tine_graph_features::assets::TrashOutcome> for TrashAssetWire {
+    fn from(outcome: tine_graph_features::assets::TrashOutcome) -> Self {
+        match outcome {
+            tine_graph_features::assets::TrashOutcome::Trashed => Self::Trashed,
+            tine_graph_features::assets::TrashOutcome::Referenced => Self::Referenced,
+        }
+    }
+}
+
+/// Move an unreferenced asset to the recoverable trash; a file the published
+/// graph still references is kept and reported as `referenced`.
 #[tauri::command]
-pub(crate) fn trash_asset(name: String, state: GraphContext<'_>) -> Result<(), CommandError> {
-    let window_label = state.window.label().to_string();
-    with_trash_graph(&state, |g| {
-        let path = g.assets_path().join(&name);
-        g.trash_asset(&name).map_err(CommandError::from)?;
-        crate::watcher::note_asset_self_write(&window_label, &path);
-        Ok(())
+pub(crate) async fn trash_asset(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<TrashAssetWire, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::assets::trash_asset(&slot.store, &name)
+            .map(TrashAssetWire::from)
+            .map_err(|error| feature_asset_error(error, &slot))
     })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Count + total bytes in the recoverable asset trash.
 #[tauri::command]
 pub(crate) async fn asset_trash_stats(
     state: GraphContext<'_>,
-) -> Result<tine_core::model::TrashStats, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<tine_core::model::TrashStats, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.with_filesystem_graph(|g| Ok(g.asset_trash_stats()))
+        tine_graph_features::assets::asset_trash_stats(&slot.store).map_err(store_error)
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 /// Permanently delete everything in the asset trash; returns files removed.
 #[tauri::command]
-pub(crate) async fn empty_asset_trash(state: GraphContext<'_>) -> Result<u64, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.with_trash_graph(|g| g.empty_asset_trash().map_err(CommandError::from))
+pub(crate) async fn empty_asset_trash(state: GraphContext<'_>) -> Result<u64, String> {
+    let slot = slot_for_context(&state)?;
+    crate::state::off_ui(move || {
+        slot.store
+            .purge_asset_trash()
+            .map(|(count, _)| count)
+            .map_err(|(error, count, bytes)| {
+                format!(
+                    "{} ({count} entries, {bytes} bytes already removed)",
+                    store_error(error)
+                )
+            })
     })
     .await
-    .map_err(CommandError::worker)?
 }
 
 /// Journal days that resolve to more than one file (e.g. a date-stem file plus a
-/// title-named one) — for the user to reconcile. Walks `journals/`, and runs at
-/// every graph open, while the graph is being indexed.
+/// title-named one) — for the user to reconcile.
 #[tauri::command]
 pub(crate) async fn list_journal_conflicts(
     state: GraphContext<'_>,
-) -> Result<Vec<tine_core::model::JournalConflict>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<Vec<tine_core::model::JournalConflict>, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.with_filesystem_graph(|g| Ok(g.journal_conflicts()))
+        tine_graph_features::journals::journal_conflicts(&slot.store)
+            .map_err(|error| error.to_string())
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
-/// Concord L0 reload-on-focus fallback: ask the watcher for ONE full stat-diff
-/// pass right now. Whatever changed on disk is then emitted through the normal
-/// `graph-changed` path, so the deferred-replay machinery decides what may be
-/// applied — this command never touches a page itself.
-///
-/// Deliberately graph-slot-free: it arms a process-wide flag on the single
-/// watcher thread, which already covers every bound graph in both regimes.
-#[tauri::command]
-pub(crate) fn rescan_graph_now(state: tauri::State<'_, AppState>) -> u64 {
-    let sequence = crate::watcher::request_full_rescan();
-    crate::state::poke_watcher(&state);
-    sequence
-}
-
-/// Journal files whose names don't round-trip to a date, and the names they
-/// would get. Concord invariant 4 (write-shyness): opening a graph used to
-/// perform these renames silently; it now only proposes them here.
+/// Proposed journal date-name renames; opening a graph never performs them.
 #[tauri::command]
 pub(crate) async fn list_journal_filename_migrations(
     state: GraphContext<'_>,
-) -> Result<Vec<tine_core::model::JournalFilenameMigration>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<Vec<JournalFilenameMigration>, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.with_filesystem_graph(|g| Ok(g.journal_filename_migrations()))
+        journals::journal_filename_migrations(&slot.store).map_err(|error| error.to_string())
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
-/// Apply the proposed journal renames, on the user's explicit request. Takes the
-/// same pre-migration snapshot the open path used to take, so the original
-/// filenames stay recoverable in Backups & recovery. Returns how many were
-/// renamed (the migration never clobbers an existing target).
+/// Snapshot (O(graph bytes)), then rename only still-valid confirmed proposals, one file each.
 #[tauri::command]
 pub(crate) async fn apply_journal_filename_migrations(
+    app: tauri::AppHandle,
     state: GraphContext<'_>,
-) -> Result<usize, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+    migrations: Vec<JournalFilenameMigration>,
+) -> Result<journals::MigrationResult, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        let graph = slot.graph();
-        crate::backup::backup_graph_now(&app, &graph, "");
-        graph
-            .migrate_journal_filenames_checked()
-            .map_err(CommandError::from)
+        crate::backup::snapshot_before_rewrite(&app, &slot, "pre-journal-rename")?;
+        let result = journals::migrate_journal_filenames(&slot.store, &migrations)
+            .map_err(|error| error.to_string())?;
+        Ok(result)
     })
     .await
-    .map_err(CommandError::worker)?
-}
-
-/// Everything the conflicts UI shows, from one pass over the graph: sync-tool
-/// conflict copies (Syncthing/Dropbox), pages whose bytes carry unresolved VCS
-/// merge markers (saves to them are refused, so the panel and the page banner
-/// explain why), and the Concord conflict queue (L3) derived from both --
-/// derived on every call from what is on disk, so it survives restarts
-/// without storing anything. One command, so a refresh reads every page once
-/// rather than twice (GH #543, audit R8-09).
-///
-/// Async + `spawn_blocking` (GH #332; audit 2026-08-24, finding A3): the
-/// marker scan reads every page file and the queue block-diffs every
-/// conflicted page. As a sync command it ran on the main thread and froze
-/// every other command for 10-16 s on a large Windows graph.
-#[tauri::command]
-pub(crate) async fn conflict_inventory(
-    state: GraphContext<'_>,
-) -> Result<tine_core::model::ConflictInventory, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            Ok(graph.conflict_inventory())
-        })?
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// Block-level diff of a marker-bearing page's own sides (Concord L5): the
-/// marker sections are parsed into complete page texts and run through the SAME
-/// block diff the conflict-copy path uses. Read-only.
-#[tauri::command]
-pub(crate) async fn vcs_marker_conflict_diff(
-    path: String,
-    state: GraphContext<'_>,
-) -> Result<Option<tine_core::concord_queue::MarkerConflictDiff>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            graph
-                .vcs_marker_conflict_diff(&path)
-                .map_err(CommandError::from)
-        })?
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// Apply the user's per-row decisions to a marker-bearing page, writing the
-/// clean merged result — the one write Concord invariant 3 permits to such a
-/// file. `base_rev` guards against the VCS changing it under the review.
-#[tauri::command]
-pub(crate) async fn resolve_vcs_marker_conflict(
-    path: String,
-    decisions: std::collections::HashMap<String, String>,
-    base_rev: String,
-    pre_choice: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph()
-            .resolve_vcs_marker_conflict(
-                &path,
-                &decisions,
-                &base_rev,
-                pre_choice.as_deref().unwrap_or("union"),
-            )
-            .map_err(direct_save_error_message)
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// Block-level diff of a sync-conflict copy against its winner (both graph-root-
-/// relative paths) — the data behind the two-column merge UI. Read-only.
-#[tauri::command]
-pub(crate) async fn sync_conflict_diff(
-    winner: String,
-    conflict: String,
-    state: GraphContext<'_>,
-) -> Result<Option<tine_core::sync_diff::SyncConflictDiff>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            graph
-                .sync_conflict_diff(&winner, &conflict)
-                .map_err(CommandError::from)
-        })?
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// Two-way diff of a duplicate journal day's canonical file against one of its
-/// strays — the data behind the same two-column merge UI the sync-copy path
-/// uses. `Ok(None)` when the pair cannot be merged at all (a cross-format
-/// `.md`/`.org` twin), which the UI renders as file rows without row choices.
-/// Read-only.
-#[tauri::command]
-pub(crate) async fn duplicate_journal_diff(
-    canonical: String,
-    stray: String,
-    state: GraphContext<'_>,
-) -> Result<Option<tine_core::sync_diff::SyncConflictDiff>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            graph
-                .duplicate_journal_diff(&canonical, &stray)
-                .map_err(CommandError::from)
-        })?
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// Fold one stray of a duplicate journal day into that day's canonical file with
-/// the user's per-row decisions, moving the stray to recoverable trash. Guarded
-/// so it can only ever touch two files of the SAME duplicate day.
-#[tauri::command]
-pub(crate) async fn resolve_duplicate_journal_day(
-    canonical: String,
-    stray: String,
-    decisions: std::collections::HashMap<String, String>,
-    base_rev: String,
-    stray_rev: String,
-    pre_choice: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<PageDto, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph()
-            .resolve_duplicate_journal_day(
-                &canonical,
-                &stray,
-                &decisions,
-                &base_rev,
-                &stray_rev,
-                pre_choice.as_deref().unwrap_or("union"),
-            )
-            .map_err(CommandError::from)
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// Block-level diff of two raw page texts — a pure function of its inputs,
-/// needing no graph, path, or slot (Concord P3's path-free seam; future in-page
-/// conflict UI builds on it). `format`: `"org"` selects the org parser,
-/// anything else means markdown. Revs are `content_rev` of the exact inputs,
-/// the same staleness tokens `Graph::sync_conflict_diff` issues.
-#[tauri::command]
-pub(crate) async fn text_block_diff(
-    mine: String,
-    theirs: String,
-    format: Option<String>,
-) -> Result<tine_core::sync_diff::SyncConflictDiff, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        tine_core::sync_diff::diff_texts(&mine, &theirs, format.as_deref() == Some("org"))
-    })
-    .await
-    .map_err(CommandError::worker)
-}
-
-/// 3-way variant of [`text_block_diff`]: classifies each aligned row against
-/// `base` (the last-agreed text) and carries per-row suggestions the UI may
-/// pre-select — never auto-apply. See ADR 0056.
-#[tauri::command]
-pub(crate) async fn text_block_diff3(
-    base: String,
-    mine: String,
-    theirs: String,
-    format: Option<String>,
-) -> Result<tine_core::sync_diff::SyncConflictDiff, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        tine_core::sync_diff::diff3_texts(&base, &mine, &theirs, format.as_deref() == Some("org"))
-    })
-    .await
-    .map_err(CommandError::worker)
-}
-
-/// Diff a retained live Direct Files draft against the exact disk observation
-/// that refused its save. The authority is inspected, never consumed.
-#[tauri::command]
-pub(crate) async fn live_save_conflict_diff(
-    page: PageDto,
-    base_rev: Option<String>,
-    conflict_epoch: u64,
-    state: GraphContext<'_>,
-) -> Result<tine_core::sync_diff::SyncConflictDiff, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.with_filesystem_graph(|graph| {
-            graph
-                .live_save_conflict_diff(
-                    &page,
-                    base_rev.as_deref(),
-                    tine_core::ConflictOverride {
-                        observation_epoch: conflict_epoch,
-                    },
-                )
-                .map_err(CommandError::from)
-        })
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-#[tauri::command]
-pub(crate) async fn capture_live_save_conflict(
-    page: PageDto,
-    base_rev: Option<String>,
-    conflict_epoch: u64,
-    state: GraphContext<'_>,
-) -> Result<Option<tine_core::LiveSaveConflictCapture>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.with_filesystem_graph(|graph| {
-            graph
-                .capture_live_save_conflict(
-                    &page,
-                    base_rev.as_deref(),
-                    tine_core::ConflictOverride {
-                        observation_epoch: conflict_epoch,
-                    },
-                )
-                .map(Some)
-                .map_err(CommandError::from)
-        })
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-#[tauri::command]
-pub(crate) async fn durable_live_save_conflict_diff(
-    page: PageDto,
-    base_text: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<tine_core::sync_diff::SyncConflictDiff, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.with_filesystem_graph(|graph| {
-            graph
-                .durable_live_save_conflict_diff(&page, base_text.as_deref())
-                .map_err(CommandError::from)
-        })
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum ConflictCapsuleAuthority {
-    DirectDurable { expected_disk_rev: String },
-    DirectLive { conflict_epoch: u64 },
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct ConflictCapsuleReview {
-    diff: tine_core::sync_diff::SyncConflictDiff,
-    authority: ConflictCapsuleAuthority,
-}
-
-/// One semantic review surface for app-private conflict capsules.
-#[tauri::command]
-pub(crate) async fn conflict_capsule_diff(
-    page: PageDto,
-    base_rev: Option<String>,
-    conflict_epoch: i64,
-    base_text: Option<String>,
-    disk_rev: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<ConflictCapsuleReview, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        let (diff, authority) = slot
-            .graph()
-            .review_live_save_conflict_capsule(
-                &page,
-                base_rev.as_deref(),
-                conflict_epoch,
-                base_text.as_deref(),
-                disk_rev.as_deref(),
-            )
-            .map_err(CommandError::from)?;
-        let authority = match authority {
-            tine_core::LiveSaveConflictReviewAuthority::Live { conflict_epoch } => {
-                ConflictCapsuleAuthority::DirectLive { conflict_epoch }
-            }
-            tine_core::LiveSaveConflictReviewAuthority::Durable { expected_disk_rev } => {
-                ConflictCapsuleAuthority::DirectDurable { expected_disk_rev }
-            }
-        };
-        Ok(ConflictCapsuleReview { diff, authority })
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// Apply capsule decisions through the existing one-shot/durable guards.
-#[tauri::command]
-pub(crate) async fn resolve_conflict_capsule(
-    page: PageDto,
-    base_rev: Option<String>,
-    authority: ConflictCapsuleAuthority,
-    decisions: std::collections::HashMap<String, String>,
-    pre_choice: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<PageDto, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        {
-            let graph = slot.graph();
-            match authority {
-                ConflictCapsuleAuthority::DirectDurable { expected_disk_rev } => graph
-                    .resolve_durable_live_save_conflict(
-                        &page,
-                        &expected_disk_rev,
-                        &decisions,
-                        pre_choice.as_deref().unwrap_or("union"),
-                    )
-                    .map_err(direct_save_error_message),
-                ConflictCapsuleAuthority::DirectLive { conflict_epoch } => graph
-                    .resolve_live_save_conflict(
-                        &page,
-                        base_rev.as_deref(),
-                        tine_core::ConflictOverride {
-                            observation_epoch: conflict_epoch,
-                        },
-                        &decisions,
-                        pre_choice.as_deref().unwrap_or("both"),
-                    )
-                    .map_err(direct_save_error_message),
-            }
-        }
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-#[tauri::command]
-pub(crate) async fn resolve_durable_live_save_conflict(
-    page: PageDto,
-    expected_disk_rev: String,
-    decisions: std::collections::HashMap<String, String>,
-    pre_choice: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<PageDto, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        let graph = slot.graph();
-        graph
-            .resolve_durable_live_save_conflict(
-                &page,
-                &expected_disk_rev,
-                &decisions,
-                pre_choice.as_deref().unwrap_or("union"),
-            )
-            .map_err(direct_save_error_message)
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// Resolve a live Direct Files save conflict block-by-block, consuming the same
-/// exact one-shot authority as the former Keep-mine action.
-#[tauri::command]
-pub(crate) async fn resolve_live_save_conflict(
-    page: PageDto,
-    base_rev: Option<String>,
-    conflict_epoch: u64,
-    decisions: std::collections::HashMap<String, String>,
-    pre_choice: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<PageDto, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        let graph = slot.graph();
-        graph
-            .resolve_live_save_conflict(
-                &page,
-                base_rev.as_deref(),
-                tine_core::ConflictOverride {
-                    observation_epoch: conflict_epoch,
-                },
-                &decisions,
-                pre_choice.as_deref().unwrap_or("both"),
-            )
-            .map_err(direct_save_error_message)
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// Resolve a sync-conflict copy: merge it into its winner per the user's per-row
-/// `decisions` (row id → "mine"/"theirs"/"both"/"merged") via the normal save path, then
-/// trash the conflict copy. `base_rev` guards against the winner changing under
-/// the merge; returns "conflict" if it did. `pre_choice`: "mine"/"theirs"/"union".
-#[tauri::command]
-pub(crate) async fn resolve_sync_conflict(
-    winner: String,
-    conflict: String,
-    decisions: std::collections::HashMap<String, String>,
-    base_rev: String,
-    conflict_rev: String,
-    merge_base_rev: Option<String>,
-    pre_choice: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<PageDto, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph()
-            .resolve_sync_conflict(
-                &winner,
-                &conflict,
-                &decisions,
-                &base_rev,
-                &conflict_rev,
-                merge_base_rev.as_deref(),
-                pre_choice.as_deref().unwrap_or("union"),
-            )
-            .map_err(direct_save_error_message)
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// Discard a sync-conflict copy without merging (move it to the recoverable
-/// trash). Refuses anything that isn't a conflict copy.
-#[tauri::command]
-pub(crate) fn trash_sync_conflict(
-    conflict: String,
-    state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    with_trash_graph(&state, |g| {
-        g.trash_sync_conflict(&conflict).map_err(CommandError::from)
-    })
+    .map_err(|error| error.to_string())?
 }
 
 /// Move one journal file (by exact filename) to the recoverable trash.
@@ -2714,205 +2246,41 @@ pub(crate) fn trash_sync_conflict(
 pub(crate) async fn trash_journal_file(
     name: String,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph()
-            .trash_journal_file(&name)
-            .map_err(CommandError::from)
+) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    crate::state::off_ui(move || {
+        tine_graph_features::journals::trash_journal_file(&slot.store, &name)
+            .map_err(|e| e.to_string())
     })
     .await
-    .map_err(CommandError::worker)?
 }
 
 /// Raw contents of one journal file (by exact filename) — for inspecting a
 /// duplicate day's files before reconciling.
 #[tauri::command]
-pub(crate) fn read_journal_file(
-    name: String,
-    state: GraphContext<'_>,
-) -> Result<String, CommandError> {
-    with_filesystem_graph(&state, |g| {
-        g.read_journal_file(&name).map_err(CommandError::from)
-    })
+pub(crate) fn read_journal_file(name: String, state: GraphContext<'_>) -> Result<String, String> {
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::journals::read_journal_file(&slot.store, &name).map_err(|e| e.to_string())
 }
 
 /// Load a page from a SPECIFIC file by its graph-root-relative path — lets the UI
 /// navigate to a duplicate-day stray that shares a (kind,name) with the canonical
-/// file and so is unreachable by name (#21).
+/// file and so is unreachable by name (#21). External-change reloads use it
+/// too. A read waits for the store writer (a watcher cycle, a save), so it
+/// runs on the blocking pool, never on the main thread (GH #623, I-21).
 #[tauri::command]
 pub(crate) async fn get_page_by_path(
     path: String,
     state: GraphContext<'_>,
-) -> Result<Option<PageDto>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        display_read(&state, &label, binding_generation, |graph| {
-            graph.load_by_path(&path).map_err(CommandError::from)
-        })?
+) -> Result<Option<PageWire>, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || match slot.store.page(&PageId::from(path)) {
+        Ok(read) => Ok(Some(page_dto(read))),
+        Err(StoreError::NotFound | StoreError::InvalidTarget(_)) => Ok(None),
+        Err(error) => Err(store_error(error)),
     })
     .await
-    .map_err(CommandError::worker)?
-}
-
-/// Activate an editor over an existing file.
-///
-/// Deliberately separate from `get_page`/`get_page_by_path`. Those are
-/// mixed-purpose reads — some results become store editors, others are read-only,
-/// export, transient, or dropped because the page is already loaded — so minting
-/// there would hand an identity to things that are not editors. An activation
-/// exists exactly when a live editor does. (GH #254 increment 3.)
-#[tauri::command]
-pub(crate) async fn activate_editor(
-    path: String,
-    intent: tine_core::ActivationIntent,
-    expected_revision: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<Option<tine_core::EditorActivationHandle>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph()
-            .activate_editor(&path, intent, expected_revision.as_deref())
-            .map(Some)
-            .map_err(CommandError::from)
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// Activate an editor for a page that has no file yet, returning the prospective
-/// target it is live for. Reserves nothing on disk.
-#[tauri::command]
-pub(crate) async fn activate_absent_editor(
-    name: String,
-    kind: PageKind,
-    state: GraphContext<'_>,
-) -> Result<Option<tine_core::EditorActivationHandle>, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph()
-            .activate_absent_editor(&name, kind)
-            .map(Some)
-            .map_err(CommandError::from)
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// Present a conflict observation and learn its fate WITHOUT writing.
-///
-/// The "Use disk version" half of the authority contract. The frontend cannot
-/// decide this locally: an observation can be revoked with no page event to react
-/// to, so every local value still compares equal while the authority is already
-/// gone. (GH #254 increment 3.)
-#[tauri::command]
-pub(crate) async fn present_conflict_override(
-    path: String,
-    base_rev: Option<String>,
-    activation: u64,
-    conflict_epoch: u64,
-    state: GraphContext<'_>,
-) -> Result<tine_core::ConflictPresentation, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph()
-            .present_conflict_override(&path, base_rev.as_deref(), activation, conflict_epoch)
-            .map_err(CommandError::from)
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-/// Retire an activation, but only if it is still the live one.
-///
-/// Compare-and-retire, never a bare "retire this path": a fire-and-forget
-/// retirement can arrive after a newer activation was installed and would revoke
-/// the wrong editor. Returns whether anything was retired, so a caller racing a
-/// newer activation learns it was superseded instead of silently destroying it.
-#[tauri::command]
-pub(crate) async fn retire_editor_activation(
-    path: String,
-    activation: u64,
-    state: GraphContext<'_>,
-) -> Result<bool, CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        Ok(slot
-            .graph()
-            .retire_editor_activation(&path, tine_core::EditorActivation::from_u64(activation)))
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-#[cfg(test)]
-mod application_page_authority_tests {
-    use super::*;
-    use tempfile::TempDir;
-    use tine_core::model::Graph;
-
-    fn graph_with_files(files: &[(&str, &str)]) -> (TempDir, Graph) {
-        let temp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(temp.path().join("pages")).unwrap();
-        std::fs::create_dir_all(temp.path().join("journals")).unwrap();
-        for (relative, content) in files {
-            let path = temp.path().join(relative);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, content).unwrap();
-        }
-        let graph = Graph::open(temp.path());
-        (temp, graph)
-    }
-
-    #[test]
-    fn pdf_area_rollback_moves_the_real_nested_crop_to_typed_asset_trash() {
-        let (temp, graph) = graph_with_files(&[]);
-        let stored = graph
-            .write_pdf_area_image("paper.pdf", 3, "area-id", 42, b"png")
-            .unwrap();
-        assert!(
-            stored.contains('/'),
-            "the fixture must exercise the nested OG layout"
-        );
-        let source = graph.assets_path().join(&stored);
-        assert!(source.is_file());
-
-        rollback_pdf_area_image_at(&graph, "paper.pdf", 3, "area-id", 42).unwrap();
-
-        assert!(!source.exists());
-        let trash = temp.path().join("logseq/.tine-trash/assets");
-        let names = std::fs::read_dir(trash)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        assert_eq!(names.len(), 1);
-        assert!(names[0].contains("__pdf-area__"));
-        assert!(names[0].ends_with("__3_area-id_42.png"));
-    }
-
-    #[test]
-    fn legacy_page_load_and_unchanged_save_helpers_retain_their_contract() {
-        let (_temp, graph) = graph_with_files(&[("pages/legacy.md", "- unchanged legacy body\n")]);
-        let loaded = graph.load_named("legacy", PageKind::Page).unwrap().unwrap();
-        let base = loaded.rev.clone().unwrap();
-        assert_eq!(
-            graph.save_page(&loaded, Some(&base)).unwrap(),
-            base,
-            "unchanged legacy saves still return the on-disk revision"
-        );
-        assert_eq!(graph.list_pages().len(), 1);
-    }
+    .map_err(|error| error.to_string())?
 }
 
 /// Reconcile a duplicate-day pair: append the blocks of `src` to `dst`, then trash
@@ -2922,30 +2290,36 @@ mod application_page_authority_tests {
 pub(crate) async fn merge_pages(
     src: String,
     dst: String,
-    rename_from: Option<String>,
-    rename_to: Option<String>,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        match (rename_from.as_deref(), rename_to.as_deref()) {
-            (Some(old), Some(new)) => slot
-                .graph()
-                .merge_pages_after_rename(&src, &dst, old, new)
-                .map_err(CommandError::from),
-            (None, None) => slot
-                .graph()
-                .merge_pages(&src, &dst)
-                .map_err(CommandError::from),
-            _ => Err(CommandError::prose(
-                "merge rename requires both source and destination names",
-            )),
-        }
+        tine_graph_features::pages::merge_pages(&slot.store, &src, &dst)
+            .map_err(graph_write_error_to_wire)
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
+}
+
+fn graph_write_error_to_wire(error: std::io::Error) -> String {
+    error.to_string()
+}
+
+#[cfg(test)]
+#[test]
+fn graph_write_wire_keeps_rollback_incomplete_family() {
+    let error = std::io::Error::other(
+        "rollback-incomplete: undo failed for pages/A.md; recovery: logseq/.tine-trash/r/A.md",
+    );
+    let wire = graph_write_error_to_wire(error);
+    assert!(
+        wire.starts_with("rollback-incomplete:"),
+        "I-9: graph command wire must preserve rollback-incomplete; exemplar merge_pages: {wire}"
+    );
+    assert!(
+        wire.contains(".tine-trash/r/A.md"),
+        "I-9: graph command wire must preserve recovery location; exemplar merge_pages: {wire}"
+    );
 }
 
 /// Rescue a duplicate-day stray by moving it to a uniquely-named page
@@ -2955,40 +2329,40 @@ pub(crate) async fn rename_file_to_page(
     path: String,
     new_name: String,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
+) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph()
-            .rename_file_to_page(&path, &new_name)
-            .map_err(CommandError::from)
+        tine_graph_features::pages::rename_file_to_page(&slot.store, &path, &new_name)
+            .map_err(|error| error.to_string())
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn save_asset(
+pub(crate) async fn save_asset(
     name: String,
     bytes_b64: String,
     state: GraphContext<'_>,
-) -> Result<String, CommandError> {
-    let bytes = decode_asset_b64(&bytes_b64)?;
-    let window_label = state.window.label().to_string();
-    with_filesystem_graph(&state, |g| {
-        let stored = g.save_asset(&name, &bytes).map_err(CommandError::from)?;
-        crate::watcher::note_asset_self_write(&window_label, &g.assets_path().join(&stored));
-        Ok(stored)
+) -> Result<String, String> {
+    let slot = slot_for_context(&state)?;
+    crate::state::off_ui(move || {
+        let bytes = decode_asset_b64(&bytes_b64)?;
+        tine_graph_features::assets::save_asset(&slot.store, &name, &bytes)
+            .map_err(|error| feature_asset_error(error, &slot))
     })
+    .await
 }
 
+mod read_highlights_worker;
 #[tauri::command]
-pub(crate) fn read_highlights(
+/// Bound-graph read; missing sidecar is empty, malformed EDN/I/O/join errors refuse.
+pub(crate) async fn read_highlights(
     pdf: String,
     state: GraphContext<'_>,
-) -> Result<Vec<tine_core::pdf::Highlight>, CommandError> {
-    with_filesystem_graph(&state, |g| Ok(g.read_highlights(&pdf)))
+) -> Result<Vec<tine_core::pdf::Highlight>, String> {
+    let slot = slot_for_context(&state)?;
+    read_highlights_worker::read(slot, pdf).await
 }
 
 #[tauri::command]
@@ -2996,883 +2370,55 @@ pub(crate) async fn open_pdf(
     pdf: String,
     label: String,
     state: GraphContext<'_>,
-) -> Result<tine_core::pdf::PdfState, CommandError> {
-    let (app, window_label, binding_generation) = owned_graph_context(state)?;
+) -> Result<tine_core::pdf::PdfState, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &window_label, Some(binding_generation))?;
-        slot.graph()
-            .open_pdf(&pdf, &label)
-            .map_err(CommandError::from)
+        tine_graph_features::pdf::open_pdf(&slot.store, &pdf, &label).map_err(feature_pdf_error)
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
+/// Require a current graph binding; run the guarded merge on a blocking worker.
+/// Dropping the caller does not cancel a started write. WouldBlock returns the
+/// fixed `conflict` token; other I/O and join errors stringify. Retain edits.
 #[tauri::command]
 pub(crate) async fn write_highlights(
     pdf: String,
     label: String,
     highlights: Vec<tine_core::pdf::Highlight>,
-    base_ids: Vec<String>,
+    base_highlights: Vec<tine_core::pdf::Highlight>,
     state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    let (app, window_label, binding_generation) = owned_graph_context(state)?;
+) -> Result<Vec<tine_core::pdf::Highlight>, String> {
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &window_label, Some(binding_generation))?;
-        slot.graph()
-            .write_highlights(&pdf, &label, &highlights, &base_ids)
-            .map_err(CommandError::from)
+        tine_graph_features::pdf::write_highlights(
+            &slot.store,
+            &pdf,
+            &label,
+            &highlights,
+            &base_highlights,
+        )
+        .map_err(feature_pdf_error)
     })
     .await
-    .map_err(CommandError::worker)?
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) async fn write_pdf_view_state(
-    pdf: String,
-    page: i64,
-    scale: f64,
-    state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    let (app, label, binding_generation) = owned_graph_context(state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        slot.graph()
-            .write_pdf_view_state(&pdf, page, scale)
-            .map_err(CommandError::from)
-    })
-    .await
-    .map_err(CommandError::worker)?
-}
-
-#[tauri::command]
-pub(crate) fn save_pdf_area_image(
+pub(crate) async fn save_pdf_area_image(
     pdf: String,
     page: i64,
     id: String,
     stamp: i64,
     bytes_b64: String,
     state: GraphContext<'_>,
-) -> Result<String, CommandError> {
-    let bytes = decode_asset_b64(&bytes_b64)?;
-    let window_label = state.window.label().to_string();
-    with_filesystem_graph(&state, |g| {
-        let stored = g
-            .write_pdf_area_image(&pdf, page, &id, stamp, &bytes)
-            .map_err(CommandError::from)?;
-        crate::watcher::note_asset_self_write(&window_label, &g.assets_path().join(&stored));
-        Ok(stored)
+) -> Result<String, String> {
+    let slot = slot_for_context(&state)?;
+    crate::state::off_ui(move || {
+        let bytes = decode_asset_b64(&bytes_b64)?;
+        tine_graph_features::pdf::write_pdf_area_image(&slot.store, &pdf, page, &id, stamp, &bytes)
+            .map_err(feature_pdf_error)
     })
-}
-
-fn rollback_pdf_area_image_at(
-    graph: &tine_core::model::Graph,
-    pdf: &str,
-    page: i64,
-    id: &str,
-    stamp: i64,
-) -> Result<(), CommandError> {
-    graph
-        .rollback_pdf_area_image(pdf, page, id, stamp)
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub(crate) fn rollback_pdf_area_image(
-    pdf: String,
-    page: i64,
-    id: String,
-    stamp: i64,
-    state: GraphContext<'_>,
-) -> Result<(), CommandError> {
-    let window_label = state.window.label().to_string();
-    with_trash_graph(&state, |graph| {
-        let source = graph
-            .assets_path()
-            .join(tine_core::pdf::asset_key(&pdf))
-            .join(format!("{page}_{id}_{stamp}.png"));
-        rollback_pdf_area_image_at(graph, &pdf, page, &id, stamp)?;
-        crate::watcher::note_asset_self_write(&window_label, &source);
-        Ok(())
-    })
-}
-
-#[cfg(test)]
-mod direct_save_error_tests {
-    use super::direct_save_error_message;
-    use std::io;
-    use tine_core::model::{DirectSaveError, DirectSaveFailureCode};
-
-    fn code(value: &str) -> DirectSaveFailureCode {
-        DirectSaveFailureCode::ALL
-            .into_iter()
-            .find(|code| code.as_str() == value)
-            .unwrap_or_else(|| panic!("missing DirectSaveFailureCode for {value}"))
-    }
-
-    fn payload(
-        value: &str,
-        kind: io::ErrorKind,
-        epoch: Option<u64>,
-        message: &str,
-    ) -> serde_json::Value {
-        let source = io::Error::new(kind, message.to_owned());
-        let error = DirectSaveError::into_io_with_conflict_epoch(code(value), epoch, source);
-        serde_json::from_str(&direct_save_error_message(error).to_string()).unwrap()
-    }
-
-    /// The frontend puts up a conflict prompt ("Keep mine" / "Use disk version")
-    /// for exactly one message, and a page it marks conflicted stops saving until
-    /// the user resolves it. So the set of failures that produce that message is
-    /// a contract, not a formatting detail: anything in it that the two buttons
-    /// cannot resolve strands the page.
-    #[test]
-    fn only_a_real_base_revision_conflict_raises_the_conflict_prompt() {
-        assert_eq!(
-            payload(
-                "conflict.base_rev",
-                io::ErrorKind::AlreadyExists,
-                None,
-                "conflict",
-            ),
-            serde_json::json!({
-                "kind": "save-conflict",
-                "reason_code": "conflict.base_rev",
-                "detail": { "io_error_kind": "AlreadyExists", "epoch": null },
-            })
-        );
-
-        for (message, expected_code) in [
-            (
-                "graph text paths share one portable case/NFC identity: pages/foo.md and pages/Foo.md",
-                "precheck.portable_collision",
-            ),
-            (
-                "graph text files alias one physical resource: pages/a.md and pages/b.md",
-                "precheck.resource_alias",
-            ),
-            (
-                "graph text entry is a symlink or reparse point: pages/Alias.md",
-                "precheck.symlink",
-            ),
-            (
-                "another graph document owns this effective page identity",
-                "identity.owned_elsewhere",
-            ),
-            (
-                "a page with that name already exists",
-                "identity.name_taken",
-            ),
-            (
-                "target page exists in another supported text extension",
-                "identity.name_taken",
-            ),
-            // The class this contract exists to keep out: an unclassified
-            // AlreadyExists. It used to reach a `conflict.other` catch-all, so
-            // a failure that had PRESERVED the user's bytes under a recovery
-            // name was reported as a bare "conflict" -- the one message that
-            // both hides the retention text and offers a "use disk" button
-            // that throws those very edits away.
-            (
-                "displaced target retained as pages/Note.md.editor-recovery",
-                "unknown",
-            ),
-        ] {
-            let reported = payload(
-                expected_code,
-                io::ErrorKind::AlreadyExists,
-                None,
-                message,
-            );
-            assert_eq!(reported["kind"], "direct-save-failure");
-            assert_eq!(reported["reason_code"], expected_code);
-        }
-    }
-
-    /// The counterpart: a page whose file moved between load and save IS a
-    /// content conflict, and since `011658a9` "keep mine" can actually resolve
-    /// it. It must reach the prompt.
-    #[test]
-    fn an_unobserved_external_change_still_raises_the_conflict_prompt() {
-        let reported = payload(
-            "conflict.pinned_owner",
-            io::ErrorKind::AlreadyExists,
-            Some(17),
-            "path-pinned page does not match its captured exact owner",
-        );
-        assert_eq!(reported["kind"], "save-conflict");
-        assert_eq!(reported["reason_code"], "conflict.pinned_owner");
-        assert_eq!(reported["detail"]["epoch"], 17);
-    }
-
-    #[test]
-    fn every_minted_site_and_no_tokenless_site_reaches_the_banner() {
-        for code in DirectSaveFailureCode::ALL {
-            let value = code.as_str();
-            let conflict = value.starts_with("conflict.");
-            let reported = payload(
-                value,
-                io::ErrorKind::Other,
-                conflict.then_some(1),
-                "display text is not classification data",
-            );
-            assert_eq!(reported["reason_code"], value);
-            assert_eq!(
-                reported["kind"],
-                if conflict {
-                    "save-conflict"
-                } else {
-                    "direct-save-failure"
-                }
-            );
-        }
-
-        for (code, message) in [
-            (
-                "conflict.save_baseline_present",
-                "editor conflict: save baseline present",
-            ),
-            (
-                "conflict.save_baseline_absent",
-                "editor conflict: save baseline absent",
-            ),
-            ("conflict.commit_recheck", "editor conflict: commit recheck"),
-            (
-                "conflict.replace_pre_retirement",
-                "editor conflict: replace pre-retirement",
-            ),
-            (
-                "conflict.replace_retired_mismatch",
-                "editor conflict: retired mismatch",
-            ),
-            (
-                "conflict.replace_publication_collision",
-                "editor conflict: publication collision",
-            ),
-            (
-                "conflict.create_publication_collision",
-                "editor conflict: create publication collision",
-            ),
-            (
-                "conflict.final_reread_absent",
-                "editor conflict: final reread absent",
-            ),
-            (
-                "conflict.final_reread_present",
-                "editor conflict: final reread present",
-            ),
-            (
-                "conflict.replace_post_publication",
-                "editor conflict: post-publication validation",
-            ),
-        ] {
-            let reported = payload(code, io::ErrorKind::AlreadyExists, Some(1), message);
-            assert_eq!(reported["kind"], "save-conflict");
-            assert_eq!(reported["reason_code"], code);
-        }
-        for (code, message) in [
-            (
-                "conflict_retry.commit_recheck",
-                "tokenless editor conflict: commit recheck: continued churn",
-            ),
-            (
-                "conflict_retry.replace_pre_retirement",
-                "tokenless editor conflict: replace pre-retirement: transient I/O",
-            ),
-            (
-                "conflict_retry.final_reread_present",
-                "tokenless editor conflict: final reread present: transient I/O",
-            ),
-        ] {
-            let reported = payload(code, io::ErrorKind::WouldBlock, None, message);
-            assert_eq!(reported["kind"], "direct-save-failure");
-            assert_eq!(reported["reason_code"], code);
-        }
-    }
-}
-
-#[cfg(test)]
-mod query_command_surface_tests {
-    //! SPEC §7.1, O12. The six commands are `#[tauri::command]` wrappers around
-    //! decisions made in the helpers above; those decisions are what a test can
-    //! actually pin, and they are what would be wrong.
-
-    use super::*;
-    use tine_core::query::ir::{
-        AggFn, DisplayDraft, Field, FriendlyPageMatchScope, SortDir, ViewKind,
-    };
-
-    fn graph_free_registry() -> tine_core::query::registry::Registry {
-        tine_core::query::registry::Registry::from_snapshot(
-            &tine_core::query::ir::RegistrySnapshot {
-                rows: Vec::new(),
-                generation: 0,
-            },
-        )
-    }
-
-    fn parsed(text: &str, dialect: QueryTextDialect) -> ParsedQuery {
-        parse_query_pair(text, dialect, &[], &graph_free_registry())
-    }
-
-    #[test]
-    fn query_parse_returns_the_pair_for_both_dialects() {
-        let og = parsed("(and (task TODO) [[Project]])", QueryTextDialect::Og);
-        assert!(!og.query.is_invalid(), "{:?}", og.query.diagnostics);
-        // OG's `(task TODO)` is a marker SET, so its TQL spelling is `in`;
-        // `task = 'TODO'` is the one-marker special case and a different node.
-        let tql = parsed("task in ('TODO') and [[Project]]", QueryTextDialect::Tql);
-        assert!(!tql.query.is_invalid(), "{:?}", tql.query.diagnostics);
-        assert_eq!(
-            og.query.normalized().filter,
-            tql.query.normalized().filter,
-            "one IR, two spellings"
-        );
-    }
-
-    #[test]
-    fn query_parse_reports_an_unknown_head_instead_of_a_shorter_query() {
-        let parsed = parsed("(and (task TODO) (frobnicate x))", QueryTextDialect::Og);
-        assert!(parsed
-            .query
-            .diagnostics
-            .iter()
-            .any(|d| d.kind == tine_core::query::ir::DiagnosticKind::UnknownHead));
-    }
-
-    #[test]
-    fn query_parse_merges_the_host_blocks_view_properties() {
-        let merged = parse_query_pair(
-            "(and (task TODO) (sort-by page asc))",
-            QueryTextDialect::Og,
-            &[("tine.sample".to_string(), "5".to_string())],
-            &graph_free_registry(),
-        );
-        assert_eq!(merged.view.sample, Some(5));
-        assert!(
-            !merged.view.sort.is_empty(),
-            "the directive survives where no property covers it"
-        );
-    }
-
-    #[test]
-    fn query_parse_exposes_independent_scoped_state_without_changing_the_singular_view() {
-        let parsed = parse_query_pair(
-            "(and (task TODO) (sort-by page asc))",
-            QueryTextDialect::Og,
-            &[
-                ("tine.sample".to_string(), "5".to_string()),
-                ("tine.page-view".to_string(), "table".to_string()),
-                ("tine.page-display".to_string(), "1".to_string()),
-                ("tine.page-sort".to_string(), "".to_string()),
-                ("tine.page-group-field".to_string(), "".to_string()),
-                ("tine.page-columns".to_string(), "".to_string()),
-                ("tine.page-col-aggregates".to_string(), "".to_string()),
-                ("tine.block-view".to_string(), "board".to_string()),
-                ("tine.block-display".to_string(), "1".to_string()),
-                ("tine.block-sort".to_string(), "priority desc".to_string()),
-                ("tine.block-columns".to_string(), "content".to_string()),
-                ("tine.block-col-aggregates".to_string(), "count".to_string()),
-                ("tine.page-match-scope".to_string(), "content".to_string()),
-            ],
-            &graph_free_registry(),
-        );
-
-        assert!(!parsed.query.is_invalid(), "{:?}", parsed.query.diagnostics);
-        assert_eq!(parsed.view.sample, Some(5));
-        assert_eq!(parsed.view.sort, vec![(Field::new("page"), SortDir::Asc)]);
-        assert_eq!(parsed.scoped.page_presentation, Some(ViewKind::Table));
-        assert_eq!(
-            parsed.scoped.page_display,
-            Some(DisplayDraft {
-                sort: Some(Vec::new()),
-                group_by: Some(Field::new("")),
-                columns: Some(Vec::new()),
-                aggregates: Some(Vec::new()),
-                sample: None,
-            })
-        );
-        assert_eq!(parsed.scoped.block_presentation, Some(ViewKind::Board));
-        assert_eq!(
-            parsed.scoped.block_display,
-            Some(DisplayDraft {
-                sort: Some(vec![(Field::new("priority"), SortDir::Desc)]),
-                columns: Some(vec![Field::new("content")]),
-                aggregates: Some(vec![(Field::new(""), AggFn::Count)]),
-                ..DisplayDraft::default()
-            })
-        );
-        assert_eq!(
-            parsed.scoped.page_match_scope,
-            Some(FriendlyPageMatchScope::Content)
-        );
-
-        let wire = serde_json::to_value(&parsed).expect("parsed query serializes");
-        assert!(
-            wire.get("scoped").is_none(),
-            "scoped state is flattened: {wire}"
-        );
-        assert_eq!(wire["page_display"]["sort"], serde_json::json!([]));
-        assert_eq!(wire["page_display"]["group_by"], "");
-        assert_eq!(
-            wire["block_display"]["aggregates"],
-            serde_json::json!([["", "count"]])
-        );
-    }
-
-    /// The cross-language presence contract, at the wire rather than in a
-    /// comment. `queryDisplayDraft.ts` asks `Object.hasOwn(parsed,
-    /// "page_display")` to tell "no scoped draft — inherit the singular
-    /// settings" from "an empty scoped draft — clear them". `Object.hasOwn` is
-    /// true for an explicit `null`, so a `page_display: None` that serialized
-    /// as `"page_display": null` would silently turn every INHERIT into a
-    /// CLEAR: each query with no scoped draft would lose the display settings
-    /// it inherits, on the frontend, with no Rust test noticing — the Rust
-    /// struct is `None` either way.
-    ///
-    /// The only thing standing between here and that bug is
-    /// `skip_serializing_if = "Option::is_none"` on `ScopedDisplaySettings`.
-    /// This test is what fails if it is ever dropped.
-    #[test]
-    fn an_absent_scoped_draft_omits_its_wire_key_entirely() {
-        let absent = parse_query_pair(
-            "(task TODO)",
-            QueryTextDialect::Og,
-            &[("tine.view".to_string(), "table".to_string())],
-            &graph_free_registry(),
-        );
-        assert_eq!(absent.scoped.page_display, None);
-        assert_eq!(absent.scoped.block_display, None);
-        let wire = serde_json::to_value(&absent).expect("parsed query serializes");
-        for key in ["page_display", "block_display", "page_match_scope"] {
-            assert!(
-                wire.get(key).is_none(),
-                "an absent scoped draft must OMIT `{key}`, never send null: \
-                 `Object.hasOwn` is true for null, so a null here turns the \
-                 frontend's inherit into a clear. Keep \
-                 `skip_serializing_if = \"Option::is_none\"` on \
-                 ScopedDisplaySettings. Wire was: {wire}"
-            );
-        }
-
-        // …and the other half of the same contract: a marker with no members
-        // is a PRESENT, empty draft, which is the explicit clear.
-        let empty = parse_query_pair(
-            "(task TODO)",
-            QueryTextDialect::Og,
-            &[("tine.page-display".to_string(), "1".to_string())],
-            &graph_free_registry(),
-        );
-        assert_eq!(empty.scoped.page_display, Some(DisplayDraft::default()));
-        let wire = serde_json::to_value(&empty).expect("parsed query serializes");
-        assert_eq!(
-            wire.get("page_display"),
-            Some(&serde_json::json!({})),
-            "a marker with no members is a present, empty draft: {wire}"
-        );
-        assert!(wire.get("block_display").is_none(), "{wire}");
-    }
-
-    #[test]
-    fn malformed_scoped_properties_are_reported_without_invalidating_the_query() {
-        let parsed = parse_query_pair(
-            "(task TODO)",
-            QueryTextDialect::Og,
-            &[
-                ("tine.page-view".to_string(), "table".to_string()),
-                ("tine.page-display".to_string(), "1".to_string()),
-                (
-                    "tine.page-col-aggregates".to_string(),
-                    "cost=sum;estimate=median".to_string(),
-                ),
-                ("tine.block-display".to_string(), "1".to_string()),
-                ("tine.block-columns".to_string(), "content".to_string()),
-                (
-                    "tine.page-match-scope".to_string(),
-                    "everywhere".to_string(),
-                ),
-            ],
-            &graph_free_registry(),
-        );
-
-        assert!(!parsed.query.is_invalid(), "{:?}", parsed.query.diagnostics);
-        assert!(parsed.query.diagnostics.is_empty());
-        assert_eq!(parsed.scoped.page_presentation, Some(ViewKind::Table));
-        assert_eq!(parsed.scoped.page_display, None);
-        assert_eq!(
-            parsed.scoped.block_display,
-            Some(DisplayDraft {
-                columns: Some(vec![Field::new("content")]),
-                ..DisplayDraft::default()
-            })
-        );
-        assert_eq!(parsed.scoped.page_match_scope, None);
-        assert_eq!(
-            parsed.scoped.unreadable_settings,
-            vec![
-                "tine.page-col-aggregates".to_string(),
-                "tine.page-match-scope".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn old_query_parse_pairs_keep_their_wire_shape_and_deserialize_with_empty_scoped_state() {
-        let parsed = parse_query_pair(
-            "(task TODO)",
-            QueryTextDialect::Og,
-            &[("tine.sample".to_string(), "5".to_string())],
-            &graph_free_registry(),
-        );
-        let wire = serde_json::to_value(&parsed).expect("old pair serializes");
-        let object = wire.as_object().expect("parsed query is an object");
-        assert_eq!(object.len(), 2, "old input still emits only query and view");
-        assert!(object.contains_key("query"));
-        assert!(object.contains_key("view"));
-
-        let decoded: ParsedQuery = serde_json::from_value(wire).expect("old pair deserializes");
-        assert_eq!(decoded.scoped, Default::default());
-        assert_eq!(decoded.view.sample, Some(5));
-        assert!(!decoded.query.is_invalid());
-    }
-
-    #[test]
-    fn query_print_prints_tql_for_every_ir_and_og_where_it_can() {
-        let parsed = parsed("(and (task TODO) [[Project]])", QueryTextDialect::Og);
-        let tql = print_query_text(&parsed.query, &parsed.view, QueryPrintDialect::Tql, false)
-            .expect("TQL is total");
-        assert!(tql.contains("[[Project]]"), "{tql}");
-        let og = print_query_text(&parsed.query, &parsed.view, QueryPrintDialect::Og, false)
-            .expect("this filter is OG-expressible");
-        assert!(og.starts_with('('), "{og}");
-    }
-
-    /// A4: the OG printer is partial and REJECTS, carrying the whole
-    /// diagnostic. Never an empty string, never a stringified message.
-    #[test]
-    fn query_print_rejects_a_non_og_expressible_ir_with_the_diagnostic() {
-        let parsed = parsed("any(children, task = 'DONE')", QueryTextDialect::Tql);
-        assert!(!parsed.query.is_invalid(), "{:?}", parsed.query.diagnostics);
-        assert!(
-            !tine_core::query::print::og_expressible(&parsed.query, &parsed.view),
-            "the fixture must be a filter the OG DSL cannot say"
-        );
-        let error = print_query_text(&parsed.query, &parsed.view, QueryPrintDialect::Og, false)
-            .expect_err("the OG printer is partial");
-        let wire = serde_json::to_string(&error).expect("the rejection serializes");
-        assert!(wire.contains("query-print-refused"), "{wire}");
-        assert!(wire.contains("not_applicable"), "{wire}");
-        assert!(
-            wire.contains("not_applicable\\\",\\\"message") || wire.contains("message"),
-            "the diagnostic travels as structure, not as prose: {wire}"
-        );
-    }
-
-    #[test]
-    fn query_og_expressible_separates_the_two_printers() {
-        let og = parsed("(and (task TODO) [[Project]])", QueryTextDialect::Og);
-        assert!(tine_core::query::print::og_expressible(&og.query, &og.view));
-        let tql_only = parsed("any(children, task = 'DONE')", QueryTextDialect::Tql);
-        assert!(!tine_core::query::print::og_expressible(
-            &tql_only.query,
-            &tql_only.view
-        ));
-    }
-
-    /// `query_registry` returns whatever the bound storage mode published, and
-    /// a registry rebuilt from that wire shape answers suggestions with it.
-    #[test]
-    fn the_registry_snapshot_round_trips_through_the_wire_shape() {
-        let snapshot = tine_core::query::ir::RegistrySnapshot {
-            rows: vec![tine_core::query::ir::RegistryRow {
-                normalized_name: "status".into(),
-                cardinality: tine_core::query::ir::Cardinality::One,
-                observed_type: tine_core::query::ir::ObservedType::Text,
-                count_blocks: 2,
-                count_pages: 0,
-                histogram: Vec::new(),
-                mismatch_count: 0,
-                declared: None,
-                top_values: Vec::new(),
-            }],
-            generation: 7,
-        };
-        let registry = tine_core::query::registry::Registry::from_snapshot(&snapshot);
-        assert_eq!(registry.generation(), 7);
-        assert_eq!(registry.snapshot(), snapshot);
-        let parsed = parse_query_pair("statuss = 'x'", QueryTextDialect::Tql, &[], &registry);
-        assert_eq!(
-            parsed
-                .query
-                .diagnostics
-                .iter()
-                .find(|d| d.kind == tine_core::query::ir::DiagnosticKind::UnknownIdent)
-                .map(|d| d.suggestions.clone()),
-            Some(vec!["prop('status')".to_string()]),
-            "the registry the command fetched is the one the parse reads"
-        );
-    }
-
-    /// `query_run` never truncates: an over-budget answer is a refusal with the
-    /// count, the same rule `run_query` applies.
-    #[test]
-    fn query_run_refuses_an_over_budget_result_rather_than_truncating_it() {
-        let result = tine_core::query::ir::QueryResult {
-            statistics: None,
-            rows: tine_core::query::ir::QueryRows::Block { groups: Vec::new() },
-            diagnostics: Vec::new(),
-            report: tine_core::query::ir::QueryReport {
-                supported: true,
-                ..Default::default()
-            },
-            total: 99_999,
-            matched_total: None,
-            exceeded: true,
-        };
-        let error = query_result_or_error(result).expect_err("an exceeded result is a refusal");
-        let wire = serde_json::to_string(&error).expect("the rejection serializes");
-        assert!(wire.contains("result-too-large"), "{wire}");
-        assert!(wire.contains("99999"), "{wire}");
-
-        let page_result = tine_core::query::ir::QueryResult {
-            statistics: None,
-            rows: tine_core::query::ir::QueryRows::Page { pages: Vec::new() },
-            diagnostics: Vec::new(),
-            report: tine_core::query::ir::QueryReport {
-                supported: true,
-                ..Default::default()
-            },
-            total: 2,
-            matched_total: Some(43),
-            exceeded: true,
-        };
-        let error = query_result_or_error(page_result)
-            .expect_err("an exceeded page result is also a refusal");
-        let wire = serde_json::to_string(&error).expect("the rejection serializes");
-        assert!(
-            wire.contains("43"),
-            "the refusal uses the exact page count: {wire}"
-        );
-    }
-
-    #[test]
-    fn query_run_passes_a_result_within_budget_through_unchanged() {
-        let result = tine_core::query::ir::QueryResult {
-            statistics: None,
-            rows: tine_core::query::ir::QueryRows::Page { pages: Vec::new() },
-            diagnostics: Vec::new(),
-            report: tine_core::query::ir::QueryReport {
-                supported: true,
-                ..Default::default()
-            },
-            total: 3,
-            matched_total: Some(3),
-            exceeded: false,
-        };
-        let passed = query_result_or_error(result).expect("within budget");
-        assert_eq!(passed.total, 3);
-        assert!(matches!(
-            passed.rows,
-            tine_core::query::ir::QueryRows::Page { .. }
-        ));
-    }
-
-    /// `query_explain_empty` (N19): a root `And` explains per conjunct with a
-    /// `without` count; anything else explains as a whole and has none.
-    #[test]
-    fn query_explain_empty_answers_per_conjunct_only_for_a_root_and() {
-        let dir = std::env::temp_dir().join(format!("tine-query-explain-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("pages")).unwrap();
-        std::fs::write(
-            dir.join("pages/Explain.md"),
-            "- TODO a task with no project\n- a project mention [[Project]]\n",
-        )
-        .unwrap();
-        let graph = ready_query_graph(&dir);
-        let bounds = tine_core::query::ir::Bounds::unbounded();
-
-        let conjunction = parsed("(and (task TODO) [[Project]])", QueryTextDialect::Og);
-        let context = tine_core::query::ir::ExecutionContext::none();
-        let explained = when_ready(|| {
-            tine_core::query::explain_empty_query(
-                &graph,
-                &conjunction.query,
-                &conjunction.view,
-                bounds,
-                &context,
-            )
-        });
-        let lines = &explained.rows;
-        assert_eq!(lines.len(), 2, "{lines:?}");
-        assert!(
-            lines.iter().all(|line| line.without.is_some()),
-            "every conjunct of a root `And` reports what the others match: {lines:?}"
-        );
-        assert!(
-            lines.iter().any(|line| line.alone == 1),
-            "each conjunct matches a row on its own: {lines:?}"
-        );
-        assert!(
-            explained.report.supported && explained.report.ignored.is_empty(),
-            "an OG source reports supported with nothing ignored (§4.4): {:?}",
-            explained.report
-        );
-
-        let single = parsed("(task TODO)", QueryTextDialect::Og);
-        let explained = when_ready(|| {
-            tine_core::query::explain_empty_query(
-                &graph,
-                &single.query,
-                &single.view,
-                bounds,
-                &context,
-            )
-        });
-        let lines = &explained.rows;
-        assert_eq!(lines.len(), 1, "{lines:?}");
-        assert_eq!(lines[0].without, None, "there is no `other` to be without");
-        assert_eq!(lines[0].alone, 1);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Open a fixture graph the way the app opens a Direct graph: with its
-    /// disposable SQLite projection attached and initialized, and its answer
-    /// awaited through the same typed readiness the frontend retries on.
-    ///
-    /// RET2 made the public Direct query route projection-only and fallible, so
-    /// a command-layer fixture that only called `Graph::open` would now be
-    /// asking a question the projection cannot answer.
-    fn ready_query_graph(dir: &std::path::Path) -> tine_core::model::Graph {
-        let graph = tine_core::model::Graph::open(dir);
-        graph
-            .attach_direct_projection(dir.join("private/projection.sqlite"))
-            .expect("the disposable projection attaches");
-        graph.warm_cache();
-        graph
-    }
-
-    fn when_ready<T>(
-        mut attempt: impl FnMut() -> Result<T, tine_core::query::QueryExecutionError>,
-    ) -> T {
-        let started = std::time::Instant::now();
-        loop {
-            match attempt() {
-                Ok(answer) => return answer,
-                Err(tine_core::query::QueryExecutionError::NotReady(_)) => {
-                    assert!(
-                        started.elapsed() < std::time::Duration::from_secs(15),
-                        "the query index never became ready"
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                Err(other) => panic!("the public query route refused: {other}"),
-            }
-        }
-    }
-
-    fn parse_and_run(graph: &tine_core::model::Graph, text: &str) -> Vec<String> {
-        let parsed = parsed(text, QueryTextDialect::Tql);
-        let result = when_ready(|| {
-            tine_core::query::run_query_result_ir(
-                graph,
-                &parsed.query,
-                &parsed.view,
-                tine_core::query::ir::Bounds::unbounded(),
-                &tine_core::query::ir::ExecutionContext::none(),
-            )
-        });
-        match result.rows {
-            tine_core::query::ir::QueryRows::Page { pages } => {
-                pages.into_iter().map(|page| page.name).collect()
-            }
-            tine_core::query::ir::QueryRows::Block { groups } => groups
-                .into_iter()
-                .flat_map(|group| group.blocks.into_iter())
-                .map(|block| {
-                    block
-                        .raw
-                        .lines()
-                        .next()
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string()
-                })
-                .collect(),
-        }
-    }
-
-    /// RET1: the two §7.1 IR commands reach the engine through the DATABASE
-    /// entry points, on both backends, and nothing else.
-    ///
-    /// The parity and counter gates live in `tine-core`, where the projection
-    /// counters are visible; what has to be pinned HERE is which functions the
-    /// wire calls, because a command that reached a walk entry directly would
-    /// bypass every one of those gates while still answering correctly.
-    /// `crates/tine-core/tests/public_query_executor_census.rs` pins the
-    /// complementary negative — that this crate builds no page source at all.
-    #[test]
-    fn the_two_ir_commands_reach_only_the_database_entry_points() {
-        // Only the PRODUCTION half of this file: the negative assertions below
-        // name the retired producers, so a whole-file scan would find its own
-        // test data.
-        let production = crate::test_support::rust_module_production_source("commands.rs");
-        let source = production.as_str();
-        let body = |name: &str| -> &str {
-            let at = source
-                .find(&format!("pub(crate) async fn {name}("))
-                .unwrap_or_else(|| panic!("{name} is a command in this file"));
-            let rest = &source[at..];
-            let end = rest
-                .find("\n#[tauri::command]")
-                .or_else(|| rest.find("\n}\n\n"))
-                .unwrap_or(rest.len());
-            &rest[..end]
-        };
-
-        let run = body("query_run");
-        assert!(
-            run.contains("tine_core::query::run_query_result_ir("),
-            "`query_run`'s Direct Files branch calls the database result entry"
-        );
-
-        let explain = body("query_explain_empty");
-        assert!(
-            explain.contains("tine_core::query::explain_empty_query("),
-            "`query_explain_empty`'s Direct Files branch calls the database explain entry"
-        );
-
-        // The walk source is the oracle: a command naming it would be
-        // reconnecting the walk.
-        assert!(
-            !source.contains("GraphQueryPages"),
-            "the command layer names the oracle walk source `GraphQueryPages`"
-        );
-    }
-
-    /// K16: a `@page` query answers with page rows and never loads a document.
-    #[test]
-    fn query_run_answers_page_rows_for_a_page_anchored_query() {
-        let dir = std::env::temp_dir().join(format!("tine-query-run-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("pages")).unwrap();
-        std::fs::create_dir_all(dir.join("journals")).unwrap();
-        std::fs::write(dir.join("pages/Proj%2FSub.md"), "- under a namespace\n").unwrap();
-        std::fs::write(dir.join("pages/Other.md"), "- elsewhere\n").unwrap();
-        let graph = ready_query_graph(&dir);
-
-        assert_eq!(
-            parse_and_run(&graph, "@page and name like 'proj/%'"),
-            vec!["Proj/Sub".to_string()]
-        );
-        assert_eq!(
-            parse_and_run(&graph, "content like '%namespace%'"),
-            vec!["under a namespace".to_string()]
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
+    .await
 }

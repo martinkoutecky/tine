@@ -1,7 +1,11 @@
 import { createMemo, createRoot, createSignal } from "solid-js";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { cellView } from "./cellPresentation";
+import { boardCardChips } from "./boardColumns";
 import { initParser } from "../render/parse";
-import { resetStore, setDoc, type FeedPage, type Node } from "../store";
+import { resetStore } from "../document";
+import { type FeedPage, type Node } from "../document/model";
+import { setDoc } from "../document/model";
 import {
   createFormulaResultsMemo,
   fieldValueToFormulaValue,
@@ -124,55 +128,26 @@ describe("formula eval context", () => {
     expect(readFormulaRowField(journalRow, "prop:score")?.text).toBe("9");
   });
 
-  it("keeps all seven facet-field arms identical for live and DTO rows", () => {
-    const live: Node = {
-      id: "live",
-      raw: "TODO [#A] Row #alpha #beta\nowner:: Martin\nSCHEDULED: <2026-09-03 Thu>\nDEADLINE: <2026-09-04 Fri>",
-      collapsed: false,
-      parent: null,
-      page: "Sheet",
-      children: [],
+  it("keeps a multi-word tag one member when tags become a formula list", () => {
+    const row = {
+      id: "t1",
+      page: "P",
+      kind: "page" as const,
+      dto: { id: "t1", raw: "Task\ntags:: [[big idea]], plain", collapsed: false, children: [], tags: ["big idea", "plain"], properties: [["tags", "[[big idea]], plain"] as [string, string]] },
     };
-    const page: FeedPage = {
-      name: "Sheet",
-      kind: "page",
-      title: "Sheet",
-      preBlock: null,
-      roots: [live.id],
-      format: "md",
-      readOnly: false,
-      guide: false,
-    };
-    setDoc({ byId: { [live.id]: live }, pages: [page], feed: [page.name], loaded: true });
-    const dtoRow = {
-      id: "dto",
-      page: page.name,
-      dto: {
-        id: "dto",
-        raw: live.raw,
-        collapsed: false,
-        children: [],
-        marker: "TODO",
-        priority: "A",
-        scheduled: "2026-09-03 Thu",
-        deadline: "2026-09-04 Fri",
-        tags: ["alpha", "beta"],
-        properties: [["owner", "Martin"]] as [string, string][],
-      },
-    };
-    const expected = new Map([
-      ["state", { text: "TODO", raw: "TODO" }],
-      ["priority", { text: "[#A]", raw: "A" }],
-      ["scheduled", { text: "2026-09-03 Thu", raw: "2026-09-03 Thu" }],
-      ["deadline", { text: "2026-09-04 Fri", raw: "2026-09-04 Fri" }],
-      ["tags", { text: "#alpha #beta", raw: "alpha beta" }],
-      ["page", { text: "Sheet", raw: "Sheet" }],
-      ["prop:owner", { text: "Martin", raw: "Martin" }],
-    ] as const);
+    const value = fieldValueToFormulaValue("tags", readFormulaRowField(row, "tags"));
+    expect(value).toEqual({ kind: "list", values: [textValue("big idea"), textValue("plain")] });
+  });
 
-    for (const [field, value] of expected) {
-      expect(readFormulaRowField({ id: live.id, page: page.name }, field)).toEqual(value);
-      expect(readFormulaRowField(dtoRow, field)).toEqual(value);
-    }
+  it("shows a multi-word tag as one chip in table cells and board cards", () => {
+    const row = {
+      id: "t2",
+      page: "P",
+      kind: "page" as const,
+      dto: { id: "t2", raw: "Task", collapsed: false, children: [], tags: ["big idea", "plain"], properties: [] },
+    };
+    expect(cellView("tags", undefined, readFormulaRowField(row, "tags"))).toEqual({ k: "chips", values: ["#big idea", "#plain"] });
+    expect(boardCardChips(row, "state").tags).toEqual(["#big idea", "#plain"]);
+    expect(boardCardChips(row, "tags").tags).toEqual([]);
   });
 });

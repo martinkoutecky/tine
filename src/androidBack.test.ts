@@ -1,20 +1,5 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-
-function rustModuleSource(path: string): string {
-  const files = [path];
-  const visit = (directory: string) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const child = join(directory, entry.name);
-      if (entry.isDirectory()) visit(child);
-      else if (entry.isFile() && entry.name.endsWith(".rs")) files.push(child);
-    }
-  };
-  const moduleDirectory = path.replace(/\.rs$/, "");
-  if (existsSync(moduleDirectory)) visit(moduleDirectory);
-  return files.sort().map((file) => readFileSync(file, "utf8")).join("\n");
-}
 import {
   dispatchAndroidBack,
   installAndroidBackHandler,
@@ -74,6 +59,48 @@ describe("GH #161 Android SafeBack owner", () => {
     expect(deps.closeRoot).toHaveBeenCalledOnce();
   });
 
+  it("takes the router's answer, not the WebView's, for the history rung", () => {
+    // master 07cb27262: a phone reported canGoBack=true with nothing for the
+    // router to pop, so Back landed on the history rung and silently did
+    // nothing. The rung is chosen by whether the router actually moved.
+    const deps = dispatchDeps();
+    deps.movedBack = false;
+    expect(dispatchAndroidBack({ canGoBack: true }, deps)).toBe("root");
+    expect(deps.historyBack).toHaveBeenCalledOnce();
+    expect(deps.closeRoot).toHaveBeenCalledOnce();
+
+    deps.movedBack = true;
+    expect(dispatchAndroidBack({ canGoBack: false }, deps)).toBe("history");
+    expect(deps.closeRoot).toHaveBeenCalledOnce();
+  });
+
+  it("hands a safely prepared root close to Tauri's installed process exit API", async () => {
+    // master cb7a10fd3/b3bdcb36f: plugin:app has no exit command on the Rust
+    // side, so `invoke("plugin:app|exit")` never closed the app.
+    const { exitAndroidActivity } = await import("./androidBack");
+    const exit = vi.fn(async (_code?: number) => {});
+
+    await exitAndroidActivity(async () => ({ exit }));
+
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("wires the router's history answer and the plugin-process exit with its capability", () => {
+    const app = readFileSync("src/App.tsx", "utf8");
+    const capability = JSON.parse(readFileSync("src-tauri/capabilities/default.json", "utf8"));
+    expect(app).not.toContain("plugin:app|exit");
+    expect(app).toContain("exitAndroidActivity");
+    expect(app).not.toContain("historyBack: () => window.history.back()");
+    expect(app).toMatch(/historyBack: \(\) => \{\s*if \(!canGoBack\(\)\) return false;\s*goBack\(\);\s*return true;/);
+    expect(capability.permissions).toContain("process:allow-exit");
+  });
+
+  it("goes back through the router even when the WebView reports no history", () => {
+    const deps = dispatchDeps();
+    expect(dispatchAndroidBack({ canGoBack: false }, deps)).toBe("history");
+    expect(deps.closeRoot).not.toHaveBeenCalled();
+  });
+
   it("subscribes exactly once only on Android and unregisters idempotently", async () => {
     const deps = dispatchDeps();
     const unregister = vi.fn(async () => {});
@@ -104,21 +131,6 @@ describe("GH #161 Android SafeBack owner", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(subscribe).not.toHaveBeenCalled();
-  });
-
-  it("takes the router's answer, not the WebView's, for the history rung", () => {
-    // A phone reported canGoBack=true with nothing for the router to pop, so
-    // Back landed on the history rung and silently did nothing. The rung is
-    // chosen by whether the router actually moved.
-    const deps = dispatchDeps();
-    deps.movedBack = false;
-    expect(dispatchAndroidBack({ canGoBack: true }, deps)).toBe("root");
-    expect(deps.historyBack).toHaveBeenCalledOnce();
-    expect(deps.closeRoot).toHaveBeenCalledOnce();
-
-    deps.movedBack = true;
-    expect(dispatchAndroidBack({ canGoBack: false }, deps)).toBe("history");
-    expect(deps.closeRoot).toHaveBeenCalledOnce();
   });
 
   it("leaves the native SafeBack owner blocking when platform or subscription setup rejects", async () => {
@@ -189,11 +201,16 @@ describe("GH #161 Android SafeBack owner", () => {
     expect(activity).toContain("showBlockedBackNotice()");
     expect(activity).toContain("SafeBackBridge.clear()");
     expect(activity).not.toContain("onBackPressedDispatcher.onBackPressed");
-    expect(app).not.toContain('@tauri-apps/api/app');
+    expect(app).not.toContain("@tauri-apps/api/app");
     expect(app).toContain('addPluginListener("safe-back", "android-safe-back", handler)');
     expect(app).not.toContain("onBackButtonPress");
     expect(app).not.toContain('addEventListener("popstate"');
+    // Android root Back follows master's AndroidRootClosePhase coordinator: a
+    // failed activity exit keeps the shield and the next Back retries only the
+    // exit (src/safeClose.test.ts pins the phases).
     expect(app).toContain("createAndroidRootCloseCoordinator(safeClose, {");
+    expect(app).toContain("await androidRootClose.request();");
+    expect(app).not.toContain("requestAndroidRootClose");
     expect(app).toContain('safeClose.prepare()) !== "accepted"');
     expect(app).toMatch(/catch \{\s*\/\/ The native close attempt failed[\s\S]*?allowClose = false;[\s\S]*?safeClose\.reset\(\);[\s\S]*?closeInProgress = false;/);
     expect(safeBackPlugin).toContain("private var webView: WebView? = null");
@@ -202,45 +219,32 @@ describe("GH #161 Android SafeBack owner", () => {
     expect(safeBackPlugin).toContain("fun dispatchIfReady(): Boolean");
     // An inlined plugin gets no ACL manifest unless the build script declares
     // one, and without it the frontend's listener registration is refused
-    // before it reaches Android — Back is owned, never delivered, in silence.
+    // before it reaches Android: Back is owned, never delivered, in silence.
     const buildScript = readFileSync("src-tauri/build.rs", "utf8");
     expect(buildScript).toMatch(/\.plugin\(\s*"safe-back",/u);
     expect(buildScript).toContain('.commands(&["registerListener", "removeListener"])');
-    const mobileCapability = readFileSync("src-tauri/capabilities/mobile.json", "utf8");
-    expect(JSON.parse(mobileCapability).permissions).toContain("safe-back:default");
-    expect(JSON.parse(mobileCapability).platforms).toContain("android");
+    const mobileCapability = JSON.parse(readFileSync("src-tauri/capabilities/mobile.json", "utf8"));
+    expect(mobileCapability.permissions).toContain("safe-back:default");
+    expect(mobileCapability.platforms).toContain("android");
     expect(safeBackPlugin).not.toContain(".goBack()");
     expect(safeBackPlugin).not.toContain("activity.onBackPressed()");
     expect(safeBackPlugin).not.toContain("isEnabled = false");
   });
 
-  it("keeps Android root Back as frontend preparation then explicit activity exit", () => {
-    const app = readFileSync("src/App.tsx", "utf8");
-    const androidBack = readFileSync("src/androidBack.ts", "utf8");
-    const commands = rustModuleSource("src-tauri/src/commands.rs");
+  it("registers the native Back owner for Android only, with every shipped target accounted for", () => {
+    // AGENTS.md section 2: a platform cfg names all five shipped targets. Linux,
+    // Windows and macOS have no Back gesture; iOS Back is the JS edge swipe
+    // (src/edgeSwipe.ts), so only Android has a native owner. A new
+    // `target_os` here must be a deliberate decision, not a forgotten target.
     const lib = readFileSync("src-tauri/src/lib.rs", "utf8");
     const nativePlugin = readFileSync("src-tauri/src/android_safe_back.rs", "utf8");
-    const defaultCapability = JSON.parse(
-      readFileSync("src-tauri/capabilities/default.json", "utf8"),
-    ) as { permissions: string[] };
-
-    expect(app).toContain("finishActivity: exitAndroidActivity");
-    expect(androidBack).toContain('import("@tauri-apps/plugin-process")');
-    expect(androidBack).toContain("await exit(0)");
-    expect(defaultCapability.permissions).toContain("process:allow-exit");
-    expect(commands).toMatch(/pub\(crate\) fn tine_quit\([\s\S]*?app\.exit\(0\)/);
-    expect(lib).toMatch(/generate_handler!\[[\s\S]*?\btine_quit,/);
-    expect(lib).toContain("builder.plugin(android_safe_back::init())");
+    expect(lib).toMatch(/#\[cfg\(target_os = "android"\)\]\s*let builder = builder\.plugin\(android_safe_back::init\(\)\);/);
+    expect(lib).toContain("(Linux, Windows, macOS, iOS) have no native Back owner by design");
+    const targets = new Set([...nativePlugin.matchAll(/target_os = "([a-z]+)"/g)].map((m) => m[1]));
+    expect([...targets]).toEqual(["android"]);
     expect(nativePlugin).toContain('Builder::new("safe-back")');
     expect(nativePlugin).toContain('register_android_plugin(PLUGIN_IDENTIFIER, "SafeBackPlugin")');
-  });
-
-  it("hands a safely prepared root close to Tauri's installed process exit API", async () => {
-    const { exitAndroidActivity } = await import("./androidBack");
-    const exit = vi.fn(async (_code?: number) => {});
-
-    await exitAndroidActivity(async () => ({ exit }));
-
-    expect(exit).toHaveBeenCalledWith(0);
+    const mobile = JSON.parse(readFileSync("src-tauri/capabilities/mobile.json", "utf8"));
+    expect(mobile.platforms).toEqual(["android", "iOS"]);
   });
 });

@@ -1,11 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readAppStylesheet } from "./testSource";
 
 const root = path.resolve(import.meta.dirname, "..");
 const theme = fs.readFileSync(path.join(root, "src/styles/theme.css"), "utf8");
-const app = readAppStylesheet();
+const app = fs.readFileSync(path.join(root, "src/styles/app.css"), "utf8");
 
 describe("cross-pane scrollbar contract (GH #103)", () => {
   it("defines semantic thumb tokens from theme colors", () => {

@@ -1,6 +1,6 @@
-/** The failed platform call behind a Direct Files save failure (GH #538).
- *  Kept apart from `backend.ts` so the diagnostics sanitizer can use it
- *  without importing the backend. */
+/** The failed platform call behind a save failure (master 678830a086af;
+ *  GH #538, #590): `io:InvalidInput` alone could not tell an Android
+ *  no-replace-rename refusal from a failed temporary-file write. */
 
 export interface SavePlatformStep {
   operation: string | null;
@@ -16,18 +16,18 @@ export function describeSavePlatformStep(step: SavePlatformStep | null): string 
 }
 
 /** The backend's operation names are fixed strings such as
- *  `renameat2(RENAME_NOREPLACE) publishing the projection`; anything else is
- *  dropped rather than shown. */
+ *  `renameat2(RENAME_NOREPLACE)`; anything else is dropped rather than shown,
+ *  so no path or page text can reach a toast (I-5). */
 const SAVE_OPERATION = /^[A-Za-z0-9 ()|_.,-]{1,120}$/u;
 
-export function readSavePlatformStep(detail: unknown): SavePlatformStep | null {
-  if (!detail || typeof detail !== "object") return null;
-  const record = detail as Record<string, unknown>;
+export function readSavePlatformStep(failure: unknown): SavePlatformStep | null {
+  if (!failure || typeof failure !== "object") return null;
+  const record = failure as Record<string, unknown>;
   const operation = typeof record.operation === "string" && SAVE_OPERATION.test(record.operation)
     ? record.operation
     : null;
-  const osError = typeof record.os_error === "number" && Number.isSafeInteger(record.os_error)
-    ? record.os_error
+  const osError = typeof record.osError === "number" && Number.isSafeInteger(record.osError)
+    ? record.osError
     : null;
   return operation === null && osError === null ? null : { operation, osError };
 }

@@ -7,9 +7,13 @@ import { setCopyIncludeSubtree } from "../copySettings";
 import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
 import { AstBody } from "../render/body";
-import { buildClipboardPayload, deleteBlock, doc, ensurePageLoaded, loadSingle, pageByName, resetStore } from "../store";
+import { buildClipboardPayload, deleteBlock, ensurePageLoaded, pageByName, resetStore } from "../document";
+import * as documentApi from "../document";
+import { setToasts, toasts } from "../toasts";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
 import type { BlockDto } from "../types";
-import { setGraphMeta } from "../ui";
+import { setGraphMeta } from "../graphSession";
 import { Block } from "./Block";
 
 beforeAll(() => initParser());
@@ -21,6 +25,7 @@ afterEach(() => {
   setCopyIncludeSubtree(true);
   vi.restoreAllMocks();
   document.body.innerHTML = "";
+  setToasts([]);
 });
 
 function mount(node: () => JSX.Element) {
@@ -50,15 +55,36 @@ function seedHost(id: string): void {
 }
 
 describe("private block payload paste necessity", () => {
+  it("reports a failed structured paste with fixed text", async () => {
+    const host = "77777777-7777-4777-8777-777777777777";
+    seedHost(host);
+    setGraphMeta({ root: "/graph" } as any);
+    vi.spyOn(backend(), "writeRich").mockResolvedValue();
+    await copyBlockOutline("copy", "- payload", {
+      blocks: [{ raw: "payload", sourceFormat: "md", children: [] }],
+      sourcePages: [],
+    });
+    vi.spyOn(documentApi, "pasteClipboardPayload").mockRejectedValueOnce(new Error("private graph path"));
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      paste(root.querySelector("textarea")!, "- payload");
+      await vi.waitFor(() => expect(toasts().some((toast) => toast.message === "Couldn't paste these blocks.")).toBe(true));
+      expect(toasts().map((toast) => toast.message).join(" ")).not.toContain("private graph path");
+    } finally {
+      dispose();
+    }
+  });
   it("preserves a cut id and resolves a seeded live reference through the renderer path", async () => {
     const host = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const preserved = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     seedHost(host);
-    await ensurePageLoaded({
+    ensurePageLoaded({
       name: "Source", kind: "page", title: "Source", pre_block: null, format: "md",
       blocks: [{ id: preserved, raw: `identity\nid:: ${preserved}`, collapsed: false, children: [] }],
     });
-    await ensurePageLoaded({
+    ensurePageLoaded({
       name: "References", kind: "page", title: "References", pre_block: null, format: "md",
       blocks: [{ id: "referrer", raw: `See ((${preserved}))`, collapsed: false, children: [] }],
     });

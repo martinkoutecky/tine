@@ -88,15 +88,11 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   clear approval. Tine stores that exact canonical directory, confines asset reads
   and writes to it, and fails closed if the link is later retargeted; pages,
   journals, and configuration never inherit that exception.
-- **Live external-asset refresh** — images replaced by an editor or a
-  whole-graph synchronizer refresh in place. Asset observation is metadata-only;
-  PDFs, audio, and video already open in Tine are left undisturbed and use the
-  new bytes on their next open.
 - **Drag the corner grip to resize an image *or a video*** — stored as a width % in
   Logseq's `{:width …}` brace, so it round-trips.
 - ⊕ **Audio ⤢ Expand** opens a wide overlay player — a **waveform scrubber** with
   ±5s / ±15s skip, play/pause, speed, and a time read-out.
-- Click an image for a **lightbox** (Esc / click-away to close; right-click / Copy
+- Click an image for a **lightbox** (Esc / click-away to close; on a phone a tap toggles the buttons and a drag up or down closes; right-click / Copy
   puts it on the clipboard).
 - Video/audio play **inline** where the codec is supported, else fall back to a
   click-to-open chip that launches the OS default player (Tine scrubs its own render
@@ -129,9 +125,6 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 - Values of `tags::`, `alias::`, and `aliases::` render as navigable page links,
   including comma-separated bare values; quoted and custom property values stay
   literal unless they contain explicit page-reference syntax.
-- `[[`, `#`, and page-name search offer every matching authored alias even when
-  the canonical title matches too. Choosing one inserts that alias spelling and
-  still opens the real owning page; it never creates a pathless alias page.
 - The `((` popup full-text-searches blocks and inserts a **durable** reference
   (writes a stable `id::` first).
 - **Page references lead the bare `/` menu.** `/` then Enter inserts `[[]]`,
@@ -184,15 +177,8 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   with a field selector, `(sort-by …)`. Results render as a list or a sortable
   **table** or board. Search, list, table, and board are presentations of one result
   membership rather than separate query implementations. ⊕ A friendly search-text
-  surface, a Gmail-style filter dialog, the interactive **visual query builder**,
-  and the raw DSL all compile to the same query plan. The builder has two states:
-  at rest a query block is ONE plain-English sentence — *Blocks where task: TODO
-  and page: Roadmap* — with its result count and a ⚙; clicking it opens a **sheet**
-  over the blocks below, with `Find blocks ▾ where …` on top and one
-  `field ▾ | operator ▾ | value | ⋮ | ×` row per condition, groupable as
-  *all of* / *any of* / *none of*. Changing what a query selects re-reads it
-  first and says how many conditions stop applying rather than dropping them.
-  Below ~600px the sheet becomes a bottom sheet. Explanations
+  surface, a Gmail-style filter dialog, the interactive **visual query builder**
+  (chip/clause bar), and the raw DSL all compile to the same query plan. Explanations
   show what Tine understood and diagnostics identify unsupported or invalid parts.
   Nested query matches follow Logseq's exact top-level-result rule: a match is
   suppressed only when its immediate parent is also a match, so a valid match
@@ -212,40 +198,23 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   switches between Search/List/Table/Board without changing membership, and remains
   outside the graph until named. Giving it a title materializes one ordinary query
   page, so exploratory search and durable dashboards share a single path.
-- **Summarize results** (beyond Logseq) — a query computes, with no code, a
-  **count** / **sum** / **average** of a property over the matched blocks, and/or a
-  **group-by** (page, property, or formula) that breaks the results down into a
-  per-group table. Sum/average parse the property numerically and report how many
-  rows were skipped. **Every** requested total is shown, in the order asked for and
-  including repeats — a query summarizing `count; cost=sum` shows both. A tags
-  group-by places a row in every tag's group, exactly as the board does, and says
-  so rather than pretending the counts partition the result. Rides in the DSL as
-  `(aggregate count|sum|avg …)` / `(group-by page|<prop>)`; the engine returns the
-  full set and the math is computed client-side. (Logseq does this only via Datalog
-  `:result-transform`.)
-- ⊕ **Inline Display panel for query blocks** (beyond Logseq) — one popover beside
-  the visual builder sets all six display facts of a query block: the view
-  (Search/List/Table/Board), the grouping field, the sort order, the visible
-  columns, the footer totals, and a row sample. Sort, columns and totals are
-  **ordered lists** with move/remove per entry, so a second sort or a second total
-  is editable rather than invisible, and settings the panel has no control for are
-  preserved untouched. Every change goes through the same save path as the builder,
-  so it is one undo step and one plain-text property write.
-- ⊕ **Query tables sort, reorder and total in place** — clicking a query table
-  header saves the sort into the note (ascending → descending → unsorted) whenever
-  the engine can express it; a column it cannot sort by server-side (title, state,
-  tags, a formula) still sorts the rows on screen and is labelled **Table-only
-  sort**, so "sorted" and "saved as sorted" are never confused. Dragging a header
-  saves the visible column order into `tine.columns::`, and a column footer cycles
-  count / sum / average into `tine.col-aggregates::`.
+- **Summarize results** (beyond Logseq) — the builder's **∑ summarize** control
+  computes, with no code, a **count** / **sum** / **average** of a property over the
+  matched blocks, and/or a **group-by** (page or property) that breaks the results
+  down into a per-group table. Sum/average parse the property numerically and report
+  how many rows were skipped. Rides in the DSL as `(aggregate count|sum|avg …)` /
+  `(group-by page|<prop>)`; the engine returns the full set and the math is computed
+  client-side. (Logseq does this only via Datalog `:result-transform`.)
 - A scoped compatibility path for Logseq's **advanced (Datalog) queries**:
   recognized clauses (`task`, `between` with a field selector, `property`,
   `page-property`, `priority`, `page`, `namespace`, `page-tags`, `scheduled`,
   `deadline`, `journal`, page-refs, boolean `or/and/not`, `:today`/`:current-page`-style
   inputs) map onto the same engine; any unsupported part is **flagged** in the result
-  rather than silently dropped or wrongly answered. An advanced query stays
-  advanced and is edited as text; there is no conversion to or from the visual
-  builder (the old "⚙ advanced" / "← Simple" switch was removed in 0.6.983).
+  rather than silently dropped or wrongly answered. The "⚙ advanced" switch is
+  **two-way**: an advanced block shows a **← Simple** control that returns to the
+  visual builder — restoring the exact pre-conversion query within a session, or
+  reverse-parsing recognized raw Datalog otherwise (and disabling itself, with a
+  tooltip, when the query has no visual representation).
 
 ## Sheets (2-D grids)
 
@@ -314,13 +283,7 @@ coordinates, no lock-in.
   grouping field back to the card. A **Group by** dropdown above the columns (and
   a matching **Group by →** submenu in the board right-click menu) changes the
   grouping axis — State, Priority, Tags, or any field — without hand-editing
-  `tine.group-by::`. On a **query** board the axis list is built from the fields
-  the result rows actually carry (plus the source page and the block's formulas),
-  and both surfaces write the query's own `tine.group-field::`, whose value is a
-  field name such as `prop:status` rather than a bare word that could mean two
-  things on two different views. Children-backed boards keep `tine.group-by::`
-  unchanged; an older query graph that uses it keeps working and is rewritten on
-  the first grouping change.
+  `tine.group-by::`.
 - **Tag boards** — boards can group by tags too: a multi-tag card appears in
   each matching column, and moving it adds/removes the tag on that block.
 - **Formula group-by and fail-open filters** — boards can group on computed axes
@@ -368,9 +331,8 @@ within a column; merged cells are still v2+.
   session and restored on launch.
 - ⊕ **Named workspaces** — save the whole window context (split layout, every
   pane's tabs and back/forward history, both sidebars, and Recent) as a named
-  workspace and switch between them in place from the switcher at the top of the
-  left sidebar (hover for a quick switch, click for New / Rename / Delete; a compact
-  control stays in the toolbar while the sidebar is folded). Each
+  workspace and switch between them in place from the switcher at the far left of
+  the tab bar (hover for a quick switch, click for New / Rename / Delete). Each
   graph keeps its own set and the active one persists across restarts. Workspaces
   are device-local session state — saving, switching, or deleting one never writes
   to your graph.
@@ -403,9 +365,8 @@ within a column; merged cells are still v2+.
   entire layout (all panes tint to show the scope) — so "split only the left
   half" and "split the whole screen" are both two keystrokes away, in either
   direction.
-- **Open to the side:** `Alt+click` a page link, tag, or block reference to open
-  it in another pane, creating a right split when needed (`Ctrl+click` or middle-click opens a background tab
-  instead). In the `Ctrl+K` switcher,
+- **Open to the side:** `Ctrl+click` a page link, tag, or block reference to open
+  it in another pane, creating a right split when needed. In the `Ctrl+K` switcher,
   `Alt+Enter` opens the highlighted page/create/block result in the other pane.
 - **Tab drag:** drag a tab within a strip to reorder it, onto another pane's strip
   to move it at that position, onto a pane body to append and activate it there,
@@ -453,14 +414,8 @@ within a column; merged cells are still v2+.
 
 ## PDF annotation
 
-- Open PDFs as ordinary persisted pane routes and draggable tabs. Desktop opens
-  a companion pane while preserving the source page; the PDF can then move into
-  any pane, split, or quadrant. Mobile opens it in the one-pane history so Back
-  returns to the source. The reader is resizable and zoomable (instant zoom,
-  HiDPI, per-page virtualization), with in-PDF `Ctrl+F` find and a page jump box.
-- **Notes** opens the `hls__` page in the PDF's structural companion pane on
-  desktop, or in the same history on mobile. Saved workspaces restore PDF tabs,
-  histories, page and scale without a separate global PDF pane or width limit.
+- Open PDFs in a resizable, zoomable pane (instant zoom, HiDPI, per-page
+  virtualization); in-PDF `Ctrl+F` find with a page jump box.
 - Select text → colored **highlights**, or hold **Shift** while dragging on Linux
   and Windows (**Command** on macOS) and then choose a color to clip an **area
   (image) highlight**. The drag must exceed 10 pixels in both dimensions, and
@@ -485,7 +440,7 @@ within a column; merged cells are still v2+.
   middle-click → background tab. **Shift+Enter** opens the selected page or block in
   the right sidebar, while **Ctrl/Cmd+Shift+K** searches only blocks owned by the
   focused routed page (including collapsed descendants). **Search syntax** documents
-  phrases, alternatives, exclusions, and regex; **Open search tab** creates the
+  phrases, alternatives, exclusions, and regex; **Open all results** creates the
   persistent workspace above. Canonically equivalent composed/decomposed Unicode
   spellings share membership and source-accurate evidence; this does not add accent
   folding or transliteration.
@@ -568,13 +523,12 @@ within a column; merged cells are still v2+.
 - **Sync-conflict merge** — Syncthing/Dropbox leave a `*.sync-conflict-*` (or
   `(conflicted copy)`) file when the same page was edited on two devices. Tine keeps
   these **out of your page list** (they're not real pages) and surfaces them under
-  Settings → *Backups & recovery* → **Sync conflict copies**. **Review in page…** opens
-  the page and resolves it there: a **block-by-block diff** against the current page —
-  matched by `id::`, then by content, then by first-line similarity — with a per-block
-  **keep-mine / keep-theirs / keep-both** choice (and page-property merge); **Discard
-  copy** trashes it from the Settings list. The merge writes through the normal save
-  path (base-revision-guarded, atomic) and moves the copy to the recoverable **trash**
-  — never auto-merged, never unlinked.
+  Settings → *Backups & recovery* → **Sync conflict copies**. **Review & merge** shows a
+  **block-by-block diff** against the current page — matched by `id::`, then by
+  content, then by first-line similarity — with a per-block **keep-current /
+  keep-copy / keep-both** choice (and page-property merge); **Discard copy** trashes
+  it. The merge writes through the normal save path (base-revision-guarded, atomic)
+  and moves the copy to the recoverable **trash** — never auto-merged, never unlinked.
 - **Pages throughout the graph are found** — like Logseq, Tine finds eligible
   Markdown/Org pages at the graph root and in nested directories, not only under
   `pages/` and `journals/`. A nested page is keyed by its **file name**
@@ -598,7 +552,7 @@ within a column; merged cells are still v2+.
   switching. Also openable from the command line: `tine /path/to/graph` or the
   `TINE_GRAPH` env var.
 
-## Plugins & declarative themes
+## Plugins & token themes
 
 - **Experimental Tine-native plugin API 0.2** — small WebAssembly guests receive
   versioned, bounded events and return inert effects that Tine validates. They do not
@@ -620,14 +574,10 @@ within a column; merged cells are still v2+.
   preconditioned focused-block edits only through declared capabilities. Plugin
   settings are device-local scalar values in Tine's own controls. Disable or uninstall
   removes behavior/packages without making graph files unreadable.
-- **Declarative theme API 0.2** — executable code is not involved: packages contain
-  strictly validated literal colors and may select host-owned editorial typography,
-  journal-header, and Today task-summary presets. Presentation style and color scheme
-  are selected independently, so an installed editorial style can use a built-in
-  palette. Themes install from the signed
+- **Token theme API 0.1** — executable code is not involved: packages contain a
+  strictly validated literal-color vocabulary. Themes install from the signed
   catalogue or local files under Settings → Appearance, remain device-local, and sit
-  below graph `logseq/custom.css` in the cascade. Existing color-only API 0.1 themes
-  remain compatible.
+  below graph `logseq/custom.css` in the cascade.
 - **Starter ecosystem and authoring tools** — the first examples cover bullet
   threading, query-filter shortcuts, and a behavioral port of heading shortcuts. A
   Rust SDK/template, deterministic checker, port-gap format, threat model, registry
@@ -659,9 +609,9 @@ within a column; merged cells are still v2+.
   close control, press Escape, or press Android Back to dismiss them safely. At
   640 px and wider—including tablets—they remain persistent desktop-style panes,
   can be open together, and retain their resize controls.
-- **Distribution** — on [F-Droid](https://f-droid.org/packages/page.tine.app/), plus a release-signed APK attached to
-  each GitHub release (built and signed in CI). iOS is a public
-  [TestFlight](https://testflight.apple.com/join/rpGGpTVW) beta.
+- **Distribution** — sideloaded, release-signed APK attached to each GitHub
+  release (built and signed in CI). Play Store / F-Droid are planned; iOS is
+  being scoped.
 
 ## Customization & output
 
@@ -683,11 +633,10 @@ within a column; merged cells are still v2+.
   replaced; markup structure kept) and **re-verified to still reproduce the
   divergence** before it's shown. Copied reports include the Tine version used.
   mldoc is loaded only on demand; nothing is uploaded.
-- Light/dark themes, independently selectable presentation styles and color schemes,
-  a built-in color gallery (Default, Nord, Solarized, Gruvbox), accent color, custom
-  CSS, wide mode (`t w`), document mode (`t d`). Theme choices are app-level and
-  device-local: Tine stores the selected style and color ids in its backend settings,
-  applies colors as a managed `#tine-theme` CSS layer, and
+- Light/dark themes, a built-in theme gallery (Default, Nord, Solarized, Gruvbox),
+  accent color, custom CSS, wide mode (`t w`), document mode (`t d`). Gallery
+  themes are app-level and device-local: Tine stores only the selected theme id in
+  its backend settings, applies the theme as a managed `#tine-theme` CSS layer, and
   never writes to your graph. Tine also aliases common Logseq `--ls-*` theme
   variables, so both gallery themes and file-based themes in `logseq/custom.css`
   can recolor backgrounds, text, links, borders, and inline code. The cascade is
@@ -715,7 +664,7 @@ within a column; merged cells are still v2+.
   links, and **sanitized raw HTML**. Dynamic content is resolved **at publish time** against your graph, too:
   `{{query …}}` runs and lists its results, `{{embed}}` inlines the target block/page,
   `{{namespace}}` lists child pages, and `{{video}}` embeds the player. (No interactive
-  graph view yet.) See the **[Feature showcase](../website/guide/)** in the public Guide.
+  graph view yet.) See the live **[Feature showcase](../website/demo/)** demo page.
 - **Export a page to PDF** — right-click a page title → **Export to PDF…** (or the
   **Export current page to PDF…** command). A small dialog offers **collapsed blocks:
   expand / keep folded**, **font size**, and **margins**; then Tine renders the *whole*
@@ -727,10 +676,8 @@ within a column; merged cells are still v2+.
   bullet rails. No extra dependency — it reuses the HTML export and the webview's own
   print engine. (Matches what the Logseq PDF-export community plugin did; OG has no
   native PDF export.)
-- **Copy/export as** Markdown for a block subtree or a whole page, with an explicit
-  *Content* choice: **Markdown** (or **Org** on an Org page) preserves the original
-  source syntax — bold, highlighting, links, properties — while **Plain
-  text** flattens to what you see. Plain-text copy keeps math delimiters (`$…$`,
+- **Copy/export as** Markdown for a block subtree or a whole page, with a *Rendered*
+  mode that flattens to what you see. Rendered copy keeps math delimiters (`$…$`,
   `$$…$$`) so pasted math is re-parseable, pre-warms off-screen `((block ref))`
   targets before copy, and resolves user macros plus provider macros with sensible
   text forms: `{{embed}}` inlines the target, `{{query}}` emits a capped result list
@@ -748,5 +695,5 @@ within a column; merged cells are still v2+.
 <p align="center">
   <img src="img/dim.png" alt="Dim inactive blocks — spotlight the one you're working on" width="32%">
   <img src="img/carry.png" alt="Carry unfinished tasks forward to today" width="32%">
-  <img src="img/query.png" alt="Query results + the visual query builder: a resting sentence over a sheet of condition rows" width="32%">
+  <img src="img/query.png" alt="Query results + the visual query builder chip bar" width="32%">
 </p>

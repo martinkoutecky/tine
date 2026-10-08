@@ -1,13 +1,17 @@
-//! Minimal journal date handling for the default Logseq formats
-//! (file `yyyy_MM_dd`, title `MMM do, yyyy`). Configurable formats are a
-//! later milestone; these defaults cover the standard graph layout.
+//! Journal dates and compiled Logseq filename/title formats. E/EE/EEE render
+//! abbreviated weekdays and EEEE full names; parsing also accepts old Tine
+//! one/two-letter weekday titles. Cost is O(pattern + title), without file I/O.
 
 /// A calendar date as (year, month, day). Stored as an ordinal key `yyyymmdd`
 /// for cheap sorting/comparison.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct JournalDate {
+    /// Gregorian year.
     pub year: i32,
+    /// Month, normally 1 through 12.
     pub month: u32,
+    /// Day of month, normally 1 through 31.
     pub day: u32,
 }
 
@@ -16,6 +20,7 @@ const MONTHS: [&str; 12] = [
 ];
 
 impl JournalDate {
+    /// Encode this date as `yyyymmdd` for `Day` and journal indexes.
     pub fn ordinal_key(&self) -> i64 {
         self.year as i64 * 10000 + self.month as i64 * 100 + self.day as i64
     }
@@ -37,7 +42,7 @@ impl JournalDate {
         let year: i32 = parts[0].parse().ok()?;
         let month: u32 = parts[1].parse().ok()?;
         let day: u32 = parts[2].parse().ok()?;
-        if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        if !(1..=12).contains(&month) || day == 0 || day > days_in_month(year, month) {
             return None;
         }
         Some(JournalDate { year, month, day })
@@ -56,11 +61,13 @@ impl JournalDate {
     pub fn to_days(&self) -> i64 {
         days_from_civil(self.year, self.month, self.day)
     }
+    /// Convert days since 1970-01-01 back to a Gregorian date.
     pub fn from_days(z: i64) -> JournalDate {
         let (year, month, day) = civil_from_days(z);
         JournalDate { year, month, day }
     }
 
+    /// Add signed calendar days and return the resulting date.
     pub fn add_days(&self, n: i64) -> JournalDate {
         JournalDate::from_days(self.to_days() + n)
     }
@@ -80,6 +87,7 @@ impl JournalDate {
     /// Today's date in the device's local civil calendar.  Journal membership,
     /// relative queries, and their date-keyed caches must all agree on this
     /// boundary; UTC epoch days split those user-facing meanings near midnight.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn today() -> JournalDate {
         use chrono::{Datelike, Local};
         let now = Local::now();
@@ -95,6 +103,7 @@ impl JournalDate {
     /// The frontend corrects its own wall clock by this (GH #607): a WebView's
     /// bundled ICU can carry older zone rules than the OS, and the two sides then
     /// disagree about the calendar day near midnight.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn local_utc_offset_now() -> (i32, i64) {
         let now = chrono::Local::now();
         (now.offset().local_minus_utc() / 60, now.timestamp_millis())
@@ -115,10 +124,31 @@ impl JournalDate {
     }
 }
 
-pub(crate) fn is_leap(y: i32) -> bool {
+/// UTC backup directory stamp in `YYYY-MM-DD_HH-MM-SS` form.
+pub fn utc_backup_stamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let date = JournalDate::from_days(days);
+    format!(
+        "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}",
+        date.year,
+        date.month,
+        date.day,
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+fn is_leap(y: i32) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
-pub(crate) fn days_in_month(y: i32, m: u32) -> u32 {
+fn days_in_month(y: i32, m: u32) -> u32 {
     match m {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
@@ -131,38 +161,6 @@ pub(crate) fn days_in_month(y: i32, m: u32) -> u32 {
         }
         _ => 30,
     }
-}
-
-/// The ONE timestamp-text → `yyyymmdd` primitive (D-14, J10), grown from the
-/// walk's old `parse_angle_date`: it consumes the BRACKETLESS facet text exactly
-/// as `doc::planning_dates` stores it on `BlockProjection::scheduled` and
-/// `BlockProjection::deadline`, and an angle-bracketed caller strips the `<`
-/// first.
-///
-/// **Calendar-validated (C5).** The old parser accepted `2026-13-45` because it
-/// only read three integers. The month/day are now checked against the existing
-/// `date.rs` `is_leap`/`days_in_month` (reused, never re-derived), so a
-/// malformed timestamp has presence and no day.
-pub(crate) fn planning_day(text: &str) -> Option<i64> {
-    let text = text.trim();
-    let text = text.strip_prefix('<').unwrap_or(text);
-    let end = text.find([' ', '>']).unwrap_or(text.len());
-    let mut parts = text[..end].split('-');
-    let year: i64 = parts.next()?.parse().ok()?;
-    let month: i64 = parts.next()?.parse().ok()?;
-    let day: i64 = parts.next()?.parse().ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    if !(1..=12).contains(&month) {
-        return None;
-    }
-    let year_i32 = i32::try_from(year).ok()?;
-    let month_u32 = u32::try_from(month).ok()?;
-    if day < 1 || day > i64::from(crate::date::days_in_month(year_i32, month_u32)) {
-        return None;
-    }
-    Some(year * 10000 + month * 100 + day)
 }
 
 // Howard Hinnant's civil <-> days-since-epoch algorithms (1970-01-01 = day 0).
@@ -208,8 +206,6 @@ fn ordinal(n: u32) -> String {
 // `safe-journal-title-formatters`), and render new titles/filenames in the
 // user's format.
 
-impl JournalFormat {}
-
 pub const DEFAULT_FILE_FORMAT: &str = "yyyy_MM_dd";
 pub const DEFAULT_TITLE_FORMAT: &str = "MMM do, yyyy";
 
@@ -252,6 +248,7 @@ enum Tok {
 }
 
 /// A compiled cljs-time / Joda-style date pattern (the subset Logseq uses).
+#[deny(missing_docs)]
 #[derive(Clone, Debug)]
 pub struct Format {
     toks: Vec<Tok>,
@@ -341,26 +338,26 @@ impl Format {
                 Tok::DayNum(false) => out.push_str(&d.day.to_string()),
                 Tok::DayOrd => out.push_str(&ordinal(d.day)),
                 Tok::Weekday(4) => out.push_str(WEEKDAYS_FULL[dow]),
-                Tok::Weekday(3) => out.push_str(WEEKDAYS_ABBR[dow]),
-                Tok::Weekday(2) => out.push_str(WEEKDAYS_2[dow]),
-                Tok::Weekday(_) => out.push_str(WEEKDAYS_1[dow]),
+                Tok::Weekday(_) => out.push_str(WEEKDAYS_ABBR[dow]),
             }
         }
         out
     }
 
     pub fn parse(&self, s: &str) -> Option<JournalDate> {
-        let cs: Vec<char> = s.chars().collect();
+        let mut cs = Vec::with_capacity(s.len());
+        cs.extend(s.chars());
         let mut i = 0usize;
         let (mut year, mut month, mut day) = (None, None, None);
         for t in &self.toks {
             match t {
                 Tok::Lit(lit) => {
-                    let lc: Vec<char> = lit.chars().collect();
-                    if i + lc.len() > cs.len() || cs[i..i + lc.len()] != lc[..] {
-                        return None;
+                    for character in lit.chars() {
+                        if cs.get(i) != Some(&character) {
+                            return None;
+                        }
+                        i += 1;
                     }
-                    i += lc.len();
                 }
                 Tok::Year(4) => year = Some(take_digits(&cs, &mut i, 4)? as i32),
                 Tok::Year(2) => year = Some(2000 + take_digits(&cs, &mut i, 2)? as i32),
@@ -395,7 +392,7 @@ impl Format {
             return None;
         }
         let (y, m, d) = (year?, month?, day?);
-        if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        if !(1..=12).contains(&m) || d == 0 || d > days_in_month(y, m) {
             return None;
         }
         Some(JournalDate {
@@ -415,7 +412,11 @@ fn take_digits(cs: &[char], i: &mut usize, max: usize) -> Option<i64> {
     if *i == start {
         return None;
     }
-    cs[start..*i].iter().collect::<String>().parse().ok()
+    cs[start..*i].iter().try_fold(0i64, |value, digit| {
+        value
+            .checked_mul(10)?
+            .checked_add((*digit as u8 - b'0') as i64)
+    })
 }
 
 /// `do` requires an ordinal suffix, but OG cljs-time's parse-ordinal-suffix
@@ -425,8 +426,8 @@ fn take_ordinal_suffix(cs: &[char], i: &mut usize) -> Option<()> {
         if *i + 2 <= cs.len()
             && cs[*i..*i + 2]
                 .iter()
-                .collect::<String>()
-                .eq_ignore_ascii_case(suffix)
+                .zip(suffix.chars())
+                .all(|(character, expected)| character.eq_ignore_ascii_case(&expected))
         {
             *i += 2;
             return Some(());
@@ -441,11 +442,14 @@ fn match_name(cs: &[char], i: usize, tables: &[&[&str]]) -> Option<(usize, usize
     let mut best: Option<(usize, usize)> = None;
     for table in tables {
         for (idx, name) in table.iter().enumerate() {
-            let nc: Vec<char> = name.chars().collect();
-            if i + nc.len() <= cs.len() {
-                let seg: String = cs[i..i + nc.len()].iter().collect();
-                if seg.eq_ignore_ascii_case(name) && best.map_or(true, |(_, l)| nc.len() > l) {
-                    best = Some((idx, nc.len()));
+            let length = name.chars().count();
+            if i + length <= cs.len() {
+                let matches = cs[i..i + length]
+                    .iter()
+                    .zip(name.chars())
+                    .all(|(character, expected)| character.eq_ignore_ascii_case(&expected));
+                if matches && best.map_or(true, |(_, l)| length > l) {
+                    best = Some((idx, length));
                 }
             }
         }
@@ -455,6 +459,7 @@ fn match_name(cs: &[char], i: usize, tables: &[&[&str]]) -> Option<(usize, usize
 
 /// The journal date formats for a graph: the user's filename + title patterns,
 /// plus a fallback parse list so foreign/default journal files still resolve.
+#[deny(missing_docs)]
 #[derive(Clone)]
 pub struct JournalFormat {
     file: Format,
@@ -465,7 +470,9 @@ pub struct JournalFormat {
 }
 
 impl JournalFormat {
-    /// Build from the config strings (`None`/empty → Logseq defaults).
+    /// Build from config strings (`None`/empty → Logseq defaults). Supported
+    /// field tokens are compiled; unrecognized characters become literals.
+    /// This does not validate that a format can parse the dates it renders.
     pub fn new(file_fmt: Option<&str>, title_fmt: Option<&str>) -> JournalFormat {
         let file_pat = file_fmt
             .filter(|s| !s.is_empty())
@@ -502,22 +509,12 @@ impl JournalFormat {
         Self::new(None, None)
     }
 
-    /// Parse a journal filename stem OR display title to a date (tries every
-    /// fallback format). `None` ⇒ not a journal date.
+    /// Parse a journal filename stem or display title to a date. Tries the
+    /// configured file and title formats, then `MMM do, yyyy`, `yyyy-MM-dd`,
+    /// and `yyyy_MM_dd` in that order. `None` means no format matched.
     pub fn parse(&self, s: &str) -> Option<JournalDate> {
         let s = s.trim();
         self.parse_list.iter().find_map(|f| f.parse(s))
-    }
-
-    /// Parse a display TITLE with the user's title pattern **alone** — never the
-    /// file pattern and never the default fallback list `parse` walks.
-    ///
-    /// The registry's date classification (SPEC §6.2, B6) needs exactly this:
-    /// with file format `yyyy_MM_dd` and title format `MMM do, yyyy`, the atom
-    /// `2026_09_04` must classify as text while `Sep 4th, 2026` classifies as a
-    /// date. `parse` would accept both and re-type a filename-shaped value.
-    pub fn parse_title(&self, s: &str) -> Option<JournalDate> {
-        self.title.parse(s.trim())
     }
 
     /// Display title for a date, in the user's `:journal/page-title-format`.
@@ -530,9 +527,24 @@ impl JournalFormat {
         self.file.format(d)
     }
 
+    /// Whether `stem` names the canonical file of its day: a `yyyy_MM_dd` /
+    /// `yyyy-MM-dd` date stem, or exactly the stem the configured
+    /// `:journal/file-name-format` renders for the date it parses to. The one
+    /// answer to "is this journal file the day's own file or a stray" — a
+    /// configured-format file must never count as a stray of itself (C3 L05).
+    pub fn is_canonical_stem(&self, stem: &str) -> bool {
+        JournalDate::from_file_stem(stem).is_some()
+            || self
+                .file
+                .parse(stem)
+                .is_some_and(|d| self.file.format(d) == stem)
+    }
+
+    /// Configured page-title format string, including unsupported literals.
     pub fn title_format(&self) -> &str {
         &self.title_pat
     }
+    /// Configured filename format string, including unsupported literals.
     pub fn file_format(&self) -> &str {
         &self.file_pat
     }
@@ -542,12 +554,42 @@ impl JournalFormat {
 mod fmt_tests {
     use super::*;
 
+    #[test]
+    fn configured_file_stem_is_its_days_canonical_file() {
+        for (pat, own, stray) in [
+            ("dd-MM-yyyy", "24-06-2026", "Wednesday, 24-06-2026"),
+            ("yyyyMMdd", "20260624", "Jun 24th, 2026"),
+            ("yyyy.MM.dd", "2026.06.24", "Jun 24th, 2026"),
+        ] {
+            let f = JournalFormat::new(Some(pat), Some("EEEE, dd-MM-yyyy"));
+            assert!(f.is_canonical_stem(own), "{pat}");
+            assert!(f.is_canonical_stem("2026_06_24"), "{pat}");
+            assert!(!f.is_canonical_stem(stray), "{pat}");
+        }
+    }
+
     fn d(y: i32, m: u32, day: u32) -> JournalDate {
         JournalDate {
             year: y,
             month: m,
             day,
         }
+    }
+
+    #[test]
+    fn rejects_impossible_calendar_days() {
+        for stem in ["2026_02_31", "2026-02-29", "2026_04_31"] {
+            assert_eq!(JournalDate::from_file_stem(stem), None, "{stem}");
+            assert_eq!(JournalFormat::default().parse(stem), None, "{stem}");
+        }
+        assert_eq!(
+            Format::compile("MMM do, yyyy").parse("Feb 31st, 2026"),
+            None
+        );
+        assert_eq!(
+            JournalDate::from_file_stem("2024_02_29"),
+            Some(d(2024, 2, 29))
+        );
     }
 
     #[test]
@@ -678,26 +720,21 @@ mod fmt_tests {
             assert_eq!(got, want, "parse {:?}", vector);
         }
     }
-}
-
-#[cfg(test)]
-mod planning_day_tests {
-    use super::*;
 
     #[test]
-    fn planning_day_accepts_the_bracketless_projection_text_and_the_angle_form() {
-        assert_eq!(planning_day("2026-07-29 Wed"), Some(20260729));
-        assert_eq!(planning_day("<2026-07-29 Wed>"), Some(20260729));
-        assert_eq!(planning_day("2026-07-29"), Some(20260729));
-    }
-
-    #[test]
-    fn planning_day_validates_the_calendar_so_a_malformed_date_has_no_day() {
-        // C5: the old `parse_angle_date` answered 20261345 for the first of these.
-        assert_eq!(planning_day("2026-13-45"), None);
-        assert_eq!(planning_day("2026-02-30"), None);
-        assert_eq!(planning_day("2023-02-29"), None);
-        assert_eq!(planning_day("2026-04-31"), None);
-        assert_eq!(planning_day("2024-02-29"), Some(20240229));
+    fn i12_journal_title_fixture_matches_rust() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/i12-journal-title-golden.json"
+        ))
+        .unwrap();
+        let fmt = JournalFormat::default();
+        for case in fixture["cases"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            assert_eq!(
+                fmt.parse(name).is_some(),
+                case["expected"].as_bool().unwrap(),
+                "{name}"
+            );
+        }
     }
 }

@@ -8,11 +8,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-import { openPageByName } from "./lib/e2e-navigation.mjs";
-
-await ensureDisplay();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -83,7 +78,11 @@ async function withApp(index, forced, fn) {
   const logPath = path.join(ARTIFACT, `driver-${index}-${forced ? "forced" : "regular"}.log`);
   const log = fs.openSync(logPath, "w");
   proof.artifacts[`driver${index}`] = logPath;
-  const driver = spawn(DRIVER, webdriverServerArgs(driverPort, nativePort, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), { env: baseEnv(forced), detached: true, stdio: ["ignore", log, log] });
+  const driver = spawn(DRIVER, [
+    "--port", String(driverPort),
+    "--native-port", String(nativePort),
+    "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
+  ], { env: baseEnv(forced), detached: true, stdio: ["ignore", log, log] });
   let browser;
   try {
     await sleep(2500);
@@ -94,23 +93,16 @@ async function withApp(index, forced, fn) {
       logLevel: "error",
       connectionRetryCount: 1,
       connectionRetryTimeout: 60_000,
-      capabilities: tauriCapabilities(APP, "mobile-drawers"),
+      capabilities: {
+        browserName: "wry",
+        "wdio:enforceWebDriverClassic": true,
+        "tauri:options": { application: APP },
+      },
     });
     await browser.$(".app-container").waitForExist({ timeout: 20_000 });
     await browser.$(".main-content").waitForExist({ timeout: 20_000 });
     await fn(browser);
     await sleep(500);
-  } catch (error) {
-    // Retain the live obstruction/focus state before teardown. Diagnostics must
-    // never replace the original assertion or WebDriver failure.
-    try {
-      fs.writeFileSync(path.join(ARTIFACT, `failure-${index}.json`), JSON.stringify(await snapshot(browser), null, 2));
-      fs.writeFileSync(path.join(ARTIFACT, `failure-${index}.html`), await browser.getPageSource());
-      nativeScreenshot(path.join(ARTIFACT, `failure-${index}.png`));
-    } catch (diagnosticError) {
-      console.error("Failure diagnostics:", diagnosticError);
-    }
-    throw error;
   } finally {
     try { await browser?.deleteSession(); } catch {}
     try { process.kill(-driver.pid, "SIGKILL"); } catch {}
@@ -238,10 +230,30 @@ async function shiftClick(browser, element) {
   try { await element.click(); } finally { await browser.releaseActions(); }
 }
 
-// Shared readiness contract: find and activate the exact page row in one
-// round trip, retrying against the routed title. See
-// scripts/lib/e2e-navigation.mjs for the re-render flake this removes.
-const navigate = (browser, name) => openPageByName(browser, name);
+async function navigate(browser, name) {
+  const current = await browser.$("h1.page-title");
+  if (await current.isExisting() && (await current.getText()).trim() === name) return;
+  await browser.keys(["Control", "k"]);
+  const input = await browser.$(".switcher-input");
+  await input.waitForExist({ timeout: 5_000 });
+  await input.setValue(name);
+  await browser.waitUntil(() => browser.execute((wanted) =>
+    [...document.querySelectorAll(".switcher-row .switcher-name")].some((node) => node.textContent?.trim() === wanted), name),
+  { timeout: 10_000, timeoutMsg: `${name} was not offered by Quick switcher` });
+  const clicked = await browser.execute((wanted) => {
+    const label = [...document.querySelectorAll(".switcher-row .switcher-name")]
+      .find((node) => node.textContent?.trim() === wanted);
+    const row = label?.closest(".switcher-row");
+    if (!row) return false;
+    row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    return true;
+  }, name);
+  assert(clicked, `could not activate ${name} Quick switcher row`);
+  await browser.waitUntil(async () => {
+    const heading = await browser.$("h1.page-title");
+    return await heading.isExisting() && (await heading.getText()).trim() === name;
+  }, { timeout: 10_000, timeoutMsg: `${name} did not open` });
+}
 
 // Forced phone-width native process: literal drawer geometry and behavior.
 await withApp(0, true, async (browser) => {
@@ -487,7 +499,7 @@ await withApp(2, false, async (browser) => {
 
   // The 960px state above proves both persisted sidebars simultaneously. Give
   // the split+560px PDF neighbor physically meaningful room for its separate
-  // structural assertion; keeping every optional surface open inside 960px
+  // layout assertion; keeping every optional surface open inside 960px
   // would test an impossible sum of fixed minimum widths, not drawer parity.
   await clickToolbar(browser, "Toggle sidebar");
   await browser.setWindowSize(1600, 900);
@@ -510,18 +522,9 @@ await withApp(2, false, async (browser) => {
   await pdfLink.click();
   await browser.$(".pdf-pane").waitForExist({ timeout: 10_000 });
   const pdf = await snapshot(browser);
-  // The contract is OWNERSHIP — the reader opens inside the workspace, not into
-  // the persistent sidebar or a drawer — not one particular nesting depth. This
-  // asked for `.drawer-workspace` to be the DIRECT parent, and the ordinary-pane
-  // PDF route legitimately added a level between them; that is what exhausted
-  // the stop-loss on 2026-09-01 after every semantic outcome had already
-  // succeeded. `closest` states the same ownership and survives a reasonable
-  // alternative structure.
-  const pdfInWorkspace = await browser.execute(
-    () => !!document.querySelector(".pdf-pane")?.closest(".drawer-workspace"),
-  );
+  const pdfInWorkspace = await browser.execute(() => !!document.querySelector(".pdf-pane")?.closest(".drawer-workspace"));
   assert(pdfInWorkspace && pdf.pdf.x >= pdf.workspace.x - 1 && pdf.pdf.right <= pdf.workspace.right + 1
-    && pdf.right && pdf.rightRole === null && pdf.rightModal === null && pdf.scrims === 0,
+    && Math.abs(pdf.right.x - rightBeforeNeighbors.x) <= 1,
   "persistent sidebar restructuring displaced the PDF neighbor", pdf);
   proof.artifacts.regular = path.join(ARTIFACT, "regular-wide-split-pdf.png");
   // Xvfb's root surface is only 1280px wide even though WebKit can own a wider

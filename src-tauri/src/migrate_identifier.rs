@@ -18,7 +18,7 @@
 // Scope: the whole app-data dir — settings, session, backups AND the WebKit
 // localStorage store — moved as one unit so the graph reopens and the session is
 // intact. Window geometry (tauri-plugin-window-state, in the *config* dir) may reset
-// once; that's covered by the one-time toast the frontend shows after a migration.
+// once; the one-shot command exposes this to the frontend for a migration notice.
 //
 // Android is intentionally NOT handled and keeps applicationId `page.tine.app`.
 // An applicationId change is a new app at the OS level and app-private storage
@@ -29,8 +29,7 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// The identifier Tine currently ships under (must match tauri.conf.json).
-pub(crate) const CURRENT_IDENTIFIER: &str = "page.tine.Tine";
+use crate::device_io::{copy_tree as copy_dir_all, publish_directory_entry};
 
 /// Identifiers Tine shipped under before, NEWEST FIRST. We migrate from the most
 /// recent one that still holds our data, so a user who upgraded through the whole
@@ -71,25 +70,10 @@ fn has_real_user_data(dir: &Path) -> bool {
         // A missing backups/ is the ordinary "no graph was ever opened under
         // this identifier" case. Any OTHER error — EACCES, EIO, a stale
         // mount, ENOTDIR — means we cannot PROVE the directory is disposable,
-        // and the caller's next step is to destroy it wholesale. Fail closed:
+        // and the caller's next step is to replace its active location. Fail closed:
         // claim user data and skip the migration (audit 4, D3).
         Err(error) => error.kind() != std::io::ErrorKind::NotFound,
     }
-}
-
-fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let from = entry.path();
-        let to = dst.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir_all(&from, &to)?;
-        } else {
-            std::fs::copy(&from, &to)?;
-        }
-    }
-    Ok(())
 }
 
 /// Core migration, factored out of the platform dir lookup so it is unit-testable:
@@ -100,6 +84,10 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// dirs differ only in the trailing identifier component across OSes, so this avoids
 /// hand-rolling per-platform base-dir logic.)
 fn migrate_app_data_dir(new_dir: &Path) -> bool {
+    migrate_after_park(new_dir, || {})
+}
+
+fn migrate_after_park(new_dir: &Path, after_park: impl Fn()) -> bool {
     let Some(parent) = new_dir.parent() else {
         return false;
     };
@@ -119,7 +107,7 @@ fn migrate_app_data_dir(new_dir: &Path) -> bool {
         // by has_real_user_data() above. Replace it WHOLESALE with the legacy dir so
         // localStorage (the graph path + session), settings and backups all carry
         // over as one consistent unit. The scaffolding is renamed ASIDE, not
-        // deleted, until the replacement is actually in place — destruction
+        // deleted, including after the replacement is in place — destruction
         // before placement turned any later failure into silent loss of
         // whatever the guard mis-assessed (audit 4, D3).
         let mut aside: Option<std::path::PathBuf> = None;
@@ -136,7 +124,7 @@ fn migrate_app_data_dir(new_dir: &Path) -> bool {
                 if candidate.exists() {
                     continue;
                 }
-                if std::fs::rename(new_dir, &candidate).is_ok() {
+                if publish_directory_entry(new_dir, &candidate).is_ok() {
                     parked = Some(candidate);
                 }
                 break;
@@ -148,19 +136,14 @@ fn migrate_app_data_dir(new_dir: &Path) -> bool {
         }
         let restore_aside = |aside: &Option<std::path::PathBuf>| {
             if let Some(parked) = aside {
-                let _ = std::fs::rename(parked, new_dir);
-            }
-        };
-        let discard_aside = |aside: &Option<std::path::PathBuf>| {
-            if let Some(parked) = aside {
-                let _ = std::fs::remove_dir_all(parked);
+                let _ = publish_directory_entry(parked, new_dir);
             }
         };
         let _ = std::fs::create_dir_all(parent);
+        after_park();
         // old & new share a parent => same filesystem => rename is atomic and cheap.
-        match std::fs::rename(&old_dir, new_dir) {
+        match publish_directory_entry(&old_dir, new_dir) {
             Ok(()) => {
-                discard_aside(&aside);
                 return true;
             }
             Err(_) => {
@@ -177,10 +160,8 @@ fn migrate_app_data_dir(new_dir: &Path) -> bool {
                 ));
                 let _ = std::fs::remove_dir_all(&staging);
                 if copy_dir_all(&old_dir, &staging).is_ok()
-                    && std::fs::rename(&staging, new_dir).is_ok()
+                    && publish_directory_entry(&staging, new_dir).is_ok()
                 {
-                    let _ = std::fs::remove_dir_all(&old_dir);
-                    discard_aside(&aside);
                     return true;
                 }
                 let _ = std::fs::remove_dir_all(&staging);
@@ -197,7 +178,7 @@ fn migrate_app_data_dir(new_dir: &Path) -> bool {
 /// joins the identifier onto (verified on Linux: `~/.local/share/<id>`, where
 /// WebKitGTK also puts the webview store).
 pub(crate) fn current_app_data_dir() -> Option<std::path::PathBuf> {
-    dirs::data_dir().map(|base| base.join(CURRENT_IDENTIFIER))
+    dirs::data_dir().map(|base| base.join(crate::app_identity::RELEASE_IDENTIFIER))
 }
 
 /// Run the migration for the app's real app-data dir. Call this at the TOP of
@@ -205,6 +186,9 @@ pub(crate) fn current_app_data_dir() -> Option<std::path::PathBuf> {
 /// one-shot flag so the frontend can toast about the migration.
 #[cfg(not(target_os = "android"))]
 pub(crate) fn run_early() {
+    if crate::app_identity::APP_IDENTIFIER != crate::app_identity::RELEASE_IDENTIFIER {
+        return;
+    }
     if let Some(new_dir) = current_app_data_dir() {
         if migrate_app_data_dir(&new_dir) {
             MIGRATED.store(true, Ordering::SeqCst);
@@ -218,7 +202,7 @@ pub(crate) fn run_early() {}
 
 /// Command: return true ONCE if this launch migrated a legacy app-data dir, then
 /// clear the flag so a later reload doesn't re-toast. The frontend calls this on
-/// boot and shows an explanatory toast when it returns true.
+/// boot can show an explanatory toast when it returns true.
 #[tauri::command]
 pub(crate) fn take_identifier_migration_notice() -> bool {
     MIGRATED.swap(false, Ordering::SeqCst)
@@ -228,6 +212,84 @@ pub(crate) fn take_identifier_migration_notice() -> bool {
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn crash_child_after_parking() {
+        let Some(root) = std::env::var_os("OG_R6_CRASH_FIXTURE") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        migrate_after_park(&root.join(crate::app_identity::RELEASE_IDENTIFIER), || {
+            std::fs::write(root.join("parked"), b"ready").unwrap();
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
+    }
+
+    #[test]
+    fn killed_migration_reopens_without_losing_either_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let old = root.join(LEGACY_IDENTIFIERS[0]);
+        let new = root.join(crate::app_identity::RELEASE_IDENTIFIER);
+        write(
+            &old,
+            "tine-settings.json",
+            r#"{"last_graph_path":"/graphs/notes"}"#,
+        );
+        write(
+            &old.join("backups"),
+            "master-snapshot",
+            "legacy backup bytes",
+        );
+        write(
+            &new.join("direct-files-projections"),
+            "master-only",
+            "current bytes",
+        );
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "migrate_identifier::tests::crash_child_after_parking",
+                "--nocapture",
+            ])
+            .env("OG_R6_CRASH_FIXTURE", root)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !root.join("parked").exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(
+            root.join("parked").exists(),
+            "child never reached the migration boundary"
+        );
+        assert!(!new.exists());
+        assert!(
+            migrate_app_data_dir(&new),
+            "reopen must finish the interrupted migration"
+        );
+        assert_eq!(
+            std::fs::read(new.join("backups/master-snapshot")).unwrap(),
+            b"legacy backup bytes"
+        );
+        let aside = root.join(format!(
+            "{}.pre-migration.0",
+            crate::app_identity::RELEASE_IDENTIFIER
+        ));
+        assert_eq!(
+            std::fs::read(aside.join("direct-files-projections/master-only")).unwrap(),
+            b"current bytes"
+        );
+        let settings: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(new.join("tine-settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(settings["last_graph_path"], "/graphs/notes");
+    }
 
     fn tmp(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!("tine-migrate-{}-{}", std::process::id(), tag))
@@ -252,7 +314,7 @@ mod tests {
         let base = tmp("absent");
         let _ = std::fs::remove_dir_all(&base);
         let old = base.join("dev.tine.app");
-        let new = base.join("page.tine.Tine");
+        let new = base.join(crate::app_identity::RELEASE_IDENTIFIER);
         write(&old, "tine-settings.json", "{\"backupKeep\":5}");
         write(&old, "SENTINEL", "graph-path-lives-in-localstorage");
         std::fs::create_dir_all(old.join("storage")).unwrap();
@@ -275,7 +337,7 @@ mod tests {
         let base = tmp("scaffold");
         let _ = std::fs::remove_dir_all(&base);
         let old = base.join("dev.tine.app");
-        let new = base.join("page.tine.Tine");
+        let new = base.join(crate::app_identity::RELEASE_IDENTIFIER);
         write(&old, "SENTINEL", "real-data");
         std::fs::create_dir_all(old.join("backups")).unwrap();
         write(&old.join("backups"), "snap1", "x");
@@ -297,7 +359,7 @@ mod tests {
         let base = tmp("welcome-session");
         let _ = std::fs::remove_dir_all(&base);
         let old = base.join("dev.tine.app");
-        let new = base.join("page.tine.Tine");
+        let new = base.join(crate::app_identity::RELEASE_IDENTIFIER);
         write(&old, "tine-settings.json", "{}");
         write(&old, "SENTINEL", "real");
         std::fs::create_dir_all(old.join("backups")).unwrap();
@@ -324,7 +386,7 @@ mod tests {
         let base = tmp("noclobber-backups");
         let _ = std::fs::remove_dir_all(&base);
         let old = base.join("dev.tine.app");
-        let new = base.join("page.tine.Tine");
+        let new = base.join(crate::app_identity::RELEASE_IDENTIFIER);
         write(&old, "tine-settings.json", "{\"old\":true}");
         std::fs::create_dir_all(new.join("backups")).unwrap();
         write(&new.join("backups"), "snap", "x");
@@ -339,7 +401,7 @@ mod tests {
         let base = tmp("page-tine-app");
         let _ = std::fs::remove_dir_all(&base);
         let old = base.join("page.tine.app");
-        let new = base.join("page.tine.Tine");
+        let new = base.join(crate::app_identity::RELEASE_IDENTIFIER);
         write(&old, "tine-settings.json", "{\"old_id\":\"page.tine.app\"}");
         write(&old, "SENTINEL", "final-rename");
         std::fs::create_dir_all(old.join("storage")).unwrap();
@@ -357,7 +419,7 @@ mod tests {
         let older = base.join("dev.logseqclaude.app");
         let newer = base.join("dev.tine.app");
         let newest = base.join("page.tine.app");
-        let new = base.join("page.tine.Tine");
+        let new = base.join(crate::app_identity::RELEASE_IDENTIFIER);
         write(&older, "tine-settings.json", "{}");
         write(&older, "WHICH", "logseqclaude");
         write(&newer, "tine-settings.json", "{}");
@@ -379,7 +441,7 @@ mod tests {
         let base = tmp("fallback");
         let _ = std::fs::remove_dir_all(&base);
         let older = base.join("dev.logseqclaude.app");
-        let new = base.join("page.tine.Tine");
+        let new = base.join(crate::app_identity::RELEASE_IDENTIFIER);
         write(&older, "tine-settings.json", "{}");
         write(&older, "WHICH", "logseqclaude");
 
@@ -396,7 +458,7 @@ mod tests {
         let base = tmp("notours");
         let _ = std::fs::remove_dir_all(&base);
         let old = base.join("dev.tine.app");
-        let new = base.join("page.tine.Tine");
+        let new = base.join(crate::app_identity::RELEASE_IDENTIFIER);
         write(&old, "someone-elses.json", "{}"); // none of Tine's artifacts
 
         assert!(!migrate_app_data_dir(&new));
@@ -406,10 +468,50 @@ mod tests {
     }
 
     #[test]
+    fn rollback_master_reads_the_moved_config_and_foreign_artifacts_byte_for_byte() {
+        let temp = tempfile::tempdir().unwrap();
+        let old = temp.path().join(LEGACY_IDENTIFIERS[0]);
+        let new = temp.path().join(crate::app_identity::RELEASE_IDENTIFIER);
+        write(
+            &old,
+            "tine-settings.json",
+            r#"{"last_graph_path":"/graphs/notes","future":true}"#,
+        );
+        for artifact in [
+            "backups",
+            "direct-files-projections",
+            "direct-move-recovery",
+            "concord-ledger",
+            "conflict-capsules",
+        ] {
+            write(&old.join(artifact), "master-only", "unchanged bytes");
+        }
+        assert!(migrate_app_data_dir(&new));
+        assert!(!migrate_app_data_dir(&new));
+        let rollback: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(new.join("tine-settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(rollback["last_graph_path"], "/graphs/notes");
+        assert_eq!(rollback["future"], true);
+        for artifact in [
+            "backups",
+            "direct-files-projections",
+            "direct-move-recovery",
+            "concord-ledger",
+            "conflict-capsules",
+        ] {
+            assert_eq!(
+                std::fs::read(new.join(artifact).join("master-only")).unwrap(),
+                b"unchanged bytes"
+            );
+        }
+    }
+
+    #[test]
     fn no_legacy_dir_is_a_noop() {
         let base = tmp("none");
         let _ = std::fs::remove_dir_all(&base);
-        let new = base.join("page.tine.Tine");
+        let new = base.join(crate::app_identity::RELEASE_IDENTIFIER);
         std::fs::create_dir_all(&new).unwrap();
         assert!(!migrate_app_data_dir(&new));
         let _ = std::fs::remove_dir_all(&base);

@@ -126,24 +126,6 @@ async function clickButtonByText(selector, pattern) {
   }, selector, pattern.source);
 }
 
-async function markPageRef(fragment, marker) {
-  await browser.waitUntil(
-    () => browser.execute((text, attr) => {
-      const link = [...document.querySelectorAll("a.page-ref")]
-        .find((el) => (el.textContent || "").includes(text));
-      link?.setAttribute("data-probe", attr);
-      if (!link) {
-        const deferred = [...document.querySelectorAll(".ast-fallback.ast-deferred")]
-          .find((el) => (el.textContent || "").includes(text));
-        deferred?.closest(".ls-block")?.scrollIntoView({ block: "center" });
-      }
-      return !!link;
-    }, fragment, marker),
-    { timeout: 20000, timeoutMsg: `Guide link did not finish rendering: ${fragment}` },
-  );
-  return true;
-}
-
 try {
   browser = await remote({
     hostname: "127.0.0.1",
@@ -154,7 +136,7 @@ try {
     connectionRetryCount: 1,
     connectionRetryTimeout: 60000,
   });
-  await browser.$(".ls-block, .page-title, .journal-day").waitForExist({ timeout: 20000 });
+  await browser.$(".ls-block").waitForExist({ timeout: 20000 });
 
   const clickedHelp = await browser.execute(() => {
     const btn = document.querySelector(".help-corner-btn");
@@ -192,23 +174,8 @@ try {
 
   const copied = await clickButtonByText(".guide-copy-btn", /^Copy the guide into your graph$/);
   check("clicked Copy the guide into your graph on Guide index", copied);
-  await sleep(250);
-  const immediateNotices = await browser.execute(() =>
-    [...document.querySelectorAll(".toast")]
-      .map((element) => (element.textContent || "").trim())
-      .filter(Boolean),
-  );
-  console.log(`Guide copy immediate notices: ${JSON.stringify(immediateNotices)}`);
 
   for (let i = 0; i < 30 && (!copiedSheetsFile() || !copiedIndexFile()); i += 1) await sleep(250);
-  if (!copiedSheetsFile() || !copiedIndexFile()) {
-    const notices = await browser.execute(() =>
-      [...document.querySelectorAll(".toast, .notification, [role='alert']")]
-        .map((element) => (element.textContent || "").trim())
-        .filter(Boolean),
-    );
-    console.error(`Guide copy notices: ${JSON.stringify(notices)}`);
-  }
   const copiedFile = copiedSheetsFile();
   const copiedIndex = copiedIndexFile();
   check("copy writes the whole guide namespace under graph pages", copiedGuidePageFiles().length >= 6, graphFiles().join("\n"));
@@ -247,10 +214,12 @@ try {
   // Open the Formulas page first, assert its live computed column, then hop to the
   // Sheets page via the Formulas page's own [[Features/Sheets]] link.
   check("copy writes the Formulas guide page under graph pages", !!copiedFormulasFile(), graphFiles().join("\n"));
-  const clickedCopiedFormulas = await markPageRef(
-    "tine-guide/Features/Formulas",
-    "copied-formulas-link",
-  );
+  const clickedCopiedFormulas = await browser.execute(() => {
+    const link = [...document.querySelectorAll("a.page-ref")]
+      .find((el) => (el.textContent || "").includes("tine-guide/Features/Formulas"));
+    link?.setAttribute("data-probe", "copied-formulas-link");
+    return !!link;
+  });
   check("found rewritten Formulas link in copied Guide index", clickedCopiedFormulas);
   if (clickedCopiedFormulas) await browser.$('[data-probe="copied-formulas-link"]').click();
   await browser.waitUntil(async () => {
@@ -276,10 +245,12 @@ try {
     JSON.stringify(planState)
   );
 
-  const clickedCopiedSheets = await markPageRef(
-    "tine-guide/Features/Sheets",
-    "copied-sheets-link",
-  );
+  const clickedCopiedSheets = await browser.execute(() => {
+    const link = [...document.querySelectorAll("a.page-ref")]
+      .find((el) => (el.textContent || "").includes("tine-guide/Features/Sheets"));
+    link?.setAttribute("data-probe", "copied-sheets-link");
+    return !!link;
+  });
   check("found rewritten Sheets link on copied Formulas page", clickedCopiedSheets);
   if (clickedCopiedSheets) await browser.$('[data-probe="copied-sheets-link"]').click();
   await browser.waitUntil(async () => {
@@ -326,14 +297,6 @@ try {
 
   console.log(failures === 0 ? `\nALL PASS (${checks} checks)` : `\n${failures} FAILED of ${checks}`);
 } catch (e) {
-  if (browser) {
-    try {
-      fs.writeFileSync("/tmp/tine-guide-probe-failure.html", await browser.getPageSource());
-      await browser.saveScreenshot("/tmp/tine-guide-probe-failure.png");
-    } catch {
-      /* Keep the original probe failure. */
-    }
-  }
   console.error("PROBE ERROR:", e);
   failures++;
 } finally {

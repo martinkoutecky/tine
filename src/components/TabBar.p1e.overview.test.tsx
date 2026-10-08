@@ -4,7 +4,7 @@ import { installKeybindings } from "../keybindings";
 import { paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "../panes";
 import { setPaneSel, paneSel } from "../paneSelect";
 import { type PaneSnapshot } from "../router";
-import { resetStore } from "../store";
+import { resetStore } from "../document";
 import { clearTransientLayersForTest, registerTransientLayer } from "../transientLayers";
 import { TabBar } from "./TabBar";
 

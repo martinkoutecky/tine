@@ -1,3 +1,4 @@
+import { revealOutlineBlock } from "./outlineViewport";
 // Tab-based routing with per-tab navigation history. Each tab holds a back/
 // forward stack of routes; the active tab's current route drives the page view.
 // Middle-click opens links in a new tab. The whole tab session is persisted, so
@@ -6,38 +7,77 @@
 // focused-pane shims, so existing call sites are unchanged.
 
 import { createSignal, type Accessor } from "solid-js";
-import {
-  pushRecent,
-  resolveAlias,
-} from "./ui";
-import {
-  doc,
-  expandAncestors,
-  persistentBlockRef,
-  resolveBlockRef,
-  extendFeedForScroll,
-  type HistoryRouteContext,
-} from "./store";
+import { pushRecent } from "./ui";
+import { navigationName } from "./pageIndex";
+import { blockRef, resolveBlockRef, settleBlockRef, expandAncestors, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
 import { backend } from "./backend";
-import {
-  normalizeFriendlyPageMatchScope,
-  normalizeQueryDisplayDraft,
-  type FriendlyPageMatchScope,
-  type QueryDisplayDraft,
-} from "./editor/queryDisplayDraft";
+import { captureBinding, stillBound } from "./binding";
+import { graphOwner, readOwned } from "./owned";
 import { renderedBlocks } from "./lazyObserve";
 import { navReuseTabs } from "./navSettings";
 import { isMobilePlatform } from "./nativeChrome";
 import type { PageKind } from "./types";
+import { installRouterBridge } from "./routerBridge";
+import { retirePdfNavigationIntent } from "./pdfNavigation";
+import { VIEW_KINDS } from "./editor/queryIr";
+import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
+import type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
+export type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 
-/** One logical page plus its optional concrete graph-relative file owner. */
-export interface PageTarget {
-  name: string;
-  pageKind: PageKind;
-  /** Absent only for deliberately logical navigation. */
-  path?: string;
+/** The one reader of a query presentation; null is "unreadable". */
+export function normalizeQueryPresentation(value: unknown): QueryPresentation | null {
+  return typeof value === "string" && (VIEW_KINDS as readonly string[]).includes(value) ? value as QueryPresentation : null;
 }
 
+/** What one atomic edit to the active query workspace may change. For each display
+ * or presentation field: absent keeps the route's value, an explicit `undefined`
+ * removes the override, a present value must normalize (`{}` stays an explicit clear). */
+export type QueryRoutePatch = Partial<Pick<QueryRoute,
+  "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">>;
+
+/** The pure half of `updateActiveQuery`: the next route, or null when the patch
+ * carries a value this build cannot read and the whole edit is refused. */
+export function applyQueryRoutePatch(current: QueryRoute, patch: QueryRoutePatch): QueryRoute | null {
+  const next: QueryRoute = { ...current };
+  if (Object.hasOwn(patch, "source")) {
+    if (typeof patch.source !== "string") return null;
+    next.source = patch.source;
+  }
+  if (Object.hasOwn(patch, "sourceKind")) {
+    if (patch.sourceKind !== "search" && patch.sourceKind !== "dsl") return null;
+    next.sourceKind = patch.sourceKind;
+  }
+  if (Object.hasOwn(patch, "presentation")) {
+    const presentation = normalizeQueryPresentation(patch.presentation);
+    if (!presentation) return null;
+    next.presentation = presentation;
+  }
+  for (const key of ["pageDisplay", "blockDisplay"] as const) {
+    if (!Object.hasOwn(patch, key)) continue;
+    if (patch[key] === undefined) { delete next[key]; continue; }
+    const display = normalizeQueryDisplayDraft(patch[key]);
+    if (!display) return null;
+    next[key] = display;
+  }
+  for (const key of ["pagePresentation", "blockPresentation"] as const) {
+    if (!Object.hasOwn(patch, key)) continue;
+    if (patch[key] === undefined) { delete next[key]; continue; }
+    const presentation = normalizeQueryPresentation(patch[key]);
+    if (!presentation) return null;
+    next[key] = presentation;
+  }
+  if (Object.hasOwn(patch, "pageMatchScope")) {
+    if (patch.pageMatchScope === undefined) delete next.pageMatchScope;
+    else {
+      const scope = normalizeFriendlyPageMatchScope(patch.pageMatchScope);
+      if (!scope) return null;
+      next.pageMatchScope = scope;
+    }
+  }
+  return next;
+}
+
+/** One logical page plus its optional concrete graph-relative file owner. */
 export interface BlockTarget extends PageTarget {
   block: string;
 }
@@ -48,12 +88,8 @@ export function pageTargetFromRoute(route: Route): PageTarget | null {
     : null;
 }
 
-export function pageTargetFromFeedPage(page: { name: string; kind: PageKind; path?: string }): PageTarget {
-  return { name: page.name, pageKind: page.kind, ...(page.path ? { path: page.path } : {}) };
-}
-
-export function pageTargetFromEntry(entry: { name: string; kind: PageKind; path?: string }): PageTarget {
-  return { name: entry.name, pageKind: entry.kind, ...(entry.path ? { path: entry.path } : {}) };
+export function pageTargetFromFeedPage(page: { name: string; kind: PageKind; id?: string }): PageTarget {
+  return { name: page.name, pageKind: page.kind, ...(page.id ? { path: page.id } : {}) };
 }
 
 export function pageTargetFromBlockRef(ref: {
@@ -66,90 +102,10 @@ export function pageTargetFromBlockRef(ref: {
 
 export function pageTargetMatchesLoaded(
   target: PageTarget,
-  page: { name: string; kind: PageKind; path?: string } | null | undefined,
+  page: { name: string; kind: PageKind; id?: string } | null | undefined,
 ): boolean {
   if (!page || page.name !== target.name || page.kind !== target.pageKind) return false;
-  return target.path === undefined || page.path === target.path;
-}
-
-export type Route =
-  | { kind: "journals" }
-  /** The conflict overview (GH #536): rendered from the live conflict queue,
-   *  never a file in the graph. */
-  | { kind: "conflicts" }
-  | QueryRoute
-  | PdfRoute
-  | InvalidRoute
-  | (PageTarget & {
-      kind: "page";
-      block?: string;
-      /** Graph-root-relative file to pin this view to - set ONLY to reach a
-       *  duplicate-day stray that shares a (kind,name) with the canonical file
-       *  (#21). Absent for normal pages, which resolve by name. */
-      path?: string;
-    });
-
-export interface PdfRoute {
-  kind: "pdf";
-  /** Stable identity of this reading view, independent of the document. */
-  viewId: string;
-  /** Graph-assets-relative backend identity. */
-  filename: string;
-  label: string;
-  page?: number;
-  scale?: number;
-}
-
-/** A malformed persisted route remains a closable tab instead of collapsing
- * its containing pane (and potentially changing the whole split layout). */
-export interface InvalidRoute {
-  kind: "invalid";
-  title: string;
-  message: string;
-}
-
-export type QueryPresentation = "search" | "list" | "table" | "board";
-export type { FriendlyPageMatchScope } from "./editor/queryDisplayDraft";
-
-const QUERY_PRESENTATIONS: ReadonlySet<string> = new Set(["search", "list", "table", "board"]);
-
-export function normalizeQueryPresentation(value: unknown): QueryPresentation | null {
-  return typeof value === "string" && QUERY_PRESENTATIONS.has(value)
-    ? value as QueryPresentation
-    : null;
-}
-
-export interface QueryRoute {
-  kind: "query";
-  /** Stable workspace identity. Editing the expression replaces this history
-   *  entry instead of appending one entry per keystroke. */
-  id: string;
-  sourceKind: "search" | "dsl";
-  source: string;
-  presentation: QueryPresentation;
-  /** The workspace's own display choices, as a complete snapshot of the
-   *  non-view half of `ViewSettings` (P5C).
-   *
-   *  A workspace has no block to hang `tine.*` properties on, so the draft lives
-   *  here. Three states, all meaningful:
-   *
-   *   * ABSENT — nothing chosen; the workspace inherits whatever the query text
-   *     already states.
-   *   * `{}` — every non-view setting explicitly cleared.
-   *   * populated — exactly these settings, and only these.
-   *
-   *  `presentation` above stays the only authority for the view, which is why
-   *  `QueryDisplayDraft` cannot carry one. Every value here has been through
-   *  `normalizeQueryDisplayDraft`. */
-  display?: QueryDisplayDraft;
-  /** Mixed-result overrides. Each absence inherits its singular counterpart;
-   *  a present empty draft clears only that result family. */
-  pagePresentation?: QueryPresentation;
-  pageDisplay?: QueryDisplayDraft;
-  blockPresentation?: QueryPresentation;
-  blockDisplay?: QueryDisplayDraft;
-  /** Friendly page membership. Absence retains historical name/alias matching. */
-  pageMatchScope?: FriendlyPageMatchScope;
+  return target.path === undefined || page.id === target.path;
 }
 
 export interface Tab {
@@ -181,6 +137,11 @@ export interface AdoptedTab {
 
 export interface PaneRouter {
   paneId: string;
+  /** O(1) read of this pane's session-local foreground navigation revision.
+   * Foreground routes, history, tab activation and closure advance it. Background
+   * tab creation, page-target rewrites/removals, route replacement, query edits
+   * and session reset do not. It is neither persisted nor shared across windows. */
+  routeIntentRevision(): number;
   tabs: Accessor<Tab[]>;
   activeId: Accessor<string>;
   setScrollerElement(el: HTMLElement | null): void;
@@ -199,11 +160,15 @@ export interface PaneRouter {
   openPageTarget(target: PageTarget, opts?: { inPlace?: boolean }): void;
   openJournals(opts?: { inPlace?: boolean }): void;
   openConflicts(opts?: { inPlace?: boolean }): void;
+  /** Navigate this pane to a PDF tab. Cost O(tabs); no file read until mounted. */
   openPdf(route: PdfRoute, opts?: { inPlace?: boolean }): void;
+  /** Save the active reader's page/zoom in its route; invalid values are ignored. */
   updateActivePdfViewState(state: { page?: number; scale?: number }): void;
+  /** Close the reader tab, returning through history or Journals if needed. */
   closePdf(): Promise<boolean>;
   openQueryInNewTab(source: string, presentation?: QueryPresentation, foreground?: boolean): QueryRoute;
   updateActiveQuery(patch: QueryRoutePatch): void;
+  settleActiveBlock(): void;
   replaceActiveRoute(route: Route): void;
   resetTabsToJournals(): void;
   openFile(
@@ -226,7 +191,7 @@ export interface PaneRouter {
   goForward(): void;
   setActiveTab(id: string): void;
   closeActiveTab(): void;
-  closeTab(id: string): Promise<boolean>;
+  closeTab(id: string): Promise<void>;
   reopenClosedTab(): void;
   activateAdjacentTab(dir: 1 | -1): void;
   activateNextTab(): void;
@@ -264,6 +229,20 @@ export function routeTitle(r: Route): string {
   return r.name;
 }
 
+/** The live store key of the block a page route zooms into, or null while it is not
+ * loaded or no longer found. A saved ID-less zoom resolves by its position path; a
+ * runtime key stays valid after a reference stamps an `id::` on the block. */
+export function resolveRouteBlock(r: Route): string | null {
+  if (r.kind !== "page" || !r.block) return null;
+  return resolveBlockRef({
+    uuid: r.block,
+    page: r.name,
+    pageKind: r.pageKind,
+    ...(r.path ? { path: r.path } : {}),
+    ...(r.blockPos ? { blockPos: r.blockPos } : {}),
+  }, { navigation: true });
+}
+
 export function sameRoute(a: Route, b: Route): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === "journals" || a.kind === "conflicts") return true;
@@ -282,6 +261,27 @@ const GUIDE_DISPLAY_PREFIX = "Tine-guide/";
 let queryRouteCounter = 0;
 let pdfViewCounter = 0;
 
+/** Mint a tab-local PDF view ID, avoiding IDs already restored in a session. */
+export function mintPdfViewId(used: ReadonlySet<string> = new Set()): string {
+  let id: string;
+  do { id = `pdf-${Date.now().toString(36)}-${(++pdfViewCounter).toString(36)}`; }
+  while (used.has(id));
+  return id;
+}
+
+/** Construct a PDF route without reading or changing the graph. */
+export function makePdfRoute(filename: string, label: string, state: {
+  page?: number; scale?: number; viewId?: string;
+} = {}): PdfRoute {
+  return { kind: "pdf", viewId: state.viewId ?? mintPdfViewId(), filename, label,
+    ...(state.page !== undefined ? { page: state.page } : {}),
+    ...(state.scale !== undefined ? { scale: state.scale } : {}) };
+}
+
+function duplicateRoute(route: Route): Route {
+  return route.kind === "pdf" ? { ...route, viewId: mintPdfViewId() } : { ...route };
+}
+
 export function makeQueryRoute(
   source: string,
   presentation: QueryPresentation = "search",
@@ -295,116 +295,6 @@ export function makeQueryRoute(
     source,
     presentation,
   };
-}
-
-/** What one atomic edit to the active query workspace may change.
- *
- *  Each singular or scoped display field distinguishes three cases:
- *
- *   * the key is ABSENT from the patch — a source-only or presentation-only
- *     edit, which keeps whatever snapshot the route already had, `{}` included;
- *   * an explicit `undefined` — remove that override and inherit its baseline;
- *   * a present object — the new snapshot, which must normalize; `{}` stays a
- *     present, explicit clear. */
-export type QueryRoutePatch =
-  Partial<Pick<QueryRoute,
-    | "source"
-    | "sourceKind"
-    | "presentation"
-    | "display"
-    | "pagePresentation"
-    | "pageDisplay"
-    | "blockPresentation"
-    | "blockDisplay"
-    | "pageMatchScope"
-  >>;
-
-/** The pure half of `updateActiveQuery`: the next route, or `null` when the
- *  patch carries a display this build cannot read and the whole edit must be
- *  refused. Exported so the future display panel can prevalidate exactly the
- *  edit it is about to submit. */
-export function applyQueryRoutePatch(
-  current: QueryRoute,
-  patch: QueryRoutePatch,
-): QueryRoute | null {
-  const next: QueryRoute = { ...current };
-
-  if (Object.hasOwn(patch, "source")) {
-    if (typeof patch.source !== "string") return null;
-    next.source = patch.source;
-  }
-  if (Object.hasOwn(patch, "sourceKind")) {
-    if (patch.sourceKind !== "search" && patch.sourceKind !== "dsl") return null;
-    next.sourceKind = patch.sourceKind;
-  }
-  if (Object.hasOwn(patch, "presentation")) {
-    const presentation = normalizeQueryPresentation(patch.presentation);
-    if (!presentation) return null;
-    next.presentation = presentation;
-  }
-
-  for (const key of ["display", "pageDisplay", "blockDisplay"] as const) {
-    if (!Object.hasOwn(patch, key)) continue;
-    const value = patch[key];
-    if (value === undefined) {
-      delete next[key];
-      continue;
-    }
-    const display = normalizeQueryDisplayDraft(value);
-    if (!display) return null;
-    next[key] = display;
-  }
-
-  for (const key of ["pagePresentation", "blockPresentation"] as const) {
-    if (!Object.hasOwn(patch, key)) continue;
-    const value = patch[key];
-    if (value === undefined) {
-      delete next[key];
-      continue;
-    }
-    const presentation = normalizeQueryPresentation(value);
-    if (!presentation) return null;
-    next[key] = presentation;
-  }
-
-  if (Object.hasOwn(patch, "pageMatchScope")) {
-    if (patch.pageMatchScope === undefined) {
-      delete next.pageMatchScope;
-    } else {
-      const scope = normalizeFriendlyPageMatchScope(patch.pageMatchScope);
-      if (!scope) return null;
-      next.pageMatchScope = scope;
-    }
-  }
-  return next;
-}
-
-export function mintPdfViewId(used: ReadonlySet<string> = new Set()): string {
-  let candidate = "";
-  do {
-    pdfViewCounter += 1;
-    candidate = `pdf-${Date.now().toString(36)}-${pdfViewCounter.toString(36)}`;
-  } while (used.has(candidate));
-  return candidate;
-}
-
-export function makePdfRoute(
-  filename: string,
-  label: string,
-  state: { page?: number; scale?: number; viewId?: string } = {},
-): PdfRoute {
-  return {
-    kind: "pdf",
-    viewId: state.viewId ?? mintPdfViewId(),
-    filename,
-    label,
-    ...(state.page !== undefined ? { page: state.page } : {}),
-    ...(state.scale !== undefined ? { scale: state.scale } : {}),
-  };
-}
-
-function duplicateRoute(route: Route): Route {
-  return route.kind === "pdf" ? { ...route, viewId: mintPdfViewId() } : { ...route };
 }
 
 function isGuideRouteName(name: string): boolean {
@@ -454,6 +344,8 @@ export function installNavigationInterceptor(
 
 export function createPaneRouter(paneId = "main"): PaneRouter {
   let counter = 0;
+  let intentRevision = 0;
+  const routeIntentRevision = () => intentRevision;
   const newId = () => `tab-${counter++}`;
 
   // Start on a single journals tab. The saved session (if any) is loaded
@@ -520,7 +412,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       if (scrollerElement.isConnected) return scrollerElement;
       scrollerElement = null;
     }
-    return null;
+    if (typeof document === "undefined") return null; // no-DOM (unit tests)
+    return document.querySelector(".main-content");
   }
 
   /** Record the current scroll offset against the active tab's current route.
@@ -590,6 +483,11 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
    *  left off instead of at the bottom of the default window. */
   function restoreScrollFor(r: Route) {
     if (typeof requestAnimationFrame === "undefined") return; // no-DOM (unit tests)
+    const binding = captureBinding();
+    const tabId = activeId();
+    const intent = intentRevision;
+    const current = () => stillBound(binding) && activeId() === tabId
+      && intentRevision === intent && sameRoute(route(), r);
     const target = scrollByRoute.get(r) ?? 0;
     let tries = 0;
     let extending = false;
@@ -597,6 +495,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // synchronous reset races the content swap (a new page wouldn't actually land
     // at the top). Then for a deep offset keep nudging while the page grows.
     const tick = () => {
+      if (!current()) return;
       const el = mainScroller();
       if (!el) return;
       const max = Math.max(0, el.scrollHeight - el.clientHeight);
@@ -610,6 +509,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
         extending = true;
         void extendFeedForScroll().then((grew) => {
           extending = false;
+          if (!current()) return;
           if (grew ? tries++ < 400 : tries++ < 60) requestAnimationFrame(tick);
         });
         return;
@@ -648,6 +548,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       openInNewTab(r, true);
       return;
     }
+    intentRevision++;
     setTabs(
       tabs().map((t) => {
         if (t.id !== activeId()) return t;
@@ -673,7 +574,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // An exact physical owner is authoritative. Alias resolution is only valid
     // for deliberately logical targets.
     const name = target.pageKind === "page" && !target.path && !isGuideRouteName(target.name)
-      ? resolveAlias(target.name)
+      ? navigationName(target.name)
       : target.name;
     navigate(
       { kind: "page", name, pageKind: target.pageKind, ...(target.path ? { path: target.path } : {}) },
@@ -697,20 +598,15 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     const current = route();
     if (current.kind !== "pdf") return;
     const page = state.page !== undefined && Number.isSafeInteger(state.page) && state.page > 0
-      ? state.page
-      : current.page;
+      ? state.page : current.page;
     const scale = state.scale !== undefined && Number.isFinite(state.scale) && state.scale > 0
-      ? state.scale
-      : current.scale;
+      ? state.scale : current.scale;
     if (page === current.page && scale === current.scale) return;
     setTabs(tabs().map((tab) => {
       if (tab.id !== activeId()) return tab;
       const history = [...tab.history];
-      history[tab.pos] = {
-        ...current,
-        ...(page !== undefined ? { page } : {}),
-        ...(scale !== undefined ? { scale } : {}),
-      };
+      history[tab.pos] = { ...current, ...(page !== undefined ? { page } : {}),
+        ...(scale !== undefined ? { scale } : {}) };
       return { ...tab, history };
     }));
     clearTimeout(pdfViewStateSaveTimer);
@@ -719,14 +615,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   async function closePdf(): Promise<boolean> {
     if (route().kind !== "pdf") return false;
-    const list = tabs();
-    if (list.length > 1) {
-      return closeTab(activeId());
-    }
-    if (activeTab().pos > 0) {
-      goBack();
-      return true;
-    }
+    if (tabs().length > 1) { await closeTab(activeId()); return true; }
+    if (activeTab().pos > 0) { goBack(); return true; }
     if (lastTabCloseHandler(paneId)) return true;
     replaceActiveRoute({ kind: "journals" });
     return true;
@@ -754,15 +644,36 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     return queryRoute;
   }
 
-  function updateActiveQuery(patch: QueryRoutePatch) {
+  function updateActiveQuery(
+    patch: QueryRoutePatch
+  ) {
     const current = route();
     if (current.kind !== "query") return;
     const next = applyQueryRoutePatch(current, patch);
-    // An unreadable display leaves the route ENTIRELY untouched — the source and
-    // presentation in the same patch included. A half-applied edit would be a
-    // silent partial success, and the display panel that will own this seam
-    // prevalidates with `normalizeQueryDisplayDraft` so it can say so visibly.
     if (!next) return;
+    setTabs(tabs().map((tab) => {
+      if (tab.id !== activeId()) return tab;
+      const history = [...tab.history];
+      history[tab.pos] = next;
+      return { ...tab, history };
+    }));
+    persist();
+  }
+
+  /** A restored zoom names its block by position; once the page is loaded, swap the
+   * position for the block's live key (in place, no history entry, no reload) so later
+   * sibling edits cannot move the zoom. No-op for any other route. */
+  function settleActiveBlock() {
+    const current = route();
+    if (current.kind !== "page" || !current.blockPos || !current.block) return;
+    const settled = settleBlockRef({
+      uuid: current.block, page: current.name, pageKind: current.pageKind,
+      ...(current.path ? { path: current.path } : {}),
+      blockPos: current.blockPos,
+    });
+    if (!settled || settled.blockPos) return;
+    const { blockPos: _drop, ...rest } = current;
+    const next: Route = { ...rest, block: settled.uuid };
     setTabs(tabs().map((tab) => {
       if (tab.id !== activeId()) return tab;
       const history = [...tab.history];
@@ -778,6 +689,11 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
    *  so they're discarded wholesale rather than remapped - mirroring OG, which
    *  keeps one graph open at a time and reloads the whole workspace on switch. */
   function resetTabsToJournals() {
+    clearTimeout(pdfViewStateSaveTimer);
+    pdfViewStateSaveTimer = undefined;
+    for (const tab of tabs()) for (const entry of tab.history) {
+      if (entry.kind === "pdf") retirePdfNavigationIntent(entry.viewId);
+    }
     const id = newId();
     setTabs([{ id, history: [{ kind: "journals" }], pos: 0, pinned: false }]);
     setActiveId(id);
@@ -805,8 +721,9 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
    *  Zooming navigates to the block's OWN page (not whichever route you're on), so
    *  it works from the journals feed, a linked-reference, or the command palette -
    *  not only when you're already on that page. Same destination as a middle-click,
-   *  just in the current tab. persistentBlockRef pins the uuid (writes id:: once)
-   *  so a zoomed tab survives a reload/restart, exactly like the new-tab path. */
+   *  just in the current tab. Zooming never writes: OG stamps an `id::` only when a
+   *  reference is created, so an ID-less block is named by its runtime key here and
+   *  by its position path in the saved session (blockPositionRef, GH #623). */
   function focusBlock(id: string | null) {
     if (id === null) {
       // Zoom out: stay on the current page, drop the block. (No-op off a page.)
@@ -817,8 +734,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       }
       return;
     }
-    if (!doc.byId[id]) return; // block no longer loaded - nothing to zoom into
-    const ref = persistentBlockRef(id);
+    if (!docNode(id)) return; // block no longer loaded - nothing to zoom into
+    const ref = blockRef(id);
     navigate({ kind: "page", ...pageTargetFromBlockRef(ref), block: ref.uuid });
   }
 
@@ -840,28 +757,34 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       page: target.name,
       pageKind: target.pageKind,
       ...(target.path ? { path: target.path } : {}),
-    });
+    }, { navigation: true });
     // Pre-latch the target so its body renders eagerly (not as a deferred raw-text
     // placeholder) - a heavy target (table/image) then lands at its true height
     // instead of growing after the scroll. See AstBody / docs/adr (P1 lazy body).
     renderedBlocks.add(liveId() ?? target.block);
     openPageTarget(target);
+    const binding = captureBinding();
+    const tabId = activeId();
+    const intent = routeIntentRevision();
+    const openedRoute = route();
+    const current = () => stillBound(binding) && activeId() === tabId
+      && routeIntentRevision() === intent && sameRoute(route(), openedRoute);
     // Let the page render, then scroll + briefly highlight the target block.
     let tries = 0;
     const tick = () => {
-      if (typeof document === "undefined") return;
+      if (!current()) return;
       const id = liveId();
       if (id) {
         renderedBlocks.add(id);
         // A collapsed parent renders no children at all, so without this the
-        // query below can never match and the poll just times out silently —
-        // the target block is simply never revealed (GH #258). Runs inside the
-        // poll, not before it, because the page load is async: the block may not
-        // be in the store yet on the first tick.
+        // query below can never match and the poll times out silently (GH #258).
+        // Inside the poll because the page load is async.
         expandAncestors(id);
       }
+      const scroller = mainScroller();
+      if (id) revealOutlineBlock(id, scroller);
       const el = id
-        ? document.querySelector(`.ls-block[data-block-id="${id}"]`)
+        ? scroller?.querySelector(`.ls-block[data-block-id="${id}"]`)
         : null;
       if (el) {
         el.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -876,6 +799,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   function openInNewTab(r: Route, foreground = false) {
     if (foreground && navigationInterceptor(paneId, r, {})) return;
+    if (foreground) intentRevision++;
     // Open a new tab. Default is *background* (no focus switch) - matches a
     // browser's middle-click. `foreground` is used by the sticky-tab redirect, so
     // a click on a pinned tab lands you on the new tab. New tabs are unpinned, so
@@ -891,7 +815,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   function openPageTargetInNewTab(target: PageTarget, foreground = false) {
     const name = target.pageKind === "page" && !target.path && !isGuideRouteName(target.name)
-      ? resolveAlias(target.name)
+      ? navigationName(target.name)
       : target.name;
     openInNewTab({ kind: "page", name, pageKind: target.pageKind, ...(target.path ? { path: target.path } : {}) }, foreground);
   }
@@ -954,12 +878,14 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   function goBack() {
     if (!canGoBack()) return;
+    intentRevision++;
     if (requestMobileHistoryBack()) return;
     applyRouterBack();
   }
 
   function goForward() {
     if (!canGoForward()) return;
+    intentRevision++;
     rememberScroll(); // save this entry's scroll before stepping forward
     setTabs(tabs().map((t) => (t.id === activeId() ? { ...t, pos: t.pos + 1 } : t)));
     activateCurrentRoute();
@@ -971,6 +897,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     const next = tabs().find((t) => t.id === id);
     if (!next || next.id === activeId()) return;
     if (navigationInterceptor(paneId, tabRoute(next), {})) return;
+    intentRevision++;
     rememberScroll(); // save the outgoing tab's scroll so switching back restores it
     setActiveId(id);
     activateCurrentRoute();
@@ -982,26 +909,27 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     void closeTab(activeId());
   }
 
-  async function closeTab(id: string): Promise<boolean> {
+  async function closeTab(id: string) {
+    const owner = graphOwner();
     let list = tabs();
     if (list.length === 1) {
-      if (route().kind !== "journals" && lastTabCloseHandler(paneId)) return false;
-      return false; // feed pane keeps its last tab
+      if (route().kind !== "journals" && lastTabCloseHandler(paneId)) return;
+      return; // feed pane keeps its last tab
     }
-    let t = list.find((x) => x.id === id);
+    const t = list.find((x) => x.id === id);
     // Pinned = sticky = "I want to keep this": confirm before closing, so an
     // accidental Ctrl+W (or middle-click) doesn't drop it. Uses the GTK dialog
     // (backend.confirm), NOT window.confirm - the latter silently returns true in
     // this WebKitGTK build, so the tab would close without ever asking. Unpinned
     // tabs skip the await and close synchronously (no behaviour change there).
     if (t?.pinned) {
-      if (!(await backend().confirm(`Close pinned tab “${routeTitle(tabRoute(t))}”?`))) return false;
-      // The confirmation dialog yields to every navigation source. Re-read the
-      // live roster and prove the same tab is still closeable before landing.
-      list = tabs();
-      t = list.find((candidate) => candidate.id === id);
-      if (!t || list.length <= 1) return false;
+      const confirmation = await readOwned(owner, backend().confirm(`Close pinned tab “${routeTitle(tabRoute(t))}”?`));
+      if (confirmation.kind === "stale" || !confirmation.value) return;
     }
+    if (!owner()) return;
+    list = tabs();
+    if (list.length === 1 || !list.some((current) => current.id === id && current === t)) return;
+    intentRevision++;
     // Save the current scroll against the (about-to-close) active tab's route, so a
     // later Ctrl+Shift+T reopen lands back where it was. The route object survives
     // in `closedTabs`, so its scrollByRoute entry is still live on reopen.
@@ -1011,18 +939,16 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // Remember the closed tab (its full history + position) so Ctrl+Shift+T can
     // reopen it. Most-recent last; cap the stack.
     if (t) {
+      for (const entry of t.history) if (entry.kind === "pdf") retirePdfNavigationIntent(entry.viewId);
       closedTabs.push({ history: t.history, pos: t.pos });
       if (closedTabs.length > CLOSED_CAP) closedTabs.shift();
     }
     setTabs(next);
     if (activeId() === id) {
-      const replacement = next[Math.min(Math.max(0, idx - 1), next.length - 1)];
-      if (!replacement) return false;
-      setActiveId(replacement.id);
+      setActiveId(next[Math.max(0, idx - 1)].id);
       activateCurrentRoute();
     }
     persist();
-    return true;
   }
 
   /** Reopen the most-recently-closed tab (Ctrl+Shift+T), restoring its full
@@ -1031,6 +957,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function reopenClosedTab() {
     const last = closedTabs.pop();
     if (!last || !last.history.length) return;
+    intentRevision++;
     const id = newId();
     const pos = Math.min(Math.max(0, last.pos | 0), last.history.length - 1);
     // New tabs are unpinned, so appending preserves the pinned-left invariant.
@@ -1202,6 +1129,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   return {
     paneId,
+    routeIntentRevision,
     tabs,
     activeId,
     setScrollerElement,
@@ -1219,6 +1147,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     closePdf,
     openQueryInNewTab,
     updateActiveQuery,
+    settleActiveBlock,
     replaceActiveRoute,
     resetTabsToJournals,
     openFile,
@@ -1293,11 +1222,9 @@ function restoreHistoryRouteContext(context: HistoryRouteContext): boolean {
   if (!router) return false;
   const route = context.route;
   if (route.kind === "page") {
-    const page = doc.pages.find((candidate) =>
-      candidate.name === route.name
-      && candidate.kind === route.pageKind
-      && (route.path === undefined || candidate.path === route.path)
-    );
+    const candidate = loadedPage(route.name);
+    const page = candidate?.kind === route.pageKind
+      && (route.path === undefined || candidate.id === route.path) ? candidate : undefined;
     if (!page) return false;
   }
   if (!activatePaneProvider(context.paneId)) return false;
@@ -1353,12 +1280,18 @@ export function openQueryInNewTab(
   return focusedRouterInstance().openQueryInNewTab(source, presentation, foreground);
 }
 
-export function updateActiveQuery(patch: QueryRoutePatch) {
+export function updateActiveQuery(
+  patch: QueryRoutePatch
+) {
   focusedRouterInstance().updateActiveQuery(patch);
 }
 
 export function replaceActiveRoute(nextRoute: Route) {
   focusedRouterInstance().replaceActiveRoute(nextRoute);
+}
+
+export function settleActiveBlock() {
+  focusedRouterInstance().settleActiveBlock();
 }
 
 export function resetTabsToJournals() {
@@ -1466,3 +1399,5 @@ export function flushSession(): Promise<void> {
 export function restoreSession(): Promise<void> {
   return mainRouterInstance().restoreSession();
 }
+
+installRouterBridge({ route, focusBlock, scheduleSessionSave, openPageTarget });

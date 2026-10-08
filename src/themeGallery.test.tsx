@@ -3,10 +3,11 @@ import { backend } from "./backend";
 import { CUSTOM_CSS_STYLE_ID, LS_SHIM_STYLE_ID } from "./lsShim";
 import {
   THEME_GALLERY_STYLE_ID,
+  applyTheme,
   applyThemeColors,
   applyThemeStyle,
-  applyTheme,
   ensureThemeStyle,
+  selectedGalleryTheme,
   selectedThemeColors,
   selectedThemePresentation,
   selectedThemeStyle,
@@ -52,15 +53,14 @@ describe("theme gallery style layer", () => {
   it("applies a bundled theme and Default clears the managed node", () => {
     applyTheme("nord");
 
-    expect(selectedThemeStyle()).toBe("");
-    expect(selectedThemeColors()).toBe("nord");
+    expect(selectedGalleryTheme()).toBe("nord");
 
     const theme = document.getElementById(THEME_GALLERY_STYLE_ID);
     if (theme) theme.textContent = "html { --scratch-theme: 1; }";
 
     applyTheme("");
 
-    expect(selectedThemeColors()).toBe("");
+    expect(selectedGalleryTheme()).toBe("");
     expect(theme?.textContent).toBe("");
   });
 
@@ -84,8 +84,7 @@ describe("theme gallery style layer", () => {
 
     applyTheme(installed.key);
 
-    expect(selectedThemeStyle()).toBe("");
-    expect(selectedThemeColors()).toBe(installed.key);
+    expect(selectedGalleryTheme()).toBe(installed.key);
     expect(document.getElementById(THEME_GALLERY_STYLE_ID)?.textContent).toContain("#010203");
     expect(managedStyleIds()).toEqual([LS_SHIM_STYLE_ID, THEME_GALLERY_STYLE_ID, CUSTOM_CSS_STYLE_ID]);
     await uninstallThemePackage(installed.key);
@@ -164,6 +163,7 @@ describe("theme gallery style layer", () => {
     applyTheme("");
   });
 
+
   it("refuses to apply or reinstall a theme version revoked by the signed registry", async () => {
     const manifest = {
       schemaVersion: 1 as const,
@@ -183,8 +183,7 @@ describe("theme gallery style layer", () => {
     applyThemeRevocations(new Set([installed.key]));
     applyTheme(installed.key);
 
-    expect(selectedThemeStyle()).toBe("");
-    expect(selectedThemeColors()).toBe("");
+    expect(selectedGalleryTheme()).toBe("");
     expect(document.getElementById(THEME_GALLERY_STYLE_ID)?.textContent).toBe("");
     await expect(installThemePackage(manifest)).rejects.toThrow(/revoked/);
     await uninstallThemePackage(installed.key);
@@ -210,8 +209,7 @@ describe("theme gallery style layer", () => {
     await initThemePackages(new Set([installed.key]));
     await initThemeGallery();
 
-    expect(selectedThemeStyle()).toBe("");
-    expect(selectedThemeColors()).toBe("");
+    expect(selectedGalleryTheme()).toBe("");
     expect(document.getElementById(THEME_GALLERY_STYLE_ID)?.textContent).toBe("");
     await uninstallThemePackage(installed.key);
   });
@@ -228,5 +226,14 @@ describe("theme gallery style layer", () => {
     expect(selectedThemeStyle()).toBe("");
     expect(selectedThemeColors()).toBe("nord");
     get.mockRestore();
+  });
+
+  it("persists the selection as one theme.composition.v1 record", async () => {
+    const set = vi.spyOn(backend(), "setAppString");
+    applyThemeColors("nord");
+    await vi.waitFor(() => expect(set).toHaveBeenCalledWith(
+      "theme.composition.v1", JSON.stringify({ style: "", colors: "nord" })));
+    expect(set.mock.calls.some(([key]) => key === "theme.gallery")).toBe(false);
+    set.mockRestore();
   });
 });

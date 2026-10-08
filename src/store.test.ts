@@ -5,115 +5,26 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi, type MockInstance } from "vitest";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
-import {
-  doc,
-  setDoc,
-  resetStore,
-  loadSingle,
-  loadFeed,
-  restoreTodayJournalInFeed,
-  markDirty,
-  flushPage,
-  flushAll,
-  forceSave,
-  isDirty,
-  deletePage,
-  reloadDisposition,
-  setBlockMoving,
-  isBlockMoving,
-  splitBlock,
-  insertOutlineAfter,
-  replaceEmptyBlockWithOutline,
-  indentBlock,
-  outdentBlock,
-  mergeWithPrev,
-  mergeWithNext,
-  deleteBlock,
-  ensureEmptyBlock,
-  toggleCollapse,
-  collapsibleDescendantIds,
-  setCollapsedDescendants,
-  visibleOrder,
-  setRaw,
-  setEditorActivation,
-  undo,
-  redo,
-  selectBlock,
-  extendSelectionTo,
-  selectedIds,
-  moveSelection,
-  deleteSelection,
-  cycleSelectionTasks,
-  moveSelectionItems,
-  moveBlockFeed,
-  moveBlock,
-  moveBlocksRelative,
-  indentSelection,
-  outdentSelection,
-  __setStoreMutationObserverForTest,
-  reloadPage,
-  forgetPage,
-  pageByName,
-  carryUnfinished,
-  ensurePageLoaded,
-  installCaptureScratchPage,
-  loadGuidePages,
-  exportNodesFor,
-  prevVisible,
-  nextVisible,
-  trailingVisibleEmptyLeaf,
-  orderedListMarker,
-  blockProperty,
-  setBlockProperty,
-  setSelectionHeading,
-  setSchedule,
-  pageToDto,
-  blockSubtreeMarkdown,
-  selectionMarkdown,
-  toggleListItemAtIndex,
-  withUndoUnit,
-  readSchedule,
-  readPageProperty,
-  setPageProperty,
-  beginPageHeaderEdit,
-  finishPageHeaderEdit,
-  ensureBlockId,
-  persistentBlockRef,
-  persistBlockRefTarget,
-  resolveBlockRef,
-  reloadPageIfStillSafe,
-  pageWritable,
-} from "./store";
-import { pageProperties } from "./render/block";
-import { saveBaselineFor, setBaseRev } from "./persistence";
+import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
+import { reloadPage, forgetPage } from "./document/workingSet";
+import { setBlockMoving, isBlockMoving } from "./document/edits/moves";
+import { loadSingle, reloadDisposition } from "./document/workingSet";
+import { trailingVisibleEmptyLeaf } from "./document/tree";
+import { pageToDto } from "./document/convert";
+import { doc, setDoc } from "./document/model";
 import { editingId, startEditing, takeCaretFor } from "./editorController";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
 import { setCopyIncludeSubtree, setCopyStripCollapsed } from "./copySettings";
-import { backend, DirectSaveFailureError, SaveConflictError, type Backend } from "./backend";
-import {
-  isConflicted,
-  conflicts,
-  clearConflict,
-  favorites,
-  recentPages,
-  setFavorites,
-  setRecentPages,
-  rightSidebar,
-  setRightSidebar,
-  seedFavorites,
-  renamePageInNavigation,
-  dataRev,
-  pageInventoryRev,
-  setToasts,
-  toasts,
-  setWorkflow,
-  setGraphMeta,
-} from "./ui";
+import { backend, type Backend } from "./backend";
+import { isConflicted, conflicts } from "./document";
+import { clearConflict, forceSave } from "./document/save/engine";
+import { favorites, recentPages, setFavorites, setRecentPages, rightSidebar, setRightSidebar, seedFavorites, renamePageInNavigation, setWorkflow } from "./ui";
+import { dataRev, pageInventoryRev, setGraphMeta } from "./graphSession";
+import { toasts, setToasts } from "./toasts";
 import { journalTitle } from "./journal";
-import type { BlockDto, PageDto } from "./types";
+import type { BlockDto, PageDto, PageRead } from "./types";
 import { resetPaneLayoutToSingle } from "./panes";
-import { graphBindingRuntime } from "./graphBindingRuntime";
 
 let counter = 0;
 function blk(raw: string, children: BlockDto[] = []): BlockDto {
@@ -135,36 +46,6 @@ function shape(ids: string[] = doc.pages[0].roots): any[] {
     const n = doc.byId[id];
     return n.children.length ? [n.raw, shape(n.children)] : [n.raw];
   });
-}
-
-/** A normalized whole-page state receipt for structural Undo/Redo checks. */
-function pageState(name: string): unknown {
-  const page = pageByName(name)!;
-  const ids = new Set<string>();
-  const visit = (id: string) => {
-    if (ids.has(id)) return;
-    ids.add(id);
-    for (const child of doc.byId[id]?.children ?? []) visit(child);
-  };
-  page.roots.forEach(visit);
-  return JSON.parse(JSON.stringify({
-    page,
-    nodes: [...ids].sort().map((id) => doc.byId[id]),
-  }));
-}
-
-function countStoreMutations(run: () => void): { publications: number; dirtyMarks: number } {
-  const counts = { publications: 0, dirtyMarks: 0 };
-  __setStoreMutationObserverForTest((observation) => {
-    if (observation.kind === "publication") counts.publications++;
-    else if (observation.kind === "dirty") counts.dirtyMarks++;
-  });
-  try {
-    run();
-  } finally {
-    __setStoreMutationObserverForTest(null);
-  }
-  return counts;
 }
 
 describe("properties-only first block", () => {
@@ -277,36 +158,6 @@ describe("properties-only first block", () => {
     });
   });
 
-  // GH #164 packet, spec section B2. An org file that round-trips byte-for-byte
-  // loads WRITABLE (read_only_org -> org_editable -> org_round_trips, and that
-  // module's own corpus pins `#+TITLE:`/`#+FILETAGS:` pages as editable), and
-  // pageWritable applies no format test. But setPageProperty takes its
-  // first-root branch only when format is "md" and otherwise falls through to
-  // upsertPropertyLine, which emits markdown `key:: value`. Org carries page
-  // properties as `#+KEY:` directives or a `:PROPERTIES:` drawer, so the line
-  // Tine writes is not a property to org at all: neither Tine's own org reader
-  // (render/block.ts pageProperties) nor Logseq reads it back. I-4.
-  it("writes a page property on an org page in org's own form (GH #164)", () => {
-    loadSingle({
-      name: "Test", kind: "page", title: "Test",
-      pre_block: "#+TITLE: My Page\n#+FILETAGS: :work:",
-      blocks: [blk("first")], format: "org",
-    });
-    // Guard against a silent no-op: if the page were read-only, setPageProperty
-    // would return early and the assertions below would "pass" by vacuity.
-    expect(pageWritable("Test")).toBe(true);
-
-    setPageProperty("Test", "tags", "reference");
-
-    // The write must have happened at all...
-    expect(isDirty("Test")).toBe(true);
-    // ...and it must be readable back through the org reader. Fail-before: the
-    // preBlock gains a markdown `tags:: reference` line, so this reads [] for
-    // `tags` and the property silently does not exist for org or for Logseq.
-    expect(pageProperties(doc.pages[0].preBlock, "org")).toContainEqual(["tags", "reference"]);
-    expect(doc.pages[0].preBlock).not.toContain("tags:: reference");
-  });
-
   it("fails closed on an invalid marked header draft and keeps the draft editable", () => {
     loadSingle({
       name: "Test", kind: "page", title: "Test", pre_block: "alias:: book",
@@ -383,8 +234,6 @@ beforeEach(() => {
   resetStore();
   setWorkflow("now");
   setGraphMeta(null);
-  graphBindingRuntime.clear();
-  graphBindingRuntime.bind(1, { binding_generation: 1 });
   resetPaneLayoutToSingle({
     tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
     activeIndex: 0,
@@ -394,19 +243,6 @@ beforeEach(() => {
   setRightSidebar([]);
   setCopyIncludeSubtree(false); // copy prefs default OFF; reset so tests don't leak
   setCopyStripCollapsed(false);
-});
-
-describe("same-content revision adoption", () => {
-  it("adopts the exact returned revision even when Concord hydration keeps the existing instance", async () => {
-    const dto = load([blk("winner content")]);
-    setEditorActivation("Test", 77);
-    setBaseRev("Test", null);
-
-    await expect(ensurePageLoaded({ ...dto, rev: "resolved-winner-rev" })).resolves.toBeNull();
-
-    expect(saveBaselineFor("Test")).toBe("resolved-winner-rev");
-    expect(pageToDto("Test")?.blocks[0].raw).toBe("winner content");
-  });
 });
 
 describe("ordered list (logseq.order-list-type)", () => {
@@ -466,7 +302,7 @@ describe("ordered list (logseq.order-list-type)", () => {
     const [target, untouched] = dto.blocks.map((block) => block.id);
     const untouchedBefore = pageToDto("Test")!.blocks[1].raw;
 
-    const pasted = insertOutlineAfter(target, [{ raw: "pasted", children: [] }]);
+    const pasted = insertOutlineAfter(target, [{ raw: "pasted", children: [] }])!;
 
     expect(blockProperty(pasted, "logseq.order-list-type")).toBe("number");
     expect(pageToDto("Test")!.blocks.find((block) => block.id === pasted)!.raw).toBe(`pasted\n${ORD}`);
@@ -481,7 +317,7 @@ describe("ordered list (logseq.order-list-type)", () => {
     const last = replaceEmptyBlockWithOutline(target, [
       { raw: "first", children: [] },
       { raw: "second", children: [] },
-    ]);
+    ])!;
 
     expect(blockProperty(target, "logseq.order-list-type")).toBe("number");
     expect(blockProperty(last, "logseq.order-list-type")).toBe("number");
@@ -495,7 +331,7 @@ describe("ordered list (logseq.order-list-type)", () => {
     const untouchedBefore = pageToDto("Test")!.blocks.find((block) => block.id === untouched)!.raw;
 
     await (moveBlock as (...args: unknown[]) => Promise<void>)(source, null, 2, "Test", target);
-    const pasted = insertOutlineAfter(target, [{ raw: "pasted", children: [] }]);
+    const pasted = insertOutlineAfter(target, [{ raw: "pasted", children: [] }])!;
 
     expect(doc.byId[source].raw).toBe(`move me\n${ORG_ORD}`);
     expect(doc.byId[pasted].raw).toBe(`pasted\n${ORG_ORD}`);
@@ -652,6 +488,26 @@ describe("outdent (Shift+Tab)", () => {
   });
 });
 
+describe("reparenting editor move ownership", () => {
+  it("retains an already active move on another page across indent and outdent", () => {
+    const first = blk("first");
+    const second = blk("second");
+    load([first, second]);
+    setBlockMoving(true, "Other page");
+    try {
+      indentBlock(second.id, 0);
+      expect(doc.byId[second.id].parent).toBe(first.id);
+      expect(isBlockMoving("Other page")).toBe(true);
+      expect(isBlockMoving("Test")).toBe(false);
+      outdentBlock(second.id, 0);
+      expect(doc.byId[second.id].parent).toBeNull();
+      expect(isBlockMoving("Other page")).toBe(true);
+    } finally {
+      setBlockMoving(false);
+    }
+  });
+});
+
 describe("move selection (mod+up/down in block-select)", () => {
   it("is a no-op at the top boundary (doesn't wrap the trailing blocks)", () => {
     const dto = load([blk("A"), blk("B"), blk("C")]);
@@ -762,7 +618,7 @@ describe("cross-day move (journal feed as one list)", () => {
   it("moves a root block up into the day above (feed order), keeping content", async () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1"), blk("o2")]);
-    await loadFeed([today, older]); // today on top, older below
+    loadFeed([today, older]); // today on top, older below
     const o1 = older.blocks[0].id;
     const res = await moveBlockFeed(o1, -1); // up → end of the day above
     expect(res).toBe("crossed");
@@ -774,7 +630,7 @@ describe("cross-day move (journal feed as one list)", () => {
   it("moves a root block down into the day below (prepended)", async () => {
     const today = journal("Today", [blk("t1"), blk("t2")]);
     const older = journal("Older", [blk("o1")]);
-    await loadFeed([today, older]);
+    loadFeed([today, older]);
     const t2 = today.blocks[1].id;
     const res = await moveBlockFeed(t2, 1); // down → start of the day below
     expect(res).toBe("crossed");
@@ -785,7 +641,7 @@ describe("cross-day move (journal feed as one list)", () => {
   it("carries a block's subtree across with it", async () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1", [blk("o1a")])]);
-    await loadFeed([today, older]);
+    loadFeed([today, older]);
     const o1 = older.blocks[0].id;
     const o1a = older.blocks[0].children[0].id;
     await moveBlockFeed(o1, -1);
@@ -795,7 +651,7 @@ describe("cross-day move (journal feed as one list)", () => {
 
   it("can't move up past the top of the feed (today)", async () => {
     const today = journal("Today", [blk("t1")]);
-    await loadFeed([today]);
+    loadFeed([today]);
     const res = await moveBlockFeed(today.blocks[0].id, -1);
     expect(res).toBe("none");
     expect(raws("Today")).toEqual(["t1"]);
@@ -997,15 +853,15 @@ describe("undo history is graph-local", () => {
 });
 
 describe("cross-page duplicate id::", () => {
-  const page = (name: string, blocks: BlockDto[], path?: string): PageDto => ({
-    name, kind: "page", title: name, pre_block: null, blocks, path,
+  const page = (name: string, blocks: BlockDto[], id?: string): PageDto & { id?: string } => ({
+    name, kind: "page", title: name, pre_block: null, blocks, id,
   });
 
-  it("re-keys a duplicate id:: on a second page so the two blocks stay distinct", async () => {
+  it("re-keys a duplicate id:: on a second page so the two blocks stay distinct", () => {
     // Two files carrying the SAME persisted id (e.g. copy-pasted raw, or a sync
     // hiccup) — the global byId must not collapse them into one node.
-    await ensurePageLoaded(page("A", [{ id: "dup", raw: "alpha\nid:: dup", collapsed: false, children: [] }]));
-    await ensurePageLoaded(page("B", [{ id: "dup", raw: "beta\nid:: dup", collapsed: false, children: [] }]));
+    ensurePageLoaded(page("A", [{ id: "dup", raw: "alpha\nid:: dup", collapsed: false, children: [] }]));
+    ensurePageLoaded(page("B", [{ id: "dup", raw: "beta\nid:: dup", collapsed: false, children: [] }]));
 
     const aRoot = pageByName("A")!.roots[0];
     const bRoot = pageByName("B")!.roots[0];
@@ -1021,10 +877,10 @@ describe("cross-page duplicate id::", () => {
     expect(doc.byId[bRoot].page).toBe("B");
   });
 
-  it("resolves a durable UUID only within its declared page, kind, and path", async () => {
+  it("resolves a durable UUID only within its declared page, kind, and path", () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";
-    await ensurePageLoaded(page("A", [{ id: uuid, raw: `alpha\nid:: ${uuid}`, collapsed: false, children: [] }]));
-    await ensurePageLoaded(page(
+    ensurePageLoaded(page("A", [{ id: uuid, raw: `alpha\nid:: ${uuid}`, collapsed: false, children: [] }]));
+    ensurePageLoaded(page(
       "B",
       [{ id: uuid, raw: `beta\nid:: ${uuid}`, collapsed: false, children: [] }],
       "pages/client-b/B.md",
@@ -1052,122 +908,53 @@ describe("cross-page duplicate id::", () => {
     })).toBeNull();
   });
 
-  it("prefers the unique authored Org id over a sibling runtime locator with the same UUID", () => {
+  it("prefers the unique authored Org id over a sibling runtime locator with the same UUID (GH #373)", () => {
     const claimed = "12345678-1234-8234-8234-123456789abc";
     const targetRuntime = "87654321-4321-8321-8321-cba987654321";
     loadSingle({
-      name: "Org Identity",
-      kind: "page",
-      title: "Org Identity",
-      pre_block: null,
-      format: "org",
-      path: "pages/Org Identity.org",
+      name: "Org Identity", kind: "page", title: "Org Identity", pre_block: null, format: "org",
+      id: "pages/Org Identity.org",
       blocks: [
         { id: claimed, raw: "Wrong earlier heading", collapsed: false, children: [] },
-        {
-          id: targetRuntime,
-          raw: `Intended heading\n:PROPERTIES:\n:id: ${claimed}\n:END:`,
-          collapsed: false,
-          children: [],
-        },
+        { id: targetRuntime, raw: `Intended heading\n:PROPERTIES:\n:id: ${claimed}\n:END:`, collapsed: false, children: [] },
       ],
     });
-
-    expect(resolveBlockRef({
-      uuid: claimed,
-      page: "Org Identity",
-      pageKind: "page",
-      path: "pages/Org Identity.org",
-    })).toBe(targetRuntime);
+    expect(resolveBlockRef({ uuid: claimed, page: "Org Identity", pageKind: "page" })).toBe(targetRuntime);
   });
 
   it.each([
     ["Markdown", "md" as const, (uuid: string) => `one\nid:: ${uuid}`],
     ["Org", "org" as const, (uuid: string) => `one\n:PROPERTIES:\n:id: ${uuid}\n:END:`],
-  ])("fails closed for duplicate authored IDs within one %s page", (_label, format, raw) => {
+  ])("fails closed for duplicate authored IDs within one %s page (GH #373)", (_label, format, raw) => {
     const duplicate = "12345678-1234-4234-8234-123456789abc";
     loadSingle({
-      name: "Duplicate",
-      kind: "page",
-      title: "Duplicate",
-      pre_block: null,
-      format,
+      name: "Duplicate", kind: "page", title: "Duplicate", pre_block: null, format,
       blocks: [
         { id: "runtime-one", raw: raw(duplicate), collapsed: false, children: [] },
         { id: "runtime-two", raw: raw(duplicate).replace("one", "two"), collapsed: false, children: [] },
       ],
     });
-
-    expect(resolveBlockRef({
-      uuid: duplicate,
-      page: "Duplicate",
-      pageKind: "page",
-    })).toBeNull();
+    expect(resolveBlockRef({ uuid: duplicate, page: "Duplicate", pageKind: "page" })).toBeNull();
   });
 
-  it("keeps an ID-less runtime locator resolvable when no authored ID claims it", () => {
+  it("keeps an ID-less runtime locator resolvable when no authored ID claims it (GH #373)", () => {
     const runtime = "12345678-1234-8234-8234-123456789abc";
     loadSingle({
-      name: "Runtime only",
-      kind: "page",
-      title: "Runtime only",
-      pre_block: null,
+      name: "Runtime only", kind: "page", title: "Runtime only", pre_block: null,
       blocks: [{ id: runtime, raw: "No authored id", collapsed: false, children: [] }],
     });
-
-    expect(resolveBlockRef({
-      uuid: runtime,
-      page: "Runtime only",
-      pageKind: "page",
-    })).toBe(runtime);
+    expect(resolveBlockRef({ uuid: runtime, page: "Runtime only", pageKind: "page" })).toBe(runtime);
   });
 
-  it("does not treat a runtime locator as a second identity after that block gains another authored ID", () => {
+  it("does not treat a runtime locator as a second identity after that block gains another authored ID (GH #373)", () => {
     const runtime = "12345678-1234-8234-8234-123456789abc";
     const authored = "87654321-4321-4321-8321-cba987654321";
     loadSingle({
-      name: "Authored identity wins",
-      kind: "page",
-      title: "Authored identity wins",
-      pre_block: null,
-      blocks: [{
-        id: runtime,
-        raw: `Only one external identity\nid:: ${authored}`,
-        collapsed: false,
-        children: [],
-      }],
+      name: "Authored identity wins", kind: "page", title: "Authored identity wins", pre_block: null,
+      blocks: [{ id: runtime, raw: `Only one external identity\nid:: ${authored}`, collapsed: false, children: [] }],
     });
-
-    expect(resolveBlockRef({
-      uuid: runtime,
-      page: "Authored identity wins",
-      pageKind: "page",
-    })).toBeNull();
-    expect(resolveBlockRef({
-      uuid: authored,
-      page: "Authored identity wins",
-      pageKind: "page",
-    })).toBe(runtime);
-  });
-});
-
-describe("reparenting editor move ownership", () => {
-  it("retains an already active move on another page across indent and outdent", () => {
-    const first = blk("first");
-    const second = blk("second");
-    load([first, second]);
-    setBlockMoving(true, "Other page");
-    try {
-      indentBlock(second.id, 0);
-      expect(doc.byId[second.id].parent).toBe(first.id);
-      expect(isBlockMoving("Other page")).toBe(true);
-      expect(isBlockMoving("Test")).toBe(false);
-      outdentBlock(second.id, 0);
-      expect(doc.byId[second.id].parent).toBeNull();
-      expect(isBlockMoving("Other page")).toBe(true);
-    } finally {
-      setBlockMoving(false);
-    }
+    expect(resolveBlockRef({ uuid: runtime, page: "Authored identity wins", pageKind: "page" })).toBeNull();
+    expect(resolveBlockRef({ uuid: authored, page: "Authored identity wins", pageKind: "page" })).toBe(runtime);
   });
 });
 
@@ -1175,8 +962,8 @@ describe("reloadDisposition (watcher reload guard)", () => {
   const j = (name: string, blocks: BlockDto[]): PageDto => ({
     name, kind: "journal", title: name, pre_block: null, blocks,
   });
-  it("reload when clean; skip while editing a block on it or mid block-move", async () => {
-    await loadFeed([j("Today", [blk("t1")])]);
+  it("reload when clean; skip while editing a block on it or mid block-move", () => {
+    loadFeed([j("Today", [blk("t1")])]);
     expect(reloadDisposition("Today")).toBe("reload");
     setBlockMoving(true);
     expect(reloadDisposition("Today")).toBe("skip"); // a move is mid-flight
@@ -1185,9 +972,9 @@ describe("reloadDisposition (watcher reload guard)", () => {
     startEditing(pageByName("Today")!.roots[0], 0, null);
     expect(reloadDisposition("Today")).toBe("skip"); // a block on it is focused
   });
-  it("conflict when the page has unsaved edits (never clobber)", async () => {
-    await loadFeed([j("D", [blk("d1")])]);
-    markDirty("D");
+  it("conflict when the page has unsaved edits (never clobber)", () => {
+    loadFeed([j("D", [blk("d1")])]);
+    markDirty("D", "save-block");
     expect(reloadDisposition("D")).toBe("conflict");
   });
 });
@@ -1198,10 +985,10 @@ describe("page-scoped structural undo", () => {
   });
   const raws = (name: string) => pageByName(name)!.roots.map((id) => doc.byId[id].raw);
 
-  it("undo of a single-page edit restores that page and leaves other loaded pages untouched", async () => {
+  it("undo of a single-page edit restores that page and leaves other loaded pages untouched", () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1"), blk("o2")]);
-    await loadFeed([today, older]);
+    loadFeed([today, older]);
     const olderIds = pageByName("Older")!.roots.slice();
 
     splitBlock(today.blocks[0].id, 1); // edit ONLY Today: "t1" -> "t","1"
@@ -1218,42 +1005,48 @@ describe("page-scoped structural undo", () => {
     expect(raws("Older")).toEqual(["o1", "o2"]);
   });
 
-  it("undo preserves a path-pinned page's `path` (a #21 stray must not misroute its save)", async () => {
-    // `path` pins the save to the exact file the page came from (a duplicate-day
-    // stray). The undo clone used to drop it, so undoing an edit re-routed the
-    // next save to the CANONICAL file. Snapshot → edit → undo must keep `path`.
-    const stray: PageDto = {
+  it("undo preserves a path-pinned page's `path` (a #21 stray must not misroute its save)", () => {
+    // The page `id` pins the save to the exact file the page came from (a
+    // duplicate-day stray). The undo clone used to drop it (then `path`), so
+    // undoing an edit re-routed the next save to the CANONICAL file.
+    // Snapshot → edit → undo must keep the id.
+    const stray: PageRead = {
       name: "Today", kind: "journal", title: "Today", pre_block: null,
-      blocks: [blk("t1")], path: "journals/Friday, 26-06-2026.md",
+      blocks: [blk("t1")], id: "journals/Friday, 26-06-2026.md",
     };
-    await loadFeed([stray]);
-    expect(pageByName("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+    loadFeed([stray]);
+    expect(pageByName("Today")!.id).toBe("journals/Friday, 26-06-2026.md");
     splitBlock(stray.blocks[0].id, 1); // structural op → snapshots this page
     undo();
-    expect(pageByName("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+    expect(pageByName("Today")!.id).toBe("journals/Friday, 26-06-2026.md");
     redo();
-    expect(pageByName("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+    expect(pageByName("Today")!.id).toBe("journals/Friday, 26-06-2026.md");
   });
 
   it("an exact path load replaces a same-name canonical page instead of editing the wrong file", async () => {
-    const canonical: PageDto = {
+    const canonical: PageRead = {
       name: "Today", kind: "journal", title: "Today", pre_block: null,
-      blocks: [blk("canonical")], path: "journals/2026_06_26.md",
+      blocks: [blk("canonical")], id: "journals/2026_06_26.md",
     };
-    const stray: PageDto = {
+    const stray: PageRead = {
       name: "Today", kind: "journal", title: "Today", pre_block: null,
-      blocks: [blk("stray")], path: "journals/Friday, 26-06-2026.md",
+      blocks: [blk("stray")], id: "journals/Friday, 26-06-2026.md",
     };
     loadSingle(canonical);
-    await ensurePageLoaded(stray);
-    expect(pageByName("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+    ensurePageLoaded(stray);
+    expect(pageByName("Today")!.id).toBe("journals/Friday, 26-06-2026.md");
     expect(doc.byId[pageByName("Today")!.roots[0]].raw).toBe("stray");
-    expect(pageToDto("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+    // The next save targets the stray's own file (was: pageToDto echoed `path`).
+    const saveSpy = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
+    markDirty("Today", "save-block");
+    expect(await flushPage("Today")).toBe(true);
+    expect(saveSpy.mock.calls[0][0][0].id).toBe("journals/Friday, 26-06-2026.md");
+    saveSpy.mockRestore();
   });
 
-  it("undo removes an op-added node from byId entirely (root-walk purge, no leak)", async () => {
+  it("undo removes an op-added node from byId entirely (root-walk purge, no leak)", () => {
     const today = journal("Today", [blk("t1")]);
-    await loadFeed([today]);
+    loadFeed([today]);
     splitBlock(today.blocks[0].id, 1); // adds a new node on Today
     const addedId = pageByName("Today")!.roots[1];
     expect(doc.byId[addedId]).toBeTruthy();
@@ -1268,10 +1061,10 @@ describe("page-scoped structural undo", () => {
   it("cross-day move undo leaves an unrelated loaded page intact", async () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1")]);
-    await loadFeed([today, older]);
+    loadFeed([today, older]);
     // A separate page in the working set (e.g. open in the sidebar), loaded after
     // the move's snapshot would be taken.
-    await ensurePageLoaded({ name: "Side", kind: "page", title: "Side", pre_block: null, blocks: [blk("s1")] });
+    ensurePageLoaded({ name: "Side", kind: "page", title: "Side", pre_block: null, blocks: [blk("s1")] });
     const sideId = pageByName("Side")!.roots[0];
 
     await moveBlockFeed(older.blocks[0].id, -1); // cross-day move (scoped to Today+Older)
@@ -1287,7 +1080,7 @@ describe("page-scoped structural undo", () => {
   it("undo of a cross-page move restores both pages (full-snapshot fallback)", async () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1"), blk("o2")]);
-    await loadFeed([today, older]);
+    loadFeed([today, older]);
     const o1 = older.blocks[0].id;
     await moveBlockFeed(o1, -1); // o1 crosses up into Today
     expect(raws("Today")).toEqual(["t1", "o1"]);
@@ -1298,16 +1091,92 @@ describe("page-scoped structural undo", () => {
     expect(raws("Older")).toEqual(["o1", "o2"]);
     expect(doc.byId[o1].page).toBe("Older"); // page ownership restored too
   });
+
+  it("undo sends the gaining page first and a failed request leaves the block on disk", async () => {
+    setToasts([]);
+    const today = journal("Today", [blk("today")]);
+    const older = journal("Older", [blk("durable moved block")]);
+    loadFeed([today, older]);
+    const moved = older.blocks[0].id;
+    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
+    await moveBlockFeed(moved, -1);
+    await flushPage("Today"); // establish the block on disk in Today
+    save.mockClear();
+    const disk = new Map([["Today", ["today", "durable moved block"]], ["Older", [] as string[]]]);
+    let finish!: () => void;
+    save.mockImplementationOnce(() => new Promise((resolve) => {
+      finish = () => resolve({ failed: { index: 1, family: "io", undoFailed: [] } });
+    })).mockResolvedValue({ failed: { index: 1, family: "io", undoFailed: [] } });
+    undo();
+    const draining = flushAll();
+    await vi.waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].map((entry) => entry.page.name)).toEqual(["Older", "Today"]);
+    finish();
+    expect(await draining).toBe(false);
+    expect(disk.get("Today")).toContain("durable moved block");
+    expect(disk.get("Older")).not.toContain("durable moved block");
+    expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("Today"))).toBe(true);
+    save.mockRestore();
+  });
+
+  it("redo sends the gaining page first and a failed request leaves the block on disk", async () => {
+    setToasts([]);
+    const today = journal("Today", [blk("today")]);
+    const older = journal("Older", [blk("durable moved block")]);
+    loadFeed([today, older]);
+    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
+    await moveBlockFeed(older.blocks[0].id, -1);
+    expect(await flushAll()).toBe(true);
+    undo();
+    expect(await flushAll()).toBe(true);
+    save.mockClear();
+    const disk = new Map([["Today", ["today"]], ["Older", ["durable moved block"]]]);
+    let finish!: () => void;
+    save.mockImplementationOnce(() => new Promise((resolve) => {
+      finish = () => resolve({ failed: { index: 1, family: "io", undoFailed: [] } });
+    })).mockResolvedValue({ failed: { index: 1, family: "io", undoFailed: [] } });
+    redo();
+    const draining = flushAll();
+    await vi.waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].map((entry) => entry.page.name)).toEqual(["Today", "Older"]);
+    finish();
+    expect(await draining).toBe(false);
+    expect(disk.get("Older")).toContain("durable moved block");
+    expect(disk.get("Today")).not.toContain("durable moved block");
+    expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("Older"))).toBe(true);
+    save.mockRestore();
+  });
+
+  it("undo before an earlier single save settles lands as one group after that save", async () => {
+    const today = journal("Today", [blk("today")]);
+    const older = journal("Older", [blk("moved")]);
+    loadFeed([today, older]);
+    let finishPrior!: () => void;
+    const save = vi.spyOn(backend(), "savePages").mockImplementationOnce(() =>
+      new Promise((resolve) => { finishPrior = () => resolve({ ok: ["prior-rev"] }); })
+    ).mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
+    markDirty("Today", "save-block");
+    const prior = flushPage("Today");
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    await moveBlockFeed(older.blocks[0].id, -1);
+    undo();
+    finishPrior();
+    await prior;
+    expect(await flushAll()).toBe(true);
+    expect(save.mock.calls.slice(1).some(([entries]) => entries.length === 2 && entries.some((entry) => entry.page.name === "Older" && entry.page.blocks.some((b) => b.raw === "moved")))).toBe(true);
+    save.mockRestore();
+  });
 });
 
 describe("carry unfinished tasks → today", () => {
-  const TODAY = journalTitle(new Date());
+  let TODAY: string;
+  beforeAll(() => { TODAY = journalTitle(new Date()); });
   const journal = (name: string, blocks: BlockDto[]): PageDto => ({
     name, kind: "journal", title: name, pre_block: null, blocks,
   });
   const raws = (name: string) => pageByName(name)!.roots.map((id) => doc.byId[id].raw);
 
-  it("keepContext: moves whole top-level blocks containing an open task; leaves the rest", async () => {
+  it("keepContext: moves whole top-level blocks containing an open task; leaves the rest", () => {
     const today = journal(TODAY, [blk("")]); // synthetic empty today
     const older = journal("Older", [
       blk("TODO A", [blk("DONE A1")]), // open task with done child → moves whole
@@ -1315,7 +1184,7 @@ describe("carry unfinished tasks → today", () => {
       blk("note C"), // plain note → stays
       blk("note D", [blk("TODO D1")]), // note containing an open task → moves whole (context)
     ]);
-    await loadFeed([today, older]);
+    loadFeed([today, older]);
     const moved = carryUnfinished(["Older"], true, null);
     expect(moved).toBe(2);
     expect(raws(TODAY)).toEqual(["TODO A", "note D"]); // empty placeholder dropped
@@ -1325,10 +1194,10 @@ describe("carry unfinished tasks → today", () => {
     expect(doc.byId[a].children.map((id) => doc.byId[id].raw)).toEqual(["DONE A1"]);
   });
 
-  it("pull-out (keepContext off): extracts just the open-task subtrees, leaving scaffolding", async () => {
+  it("pull-out (keepContext off): extracts just the open-task subtrees, leaving scaffolding", () => {
     const today = journal(TODAY, [blk("existing")]);
     const older = journal("Older", [blk("note D", [blk("TODO D1", [blk("DONE D1a")])])]);
-    await loadFeed([today, older]);
+    loadFeed([today, older]);
     const moved = carryUnfinished(["Older"], false, null);
     expect(moved).toBe(1);
     expect(raws(TODAY)).toEqual(["existing", "TODO D1"]); // pulled out; note D stays
@@ -1337,24 +1206,24 @@ describe("carry unfinished tasks → today", () => {
     expect(doc.byId[t].children.map((id) => doc.byId[id].raw)).toEqual(["DONE D1a"]);
   });
 
-  it("processes days in order (newest first ends up on top) and can add a header", async () => {
+  it("processes days in order (newest first ends up on top) and can add a header", () => {
     const today = journal(TODAY, [blk("")]);
     const d1 = journal("D1", [blk("TODO from-d1")]);
     const d2 = journal("D2", [blk("TODO from-d2")]);
-    await loadFeed([today, d1, d2]);
+    loadFeed([today, d1, d2]);
     carryUnfinished(["D1", "D2"], true, "Carried over");
     expect(raws(TODAY)).toEqual(["Carried over", "TODO from-d1", "TODO from-d2"]);
   });
 
-  it("is a no-op when there are no open tasks", async () => {
+  it("is a no-op when there are no open tasks", () => {
     const today = journal(TODAY, [blk("")]);
     const older = journal("Older", [blk("DONE x"), blk("just a note")]);
-    await loadFeed([today, older]);
+    loadFeed([today, older]);
     expect(carryUnfinished(["Older"], true, null)).toBe(0);
     expect(raws("Older")).toEqual(["DONE x", "just a note"]);
   });
 
-  it("removes the carried tasks and leaves finished tasks AND blank spacer bullets untouched", async () => {
+  it("removes the carried tasks and leaves finished tasks AND blank spacer bullets untouched", () => {
     const today = journal(TODAY, [blk("")]);
     // The reported case: open tasks interleaved with a finished task and a blank
     // spacer bullet. Carrying must remove ONLY the open tasks; the spacer stays.
@@ -1366,15 +1235,15 @@ describe("carry unfinished tasks → today", () => {
       blk(""), // intentional spacer — must survive the carry
       blk("DONE another thing"),
     ]);
-    await loadFeed([today, older]);
+    loadFeed([today, older]);
     expect(carryUnfinished(["Older"], false, null)).toBe(3);
     expect(raws("Older")).toEqual(["DONE something else", "", "DONE another thing"]);
   });
 
-  it("leaves a blank parent that only held a carried task (no-task blocks are never touched)", async () => {
+  it("leaves a blank parent that only held a carried task (no-task blocks are never touched)", () => {
     const today = journal(TODAY, [blk("")]);
     const older = journal("Older", [blk("", [blk("TODO a")])]);
-    await loadFeed([today, older]);
+    loadFeed([today, older]);
     carryUnfinished(["Older"], false, null);
     expect(raws("Older")).toEqual([""]); // the empty parent stays — it had no task marker
   });
@@ -1478,7 +1347,7 @@ describe("merge (Backspace at 0)", () => {
   // prevVisible/nextVisible must fall back to the block's own page — otherwise
   // Backspace-merge and Up/Down nav are dead in the capture window.
   it("merges + navigates on a detached page absent from the main view", () => {
-    installCaptureScratchPage({
+    ensurePageLoaded({
       name: "·capture·",
       kind: "page",
       title: "·capture·",
@@ -1556,67 +1425,16 @@ describe("working-set eviction", () => {
     blocks: [blk(`${name} body`)],
   });
 
-  it("pins every pane's active page route", async () => {
+  it("pins every pane's active page route", () => {
     resetPaneLayoutToSingle({
       tabs: [{ history: [{ kind: "page", name: "Pinned", pageKind: "page" }], pos: 0, pinned: false }],
       activeIndex: 0,
     });
-    await ensurePageLoaded(page("Pinned"));
+    ensurePageLoaded(page("Pinned"));
 
-    for (let i = 0; i < 90; i++) await ensurePageLoaded(page(`Page ${i}`));
+    for (let i = 0; i < 90; i++) ensurePageLoaded(page(`Page ${i}`));
 
     expect(pageByName("Pinned")).toBeTruthy();
-  });
-
-  // GH #305. Eviction deliberately keeps undo history, but the entry it keeps
-  // describes the instance that was evicted. Re-opening the page installs a
-  // FRESH instance carrying whatever the file says now — so replaying that entry
-  // would restore pre-eviction text and mark the page dirty, and the next save
-  // would submit it under the new file's revision, which the base-revision guard
-  // accepts because that baseline genuinely matches disk. No conflict is raised.
-  it("refuses an undo entry recorded before the page was evicted (GH #305)", async () => {
-    const saveSpy = vi.spyOn(backend(), "savePage").mockResolvedValue({ revision: "rev-victim" });
-    await ensurePageLoaded({
-      name: "Victim",
-      kind: "page",
-      title: "Victim",
-      pre_block: null,
-      blocks: [blk("keep me"), blk("delete me")],
-    });
-    // A STRUCTURAL edit: its undo entry is a whole-page snapshot, which is what
-    // can resurrect pre-eviction content wholesale.
-    const doomed = pageByName("Victim")!.roots[1];
-    deleteBlock(doomed);
-    expect(pageByName("Victim")!.roots).toHaveLength(1);
-    // A dirty page is pinned against eviction, which is correct — the bug needs
-    // a page the user has FINISHED with, so settle the edit first.
-    await flushAll();
-    expect(isDirty("Victim")).toBe(false);
-
-    // Browse far enough that Victim ages out of the working set.
-    for (let i = 0; i < 90; i++) await ensurePageLoaded(page(`Filler ${i}`));
-    expect(pageByName("Victim")).toBeFalsy();
-
-    // The file changed elsewhere while we were away; re-opening reads it fresh.
-    await ensurePageLoaded({
-      name: "Victim",
-      kind: "page",
-      title: "Victim",
-      pre_block: null,
-      blocks: [blk("changed by another device")],
-    });
-    const after = pageByName("Victim")!.roots;
-    expect(after.map((id) => doc.byId[id].raw)).toEqual(["changed by another device"]);
-
-    undo();
-
-    // The external content must survive, and the page must not be left dirty
-    // with pre-eviction content queued for the next save.
-    expect(pageByName("Victim")!.roots.map((id) => doc.byId[id].raw)).toEqual([
-      "changed by another device",
-    ]);
-    expect(isDirty("Victim")).toBe(false);
-    saveSpy.mockRestore();
   });
 });
 
@@ -1780,7 +1598,7 @@ describe("undo / redo", () => {
     const [a, b] = dto.blocks;
 
     expect(() =>
-      withUndoUnit("throwing", ["Test"], () => {
+    withUndoUnit("throwing", ["Test"], () => {
         setRaw(a.id, "ONE");
         setRaw(b.id, "TWO");
         throw new Error("boom");
@@ -1792,6 +1610,21 @@ describe("undo / redo", () => {
     undo();
     expect(doc.byId[a.id].raw).toBe("one");
     expect(doc.byId[b.id].raw).toBe("two");
+  });
+
+  it("withUndoUnit rolls back a callback that returns false", () => {
+    const dto = load([blk("one"), blk("two")]);
+    const [a, b] = dto.blocks;
+    const result = withUndoUnit("refused", ["Test"], () => {
+      setRaw(a.id, "ONE");
+      setRaw(b.id, "TWO");
+      return false;
+    });
+    expect(result).toBe(false);
+    expect(doc.byId[a.id].raw).toBe("one");
+    expect(doc.byId[b.id].raw).toBe("two");
+    undo();
+    expect(doc.byId[a.id].raw).toBe("one");
   });
 
   it("withUndoUnit redo works after undo", () => {
@@ -1811,15 +1644,15 @@ describe("undo / redo", () => {
 });
 
 describe("journals feed (multi-page)", () => {
-  async function feed() {
-    await loadFeed([
+  function feed() {
+    loadFeed([
       { name: "Today", kind: "journal", title: "Today", pre_block: null, blocks: [blk("today a"), blk("today b")] },
       { name: "Yesterday", kind: "journal", title: "Yesterday", pre_block: null, blocks: [blk("yest a")] },
     ]);
   }
 
-  it("visible order spans all pages in feed order", async () => {
-    await feed();
+  it("visible order spans all pages in feed order", () => {
+    feed();
     expect(visibleOrder().map((id) => doc.byId[id].raw)).toEqual([
       "today a",
       "today b",
@@ -1827,16 +1660,16 @@ describe("journals feed (multi-page)", () => {
     ]);
   });
 
-  it("does not merge a block into the previous page's block", async () => {
-    await feed();
+  it("does not merge a block into the previous page's block", () => {
+    feed();
     const yestFirst = doc.pages[1].roots[0];
     // prevVisible(yestFirst) is "today b" on a different page — merge must no-op.
     expect(mergeWithPrev(yestFirst)).toBe(false);
     expect(doc.pages[1].roots.length).toBe(1);
   });
 
-  it("splitting keeps the new block on the same page", async () => {
-    await feed();
+  it("splitting keeps the new block on the same page", () => {
+    feed();
     const todayA = doc.pages[0].roots[0];
     splitBlock(todayA, "today a".length);
     const newId = editingId()!;
@@ -1850,12 +1683,12 @@ describe("stale undo is dropped on external reload / forget (ds8-1)", () => {
     name, kind: "page", title: name, pre_block: null, blocks,
   });
 
-  it("undo after an external reload can't clobber the reloaded content", async () => {
+  it("undo after an external reload can't clobber the reloaded content", () => {
     loadSingle(page("P", [blk("original")]));
     splitBlock(doc.pages[0].roots[0], 4); // structural op → undo entry for P exists
     expect(doc.pages[0].roots.length).toBe(2);
     // External edit lands on disk; we reload P with new content + rev.
-    await reloadPage({
+    reloadPage({
       name: "P", kind: "page", title: "P", pre_block: null, rev: "r2",
       blocks: [{ id: "x", raw: "external version", collapsed: false, children: [] }],
     });
@@ -1884,7 +1717,7 @@ describe("root-to-root drop across pages targets the drop page (#38)", () => {
   it("a root block dropped onto another day's root lands on that day, not the source", async () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1")]);
-    await loadFeed([today, older]);
+    loadFeed([today, older]);
     const t1 = today.blocks[0].id;
     // Drop t1 (a root) after o1 (a root on Older): newParent=null, targetPage=Older.
     await moveBlock(t1, null, 1, "Older");
@@ -1894,320 +1727,15 @@ describe("root-to-root drop across pages targets the drop page (#38)", () => {
   });
 });
 
-describe("selection heading ownership (GH #240)", () => {
-  async function observe(run: () => Promise<unknown> | unknown) {
-    const counts = { publications: 0, dirtyMarks: 0, snapshots: 0 };
-    __setStoreMutationObserverForTest((observation) => {
-      if (observation.kind === "publication") counts.publications++;
-      else if (observation.kind === "dirty") counts.dirtyMarks++;
-      else if (observation.kind === "undo-snapshot") counts.snapshots++;
-    });
-    try {
-      await run();
-    } finally {
-      __setStoreMutationObserverForTest(null);
-    }
-    return counts;
-  }
-
-  it("serializes Markdown and Org targets in one publication/undo unit and restores both pages", async () => {
-    const markdown = { id: "heading-md", raw: "Markdown", collapsed: false, children: [] };
-    const org = { id: "heading-org", raw: "Org", collapsed: false, children: [] };
-    await loadFeed([
-      { name: "Markdown", kind: "page", title: "Markdown", pre_block: null, blocks: [markdown], format: "md" },
-      { name: "Org", kind: "page", title: "Org", pre_block: null, blocks: [org], format: "org" },
-    ]);
-    clearSeededFacets();
-    selectBlock(markdown.id);
-    extendSelectionTo(org.id);
-    const beforeMarkdown = pageState("Markdown");
-    const beforeOrg = pageState("Org");
-
-    expect(await observe(() => setSelectionHeading("unused-pointer", 2))).toEqual({
-      publications: 1,
-      dirtyMarks: 2,
-      snapshots: 1,
-    });
-    expect(doc.byId[markdown.id].raw).toBe("## Markdown");
-    expect(doc.byId[org.id].raw).toBe("Org\n:PROPERTIES:\n:heading: 2\n:END:");
-    expect(selectedIds()).toEqual([markdown.id, org.id]);
-    const afterMarkdown = pageState("Markdown");
-    const afterOrg = pageState("Org");
-
-    undo();
-    expect(pageState("Markdown")).toEqual(beforeMarkdown);
-    expect(pageState("Org")).toEqual(beforeOrg);
-    redo();
-    expect(pageState("Markdown")).toEqual(afterMarkdown);
-    expect(pageState("Org")).toEqual(afterOrg);
-  });
-
-  it("is an exact no-op when any selected page is read-only", async () => {
-    const writable = { id: "heading-writable", raw: "Writable", collapsed: false, children: [] };
-    const readOnly = { id: "heading-read-only", raw: "Read only", collapsed: false, children: [] };
-    await loadFeed([
-      { name: "Writable", kind: "page", title: "Writable", pre_block: null, blocks: [writable], format: "md" },
-      { name: "Read only", kind: "page", title: "Read only", pre_block: null, blocks: [readOnly], format: "org", read_only: true },
-    ]);
-    selectBlock(writable.id);
-    extendSelectionTo(readOnly.id);
-
-    let result = true;
-    expect(await observe(() => { result = setSelectionHeading(writable.id, 3); })).toEqual({
-      publications: 0,
-      dirtyMarks: 0,
-      snapshots: 0,
-    });
-    expect(result).toBe(false);
-    expect(doc.byId[writable.id].raw).toBe("Writable");
-    expect(doc.byId[readOnly.id].raw).toBe("Read only");
-    expect(isDirty("Writable")).toBe(false);
-    expect(isDirty("Read only")).toBe(false);
-    expect(selectedIds()).toEqual([writable.id, readOnly.id]);
-  });
-});
-
-describe("target-relative multi-root drag (GH #240)", () => {
-  async function observe(run: () => Promise<unknown>) {
-    const counts = { publications: 0, dirtyMarks: 0, snapshots: 0 };
-    __setStoreMutationObserverForTest((observation) => {
-      if (observation.kind === "publication") counts.publications++;
-      else if (observation.kind === "dirty") counts.dirtyMarks++;
-      else if (observation.kind === "undo-snapshot") counts.snapshots++;
-    });
-    try {
-      await run();
-    } finally {
-      __setStoreMutationObserverForTest(null);
-    }
-    return counts;
-  }
-
-  it("moves normalized roots from different sibling arrays together with exact undo/redo", async () => {
-    const descendant = blk("descendant");
-    const parent = blk("parent", [descendant]);
-    const nested = blk("nested");
-    const holder = blk("holder", [nested]);
-    const target = blk("target");
-    load([parent, holder, target]);
-    const before = pageState("Test");
-
-    expect(await observe(() => moveBlocksRelative(
-      [parent.id, descendant.id, nested.id, nested.id],
-      target.id,
-      "after",
-    ))).toEqual({ publications: 1, dirtyMarks: 1, snapshots: 1 });
-    expect(pageByName("Test")!.roots).toEqual([holder.id, target.id, parent.id, nested.id]);
-    expect(doc.byId[holder.id].children).toEqual([]);
-    expect(doc.byId[parent.id].children).toEqual([descendant.id]);
-    expect(doc.byId[descendant.id]).toMatchObject({ parent: parent.id, raw: "descendant" });
-    expect(doc.byId[nested.id].parent).toBeNull();
-    const after = pageState("Test");
-
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    expect(pageState("Test")).toEqual(after);
-  });
-
-  it("appends selected roots as children of the target with exact undo/redo (GH #326)", async () => {
-    const first = blk("first");
-    const secondChild = blk("second child");
-    const second = blk("second", [secondChild]);
-    const existingChild = blk("existing child");
-    const target = blk("target", [existingChild]);
-    load([first, second, target]);
-    const before = pageState("Test");
-
-    expect(await moveBlocksRelative([first.id, second.id], target.id, "child")).toBe(true);
-    expect(pageByName("Test")!.roots).toEqual([target.id]);
-    expect(doc.byId[target.id].children).toEqual([existingChild.id, first.id, second.id]);
-    expect(doc.byId[first.id].parent).toBe(target.id);
-    expect(doc.byId[second.id].parent).toBe(target.id);
-    expect(doc.byId[secondChild.id]).toMatchObject({ parent: second.id, page: "Test" });
-    const after = pageState("Test");
-
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    expect(pageState("Test")).toEqual(after);
-  });
-
-  it.each([
-    ["target is a moved root", "same"],
-    ["target is inside a moved subtree", "descendant"],
-    ["source page is read-only", "source-read-only"],
-    ["destination page is read-only", "destination-read-only"],
-  ] as const)("rejects when %s without publication, undo, or dirty marks", async (_label, scenario) => {
-    let sourceId: string;
-    let targetId: string;
-    if (scenario === "same" || scenario === "descendant") {
-      const child = blk("child");
-      const source = blk("source", [child]);
-      const target = blk("target");
-      load([source, target]);
-      sourceId = source.id;
-      targetId = scenario === "same" ? source.id : child.id;
-    } else {
-      const source = { id: "invalid-source", raw: "source", collapsed: false, children: [] };
-      const target = { id: "invalid-target", raw: "target", collapsed: false, children: [] };
-      await loadFeed([
-        {
-          name: "Source", kind: "page", title: "Source", pre_block: null, blocks: [source],
-          read_only: scenario === "source-read-only",
-        },
-        {
-          name: "Destination", kind: "page", title: "Destination", pre_block: null, blocks: [target],
-          read_only: scenario === "destination-read-only",
-        },
-      ]);
-      sourceId = source.id;
-      targetId = target.id;
-    }
-    const before = JSON.parse(JSON.stringify(doc));
-    let result = true;
-
-    expect(await observe(async () => { result = await moveBlocksRelative([sourceId], targetId, "after"); })).toEqual({
-      publications: 0,
-      dirtyMarks: 0,
-      snapshots: 0,
-    });
-    expect(result).toBe(false);
-    expect(JSON.parse(JSON.stringify(doc))).toEqual(before);
-  });
-
-  it("moves multiple source-page subtrees in captured order with per-root inheritance and exact undo", async () => {
-    const childOne = { id: "child-one", raw: "child one\nbody:: byte-exact", collapsed: false, children: [] };
-    const childTwo = { id: "child-two", raw: "child two\n:literal: byte-exact", collapsed: false, children: [] };
-    const sourceOne = { id: "source-one", raw: "source one", collapsed: false, children: [childOne] };
-    const sourceTwoRaw = "source two\n:PROPERTIES:\n:logseq.order-list-type: number\n:END:";
-    const sourceTwo = { id: "source-two", raw: sourceTwoRaw, collapsed: false, children: [childTwo] };
-    const targetRaw = "target\n:PROPERTIES:\n:logseq.order-list-type: number\n:END:";
-    const target = { id: "destination-target", raw: targetRaw, collapsed: false, children: [] };
-    const tail = { id: "destination-tail", raw: "tail", collapsed: false, children: [] };
-    await loadFeed([
-      { name: "Source one", kind: "page", title: "Source one", pre_block: null, blocks: [sourceOne], format: "md" },
-      { name: "Source two", kind: "page", title: "Source two", pre_block: null, blocks: [sourceTwo], format: "org" },
-      { name: "Destination", kind: "page", title: "Destination", pre_block: null, blocks: [target, tail], format: "org" },
-    ]);
-    clearSeededFacets();
-    const before = [pageState("Source one"), pageState("Source two"), pageState("Destination")];
-    const saveSpy = vi.spyOn(backend(), "savePage").mockResolvedValue({ revision: "selection-drag-rev" });
-    try {
-      expect(await observe(() => moveBlocksRelative(
-        [sourceTwo.id, sourceOne.id],
-        target.id,
-        "before",
-      ))).toMatchObject({ publications: 1, snapshots: 1 });
-      await flushAll();
-
-      expect(pageByName("Source one")!.roots).toEqual([]);
-      expect(pageByName("Source two")!.roots).toEqual([]);
-      expect(pageByName("Destination")!.roots).toEqual([sourceTwo.id, sourceOne.id, target.id, tail.id]);
-      expect(doc.byId[sourceTwo.id].raw).toBe(sourceTwoRaw);
-      expect(doc.byId[sourceOne.id].raw).toBe(
-        "source one\n:PROPERTIES:\n:logseq.order-list-type: number\n:END:",
-      );
-      expect(doc.byId[childOne.id]).toMatchObject({ page: "Destination", raw: childOne.raw });
-      expect(doc.byId[childTwo.id]).toMatchObject({ page: "Destination", raw: childTwo.raw });
-      expect(doc.byId[sourceOne.id].page).toBe("Destination");
-      expect(doc.byId[sourceTwo.id].page).toBe("Destination");
-      const after = [pageState("Source one"), pageState("Source two"), pageState("Destination")];
-
-      undo();
-      expect([pageState("Source one"), pageState("Source two"), pageState("Destination")]).toEqual(before);
-      redo();
-      expect([pageState("Source one"), pageState("Source two"), pageState("Destination")]).toEqual(after);
-    } finally {
-      saveSpy.mockRestore();
-    }
-  });
-});
-
-describe("target-relative drag persistence barrier (GH #240)", () => {
-  const page = (name: string, id: string): PageDto => ({
-    name,
-    kind: "page",
-    title: name,
-    pre_block: null,
-    blocks: [{ id, raw: id, collapsed: false, children: [] }],
-  });
-
-  it("flushes every dirty source while it still contains its moved root", async () => {
-    await loadFeed([page("Source one", "source-one"), page("Source two", "source-two"), page("Destination", "target")]);
-    markDirty("Source one");
-    markDirty("Source two");
-    const saved: PageDto[] = [];
-    const saveSpy = vi.spyOn(backend(), "savePage").mockImplementation(async (dto) => {
-      saved.push(dto);
-      return { revision: "barrier-rev" };
-    });
-    try {
-      expect(await moveBlocksRelative(["source-one", "source-two"], "target", "before")).toBe(true);
-      await flushAll();
-      expect(saved.slice(0, 2).map((dto) => [dto.name, dto.blocks.map((block) => block.id)])).toEqual([
-        ["Source one", ["source-one"]],
-        ["Source two", ["source-two"]],
-      ]);
-    } finally {
-      saveSpy.mockRestore();
-    }
-  });
-
-  it("aborts before mutation when a dirty source flush is refused", async () => {
-    await loadFeed([page("Source", "source"), page("Destination", "target")]);
-    markDirty("Source");
-    const before = [pageState("Source"), pageState("Destination")];
-    const saveSpy = vi.spyOn(backend(), "savePage").mockRejectedValueOnce(new SaveConflictError(240));
-    const counts = { publications: 0, dirtyMarks: 0, snapshots: 0 };
-    __setStoreMutationObserverForTest((observation) => {
-      if (observation.kind === "publication") counts.publications++;
-      else if (observation.kind === "dirty") counts.dirtyMarks++;
-      else if (observation.kind === "undo-snapshot") counts.snapshots++;
-    });
-    try {
-      expect(await moveBlocksRelative(["source"], "target", "before")).toBe(false);
-    } finally {
-      __setStoreMutationObserverForTest(null);
-      saveSpy.mockRestore();
-    }
-    expect(counts).toEqual({ publications: 0, dirtyMarks: 0, snapshots: 0 });
-    expect([pageState("Source"), pageState("Destination")]).toEqual(before);
-  });
-
-  it("does not begin a post-removal source save before the destination resolves", async () => {
-    await loadFeed([page("Source one", "source-one"), page("Source two", "source-two"), page("Destination", "target")]);
-    let resolveDestination!: (result: { revision: string }) => void;
-    const destinationSaved = new Promise<{ revision: string }>((resolve) => { resolveDestination = resolve; });
-    const saved: PageDto[] = [];
-    const saveSpy = vi.spyOn(backend(), "savePage").mockImplementation((dto) => {
-      saved.push(dto);
-      return dto.name === "Destination" ? destinationSaved : Promise.resolve({ revision: "source-rev" });
-    });
-    try {
-      expect(await moveBlocksRelative(["source-one", "source-two"], "target", "before")).toBe(true);
-      await vi.waitFor(() => expect(saved.map((dto) => dto.name)).toEqual(["Destination"]));
-      expect(saved[0].blocks.map((block) => block.id)).toEqual(["source-one", "source-two", "target"]);
-
-      resolveDestination({ revision: "destination-rev" });
-      await flushAll();
-      expect(saved.map((dto) => dto.name)).toEqual(["Destination", "Source one", "Source two"]);
-      expect(saved.slice(1).map((dto) => dto.blocks)).toEqual([[], []]);
-    } finally {
-      saveSpy.mockRestore();
-    }
-  });
-});
-
 describe("selection indent is single-page (ds8-2)", () => {
   const journal = (name: string, blocks: BlockDto[]): PageDto => ({
     name, kind: "journal", title: name, pre_block: null, blocks,
   });
 
-  it("indenting a cross-day selection leaves the other day's block in place", async () => {
+  it("indenting a cross-day selection leaves the other day's block in place", () => {
     const today = journal("Today", [blk("t1"), blk("t2")]);
     const older = journal("Older", [blk("o1")]);
-    await loadFeed([today, older]);
+    loadFeed([today, older]);
     const t1 = today.blocks[0].id, t2 = today.blocks[1].id, o1 = older.blocks[0].id;
     selectBlock(t2); // anchor on Today
     moveSelection(1, true); // extend down across the day boundary to o1
@@ -2220,679 +1748,18 @@ describe("selection indent is single-page (ds8-2)", () => {
   });
 });
 
-describe("selection indent/outdent batches one shared-store command (F1)", () => {
-  function selectRange(first: string, last: string, scope?: { roots: string[]; forceExpandedRoot?: string }) {
-    selectBlock(first, scope);
-    extendSelectionTo(last, scope);
-  }
-
-  function assertOnePublicationAndDirty(run: () => void) {
-    expect(countStoreMutations(run)).toEqual({ publications: 1, dirtyMarks: 1 });
-  }
-
-  it.each([50, 200])("indents %i flat selected roots with one publication and one dirty mark", (count) => {
-    const predecessor = blk("predecessor");
-    const roots = Array.from({ length: count }, (_, i) => blk(`selected-${i}`));
-    const tail = blk("tail");
-    load([predecessor, ...roots, tail]);
-    selectRange(roots[0].id, roots.at(-1)!.id);
-    const before = pageState("Test");
-    const selectedBefore = selectedIds();
-
-    // On the old per-root loop this receives N `moveBlockInternal` publications
-    // plus `writeCollapsed`, and N dirty marks. The observer sits at those real
-    // boundaries, so this is a causal fail-before work-shape assertion.
-    assertOnePublicationAndDirty(indentSelection);
-
-    expect(selectedIds()).toEqual(selectedBefore);
-    expect(doc.pages[0].roots).toEqual([predecessor.id, tail.id]);
-    expect(doc.byId[predecessor.id].children).toEqual(roots.map((root) => root.id));
-    expect(roots.map((root) => doc.byId[root.id].parent)).toEqual(Array(count).fill(predecessor.id));
-    const after = pageState("Test");
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    expect(pageState("Test")).toEqual(after);
-  });
-
-  it.each([50, 200])("outdents %i selected children with one publication and one dirty mark", (count) => {
-    const selected = Array.from({ length: count }, (_, i) => blk(`selected-${i}`));
-    const parent = blk("parent", selected);
-    const tail = blk("tail");
-    load([parent, tail]);
-    selectRange(selected[0].id, selected.at(-1)!.id);
-    const before = pageState("Test");
-    const selectedBefore = selectedIds();
-
-    assertOnePublicationAndDirty(outdentSelection);
-
-    expect(selectedIds()).toEqual(selectedBefore);
-    expect(doc.pages[0].roots).toEqual([parent.id, ...selected.map((root) => root.id), tail.id]);
-    expect(doc.byId[parent.id].children).toEqual([]);
-    expect(selected.map((root) => doc.byId[root.id].parent)).toEqual(Array(count).fill(null));
-    const after = pageState("Test");
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    expect(pageState("Test")).toEqual(after);
-  });
-
-  it.each(["indent", "outdent"] as const)("%s preserves every descendant in a 50-by-8 selection", (command) => {
-    const descendants = Array.from({ length: 50 }, (_, i) =>
-      Array.from({ length: 8 }, (_, j) => blk(`child-${i}-${j}`)),
-    );
-    const selected = descendants.map((children, i) => blk(`selected-${i}`, children));
-    let first: string;
-    let last: string;
-    if (command === "indent") {
-      const predecessor = blk("predecessor");
-      load([blk("lead"), predecessor, ...selected, blk("tail")]);
-      first = selected[0].id;
-      last = selected.at(-1)!.id;
-    } else {
-      const parent = blk("parent", selected);
-      load([blk("lead"), parent, blk("tail")]);
-      first = selected[0].id;
-      last = selected.at(-1)!.id;
-    }
-    const descendantsBefore = descendants.flat().map((block) => ({
-      id: block.id,
-      state: JSON.parse(JSON.stringify(doc.byId[block.id])),
-    }));
-    selectRange(first, last);
-    const before = pageState("Test");
-
-    assertOnePublicationAndDirty(command === "indent" ? indentSelection : outdentSelection);
-
-    for (const { id, state } of descendantsBefore) {
-      expect(JSON.parse(JSON.stringify(doc.byId[id]))).toEqual(state);
-    }
-    const after = pageState("Test");
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    expect(pageState("Test")).toEqual(after);
-  });
-
-  it("indent removes roots from different original sibling arrays once and inserts them in visible order", () => {
-    const destination = blk("destination");
-    const child = blk("child");
-    const branch = blk("branch", [destination, child]);
-    const laterRoot = blk("later-root");
-    const tail = blk("tail");
-    load([branch, laterRoot, tail]);
-    selectRange(child.id, laterRoot.id);
-    const before = pageState("Test");
-
-    assertOnePublicationAndDirty(indentSelection);
-
-    expect(doc.byId[branch.id].children).toEqual([destination.id]);
-    expect(doc.pages[0].roots).toEqual([branch.id, tail.id]);
-    expect(doc.byId[destination.id].children).toEqual([child.id, laterRoot.id]);
-    expect(doc.byId[child.id].parent).toBe(destination.id);
-    expect(doc.byId[laterRoot.id].parent).toBe(destination.id);
-    const after = pageState("Test");
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    expect(pageState("Test")).toEqual(after);
-  });
-
-  it("outdent removes roots from different original sibling arrays once and inserts them after the first parent", () => {
-    const child = blk("child");
-    const parent = blk("parent", [child]);
-    const laterRoot = blk("later-root");
-    const tail = blk("tail");
-    load([parent, laterRoot, tail]);
-    selectRange(child.id, laterRoot.id);
-    const before = pageState("Test");
-
-    assertOnePublicationAndDirty(outdentSelection);
-
-    expect(doc.byId[parent.id].children).toEqual([]);
-    expect(doc.pages[0].roots).toEqual([parent.id, child.id, laterRoot.id, tail.id]);
-    expect(doc.byId[child.id].parent).toBeNull();
-    expect(doc.byId[laterRoot.id].parent).toBeNull();
-    const after = pageState("Test");
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    expect(pageState("Test")).toEqual(after);
-  });
-
-  it.each([
-    ["markdown", "md", "target\ncollapsed:: true", /(^|\n)collapsed::/i],
-    ["org", "org", "target\n:PROPERTIES:\n:collapsed: true\n:END:\nbody", /(^|\n):collapsed:/i],
-  ] as const)("%s expands a collapsed indent target with one format-correct property removal and exact Undo/Redo", (_label, format, raw, property) => {
-    const target = { ...blk(raw), collapsed: true };
-    const selected = blk("selected", [blk("selected-child")]);
-    load([target, selected], format);
-    selectBlock(selected.id);
-    const before = pageState("Test");
-
-    assertOnePublicationAndDirty(indentSelection);
-    const after = pageState("Test");
-    expect(raw.match(new RegExp(property.source, "gi"))).toHaveLength(1);
-    expect(doc.byId[target.id].collapsed).toBe(false);
-    expect(doc.byId[target.id].raw).not.toMatch(property);
-    expect(doc.byId[target.id].children).toEqual([selected.id]);
-
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    expect(pageState("Test")).toEqual(after);
-  });
-
-  it("does not add a collapse property when an already-expanded target receives a selection", () => {
-    const target = blk("target");
-    const selected = blk("selected");
-    load([target, selected]);
-    selectBlock(selected.id);
-    const before = pageState("Test");
-
-    assertOnePublicationAndDirty(indentSelection);
-
-    expect(doc.byId[target.id].collapsed).toBe(false);
-    expect(doc.byId[target.id].raw).toBe("target");
-    const after = pageState("Test");
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    expect(pageState("Test")).toEqual(after);
-  });
-
-  it("keeps an indent selection inside its zoom scope when the preceding sibling is outside", () => {
-    const outside = blk("outside");
-    const selected = blk("selected");
-    const parent = blk("parent", [outside, selected]);
-    load([parent]);
-    const before = pageState("Test");
-    selectBlock(selected.id, { roots: [selected.id] });
-
-    expect(countStoreMutations(indentSelection)).toEqual({ publications: 0, dirtyMarks: 0 });
-    expect(pageState("Test")).toEqual(before);
-  });
-
-  it("keeps a force-expanded zoom root's children inside that root on outdent", () => {
-    const selected = blk("selected");
-    const zoomRoot = { ...blk("zoom\ncollapsed:: true", [selected]), collapsed: true };
-    load([zoomRoot]);
-    const before = pageState("Test");
-    selectBlock(selected.id, { roots: [zoomRoot.id], forceExpandedRoot: zoomRoot.id });
-
-    expect(countStoreMutations(outdentSelection)).toEqual({ publications: 0, dirtyMarks: 0 });
-    expect(pageState("Test")).toEqual(before);
-  });
-
-  it("refuses a feed-spanning selection when any initially selected block is read-only", async () => {
-    const todayPredecessor = blk("today predecessor");
-    const todaySelected = blk("today selected");
-    const otherSelected = blk("other selected");
-    const today: PageDto = {
-      name: "Today", kind: "journal", title: "Today", pre_block: null,
-      blocks: [todayPredecessor, todaySelected],
-    };
-    const other: PageDto = {
-      name: "Other", kind: "journal", title: "Other", pre_block: null,
-      read_only: true, blocks: [otherSelected],
-    };
-    await loadFeed([today, other]);
-    const beforeToday = pageState("Today");
-    const beforeOther = pageState("Other");
-    selectRange(todaySelected.id, otherSelected.id);
-
-    expect(selectedIds()).toEqual([todaySelected.id, otherSelected.id]);
-    expect(countStoreMutations(indentSelection)).toEqual({ publications: 0, dirtyMarks: 0 });
-    expect(pageState("Today")).toEqual(beforeToday);
-    expect(pageState("Other")).toEqual(beforeOther);
-    expect(isDirty("Today")).toBe(false);
-    expect(isDirty("Other")).toBe(false);
-  });
-
-  it("refuses a feed-spanning outdent when another selected day is read-only and dirties neither page", async () => {
-    const todaySelected = blk("today selected");
-    const todayParent = blk("today parent", [todaySelected]);
-    const otherSelected = blk("other selected");
-    const today: PageDto = {
-      name: "Today", kind: "journal", title: "Today", pre_block: null,
-      blocks: [todayParent],
-    };
-    const other: PageDto = {
-      name: "Other", kind: "journal", title: "Other", pre_block: null,
-      read_only: true, blocks: [otherSelected],
-    };
-    await loadFeed([today, other]);
-    const beforeToday = pageState("Today");
-    const beforeOther = pageState("Other");
-    selectRange(todaySelected.id, otherSelected.id);
-
-    expect(selectedIds()).toEqual([todaySelected.id, otherSelected.id]);
-    expect(countStoreMutations(outdentSelection)).toEqual({ publications: 0, dirtyMarks: 0 });
-    expect(pageState("Today")).toEqual(beforeToday);
-    expect(pageState("Other")).toEqual(beforeOther);
-    expect(isDirty("Today")).toBe(false);
-    expect(isDirty("Other")).toBe(false);
-  });
-
-  it("outdents only the first page of a writable feed-spanning selection, keeping the other day byte-identical and clean", async () => {
-    const todaySelected = blk("today selected", [blk("today descendant")]);
-    const todayParent = blk("today parent", [todaySelected]);
-    const otherSelected = blk("other selected", [blk("other descendant")]);
-    const today: PageDto = {
-      name: "Today", kind: "journal", title: "Today", pre_block: null,
-      blocks: [todayParent],
-    };
-    const other: PageDto = {
-      name: "Other", kind: "journal", title: "Other", pre_block: null,
-      blocks: [otherSelected],
-    };
-    await loadFeed([today, other]);
-    const beforeToday = pageState("Today");
-    const beforeOther = pageState("Other");
-    selectRange(todaySelected.id, otherSelected.id);
-
-    assertOnePublicationAndDirty(outdentSelection);
-
-    const afterToday = pageState("Today");
-    expect(doc.pages.find((page) => page.name === "Today")!.roots).toEqual([todayParent.id, todaySelected.id]);
-    expect(doc.byId[todayParent.id].children).toEqual([]);
-    expect(doc.byId[todaySelected.id].parent).toBeNull();
-    expect(pageState("Other")).toEqual(beforeOther);
-    expect(isDirty("Today")).toBe(true);
-    expect(isDirty("Other")).toBe(false);
-
-    undo();
-    expect(pageState("Today")).toEqual(beforeToday);
-    expect(pageState("Other")).toEqual(beforeOther);
-    redo();
-    expect(pageState("Today")).toEqual(afterToday);
-    expect(pageState("Other")).toEqual(beforeOther);
-  });
-});
-
-describe("selection move burst history (F2)", () => {
-  let saveSpy: MockInstance<Backend["savePage"]>;
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-    saveSpy = vi.spyOn(backend(), "savePage").mockResolvedValue({ revision: "move-burst-rev" });
-  });
-  afterEach(() => {
-    vi.runOnlyPendingTimers();
-    vi.useRealTimers();
-    saveSpy.mockRestore();
-  });
-
-  function selectRange(first: string, last: string) {
-    selectBlock(first);
-    extendSelectionTo(last);
-  }
-
-  function loadMovableSelection(selectedCount: number) {
-    const before = Array.from({ length: 40 }, (_, i) => blk(`before-${i}`));
-    const selected = Array.from({ length: selectedCount }, (_, i) => blk(`selected-${i}`));
-    const after = Array.from({ length: 40 }, (_, i) => blk(`after-${i}`));
-    load([...before, ...selected, ...after]);
-    selectRange(selected[0].id, selected.at(-1)!.id);
-    return { before, selected, after };
-  }
-
-  function expectSavedPageEqualsCurrent(callIndex: number, pageName: string) {
-    expect(saveSpy.mock.calls[callIndex]?.[0]).toEqual(pageToDto(pageName));
-  }
-
-  async function observeMoveBurst(run: () => Promise<void>): Promise<{
-    publications: number;
-    dirtyMarks: number;
-    snapshots: number;
-  }> {
-    const counts = { publications: 0, dirtyMarks: 0, snapshots: 0 };
-    __setStoreMutationObserverForTest((observation) => {
-      if (observation.kind === "publication") counts.publications++;
-      else if (observation.kind === "dirty") counts.dirtyMarks++;
-      else if (observation.kind === "undo-snapshot") counts.snapshots++;
-    });
-    try {
-      await run();
-    } finally {
-      __setStoreMutationObserverForTest(null);
-    }
-    return counts;
-  }
-
-  it.each([
-    [50, -1],
-    [50, 1],
-    [200, -1],
-    [200, 1],
-  ])("keeps %i-root 20-nudge direction-%i bursts visibly immediate but one Undo/Redo unit", async (count, direction) => {
-    const { selected } = loadMovableSelection(count);
-    const before = pageState("Test");
-
-    const counts = await observeMoveBurst(async () => {
-      for (let i = 0; i < 20; i++) {
-        await moveSelectionItems(direction as 1 | -1);
-        await vi.advanceTimersByTimeAsync(50);
-      }
-    });
-    const after = pageState("Test");
-
-    // Every visible nudge still publishes and refreshes the ordinary dirty
-    // generation/debounce. Only the page snapshot is shared.
-    expect(counts).toEqual({ publications: 20, dirtyMarks: 20, snapshots: 1 });
-    expect(saveSpy).not.toHaveBeenCalled();
-    expect(selectedIds()).toEqual(selected.map((block) => block.id));
-
-    // The final mark's existing debounce is allowed to persist the current
-    // document before history replay; no later mark is suppressed by F2.
-    await vi.advanceTimersByTimeAsync(350);
-    expect(saveSpy).toHaveBeenCalledTimes(1);
-    expectSavedPageEqualsCurrent(0, "Test");
-
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    expect(pageState("Test")).toEqual(after);
-  });
-
-  it("starts a fresh unit after Undo or Redo", async () => {
-    loadMovableSelection(2);
-    const before = pageState("Test");
-
-    await moveSelectionItems(1);
-    const afterFirst = pageState("Test");
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    expect(pageState("Test")).toEqual(afterFirst);
-
-    await moveSelectionItems(1);
-    const afterSecond = pageState("Test");
-    undo();
-    expect(pageState("Test")).toEqual(afterFirst);
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    redo();
-    expect(pageState("Test")).toEqual(afterSecond);
-  });
-
-  it("keeps mixed Up/Down repeats in one selection-move command family", async () => {
-    loadMovableSelection(3);
-    const before = pageState("Test");
-    const counts = await observeMoveBurst(async () => {
-      await moveSelectionItems(1);
-      await vi.advanceTimersByTimeAsync(50);
-      await moveSelectionItems(1);
-      await vi.advanceTimersByTimeAsync(50);
-      await moveSelectionItems(-1);
-      await vi.advanceTimersByTimeAsync(50);
-      await moveSelectionItems(1);
-    });
-    const after = pageState("Test");
-
-    expect(counts).toEqual({ publications: 4, dirtyMarks: 4, snapshots: 1 });
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    expect(pageState("Test")).toEqual(after);
-  });
-
-  it("starts a fresh unit when the selected root set changes inside the idle window", async () => {
-    const { selected } = loadMovableSelection(3);
-    const before = pageState("Test");
-
-    await moveSelectionItems(1);
-    const afterFirst = pageState("Test");
-    await vi.advanceTimersByTimeAsync(100);
-    selectBlock(selected[0].id); // [selected-0..2] -> [selected-0]
-    await moveSelectionItems(1);
-    const afterSecond = pageState("Test");
-
-    undo();
-    expect(pageState("Test")).toEqual(afterFirst);
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    redo();
-    expect(pageState("Test")).toEqual(afterSecond);
-  });
-
-  it("ends page A's burst when unrelated loaded page B is reloaded", async () => {
-    const { selected } = loadMovableSelection(2);
-    const pageB: PageDto = {
-      name: "B", kind: "page", title: "B", pre_block: null, rev: "b1",
-      blocks: [blk("B before reload")],
-    };
-    await ensurePageLoaded(pageB);
-    selectRange(selected[0].id, selected.at(-1)!.id);
-    const before = pageState("Test");
-
-    await moveSelectionItems(1);
-    const afterFirst = pageState("Test");
-    await vi.advanceTimersByTimeAsync(100);
-    await reloadPage({
-      ...pageB,
-      rev: "b2",
-      blocks: [blk("B after reload")],
-    });
-    expect(pageToDto("B")?.blocks[0]?.raw).toBe("B after reload");
-
-    await moveSelectionItems(1);
-    const afterSecond = pageState("Test");
-    undo();
-    expect(pageState("Test")).toEqual(afterFirst);
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    redo();
-    expect(pageState("Test")).toEqual(afterSecond);
-  });
-
-  it.each([-1, 1] as const)("moves three 100-descendant roots one slot direction %i in an exact 511-block page", async (direction) => {
-    const selected = Array.from({ length: 3 }, (_, rootIndex) => blk(
-      `selected-root-${rootIndex}`,
-      Array.from({ length: 100 }, (_, childIndex) => blk(`descendant-${rootIndex}-${childIndex}`)),
-    ));
-    const displacedBefore = blk("displaced-before");
-    const padding = Array.from({ length: 207 }, (_, index) => blk(`padding-${index}`));
-    load([displacedBefore, ...selected, ...padding]);
-    const countBlocks = (blocks: BlockDto[]): number => blocks.reduce(
-      (total, block) => total + 1 + countBlocks(block.children),
-      0,
-    );
-    expect(countBlocks(pageToDto("Test")!.blocks)).toBe(511);
-
-    const before = pageState("Test");
-    const beforeRoots = [...pageByName("Test")!.roots];
-    const nodeReceipts = Object.fromEntries(
-      Object.entries(doc.byId).map(([id, node]) => [id, JSON.parse(JSON.stringify(node))]),
-    );
-    selectRange(selected[0].id, selected[2].id);
-    await moveSelectionItems(direction);
-
-    const expectedRoots = direction === -1
-      ? [...selected.map((block) => block.id), displacedBefore.id, ...padding.map((block) => block.id)]
-      : [displacedBefore.id, padding[0].id, ...selected.map((block) => block.id), ...padding.slice(1).map((block) => block.id)];
-    expect(beforeRoots).toEqual([displacedBefore.id, ...selected.map((block) => block.id), ...padding.map((block) => block.id)]);
-    expect(pageByName("Test")!.roots).toEqual(expectedRoots);
-    for (const [id, receipt] of Object.entries(nodeReceipts)) {
-      expect(doc.byId[id]).toEqual(receipt);
-    }
-
-    const after = pageState("Test");
-    undo();
-    expect(pageState("Test")).toEqual(before);
-    redo();
-    expect(pageState("Test")).toEqual(after);
-  });
-
-  it("starts fresh units after idle/max boundaries, selection endpoints, other edits, and reload", async () => {
-    const { after } = loadMovableSelection(2);
-
-    await moveSelectionItems(1);
-    const afterFirst = pageState("Test");
-    await vi.advanceTimersByTimeAsync(400); // closes the burst's independent idle timer
-    await moveSelectionItems(1);
-    const afterIdleSeparated = pageState("Test");
-    undo();
-    expect(pageState("Test")).toEqual(afterFirst);
-    redo();
-    expect(pageState("Test")).toEqual(afterIdleSeparated);
-
-    // A raw edit closes the burst without merging that edit into either move.
-    setRaw(after[0].id, "changed between move gestures");
-    const afterRaw = pageState("Test");
-    await moveSelectionItems(1);
-    const afterRawThenMove = pageState("Test");
-    undo();
-    expect(pageState("Test")).toEqual(afterRaw);
-    undo();
-    expect(doc.byId[after[0].id].raw).toBe("after-0");
-    expect(pageState("Test")).toEqual(afterIdleSeparated);
-    redo();
-    redo();
-    expect(pageState("Test")).toEqual(afterRawThenMove);
-
-    // A structural command has the same generic reset point as raw editing.
-    setBlockProperty(after[1].id, "burst-boundary", "yes");
-    const afterStructural = pageState("Test");
-    await moveSelectionItems(-1);
-    undo();
-    expect(pageState("Test")).toEqual(afterStructural);
-
-    // The endpoint change only removes a descendant of an already-selected
-    // parent in the normalized root set. It must still end the gesture.
-    resetStore();
-    const child = blk("child");
-    const parent = blk("parent", [child]);
-    const tail = blk("tail");
-    load([blk("lead"), parent, tail]);
-    const parentBefore = pageState("Test");
-    selectBlock(parent.id);
-    extendSelectionTo(child.id);
-    await moveSelectionItems(1);
-    const parentAfterFirst = pageState("Test");
-    selectBlock(parent.id); // topSelected remains [parent], focus changed child → parent
-    await moveSelectionItems(-1);
-    undo();
-    expect(pageState("Test")).toEqual(parentAfterFirst);
-    undo();
-    expect(pageState("Test")).toEqual(parentBefore);
-
-    // A replacement of the loaded page instance ends the old burst too.
-    resetStore();
-    const { selected: reloadedSelected } = loadMovableSelection(2);
-    await moveSelectionItems(1);
-    const reloaded = pageToDto("Test")!;
-    await reloadPage({
-      ...reloaded,
-      rev: "replacement",
-      blocks: reloaded.blocks.map((block, index) => index === 0 ? { ...block, raw: "reloaded" } : block),
-    });
-    const afterReload = pageState("Test");
-    selectRange(reloadedSelected[0].id, reloadedSelected.at(-1)!.id);
-    await moveSelectionItems(1);
-    undo();
-    expect(pageState("Test")).toEqual(afterReload);
-  });
-
-  it("splits a continuous burst at the three-second maximum", async () => {
-    loadMovableSelection(1);
-    const beforeFinalNudge = await (async () => {
-      for (let i = 0; i < 30; i++) {
-        await moveSelectionItems(1);
-        await vi.advanceTimersByTimeAsync(100);
-      }
-      return pageState("Test");
-    })();
-    await moveSelectionItems(1); // exactly 3,000ms from the first nudge → fresh unit
-    const afterFinalNudge = pageState("Test");
-
-    undo();
-    expect(pageState("Test")).toEqual(beforeFinalNudge);
-    redo();
-    expect(pageState("Test")).toEqual(afterFinalNudge);
-  });
-
-  it("keeps normal maximum-delay persistence and the final idle save during a long burst", async () => {
-    loadMovableSelection(1);
-    for (let i = 0; i < 30; i++) {
-      await moveSelectionItems(1);
-      await vi.advanceTimersByTimeAsync(100);
-    }
-
-    // The first dirty window reaches its existing three-second deadline while
-    // keys continue, and its request is the complete state at that boundary.
-    expect(saveSpy).toHaveBeenCalledTimes(1);
-    expectSavedPageEqualsCurrent(0, "Test");
-
-    for (let i = 0; i < 5; i++) {
-      await moveSelectionItems(1);
-      await vi.advanceTimersByTimeAsync(100);
-    }
-    const finalPage = pageToDto("Test");
-
-    // Later marks are still delivered to persistence, yielding one final idle
-    // save rather than suppressing the dirty generation. That tail request must
-    // be the complete final page, not the three-second checkpoint DTO.
-    await vi.advanceTimersByTimeAsync(299);
-    expect(saveSpy).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(saveSpy).toHaveBeenCalledTimes(2);
-    expect(saveSpy.mock.calls[1][0]).toEqual(finalPage);
-  });
-
-  it("separates in-page, cross-day, and changed-page-scope moves with exact Undo/Redo", async () => {
-    const today = { name: "Today", kind: "journal" as const, title: "Today", pre_block: null, blocks: [blk("a"), blk("b"), blk("c")] };
-    const older = { name: "Older", kind: "journal" as const, title: "Older", pre_block: null, blocks: [blk("old-1"), blk("old-2")] };
-    await loadFeed([today, older]);
-    const state = () => ({ today: pageState("Today"), older: pageState("Older") });
-    const before = state();
-    selectBlock(today.blocks[1].id);
-    await moveSelectionItems(1); // b → after c, an in-page burst
-    const afterInPage = state();
-    await moveSelectionItems(1); // c/b boundary → cross-page route
-    const afterCross = state();
-    expect(doc.byId[today.blocks[1].id].page).toBe("Older");
-    expect(pageByName("Today")!.roots).toEqual([today.blocks[0].id, today.blocks[2].id]);
-    expect(pageByName("Older")!.roots).toEqual([today.blocks[1].id, older.blocks[0].id, older.blocks[1].id]);
-
-    // The selected root id is unchanged, but its complete page-instance scope
-    // changed from Today to Older. Its next in-page nudge is a third undo unit.
-    await vi.advanceTimersByTimeAsync(100);
-    await moveSelectionItems(1);
-    const afterChangedScope = state();
-    expect(pageByName("Older")!.roots).toEqual([older.blocks[0].id, today.blocks[1].id, older.blocks[1].id]);
-
-    undo();
-    expect(state()).toEqual(afterCross);
-    undo();
-    expect(state()).toEqual(afterInPage);
-    undo();
-    expect(state()).toEqual(before);
-    redo();
-    expect(state()).toEqual(afterInPage);
-    redo();
-    expect(state()).toEqual(afterCross);
-    redo();
-    expect(state()).toEqual(afterChangedScope);
-  });
-});
-
 // Characterization tests for the debounced persistence engine (markDirty →
 // scheduleSave/doSave/flushPage/flushAll/forceSave + the dirty/baseRev/
 // deletedPages/conflict guards). These pin the save behaviour so the R2
 // extraction into a SaveCoordinator is provably behaviour-preserving.
 describe("save engine (persistence)", () => {
-  let saveSpy: MockInstance<Backend["savePage"]>;
+  let saveSpy: MockInstance<Backend["savePages"]>;
   beforeEach(() => {
     conflicts()
       .slice()
       .forEach(clearConflict); // ui conflicts aren't cleared by resetStore
     vi.useFakeTimers();
-    setToasts([]);
-    saveSpy = vi.spyOn(backend(), "savePage").mockResolvedValue({ revision: "rev1" });
+    saveSpy = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev1"] });
   });
   afterEach(() => {
     vi.runOnlyPendingTimers();
@@ -2902,178 +1769,301 @@ describe("save engine (persistence)", () => {
 
   it("debounces dirty pages into one batched save", async () => {
     load([blk("hello")]);
-    markDirty("Test");
-    markDirty("Test"); // coalesced into the same 400ms batch
+    markDirty("Test", "save-block");
+    markDirty("Test", "save-block"); // coalesced into the same 400ms batch
     expect(saveSpy).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(400);
     expect(saveSpy).toHaveBeenCalledTimes(1);
-    expect((saveSpy.mock.calls[0][0] as { name: string }).name).toBe("Test");
+    expect((saveSpy.mock.calls[0][0][0].page).name).toBe("Test");
     expect(isDirty("Test")).toBe(false);
   });
 
   it("flushPage writes immediately and advances the baseline rev", async () => {
     load([blk("x")]);
-    saveSpy.mockResolvedValue({ revision: "rev2" });
-    markDirty("Test");
+    saveSpy.mockResolvedValue({ ok: ["rev2"] });
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
     expect(saveSpy).toHaveBeenCalledTimes(1);
     // Next save sends the rev returned by the previous one as its baseRev.
-    markDirty("Test");
+    markDirty("Test", "save-block");
     await flushPage("Test");
-    expect(saveSpy.mock.calls[1][1]).toBe("rev2");
+    expect(saveSpy.mock.calls[1][0][0].baseRev).toBe("rev2");
   });
 
-  it("delete drains an edit injected into its first save before tombstoning", async () => {
-    load([blk("first accepted draft")]);
-    let finishFirstSave!: (result: { revision: string }) => void;
-    saveSpy
-      .mockImplementationOnce(() => new Promise<{ revision: string }>((resolve) => { finishFirstSave = resolve; }))
-      .mockResolvedValueOnce({ revision: "rev2" });
-    const deleteSpy = vi.spyOn(backend(), "deletePage").mockResolvedValue();
-
-    markDirty("Test");
-    const firstSave = flushPage("Test");
-    await vi.advanceTimersByTimeAsync(0); // let savePage enter its first await
-    const firstBlock = doc.pages[0].roots[0];
-    setRaw(firstBlock, "second accepted draft"); // typed while the first save is in flight
-    const deleting = deletePage("Test", "page");
-    finishFirstSave({ revision: "rev1" });
-
-    await expect(firstSave).resolves.toBe(true);
-    await expect(deleting).resolves.toBe(true);
-    expect(saveSpy).toHaveBeenCalledTimes(2);
-    expect((saveSpy.mock.calls[1][0] as PageDto).blocks[0].raw).toBe("second accepted draft");
-    expect(deleteSpy).toHaveBeenCalledTimes(1);
-    deleteSpy.mockRestore();
+  it("a late save does not advance the baseline of a same-name replacement", async () => {
+    let finish!: (result: { ok: string[] }) => void;
+    saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    load([blk("old instance")]);
+    markDirty("Test", "save-block");
+    const first = flushPage("Test");
+    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    reloadPage({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [blk("new instance")], rev: "replacement-rev" });
+    finish({ ok: ["old-save-rev"] });
+    await first;
+    markDirty("Test", "save-block");
+    await flushPage("Test");
+    expect(saveSpy.mock.calls[1][0][0].baseRev).toBe("replacement-rev");
   });
 
-  it("hands a durable delete to route retirement before forgetting the loaded page", async () => {
-    load([blk("visible until durable route retirement")]);
-    const deleteSpy = vi.spyOn(backend(), "deletePage").mockResolvedValue();
-    const phases: string[] = [];
-
-    await expect(deletePage("Test", "page", undefined, {
-      phase: (phase) => phases.push(phase),
-      retireDurableRoute: () => {
-        phases.push("retire-durable-route");
-        expect(pageByName("Test")).toBeDefined();
-      },
-    })).resolves.toBe(true);
-
-    expect(phases).toEqual([
-      "dirty-flush-start",
-      "dirty-flush-complete",
-      "native-command-start",
-      "durable-response",
-      "retire-durable-route",
-    ]);
-    expect(pageByName("Test")).toBeUndefined();
-    expect(deleteSpy).toHaveBeenCalledTimes(1);
-    deleteSpy.mockRestore();
+  it("a never-saved page deleted during its first save is deleted after that save", async () => {
+    let finish!: (result: { ok: string[] }) => void;
+    const disk = new Set<string>();
+    saveSpy.mockImplementationOnce((entries) => new Promise((resolve) => { finish = (result) => { disk.add(entries[0].id); resolve(result); }; }));
+    const remove = vi.spyOn(backend(), "deletePage").mockImplementation(async () => { disk.clear(); });
+    load([blk("new content")]);
+    markDirty("Test", "save-block");
+    const save = flushPage("Test");
+    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    const deletion = deletePage("Test", "page");
+    await Promise.resolve();
+    expect(remove).not.toHaveBeenCalled();
+    finish({ ok: ["created-rev"] });
+    await save;
+    expect(await deletion, "I-11: deletePage drains a first save before removal; exemplar src/store.ts deletePage").toBe(true);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(disk.size, "I-11: a deleted never-saved page leaves no file; exemplar src/store.ts deletePage").toBe(0);
+    remove.mockRestore();
   });
 
-  it("refuses an edit injected after the quiescence helper resolves but before tombstoning", async () => {
-    load([blk("clean before delete")]);
-    const deleteSpy = vi.spyOn(backend(), "deletePage").mockResolvedValue();
+  it("does not delete a same-name page in a new graph after draining the old save (I-20)", async () => {
+    let finish!: (result: { ok: string[] }) => void;
+    saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined);
+    load([blk("old graph")]);
+    markDirty("Test", "save-block");
+    const first = flushPage("Test");
+    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    const deletion = deletePage("Test", "page");
+    resetStore();
+    load([blk("new graph")]);
+    finish({ ok: ["old-rev"] });
+    await first;
+    expect(await deletion).toBe(false);
+    expect(remove, "I-20: old delete must not trash a new graph page; exemplar src/store.ts deletePage").not.toHaveBeenCalled();
+    expect(pageToDto("Test")!.blocks[0].raw).toBe("new graph");
+    remove.mockRestore();
+  });
 
-    const deleting = deletePage("Test", "page");
-    // flushPageToQuiescence has synchronously found the page clean and returned
-    // a resolved promise; deletePage is suspended on its await continuation.
-    setRaw(doc.pages[0].roots[0], "typed in the quiescence handoff");
+  it("flushAll drains an in-flight save and the edit made while it was pending (I-11)", async () => {
+    let finish!: (result: { ok: string[] }) => void;
+    saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const firstBlock = blk("first");
+    load([firstBlock]);
+    markDirty("Test", "save-block");
+    const first = flushPage("Test");
+    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    let settled = false;
+    const all = flushAll().then((ok) => { settled = true; return ok; });
+    setRaw(firstBlock.id, "second");
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish({ ok: ["first-rev"] });
+    await first;
+    expect(await all, "I-11: flushAll counts the saveChain and edits made during a save; exemplar src/persistence.ts flushAll").toBe(true);
+    expect(saveSpy.mock.calls.at(-1)![0][0].page.blocks[0].raw).toBe("second");
+    expect(saveSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
 
-    await expect(deleting).resolves.toBe(false);
-    expect(deleteSpy).not.toHaveBeenCalled();
-    expect(pageByName("Test")).toBeDefined();
-    expect(doc.byId[doc.pages[0].roots[0]].raw).toBe("typed in the quiescence handoff");
-    expect(isDirty("Test")).toBe(true);
-    // The refused delete retained a normal writable draft which can still land.
-    await expect(flushPage("Test")).resolves.toBe(true);
+  it("flushAll refuses completion when a fifth queued save survives its bounded drain (I-11)", async () => {
+    let finishFifth!: (result: { ok: string[] }) => void;
+    let nested: Promise<boolean> | undefined;
+    load([blk("content")]);
+    saveSpy.mockImplementation(() => {
+      const call = saveSpy.mock.calls.length;
+      if (call < 4) {
+        markDirty("Test", "save-block");
+        return Promise.resolve({ ok: [`rev-${call}`] });
+      }
+      if (call === 4) {
+        markDirty("Test", "save-block");
+        nested = flushPage("Test");
+        return Promise.resolve({ ok: ["rev-4"] });
+      }
+      return new Promise((resolve) => { finishFifth = resolve; });
+    });
+    markDirty("Test", "save-block");
+    const draining = flushAll();
+    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(5));
+    expect(isDirty("Test")).toBe(false);
+    try {
+      expect(await draining,
+        "I-11: flushAll must count saveChain after its bounded drain; exemplar src/persistence.ts flushAll").toBe(false);
+    } finally {
+      finishFifth({ ok: ["rev-5"] });
+      await nested;
+    }
+  });
+
+  it("shows one toast for repeated identical save failures (I-10)", async () => {
+    setToasts([]);
+    load([blk("unsaved")]);
+    saveSpy.mockRejectedValue(new Error("io:Other"));
+    markDirty("Test", "save-block");
+    expect(await flushPage("Test")).toBe(false);
+    // The automatic transient retries (100 ms, 300 ms) run and fail too.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await flushPage("Test")).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(saveSpy.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(toasts().filter((toast) => toast.kind === "error" && toast.message.includes("Test")),
+      "I-10: identical save failures show one toast; exemplar src/persistence.ts lastSaveFailure").toHaveLength(1);
+  });
+
+  it("drops a quick capture read that resolves after a graph switch (I-20)", async () => {
+    let finish!: (dto: PageRead | null) => void;
+    const read = vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    load([blk("old graph")]);
+    const capture = captureToPage("Captured", "- captured text");
+    await vi.waitFor(() => expect(read).toHaveBeenCalled());
+    resetStore();
+    load([blk("new graph")]);
+    finish({ name: "Captured", kind: "page", title: "Captured", id: "pages/Captured.md", pre_block: null, blocks: [] });
+    expect(await capture).toBe(false);
+    expect(pageByName("Captured")).toBeUndefined();
+    expect(saveSpy).not.toHaveBeenCalled();
+    read.mockRestore();
+  });
+
+  it("drops an hls reload that resolves after a graph switch (I-20)", async () => {
+    let finish!: (dto: PageRead | null) => void;
+    const read = vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    loadSingle({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("old notes")] });
+    const reload = reloadHlsIfLoaded("hls__paper");
+    await vi.waitFor(() => expect(read).toHaveBeenCalled());
+    resetStore();
+    loadSingle({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("new graph notes")] });
+    finish({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("stale notes")], rev: "stale-rev" });
+    await reload;
+    expect(pageToDto("hls__paper")!.blocks[0].raw).toBe("new graph notes");
+    read.mockRestore();
+  });
+
+  it("keeps a highlight note edit typed during its disk fetch", async () => {
+    let finish!: (dto: PageRead | null) => void;
+    const read = vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    loadSingle({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("old notes")] });
+    const reload = reloadHlsIfLoaded("hls__paper");
+    await vi.waitFor(() => expect(read).toHaveBeenCalled());
+    const id = pageByName("hls__paper")!.roots[0];
+    setRaw(id, "typed during fetch", { timetracking: false });
+    finish({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("disk note")], rev: "disk-rev" });
+    await reload;
+    expect(pageToDto("hls__paper")!.blocks[0].raw).toBe("typed during fetch");
+    read.mockRestore();
+  });
+
+  it("does not replace a dirty loaded name with a different physical file", () => {
+    loadSingle({ name: "Duplicate", kind: "page", title: "Duplicate", id: "pages/original.md", pre_block: null, blocks: [blk("original")] });
+    const id = pageByName("Duplicate")!.roots[0];
+    setRaw(id, "local edit", { timetracking: false });
+    ensurePageLoaded({ name: "Duplicate", kind: "page", title: "Duplicate", id: "pages/stray.md", pre_block: null, blocks: [blk("stray")] });
+    expect(pageByName("Duplicate")!.id).toBe("pages/original.md");
+    expect(pageToDto("Duplicate")!.blocks[0].raw).toBe("local edit");
+  });
+
+  it("drops a direct save after its resolve lands in another graph (I-20)", async () => {
+    let finish!: (resolved: { kind: "absent"; id: string }) => void;
+    const resolve = vi.spyOn(backend(), "resolvePage").mockImplementationOnce(() => new Promise((done) => { finish = done; }));
+    load([blk("old draft")]);
+    markDirty("Test", "save-block");
+    const save = flushPage("Test");
+    await vi.waitFor(() => expect(resolve).toHaveBeenCalled());
+    resetStore();
+    load([blk("new graph")]);
+    finish({ kind: "absent", id: "pages/Test.md" });
+    expect(await save).toBe(false);
+    expect(saveSpy).not.toHaveBeenCalled();
+    expect(pageToDto("Test")!.blocks[0].raw).toBe("new graph");
+    resolve.mockRestore();
+  });
+
+  it("does not run a forced save queued in the old binding against a same-name new graph page (I-20)", async () => {
+    let finish!: (result: { ok: string[] }) => void;
+    saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    load([blk("old graph")]);
+    markDirty("Test", "save-block");
+    const first = flushPage("Test");
+    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    const queued = forceSave("Test");
+    resetStore();
+    load([blk("new graph")]);
+    finish({ ok: ["old-rev"] });
+    await first;
+    expect(await queued).toBe(false);
     expect(saveSpy).toHaveBeenCalledTimes(1);
-    deleteSpy.mockRestore();
+    expect(pageToDto("Test")!.blocks[0].raw).toBe("new graph");
   });
 
-  it("retains the loaded draft when the delete quiescence barrier cannot save it", async () => {
-    load([blk("must remain editable")]);
-    saveSpy.mockRejectedValueOnce(new Error("write refused"));
-    const deleteSpy = vi.spyOn(backend(), "deletePage").mockResolvedValue();
-
-    markDirty("Test");
-    await expect(deletePage("Test", "page")).resolves.toBe(false);
-    expect(pageByName("Test")).toBeDefined();
-    expect(doc.byId[doc.pages[0].roots[0]].raw).toBe("must remain editable");
-    expect(deleteSpy).not.toHaveBeenCalled();
-    deleteSpy.mockRestore();
-  });
-
-  it("retains the captured draft when the backend delete fails", async () => {
-    load([blk("still present after failed delete")]);
-    const deleteSpy = vi.spyOn(backend(), "deletePage").mockRejectedValue(new Error("delete failed"));
-
-    await expect(deletePage("Test", "page")).resolves.toBe(false);
-    expect(pageByName("Test")).toBeDefined();
-    expect(doc.byId[doc.pages[0].roots[0]].raw).toBe("still present after failed delete");
-    expect(deleteSpy).toHaveBeenCalledTimes(1);
-    deleteSpy.mockRestore();
-  });
-
-  it("gives a fresh Markdown block one durable identity for persistent references and Copy block ref", async () => {
+  it("browsing to a fresh Markdown block writes nothing; Copy block ref stamps one durable identity", async () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
     load([blk("Fresh target")]);
     const storeKey = doc.pages[0].roots[0];
 
-    const ref = persistentBlockRef(storeKey);
+    // Zoom / sidebar / tab navigation only ever builds a locator: no write, no id.
+    const nav = blockPositionRef({ ...blockRef(storeKey) });
+    expect(nav).toMatchObject({ uuid: storeKey, page: "Test", pageKind: "page", blockPos: [0] });
+    expect(doc.byId[storeKey].raw).toBe("Fresh target");
+    expect(isDirty("Test")).toBe(false);
 
-    expect(ref).toMatchObject({ uuid, page: "Test", pageKind: "page" });
-    expect(ref.uuid).not.toBe(storeKey);
+    // Creating a reference still writes id:: exactly once (OG copy-block-ref!).
+    expect(await ensureBlockId(storeKey)).toBe(uuid);
     expect(doc.byId[storeKey].raw).toBe(`Fresh target\nid:: ${uuid}`);
     expect(await ensureBlockId(storeKey)).toBe(uuid);
     expect(doc.byId[storeKey].raw.match(/(?:^|\n)id::/g)).toHaveLength(1);
+
+    // Once the block has an authored id the saved locator carries it instead of a position.
+    expect(blockPositionRef({ ...blockRef(storeKey) })).toMatchObject({ uuid });
+    expect(blockPositionRef({ ...blockRef(storeKey) })).not.toHaveProperty("blockPos");
   });
 
-  it("never persists a UUID-shaped runtime locator as a fresh block's external identity", () => {
+  it("a saved position ref resolves by position on an ID-less block and settles to the live key", () => {
+    load([blk("first"), blk("second")]);
+    const [a, b] = doc.pages[0].roots;
+    const saved = { ...blockPositionRef({ ...blockRef(b) }) };
+    expect(saved.blockPos).toEqual([1]);
+    // A restart mints new runtime keys: the stale uuid is ignored, the position finds the block.
+    const stale = { ...saved, uuid: "gone-key" };
+    expect(resolveBlockRef(stale)).toBe(b);
+    expect(resolveBlockRef(stale)).not.toBe(a);
+    const settled = settleBlockRef(stale);
+    expect(settled).toMatchObject({ uuid: b, page: "Test" });
+    expect(settled).not.toHaveProperty("blockPos");
+    // Out of range: not found, so the caller falls back to the page top.
+    expect(resolveBlockRef({ ...stale, blockPos: [7] })).toBeNull();
+    expect(settleBlockRef({ ...stale, blockPos: [1, 0] })).toBeNull();
+    expect(doc.byId[b].raw).toBe("second");
+  });
+
+  it("never persists a UUID-shaped runtime locator as a fresh block's external identity (GH #373)", async () => {
     const runtime = "12345678-1234-8234-8234-123456789abc";
     const external = "87654321-4321-4321-8321-cba987654321";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(external);
     load([{ id: runtime, raw: "Fresh deterministic runtime target", collapsed: false, children: [] }]);
 
-    const ref = persistentBlockRef(runtime);
-
-    expect(ref.uuid).toBe(external);
-    expect(ref.uuid).not.toBe(runtime);
+    expect(await ensureBlockId(runtime)).toBe(external);
     expect(doc.byId[runtime].raw).toBe(`Fresh deterministic runtime target\nid:: ${external}`);
   });
 
-  it("mints the same fresh external identity boundary for a UUID-shaped Org runtime locator", () => {
+  it("mints the same fresh external identity boundary for a UUID-shaped Org runtime locator (GH #373)", async () => {
     const runtime = "12345678-1234-8234-8234-123456789abc";
     const external = "87654321-4321-4321-8321-cba987654321";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(external);
     loadSingle({
-      name: "Org target",
-      kind: "page",
-      title: "Org target",
-      pre_block: null,
-      format: "org",
+      name: "Org target", kind: "page", title: "Org target", pre_block: null, format: "org",
       blocks: [{ id: runtime, raw: "Fresh Org runtime target", collapsed: false, children: [] }],
     });
 
-    const ref = persistentBlockRef(runtime);
-
-    expect(ref.uuid).toBe(external);
-    expect(ref.uuid).not.toBe(runtime);
-    expect(doc.byId[runtime].raw).toBe(
-      `Fresh Org runtime target\n:PROPERTIES:\n:id: ${external}\n:END:`,
-    );
+    expect(await ensureBlockId(runtime)).toBe(external);
+    expect(doc.byId[runtime].raw).toBe(`Fresh Org runtime target\n:PROPERTIES:\n:id: ${external}\n:END:`);
   });
 
-  it("preserves the exact external ID of an already-committed inline block reference", async () => {
+  it("preserves the exact external ID of an already-committed block reference (GH #373)", async () => {
     const committed = "12345678-1234-8234-8234-123456789abc";
-    const random = vi.spyOn(crypto, "randomUUID").mockReturnValue(
-      "87654321-4321-4321-8321-cba987654321",
-    );
+    const random = vi.spyOn(crypto, "randomUUID").mockReturnValue("87654321-4321-4321-8321-cba987654321");
     load([{ id: committed, raw: "Already referenced target", collapsed: false, children: [] }]);
 
-    await persistBlockRefTarget(committed, "Test", "page");
+    expect(await persistBlockRefTarget(committed, "Test", "page")).toBe(true);
 
     expect(doc.byId[committed].raw).toBe(`Already referenced target\nid:: ${committed}`);
     expect(random).not.toHaveBeenCalled();
@@ -3092,10 +2082,8 @@ describe("save engine (persistence)", () => {
       blocks: [target],
     });
 
-    const ref = persistentBlockRef(target.id);
-
-    expect(ref).toMatchObject({ uuid, page: "2026-07-22", pageKind: "journal" });
-    expect(ref.uuid).not.toBe(target.id);
+    expect(await ensureBlockId(target.id)).toBe(uuid);
+    expect(blockPositionRef({ ...blockRef(target.id), page: "2026-07-22", pageKind: "journal" })).toMatchObject({ uuid, page: "2026-07-22", pageKind: "journal" });
     expect(doc.byId[target.id].raw).toBe(
       `Fresh journal target\nSCHEDULED: <2026-07-22 Wed>\n:PROPERTIES:\n:id: ${uuid}\n:END:`,
     );
@@ -3106,85 +2094,224 @@ describe("save engine (persistence)", () => {
   it("refreshes page inventory only when a save creates a new file", async () => {
     const before = pageInventoryRev();
     load([blk("new")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
     expect(pageInventoryRev()).toBeGreaterThan(before);
 
     const afterCreate = pageInventoryRev();
-    markDirty("Test");
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
     expect(pageInventoryRev()).toBe(afterCreate);
   });
 
   it("a conflict marks the page (no clobber) and flushAll reports failure", async () => {
     load([blk("x")]);
-    markDirty("Test");
-    saveSpy.mockRejectedValueOnce(new SaveConflictError(null));
+    markDirty("Test", "save-block");
+    saveSpy.mockRejectedValueOnce(new Error("conflict"));
     expect(await flushAll()).toBe(false);
     expect(isConflicted("Test")).toBe(true);
   });
 
-  it("mints a snapshot-less save fallback so a diverged editor raises an answerable conflict", async () => {
-    loadSingle({
-      name: "Fallback",
-      kind: "page",
-      title: "Fallback",
-      pre_block: null,
-      path: "pages/Fallback.md",
-      rev: "loaded-revision",
-      blocks: [blk("retained draft")],
-    });
-    markDirty("Fallback");
-    const activate = vi.spyOn(backend(), "activateEditor").mockResolvedValue({
-      activation: 7001,
-      target: "pages/Fallback.md",
-      prospective: false,
-    });
-    saveSpy.mockRejectedValueOnce(new SaveConflictError(77));
-
-    expect(await flushPage("Fallback")).toBe(false);
-    expect(activate).toHaveBeenCalledWith("pages/Fallback.md", "replace", null);
-    expect(saveSpy.mock.calls[0][0]).toMatchObject({ activation: 7001 });
-    expect(saveSpy.mock.calls[0][1]).toBe("loaded-revision");
-    expect(conflicts()).toContain("Fallback");
-
-    saveSpy.mockResolvedValueOnce({ revision: "winner-replaced" });
-    expect(await forceSave("Fallback")).toBe(true);
-    expect(saveSpy.mock.calls[1][0]).toMatchObject({ activation: 7001 });
-    expect(saveSpy.mock.calls[1][2]).toBe(true);
-    expect(saveSpy.mock.calls[1][3]).toBe(77);
-  });
-
-  it("a transient error retries automatically before showing a save failure", async () => {
+  it("a transient error keeps the page dirty for retry", async () => {
     load([blk("x")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     saveSpy.mockRejectedValueOnce(new Error("disk full"));
     expect(await flushPage("Test")).toBe(false);
     expect(isDirty("Test")).toBe(true);
-    expect(toasts()).toHaveLength(0);
+    expect(await flushPage("Test")).toBe(true); // retry succeeds
+  });
+
+  // master 620b88da596c: a transient save failure heals itself (100 ms, then
+  // 300 ms) before the user is told; the page stays dirty until it saves.
+  it("a transient error retries on its own before showing a save failure", async () => {
+    setToasts([]);
+    load([blk("x")]);
+    markDirty("Test", "save-block");
+    saveSpy.mockRejectedValueOnce(new Error("io:StorageFull"));
+    expect(await flushPage("Test")).toBe(false);
+    expect(isDirty("Test")).toBe(true);
+    expect(toasts().filter((t) => t.kind === "error")).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(100);
     expect(saveSpy).toHaveBeenCalledTimes(2);
     expect(isDirty("Test")).toBe(false);
-    expect(toasts()).toHaveLength(0);
+    expect(toasts().filter((t) => t.kind === "error")).toHaveLength(0);
   });
 
-  it("reports a save failure only after bounded automatic retries also fail", async () => {
+  it("reports a save failure only after the bounded automatic retries also fail", async () => {
+    setToasts([]);
     load([blk("x")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     saveSpy.mockRejectedValue(new Error("persistent failure"));
-
-    await vi.advanceTimersByTimeAsync(400);
-    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(await flushPage("Test")).toBe(false);
     await vi.advanceTimersByTimeAsync(100);
-    expect(toasts()).toHaveLength(0);
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+    expect(toasts().filter((t) => t.kind === "error")).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(300);
-
     expect(saveSpy).toHaveBeenCalledTimes(3);
     expect(isDirty("Test")).toBe(true);
-    expect(toasts().at(-1)).toMatchObject({
-      kind: "error",
-      message: expect.stringContaining("persistent failure"),
-    });
+    const errors = toasts().filter((t) => t.kind === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain("persistent failure");
+    // Retries are bounded: nothing further is attempted until the next edit/flush.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(saveSpy).toHaveBeenCalledTimes(3);
+  });
+
+  // R-CREATE-UNREADABLE-OWNER (master 69e0a885ddf9): the backend refuses a new
+  // page whose name an unreadable file may already own; the toast names that
+  // file, the edits stay dirty, and nothing retries or raises a disk conflict.
+  it("a create refused for an unreadable owner names the file and keeps the edits", async () => {
+    setToasts([]);
+    load([blk("x")]);
+    markDirty("Test", "save-block");
+    saveSpy.mockResolvedValue({ failed: { index: 0, family: "unreadable-owner", undoFailed: [], unreadableOwner: "pages/Other.md" } });
+    expect(await flushPage("Test")).toBe(false);
+    expect(isDirty("Test")).toBe(true);
+    expect(isConflicted("Test")).toBe(false);
+    const errors = toasts().filter((t) => t.kind === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain("pages/Other.md");
+    expect(errors[0].message).toContain("Test");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(saveSpy.mock.calls.length).toBeLessThanOrEqual(2); // at most the ordinary debounce
+  });
+
+  it("a non-transient save failure is reported at once, without automatic retries", async () => {
+    setToasts([]);
+    load([blk("x")]);
+    markDirty("Test", "save-block");
+    saveSpy.mockRejectedValue(new Error("publication-incomplete:pages/Test.md"));
+    await vi.advanceTimersByTimeAsync(400); // the ordinary debounced save
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(toasts().filter((t) => t.kind === "error")).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(isDirty("Test")).toBe(true);
+  });
+
+  // B15b: a save carries the page's file identity (PageId). A loaded page sends
+  // its own id; a page with no id yet asks `resolvePage` once, first.
+  it("saves a brand-new page to the backend's Absent id, then reuses it without resolving again", async () => {
+    const resolveSpy = vi.spyOn(backend(), "resolvePage")
+      .mockResolvedValue({ kind: "absent", id: "pages/Test.org" });
+    load([blk("new")]);
+    expect(pageByName("Test")!.id).toBeUndefined();
+    markDirty("Test", "save-block");
+    expect(await flushPage("Test")).toBe(true);
+    expect(resolveSpy).toHaveBeenCalledWith("Test", "page");
+    expect(saveSpy.mock.calls[0][0][0].id).toBe("pages/Test.org");
+    expect(saveSpy.mock.calls[0][0][0].baseRev).toBeNull(); // CreateNew
+    expect(pageByName("Test")!.id).toBe("pages/Test.org");
+
+    markDirty("Test", "save-block");
+    expect(await flushPage("Test")).toBe(true);
+    expect(resolveSpy).toHaveBeenCalledTimes(1); // no extra round trip once it has an id
+    expect(saveSpy.mock.calls[1][0][0].id).toBe("pages/Test.org");
+    resolveSpy.mockRestore();
+  });
+
+  it("a loaded duplicate-day stray saves to its own file id without resolving its name (#21)", async () => {
+    const resolveSpy = vi.spyOn(backend(), "resolvePage");
+    const stray = { name: "Today", kind: "journal" as const, title: "Today", pre_block: null,
+      blocks: [blk("stray")], id: "journals/Friday, 26-06-2026.md", rev: "stray-rev" };
+    loadFeed([stray]);
+    markDirty("Today", "save-block");
+    expect(await flushPage("Today")).toBe(true);
+    expect(resolveSpy).not.toHaveBeenCalled();
+    expect(saveSpy.mock.calls[0][0][0].id).toBe("journals/Friday, 26-06-2026.md");
+    expect(saveSpy.mock.calls[0][0][0].baseRev).toBe("stray-rev");
+    resolveSpy.mockRestore();
+  });
+
+  it("a pathless save whose name now exists on disk is a conflict and keeps the content", async () => {
+    const resolveSpy = vi.spyOn(backend(), "resolvePage")
+      .mockResolvedValue({ kind: "existing", id: "pages/Test.md", others: [] });
+    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    const [b] = [blk("mine")];
+    load([b]);
+    markDirty("Test", "save-block");
+    expect(await flushPage("Test")).toBe(false);
+    // CreateNew (null base) onto the existing file: the backend refuses it.
+    expect(saveSpy.mock.calls[0][0][0].id).toBe("pages/Test.md");
+    expect(saveSpy.mock.calls[0][0][0].baseRev).toBeNull();
+    expect(isConflicted("Test")).toBe(true);
+    expect(pageByName("Test")!.id).toBeUndefined();
+    expect(doc.byId[b.id].raw).toBe("mine");
+    resolveSpy.mockRestore();
+  });
+
+  it("refuses a content save onto an alias name: no write, conflict surface, content kept", async () => {
+    const resolveSpy = vi.spyOn(backend(), "resolvePage")
+      .mockResolvedValue({ kind: "alias", owners: ["pages/Owner.md"] });
+    // The old HEAD test name stays as a ratchet: an alias owner that vanished
+    // between resolution and read must refuse without losing the draft.
+    const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
+    const [b] = [blk("typed under an alias name")];
+    load([b]);
+    markDirty("Test", "save-block");
+    expect(await flushPage("Test")).toBe(false);
+    expect(saveSpy).not.toHaveBeenCalled();
+    expect(isConflicted("Test")).toBe(true);
+    expect(pageByName("Test")!.id).toBeUndefined();
+    expect(doc.byId[b.id].raw).toBe("typed under an alias name");
+    read.mockRestore();
+    resolveSpy.mockRestore();
+  });
+
+  it("appends a never-saved alias draft after its owner's blocks and opens the owner", async () => {
+    const owner = { name: "Owner", kind: "page" as const, title: "Owner", id: "pages/Owner.md", rev: "owner-rev", pre_block: "alias:: Test", blocks: [blk("owner text")] };
+    const draft = blk("draft parent", [blk("draft child")]);
+    load([draft]);
+    const disk = new Map<string, PageDto>([[owner.id, owner]]);
+    saveSpy.mockImplementation(async (entries) => { const { id, page: dto } = entries[0]; disk.set(id, dto); return { ok: ["saved-owner-rev"] }; });
+    const resolve = vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: [owner.id] });
+    const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(owner);
+    markDirty("Test", "save-block");
+    expect(await flushPage("Test")).toBe(true);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(saveSpy.mock.calls[0][0][0].id).toBe(owner.id);
+    expect(saveSpy.mock.calls[0][0][0].baseRev).toBe(owner.rev);
+    expect(saveSpy.mock.calls[0][0][0].page.blocks.map((b) => b.raw)).toEqual(["owner text", "draft parent"]);
+    expect(saveSpy.mock.calls[0][0][0].page.blocks[1].children.map((b) => b.raw)).toEqual(["draft child"]);
+    expect([...disk.keys()]).toEqual([owner.id]);
+    expect(disk.get(owner.id)!.blocks.map((b) => b.raw)).toEqual(["owner text", "draft parent"]);
+    expect(disk.get(owner.id)!.blocks[1].children.map((b) => b.raw)).toEqual(["draft child"]);
+    expect(pageByName("Test")).toBeUndefined();
+    expect(pageByName("Owner")!.roots.map((id) => doc.byId[id].raw)).toEqual(["owner text", "draft parent"]);
+    expect(doc.feed).toEqual(["Owner"]);
+    expect(toasts().some((t) => t.kind === "info" && t.message.includes("Test") && t.message.includes("Owner"))).toBe(true);
+    read.mockRestore();
+    resolve.mockRestore();
+  });
+
+  it("keeps an alias draft conflicted in memory when the owner's append conflicts", async () => {
+    const owner = { name: "Owner", kind: "page" as const, title: "Owner", id: "pages/Owner.md", rev: "owner-rev", pre_block: "alias:: Test", blocks: [blk("owner text")] };
+    const draft = blk("draft text");
+    load([draft]);
+    const resolve = vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: [owner.id] });
+    const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(owner);
+    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    markDirty("Test", "save-block");
+    expect(await flushPage("Test")).toBe(false);
+    expect(saveSpy.mock.calls[0][0][0].page.blocks.map((b) => b.raw)).toEqual(["owner text", "draft text"]);
+    expect(isConflicted("Test")).toBe(true);
+    expect(doc.byId[draft.id].raw).toBe("draft text");
+    expect(doc.feed).toEqual(["Test"]);
+    read.mockRestore();
+    resolve.mockRestore();
+  });
+
+  it("keeps a draft page preamble as an appended owner block", async () => {
+    const owner = { name: "Owner", kind: "page" as const, title: "Owner", id: "pages/Owner.md", rev: "owner-rev", pre_block: "alias:: Test", blocks: [blk("existing")] };
+    loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: "tags:: draft", blocks: [blk("body")] });
+    const resolve = vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: [owner.id] });
+    const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(owner);
+    markDirty("Test", "save-block");
+    expect(await flushPage("Test")).toBe(true);
+    expect(saveSpy.mock.calls[0][0][0].page.pre_block).toBe("alias:: Test");
+    expect(saveSpy.mock.calls[0][0][0].page.blocks.map((b) => b.raw)).toEqual(["existing", "tags:: draft", "body"]);
+    read.mockRestore();
+    resolve.mockRestore();
   });
 
   it("no-ops guide-flagged pages at the persistence boundary", async () => {
@@ -3200,7 +2327,7 @@ describe("save engine (persistence)", () => {
         guide: true,
       },
     ]);
-    markDirty("Tine-guide/Features/Sheets");
+    markDirty("Tine-guide/Features/Sheets", "save-block");
 
     expect(await flushPage("Tine-guide/Features/Sheets")).toBe(true);
     expect(saveSpy).not.toHaveBeenCalled();
@@ -3209,16 +2336,16 @@ describe("save engine (persistence)", () => {
 
   it("a tombstoned (deleted) page is never written", async () => {
     load([blk("x")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     await deletePage("Test", "page"); // tombstones the page
     saveSpy.mockClear();
-    markDirty("Test"); // a stray queued save after delete must not recreate it
+    markDirty("Test", "save-block"); // a stray queued save after delete must not recreate it
     expect(await flushPage("Test")).toBe(true);
     expect(saveSpy).not.toHaveBeenCalled();
   });
 
   it("deletePage removes journal feed entries plus sidebar favorites and recents", async () => {
-    await loadFeed([
+    loadFeed([
       { name: "Today", kind: "journal", title: "Today", pre_block: null, blocks: [blk("today")] },
       { name: "Older", kind: "journal", title: "Older", pre_block: null, blocks: [blk("older")] },
     ]);
@@ -3302,14 +2429,14 @@ describe("save engine (persistence)", () => {
 
   it("restores today's empty journal at the top of the feed after deleting today in place (#17)", async () => {
     const today = journalTitle(new Date());
-    await loadFeed([
+    loadFeed([
       { name: today, kind: "journal", title: today, pre_block: null, blocks: [blk("today content")] },
       { name: "Older", kind: "journal", title: "Older", pre_block: null, blocks: [blk("older")] },
     ]);
 
     expect(await deletePage(today, "journal")).toBe(true);
     expect(doc.feed).toEqual(["Older"]); // deletePage alone drops today from the feed
-    await restoreTodayJournalInFeed(); // ContextMenu re-runs this on the journals feed
+    restoreTodayJournalInFeed(); // ContextMenu re-runs this on the journals feed
 
     expect(doc.feed).toEqual([today, "Older"]); // today back on top…
     const page = pageByName(today)!;
@@ -3319,67 +2446,48 @@ describe("save engine (persistence)", () => {
     // The placeholder is writable: the delete tombstone was lifted, so the first
     // edit saves a fresh file (not silently swallowed like a still-deleted page).
     saveSpy.mockClear();
-    markDirty(today);
+    markDirty(today, "save-block");
     expect(await flushPage(today)).toBe(true);
     expect(saveSpy).toHaveBeenCalledTimes(1);
-    expect((saveSpy.mock.calls[0][0] as { name: string }).name).toBe(today);
+    expect((saveSpy.mock.calls[0][0][0].page).name).toBe(today);
   });
 
   it("keeps today untouched when an OLDER day is deleted from the feed (#17 no-op)", async () => {
     const today = journalTitle(new Date());
-    await loadFeed([
+    loadFeed([
       { name: today, kind: "journal", title: today, pre_block: null, blocks: [blk("today content")] },
       { name: "Older", kind: "journal", title: "Older", pre_block: null, blocks: [blk("older")] },
     ]);
 
     expect(await deletePage("Older", "journal")).toBe(true);
-    await restoreTodayJournalInFeed(); // called on every journals-feed delete; must not disturb today
+    restoreTodayJournalInFeed(); // called on every journals-feed delete; must not disturb today
 
     expect(doc.feed).toEqual([today]); // today's real content still there, not replaced
     expect(doc.byId[pageByName(today)!.roots[0]].raw).toBe("today content");
   });
 
-  it("forceSave overwrites even a conflicted page (force=true)", async () => {
+  it("forceSave resolves a conflicted page through a revision-guarded write", async () => {
     load([blk("x")]);
-    markDirty("Test");
-    saveSpy.mockRejectedValueOnce(new SaveConflictError(11));
+    markDirty("Test", "save-block");
+    saveSpy.mockRejectedValueOnce(new Error("conflict"));
     await flushPage("Test");
     expect(isConflicted("Test")).toBe(true);
-    saveSpy.mockResolvedValue({ revision: "rev3" });
+    saveSpy.mockResolvedValue({ ok: ["rev3"] });
     expect(await forceSave("Test")).toBe(true);
-    expect(saveSpy.mock.calls.at(-1)![2]).toBe(true); // force flag
-    expect(saveSpy.mock.calls.at(-1)![3]).toBe(11); // exact observed winner
+    expect(saveSpy.mock.calls.at(-1)![0][0].force).toBe(false);
   });
 
-  it("deletes a CONFLICTED page through the backend without flushing its retained draft", async () => {
+  it("deletes a CONFLICTED page rather than leaving it undeletable", async () => {
     load([blk("x")]);
-    markDirty("Test");
-    saveSpy.mockRejectedValueOnce(new SaveConflictError(null));
+    markDirty("Test", "save-block");
+    saveSpy.mockRejectedValueOnce(new Error("conflict"));
     await flushPage("Test"); // the save is now refused until the conflict is resolved
     expect(isConflicted("Test")).toBe(true);
-    const deleteSpy = vi.spyOn(backend(), "deletePage").mockResolvedValue();
-
+    // Regression: deletePage used to flush-first and abort on the (impossible) flush,
+    // so a conflicted page could be neither saved nor deleted. Delete IS a resolution;
+    // the on-disk version still goes to .tine-trash (recoverable).
     expect(await deletePage("Test", "page")).toBe(true);
-    expect(saveSpy).toHaveBeenCalledTimes(1); // conflicted retained draft is never flushed
-    expect(deleteSpy).toHaveBeenCalledTimes(1); // actor preserves its accepted winner in typed trash
     expect(pageByName("Test")).toBeUndefined();
-    deleteSpy.mockRestore();
-  });
-
-  it("retains a CONFLICTED draft when its backend delete fails", async () => {
-    load([blk("retained conflict draft")]);
-    markDirty("Test");
-    saveSpy.mockRejectedValueOnce(new SaveConflictError(null));
-    await flushPage("Test");
-    expect(isConflicted("Test")).toBe(true);
-    const deleteSpy = vi.spyOn(backend(), "deletePage").mockRejectedValue(new Error("delete deferred"));
-
-    expect(await deletePage("Test", "page")).toBe(false);
-    expect(saveSpy).toHaveBeenCalledTimes(1);
-    expect(deleteSpy).toHaveBeenCalledTimes(1);
-    expect(pageByName("Test")).toBeDefined();
-    expect(doc.byId[doc.pages[0].roots[0]].raw).toBe("retained conflict draft");
-    deleteSpy.mockRestore();
   });
 
   it("bumps dataRev on delete so live queries drop the deleted page's rows", async () => {
@@ -3401,22 +2509,22 @@ describe("undo survives a self-write reload echo (Ctrl+Z of a delete)", () => {
     blocks,
   });
 
-  it("keeps the delete-undo entry when a reload's content matches memory", async () => {
+  it("keeps the delete-undo entry when a reload's content matches memory", () => {
     load([blk("keep"), blk("victim")]);
     deleteBlock(doc.pages[0].roots[1]);
     expect(shape()).toEqual([["keep"]]);
     // The watcher re-reports our OWN just-saved content (identical) — this must NOT
     // drop the undo entry we pushed for the delete.
-    await reloadPage(echo([{ id: "x", raw: "keep", collapsed: false, children: [] }]));
+    reloadPage(echo([{ id: "x", raw: "keep", collapsed: false, children: [] }]));
     undo();
     expect(shape()).toEqual([["keep"], ["victim"]]); // deletion undone
   });
 
-  it("still invalidates undo on a GENUINE external change", async () => {
+  it("still invalidates undo on a GENUINE external change", () => {
     load([blk("keep"), blk("victim")]);
     deleteBlock(doc.pages[0].roots[1]);
     // Different content on disk → a real external edit → undo is (correctly) dropped.
-    await reloadPage(echo([{ id: "x", raw: "changed elsewhere", collapsed: false, children: [] }]));
+    reloadPage(echo([{ id: "x", raw: "changed elsewhere", collapsed: false, children: [] }]));
     undo();
     expect(shape()).toEqual([["changed elsewhere"]]); // undo was a no-op; external content kept
   });
@@ -3429,15 +2537,26 @@ describe("toggleListItemAtIndex (positional checkbox toggle)", () => {
   it("flips the exact line among identical checkbox labels", () => {
     const b = blk("Title\n+ [ ] same\n+ [ ] same");
     load([b]);
-    toggleListItemAtIndex(b.id, 2); // line index 2 = the SECOND "+ [ ] same"
+    toggleListItemAtIndex(b.id, 2, 2); // line index 2 = the SECOND "+ [ ] same"; column 2 = its checkbox
     expect(doc.byId[b.id].raw).toBe("Title\n+ [ ] same\n+ [x] same");
   });
 
   it("ignores a non-checkbox line index (no-op, no corruption)", () => {
     const b = blk("Title\n+ [ ] a");
     load([b]);
-    toggleListItemAtIndex(b.id, 0); // "Title" is not a checkbox line
+    toggleListItemAtIndex(b.id, 0, 0); // "Title" is not a checkbox line
     expect(doc.byId[b.id].raw).toBe("Title\n+ [ ] a");
+  });
+
+  it("flips only the token at the given column (a literal `[ ]` in the label stays)", () => {
+    const b = blk("Tasks\n+ [x] literal [ ]");
+    load([b]);
+    toggleListItemAtIndex(b.id, 1, 2);
+    expect(doc.byId[b.id].raw).toBe("Tasks\n+ [ ] literal [ ]");
+    toggleListItemAtIndex(b.id, 1, 14); // an explicit column names whichever token a caller computed
+    expect(doc.byId[b.id].raw).toBe("Tasks\n+ [ ] literal [x]");
+    toggleListItemAtIndex(b.id, 1, 3); // not at a token boundary: no-op
+    expect(doc.byId[b.id].raw).toBe("Tasks\n+ [ ] literal [x]");
   });
 });
 
@@ -3629,210 +2748,5 @@ describe("SCHEDULED/DEADLINE time (#30) — read/write round-trip, OG format", (
     // Simulate the picker committing a NEW day with the seeded time carried through.
     setSchedule(b.id, "scheduled", { y: 2026, m: 6, d: 10 }, sel.repeater, sel.time);
     expect(doc.byId[b.id].raw).toBe("Task\nSCHEDULED: <2026-07-10 Fri 14:30>");
-  });
-});
-
-// Direct Files data-safety audit, 2026-08-09, finding 5.
-//
-// The watcher sites computed `reloadDisposition` and then applied the reload
-// AFTER an `await backend().getPage(...)`. On a large graph that IPC is tens to
-// hundreds of ms, and a Syncthing burst fires many concurrently. Text typed
-// inside that window was destroyed: `upsertPage` replaces the page, dropping the
-// edit and its undo, with no conflict raised and nothing written to disk.
-describe("a watcher reload re-checks safety at the moment it applies", () => {
-  const disk = (name: string, raw: string): PageDto => ({
-    name,
-    kind: "page",
-    title: name,
-    pre_block: null,
-    blocks: [{ id: `${name}-disk`, raw, collapsed: false, children: [] }],
-  });
-
-  it("declines when the page went dirty while the DTO was in flight", async () => {
-    loadSingle({
-      name: "Raced",
-      kind: "page",
-      title: "Raced",
-      pre_block: null,
-      blocks: [{ id: "raced-1", raw: "original", collapsed: false, children: [] }],
-    });
-    // "reload" was the correct verdict when the watcher event arrived...
-    expect(reloadDisposition("Raced")).toBe("reload");
-    // ...then the user typed while getPage was in flight.
-    setRaw("raced-1", "the user typed this");
-
-    expect(await reloadPageIfStillSafe("Raced", disk("Raced", "what the disk says"))).toBe(false);
-    expect(doc.byId["raced-1"].raw).toBe("the user typed this");
-  });
-
-  it("still applies an ordinary reload of a clean page", async () => {
-    // Necessity guard: the re-check must not disable watcher reloads outright.
-    loadSingle({
-      name: "Clean",
-      kind: "page",
-      title: "Clean",
-      pre_block: null,
-      blocks: [{ id: "clean-1", raw: "original", collapsed: false, children: [] }],
-    });
-    expect(await reloadPageIfStillSafe("Clean", disk("Clean", "from disk"))).toBe(true);
-    expect(pageByName("Clean")!.roots.map((id) => doc.byId[id].raw)).toEqual(["from disk"]);
-  });
-
-  it("does not install a DTO whose exact read snapshot changed before activation", async () => {
-    const stale = {
-      ...disk("Stale", "bytes from the completed read"),
-      path: "pages/Stale.md",
-      rev: "revision-from-the-read",
-    };
-    const activate = vi.spyOn(backend(), "activateEditor").mockImplementation(
-      async (_path, _intent, expected) => {
-        if (expected === stale.rev) throw new Error("activation.snapshot_changed");
-        return { activation: 4001, target: stale.path, prospective: false };
-      },
-    );
-
-    const refusal = await ensurePageLoaded(stale);
-
-    expect(refusal).toEqual({ reason: "activation-failed", page: "Stale" });
-    expect(activate).toHaveBeenCalledWith(stale.path, "replace", stale.rev);
-    expect(pageByName("Stale")).toBeUndefined();
-  });
-});
-
-describe("GH #546 — page-header properties saved while the user is still typing", () => {
-  it("reconciles the store with the page header the save just wrote to disk", async () => {
-    // Page-header properties authored as the flagless properties-only first
-    // bullet: the projection folds them into pre_block (GH #198), so the file
-    // ends up carrying a preamble the STORE does not know about. That
-    // divergence is the root cause of the reporter's toast — from here on the
-    // store proposes pre_block=null, and the first keystroke that leaves the
-    // bullet transiently not properties-only ships the header property as
-    // outline content, which the disk firewall must refuse (GH #163).
-    load([blk("alias:: book")]);
-    markDirty("Test");
-    const saved: PageDto[] = [];
-    const saveSpy = vi.spyOn(backend(), "savePage").mockImplementation(async (dto) => {
-      saved.push(dto);
-      return { revision: "gh546-rev" };
-    });
-    try {
-      await flushPage("Test");
-    } finally {
-      saveSpy.mockRestore();
-    }
-
-    // Preconditions, asserted separately from the property below: the fold
-    // really did happen, so disk now carries the header as a preamble.
-    expect(saved).toHaveLength(1);
-    expect(saved[0].pre_block).toBe("alias:: book");
-    expect(saved[0].blocks).toEqual([]);
-
-    // One keystroke into a second property, whose `::` is not typed yet.
-    setRaw(doc.pages[0].roots[0], "alias:: book\ntag");
-
-    // The property this test exists to protect. The Rust data-preservation
-    // firewall refuses a DTO that empties `pre_block` while presenting a
-    // page-header property as outline content (GH #163), and that refusal
-    // reaches the user as `reason code: unknown`, is classified retryable, and
-    // after three tries becomes a red toast mid-edit. The store must therefore
-    // never propose that shape once the header is on disk as a preamble.
-    const dto = pageToDto("Test");
-    const strandsHeaderInOutline =
-      dto !== null
-      && !(dto.pre_block ?? "")
-      && JSON.stringify(dto.blocks).includes("alias:: book");
-    expect(strandsHeaderInOutline).toBe(false);
-
-    // And the edit is not stranded by deferring it: as soon as the properties
-    // are valid again the page serializes normally, header and all. Without
-    // this the bug could be "fixed" by never saving the page again.
-    setRaw(doc.pages[0].roots[0], "alias:: book\ntag:: x");
-    expect(pageToDto("Test")?.pre_block).toBe("alias:: book\ntag:: x");
-    expect(pageToDto("Test")?.blocks).toEqual([]);
-  });
-});
-
-describe("GH #535 — a save the data-preservation firewall refuses", () => {
-  it("is not retried, says so once, offers the draft, and clears when the page saves", async () => {
-    // The firewall's verdict is on the draft's content, so resending it cannot
-    // succeed. It used to arrive as `unknown`: retried at 100 and 300 ms, then
-    // a transient "after 3 tries" toast, then a page that silently never
-    // saved while every further edit repeated the cycle.
-    setToasts([]);
-    load([blk("Dosa")]);
-    let refuse = true;
-    let calls = 0;
-    const saveSpy = vi.spyOn(backend(), "savePage").mockImplementation(async () => {
-      calls++;
-      if (refuse) throw new DirectSaveFailureError("refused.data_preservation", "InvalidData");
-      return { revision: "gh535-rev" };
-    });
-    try {
-      for (const text of ["Dosa a", "Dosa ab", "Dosa abc"]) {
-        setRaw(doc.pages[0].roots[0], text);
-        markDirty("Test");
-        await flushPage("Test");
-      }
-      // Past the 400 ms autosave debounce and the old 100/300 ms retry timers.
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      // One attempt per flush plus the one debounced autosave the edits armed;
-      // no timed retries of a draft the firewall has already judged.
-      expect(calls).toBe(4);
-      expect(isDirty("Test")).toBe(true); // the draft stays live in this window
-      const refused = toasts().filter((toast) => toast.message.includes("Test"));
-      expect(refused).toHaveLength(1);
-      expect(refused[0]).toMatchObject({ kind: "error", sticky: true, action: { label: "Review unsaved" } });
-      expect(refused[0].message).toContain("did not save");
-
-      refuse = false;
-      setRaw(doc.pages[0].roots[0], "Dosa abcd");
-      markDirty("Test");
-      await flushPage("Test");
-      expect(isDirty("Test")).toBe(false);
-      expect(toasts().filter((toast) => toast.message.includes("Test"))).toEqual([]);
-    } finally {
-      saveSpy.mockRestore();
-    }
-  });
-});
-
-describe("GH #540 — an empty numbered item as a page's first bullet", () => {
-  it("stays a list item, so typing its text keeps saving", async () => {
-    // The numbered-list command leaves an empty first bullet whose raw is
-    // exactly `logseq.order-list-type:: number`. Folding that into the page
-    // header made the list page properties; the text typed next then either
-    // jammed every save as `reason code: unknown` or, once the store adopted
-    // the fold (GH #546), was never saved at all.
-    load([blk("logseq.order-list-type:: number")]);
-    markDirty("Test");
-    const saved: PageDto[] = [];
-    const saveSpy = vi.spyOn(backend(), "savePage").mockImplementation(async (dto) => {
-      saved.push(dto);
-      return { revision: "gh540-rev" };
-    });
-    try {
-      await flushPage("Test");
-    } finally {
-      saveSpy.mockRestore();
-    }
-    expect(saved).toHaveLength(1);
-    expect(saved[0].pre_block ?? null).toBeNull();
-    expect(saved[0].blocks.map((b) => b.raw)).toEqual(["logseq.order-list-type:: number"]);
-
-    setRaw(doc.pages[0].roots[0], "Dosa\nlogseq.order-list-type:: number");
-    const dto = pageToDto("Test");
-    expect(dto?.pre_block ?? null).toBeNull();
-    expect(dto?.blocks.map((b) => b.raw)).toEqual(["Dosa\nlogseq.order-list-type:: number"]);
-  });
-
-  it("keeps the block-scoped property list identical to the Rust promotion rule", async () => {
-    const { readFileSync } = await import("node:fs");
-    const rust = readFileSync("crates/tine-core/src/model/page_header.rs", "utf8");
-    const body = /BLOCK_SCOPED_PROPERTY_KEYS: &\[&str\] = &\[([^\]]*)\]/.exec(rust)?.[1] ?? "";
-    const rustKeys = [...body.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    const { BLOCK_SCOPED_PROPERTY_KEYS } = await import("./store/mutationPlans");
-    expect(rustKeys.length).toBeGreaterThan(0);
-    expect([...BLOCK_SCOPED_PROPERTY_KEYS]).toEqual(rustKeys);
   });
 });

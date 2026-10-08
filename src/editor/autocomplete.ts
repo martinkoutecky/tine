@@ -2,10 +2,14 @@
 // trigger at the caret, and apply a chosen completion. No DOM — unit-testable.
 
 import { TEMPLATE_VARS } from "./templateVars";
-import { QUERY_MACRO_SCAFFOLD, QUERY_MACRO_SCAFFOLD_CARET } from "./queryMacroName";
 import { isBareTagPrefix, tagRef } from "../tags";
 import { propertyKeyNorm } from "../render/block";
+import { QUERY_MACRO_SCAFFOLD, QUERY_MACRO_SCAFFOLD_CARET } from "./queryMacroName";
+import { searchFold } from "./searchFold";
 import { pageIdentityKey } from "../pageIdentity";
+import { isEditablePropertyKey } from "./properties";
+import { codeFences, lineStartsInFence } from "./fences";
+import type { Format } from "../render/ast";
 
 export type TriggerKind =
   | "page"
@@ -83,30 +87,12 @@ export interface Trigger {
 /** Existing canonical property identity, re-exported for editor authoring. */
 export const propertyKeyFold = propertyKeyNorm;
 
-/** True when the current line starts inside a preceding Markdown fence. A
- * fence-looking line inside code is content/closing syntax, never an opening
- * language declaration. */
-function insideFenceBefore(raw: string, lineStart: number): boolean {
-  let open: { char: "`" | "~"; len: number } | null = null;
-  for (const line of raw.slice(0, lineStart).split("\n")) {
-    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    if (!match) continue;
-    const fence = match[1];
-    const char = fence[0] as "`" | "~";
-    if (!open) {
-      open = { char, len: fence.length };
-    } else if (char === open.char && fence.length >= open.len && match[2].trim() === "") {
-      open = null;
-    }
-  }
-  return open !== null;
-}
-
 /** Detect an active completion trigger immediately before `caret`. */
 export function detectTrigger(
   raw: string,
   caret: number,
   propertyValueKey?: string | null,
+  format: Format = "md",
 ): Trigger | null {
   // No trigger spans a newline: the `[[` inner forbids it, `#tag`/`/command`
   // are anchored at line start or after whitespace, and `<command` starts its
@@ -122,13 +108,13 @@ export function detectTrigger(
   // merely moving into an existing `key:: value` line must not pop a menu.
   // OG parity: handler/editor.cljs:1907-1924 (name trigger) and :2211-2226
   // (chosen key immediately transitions to value search), checkout 6e7afa8eb.
-  if (!insideFenceBefore(raw, lineStart)) {
+  const propertyTrigger = ((): Trigger | null => {
     if (propertyValueKey) {
       const delimiter = before.indexOf("::");
       if (delimiter > 0) {
         const sourceKey = before.slice(0, delimiter);
         if (
-          /^[A-Za-z0-9_./-]+$/.test(sourceKey) &&
+          isEditablePropertyKey(sourceKey) &&
           propertyKeyFold(sourceKey) === propertyKeyFold(propertyValueKey)
         ) {
           const afterDelimiter = delimiter + 2;
@@ -158,13 +144,14 @@ export function detectTrigger(
       }
     }
 
-    // Match the persisted parser's property-key alphabet. In particular, a
+    // The persisted parser's property-key alphabet (`isEditablePropertyKey`, the
+    // one answerer; Unicode letters included). In particular, a
     // whitespace-separated prose phrase ending in `::` is not property syntax.
-    const propertyName = /^([A-Za-z0-9_./-]*)::$/.exec(before);
-    if (propertyName) {
+    const nameBeforeDelimiter = before.endsWith("::") ? before.slice(0, -2) : null;
+    if (nameBeforeDelimiter !== null && (nameBeforeDelimiter === "" || isEditablePropertyKey(nameBeforeDelimiter))) {
       return {
         kind: "property-name",
-        query: propertyName[1],
+        query: nameBeforeDelimiter,
         start: lineStart,
         end: caret,
       };
@@ -174,7 +161,7 @@ export function detectTrigger(
     // lets the user type the property name to its left. Keep the replacement
     // span through the delimiter even though the caret is before it, so
     // `::` -> caret 0 -> type `alp` yields `alp|::` and accepts as `alpha:: `.
-    if (raw.slice(caret, caret + 2) === "::" && /^[A-Za-z0-9_./-]*$/.test(before)) {
+    if (raw.slice(caret, caret + 2) === "::" && (before === "" || isEditablePropertyKey(before))) {
       return {
         kind: "property-name",
         query: before,
@@ -182,16 +169,21 @@ export function detectTrigger(
         end: caret + 2,
       };
     }
-  }
+    return null;
+  })();
+  // Code is literal: no property completion inside a fence. The parse behind that answer runs only
+  // when a property trigger is actually pending, never for ordinary typing.
+  if (propertyTrigger && !lineStartsInFence(raw, lineStart, format)) return propertyTrigger;
 
   // Opening Markdown fence language. Do not pop a menu for a bare fence typed
-  // inside other content (Enter keeps its established behavior); one language
-  // character is enough. /Code block and the whole-block ``` scaffold open the
-  // empty picker explicitly instead (Block.tsx `openFenceLanguagePicker`).
-  const fence = /^( {0,3})(`{3,}|~{3,})([\w+#.-]+)$/.exec(before);
-  if (fence && !insideFenceBefore(raw, lineStart)) {
-    const start = lineStart + fence[1].length + fence[2].length;
-    return { kind: "code-language", query: fence[3], start, end: caret };
+  // by hand (Enter keeps its established behavior); one language character is
+  // enough. The /Code block command explicitly opens the empty picker instead.
+  // The opener is the parser's: a container (or the fence being typed) that opens on this line.
+  // The one-character test only skips the parse for lines that cannot hold a fence delimiter.
+  if (before.includes("`") || before.includes("~")) {
+    const opener = codeFences(raw).find((f) => lineStart <= f.start && f.start - lineStart <= 3 && f.delimEnd <= caret && caret < f.openEnd);
+    const language = opener ? raw.slice(opener.delimEnd, caret) : "";
+    if (opener && /^[\w+#.-]+$/.test(language)) return { kind: "code-language", query: language, start: opener.delimEnd, end: caret };
   }
 
   // [[page and ((block — an opener with no closer since (the line has no
@@ -256,11 +248,12 @@ export function propertyValueKeyAfterBoundary(
   if (typed !== " " && typed !== ",") return null;
   const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
   const before = raw.slice(lineStart, caret);
-  const match = /^([A-Za-z0-9_./-]+)::(.*)$/.exec(before);
-  if (!match) return null;
-  if (typed === " " && match[2] !== " ") return null;
-  if (typed === "," && !match[2].endsWith(",")) return null;
-  return propertyKeyFold(match[1]);
+  const delimiter = before.indexOf("::");
+  if (delimiter <= 0 || !isEditablePropertyKey(before.slice(0, delimiter))) return null;
+  const rest = before.slice(delimiter + 2);
+  if (typed === " " && rest !== " ") return null;
+  if (typed === "," && !rest.endsWith(",")) return null;
+  return propertyKeyFold(before.slice(0, delimiter));
 }
 
 /** OG-style bracket auto-pairing for page refs, run AFTER the browser has
@@ -384,29 +377,22 @@ function canonicalCompare<T extends NamedAutocompleteItem<unknown>>(a: T, b: T):
  * lifecycle but deliberately expose no rows; the editor also skips quickSwitch
  * for them. Nonblank results are canonical-name ordered so graph/index order is
  * never an accidental Enter policy. */
-/** The `[[`/`#` row label for a suggestion that is an authored alias. Core
- *  offers an alias as its own row, so choosing it inserts the alias text; the
- *  label names the page it belongs to (GH #558, GH #482). `owner` is the name
- *  resolved through the alias map, where an existing page wins, so an ordinary
- *  page gets no label. */
-export function aliasOfLabel(name: string, owner: string): string | undefined {
-  return pageIdentityKey(owner) === pageIdentityKey(name) ? undefined : `alias of ${owner}`;
-}
-
 export function orderAcItems<T>(
   matches: readonly NamedAutocompleteItem<T>[],
   createItem: NamedAutocompleteItem<T>,
-  opts: { query: string; policy: LinkAutocompletePolicy },
+  opts: { query: string; policy: LinkAutocompletePolicy; removeAccents?: boolean },
 ): T[] {
   const query = canonicalName(opts.query.trim());
+  const removeAccents = opts.removeAccents !== false;
+  const foldedQuery = searchFold(opts.query.trim(), removeAccents);
   if (!query) return [];
   const exact = matches.filter((match) => canonicalName(match.name) === query).sort(canonicalCompare);
   const remaining = exact.length
     ? matches.filter((match) => canonicalName(match.name) !== query)
     : matches;
 
-  const prefix = remaining.filter((match) => canonicalName(match.name).startsWith(query)).sort(canonicalCompare);
-  const fuzzy = remaining.filter((match) => !canonicalName(match.name).startsWith(query)).sort(canonicalCompare);
+  const prefix = remaining.filter((match) => searchFold(match.name, removeAccents).startsWith(foldedQuery)).sort(canonicalCompare);
+  const fuzzy = remaining.filter((match) => !searchFold(match.name, removeAccents).startsWith(foldedQuery)).sort(canonicalCompare);
   const ordered = [...prefix, ...fuzzy];
   // An existing exact page is always the default and makes Create redundant,
   // but it must not hide other valid page matches (GH #186).
@@ -428,6 +414,9 @@ export type CommandAction =
   | "record"
   | "drawio"
   | "now-time"
+  | "date-picker"
+  | "tomorrow"
+  | "yesterday"
   | "today"
   | "thatday"
   | "query-builder"
@@ -514,17 +503,9 @@ const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
     caret: `#+BEGIN_${t}\n`.length,
   })),
   { label: "Divider", insert: "---" },
-  // **One query command (SPEC §7.3).** There used to be two — "Query", which
-  // inserted the scaffold, and "Query (visual builder)", which opened the chip
-  // bar — and there is one query block, which opens in the builder. So this
-  // inserts the scaffold AND flags the block, and the sheet opens with the
-  // field chooser focused.
-  {
-    label: "Query",
-    insert: QUERY_MACRO_SCAFFOLD,
-    caret: QUERY_MACRO_SCAFFOLD_CARET,
-    action: "query-builder",
-  },
+  // One query command (master 2617ff194, SPEC §7.3): it inserts the scaffold
+  // AND flags the block, so the sheet opens with the field chooser focused.
+  { label: "Query", insert: QUERY_MACRO_SCAFFOLD, caret: QUERY_MACRO_SCAFFOLD_CARET, action: "query-builder" },
   { label: "Embed", insert: "{{embed }}", caret: 8 },
   // OG's slash entry is named "Embed Youtube timestamp" (og-1.0.0
   // 6e7afa8eb, commands.cljs:294-300).
@@ -532,6 +513,9 @@ const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
   { label: "Math block", insert: "$$$$", caret: 2 },
   { label: "Current time", action: "now-time" },
   { label: "Today", action: "today" },
+  { label: "Tomorrow", action: "tomorrow" },
+  { label: "Yesterday", action: "yesterday" },
+  { label: "Date picker", action: "date-picker" },
   { label: "That day", action: "thatday" },
   { label: "Page properties", action: "page-props" },
   // Template variables: insert the `<% … %>` placeholder (expanded when the
@@ -543,7 +527,7 @@ const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
 const BARE_ORDER = new Map<string, number>([
   "Page reference", "Link", "Upload an asset", "Voice recording", "Draw.io diagram",
   "Heading (Auto)", "Heading 1", "Heading 2", "Heading 3", "Heading 4",
-  "Today", "That day", "Current time",
+  "Today", "Tomorrow", "Yesterday", "Date picker", "That day", "Current time",
   "TODO", "DOING", "LATER", "NOW", "DONE", "WAITING", "WAIT", "IN-PROGRESS", "CANCELED", "Scheduled", "Deadline",
   "Priority A", "Priority B", "Priority C",
   "Grid", "Table", "Board",
@@ -722,4 +706,13 @@ export function filterAdvancedBlockCommands(query: string): AdvancedBlockCommand
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score || a.command.matchTieOrder - b.command.matchTieOrder)
     .map(({ command }) => command);
+}
+
+/** The `[[`/`#` row label for a suggestion that is an authored alias. Core
+ *  offers an alias as its own row, so choosing it inserts the alias text; the
+ *  label names the page it belongs to (GH #558, GH #482). `owner` is the name
+ *  the page index resolves (an existing page wins), so an ordinary page gets
+ *  no label. */
+export function aliasOfLabel(name: string, owner: string): string | undefined {
+  return pageIdentityKey(owner) === pageIdentityKey(name) ? undefined : `alias of ${owner}`;
 }

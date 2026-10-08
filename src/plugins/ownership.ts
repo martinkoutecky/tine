@@ -1,10 +1,13 @@
-import { graphMeta, graphTransitioning } from "../ui";
-import { graphBinding } from "../persistence";
+import { bindingIdentity } from "../binding";
+import { graphMeta } from "../graphSession";
+import { graphTransitioning } from "../ui";
 import type { PluginBlockSnapshot } from "./protocol";
 
+/** A plugin call is owned by the graph binding, not the render epoch: a display-only
+ * repaint (rename, typography, title format) must not drop plugin work in flight. */
 export interface PluginGraphOwner {
   readonly graphRoot: string;
-  readonly generation: number;
+  readonly generation: string;
 }
 
 export interface OwnedPluginBlockSnapshot {
@@ -15,13 +18,13 @@ export interface OwnedPluginBlockSnapshot {
 export function capturePluginGraphOwner(): PluginGraphOwner | null {
   const root = graphMeta()?.root;
   if (!root || graphTransitioning()) return null;
-  return Object.freeze({ graphRoot: root, generation: graphBinding() });
+  return Object.freeze({ graphRoot: root, generation: bindingIdentity() });
 }
 
 export function isPluginGraphOwnerCurrent(owner: PluginGraphOwner): boolean {
   return !graphTransitioning()
     && graphMeta()?.root === owner.graphRoot
-    && graphBinding() === owner.generation;
+    && bindingIdentity() === owner.generation;
 }
 
 export function bindPluginBlockSnapshot(block: PluginBlockSnapshot): OwnedPluginBlockSnapshot | null {

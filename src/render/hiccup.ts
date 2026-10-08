@@ -1,6 +1,6 @@
 // Bounded, data-only Hiccup transcription for configured macro expansions.
 // OG safe-reads Hiccup, serializes it, then sanitizes the HTML at
-// /aux/koutecky/logseq/og/src/main/frontend/components/block.cljs:1554-1562.
+// upstream Logseq src/main/frontend/components/block.cljs:1554-1562.
 // This module deliberately implements only the frozen supported subset; it never
 // evaluates ClojureScript, and its output is still untrusted until DOMPurify runs.
 
@@ -8,6 +8,9 @@ const MAX_SOURCE_BYTES = 64 * 1024;
 const MAX_DEPTH = 64;
 const MAX_NODES = 2048;
 const TOKEN = /^[A-Za-z][A-Za-z0-9-]*$/;
+// Hiccup's frozen EDN subset keeps the authored spelling (including exponent,
+// leading-dot and trailing-dot forms); sheet/formula decimal cells are stricter.
+const HICCUP_NUMBER = /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$/;
 
 class HiccupParseError extends Error {}
 
@@ -282,13 +285,12 @@ class Reader {
   }
 
   private startsNumber(): boolean {
-    const token = this.peekAtom();
-    return /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$/.test(token);
+    return HICCUP_NUMBER.test(this.peekAtom());
   }
 
   private readNumber(): string {
     const token = this.readAtom();
-    if (!/^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$/.test(token)) this.fail();
+    if (!HICCUP_NUMBER.test(token)) this.fail();
     return token;
   }
 

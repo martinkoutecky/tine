@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { readAppStylesheet } from "../testSource";
+import { readFileSync } from "node:fs";
 
-const app = readAppStylesheet();
+const app = readFileSync("src/styles/app.css", "utf8");
+const appTsx = readFileSync("src/App.tsx", "utf8");
 
 function ruleBody(selectorPattern: RegExp): string {
   return app.match(selectorPattern)?.[1] ?? "";
@@ -45,6 +46,13 @@ describe("pane end-of-page slack is pane-relative (GH #369)", () => {
     expect(inner).toMatch(/\bwidth:\s*100%/);
   });
 
+  it("caps the standard column at the user's override, else the theme default; Wide mode likewise", () => {
+    const inner = ruleBody(/^\.main-content-inner\s*\{([^}]*)\}/m);
+    expect(inner).toContain("max-width: var(--tine-main-content-max-width, var(--ls-main-content-max-width))");
+    const wide = ruleBody(/^\.wide-mode \.main-content-inner\s*\{([^}]*)\}/m);
+    expect(wide).toContain("max-width: var(--tine-wide-content-max-width, var(--ls-main-content-max-width-wide))");
+  });
+
   it("lets the idle spacer absorb only real free space, never manufacture overflow", () => {
     const spacer = ruleBody(/^\.main-content::after\s*\{([^}]*)\}/m);
     // Grow through unused pane space, but start from zero and remain shrinkable:
@@ -58,5 +66,12 @@ describe("pane end-of-page slack is pane-relative (GH #369)", () => {
     expect(overflowing).toMatch(/flex:\s*1\s+0\s+40%/);
     // Mounting a textarea is transient and must not change pane geometry.
     expect(app).not.toMatch(/\.main-content:has\(\.block-editor\)::after/);
+  });
+
+  it("toggles that class from the pane's measured natural overflow, in every pane scroller (GH #390)", () => {
+    expect(appTsx).toMatch(/"natural-content-overflow":\s*naturalOverflow\(\)/);
+    expect(appTsx).toMatch(/inner\.scrollHeight\s*>\s*scroller\.clientHeight\s*\+\s*1/);
+    // Both the solo and the multi-pane leaf render through PaneScroller.
+    expect(appTsx).not.toMatch(/<main\s+class="main-content/);
   });
 });

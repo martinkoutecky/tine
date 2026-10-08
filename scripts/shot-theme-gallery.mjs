@@ -1,12 +1,9 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Built-in theme gallery acceptance shots. Runs against the built frontend and
 // mock backend, saving full visual checks under subagent-tasks/notes/ plus small
 // crops used by Settings card thumbnails.
 // Usage (after `source scripts/env.sh && npm run build`):
 //   node scripts/shot-theme-gallery.mjs
-// Set TINE_UPDATE_THEME_THUMBNAILS=1 only when intentionally refreshing the
-// checked-in Settings thumbnails; ordinary verification leaves them untouched.
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -16,7 +13,6 @@ const OUT = "subagent-tasks/notes";
 const THUMBS = "public/theme-thumbnails";
 const THEMES = ["nord", "solarized", "gruvbox"];
 const MODES = ["light", "dark"];
-const UPDATE_THUMBNAILS = process.env.TINE_UPDATE_THEME_THUMBNAILS === "1";
 
 mkdirSync(OUT, { recursive: true });
 mkdirSync(THUMBS, { recursive: true });
@@ -25,6 +21,18 @@ const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--stric
   stdio: "ignore",
 });
 
+async function waitForServer(url, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return;
+    } catch {
+      // still starting
+    }
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 async function openPage(browser, customCss = "") {
   const context = await browser.newContext({
@@ -70,20 +78,15 @@ async function metrics(page) {
     const code = document.querySelector(".inline-code, .code-block, code");
     const sidebar = document.querySelector(".left-sidebar");
     const theme = document.getElementById("tine-theme");
-    const custom = document.getElementById("tine-custom-css");
     const ids = Array.from(document.head.children).map((el) => el.id).filter(Boolean);
     return {
       bg: style(body, "background-color"),
-      primaryToken: style(document.documentElement, "--bg-primary").trim(),
-      primaryLsToken: style(document.documentElement, "--ls-primary-background-color").trim(),
-      bodyPrimaryToken: style(body, "--bg-primary").trim(),
       text: style(body, "color"),
       link: link ? style(link, "color") : "",
       tag: tag ? style(tag, "color") : "",
       border: sidebar ? style(sidebar, "border-right-color") : "",
       codeBg: code ? style(code, "background-color") : "",
       themeBytes: theme?.textContent?.length ?? 0,
-      customBytes: custom?.textContent?.length ?? 0,
       order: ids.filter((id) => id === "tine-ls-shim" || id === "tine-theme" || id === "tine-custom-css"),
     };
   });
@@ -108,7 +111,7 @@ function assertManagedOrder(label, order) {
 }
 
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 40, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({
     args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
   });
@@ -124,7 +127,7 @@ try {
     assertManagedOrder(`Default/${mode}`, got.order);
     defaultMetrics[mode] = got;
     await page.screenshot({ path: `${OUT}/theme-gallery-default-${mode}.png` });
-    if (mode === "light" && UPDATE_THUMBNAILS) {
+    if (mode === "light") {
       await page.screenshot({
         path: `${THUMBS}/default.png`,
         clip: { x: 246, y: 58, width: 640, height: 360 },
@@ -142,7 +145,7 @@ try {
       assertManagedOrder(`${theme}/${mode}`, got.order);
       assertRecolored(theme, mode, got, defaultMetrics[mode]);
       await page.screenshot({ path: `${OUT}/theme-gallery-${theme}-${mode}.png` });
-      if (mode === "light" && UPDATE_THUMBNAILS) {
+      if (mode === "light") {
         await page.screenshot({
           path: `${THUMBS}/${theme}.png`,
           clip: { x: 246, y: 58, width: 640, height: 360 },

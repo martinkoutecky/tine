@@ -1,10 +1,11 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { __setBackendForTest } from "../backend";
-import { graphBindingRuntime } from "../graphBindingRuntime";
 import { initParser } from "../render/parse";
 import { inlineText, parseBody } from "../render/facets";
-import { pageToDto, resetStore, setDoc, undo, doc, type FeedPage, type Node as StoreNode } from "../store";
-import { setToasts, toasts } from "../ui";
+import { resetStore, undo } from "../document";
+import { pageToDto } from "../document/convert";
+import { type FeedPage, type Node as StoreNode } from "../document/model";
+import { doc, setDoc } from "../document/model";
+import { setToasts, toasts } from "../toasts";
 import {
   canConvertPipeTableToGrid,
   convertGridToPipeTable,
@@ -18,8 +19,6 @@ beforeAll(() => initParser());
 
 beforeEach(() => {
   resetStore();
-  graphBindingRuntime.bind(1, { binding_generation: 1 });
-  __setBackendForTest(null);
   setToasts([]);
 });
 
@@ -283,5 +282,16 @@ describe("sheet pipe-table/grid conversions", () => {
 
     undo();
     expect(pageToDto("Sheet")).toEqual(before);
+  });
+});
+
+describe("grid to pipe table admission bound (og C, I-22)", () => {
+  it("refuses an oversized grid by its row count before visiting its rows", () => {
+    grid();
+    // 300,000 row ids: the refusal must come from the count, not from mapping
+    // every row (whose spread into Math.max exceeds the engine argument limit).
+    setDoc("byId", "grid", "children", Array.from({ length: 300_000 }, (_, i) => `missing-${i}`));
+    expect(() => convertGridToPipeTable("grid")).not.toThrow();
+    expect(toasts().at(-1)?.message).toContain("larger than 30 columns by 200 rows");
   });
 });

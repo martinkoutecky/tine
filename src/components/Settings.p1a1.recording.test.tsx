@@ -1,15 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { installKeybindings, setKeybindingsSuspended } from "../keybindings";
-import {
-  closeSettings,
-  closeSwitcher,
-  openSettings,
-  setShortcutOverrides,
-  settingsOpen,
-  shortcutOverrides,
-  switcherOpen,
-} from "../ui";
+import { closeSettings, closeSwitcher, openSettings, setShortcutOverrides, settingsOpen, shortcutOverrides, switcherOpen } from "../ui";
 import { clearTransientLayersForTest } from "../transientLayers";
 import { Settings } from "./Settings";
 
@@ -24,36 +16,6 @@ function keydown(init: KeyboardEventInit & { composing?: boolean; keyCode?: numb
 }
 
 describe("GH #161 P1A1-F2 Settings shortcut recording", () => {
-  it("routes the existing Settings search to shortcut commands on that tab (GH #380)", async () => {
-    const root = document.createElement("div");
-    document.body.append(root);
-    const dispose = render(() => <Settings />, root);
-    try {
-      openSettings("shortcuts");
-      await tick();
-      const input = root.querySelector<HTMLInputElement>(".settings-search-input")!;
-      expect(input.placeholder).toBe("Search shortcuts...");
-      input.value = "Find in page";
-      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
-      await tick();
-
-      expect(root.querySelector(".settings-search-results")).toBeNull();
-      const ids = [...root.querySelectorAll<HTMLElement>(".help-shortcut-id")]
-        .map((element) => element.textContent);
-      expect(ids).toEqual(["go/find-in-page"]);
-
-      input.value = "no-such-shortcut";
-      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
-      await tick();
-      expect(root.querySelector(".help-shortcut-search-empty")?.textContent).toBe("No matching shortcuts");
-    } finally {
-      dispose();
-      clearTransientLayersForTest();
-      closeSettings();
-      root.remove();
-    }
-  });
-
   it("keeps ordinary recording reachable after the earlier global capture listener declines suspended input", async () => {
     const priorOverrides = { ...shortcutOverrides() };
     const priorStorage = localStorage.getItem(SHORTCUTS_KEY);

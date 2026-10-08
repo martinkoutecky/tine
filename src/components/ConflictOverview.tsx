@@ -1,14 +1,16 @@
-import { For, Show, onMount, type JSX } from "solid-js";
+import { For, Show, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { bindingOwner, readOwned, writeOwned } from "../owned";
 import type { PaneRouter } from "../router";
+import { pushToast } from "../toasts";
 import type { ConflictObject, ConflictSource, SyncConflict } from "../types";
-import { conflictQueue, openPageInSidebar, pushToast, refreshSyncConflicts, syncConflicts } from "../ui";
+import { conflictQueue, openPageInSidebar, refreshSyncConflicts, syncConflicts } from "../ui";
+import { liveConflictObjects, pendingConflictCount } from "../liveConflicts";
 
-// Concord overview (GH #536): every page that needs a decision, in one place,
-// rendered from the live conflict queue and never written to the graph. It is
-// the INVENTORY; resolution still happens on the page, next to the blocks.
-// Rows vanish as the queue re-derives after each Apply, so the overview keeps
-// itself current by construction.
+// Concord overview (og 8c): every page that needs a decision, in one place,
+// rendered from the derived conflict queue and never written to the graph. It
+// is the INVENTORY; resolution happens on the page, next to the blocks. Rows
+// vanish as the queue re-derives after each Apply.
 
 const GROUPS: { source: ConflictSource; title: string }[] = [
   { source: "live-save", title: "Unsaved drafts" },
@@ -19,16 +21,11 @@ const GROUPS: { source: ConflictSource; title: string }[] = [
 
 export function conflictSourceLabel(conflict: ConflictObject): string {
   const side = (role: "mine" | "theirs") => conflict.sides.find((s) => s.role === role)?.label;
-  switch (conflict.source) {
-    case "live-save":
-      return "unsaved draft";
-    case "sync-copy":
-      return `sync copy · ${side("theirs") ?? "conflict copy"}`;
-    case "vcs-markers":
-      return `merge markers · ${side("mine") ?? "local"} vs ${side("theirs") ?? "merged-in"}`;
-    case "duplicate-journal":
-      return `${conflict.sides.length} files for one day`;
-  }
+  if (conflict.source === "live-save") return conflict.live?.restored ? "kept draft from an earlier session" : "unsaved draft";
+  if (conflict.source === "duplicate-journal") return `${conflict.sides.length} files for one day`;
+  return conflict.source === "sync-copy"
+    ? `sync copy · ${side("theirs") ?? "conflict copy"}`
+    : `merge markers · ${side("mine") ?? "local"} vs ${side("theirs") ?? "merged-in"}`;
 }
 
 /** Absent is not zero: a count Tine did not compute shows "—", never "0". */
@@ -43,34 +40,35 @@ function copyPath(conflict: ConflictObject): string | undefined {
   return conflict.sides.find((s) => s.role === "theirs")?.path ?? undefined;
 }
 
-async function discardCopy(path: string, pageName: string): Promise<void> {
-  const name = path.split("/").pop() ?? path;
-  const confirmed = await backend().confirm(
-    `Discard the conflict copy “${name}”?\n\n` +
-      `It moves to logseq/.tine-trash (recoverable). The current “${pageName}” is left as-is.`,
-  );
-  if (!confirmed) return;
-  try {
-    await backend().trashSyncConflict(path);
-    pushToast(`Discarded ${name}`, "success");
-    await refreshSyncConflicts();
-  } catch (e) {
-    pushToast(`Couldn’t discard it: ${String(e)}`, "error");
-  }
-}
-
 export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
+  let alive = true;
+  onCleanup(() => { alive = false; });
   onMount(() => void refreshSyncConflicts());
+  const discardCopy = async (path: string, pageName: string) => {
+    const owner = bindingOwner(() => alive);
+    const name = path.split("/").pop() ?? path;
+    const confirmed = await readOwned(owner, backend().confirm(
+      `Discard the conflict copy “${name}”?\n\n` +
+        `It moves to logseq/.tine-trash (recoverable). The current “${pageName}” is left as-is.`
+    ));
+    if (confirmed.kind === "stale" || !confirmed.value) return;
+    try {
+      const result = await writeOwned(owner, backend().trashSyncConflict(path, "delete-page"));
+      if (result.kind === "stale") return;
+      pushToast(`Discarded ${name}`, "success");
+      await readOwned(owner, refreshSyncConflicts());
+    } catch (e) {
+      pushToast(`Couldn’t discard it: ${String(e)}`, "error");
+    }
+  };
   const orphans = (): SyncConflict[] => syncConflicts().filter((c) => !c.base_path);
   const open = (conflict: ConflictObject, event: MouseEvent) => {
-    // Address the exact FILE: a duplicate-day journal would otherwise resolve to
-    // the canonical file rather than the one carrying the conflict.
     const target = { name: conflict.page_name, pageKind: conflict.kind, path: conflict.page_path };
     // Shift- or middle-click keeps the overview in view beside the page.
     if (event.shiftKey || event.button === 1) openPageInSidebar(target);
     else props.router.openPageTarget(target);
   };
-  const total = () => conflictQueue().length + orphans().length;
+  const total = pendingConflictCount;
   return (
     <div class="conflict-overview">
       <h1 class="page-title">Conflicts</h1>
@@ -84,7 +82,8 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
         </p>
         <For each={GROUPS}>
           {(group) => {
-            const rows = () => conflictQueue().filter((c) => c.source === group.source);
+            // A live draft is not on disk, so it is not in the derived queue.
+            const rows = () => group.source === "live-save" ? liveConflictObjects() : conflictQueue().filter((c) => c.source === group.source);
             const extra = () => (group.source === "sync-copy" ? orphans() : []);
             return (
               <Show when={rows().length || extra().length}>
@@ -105,10 +104,7 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
                         <span class="conflict-overview-count">{conflictBlockCount(conflict)}</span>
                         <Show when={conflict.source === "sync-copy" && copyPath(conflict)}>
                           {(path) => (
-                            <button
-                              class="settings-btn settings-btn-danger"
-                              onClick={() => void discardCopy(path(), conflict.page_name)}
-                            >
+                            <button class="settings-btn settings-btn-danger" onClick={() => void discardCopy(path(), conflict.page_name)}>
                               Discard copy
                             </button>
                           )}
@@ -124,10 +120,7 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
                           sync copy · {copy.tag || "conflict copy"} · its page no longer exists
                         </span>
                         <span class="conflict-overview-count">—</span>
-                        <button
-                          class="settings-btn settings-btn-danger"
-                          onClick={() => void discardCopy(copy.path, copy.base_name)}
-                        >
+                        <button class="settings-btn settings-btn-danger" onClick={() => void discardCopy(copy.path, copy.base_name)}>
                           Discard copy
                         </button>
                       </div>

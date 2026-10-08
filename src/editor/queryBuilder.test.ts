@@ -13,7 +13,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ADVANCED_PHRASE,
+  JOURNAL_ANY_RANGE,
   MAX_QUERY_BUILDER_DEPTH,
+  anyTaskFilter,
+  isAnyTaskStatus,
+  OG_TASK_MARKERS,
   addChild,
   betweenFilter,
   builderLeafKind,
@@ -24,13 +28,16 @@ import {
   currentSort,
   encodePropertyLeaf,
   escapeLike,
+  filterChildren,
   filterLabel,
   filterValueLabel,
   filterPhrase,
   groupSelected,
   groupWithPrevious,
   isDisabledAt,
+  isEmptyFilter,
   journalFilter,
+  moveAcross,
   moveSibling,
   namespaceFilter,
   onPageFilter,
@@ -61,6 +68,11 @@ import {
   wrapAt,
   type PropertyOperatorId,
 } from "./queryBuilder";
+
+it("treats an empty or as false, matching the engine", () => {
+  expect(isEmptyFilter({ kind: "or", items: [] })).toBe(false);
+  expect(isEmptyFilter({ kind: "and", items: [] })).toBe(true);
+});
 import {
   forEachFilter,
   type Cardinality,
@@ -157,8 +169,23 @@ describe("leaf constructors mirror the OG parser's IR", () => {
     expect(namespaceFilter("Projects")).toEqual(
       throughPage({ kind: "leaf", leaf: { kind: "attr", attr: "name", op: "starts_with", value: { kind: "text", text: "Projects/" } } }),
     );
+    // OG has no `(journal)`: "In a journal page" is OG's own `between` over a range wider than any journal date (GH #619).
     expect(journalFilter()).toEqual(
-      throughPage({ kind: "leaf", leaf: { kind: "attr", attr: "journal", op: "eq", value: { kind: "bool", bool: true } } }),
+      throughPage({
+        kind: "leaf",
+        leaf: {
+          kind: "attr",
+          attr: "day",
+          op: "between",
+          value: {
+            kind: "list",
+            items: [
+              { kind: "date", literal: JOURNAL_ANY_RANGE[0] },
+              { kind: "date", literal: JOURNAL_ANY_RANGE[1] },
+            ],
+          },
+        },
+      }),
     );
     expect(pagePropertyFilter("fach", null)).toEqual(throughPage(propertyFilter("fach", null)));
   });
@@ -333,7 +360,7 @@ describe("filterValueLabel: the row's value cell holds VALUES", () => {
     expect(filterValueLabel(namespaceFilter("Projects"))).toBe("Projects");
     expect(filterValueLabel(pageRefFilter("Foo"))).toBe("Foo");
     expect(filterValueLabel(contentFilter("100% done"))).toBe("100% done");
-    expect(filterValueLabel(betweenFilter("scheduled", "-7d", "+7d"))).toBe("-7d ~ +7d");
+    expect(filterValueLabel(betweenFilter("scheduled", "-7d", "+7d"))).toBe("7 days ago to 7 days ahead");
   });
 
   it("keeps the whole phrase when a condition compares against nothing", () => {
@@ -357,7 +384,7 @@ describe("filterValueLabel: the row's value cell holds VALUES", () => {
 describe("filterLabel is total over the IR", () => {
   const fixture = JSON.parse(
     readFileSync(
-      join(fileURLToPath(new URL("../..", import.meta.url)), "crates/tine-core/tests/fixtures/query-ir/filter.json"),
+      join(fileURLToPath(new URL("../..", import.meta.url)), "crates/tine-core/src/query/fixtures/query-ir/filter.json"),
       "utf8",
     ),
   ) as Filter;
@@ -393,8 +420,8 @@ describe("filterLabel is total over the IR", () => {
     expect(filterLabel(namespaceFilter("Projects"))).toBe("namespace: Projects");
     expect(filterLabel(journalFilter())).toBe("on journal page");
     expect(filterLabel(contentFilter("100% done"))).toBe('text: "100% done"');
-    expect(filterLabel(betweenFilter("journal", "-30d", "today"))).toBe("between: -30d ~ today");
-    expect(filterLabel(betweenFilter("scheduled", "-7d", "+7d"))).toBe("scheduled between: -7d ~ +7d");
+    expect(filterLabel(betweenFilter("journal", "-30d", "today"))).toBe("journal date: last 30 days");
+    expect(filterLabel(betweenFilter("scheduled", "-7d", "+7d"))).toBe("scheduled: 7 days ago to 7 days ahead");
   });
 });
 
@@ -804,6 +831,17 @@ describe("filterPhrase / querySentence", () => {
     expect(said(querySentence({ anchor: "page", filter: { kind: "true" } }))).toBe("All pages");
   });
 
+  it("GH #619 item 9: in `Pages and blocks` mode the subject names both families, never `Blocks`", () => {
+    expect(said(querySentence({ anchor: "block", filter: { kind: "and", items: [] }, both: true })))
+      .toBe("All pages and blocks");
+    const filter: Filter = { kind: "and", items: [taskFilter(["TODO"])] };
+    const both = said(querySentence({ anchor: "block", filter, both: true }));
+    expect(both).toMatch(/^Pages and blocks where /);
+    expect(both).not.toMatch(/^Blocks where /);
+    // The one-family reading is unchanged.
+    expect(said(querySentence({ anchor: "block", filter, both: false }))).toMatch(/^Blocks where /);
+  });
+
   it("reads a filter as one sentence whose subject is the anchor", () => {
     const filter: Filter = {
       kind: "and",
@@ -998,6 +1036,100 @@ describe("groupWithPrevious", () => {
   });
 });
 
+describe("moveAcross (GH #619 item 6: drag a condition between groups)", () => {
+  const D = pageRefFilter("D");
+  const and = (...items: Filter[]): Filter => ({ kind: "and", items });
+  const or = (...items: Filter[]): Filter => ({ kind: "or", items });
+
+  it("moves a row into another group at the slot the drop line shows", () => {
+    const root = and(A, or(B, C, D));
+    expect(moveAcross(root, [0], [1], 0)).toEqual(and(or(A, B, C, D)));
+    expect(moveAcross(root, [0], [1], 2)).toEqual(and(or(B, C, A, D)));
+    expect(moveAcross(root, [0], [1], 3)).toEqual(and(or(B, C, D, A)));
+  });
+
+  it("moves a row out of a group into the root list, and a group left with two keeps its place", () => {
+    const root = and(A, or(B, C, D));
+    expect(moveAcross(root, [1, 2], [], 0)).toEqual(and(D, A, or(B, C)));
+    expect(moveAcross(root, [1, 0], [], 2)).toEqual(and(A, or(C, D), B));
+  });
+
+  it("dissolves a group left with one condition into its parent, in place", () => {
+    const root = and(A, or(B, C), D);
+    // C leaves the `or`: B takes the group's place, between A and D.
+    expect(moveAcross(root, [1, 1], [], 3)).toEqual(and(A, B, D, C));
+    // Moving into the group's own sibling slot at the front: same dissolve.
+    expect(moveAcross(root, [1, 0], [], 0)).toEqual(and(B, A, C, D));
+  });
+
+  it("dissolves inside the group's own wrapper, so `none of` stays a negation", () => {
+    const none: Filter = { kind: "not", inner: or(B, C) };
+    const root = and(A, none);
+    expect(moveAcross(root, [1, 0, 1], [], 0)).toEqual(and(C, A, { kind: "not", inner: B }));
+    const off: Filter = { kind: "off", inner: and(B, C) };
+    expect(moveAcross(and(A, off), [1, 0, 0], [], 0)).toEqual(and(B, A, { kind: "off", inner: C }));
+  });
+
+  it("keeps a one-child group whose wrapper would end up holding another wrapper", () => {
+    const negB: Filter = { kind: "not", inner: B };
+    const none: Filter = { kind: "not", inner: or(negB, C) };
+    const root = and(A, none);
+    const moved = moveAcross(root, [1, 0, 1], [], 0);
+    expect(moved).toEqual(and(C, A, { kind: "not", inner: or(negB) }));
+  });
+
+  it("dissolves a nested group into the group above it, not the root", () => {
+    const root = and(A, or(B, and(C, D)));
+    // D leaves the inner `and`: C takes its place inside the `or`.
+    expect(moveAcross(root, [1, 1, 1], [], 0)).toEqual(and(D, A, or(B, C)));
+  });
+
+  it("moves a whole group, wrappers and all, into another group", () => {
+    const group: Filter = { kind: "off", inner: or(B, C) };
+    const root = and(A, group, and(D, A));
+    expect(moveAcross(root, [1], [2], 1)).toEqual(and(A, and(D, group, A)));
+  });
+
+  it("does not move a group into itself or anything below it", () => {
+    const root = and(A, or(B, and(C, D)));
+    expect(moveAcross(root, [1], [1], 0)).toBe(root);
+    expect(moveAcross(root, [1], [1, 1], 0)).toBe(root);
+    const none: Filter = { kind: "not", inner: or(B, C) };
+    const wrapped = and(A, none);
+    expect(moveAcross(wrapped, [1], [1, 0], 0)).toBe(wrapped);
+  });
+
+  it("moving within one list is a reorder and dissolves nothing", () => {
+    const root = and(A, or(B, C));
+    expect(moveAcross(root, [1, 0], [1], 2)).toEqual(and(A, or(C, B)));
+    expect(moveAcross(root, [1, 0], [1], 0)).toBe(root);
+    expect(moveAcross(root, [1, 0], [1], 1)).toBe(root);
+  });
+
+  it("refuses stale paths, a leaf destination and an out-of-range slot", () => {
+    const root = and(A, or(B, C));
+    expect(moveAcross(root, [9], [], 0)).toBe(root);
+    expect(moveAcross(root, [0], [0], 0)).toBe(root);
+    expect(moveAcross(root, [0], [7], 0)).toBe(root);
+    expect(moveAcross(root, [0], [1], 3)).toBe(root);
+    expect(moveAcross(root, [0], [1], -1)).toBe(root);
+    expect(moveAcross(root, [], [1], 0)).toBe(root);
+  });
+
+  it("prunes a group the move emptied, and leaves authored empty groups alone", () => {
+    const solo = and(A, or(B), and());
+    // The one-child `or` loses B: it empties and goes; the authored empty `and` stays.
+    expect(moveAcross(solo, [1, 0], [], 0)).toEqual(and(B, A, and()));
+  });
+
+  it("never edits the input tree", () => {
+    const root = and(A, or(B, C));
+    const before = structuredClone(root);
+    moveAcross(root, [1, 1], [], 0);
+    expect(root).toEqual(before);
+  });
+});
+
 describe("moveSibling", () => {
   it("moves a row up and down among its own siblings", () => {
     const root: Filter = { kind: "and", items: [A, B, C] };
@@ -1176,5 +1308,126 @@ describe("editing a group that sits inside a unary wrapper", () => {
     const kept: Filter = { kind: "raw", text: "task = 'TODO'", diagnostic_kind: "not_applicable" };
     const root: Filter = { kind: "and", items: [A, { kind: "or", items: [child, kept, DEEP] }, C] };
     expect(unwrapAt(root, [1])).toEqual({ kind: "and", items: [A, child, kept, DEEP, C] });
+  });
+});
+
+it("tree edits preserve pre-existing empty boolean siblings", () => {
+  const empty: Filter[] = [{ kind: "or", items: [] }, { kind: "and", items: [] }, { kind: "not", inner: { kind: "or", items: [] } }];
+  const a: Filter = { kind: "true" };
+  const tree: Filter = { kind: "and", items: [...empty, a] };
+  expect(replaceAt(tree, [3], { kind: "false" })).toEqual({ kind: "and", items: [...empty, { kind: "false" }] });
+  expect(removeAt(tree, [3])).toEqual({ kind: "and", items: empty });
+  expect(addChild(tree, [], a)).toEqual({ kind: "and", items: [...empty, a, a] });
+  expect(setOp(tree, [], "or")).toEqual({ kind: "or", items: [...empty, a] });
+});
+
+
+it("all query editing gestures retain authored empty siblings (I-4; queryBuilder.ts edit)", () => {
+  const empty: Filter = { kind: "or", items: [] };
+  const tree: Filter = { kind: "and", items: [empty, A, B, { kind: "and", items: [C] }] };
+  for (const next of [
+    wrapAt(tree, [1], "not"), toggleDisabledAt(tree, [1]),
+    groupSelected(tree, [[1], [2]], "any"), groupWithPrevious(tree, [2]),
+    moveSibling(tree, [1], 2), unwrapAt(tree, [3]), setOp(tree, [3], "or"),
+    removeAt(tree, [3, 0]),
+  ]) expect(filterChildren(next)?.[0]).toEqual(empty);
+  expect(tree.items).toEqual([empty, A, B, { kind: "and", items: [C] }]);
+});
+
+// GH #619 (hestratos): task "Any status", "In a journal page" read-back, no "(advanced)" for builder shapes
+
+describe("task Any status (GH #619 item 2)", () => {
+  it("writes every status OG knows and reads back as `Any status`", () => {
+    const filter = anyTaskFilter();
+    expect(builderLeafKind(filter)).toBe("task");
+    expect(filterLabel(filter)).toBe("task: Any status");
+    expect(filterValueLabel(filter)).toBe("Any status");
+    // OG's own marker set, not Tine's STARTED, so OG can read the text.
+    expect(OG_TASK_MARKERS).not.toContain("STARTED");
+    expect(OG_TASK_MARKERS).toHaveLength(10);
+  });
+
+  it("does not call a partial selection `Any status`", () => {
+    expect(isAnyTaskStatus(["TODO", "DOING"])).toBe(false);
+    expect(filterLabel(taskFilter(["TODO", "DOING"]))).toBe("task: TODO | DOING");
+  });
+});
+
+describe("In a journal page (GH #619 item 3)", () => {
+  it("is recognised as the journal condition, not as dates", () => {
+    expect(builderLeafKind(journalFilter())).toBe("journal");
+    expect(filterLabel(journalFilter())).toBe("on journal page");
+    // A genuine date range stays a dates condition.
+    expect(builderLeafKind(betweenFilter("journal", "-30d", "today"))).toBe("between");
+  });
+});
+
+describe("no ⟨advanced⟩ for a shape the builder wrote (GH #619 item 5)", () => {
+  const said = (segments: { text: string }[]) => segments.map((s) => s.text).join("");
+  const everyBuilderShape: [string, Filter][] = [
+    ["page ref", pageRefFilter("A")],
+    ["task", taskFilter(["TODO"])],
+    ["any task", anyTaskFilter()],
+    ["priority", priorityFilter(["A"])],
+    ["property", propertyFilter("type", "book")],
+    ["scheduled", planningFilter("scheduled")],
+    ["deadline", planningFilter("deadline")],
+    ["journal", journalFilter()],
+    ["journal dates", betweenFilter("journal", "today", "+7d")],
+    ["scheduled dates", betweenFilter("scheduled", "today", "+7d")],
+    ["deadline dates", betweenFilter("deadline", "-7d", "today")],
+    ["scheduled from", betweenFilter("scheduled", "today", "")],
+    ["content", contentFilter("x")],
+    ["on page", onPageFilter("A")],
+    ["namespace", namespaceFilter("A")],
+    ["page property", pagePropertyFilter("fach", "x")],
+    ["page tags", pageTagsFilter(["a"])],
+  ];
+
+  it("keeps every builder shape one plain condition two groups deep", () => {
+    for (const [name, filter] of everyBuilderShape) {
+      const nested: Filter = {
+        kind: "and",
+        items: [pageRefFilter("x"), { kind: "or", items: [filter, pageRefFilter("y")] }],
+      };
+      expect(said(querySentence({ anchor: "block", filter: nested })), name).not.toContain(ADVANCED_PHRASE);
+    }
+  });
+
+  it("phrases a scheduled/deadline date in plain words", () => {
+    expect(filterLabel(betweenFilter("scheduled", "today", "+7d"))).toBe("scheduled: next 7 days");
+    expect(filterLabel(betweenFilter("deadline", "-7d", "today"))).toBe("deadline: last 7 days");
+    expect(filterLabel(betweenFilter("scheduled", "today", ""))).toBe("scheduled: from today");
+    expect(filterLabel(betweenFilter("journal", "-30d", "today"))).toBe("journal date: last 30 days");
+  });
+
+  it("still collapses a nested level the builder cannot re-collect", () => {
+    let rel: Filter = pageRefFilter("bottom");
+    for (let i = 0; i < 64; i++) {
+      rel = { kind: "leaf", leaf: { kind: "rel", rel: "page", quant: "any", pred: rel } };
+    }
+    expect(filterLabel(rel)).toContain(ADVANCED_PHRASE);
+    expect(filterLabel(rel).length).toBeLessThan(120);
+  });
+});
+
+// I-12: the TypeScript readers below are twins of Rust functions; each reads
+// the SAME golden file as its Rust test (query/tql_tests.rs, query/parse_tests.rs).
+import likeGolden from "../../tests/fixtures/i12-like-escape-golden.json";
+import propsGolden from "../../tests/fixtures/i12-props-reader-golden.json";
+import { propsParts } from "./queryBuilder";
+import type { Filter as IrFilter } from "./queryIr";
+
+describe("twins agree with the native goldens", () => {
+  it("escapeLike and plainLikeSubstring match escape_like_literal / plain_like_substring", () => {
+    for (const [text, want] of likeGolden.escape as [string, string][]) expect(escapeLike(text), JSON.stringify(text)).toBe(want);
+    for (const [pattern, want] of likeGolden.plain as [string, string | null][]) expect(plainLikeSubstring(pattern), JSON.stringify(pattern)).toBe(want);
+  });
+  it("propsParts matches Filter::props_key / props_atom_test", () => {
+    for (const c of propsGolden.cases) {
+      const parts = propsParts(c.pred as IrFilter);
+      expect(parts?.key ?? null, c.name).toBe(c.key);
+      if (c.key !== null) expect(parts?.atom ?? null, c.name).toEqual(c.atom);
+    }
   });
 });

@@ -112,3 +112,16 @@ describe("parseOutline", () => {
     expect(got.sort()).toEqual(want.sort());
   });
 });
+
+it("keeps list segmentation outside inline parser literals", () => {
+  expect(parseOutline("- `inline`\n2) second")).toEqual([
+    { raw: "`inline`", children: [] }, { raw: "second", children: [] },
+  ]);
+});
+
+it("uses parser byte ranges after Unicode text and normalizes CRLF once", () => {
+  const literal = "  ```text\n  - 値\n\n  ```";
+  expect(parseOutline(`- ž😀\r\n${literal.replaceAll("\n", "\r\n")}\r\n2) second`)).toEqual([
+    { raw: `ž😀\n${literal}`, children: [] }, { raw: "second", children: [] },
+  ]);
+});

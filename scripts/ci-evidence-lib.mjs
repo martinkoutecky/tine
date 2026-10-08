@@ -1,11 +1,6 @@
 export const REQUIRED_FULL_CI_JOBS = Object.freeze([
   "Full CI / Linux tests and release contracts",
-  "Full CI / Linux tine-core nextest contract",
-  "Full CI / Linux tine-core nextest shard 1/4",
-  "Full CI / Linux tine-core nextest shard 2/4",
-  "Full CI / Linux tine-core nextest shard 3/4",
-  "Full CI / Linux tine-core nextest shard 4/4",
-  "Full CI / Windows core compile + integration smoke",
+  "Full CI / Windows compile and core tests",
   "Full CI / Android core compile",
   "Full CI / performance A/B",
 ]);

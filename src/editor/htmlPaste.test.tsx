@@ -12,7 +12,7 @@ describe("structuredHtmlOutline", () => {
     ]);
   });
 
-  it("keeps literal square brackets instead of backslash-escaping them (GH: Martin; UI-PASTE-BRACKET-LITERAL-001)", () => {
+  it("keeps literal square brackets instead of backslash-escaping them (GH: Martin)", () => {
     // Multi-block matches outlineToHtml's own output for a multi-line block copy,
     // so the single-node plain-text bypass does not apply and the outline is asserted.
     expect(structuredHtmlOutline(
@@ -21,19 +21,6 @@ describe("structuredHtmlOutline", () => {
     )).toEqual([
       { raw: "see [ref] here", children: [] },
       { raw: "and [two]", children: [] },
-    ]);
-  });
-
-  it("keeps Markdown-shaped external text literal; link safety is ExternalLink's job, not the escaper's", () => {
-    // Martin's catalogued decision (UI-PASTE-BRACKET-LITERAL-001) wins over
-    // paste-time escaping. The pasted href can only ever open through
-    // backend().openExternal's native scheme allowlist.
-    expect(structuredHtmlOutline(
-      "<ul><li>[x](javascript:alert(1))</li><li>safe</li></ul>",
-      "[x](javascript:alert(1))\nsafe",
-    )).toEqual([
-      { raw: "[x](javascript:alert(1))", children: [] },
-      { raw: "safe", children: [] },
     ]);
   });
 
@@ -111,4 +98,8 @@ describe("structuredHtmlOutline", () => {
     const oversized = `<p>${"x".repeat(HTML_PASTE_LIMITS.inputBytes + 1)}</p>`;
     expect(structuredHtmlOutline(oversized, "x")).toBeNull();
   });
+});
+
+it("HTML paste keeps blank code lines", () => {
+  expect(structuredHtmlOutline("<pre><code>a\n\n\nb</code></pre>", "a\n\n\nb")).toEqual([{ raw: "```\na\n\n\nb\n```", children: [] }]);
 });

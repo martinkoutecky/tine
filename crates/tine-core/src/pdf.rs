@@ -11,7 +11,7 @@ use crate::doc::{DocBlock, Document};
 use crate::edn::{self, Edn};
 use crate::model::Format;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
@@ -269,48 +269,6 @@ pub fn parse_pdf_state(edn_str: &str) -> PdfState {
     }
 }
 
-/// Update only OG's `:extra` view fields while retaining highlights and all
-/// foreign root/extra fields. Invalid existing EDN fails closed (`None`).
-pub fn write_pdf_view_state(existing_edn: &str, page: i64, scale: f64) -> Option<String> {
-    if page < 1 || !scale.is_finite() || scale <= 0.0 {
-        return None;
-    }
-    let mut pairs = if existing_edn.trim().is_empty() {
-        vec![(kw("highlights"), Edn::Vec(Vec::new()))]
-    } else {
-        match edn::parse_strict(existing_edn)? {
-            Edn::Map(pairs) => pairs,
-            _ => return None,
-        }
-    };
-    let mut extra = match pairs
-        .iter()
-        .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "extra"))
-        .map(|(_, value)| value)
-    {
-        Some(Edn::Map(existing)) => existing.clone(),
-        _ => Vec::new(),
-    };
-    deep_merge(
-        &mut extra,
-        vec![
-            (kw("page"), Edn::Int(page)),
-            (kw("scale"), Edn::Float(scale)),
-        ],
-    );
-    if let Some((_, value)) = pairs
-        .iter_mut()
-        .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "extra"))
-    {
-        *value = Edn::Map(extra);
-    } else {
-        pairs.push((kw("extra"), Edn::Map(extra)));
-    }
-    let mut out = edn::to_string(&Edn::Map(pairs));
-    out.push('\n');
-    Some(out)
-}
-
 /// Recursively merge `new` pairs onto `old` (in place): a key present in both whose
 /// values are BOTH maps is merged deeper; otherwise `new` overwrites. Keys only in
 /// `old` are kept. This is how foreign EDN (data Tine doesn't model) round-trips.
@@ -330,39 +288,57 @@ fn deep_merge(old: &mut Vec<(Edn, Edn)>, new: Vec<(Edn, Edn)>) {
 /// Tine's fields for one highlight, merged ONTO its existing EDN map (matched by id)
 /// so any keys the user/Logseq added — at the top level or inside content/properties —
 /// survive a highlight edit. A brand-new highlight has no existing map → just ours.
+/// Only the model fields that CHANGED are written: an untouched entry is kept
+/// value-for-value, and a recolour does not rewrite `:position`, so rects or
+/// spellings this model cannot read survive an unrelated edit.
 fn merge_highlight(existing: Option<&Edn>, h: &Highlight) -> Edn {
-    match (existing, highlight_to(h)) {
-        (Some(Edn::Map(old)), Edn::Map(new)) => {
-            let mut merged = old.clone();
-            // `:position/:bounding` is deep-merged so foreign metadata survives,
-            // but its old and current coordinate spellings must not coexist: an
-            // old `:top` would otherwise shadow newly-written `:x1` on the next
-            // read. `:rects` is replaced as a whole by deep_merge below.
-            if let Some((_, Edn::Map(position))) = merged
-                .iter_mut()
-                .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "position"))
-            {
-                if let Some((_, Edn::Map(bounding))) = position
-                    .iter_mut()
-                    .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "bounding"))
-                {
-                    bounding.retain(|(key, _)| {
-                        !matches!(
-                            key,
-                            Edn::Keyword(name)
-                                if matches!(
-                                    name.as_str(),
-                                    "top" | "left" | "x1" | "y1" | "x2" | "y2" | "width" | "height"
-                                )
-                        )
-                    });
-                }
-            }
-            deep_merge(&mut merged, new);
-            Edn::Map(merged)
+    let (Some(Edn::Map(old)), Edn::Map(mut new)) = (existing, highlight_to(h)) else {
+        return highlight_to(h);
+    };
+    if let Some(prior) = existing.and_then(highlight_from) {
+        if prior == *h {
+            return existing.cloned().unwrap_or_else(|| highlight_to(h));
         }
-        (_, ours) => ours,
+        new.retain(|(key, _)| match key {
+            Edn::Keyword(name) => match name.as_str() {
+                "page" => prior.page != h.page,
+                "position" => prior.position != h.position,
+                "content" => prior.text != h.text || prior.image != h.image,
+                "properties" => prior.color != h.color,
+                _ => true,
+            },
+            _ => true,
+        });
     }
+    let mut merged = old.clone();
+    let rewrites_position = new
+        .iter()
+        .any(|(key, _)| matches!(key, Edn::Keyword(name) if name == "position"));
+    // `:position/:bounding` is deep-merged so foreign metadata survives,
+    // but its old and current coordinate spellings must not coexist: an
+    // old `:top` would otherwise shadow newly-written `:x1` on the next
+    // read. `:rects` is replaced as a whole by deep_merge below.
+    if let Some((_, Edn::Map(position))) = merged.iter_mut().find(|(key, _)| {
+        rewrites_position && matches!(key, Edn::Keyword(name) if name == "position")
+    }) {
+        if let Some((_, Edn::Map(bounding))) = position
+            .iter_mut()
+            .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "bounding"))
+        {
+            bounding.retain(|(key, _)| {
+                !matches!(
+                    key,
+                    Edn::Keyword(name)
+                        if matches!(
+                            name.as_str(),
+                            "top" | "left" | "x1" | "y1" | "x2" | "y2" | "width" | "height"
+                        )
+                )
+            });
+        }
+    }
+    deep_merge(&mut merged, new);
+    Edn::Map(merged)
 }
 
 /// Serialize highlights to `assets/<key>.edn`, PRESERVING the foreign content of the
@@ -382,12 +358,31 @@ pub fn write_highlights(highlights: &[Highlight], existing_edn: &str) -> String 
                 .collect()
         })
         .unwrap_or_default();
-    let hl_vec = Edn::Vec(
-        highlights
-            .iter()
-            .map(|h| merge_highlight(existing_by_id.get(&h.id), h))
-            .collect(),
-    );
+    let mut hl_items: Vec<Edn> = highlights
+        .iter()
+        .map(|h| merge_highlight(existing_by_id.get(&h.id), h))
+        .collect();
+    // An entry this model cannot read (reversed rect, missing position, a
+    // foreign shape) was never shown to the user, so no caller can have
+    // deleted it: carry it through value-for-value at its original index
+    // (L01 H1; in-scope: malformed imported content, a newer OG sidecar).
+    let owned: HashSet<&str> = highlights.iter().map(|h| h.id.as_str()).collect();
+    if let Some(entries) = root
+        .as_ref()
+        .and_then(|r| r.get("highlights"))
+        .and_then(Edn::as_vec)
+    {
+        for (index, entry) in entries.iter().enumerate() {
+            let claimed = entry
+                .get("id")
+                .and_then(highlight_id)
+                .is_some_and(|id| owned.contains(id));
+            if highlight_from(entry).is_none() && !claimed {
+                hl_items.insert(index.min(hl_items.len()), entry.clone());
+            }
+        }
+    }
+    let hl_vec = Edn::Vec(hl_items);
 
     // Keep every existing root key; replace only `:highlights`; ensure `:extra` exists
     // (OG canonical). A new/empty/unparseable file yields the canonical skeleton.
@@ -430,56 +425,12 @@ pub fn write_highlights(highlights: &[Highlight], existing_edn: &str) -> String 
 /// every non-alphanumeric to `_`, which diverged from OG and collided distinct
 /// PDFs — see `legacy_asset_key` for the read-fallback/migration path.)
 pub fn asset_key(pdf_filename: &str) -> String {
-    let stem = pdf_filename
-        .strip_suffix(".pdf")
-        .or_else(|| pdf_filename.strip_suffix(".PDF"))
-        .unwrap_or(pdf_filename);
-    sanitize_filename(stem)
+    crate::pdf_key::asset_key(pdf_filename, crate::pdf_key::PdfSuffix::Native)
 }
 
-/// Strip only the characters the npm `sanitize-filename` 1.6.3 library removes
-/// (default empty-string replacement), so the result matches OG's key byte-for-
-/// byte: drop the reserved set `/ ? < > \ : * | "`, control chars
-/// (`0x00–0x1f`, `0x80–0x9f`), trailing dots/spaces, and Windows reserved device
-/// names (CON/PRN/AUX/NUL/COM0-9/LPT0-9). Nothing is lowercased or substituted.
-fn sanitize_filename(s: &str) -> String {
-    let illegal = |c: char| matches!(c, '/' | '?' | '<' | '>' | '\\' | ':' | '*' | '|' | '"');
-    let control = |c: char| {
-        let n = c as u32;
-        n <= 0x1f || (0x80..=0x9f).contains(&n)
-    };
-    let mut out: String = s.chars().filter(|&c| !illegal(c) && !control(c)).collect();
-    // Windows: strip trailing dots and spaces.
-    while out.ends_with('.') || out.ends_with(' ') {
-        out.pop();
-    }
-    // Windows reserved device names (optionally with an extension) → removed.
-    let base = out.split('.').next().unwrap_or("").to_ascii_lowercase();
-    let reserved = matches!(base.as_str(), "con" | "prn" | "aux" | "nul")
-        || ((base.starts_with("com") || base.starts_with("lpt"))
-            && base.len() == 4
-            && base.as_bytes()[3].is_ascii_digit());
-    if reserved {
-        out.clear();
-    }
-    out
-}
-
-/// Tine's pre-launch key scheme (lowercased, every non-alphanumeric → `_`).
-/// Retained ONLY so highlight files written by older Tine builds can still be
-/// located (read-fallback) and migrated forward to the OG-compatible
-/// [`asset_key`] on the next write. Do not use for new writes.
+/// Read-fallback identity for highlights from pre-launch Tine versions.
 pub fn legacy_asset_key(pdf_filename: &str) -> String {
-    let stem = pdf_filename.strip_suffix(".pdf").unwrap_or(pdf_filename);
-    stem.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect()
+    crate::pdf_key::legacy_asset_key(pdf_filename)
 }
 
 pub fn hls_page_name(key: &str) -> String {
@@ -487,6 +438,7 @@ pub fn hls_page_name(key: &str) -> String {
 }
 
 /// Build the `hls__<key>` index page document for a set of highlights.
+#[cfg(test)]
 pub fn hls_page_document(pdf_filename: &str, label: &str, highlights: &[Highlight]) -> Document {
     hls_page_document_for_format(pdf_filename, label, highlights, Format::Md)
 }
@@ -497,27 +449,56 @@ pub fn hls_page_document_for_format(
     highlights: &[Highlight],
     format: Format,
 ) -> Document {
-    merge_hls_page_for_format(None, pdf_filename, label, highlights, format)
+    merge_hls_page_for_format(
+        None,
+        pdf_filename,
+        label,
+        highlights,
+        &HashSet::new(),
+        format,
+    )
 }
 
-/// Upsert highlights into an existing `hls__` page, **preserving each existing
-/// annotation block (and its child notes) by `id`**. New highlights are
-/// appended; highlights deleted from the set drop their block. This is what
-/// makes the review flow safe — re-saving never clobbers notes.
+/// Test shorthand: every existing annotation id missing from `highlights`
+/// counts as deleted by this write.
+#[cfg(test)]
 pub fn merge_hls_page(
     existing: Option<&Document>,
     pdf_filename: &str,
     label: &str,
     highlights: &[Highlight],
 ) -> Document {
-    merge_hls_page_for_format(existing, pdf_filename, label, highlights, Format::Md)
+    let removed = existing
+        .map(|doc| {
+            doc.roots
+                .iter()
+                .filter_map(|b| b.property("id"))
+                .filter(|id| highlights.iter().all(|h| h.id != *id))
+                .collect()
+        })
+        .unwrap_or_default();
+    merge_hls_page_for_format(
+        existing,
+        pdf_filename,
+        label,
+        highlights,
+        &removed,
+        Format::Md,
+    )
 }
 
+/// Upsert highlights into an existing `hls__` page, **preserving each existing
+/// annotation block (and its child notes) by `id`** and the page's block order.
+/// A block is dropped only when its id is in `removed` — highlights this write
+/// knows were deleted. An annotation whose id the writer does not know (its
+/// sidecar entry is unreadable, or the page arrived by sync before the sidecar)
+/// is kept (L01 H1/H2). New highlights go after the last annotation block.
 pub fn merge_hls_page_for_format(
     existing: Option<&Document>,
     pdf_filename: &str,
     label: &str,
     highlights: &[Highlight],
+    removed: &HashSet<String>,
     format: Format,
 ) -> Document {
     let asset_path = format!("../assets/{pdf_filename}");
@@ -534,78 +515,71 @@ pub fn merge_hls_page_for_format(
             format!("#+FILE-PATH: {asset_path}"),
         ],
     };
-    if let Some(doc) = existing {
-        if let Some(prev) = &doc.pre_block {
-            for line in prev.lines() {
-                let key = page_property_key(line, format);
-                if matches!(key.as_deref(), Some("file") | Some("file-path")) {
-                    continue;
-                }
-                pre_lines.push(line.to_string());
+    if let Some(prev) = existing.and_then(|doc| doc.pre_block.as_deref()) {
+        // The parser owns which preamble lines are the page's `file`/`file-path`
+        // properties: an example inside a code fence is text and survives.
+        let regions = crate::block_regions::parse_document(prev, format == Format::Org);
+        if regions.quarantined {
+            // Unparseable preamble (refused input): rewrite nothing we cannot
+            // read. The existing pointers stay as they are; none are generated.
+            pre_lines.clear();
+        }
+        let generated: Vec<crate::block_regions::Range> = regions
+            .page_properties()
+            .filter(|p| matches!(p.key.to_ascii_lowercase().as_str(), "file" | "file-path"))
+            .map(|p| p.line)
+            .collect();
+        let mut at = 0;
+        for line in prev.split_inclusive('\n') {
+            let start = at;
+            at += line.len();
+            if generated.iter().any(|r| r.0 < at && start < r.1) {
+                continue;
             }
+            let line = line.strip_suffix('\n').unwrap_or(line);
+            pre_lines.push(line.strip_suffix('\r').unwrap_or(line).to_string());
         }
     }
     let pre = pre_lines.join("\n");
 
-    // Split existing roots into annotation blocks (keyed by id) and everything
-    // else — user-authored top-level notes that must be PRESERVED, not rebuilt
-    // away. Annotations are regenerated from the (authoritative) highlight list so
-    // a removed highlight drops its block; a non-annotation root is always kept.
-    let mut ann_by_id: HashMap<String, DocBlock> = HashMap::new();
-    let mut user_roots: Vec<DocBlock> = Vec::new();
-    if let Some(doc) = existing {
-        for b in &doc.roots {
-            let is_annotation = b.property("ls-type").as_deref() == Some("annotation");
-            match b.property("id") {
-                Some(id) if is_annotation => {
-                    ann_by_id.insert(id, b.clone());
-                }
-                _ => user_roots.push(b.clone()),
-            }
-        }
-    }
-
-    let mut roots: Vec<DocBlock> = highlights
-        .iter()
-        .map(|h| match ann_by_id.remove(&h.id) {
+    let by_id: HashMap<&str, &Highlight> = highlights.iter().map(|h| (h.id.as_str(), h)).collect();
+    let mut placed: HashSet<&str> = HashSet::new();
+    let mut roots: Vec<DocBlock> = Vec::new();
+    let mut after_last_annotation = 0;
+    for b in existing.map(|doc| doc.roots.as_slice()).unwrap_or_default() {
+        let annotation = b.property("ls-type").as_deref() == Some("annotation");
+        let id = b.property("id").filter(|_| annotation);
+        match id.as_deref() {
             // Keep the user's note text + child blocks, but refresh the highlight
             // metadata (color/page) from the authoritative highlight — so
-            // recoloring in the PDF pane updates the colored badge here too.
-            Some(existing) => refresh_annotation(existing, h, format),
-            None => highlight_block(h, format),
-        })
+            // recoloring in the PDF pane updates the colored badge here too. A
+            // duplicate block for the same id is kept as it is, never dropped.
+            Some(id) if !placed.contains(id) && by_id.contains_key(id) => {
+                let (&key, h) = by_id.get_key_value(id).expect("checked");
+                placed.insert(key);
+                roots.push(refresh_annotation(
+                    b.clone(),
+                    h,
+                    format,
+                    &b.projection().regions,
+                ));
+            }
+            Some(id) if removed.contains(id) => continue,
+            _ => roots.push(b.clone()),
+        }
+        if annotation {
+            after_last_annotation = roots.len();
+        }
+    }
+    let fresh: Vec<DocBlock> = highlights
+        .iter()
+        .filter(|h| placed.insert(h.id.as_str()))
+        .map(|h| highlight_block(h, format))
         .collect();
-    // Keep the user's own top-level notes (after the generated annotations).
-    roots.extend(user_roots);
+    roots.splice(after_last_annotation..after_last_annotation, fresh);
     Document {
         pre_block: Some(pre),
         roots,
-    }
-}
-
-fn page_property_key(line: &str, format: Format) -> Option<String> {
-    match format {
-        Format::Md => crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase()),
-        Format::Org => line
-            .trim()
-            .strip_prefix("#+")
-            .and_then(|line| line.split_once(':'))
-            .map(|(key, _)| key.to_ascii_lowercase()),
-    }
-}
-
-fn block_property_key(line: &str, format: Format) -> Option<String> {
-    match format {
-        Format::Md => crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase()),
-        Format::Org => {
-            let line = line.trim();
-            if line.eq_ignore_ascii_case(":PROPERTIES:") || line.eq_ignore_ascii_case(":END:") {
-                return None;
-            }
-            line.strip_prefix(':')
-                .and_then(|line| line.split_once(':'))
-                .map(|(key, _)| key.to_ascii_lowercase())
-        }
     }
 }
 
@@ -620,63 +594,26 @@ fn property_line(key: &str, value: impl std::fmt::Display, format: Format) -> St
 /// (possibly recolored / re-paged) highlight, preserving everything else — the
 /// user's highlight-text line, any extra properties, and the note children. The
 /// old block was previously kept verbatim, so a recolor never reached the page.
-fn refresh_annotation(mut block: DocBlock, h: &Highlight, format: Format) -> DocBlock {
-    let mut saw_color = false;
-    let mut saw_page = false;
-    let mut lines: Vec<String> = block
-        .raw
-        .lines()
-        .map(|line| match block_property_key(line, format) {
-            Some(k) if k == "hl-color" => {
-                saw_color = true;
-                property_line("hl-color", &h.color, format)
-            }
-            Some(k) if k == "hl-page" => {
-                saw_page = true;
-                property_line("hl-page", h.page, format)
-            }
-            _ => line.to_string(),
-        })
-        .collect();
-    // If the metadata lines were missing (hand-edited file), add them before id::.
-    if !saw_color || !saw_page {
-        let id_pos = lines
-            .iter()
-            .position(|line| block_property_key(line, format).as_deref() == Some("id"));
-        let mut add: Vec<String> = Vec::new();
-        if !saw_page {
-            add.push(property_line("hl-page", h.page, format));
-        }
-        if !saw_color {
-            add.push(property_line("hl-color", &h.color, format));
-        }
-        match id_pos {
-            Some(i) => {
-                for (j, l) in add.into_iter().enumerate() {
-                    lines.insert(i + j, l);
-                }
-            }
-            None if format == Format::Org => {
-                let end = lines
-                    .iter()
-                    .position(|line| line.trim().eq_ignore_ascii_case(":END:"));
-                match end {
-                    Some(index) => {
-                        for (offset, line) in add.into_iter().enumerate() {
-                            lines.insert(index + offset, line);
-                        }
-                    }
-                    None => {
-                        lines.push(":PROPERTIES:".to_string());
-                        lines.extend(add);
-                        lines.push(":END:".to_string());
-                    }
-                }
-            }
-            None => lines.extend(add),
-        }
-    }
-    block.raw = lines.join("\n");
+fn refresh_annotation(
+    mut block: DocBlock,
+    h: &Highlight,
+    format: Format,
+    regions: &crate::block_regions::BlockRegions,
+) -> DocBlock {
+    use crate::block_regions::Edit;
+    let raw = regions
+        .apply(
+            block.raw(),
+            format == Format::Org,
+            Edit::Properties {
+                values: vec![
+                    ("hl-color".into(), h.color.clone()),
+                    ("hl-page".into(), h.page.to_string()),
+                ],
+            },
+        )
+        .expect("parsed annotation");
+    block.set_raw(raw);
     block
 }
 
@@ -896,19 +833,24 @@ mod tests {
     }
 
     #[test]
-    fn pdf_state_reads_and_updates_og_extra_without_touching_foreign_data() {
+    fn pdf_state_reads_og_extra_and_highlight_writes_keep_it_with_foreign_data() {
         let existing = r#"{:highlights [] :extra {:page 7 :scale 1.75 :plugin "keep"} :future 42}"#;
         let state = parse_pdf_state(existing);
         assert_eq!(state.page, Some(7));
         assert_eq!(state.scale, Some(1.75));
 
-        let out = write_pdf_view_state(existing, 9, 2.25).unwrap();
+        // Tine no longer writes the view position into the sidecar, but an OG-written
+        // one must survive every highlight write together with foreign fields.
+        let out = write_highlights(&[sample()], existing);
         let root = edn::parse_strict(&out).unwrap();
         let extra = root.get("extra").unwrap();
-        assert_eq!(extra.get("page").and_then(Edn::as_i64), Some(9));
-        assert_eq!(extra.get("scale").and_then(Edn::as_f64), Some(2.25));
+        assert_eq!(extra.get("page").and_then(Edn::as_i64), Some(7));
+        assert_eq!(extra.get("scale").and_then(Edn::as_f64), Some(1.75));
         assert_eq!(extra.get("plugin").and_then(Edn::as_str), Some("keep"));
         assert_eq!(root.get("future").and_then(Edn::as_i64), Some(42));
+        let state = parse_pdf_state(&out);
+        assert_eq!((state.page, state.scale), (Some(7), Some(1.75)));
+        assert_eq!(state.highlights, vec![sample()]);
     }
 
     #[test]
@@ -1014,6 +956,69 @@ mod tests {
             "file-path not updated: {pre}"
         );
         assert!(!pre.contains("old.pdf"), "stale file path kept: {pre}");
+    }
+
+    /// C5 L01-S2: only the parser's `file`/`file-path` page properties are
+    /// regenerated; lookalike lines inside a code fence are preamble text.
+    #[test]
+    fn merge_hls_page_keeps_fenced_lookalike_preamble_lines() {
+        let fence =
+            "```text\nfile:: keep this literal example\nfile-path:: keep this second example\n```";
+        let existing = crate::doc::parse(&format!(
+            "tags:: reading\nfile:: [old](../assets/old.pdf)\nfile-path:: ../assets/old.pdf\n\n{fence}\n"
+        ));
+        let pre = merge_hls_page(Some(&existing), "paper.pdf", "Paper", &[])
+            .pre_block
+            .unwrap();
+        assert_eq!(
+            pre,
+            format!("file:: [Paper](../assets/paper.pdf)\nfile-path:: ../assets/paper.pdf\ntags:: reading\n\n{fence}")
+        );
+        // Idempotent: a second merge over the first result changes nothing.
+        let again = merge_hls_page_for_format(
+            Some(&crate::doc::parse(&pre)),
+            "paper.pdf",
+            "Paper",
+            &[],
+            &HashSet::new(),
+            Format::Md,
+        );
+        assert_eq!(again.pre_block.as_deref(), Some(pre.as_str()));
+    }
+
+    #[test]
+    fn merge_hls_page_regenerates_org_file_directives_only() {
+        let existing = crate::org::parse_org(
+            "#+TITLE: hls\n#+FILE: [[../assets/old.pdf][old]]\n#+FILE-PATH: ../assets/old.pdf\n#+BEGIN_SRC text\n#+FILE: keep\n#+END_SRC\n* h\n:PROPERTIES:\n:id: x\n:END:\n",
+        );
+        let pre = merge_hls_page_for_format(
+            Some(&existing),
+            "paper.pdf",
+            "Paper",
+            &[],
+            &HashSet::new(),
+            Format::Org,
+        )
+        .pre_block
+        .unwrap();
+        assert_eq!(
+            pre,
+            "#+FILE: [[../assets/paper.pdf][Paper]]\n#+FILE-PATH: ../assets/paper.pdf\n#+TITLE: hls\n#+BEGIN_SRC text\n#+FILE: keep\n#+END_SRC"
+        );
+    }
+
+    /// Preamble text the parser refuses is never rewritten: no deletion, no
+    /// growth on every save.
+    #[test]
+    fn merge_hls_page_leaves_a_parser_refused_preamble_alone() {
+        let deep = ">".repeat(5000);
+        let pre_text = format!("file:: [old](../assets/old.pdf)\n{deep} x");
+        let existing = Document {
+            pre_block: Some(pre_text.clone()),
+            roots: Vec::new(),
+        };
+        let once = merge_hls_page(Some(&existing), "paper.pdf", "Paper", &[]);
+        assert_eq!(once.pre_block.as_deref(), Some(pre_text.as_str()));
     }
 
     #[test]

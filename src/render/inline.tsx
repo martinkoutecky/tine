@@ -1,35 +1,42 @@
+import { urlDest } from "./urlDest";
 // Inline markdown -> Solid components. Produces real interactive DOM (clickable
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
 
+import { createExpansionGate, MACRO_EXPANSION_LIMIT_LABEL } from "./expansionBudget";
+import { leadingMarker, matchLeadingMarker } from "../markers";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { extOf, mediaKind } from "../media";
+import { assetRelPath, extOf, mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageAtBlock, openInNewTab, focusBlock } from "../router";
-import { openRouteInOtherPane } from "../panes";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
-import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, dataRev, graphEpoch, graphMeta, pushToast, showBrackets } from "../ui";
-import { openPdf } from "../panes";
+import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
+import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { pushToast } from "../toasts";
+import { reportLinkOpenFailure } from "../components/ExternalLink";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
-import type { Inline, Url, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format } from "./ast";
+import { mime_from_path } from "./wasm/lsdoc_wasm";
+import type { Inline, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format, Span } from "./ast";
 import type { PageKind } from "../types";
 import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
-import { sanitizeRawHtml, rawHtmlLocalImages } from "./htmlSanitize";
+import { rawHtmlPresentation } from "./htmlSanitize";
 import { allowLocalFileImages } from "../localFileSettings";
+import { resolvedTarget } from "../pageIndex";
 import { pageIcon } from "../pageIconBatch";
-import { pageIsMissing } from "../pageExistsBatch";
 import { typographic } from "./typography";
-import { coarseSpanAttrs, literalSpanAttrs, plainSpanAttrs, typographicPlainSpanAttrs, type SpanDomAttrs } from "./spans";
-import { createLongPress } from "./longPress";
+import { coarseSpanAttrs, literalSpanAttrs, plainSpanAttrs, rebulletedSourceByteToRawByte, typographicPlainSpanAttrs, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
+import { literalBlockOfLine } from "../editor/literalLines";
 import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
-import { leadingMarker, matchLeadingMarker } from "../markers";
-import { isQueryMacroName, queryMacroExtentAtSpan, QUERY_MACRO_NAMES } from "../editor/queryMacro";
+import { parseImageMetaBrace } from "./imageMeta";
 import { AstBody } from "./body";
 import { backend } from "../backend";
+import { captureBinding } from "../binding";
+import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { writeClipboardText } from "../clipboard";
 import { acquireAssetBlob, acquireLocalImageBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
@@ -37,21 +44,22 @@ import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallb
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
-import { resolveBlockBatched } from "../resolveBatch";
-import { readLane } from "../readLane";
-import { doc, setRaw, formatForPage, formatForBlock, blockRef } from "../store";
-import { isBlockRefUuid } from "../store/blockRefs";
-import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
+import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
+import { setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode } from "../document";
+import { PaneContext, focusedPaneId, openRouteInOtherPane, openPdf } from "../panes";
+import { isQueryMacroName, queryMacroExtentAtSpan, type MacroExtent } from "../editor/queryMacro";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
 import { NamespaceMacro } from "../components/Namespace";
 import { guideTargetForLink, isGuidePageName } from "../guide";
 import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
-import { annotationInfoForBlock, pdfFileFromPreBlock } from "../editor/annotation";
+import { annotationInfoForBlock, pdfAssetFile, pdfFileFromPreBlock } from "../editor/annotation";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
+import { createLongPress } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
-import { ExternalLink, reportLinkOpenFailure } from "../components/ExternalLink";
+import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
-
+import { galleryFor } from "../imageGallery";
+import { queryMacroRenderRun } from "./queryMacroRender";
 
 // ===========================================================================
 // AST renderer (lsdoc). Renders an `Inline[]` produced by the Rust parser to
@@ -62,29 +70,13 @@ import { readOr } from "../resourceRead";
 
 // Shared `{{macro}}` dispatch, keyed off a reconstructed body string for built-ins.
 // User macros get parser-supplied args from the AST path so quoted commas survive.
-//
-// **The query arm does not use `raw` (§4.3.1, §7.9).** `macroBody` rebuilds a
-// body with `args.join(", ")`, and mldoc's macro parser both splits on commas
-// and stops before the first `}` — so for `{{query (task TODO) {:title "T"}}}`
-// the AST argument is `(task TODO) {:title "T"` with the closing brace missing,
-// and `content = 'a,b'` comes back as `content = 'a, b'`. A query is therefore
-// dispatched with its RAW SOURCE SLICE, recovered from the owning block by the
-// macro's own source offset. `rawArgument` is that slice; when the caller has no
-// span or no block (macro expansion, decorator unit tests) the arm falls back to
-// the reconstructed body, which is what every non-query macro still uses.
-function renderMacroBody(
-  raw: string,
-  blockId?: string,
-  userArgs?: string[],
-  rawMacro?: { name: string; argument: string },
-): JSX.Element {
+// The query arm prefers the RAW source slice (`rawMacro`): mldoc splits macro
+// arguments on commas and stops before the first `}`, so the AST body loses an
+// options map's closing brace and a literal comma.
+function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], rawMacro?: MacroExtent): JSX.Element {
   const body = raw.trimStart();
-  if (rawMacro) {
-    return <QueryMacro body={`${rawMacro.name} ${rawMacro.argument}`} macroName={rawMacro.name} blockId={blockId} />;
-  }
-  if (QUERY_MACRO_NAMES.some((name) => new RegExp(`^${name}\\b`, "i").test(body))) {
-    return <QueryMacro body={body} blockId={blockId} />;
-  }
+  if (rawMacro) return <QueryMacro body={`${rawMacro.name} ${rawMacro.argument}`} blockId={blockId} sourceExtent={rawMacro} sourceRaw={blockId ? docNode(blockId)?.raw.slice(rawMacro.start, rawMacro.end) : undefined} />;
+  if (isQueryMacroName(/^\S*/.exec(body)![0].replace(/}+$/, ""))) return <QueryMacro body={body} blockId={blockId} />;
   if (/^embed\b/i.test(body)) return <EmbedMacro body={body} blockId={blockId} />;
   if (/^youtube-timestamp\b/i.test(body)) return <YoutubeTimestamp body={body} />;
   if (/^(video|youtube|vimeo|bilibili)\b/i.test(body)) return <VideoMacro body={body} />;
@@ -127,7 +119,14 @@ export function renderInlines(
   spanMode = true,
   macroExpansion = false,
   format?: Format,
+  sourceRaw?: string,
 ): JSX.Element {
+  if (inlines.some((s) => s.k === "macro" && isQueryMacroName(s.name))) {
+    const raw = sourceRaw ?? (blockId ? docNode(blockId)?.raw : undefined);
+    if (raw !== undefined) return <For each={queryMacroRenderRun(inlines, raw, format)}>{({ inline, extent }) => extent
+      ? renderMacroBody(`${extent.name} ${extent.argument}`, blockId, undefined, extent)
+      : renderInline(inline, blockId, spanMode, macroExpansion, format)}</For>;
+  }
   return <For each={inlines}>{(s) => renderInline(s, blockId, spanMode, macroExpansion, format)}</For>;
 }
 
@@ -197,7 +196,7 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
       return renderEmail(s.text, spanMode ? coarseSpanAttrs(s.span) : undefined);
     case "entity":
       return spanMode && s.span ? <span {...(coarseSpanAttrs(s.span) ?? {})}>{s.unicode}</span> : <>{s.unicode}</>;
-    case "hiccup": {
+    case "hiccup":
       // OG 6e7afa8eb inserts direct inline Hiccup only after safe-read,
       // serialization, and sanitization
       // (src/main/frontend/components/block.cljs:1554-1562 and
@@ -206,13 +205,6 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
       const html = hiccupToHtml(s.v);
       if (html !== null) return renderSanitizedHtml(html, spanMode ? coarseSpanAttrs(s.span) : undefined);
       return spanMode && s.span ? <span {...(coarseSpanAttrs(s.span) ?? {})}>{s.v}</span> : <>{s.v}</>;
-    }
-    default: {
-      // DUP-8 exhaustiveness guard: a new `Inline` variant must fail `tsc` here
-      // rather than silently rendering as nothing. Unreachable at runtime.
-      const _exhaustive: never = s;
-      return _exhaustive;
-    }
   }
 }
 
@@ -231,64 +223,24 @@ export function astText(inlines: Inline[]): string {
       case "entity": out += s.unicode; break;
       case "latex": out += s.body; break;
       case "hiccup": out += s.v; break;
-      // The kinds below contribute NOTHING to astText. They were silently
-      // skipped before DUP-8; they are now explicit so that adding a new
-      // `Inline` variant fails `tsc` in the `default` arm instead of
-      // disappearing here unnoticed. Behavior is unchanged.
-      case "break": break; // astText intentionally excludes break (DUP-8: explicit, was silent)
-      case "hardbreak": break; // astText intentionally excludes hardbreak (DUP-8: explicit, was silent)
-      case "macro": break; // astText intentionally excludes macro (DUP-8: explicit, was silent)
-      case "timestamp": break; // astText intentionally excludes timestamp (DUP-8: explicit, was silent)
-      case "fnref": break; // astText intentionally excludes fnref (DUP-8: explicit, was silent)
-      case "inline_html": break; // astText intentionally excludes inline_html (DUP-8: explicit, was silent)
-      case "email": break; // astText intentionally excludes email (DUP-8: explicit, was silent)
-      default: {
-        const _exhaustive: never = s;
-        out += _exhaustive;
-        break;
-      }
     }
   }
   return out;
-}
-
-// The destination string of a link/image `url`.
-function urlDest(url: Url): string {
-  switch (url.type) {
-    case "page_ref":
-    case "block_ref":
-    case "search":
-    case "file":
-    case "embed_data":
-      return url.v;
-    case "complex":
-      return url.protocol && url.link != null ? `${url.protocol}://${url.link}` : url.link ?? "";
-  }
 }
 
 function macroBody(s: MacroInline): string {
   return s.args.length ? `${s.name} ${s.args.join(", ")}` : s.name;
 }
 
-/** The RAW source slice of a query macro node, by source offset (§4.3.1).
- *
- *  Returns null for a non-query macro, and for a query macro the renderer cannot
- *  anchor: no span (the AST did not carry one), no owning block, or no extent
- *  covering the offset. The caller then falls back to the reconstructed body —
- *  lossy for options maps and literal commas, but never worse than before this
- *  packet, and it is the only path an expanded user macro can take (its text is
- *  not a slice of any block's raw source). */
-function rawQueryMacro(s: MacroInline, blockId?: string): { name: string; argument: string } | undefined {
-  if (!isQueryMacroName(s.name)) return undefined;
-  if (!blockId || s.span === undefined) return undefined;
-  const raw = doc.byId[blockId]?.raw;
+/** A query macro's raw source slice, anchored by the node's source offset, or
+ *  undefined (no span, no owning block, or no exact extent there): the caller
+ *  then falls back to the reconstructed body. Ported from master inline.tsx. */
+function rawQueryMacro(s: MacroInline, blockId?: string): MacroExtent | undefined {
+  if (!isQueryMacroName(s.name) || !blockId || s.span === undefined) return undefined;
+  const raw = docNode(blockId)?.raw;
   if (raw === undefined) return undefined;
-  // Anchor exactly, or not at all — `queryMacroExtentAtSpan` owns both the
-  // span→index mapping and the exactness requirement, so a span measured against
-  // some OTHER string finds nothing and this falls back rather than rendering one
-  // query's results under another query's text.
   const extent = queryMacroExtentAtSpan(raw, s.span);
-  return extent ? { name: extent.name, argument: extent.argument } : undefined;
+  return extent ?? undefined;
 }
 
 const PEEK_OPEN_MS = 350;
@@ -349,22 +301,22 @@ function createPeekBridge(disabled: () => boolean) {
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
 export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; blockId?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);
   let anchorEl: HTMLAnchorElement | undefined;
-  const sourcePage = () => (props.blockId ? doc.byId[props.blockId]?.page : undefined);
+  const sourcePage = () => (props.blockId ? docNode(props.blockId)?.page : undefined);
   const targetName = () => guideTargetForLink(props.name, sourcePage());
   // The referenced page's `icon::`, shown as a prefix like OG (and Tine's own page
   // title / namespace macro). Emoji route through EmojiText → Twemoji SVG, since
   // WebKitGTK paints color-emoji webfonts blank. Reactive + batched + cached per
   // graph; an icon-less graph costs one IPC and no re-render (see pageIconBatch).
   const icon = () => (isGuidePageName(targetName()) ? null : pageIcon(targetName()));
-  // Dim a `[[ref]]` whose page does not exist, so a link that will open a blank
-  // page says so before it is clicked. NOT applied to `#tags`: a tag whose page
-  // has no file is ordinary Logseq usage, and dimming those would mark most tags
-  // in a normal graph. Deliberate divergence from OG — see `existing_page_names`.
-  const missing = () =>
-    !props.tag && !isGuidePageName(targetName()) && pageIsMissing(targetName());
   const kind = (): PageKind => (isGuidePageName(targetName()) ? "page" : isJournalTitle(targetName()) ? "journal" : "page");
+  // Deliberate Martin-approved OG divergence (master fd1fd6e1c): a missing page
+  // link signals a blank destination. Tags are exempt: a tag whose page has no
+  // file is ordinary Logseq usage, and dimming them would mark most tags in a
+  // normal graph. I-12/I-25: existence comes from the page index only.
+  const missing = () => !props.tag && !isGuidePageName(targetName()) && resolvedTarget(targetName(), kind())?.kind === "absent";
   const open = (e: MouseEvent) => {
     if (longPress.consumeClick(e)) {
       e.preventDefault();
@@ -372,12 +324,18 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
       return;
     }
     e.stopPropagation();
+    // Shared modified-click contract (linkGesture.ts, GH #283/#438).
     const dest = internalLinkDest(e);
     if (dest === "sidebar" && !isGuidePageName(targetName())) openPageInSidebar(targetName(), kind());
-    else if (dest === "background") openPageInNewTab(targetName(), kind());
-    else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: targetName(), pageKind: kind() });
+    else if (dest === "background") openBackgroundTab();
+    else if (dest === "pane")
+      openRouteInOtherPane({ kind: "page", name: targetName(), pageKind: kind() }, pane?.paneId ?? focusedPaneId());
     else openPage(targetName(), kind());
   };
+  // A background tab belongs to the pane that was already active, not
+  // necessarily the pane containing this link (GH #87): the pane tracker keeps
+  // the active pane across a middle-button press (ui.ts installPaneTracker).
+  const openBackgroundTab = () => openPageInNewTab(targetName(), kind());
 
   // Hover peek (GH #40): after a short dwell, fetch the target page and show its
   // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:
@@ -393,8 +351,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
     () => (peek.open() && !isGuidePageName(targetName()) ? `${targetName()}\0${graphEpoch()}` : null),
     () => backend().getPage(targetName(), kind()),
   );
-  // A hover preview that cannot be fetched shows no popup. Before readOr the
-  // rejection threw out of this read and cost the whole page region.
+  // A hover preview that cannot be fetched shows no popup; a rejection used to
+  // throw out of this read and cost the whole page region.
   const preview = () => readOr(previewResource, undefined, "page peek");
   const capped = createMemo(() => capBlockTree(preview()?.blocks ?? [], PEEK_BLOCK_CAP));
 
@@ -402,11 +360,11 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
     <>
       <a
         ref={anchorEl}
-        class={`${props.tag ? "tag" : "page-ref"}${missing() ? " page-ref-missing" : ""}`}
+        class={props.tag ? "tag" : "page-ref"}
+        data-missing-page={missing() ? "" : undefined}
         {...(props.spanAttrs ?? {})}
-        // Shift+click opens the page in the sidebar (via `open`); the shared
-        // guard suppresses native shift-range-selection / middle-click autoscroll
-        // so the gestures can't leak to the browser (GH #42, GH #207).
+        // Suppress the browser defaults the destinations replace: shift-range
+        // selection (GH #42) and middle-button autoscroll / PRIMARY paste (GH #207).
         onMouseDown={internalLinkMouseDown}
         onClick={open}
         onPointerEnter={peek.anchorEnter}
@@ -415,11 +373,9 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
         onPointerMove={longPress.onPointerMove}
         onPointerUp={longPress.onPointerUp}
         onPointerCancel={longPress.onPointerCancel}
-
         onAuxClick={(e) => {
-          // A background tab belongs to the pane that was already active, not
-          // necessarily the pane containing this link (GH #87).
-          if (internalLinkAuxClick(e, () => openPageInNewTab(targetName(), kind()))) e.stopPropagation();
+          if (e.button === 1) e.stopPropagation();
+          internalLinkAuxClick(e, openBackgroundTab);
         }}
         onContextMenu={(e) => {
           if (!shouldOpenTextContextMenu(e)) return;
@@ -493,9 +449,10 @@ function renderLink(
 ): JSX.Element {
   const url = s.url;
   const spanAttrs = spanMode ? coarseSpanAttrs(s.span) : undefined;
+  const token: MediaToken = { full: s.full, metadata: s.metadata, span: spanMode ? s.span : undefined };
   if (url.type === "page_ref") {
     if (format === "org" && isOgOrgPageRefImageTarget(url.v)) {
-      return <AssetImage url={url.v} alt="" blockId={blockId} spanAttrs={spanAttrs} />;
+      return <AssetImage url={url.v} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
     }
     const alias = s.label && s.label.length ? renderInlines(s.label, blockId, spanMode, macroExpansion, format) : undefined;
     return <PageRef name={url.v} alias={alias} blockId={blockId} spanAttrs={spanAttrs} />;
@@ -505,23 +462,19 @@ function renderLink(
     return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} />;
   }
   const dest = urlDest(url);
-  // GH #442: a remote http(s) URL ending in `.pdf` is an external web link —
-  // it opens in the browser like every other remote URL. Only graph/local
-  // asset PDF references enter Tine's PDF viewer.
-  const remotePdf = /^https?:\/\//i.test(dest) && /\.pdf$/i.test(dest);
+  // File URLs use the OS viewer, preserving their full path (GH #577).
+  // File URLs must never enter the graph annotation reader.
+  const externalPdf = /^(?:https?:\/\/|file:)/i.test(dest) && /\.pdf$/i.test(dest);
   if (s.image) {
     const { width, height } = parseImageMetaBrace(s.metadata);
     const alt = s.label && s.label.length ? astText(s.label) : "";
-    if (!remotePdf && /\.pdf$/i.test(dest)) return <PdfAssetLink dest={dest} label={alt} spanAttrs={spanAttrs} />;
+    if (!externalPdf && /\.pdf$/i.test(dest)) return <PdfAssetLink dest={dest} label={alt} spanAttrs={spanAttrs} />;
     const k = mediaKind(dest);
     if (k === "video" || k === "audio")
-      return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} spanAttrs={spanAttrs} />;
-    // A remote .pdf image falls through: <img> cannot display a PDF anyway, so
-    // it renders as the ordinary external link below — its click then opens
-    // the browser, exactly like every other remote URL (GH #442).
-    if (!remotePdf) return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} spanAttrs={spanAttrs} />;
+      return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
+    if (!externalPdf) return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
-  if (!remotePdf && /\.pdf$/i.test(dest)) {
+  if (!externalPdf && /\.pdf$/i.test(dest)) {
     const labelStr = s.label && s.label.length ? astText(s.label) : pdfFilenameFromDest(dest);
     return <PdfAssetLink dest={dest} label={labelStr} spanAttrs={spanAttrs} />;
   }
@@ -532,61 +485,50 @@ function renderLink(
   if (!s.image && /^https?:\/\//i.test(s.full.trimStart())) {
     const k = mediaKind(dest);
     if (k === "image")
-      return <AssetImage url={dest} alt="" blockId={blockId} spanAttrs={spanAttrs} />;
+      return <AssetImage url={dest} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
     if (k === "video" || k === "audio")
-      return <MediaEmbed url={dest} kind={k} alt="" blockId={blockId} spanAttrs={spanAttrs} />;
+      return <MediaEmbed url={dest} kind={k} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
+  const unsafeHref = /^(?:javascript|vbscript|data):/i.test(dest.replace(/[\u0000-\u0020]/g, ""));
   return (
     <span class="link-copy-wrap">
-      <ExternalLink
+      <a
         class="external-link"
-        dest={dest}
-        attrs={spanAttrs}
-        open={() => {
+        href={unsafeHref ? undefined : dest}
+        {...(spanAttrs ?? {})}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (unsafeHref) return;
           const rel = assetLinkRel(dest);
-          return rel !== null ? backend().openAsset(rel) : backend().openExternal(dest);
+          if (rel !== null) void readOwned(graphOwner(), backend().openAsset(rel, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(dest, error));
+          else void readOwned(graphOwner(), backend().openExternal(dest)).catch((error) => reportLinkOpenFailure(dest, error));
         }}
       >
         <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
-      </ExternalLink>
+      </a>
       <CopyButton text={dest} title="Copy link" class="copy-inline" />
     </span>
   );
 }
 
-/** GH #444: a link that cannot be opened has to say so. Every one of these
- *  paths used to discard the backend's rejection, so a refused scheme, a
- *  missing file and a platform with no file manager all looked identical to a
- *  dead link — which is exactly how the reported `file://` failure stayed
- *  invisible for as long as it did. */
+/** The file name shown for a PDF link that has no label. The reader route
+ * keeps the whole assets-relative path (`pdfAssetFile`), not this. */
 function pdfFilenameFromDest(dest: string): string {
-  const normalized = dest.replace(/\\/g, "/");
-  const rel = assetRelPath(normalized);
-  const path = rel ?? normalized;
+  const path = dest.replace(/\\/g, "/");
   return path.split("/").pop() || path;
 }
 
 function PdfAssetLink(props: { dest: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
-  const filename = pdfFilenameFromDest(props.dest);
-  const label = props.label || filename;
+  // The route names the PDF by its path under assets/: highlights, sidecar and
+  // hls page are keyed from it, so dropping `nested/` opened another resource.
+  const filename = pdfAssetFile(props.dest);
+  const label = props.label || pdfFilenameFromDest(props.dest);
   return (
     <a class="external-link pdf-link" {...(props.spanAttrs ?? {})} onClick={(e) => { e.stopPropagation(); openPdf(filename, label); }}>
       📄 {label}
     </a>
   );
-}
-
-// Logseq image-metadata brace reader (`{:width 200, :height 100}` or
-// `{:width "40%"}`) — same logic the old parseInline used; kept here so it
-// survives parseInline.ts's eventual removal.
-function parseImageMetaBrace(brace: string | undefined): { width?: string; height?: string } {
-  if (!brace) return {};
-  const out: { width?: string; height?: string } = {};
-  const w = /:width\s+"?([0-9]+%?|[0-9]+px)"?/.exec(brace);
-  const h = /:height\s+"?([0-9]+%?|[0-9]+px)"?/.exec(brace);
-  if (w) out.width = /^\d+$/.test(w[1]) ? `${w[1]}px` : w[1];
-  if (h) out.height = /^\d+$/.test(h[1]) ? `${h[1]}px` : h[1];
-  return out;
 }
 
 // Org timestamp inline → the styled `<…>`(active)/`[…]`(inactive) badge. The
@@ -629,22 +571,7 @@ function renderIframe(src: string, width?: string, height?: string, spanAttrs?: 
 // by the Rust export) and rendered LIVE. Handlers/`style`/`<script>` are stripped,
 // so `innerHTML` is XSS-safe here. See ADR 0019.
 export function renderRawHtml(text: string, spanAttrs?: SpanDomAttrs): JSX.Element {
-  const m = /<iframe\b([^>]*)>/i.exec(text);
-  if (m) {
-    const attrs = m[1];
-    const src = /src\s*=\s*["']([^"']+)["']/i.exec(attrs)?.[1];
-    if (src && /^https?:\/\//i.test(src)) {
-      const attrWidth = /width\s*=\s*["']?(\d+px|\d+%|\d+)["']?/i.exec(attrs)?.[1];
-      const attrHeight = /height\s*=\s*["']?(\d+px|\d+%|\d+)["']?/i.exec(attrs)?.[1];
-      const style = !attrWidth || !attrHeight ? /style\s*=\s*(["'])(.*?)\1/i.exec(attrs)?.[2] : undefined;
-      const styleWidth = style ? /(?:^|;)\s*width\s*:\s*(\d+px|\d+%)(?=\s*(?:;|$))/i.exec(style)?.[1] : undefined;
-      const styleHeight = style ? /(?:^|;)\s*height\s*:\s*(\d+px|\d+%)(?=\s*(?:;|$))/i.exec(style)?.[1] : undefined;
-      const width = attrWidth ?? styleWidth;
-      const height = attrHeight ?? styleHeight;
-      return renderIframe(src, width, height, spanAttrs);
-    }
-  }
-  return renderSanitizedHtml(text, spanAttrs);
+  return <RawHtmlContent text={text} spanAttrs={spanAttrs} allowIframe />;
 }
 
 /** The sanitizer-only HTML insertion path. Unlike `renderRawHtml`, this helper
@@ -657,13 +584,13 @@ export function renderSanitizedHtml(text: string, spanAttrs?: SpanDomAttrs): JSX
 // (Settings → "Load local-file images") — swaps a blob URL into any `<img>` whose
 // `src` was a local path (the sanitizer strips those, so we re-attach them by
 // document-order match to the scanned paths). Off by default; see ADR 0019.
-function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
-  const clean = createMemo(() => sanitizeRawHtml(props.text));
+function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs; allowIframe?: boolean }): JSX.Element {
+  const presentation = createMemo(() => rawHtmlPresentation(props.text, props.allowIframe));
   let host: HTMLSpanElement | undefined;
   createEffect(() => {
-    clean(); // re-run if the sanitized markup changes
+    const shown = presentation(); // one projection for HTML, iframe and local resources
     if (!host || !allowLocalFileImages()) return;
-    const locals = rawHtmlLocalImages(props.text);
+    const locals = shown.localImages;
     if (!locals.some(Boolean)) return;
     let active = true;
     const releases: (() => void)[] = [];
@@ -683,7 +610,9 @@ function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs }): JSX.
       releases.forEach((release) => release());
     });
   });
-  return <span ref={host} class="raw-html" innerHTML={clean()} {...(props.spanAttrs ?? {})} />;
+  return <Show when={presentation().iframe} fallback={<span ref={host} class="raw-html" innerHTML={presentation().html} {...(props.spanAttrs ?? {})} />}>
+    {(frame) => renderIframe(frame().src, frame().width, frame().height, props.spanAttrs)}
+  </Show>;
 }
 
 function renderEmail(text: EmailValue, spanAttrs?: SpanDomAttrs): JSX.Element {
@@ -696,9 +625,9 @@ function renderEmail(text: EmailValue, spanAttrs?: SpanDomAttrs): JSX.Element {
   }
   const href = `mailto:${addr}`;
   return (
-    <ExternalLink class="external-link" dest={href} attrs={spanAttrs}>
+    <a class="external-link" href={href} {...(spanAttrs ?? {})} onClick={(e) => { e.preventDefault(); e.stopPropagation(); void readOwned(graphOwner(), backend().openExternal(href)).catch((error) => reportLinkOpenFailure(href, error)); }}>
       {addr}
-    </ExternalLink>
+    </a>
   );
 }
 
@@ -740,24 +669,20 @@ export function MathView(props: { tex: string; display: boolean; spanAttrs?: Spa
   );
 }
 
-// Resolve the path of a graph asset relative to the `assets/` dir.
-function assetRelPath(url: string): string | null {
-  const normalized = url.replace(/\\/g, "/");
-  const i = normalized.toLowerCase().indexOf("assets/");
-  return i === -1 ? null : normalized.slice(i + "assets/".length);
-}
+// `assetRelPath` lives in ../media (shared with the PDF annotation reader);
+// re-exported so existing importers keep one door.
+export { assetRelPath };
 
-// A clicked link into `assets/` — file, nested directory, or the assets root
-// itself — decoded for the OS opener (GH #367). Extension- and platform-
-// agnostic: whatever the file is, the OS default handler gets it. Returns null
-// for anything that is not a relative graph-asset reference (a crafted
-// `https://host/assets/x` URL must stay on the external-URL route; the RootDir
-// case is the empty string, e.g. `[path](./assets/)` or bare `./assets`).
+// A clicked link into `assets/` (file, nested directory, or the assets root)
+// decoded for the OS opener (GH #367); the root is "" (`[p](./assets/)` or bare
+// `./assets`). Null for anything else: a scheme URL such as
+// `https://host/assets/x` stays on the external route. Trailing slashes are
+// dropped so `./assets/dir/` names `dir`. The backend re-validates the name.
 function assetLinkRel(dest: string): string | null {
   if (/^[a-z][a-z0-9+.-]*:/i.test(dest)) return null;
   const normalized = dest.replace(/\\/g, "/").replace(/\/+$/, "");
   if (/(^|\/)assets$/i.test(normalized)) return "";
-  const rel = assetRelPath(dest);
+  const rel = assetRelPath(normalized);
   if (rel === null) return null;
   try {
     return decodeURIComponent(rel);
@@ -781,32 +706,115 @@ function blockRefWidth(el: HTMLElement): number {
   return el.getBoundingClientRect().width;
 }
 
+/** The rendered media link a resize/trash edits: its exact source text (lsdoc
+ *  `full`, trailing `{…}` metadata included) and, when rendered from the
+ *  block's own text, its source span. */
+interface MediaToken {
+  full: string;
+  metadata?: string;
+  span?: Span;
+}
+
+// Where THIS token starts in the block's raw (C3 L16): at its source span when
+// the text there is exactly the token; otherwise only an occurrence that is the
+// ONLY one outside code. A duplicate earlier in the block, a lookalike inside a
+// code fence, a label with markup, or a render that is not of this raw never
+// redirects the edit to another token; null means "not found, edit nothing".
+function locateMediaToken(blockId: string, raw: string, token: MediaToken): number | null {
+  if (token.span) {
+    const at = utf8ByteToUtf16Offset(raw, rebulletedSourceByteToRawByte(raw, token.span[0]));
+    if (raw.startsWith(token.full, at)) return at;
+  }
+  const literal = literalBlockOfLine(raw, formatForBlock(blockId) ?? "md");
+  const hits: number[] = [];
+  for (let p = raw.indexOf(token.full); p !== -1; p = raw.indexOf(token.full, p + 1)) {
+    if (literal[raw.slice(0, p).split("\n").length - 1] === -1) hits.push(p);
+  }
+  return hits.length === 1 ? hits[0] : null;
+}
+
 // Persist a resized media width back into its block's raw text as the OG-native
-// `{:width "N%"}` brace. Works for images AND video/audio — all use the
-// `![alt](url)` form. We rewrite THIS token's trailing `{...}` only (matched by
-// its exact alt+url), so other text/media in the block are untouched; width is
-// stored as a percentage (Martin's choice — survives column width changes) and
-// as a quoted string so it stays valid EDN OG can also read.
-function writeMediaWidth(blockId: string, alt: string, url: string, pct: number) {
-  const node = doc.byId[blockId];
-  if (!node) return;
-  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`(!\\[${esc(alt)}\\]\\(${esc(url)}\\))(\\{[^}]*\\})?`);
-  const next = node.raw.replace(re, `$1{:width "${pct}%"}`);
+// `{:width "N%"}` brace, on THIS token only (replacing its own `{…}`). Works for
+// images AND video/audio in the `![alt](url)` form; width is stored as a
+// percentage (Martin's choice — survives column width changes) and as a quoted
+// string so it stays valid EDN OG can also read.
+function writeMediaWidth(blockId: string, token: MediaToken | undefined, pct: number) {
+  const node = docNode(blockId);
+  if (!node || !token || !token.full.startsWith("![")) return;
+  const at = locateMediaToken(blockId, node.raw, token);
+  if (at === null) return;
+  const meta = token.metadata && token.full.endsWith(token.metadata) ? token.metadata.length : 0;
+  const base = token.full.slice(0, token.full.length - meta);
+  const next = node.raw.slice(0, at) + `${base}{:width "${pct}%"}` + node.raw.slice(at + token.full.length);
   if (next !== node.raw) setRaw(blockId, next);
 }
 
-// Remove THIS media token (`![alt](url){...}`) from its block's raw — the "trash"
-// affordance drops the reference (OG's delete-asset-of-block! also rewrites the
-// block, then unlinks the file). Eats one adjacent space so we don't leave a
-// double space behind. Matched by exact alt+url, like writeMediaWidth.
-function removeMediaToken(blockId: string, alt: string, url: string) {
-  const node = doc.byId[blockId];
-  if (!node) return;
-  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(` ?!\\[${esc(alt)}\\]\\(${esc(url)}\\)(\\{[^}]*\\})?`);
-  const next = node.raw.replace(re, "");
-  if (next !== node.raw) setRaw(blockId, next);
+// Remove THIS media token from its block's raw — the "trash" affordance drops the
+// reference (OG's delete-asset-of-block! also rewrites the block, then unlinks
+// the file). Eats one preceding space so we don't leave a double space behind.
+// True only when the reference is gone from the block's raw.
+function removeMediaToken(blockId: string, token: MediaToken | undefined): boolean {
+  const node = docNode(blockId);
+  if (!node || !token) return false;
+  const at = locateMediaToken(blockId, node.raw, token);
+  if (at === null) return false;
+  const from = at > 0 && node.raw[at - 1] === " " ? at - 1 : at;
+  const next = node.raw.slice(0, from) + node.raw.slice(at + token.full.length);
+  setRaw(blockId, next);
+  return docNode(blockId)?.raw === next;
+}
+
+// One media resize lifecycle for images and video. The component owns every
+// listener; only the initiating pointer and original graph/block can commit.
+function mediaResizeGrip(
+  wrapper: () => HTMLSpanElement | undefined,
+  media: () => HTMLElement | undefined,
+  blockId: () => string | undefined,
+  token: () => MediaToken | undefined,
+  minimum: number,
+): (event: PointerEvent) => void {
+  let alive = true, cancel = () => {};
+  onCleanup(() => { alive = false; cancel(); });
+  createEffect(() => { graphEpoch(); blockId(); token(); cancel(); });
+  return (event) => {
+    cancel();
+    const wrap = wrapper(), id = blockId(), original = id && docNode(id), source = token();
+    if (!wrap || !id || !original || event.button !== 0) return;
+    const owner = bindingOwner(() => alive && docNode(id) === original);
+    event.preventDefault(); event.stopPropagation();
+    const grip = event.currentTarget as HTMLElement;
+    const refW = blockRefWidth(wrap), startX = event.clientX, startW = wrap.getBoundingClientRect().width;
+    const oldWidth = wrap.style.width, element = media(), oldMediaWidth = element?.style.width ?? "";
+    if (element) element.style.width = "100%";
+    const stop = (restore = true) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancelled);
+      window.removeEventListener("blur", cancel);
+      grip.removeEventListener("lostpointercapture", cancelled);
+      if (restore) { wrap.style.width = oldWidth; if (element) element.style.width = oldMediaWidth; }
+      cancel = () => {};
+    };
+    const move = (next: PointerEvent) => {
+      if (!owner()) { cancel(); return; }
+      if (next.pointerId !== event.pointerId) return;
+      wrap.style.width = `${Math.max(minimum, Math.min(refW, startW + next.clientX - startX))}px`;
+    };
+    const up = (next: PointerEvent) => {
+      if (!owner()) { cancel(); return; }
+      if (next.pointerId !== event.pointerId) return;
+      const pct = Math.max(5, Math.min(100, Math.round(wrap.getBoundingClientRect().width / refW * 100)));
+      stop(false);
+      writeMediaWidth(id, source, pct);
+    };
+    const cancelled = (next: PointerEvent) => { if (next.pointerId === event.pointerId) cancel(); };
+    cancel = () => stop();
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancelled);
+    window.addEventListener("blur", cancel);
+    grip.addEventListener("lostpointercapture", cancelled);
+  };
 }
 
 // Image embed: external URLs load directly; graph assets (`../assets/x.png`)
@@ -819,6 +827,7 @@ function AssetImage(props: {
   width?: string;
   height?: string;
   blockId?: string;
+  token?: MediaToken;
   spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
   // Width sizes the WRAPPER, not the <img>: an inline-block sized by a
@@ -871,28 +880,7 @@ function AssetImage(props: {
 
   let wrapEl: HTMLSpanElement | undefined;
   let imgEl: HTMLImageElement | undefined;
-  const onGripDown = (e: PointerEvent) => {
-    if (!wrapEl || !props.blockId) return;
-    e.preventDefault();
-    e.stopPropagation(); // don't start a block drag / open the lightbox
-    const refW = blockRefWidth(wrapEl);
-    const startX = e.clientX;
-    const startW = wrapEl.getBoundingClientRect().width;
-    if (imgEl) imgEl.style.width = "100%"; // make the image track the wrapper during the drag
-    const move = (me: PointerEvent) => {
-      const w = Math.max(24, Math.min(refW, startW + (me.clientX - startX)));
-      if (wrapEl) wrapEl.style.width = `${w}px`; // live feedback during the drag
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      const w = wrapEl ? wrapEl.getBoundingClientRect().width : startW;
-      const pct = Math.max(5, Math.min(100, Math.round((w / refW) * 100)));
-      writeMediaWidth(props.blockId!, props.alt, props.url, pct);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
+  const onGripDown = mediaResizeGrip(() => wrapEl, () => imgEl, () => props.blockId, () => props.token, 24);
 
   // Hover actions (graph assets in a real block only — like OG's asset action bar):
   // copy the image to the OS clipboard, and trash it (drop the block reference + move
@@ -908,19 +896,48 @@ function AssetImage(props: {
   };
   const onTrashAsset = async (e: MouseEvent) => {
     e.stopPropagation();
+    const binding = captureBinding();
+    const owner = bindingOwner();
     const name = assetRelPath(props.url);
     if (!name || !props.blockId) return;
-    const ok = await backend().confirm(
+    const confirmed = await readOwned(owner, backend().confirm(
       `Move "${name}" to the trash and remove it from this block? It stays recoverable in logseq/.tine-trash.`,
       "Trash asset",
-    );
-    if (!ok) return;
-    removeMediaToken(props.blockId, props.alt, props.url); // drop the reference first (saves the block)
+    ));
+    if (confirmed.kind === "stale" || !confirmed.value) return;
+    // Drop the reference first (saves the block). Trash the file only when the
+    // reference is actually gone: otherwise the block keeps pointing at a file
+    // that was moved away (C3 L16).
+    if (!removeMediaToken(props.blockId, props.token)) {
+      pushToast("Couldn't find this image in the block's text; nothing was trashed", "error");
+      return;
+    }
+    // The backend trashes only a file the PUBLISHED graph no longer references,
+    // and setRaw only schedules a debounced save: make the reference removal
+    // durable first, or the trash races its own edit (GH #623, comment 17).
+    const pageName = docNode(props.blockId)?.page;
+    let saved = false;
     try {
-      await backend().trashAsset(name);
+      const flushed = pageName ? await writeOwned(owner, flushPage(pageName)) : null;
+      if (flushed?.kind === "stale") return;
+      saved = flushed?.value === true;
+    } catch { /* reported below as an unsaved edit */ }
+    if (!saved) {
+      pushToast("Couldn't save this block, so the image file was not moved to the trash.", "error");
+      return;
+    }
+    try {
+      const result = await writeOwned(owner, backend().trashAsset(name, binding.backendGeneration));
+      if (result.kind === "stale") return;
+      if (result.value === "referenced") {
+        // Typed outcome: another place still uses the file. The block edit
+        // stands and the file stays in assets/.
+        pushToast("Image removed from this block. The file stays in assets because it is still used elsewhere.", "info");
+        return;
+      }
       pushToast("Asset moved to trash", "success");
     } catch (err) {
-      pushToast(`Couldn't trash the asset (${String(err)})`, "error");
+      pushToast(`Image removed from this block, but its file couldn't be moved to the trash (${String(err)})`, "error");
     }
   };
 
@@ -932,13 +949,15 @@ function AssetImage(props: {
     assetActions() && !isMobilePlatform ? mediaEditorForAsset(assetRelPath(props.url)) : undefined;
   const onEditAsset = async (e: MouseEvent) => {
     e.stopPropagation();
+    const binding = captureBinding();
+    const owner = bindingOwner();
     const name = assetRelPath(props.url);
     const ed = editor();
     if (!name || !ed) return;
-    const cmd = await resolveMediaEditorCommand(ed);
-    void backend()
-      .editAssetExternal(name, cmd)
-      .catch(() => pushToast(`Couldn't open ${ed.label.replace(/^Edit in /, "")}`, "error"));
+    const command = await readOwned(owner, resolveMediaEditorCommand(ed));
+    if (command.kind === "stale") return;
+    void writeOwned(owner, backend().editAssetExternal(name, command.value, binding.backendGeneration))
+      .catch(() => { pushToast(`Couldn't open ${ed.label.replace(/^Edit in /, "")}`, "error"); });
     refreshAssetOnReturn(name);
   };
 
@@ -954,7 +973,7 @@ function AssetImage(props: {
           src={src()!}
           alt={props.alt}
           style={imgStyle()}
-          onClick={(e) => { e.stopPropagation(); setLightbox(src()!); }}
+          onClick={(e) => { e.stopPropagation(); openLightbox(src()!, galleryFor(e.currentTarget)); }}
         />
         <Show when={assetActions()}>
           <span class="asset-action-bar" aria-hidden="true">
@@ -1029,6 +1048,7 @@ function MediaEmbed(props: {
   alt?: string;
   width?: string;
   blockId?: string;
+  token?: MediaToken;
   spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
   const [failed, setFailed] = createSignal(false);
@@ -1039,20 +1059,28 @@ function MediaEmbed(props: {
   const rel = () => assetRelPath(props.url);
   // Graph media uses native range requests; never copy a multi-GB file into a Blob.
   const [blobResource] = createResource(
-    () => (external ? null : rel()),
-    async (r) => (r ? await backend().streamAsset(r) : "")
+    () => (external ? null : `${graphEpoch()}\0${rel()}`),
+    async () => {
+      const r = rel();
+      if (!r) return "";
+      const result = await readOwned(graphOwner(), backend().streamAsset(r));
+      return result.kind === "current" ? result.value : "";
+    }
   );
   // An asset stream that fails leaves the native element without a src, which
-  // is what `blobFallback()` below already exists to cover.
+  // is what `blobFallback()` above already exists to cover.
   const blob = () => readOr(blobResource, undefined, "inline audio asset");
   const src = () => blobFallback() || (external ? props.url : blob());
-  const label = () =>
-    decodeURIComponent((rel() || props.url).split("/").pop() || props.url);
+  const label = () => {
+    const name = (rel() || props.url).split("/").pop() || props.url;
+    try { return decodeURIComponent(name); }
+    catch { return name; /* An ordinary filename may contain a literal percent. */ }
+  };
   const open = (e: MouseEvent) => {
     e.stopPropagation();
     const r = rel();
-    if (r && !external) void backend().openAsset(r).catch((error) => reportLinkOpenFailure(props.url, error));
-    else void backend().openExternal(props.url).catch((error) => reportLinkOpenFailure(props.url, error));
+    if (r && !external) void readOwned(graphOwner(), backend().openAsset(r, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(props.url, error));
+    else void readOwned(graphOwner(), backend().openExternal(props.url)).catch((error) => reportLinkOpenFailure(props.url, error));
   };
   let tryingBlobFallback = false;
   let blobLease: MediaBlobLease | null = null;
@@ -1080,15 +1108,7 @@ function MediaEmbed(props: {
       tryingBlobFallback = true;
       const abort = new AbortController();
       fallbackAbort = abort;
-      const ext = r.split(".").pop()?.toLowerCase();
-      const mime = props.kind === "video" ? "video/x-matroska" :
-        ext === "mp3" || ext === "mpeg" ? "audio/mpeg" :
-        ext === "m4a" || ext === "aac" ? "audio/mp4" :
-        ext === "wav" ? "audio/wav" :
-        ext === "ogg" || ext === "oga" ? "audio/ogg" :
-        ext === "opus" ? "audio/opus" :
-        ext === "flac" ? "audio/flac" : "application/octet-stream";
-      void acquireMediaBlobFallback(r, props.kind, mime, abort.signal).then((lease) => {
+      void acquireMediaBlobFallback(r, props.kind, mime_from_path(r), abort.signal).then((lease) => {
         if (disposed) {
           lease.release();
           return;
@@ -1109,28 +1129,7 @@ function MediaEmbed(props: {
   // width %). Audio uses the widen toggle instead, so no grip there.
   let wrapEl: HTMLSpanElement | undefined;
   let mediaEl: HTMLVideoElement | HTMLAudioElement | undefined;
-  const onGripDown = (e: PointerEvent) => {
-    if (!wrapEl || !props.blockId) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const refW = blockRefWidth(wrapEl);
-    const startX = e.clientX;
-    const startW = wrapEl.getBoundingClientRect().width;
-    if (mediaEl) mediaEl.style.width = "100%";
-    const move = (me: PointerEvent) => {
-      const w = Math.max(80, Math.min(refW, startW + (me.clientX - startX)));
-      if (wrapEl) wrapEl.style.width = `${w}px`;
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      const w = wrapEl ? wrapEl.getBoundingClientRect().width : startW;
-      const pct = Math.max(5, Math.min(100, Math.round((w / refW) * 100)));
-      writeMediaWidth(props.blockId!, props.alt ?? "", props.url, pct);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
+  const onGripDown = mediaResizeGrip(() => wrapEl, () => mediaEl, () => props.blockId, () => props.token, 80);
 
   // A persisted `{:width N%}` sizes the video wrapper (image fills it at 100%).
   const wrapStyle = () =>
@@ -1217,8 +1216,7 @@ export function InlineText(props: { text: string; blockId?: string; format?: For
   // content is never dropped — matching the old inline-only renderer.
   const inlines = createMemo(() => {
     if (!parserReady()) return null;
-    const blocks = parseBlock(props.text, props.format === "org");
-    const inline = blockInlines(blocks);
+    const inline = blockInlines(parseBlock(props.text, props.format === "org"));
     // A reference has already separated its task state from the body. A task
     // word still in that body is literal content (e.g. `TODO TODO buy milk`),
     // even though the block parser projects it as a header facet on reparse.
@@ -1231,17 +1229,18 @@ export function InlineText(props: { text: string; blockId?: string; format?: For
   });
   return (
     <Show when={inlines() && inlines()!.length > 0} fallback={<EmojiText text={props.text} />}>
-      {renderInlines(inlines()!, props.blockId, false, props.macroExpansion ?? false, props.format)}
+      {renderInlines(inlines()!, props.blockId, false, props.macroExpansion ?? false, props.format, props.text)}
     </Show>
   );
 }
 
-// Recursion depth guard for user `:macros` expansion. renderSegs uses <For>, which
-// evaluates synchronously on creation, so a macro that expands to itself (or a
-// mutually-recursive pair) would render forever. We cap nesting and bail to a grey
-// literal past the cap — cheap and bulletproof against both direct and mutual loops.
-let userMacroDepth = 0;
-const MAX_USER_MACRO_DEPTH = 12;
+// Expansion guard for user `:macros`. renderSegs uses <For>, which evaluates
+// synchronously on creation, so a macro that expands to itself (or a mutually
+// recursive pair) would render forever, and one that expands to itself several
+// times would branch exponentially inside the depth cap. The shared gate caps
+// nesting (grey literal) and each top-level tree's expansions/bytes (visible
+// limit marker) — I-22, one budget with renderedText.ts.
+const userMacroGate = createExpansionGate();
 
 export function expandTemplate(template: string, args: string[]): string {
   return template.replace(/\$(\d+)/g, (m, d) => args[Number(d) - 1] ?? m);
@@ -1270,49 +1269,60 @@ function expansionHeadingLevel(expanded: string, fmt?: Format): number | null {
 // the args. Single-paragraph expansions stay inline; block-level expansions render
 // through the block renderer, matching OG's macro parse/render split.
 function UserMacroView(props: { name: string; template: string; args: string[]; blockId?: string }): JSX.Element {
-  if (userMacroDepth >= MAX_USER_MACRO_DEPTH) {
-    return <span class="macro">{`{{${props.name}}}`}</span>;
-  }
   const expanded = expandTemplate(props.template, props.args);
-  userMacroDepth++;
-  try {
-    const fmt = formatForBlock(props.blockId);
-    if (parserReady() && expansionIsBlockLevel(expanded, fmt)) {
-      return (
-        <div class="macro-blocks">
-          <AstBody raw={expanded} blockId={props.blockId} format={fmt} headingLevel={expansionHeadingLevel(expanded, fmt)} macroExpansion />
-        </div>
-      );
-    }
-    return <InlineText text={expanded} blockId={props.blockId} format={fmt} macroExpansion />;
-  } finally {
-    userMacroDepth--;
-  }
+  return userMacroGate.expand(
+    expanded.length,
+    () => <span class="macro">{`{{${props.name}}}`}</span>,
+    () => (
+      <span class="macro macro-expansion-limit" title={`{{${props.name}}}`}>
+        {`{{${props.name}}} (${MACRO_EXPANSION_LIMIT_LABEL})`}
+      </span>
+    ),
+    () => {
+      const fmt = formatForBlock(props.blockId);
+      if (parserReady() && expansionIsBlockLevel(expanded, fmt)) {
+        return (
+          <div class="macro-blocks">
+            <AstBody raw={expanded} blockId={props.blockId} format={fmt} headingLevel={expansionHeadingLevel(expanded, fmt)} macroExpansion />
+          </div>
+        );
+      }
+      return <InlineText text={expanded} blockId={props.blockId} format={fmt} macroExpansion />;
+    },
+  );
 }
 
-// Inline block reference. Bare `((uuid))` shows the referenced block's full
-// visible body; the labeled form `[label](((uuid)))` shows the label instead. Both
+// Inline block reference. Bare `((uuid))` shows the referenced block's visible
+// body, soft line breaks kept; the labeled form `[label](((uuid)))` shows the label instead. Both
 // navigate to the source page on click and show a hover preview of the full
 // referenced block (mirrors OG); a missing target, or an id that is not a
 // UUID, shows its source `((id))` in full, as OG does (GH #589).
 function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  const linkDepth = useContext(LinkDepthContext);
+  if (linkDepth >= MAX_DEPTH_OF_LINKS) {
+    return <span class="link-depth-warning">Reference depth is too deep</span>;
+  }
+  const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);
   let anchorEl: HTMLSpanElement | undefined;
   const [grpResource] = createResource(
     // Not a UUID: nothing to resolve (OG's `parse-uuid` gate), so no lookup.
     () => isBlockRefUuid(props.id) && `${props.id}\0${graphEpoch()}\0${dataRev()}`,
-    () => resolveBlockBatched(props.id)
+    async () => {
+      const result = await readOwned(graphOwner(), resolveBlockBatched(props.id));
+      return result.kind === "current" ? result.value : null;
+    }
   );
   // `undefined` on failure, not `null`: `null` is an AUTHORITATIVE miss (see
   // targetRaw below) and a failed lookup has not established that. Undefined
-  // keeps a loaded reactive node winning and otherwise shows the source id.
+  // keeps a loaded reactive node winning and otherwise shows the short id.
   const grp = () => readOr(grpResource, undefined, "block reference target");
   const peek = createPeekBridge(() => insidePeek);
   // A loaded target shares the editor's reactive node, so references update on
   // the keystroke without re-resolving every visible uuid after every save. The
   // backend snapshot remains the fallback for targets outside the working set;
   // visible fallback UUIDs are batch-refreshed after landed graph transactions.
-  const liveTarget = () => doc.byId[props.id];
+  const liveTarget = () => docNode(props.id);
   const targetRaw = () => {
     const resolved = grp();
     // `undefined` is the initial/loading state, where a loaded reactive entity
@@ -1340,15 +1350,17 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const fmt = () => liveTarget() ? formatForBlock(props.id) : formatForPage(grp()?.page);
   const annotation = () => {
     const block = grp()?.blocks[0];
-    return block ? annotationInfoForBlock(block) : null;
+    return block ? annotationInfoForBlock(block, fmt()) : null;
   };
   // Summary resolution stays shallow and graph-lifetime cached. Fetch the
   // descendant tree only after the hover dwell, through a backend operation
   // that applies the cap before DTO allocation and IPC serialization.
-  const previewLane = readLane();
-  const previewKey = () => (peek.open() && grp() ? `${props.id}\0${graphEpoch()}\0${dataRev()}` : null);
-  const [previewResource] = createResource(previewKey, (key) =>
-    previewLane(() => previewKey() === key, () => backend().previewBlock(props.id, PEEK_BLOCK_CAP)),
+  const [previewResource] = createResource(
+    () => (peek.open() && grp() ? `${props.id}\0${graphEpoch()}\0${dataRev()}` : null),
+    async () => {
+      const result = await readOwned(graphOwner(), backend().previewBlock(props.id, PEEK_BLOCK_CAP));
+      return result.kind === "current" ? result.value : null;
+    },
   );
   const preview = () => readOr(previewResource, undefined, "block reference peek");
   const capped = createMemo(() => capBlockTree(preview()?.group.blocks ?? [], PEEK_BLOCK_CAP));
@@ -1364,28 +1376,22 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         title={annotation()
           ? "Click to open the highlight in its PDF; shift-click → sidebar; right-click for more"
           : "Click to go to the block; shift-click → sidebar; right-click for more"}
-        // Shared guard: suppress native shift-range-selection / middle-click
-        // autoscroll up front (GH #42, GH #207).
         onMouseDown={internalLinkMouseDown}
+        onAuxClick={(e) => {
+          if (e.button !== 1) return;
+          e.stopPropagation();
+          const g = grp();
+          if (!g) return;
+          const ref = blockRefTarget(props.id, g);
+          internalLinkAuxClick(e, () =>
+            openInNewTab({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) }));
+        }}
         onPointerEnter={peek.anchorEnter}
         onPointerLeave={peek.anchorLeave}
-        // Middle-click → background tab with the block anchor (GH #283).
-        onAuxClick={(e) => {
-          if (internalLinkAuxClick(e, () => {
-            const g = grp();
-            if (!g) return;
-            const ref = doc.byId[props.id]
-              ? blockRef(props.id)
-              : { uuid: props.id, page: g.page, pageKind: g.kind };
-            openInNewTab({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
-          })) e.stopPropagation();
-        }}
         onContextMenu={(e) => {
           const g = grp();
           if (!g) return; // missing target → let the default menu through
-          const ref = doc.byId[props.id]
-            ? blockRef(props.id)
-            : { uuid: props.id, page: g.page, pageKind: g.kind };
+          const ref = blockRefTarget(props.id, g);
           if (!shouldOpenTextContextMenu(e.target)) return;
           e.preventDefault();
           e.stopPropagation();
@@ -1395,51 +1401,55 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           e.stopPropagation();
           const g = grp();
           if (!g) return;
-          const ref = doc.byId[props.id]
-            ? blockRef(props.id)
-            : { uuid: props.id, page: g.page, pageKind: g.kind };
+          const ref = blockRefTarget(props.id, g);
           const ann = annotation();
           const dest = internalLinkDest(e);
-          // OG opens a referenced PDF annotation at its source page (plain click
-          // only); modifier destinations follow the shared internal-link contract.
+          // OG opens a referenced PDF annotation at its source page. Modifier
+          // clicks keep the shared destinations (sidebar / tab / other pane).
           if (ann && dest === "default") {
-            void backend()
-              .getPage(g.page, g.kind)
-              .then((page) => {
-                const file = pdfFileFromPreBlock(page?.pre_block);
+            const owner = graphOwner();
+            void readOwned(owner, backend().getPage(g.page, g.kind))
+              .then((result) => {
+                if (result.kind === "stale") return;
+                const page = result.value;
+                const file = pdfFileFromPreBlock(page?.pre_block, page?.format);
                 if (file) openPdf(file, file, ann.hlPage, props.id);
                 else pushToast("Couldn't find the PDF for this highlight", "error");
               })
-              .catch(() => pushToast("Couldn't open the PDF for this highlight", "error"));
+              .catch(() => { pushToast("Couldn't open the PDF for this highlight", "error"); });
             return;
           }
-          // Shift-click opens the referenced block in the right sidebar. Plain click:
-          // Tine scrolls + flashes the block in context (default); the OG behavior —
-          // zoom into the block as its own page — is opt-in (Settings → ref-click-zoom).
-          // GH #283: Ctrl/Cmd+click opens a BACKGROUND tab, matching every other
-          // internal-link surface. GH #438: Alt+click opens the referenced block
-          // in the OTHER pane, matching Search / the Quick Switcher.
+          // Shift-click opens the referenced block in the right sidebar, Ctrl/Cmd+click
+          // in a background tab (GH #283), Alt+click in the other pane (GH #438).
+          // Plain click: Tine scrolls + flashes the block in context (default); the
+          // OG behavior — zoom into the block as its own page — is opt-in
+          // (Settings → ref-click-zoom).
           if (dest === "sidebar") openBlockInSidebar(ref);
           else if (dest === "background")
             openInNewTab({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
           else if (dest === "pane")
-            openRouteInOtherPane({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
+            openRouteInOtherPane(
+              { kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) },
+              pane?.paneId ?? focusedPaneId()
+            );
           else if (refClickZoom()) focusBlock(props.id);
           else openPageAtBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
         }}
       >
         <Show when={lines() !== undefined} fallback={<>(({props.id}))</>}>
-          <Show when={marker()}>
-            {(m) => <><span class={`block-marker marker-${m().toLowerCase()}`}>{m()}</span>{" "}</>}
-          </Show>
-          <For each={lines()!}>
-            {(line, index) => (
-              <>
-                <Show when={index() > 0}><br /></Show>
-                <InlineText text={line} format={fmt()} preserveMarker={props.label === undefined} />
-              </>
-            )}
-          </For>
+          <LinkDepthContext.Provider value={linkDepth + 1}>
+            <Show when={marker()}>
+              {(m) => <><span class={`block-marker marker-${m().toLowerCase()}`}>{m()}</span>{" "}</>}
+            </Show>
+            <For each={lines()!}>
+              {(line, index) => (
+                <>
+                  <Show when={index() > 0}><br /></Show>
+                  <InlineText text={line} format={fmt()} preserveMarker={props.label === undefined} />
+                </>
+              )}
+            </For>
+          </LinkDepthContext.Provider>
         </Show>
       </span>
       <Show when={peek.open() && preview() && capped().blocks.length > 0}>

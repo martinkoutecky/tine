@@ -2,43 +2,31 @@ use crate::backup::backup_async;
 use crate::settings::{
     approved_external_assets, remember_external_assets_approval, remember_graph,
 };
-use crate::state::{
-    canonical_graph_root, poke_watcher, slot_for_window, AppState, ApplicationPageAdmission,
-    GraphSlot,
-};
-use crate::storage_transition_supervisor::{
-    StorageTransitionKind, StorageTransitionOutcome, StorageTransitionPhase,
-};
-use sha2::{Digest as _, Sha256};
-use std::path::{Path, PathBuf};
+use crate::state::{canonical_graph_root, graph_meta, slot_for_window, AppState, GraphSlot};
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Instant;
 use tauri::{Emitter, Manager, State};
-use tine_core::model::{Graph, GraphMeta};
+use tine_core::model::GraphMeta;
+use tine_store::{OpenError, OpenOptions, Store};
 
-/// A launch warm reserved for a graph that is about to be published: the warm
-/// generation `warm_cache_async` reports done against, and the graph's
-/// registered index owner, which tells readers index work is coming.
-pub(crate) struct WarmTicket {
-    pub(crate) generation: u64,
-    owner: tine_core::model::IndexOwner,
-}
-
-/// Reset the warm flag for a new graph load and register its index owner.
-/// Both callers take the ticket before the slot is published, so a command
-/// reaching the new graph sees index work coming and waits for it instead of
-/// parsing the whole graph itself (GH #543); `warm_cache_async` accepts only a
-/// ticket.
-pub(crate) fn begin_warm_cache(slot: &GraphSlot) -> WarmTicket {
-    slot.warm_done.store(false, Ordering::Release);
-    WarmTicket {
-        generation: slot.warm_generation.fetch_add(1, Ordering::AcqRel) + 1,
-        owner: slot.graph().register_index_owner(),
+pub(crate) fn open_error_text(error: OpenError, layout_prefix: bool) -> String {
+    let text = error.to_string();
+    if layout_prefix {
+        format!("unsafe graph layout: {text}")
+    } else {
+        text
     }
 }
 
-/// Resolve the graph root: explicit path, else env var, else first CLI arg.
+/// Reset the warm flag for a new graph load and return the new warm generation
+/// (passed to `warm_cache_async`, which only reports done if still current).
+pub(crate) fn begin_warm_cache(slot: &GraphSlot) -> u64 {
+    slot.begin_startup_warm()
+}
+
+/// Resolve the graph root: explicit path, else env var, else the graph named by
+/// the launch command line (`cli::launch_request`; desktop only).
 pub(crate) fn resolve_root(path: &str) -> Option<String> {
     if !path.is_empty() {
         return Some(path.to_string());
@@ -57,151 +45,42 @@ pub(crate) fn resolve_root(path: &str) -> Option<String> {
     None
 }
 
-/// The remembered-graph lookup retains its historical best-effort semantics:
-/// unavailable, truncated, and malformed device settings simply yield no
-/// remembered graph.  Unlike the old `last_graph_path` composition, every
-/// operation is reported with a bounded code so a stuck startup never looks
-/// silent.  The supplied path is never included in a diagnostic.
-fn remembered_startup_graph_path_at(
-    configured: Option<String>,
-    settings_path: Option<&Path>,
-    mut report: impl FnMut(&'static str, bool, Option<&'static str>),
-) -> Option<String> {
-    report("lookup.entry", false, None);
-    report("lookup.app_data", false, None);
-
-    report("lookup.settings_stat", false, None);
-    let settings_exists = settings_path
-        .and_then(|path| std::fs::metadata(path).ok())
-        .is_some();
-
-    report("lookup.settings_read", false, None);
-    let contents = settings_exists
-        .then(|| settings_path.and_then(|path| std::fs::read_to_string(path).ok()))
-        .flatten();
-
-    report("lookup.settings_parse", false, None);
-    let remembered = contents
-        .as_deref()
-        .and_then(|contents| serde_json::from_str::<serde_json::Value>(contents).ok())
-        .and_then(|json| {
-            json.get("last_graph_path")
-                .and_then(|value| value.as_str())
-                .map(str::to_string)
-        });
-
-    let result = configured.or(remembered);
-    report("lookup.complete", true, Some("ok"));
-    result
-}
-
-fn startup_graph_path_blocking(app: &tauri::AppHandle) -> Option<String> {
-    let settings_path = crate::settings::settings_path(app);
-    remembered_startup_graph_path_at(
-        resolve_root(""),
-        settings_path.as_deref(),
-        |phase, terminal, outcome| {
-            crate::debug::diag(format!(
-                "startup lookup: phase={phase}; terminal={terminal}; outcome={}",
-                outcome.unwrap_or("none")
-            ));
-        },
-    )
+/// A remembered path is optional startup state: a moved or deleted graph
+/// sends the app to the picker instead of aborting Tauri setup.
+pub(crate) fn usable_last_graph_path(path: Option<String>) -> Option<String> {
+    path.filter(|root| Store::canonical_root(Path::new(root)).is_ok())
 }
 
 #[tauri::command]
-pub(crate) async fn startup_graph_path(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
-) -> Option<String> {
-    let label = window.label().to_string();
-    let state = app.state::<AppState>();
-    let lookup_id = match state.storage_supervisor.begin_transition(
-        &app,
-        &label,
-        None,
-        StorageTransitionKind::Lookup,
+pub(crate) fn startup_graph_path(app: tauri::AppHandle) -> Option<String> {
+    #[cfg(desktop)]
+    if matches!(
+        crate::cli::launch_request_env(),
+        crate::cli::LaunchRequest::Link(_)
     ) {
-        Ok(operation_id) => operation_id,
-        Err(error) => {
-            crate::debug::diag(error);
-            return None;
-        }
-    };
-    let worker_app = app.clone();
-    match tauri::async_runtime::spawn_blocking(move || {
-        let worker_state = worker_app.state::<AppState>();
-        if let Err(error) = worker_state.storage_supervisor.advance_transition(
-            &worker_app,
-            lookup_id,
-            StorageTransitionPhase::LookingUpSelection,
-        ) {
-            crate::debug::diag(error);
-        }
-        let result = startup_graph_path_blocking(&worker_app);
-        let canonical_target = result
-            .as_deref()
-            .and_then(|path| canonical_graph_root(path).ok());
-        if let Some(root) = canonical_target.clone() {
-            if let Err(error) = worker_state
-                .storage_supervisor
-                .bind_transition_root(lookup_id, root)
-            {
-                crate::debug::diag(error);
-            }
-        }
-        if let Err(error) = worker_state.storage_supervisor.finish_transition(
-            &worker_app,
-            lookup_id,
-            StorageTransitionOutcome::Succeeded,
-            None,
-        ) {
-            crate::debug::diag(error);
-        }
-        result
-    })
-    .await
-    {
-        Ok(result) => result,
-        Err(_) => {
-            if let Err(error) = state.storage_supervisor.finish_transition(
-                &app,
-                lookup_id,
-                StorageTransitionOutcome::Failed,
-                Some("worker_join_failed".into()),
-            ) {
-                crate::debug::diag(error);
-            }
-            None
-        }
+        return None;
     }
+    resolve_root("").or_else(|| usable_last_graph_path(crate::settings::last_graph_path(&app)))
 }
 
 #[tauri::command]
-pub(crate) fn capture_target(
-    state: State<'_, AppState>,
-) -> Result<String, crate::command_error::CommandError> {
+pub(crate) fn capture_target(state: State<'_, AppState>) -> Result<String, String> {
     capture_target_for_state(&state)
 }
 
-fn capture_target_for_state(
-    state: &AppState,
-) -> Result<String, crate::command_error::CommandError> {
+fn capture_target_for_state(state: &AppState) -> Result<String, String> {
     let preferred = state.last_focused.lock().unwrap().clone();
-    if let Some(label) =
-        preferred.filter(|label| state.graphs.read().unwrap().slot(label).is_some())
-    {
+    // One registry read answers both questions (R2: no re-read under a guard).
+    let registry = state.graphs.read().unwrap();
+    if let Some(label) = preferred.filter(|label| registry.slot(label).is_some()) {
         return Ok(label);
     }
-    state
-        .graphs
-        .read()
-        .unwrap()
+    registry
         .entries()
         .into_iter()
         .next()
         .map(|entry| entry.0)
-        .ok_or_else(|| crate::command_error::CommandError::prose("no graph window is open"))
+        .ok_or_else(|| "no graph window is open".to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -209,15 +88,15 @@ pub(crate) struct CaptureGraphBindingResult {
     pub(crate) binding_generation: u64,
 }
 
-/// Complete the current native show with one selected read lease. Beginning
-/// the show already revoked the prior lease; a superseded request cannot bind.
-/// The frontend only reads the resulting selection through `capture_graph_binding`.
+/// Complete this native show's read lease. A newer show returns None and
+/// retains its own selection; an unbound cold launch errors and stays pending.
+/// Cost O(open windows); the frontend reads the frozen lease, never reselects.
 pub(crate) fn refresh_capture_graph_binding(
     state: &AppState,
     show_generation: u64,
-) -> Result<Option<u64>, crate::command_error::CommandError> {
+) -> Result<Option<u64>, String> {
     let target = capture_target_for_state(state)?;
-    let slot = slot_for_window(state, &target).map_err(crate::command_error::CommandError::from)?;
+    let slot = slot_for_window(state, &target)?;
     let binding_generation = slot.binding_generation;
     Ok(state
         .complete_capture_show(show_generation, target, binding_generation)
@@ -233,42 +112,142 @@ pub(crate) fn refresh_capture_graph_binding(
 pub(crate) fn capture_graph_binding(
     window: tauri::WebviewWindow,
     state: State<'_, AppState>,
-) -> Result<CaptureGraphBindingResult, crate::command_error::CommandError> {
+) -> Result<CaptureGraphBindingResult, String> {
     if window.label() != "capture" {
-        return Err(crate::command_error::CommandError::prose(
-            "capture graph binding is only available to quick capture",
-        ));
+        return Err("capture graph binding is only available to quick capture".into());
     }
     let binding_generation = state
         .capture_graph_binding()
-        .ok_or_else(|| {
-            crate::command_error::CommandError::prose("no graph bound for quick capture")
-        })?
+        .ok_or("no graph bound for quick capture")?
         .binding_generation;
     Ok(CaptureGraphBindingResult { binding_generation })
 }
 
 struct LoadedGraph {
-    graph: Graph,
+    store: Store,
+    meta: GraphMeta,
 }
 
+/// One launch-owned result, consumed under `graph_load` before binding a slot.
+/// Failed opens remain command errors, never setup errors. Dropping an unused
+/// result drops its Store and cancels its worker; no thread can bind a window.
+#[derive(Default)]
+pub(crate) struct StartupGraph(
+    std::sync::Mutex<
+        Option<(
+            std::path::PathBuf,
+            std::thread::JoinHandle<Result<LoadedGraph, String>>,
+        )>,
+    >,
+);
+
+impl StartupGraph {
+    fn begin(
+        &self,
+        root: std::path::PathBuf,
+        approved: Option<std::path::PathBuf>,
+        watch: tine_store::WatchMode,
+        app_data: Option<std::path::PathBuf>,
+    ) {
+        let requested = root.clone();
+        let worker = std::thread::Builder::new()
+            .name("tine-startup-open".into())
+            .spawn(move || {
+                open_graph_for_load(
+                    &requested.display().to_string(),
+                    approved.as_deref(),
+                    watch,
+                    app_data.as_deref(),
+                )
+            });
+        match worker {
+            Ok(worker) => *self.0.lock().unwrap() = Some((root, worker)),
+            Err(_) => crate::debug::diag("startup-open worker unavailable; load command will open"),
+        }
+    }
+
+    fn take(&self, root: &Path) -> Option<Result<LoadedGraph, String>> {
+        let (requested, worker) = self.0.lock().unwrap().take()?;
+        if requested != root {
+            return None;
+        }
+        Some(
+            worker
+                .join()
+                .unwrap_or_else(|_| Err("startup graph open panicked".into())),
+        )
+    }
+}
+
+/// Start read-only Store opening/warming while JS boots; the webview still owns
+/// activation and error presentation through its ordinary load command (I-22).
+pub(crate) fn prepare_startup_graph(app: &tauri::AppHandle) {
+    let Some(root) = startup_graph_path(app.clone()) else {
+        return;
+    };
+    let Ok(root) = canonical_graph_root(&root) else {
+        return;
+    };
+    app.state::<StartupGraph>().begin(
+        root.clone(),
+        approved_external_assets(app, &root),
+        crate::watcher::watch_mode(app),
+        checkpoint_app_data(app),
+    );
+}
+
+/// Open a graph without writing to it. Title-named journal files are proposed
+/// for renaming in Settings, never renamed here (master e6f9b6e1ceae): a
+/// rename at open lands as an unrequested change in a synced or git-kept graph.
 fn open_graph_for_load(
     root: &str,
     approved_assets: Option<&Path>,
-) -> Result<LoadedGraph, crate::command_error::CommandError> {
-    let graph = Graph::open_checked_with_assets(root, approved_assets).map_err(|e| {
-        crate::command_error::CommandError::graph(format!("unsafe graph layout: {e}"))
-    })?;
-    // Concord invariant 4 (write-shyness). Opening a graph used to RENAME every
-    // title-named journal file to its date stem, behind a synchronous launch
-    // backup. It is a genuine repair — such a file cannot be parsed back to a
-    // date, so its day looks empty — but it is not a repair the user asked for,
-    // and in a graph kept in git or behind a sync tool it lands as a tree
-    // rewrite the moment Tine is started. The renames are now PROPOSED
-    // (`journal_filename_migrations`) and applied only by the explicit
-    // `apply_journal_filename_migrations` command, which takes the same
-    // pre-migration snapshot first. Opening touches nothing.
-    Ok(LoadedGraph { graph })
+    watch: tine_store::WatchMode,
+    app_data: Option<&Path>,
+) -> Result<LoadedGraph, String> {
+    let (store, meta, _) = Store::open(
+        Path::new(root),
+        OpenOptions {
+            approved_external_assets: approved_assets.map(Path::to_path_buf),
+            watch,
+            launch_checkpoint: app_data.map(|dir| launch_checkpoint_path(dir, Path::new(root))),
+        },
+    )
+    .map_err(|error| open_error_text(error, true))?;
+    Ok(LoadedGraph { store, meta })
+}
+
+/// The app-data directory launch checkpoints live under (ADR 0070): Tauri's
+/// `app_data_dir`, as `concord_ledger::attach` uses, on all five shipped
+/// targets (Linux, Windows, macOS, iOS, Android) with no platform branch.
+/// The `dirs` crate it replaces has no Android arm (it falls to `$HOME`) and
+/// is not the app sandbox on mobile. Unit tests keep no checkpoint, so they
+/// never touch the developer's app data.
+pub(crate) fn checkpoint_app_data(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    app.path().app_data_dir().ok()
+}
+
+/// The graph's launch checkpoint (ADR 0070): one file under `app_data`, never
+/// under the graph root, keyed like the session and drafts files.
+pub(crate) fn launch_checkpoint_path(app_data: &Path, root: &Path) -> std::path::PathBuf {
+    let id = crate::settings::session_id(root);
+    let stem = id.strip_suffix(".json").unwrap_or(&id);
+    app_data
+        .join("launch-checkpoints")
+        .join(format!("{stem}.bin"))
+}
+
+/// Removing a graph from Tine deletes its launch checkpoint (ADR 0070).
+/// Best-effort: the checkpoint is a disposable cache, so a failure (already
+/// gone, a disk error) is ignored and never fails the removal; nothing in the
+/// graph is touched.
+pub(crate) fn forget_launch_checkpoint(app_data: Option<&Path>, root: &str) {
+    if let Some(app_data) = app_data {
+        let _ = std::fs::remove_file(launch_checkpoint_path(app_data, Path::new(root)));
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -285,23 +264,19 @@ pub(crate) struct GraphAccessInspection {
 pub(crate) fn inspect_graph_access(
     path: String,
     app: tauri::AppHandle,
-) -> Result<GraphAccessInspection, crate::command_error::CommandError> {
-    let root = resolve_root(&path).ok_or_else(|| {
-        crate::command_error::CommandError::prose(
-            "no graph path provided (set TINE_GRAPH or pass a path)",
-        )
-    })?;
-    let root = canonical_graph_root(&root).map_err(crate::command_error::CommandError::from)?;
-    let external =
-        Graph::external_assets_target(&root).map_err(crate::command_error::CommandError::from)?;
-    let approved_target =
-        approved_external_assets(&app, &root).and_then(|path| std::fs::canonicalize(path).ok());
-    let approved = external
-        .as_ref()
-        .is_none_or(|target| approved_target.as_ref() == Some(target));
+) -> Result<GraphAccessInspection, String> {
+    let root = resolve_root(&path)
+        .ok_or_else(|| "no graph path provided (set TINE_GRAPH or pass a path)".to_string())?;
+    let root = canonical_graph_root(&root)?;
+    let inspection = Store::inspect(&root).map_err(|error| open_error_text(error, false))?;
+    let approved = inspection.external_assets.is_none()
+        || approved_external_assets(&app, &root)
+            .is_some_and(|path| inspection.approves_external_assets(&path).unwrap_or(false));
     Ok(GraphAccessInspection {
         graph_root: root.display().to_string(),
-        external_assets_path: external.map(|path| path.display().to_string()),
+        external_assets_path: inspection
+            .external_assets
+            .map(|path| path.display().to_string()),
         approved,
     })
 }
@@ -309,43 +284,53 @@ pub(crate) fn inspect_graph_access(
 /// Persist consent only if the submitted target still exactly matches the
 /// graph's live canonical assets target (TOCTOU/retarget guard).
 #[tauri::command]
-pub(crate) fn approve_external_assets(
+pub(crate) async fn approve_external_assets(
     graph_root: String,
     assets_path: String,
     app: tauri::AppHandle,
-) -> Result<(), crate::command_error::CommandError> {
-    let root =
-        canonical_graph_root(&graph_root).map_err(crate::command_error::CommandError::from)?;
-    let live = Graph::external_assets_target(&root)
-        .map_err(crate::command_error::CommandError::from)?
-        .ok_or_else(|| {
-            crate::command_error::CommandError::prose(
-                "graph no longer uses an external assets directory",
-            )
-        })?;
-    let submitted = std::fs::canonicalize(&assets_path).map_err(|error| {
-        crate::command_error::CommandError::graph(format!(
-            "couldn't resolve external assets path: {error}"
-        ))
-    })?;
-    if submitted != live {
-        return Err(crate::command_error::CommandError::graph(format!(
+) -> Result<(), String> {
+    // Inspects the graph and fsyncs the settings file (R3): off the main thread.
+    crate::state::off_ui(move || approve_external_assets_blocking(graph_root, assets_path, app))
+        .await
+}
+
+fn approve_external_assets_blocking(
+    graph_root: String,
+    assets_path: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let root = canonical_graph_root(&graph_root)?;
+    let inspection = Store::inspect(&root).map_err(|error| open_error_text(error, false))?;
+    let live = inspection
+        .external_assets
+        .clone()
+        .ok_or_else(|| "graph no longer uses an external assets directory".to_string())?;
+    let matches = inspection
+        .approves_external_assets(Path::new(&assets_path))
+        .map_err(|error| format!("couldn't resolve external assets path: {error}"))?;
+    if !matches {
+        return Err(format!(
             "external assets directory changed before approval (now {})",
             live.display()
-        )));
+        ));
     }
     remember_external_assets_approval(&app, &root, &live)
 }
 
+/// Open (or focus) the graph at `path` for the calling window. Runs on the
+/// blocking pool (I-13, master abf7af831884): a synchronous command runs on
+/// the UI thread, and an in-place switch tears the displaced graph's Store
+/// down (~200 ms for a Ready graph on a copy of the anonymized graph) besides
+/// opening the new one. If the window closed while the open ran, the binding
+/// this open created is released again and the open reports an error.
 #[tauri::command]
 pub(crate) async fn load_graph(
     path: String,
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
-    state: State<'_, AppState>,
-) -> Result<LoadGraphResult, crate::command_error::CommandError> {
+) -> Result<LoadGraphResult, String> {
     let label = window.label().to_string();
-    drop((window, state));
+    drop(window);
     let worker_app = app.clone();
     let worker_label = label.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -353,40 +338,20 @@ pub(crate) async fn load_graph(
         load_graph_for_label(path, &worker_app, &worker_label, &state)
     })
     .await
-    .map_err(|error| {
-        crate::command_error::CommandError::graph(format!("graph-open worker failed: {error}"))
-    })??;
-
+    .map_err(|error| format!("graph-open worker failed: {error}"))??;
     if app.get_webview_window(&label).is_none() {
-        let binding_generation = match &result {
-            LoadGraphResult::Loaded {
-                binding_generation, ..
-            }
-            | LoadGraphResult::AlreadyCurrent {
-                binding_generation, ..
-            } => Some(*binding_generation),
-            LoadGraphResult::FocusedExisting { .. } => None,
-        };
-        if let Some(binding_generation) = binding_generation {
+        if let Some(binding_generation) = result.binding_generation() {
             let state = app.state::<AppState>();
-            let removed = {
-                let mut graphs = state.graphs.write().unwrap();
-                let owns_generation = graphs
-                    .slot(&label)
-                    .is_some_and(|slot| slot.binding_generation == binding_generation);
-                owns_generation.then(|| graphs.remove(&label)).flatten()
-            };
-            if removed.is_some() {
-                poke_watcher(&state);
-            }
+            let released = state
+                .graphs
+                .write()
+                .unwrap()
+                .release_binding(&label, binding_generation);
+            // Closed (and its ~200 ms Store teardown) outside the lock.
+            drop(released);
         }
-        return Err(crate::command_error::CommandError::prose(
-            "graph window closed while storage was opening",
-        ));
+        return Err("graph window closed while the graph was opening".into());
     }
-
-    // Only a pending unbound Capture request may consume this publication.
-    // A shown Capture keeps its frozen graph lease across unrelated opens.
     #[cfg(desktop)]
     if let LoadGraphResult::Loaded {
         binding_generation, ..
@@ -397,237 +362,116 @@ pub(crate) async fn load_graph(
     {
         crate::complete_pending_capture_show(&app, label.clone(), *binding_generation);
     }
-
-    // The iOS Simulator probe exercises the same bound-graph helper as the
-    // Guide button.  Keeping the hook simulator-only prevents a hidden launch
-    // argument from becoming product behavior on physical devices.
-    #[cfg(all(target_os = "ios", target_abi = "sim"))]
-    if std::env::args().any(|argument| argument == "--tine-ci-copy-guide") {
-        let binding_generation = match &result {
-            LoadGraphResult::Loaded {
-                binding_generation, ..
-            }
-            | LoadGraphResult::AlreadyCurrent {
-                binding_generation, ..
-            } => Some(*binding_generation),
-            LoadGraphResult::FocusedExisting { .. } => None,
-        }
-        .ok_or_else(|| {
-            crate::command_error::CommandError::prose(
-                "iOS Guide-copy probe did not retain the requested graph",
-            )
-        })?;
-        let worker_app = app.clone();
-        let worker_label = label.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            crate::commands::copy_guide_into_bound_graph(
-                &worker_app,
-                &worker_label,
-                binding_generation,
-                "Tine Guide".to_string(),
-            )
-        })
-        .await
-        .map_err(|error| {
-            crate::command_error::CommandError::graph(format!(
-                "iOS Guide-copy probe worker failed: {error}"
-            ))
-        })?
-        .map_err(|error| {
-            crate::command_error::CommandError::graph(format!(
-                "iOS Guide-copy probe failed: {error}"
-            ))
-        })?;
-        crate::debug::diag("iOS Guide-copy probe completed".to_string());
-    }
-
     Ok(result)
 }
 
-fn graph_load_phase(started: Option<Instant>, previous: &mut Option<Instant>, phase: &str) {
-    let (Some(started), Some(prior)) = (started, *previous) else {
-        return;
-    };
-    let now = Instant::now();
-    crate::debug::diag(format!(
-        "graph load phase: {phase}; phase_ms={}; total_ms={}",
-        now.duration_since(prior).as_millis(),
-        now.duration_since(started).as_millis()
-    ));
-    *previous = Some(now);
-}
-
-/// The one Direct Files publish lifecycle used by ordinary graph open.
-/// It deliberately includes the normal backup, migration, remembered-graph,
-/// title, watcher, and cache scheduling work so a recovery binding is not a
-/// half-open graph that only happens to answer `AlreadyCurrent` later.
-pub(crate) struct DirectFilesOpen {
-    pub(crate) meta: GraphMeta,
-    pub(crate) binding_generation: u64,
-    pub(crate) application_page_admission: ApplicationPageAdmission,
-}
-
-/// Install the ordinary Direct Files authority in the window registry.  This is
-/// intentionally the one testable sub-boundary of Direct Files publishing: a
-/// caller that reaches it has already made the storage decision, and the slot
-/// itself is the authority every later graph command is routed to.
-fn publish_direct_files_slot(
+/// The "root is already bound" branch of `load_graph_for_label`: the calling
+/// window's own graph answers `AlreadyCurrent`; a graph bound in another window
+/// is activated there (`activate` returns whether that window exists) and,
+/// when that moves capture routing, remembered as the last graph (`remember`
+/// fsyncs the settings file). `None` means no window owns `root_key`.
+fn route_bound_root(
     state: &AppState,
+    root_key: &Path,
     window_label: &str,
-    graph: Graph,
-    root_key: PathBuf,
-) -> Result<(Arc<GraphSlot>, WarmTicket), crate::command_error::CommandError> {
-    let slot = Arc::new(GraphSlot::new(graph, root_key));
-    let warm = begin_warm_cache(&slot);
-    state
+    activate: impl FnOnce(&str) -> bool,
+    remember: impl FnOnce(&GraphSlot),
+) -> Result<Option<LoadGraphResult>, String> {
+    // R2: snapshot under one read guard and release it before acting. A
+    // guard kept alive by an `if let` head (edition 2021) would stay held
+    // while this thread re-reads the registry; std's RwLock queues that read
+    // behind a waiting writer (`bind`, the `Destroyed` handler), which waits
+    // on our guard: both threads and the UI freeze.
+    let (owner, own_slot) = {
+        let registry = state.graphs.read().unwrap();
+        let Some(owner) = registry.owner(root_key) else {
+            return Ok(None);
+        };
+        let own_slot = (owner == window_label).then(|| registry.slot(&owner));
+        (owner, own_slot)
+    };
+    if let Some(slot) = own_slot {
+        let slot = slot.ok_or_else(|| format!("no graph loaded for window {owner}"))?;
+        return Ok(Some(LoadGraphResult::AlreadyCurrent {
+            meta: graph_meta(&slot),
+            binding_generation: slot.binding_generation,
+            config_problem: config_problem(&slot.store),
+        }));
+    }
+    // `FocusedExisting` is an explicit activation request. Update capture
+    // routing now instead of depending solely on a subsequent OS focus event,
+    // which is not guaranteed on every WM/headless environment.
+    if activate(&owner) && state.note_focused(&owner) {
+        if let Ok(slot) = slot_for_window(state, &owner) {
+            remember(&slot);
+        }
+    }
+    Ok(Some(LoadGraphResult::FocusedExisting {
+        window_label: owner,
+    }))
+}
+
+pub(crate) fn load_graph_for_label(
+    path: String,
+    app: &tauri::AppHandle,
+    window_label: &str,
+    state: &State<'_, AppState>,
+) -> Result<LoadGraphResult, String> {
+    let root = resolve_root(&path)
+        .ok_or_else(|| "no graph path provided (set TINE_GRAPH or pass a path)".to_string())?;
+    let root_key = canonical_graph_root(&root)?;
+    let _load = state.graph_load.lock().unwrap();
+    let routed = route_bound_root(
+        state,
+        &root_key,
+        window_label,
+        |owner| {
+            let Some(existing) = app.get_webview_window(owner) else {
+                return false;
+            };
+            let _ = existing.show();
+            #[cfg(desktop)]
+            let _ = existing.unminimize();
+            let _ = existing.set_focus();
+            true
+        },
+        |slot| {
+            let _ = remember_graph(app, &slot.root_key.display().to_string());
+        },
+    )?;
+    if let Some(result) = routed {
+        return Ok(result);
+    }
+    let root = root_key.display().to_string();
+    let approved_assets = approved_external_assets(app, &root_key);
+    let LoadedGraph { store, meta } = match app.state::<StartupGraph>().take(&root_key) {
+        Some(result) => result,
+        None => open_graph_for_load(
+            &root,
+            approved_assets.as_deref(),
+            crate::watcher::watch_mode(app),
+            checkpoint_app_data(app).as_deref(),
+        ),
+    }?;
+    let slot = Arc::new(GraphSlot::new(store, root_key));
+    let warm_generation = begin_warm_cache(&slot);
+    let displaced = state
         .graphs
         .write()
         .unwrap()
-        .bind(window_label.to_string(), Arc::clone(&slot))
-        .map_err(crate::command_error::CommandError::from)?;
+        .bind(window_label.to_string(), slot.clone())?;
+    // The replaced graph's Store closes here, after the registry lock is
+    // released, so other graph commands do not wait on its teardown.
+    drop(displaced);
     state.note_focused(window_label);
-    poke_watcher(state);
-    Ok((slot, warm))
-}
-
-fn direct_files_projection_path(
-    app: &tauri::AppHandle,
-    root: &Path,
-) -> Result<PathBuf, crate::command_error::CommandError> {
-    let app_data = app.path().app_data_dir().map_err(|error| {
-        crate::command_error::CommandError::graph(format!(
-            "app data directory is unavailable: {error}"
-        ))
-    })?;
-    let mut digest = Sha256::new();
-    digest.update(b"tine-direct-projection-path-v1\0");
-    digest.update(root.to_string_lossy().as_bytes());
-    let key = digest
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    Ok(app_data
-        .join("direct-files-projections")
-        .join(format!("{key}.sqlite")))
-}
-
-pub(crate) struct PreparedDirectFilesOpen {
-    graph: Graph,
-    root_key: PathBuf,
-}
-
-/// Perform the expensive, non-authoritative Direct Files work without touching
-/// the window registry.  A storage transition may be superseded while this
-/// runs; only `publish_prepared_direct_files` is the linearization point.
-pub(crate) fn prepare_direct_files_open(
-    app: &tauri::AppHandle,
-    root_key: PathBuf,
-) -> Result<PreparedDirectFilesOpen, crate::command_error::CommandError> {
-    let root = root_key.display().to_string();
-    let approved_assets = approved_external_assets(app, &root_key);
-    // Convergent cross-page moves (packet B2, I-3/I-2). A move writes N+1 files
-    // and the process may die between any two of them. The durable record that
-    // makes that convergent is retired here, BEFORE a single page is parsed, so
-    // no reader ever observes the half-move: the next open either completes it
-    // or rolls it back. This is the layer that owns the app-private root —
-    // `Graph` is never handed one, which is exactly why recovery cannot live
-    // inside it. See `docs/contracts/direct-move-recovery.md` §3.
-    match crate::backup::direct_move_recovery_dir(app, &root_key) {
-        Some(store_root) => {
-            let report = tine_core::direct_move_recovery::recover_all(&store_root, &root_key);
-            if !report.is_empty() {
-                crate::debug::diag(report.summary());
-            }
-        }
-        None => crate::debug::diag(
-            "Direct move recovery store unavailable; a crashed cross-page move cannot converge"
-                .to_string(),
-        ),
-    }
-    let LoadedGraph { graph } = open_graph_for_load(&root, approved_assets.as_deref())?;
-    attach_direct_files_services(&graph, direct_files_service_paths(app, &root_key));
-    Ok(PreparedDirectFilesOpen { graph, root_key })
-}
-
-/// The app-private locations of the services a Direct Files `Graph` carries:
-/// the disposable SQLite projection and the Concord base ledger. Resolved from
-/// the `AppHandle` once, so the attach itself needs no handle and can be driven
-/// from a test.
-pub(crate) struct DirectFilesServicePaths {
-    pub(crate) projection: Result<PathBuf, crate::command_error::CommandError>,
-    pub(crate) concord_ledger: Option<PathBuf>,
-}
-
-pub(crate) fn direct_files_service_paths(
-    app: &tauri::AppHandle,
-    root_key: &Path,
-) -> DirectFilesServicePaths {
-    DirectFilesServicePaths {
-        projection: direct_files_projection_path(app, root_key),
-        concord_ledger: crate::backup::concord_ledger_dir(app, root_key),
-    }
-}
-
-/// Attach the Direct Files services to a freshly opened `Graph`. This is the
-/// ONE place that does so: the ordinary open and the configuration refresh
-/// (`state::PreparedRefresh::commit`) both go through it, so a `Graph` that
-/// reaches the window registry always carries its projection. A refresh that
-/// reopened without attaching left every query `ProjectionUnavailable` until
-/// the next graph open (GH draft "Query Engine", 2026-09-11: dismissing the
-/// Guide toast killed all queries).
-pub(crate) fn attach_direct_files_services(graph: &Graph, paths: DirectFilesServicePaths) {
-    match paths.projection {
-        Ok(path) => {
-            if let Err(error) = graph.attach_direct_projection(path) {
-                crate::debug::diag(format!(
-                    "Direct Files SQLite projection unavailable; indexed reads are unavailable: {error}"
-                ));
-            }
-        }
-        Err(error) => crate::debug::diag(format!(
-            "Direct Files SQLite projection path unavailable; indexed reads are unavailable: {error}"
-        )),
-    }
-    // Concord base ledger (ADR 0056): Direct Files only, app-private, outside
-    // the sync tree. Attach failure is impossible (the attach performs no I/O);
-    // an unavailable app-data dir simply leaves the ledger off — every hook
-    // no-ops and conflict diffs stay 2-way.
-    match paths.concord_ledger {
-        Some(dir) => graph.attach_concord_ledger(dir),
-        None => crate::debug::diag(
-            "Concord ledger directory unavailable; conflict diffs stay 2-way".to_string(),
-        ),
-    }
-}
-
-/// The short authoritative half of a Direct Files open.  Callers must invoke
-/// this from the native storage supervisor's `commit_if_current` closure.
-pub(crate) fn publish_prepared_direct_files(
-    app: &tauri::AppHandle,
-    window_label: &str,
-    state: &AppState,
-    prepared: PreparedDirectFilesOpen,
-) -> Result<DirectFilesOpen, crate::command_error::CommandError> {
-    let PreparedDirectFilesOpen { graph, root_key } = prepared;
-    let (slot, warm) = publish_direct_files_slot(state, window_label, graph, root_key)?;
-    crate::state::serve_disk_config(app, window_label, &slot);
-    let meta = slot.graph_meta();
-    let binding_generation = slot.binding_generation;
-    let application_page_admission = slot.application_page_admission();
-    // The graph is published: its index owner starts now, before anything
-    // that can fail. An error returned after publication dropped the warm
-    // ticket, leaving an open graph whose index nobody owned and whose
-    // whole-graph views waited for a completion that never came (GH #543,
-    // audit R7-03).
-    warm_cache_async(app.clone(), window_label.to_string(), slot.clone(), warm)?;
-    // Opening no longer mutates the tree, so the launch snapshot is never on a
-    // rename's critical path: it stays the ordinary background backup.
-    backup_async(app.clone(), window_label.to_string(), slot)?;
-    // The recent-graphs list is bookkeeping; a settings write that fails
-    // (a full disk) does not un-open the graph.
+    crate::concord_ledger::attach(app.path().app_data_dir().ok(), &slot);
+    crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
+    backup_async(app.clone(), slot.clone());
+    // The graph is bound above; a settings write that fails (disk full, EIO)
+    // must not return early, or `open_graph_window` skips its cleanup and the
+    // graph stays owned by a window that never existed (master graph.rs:629).
     if remember_graph(app, &meta.root).is_err() {
-        crate::debug::diag("remembering the opened graph in settings failed".to_string());
+        crate::debug::diag("remembering the opened graph in settings failed");
     }
     if let Some(window) = app.get_webview_window(window_label) {
         let name = Path::new(&meta.root)
@@ -636,145 +480,13 @@ pub(crate) fn publish_prepared_direct_files(
             .unwrap_or("Graph");
         let _ = window.set_title(&format!("Tine — {name}"));
     }
-    Ok(DirectFilesOpen {
+    let binding_generation = slot.binding_generation;
+    let config_problem = config_problem(&slot.store);
+    warm_cache_async(app.clone(), window_label.to_string(), slot, warm_generation);
+    Ok(LoadGraphResult::Loaded {
         meta,
         binding_generation,
-        application_page_admission,
-    })
-}
-
-pub(crate) fn load_graph_for_label(
-    path: String,
-    app: &tauri::AppHandle,
-    window_label: &str,
-    state: &State<'_, AppState>,
-) -> Result<LoadGraphResult, crate::command_error::CommandError> {
-    let started = crate::debug::debug_enabled().then(Instant::now);
-    let mut previous = started;
-    let root = resolve_root(&path).ok_or_else(|| {
-        crate::command_error::CommandError::prose(
-            "no graph path provided (set TINE_GRAPH or pass a path)",
-        )
-    })?;
-    let root_key = canonical_graph_root(&root).map_err(crate::command_error::CommandError::from)?;
-    graph_load_phase(started, &mut previous, "canonical graph root");
-    let transition_gate = state.storage_supervisor.transition_lane(&root_key);
-    let _load = transition_gate.lock().unwrap();
-    graph_load_phase(started, &mut previous, "serialized graph-open lock");
-    let lookup_id = state.storage_supervisor.begin_transition(
-        app,
-        window_label,
-        Some(root_key.clone()),
-        StorageTransitionKind::Lookup,
-    )?;
-    state.storage_supervisor.advance_transition(
-        app,
-        lookup_id,
-        StorageTransitionPhase::LookingUpSelection,
-    )?;
-    let owner = state.graphs.read().unwrap().owner(&root_key);
-    if let Some(owner) = owner {
-        if owner == window_label {
-            let slot = slot_for_window(&state, &owner)
-                .map_err(crate::command_error::CommandError::from)?;
-            crate::state::serve_disk_config(app, window_label, &slot);
-            state.storage_supervisor.finish_transition(
-                app,
-                lookup_id,
-                StorageTransitionOutcome::Succeeded,
-                None,
-            )?;
-            return Ok(LoadGraphResult::AlreadyCurrent {
-                meta: slot.graph_meta(),
-                binding_generation: slot.binding_generation,
-                application_page_admission: slot.application_page_admission(),
-            });
-        }
-        if let Some(existing) = app.get_webview_window(&owner) {
-            let _ = existing.show();
-            #[cfg(desktop)]
-            let _ = existing.unminimize();
-            let _ = existing.set_focus();
-            // `FocusedExisting` is an explicit activation request. Update
-            // capture routing now instead of depending solely on a subsequent
-            // OS focus event, which is not guaranteed on every WM/headless
-            // environment.
-            if state.note_focused(&owner) {
-                if let Ok(slot) = slot_for_window(state, &owner) {
-                    let _ = remember_graph(app, &slot.root_key.display().to_string());
-                }
-            }
-        }
-        state.storage_supervisor.finish_transition(
-            app,
-            lookup_id,
-            StorageTransitionOutcome::Succeeded,
-            None,
-        )?;
-        return Ok(LoadGraphResult::FocusedExisting {
-            window_label: owner,
-        });
-    }
-    state.storage_supervisor.finish_transition(
-        app,
-        lookup_id,
-        StorageTransitionOutcome::Succeeded,
-        None,
-    )?;
-    let direct_id = state.storage_supervisor.begin_transition(
-        app,
-        window_label,
-        Some(root_key.clone()),
-        StorageTransitionKind::OpenDirect,
-    )?;
-    state.storage_supervisor.advance_transition(
-        app,
-        direct_id,
-        StorageTransitionPhase::ValidatingTarget,
-    )?;
-    state.storage_supervisor.advance_transition(
-        app,
-        direct_id,
-        StorageTransitionPhase::OpeningDirect,
-    )?;
-    let prepared = match prepare_direct_files_open(app, root_key) {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            let _ = state.storage_supervisor.finish_transition(
-                app,
-                direct_id,
-                StorageTransitionOutcome::Failed,
-                Some("direct_open_failed".into()),
-            );
-            return Err(error);
-        }
-    };
-    graph_load_phase(started, &mut previous, "Direct Files prepare");
-    let direct = match state.storage_supervisor.commit_if_current(direct_id, || {
-        publish_prepared_direct_files(app, window_label, state, prepared)
-    }) {
-        Ok(direct) => direct,
-        Err(error) => {
-            let _ = state.storage_supervisor.finish_transition(
-                app,
-                direct_id,
-                StorageTransitionOutcome::Failed,
-                Some("direct_open_failed".into()),
-            );
-            return Err(error);
-        }
-    };
-    state.storage_supervisor.finish_transition(
-        app,
-        direct_id,
-        StorageTransitionOutcome::Succeeded,
-        None,
-    )?;
-    graph_load_phase(started, &mut previous, "Direct Files publish");
-    Ok(LoadGraphResult::Loaded {
-        meta: direct.meta,
-        binding_generation: direct.binding_generation,
-        application_page_admission: direct.application_page_admission,
+        config_problem,
     })
 }
 
@@ -783,12 +495,11 @@ pub(crate) async fn open_graph_window(
     path: String,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<LoadGraphResult, crate::command_error::CommandError> {
+) -> Result<LoadGraphResult, String> {
     #[cfg(desktop)]
     {
         let id = state.next_window.fetch_add(1, Ordering::Relaxed);
         let label = format!("graph-{id}");
-        // Off the async runtime, like `load_graph`: opening a graph walks it.
         let worker_app = app.clone();
         let worker_label = label.clone();
         let result = tauri::async_runtime::spawn_blocking(move || {
@@ -796,7 +507,7 @@ pub(crate) async fn open_graph_window(
             load_graph_for_label(path, &worker_app, &worker_label, &state)
         })
         .await
-        .map_err(crate::command_error::CommandError::worker)??;
+        .map_err(|error| format!("graph-open worker failed: {error}"))??;
         if let LoadGraphResult::Loaded { ref meta, .. } = result {
             let name = Path::new(&meta.root)
                 .file_name()
@@ -827,6 +538,8 @@ pub(crate) async fn open_graph_window(
             } else {
                 builder
             };
+            #[cfg(target_os = "linux")]
+            let builder = crate::youtube_identity::configure(builder, &app);
             let built = builder.build();
             match built {
                 Ok(window) => {
@@ -837,11 +550,8 @@ pub(crate) async fn open_graph_window(
                     let _ = window.set_focus();
                 }
                 Err(error) => {
-                    state.graphs.write().unwrap().remove(&label);
-                    poke_watcher(&state);
-                    return Err(crate::command_error::CommandError::graph(format!(
-                        "couldn't create graph window: {error}"
-                    )));
+                    let _ = crate::state::release_window_graph(&state.graphs, &label);
+                    return Err(format!("couldn't create graph window: {error}"));
                 }
             }
         }
@@ -850,10 +560,20 @@ pub(crate) async fn open_graph_window(
     #[cfg(not(desktop))]
     {
         let _ = (path, app, state);
-        Err(crate::command_error::CommandError::prose(
-            "multiple graph windows are desktop-only",
-        ))
+        Err("multiple graph windows are desktop-only".to_string())
     }
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct ConfigProblem {
+    kind: &'static str,
+    message: String,
+}
+fn config_problem(store: &Store) -> Option<ConfigProblem> {
+    store.config().problem.map(|error| ConfigProblem {
+        kind: "config-read",
+        message: error.to_string(),
+    })
 }
 
 #[derive(serde::Serialize)]
@@ -862,22 +582,32 @@ pub(crate) enum LoadGraphResult {
     Loaded {
         meta: GraphMeta,
         binding_generation: u64,
-        application_page_admission: ApplicationPageAdmission,
+        config_problem: Option<ConfigProblem>,
     },
     AlreadyCurrent {
         meta: GraphMeta,
         binding_generation: u64,
-        application_page_admission: ApplicationPageAdmission,
+        config_problem: Option<ConfigProblem>,
     },
     FocusedExisting {
         window_label: String,
     },
 }
 
-fn dir_is_empty(p: &Path) -> bool {
-    std::fs::read_dir(p)
-        .map(|mut it| it.next().is_none())
-        .unwrap_or(false)
+impl LoadGraphResult {
+    /// The binding this result created or found in the calling window; a
+    /// focus hand-off to another window binds nothing here.
+    fn binding_generation(&self) -> Option<u64> {
+        match self {
+            Self::Loaded {
+                binding_generation, ..
+            }
+            | Self::AlreadyCurrent {
+                binding_generation, ..
+            } => Some(*binding_generation),
+            Self::FocusedExisting { .. } => None,
+        }
+    }
 }
 
 /// Create a brand-new demo graph (the onboarding "Create a new graph" path) and
@@ -886,140 +616,35 @@ fn dir_is_empty(p: &Path) -> bool {
 /// write into a user's existing files. Does NOT load the graph — the frontend
 /// calls `load_graph` with the returned path (matching the "open existing" flow).
 #[tauri::command]
-pub(crate) fn create_graph(dir: String) -> Result<String, crate::command_error::CommandError> {
+pub(crate) async fn create_graph(dir: String) -> Result<String, String> {
+    // Writes and fsyncs every demo page (R3): off the main thread.
+    crate::state::off_ui(move || create_graph_blocking(dir)).await
+}
+
+fn create_graph_blocking(dir: String) -> Result<String, String> {
     let dir = dir.trim();
     if dir.is_empty() {
-        return Err(crate::command_error::CommandError::prose(
-            "no folder was chosen",
-        ));
+        return Err("no folder was chosen".into());
     }
-    let base = Path::new(dir);
-    if !base.is_dir() {
-        return Err(crate::command_error::CommandError::graph(format!(
-            "{dir} is not a folder"
-        )));
-    }
-    let root = if dir_is_empty(base) {
-        base.to_path_buf()
-    } else {
-        let mut cand = base.join("tine-demo");
-        let mut n = 2;
-        while cand.exists() {
-            cand = base.join(format!("tine-demo-{n}"));
-            n += 1;
-        }
-        std::fs::create_dir(&cand).map_err(|e| {
-            crate::command_error::CommandError::graph(format!("couldn't create folder: {e}"))
-        })?;
-        cand
-    };
-    tine_core::onboarding::create_demo_graph(&root).map_err(|e| {
-        crate::command_error::CommandError::graph(format!("couldn't create the demo graph: {e}"))
-    })?;
+    let root =
+        tine_graph_features::guide::create_demo_graph(Path::new(dir)).map_err(
+            |error| match error {
+                OpenError::NotAFolder(_) => format!("{dir} is not a folder"),
+                OpenError::CreateFailed { path, cause }
+                    if path.parent() == Some(Path::new(dir))
+                        && path.file_name().is_some_and(|name| {
+                            name.to_string_lossy().starts_with("tine-demo")
+                        }) =>
+                {
+                    format!("couldn't create folder: {}", cause.message)
+                }
+                OpenError::CreateFailed { cause, .. } | OpenError::Io(cause) => {
+                    format!("couldn't create the demo graph: {}", cause.message)
+                }
+                other => format!("couldn't create the demo graph: {other}"),
+            },
+        )?;
     Ok(root.display().to_string())
-}
-
-/// Compose and durably publish the recovery record for one Direct cross-page
-/// move, BEFORE the frontend writes the first page (packet B2; I-3, I-2).
-///
-/// `destination` and `sources` are the POST-move DTOs — the exact DTOs the
-/// choreography is about to save, in the order it will save them. The record
-/// binds every participant's path, page identity, base revision, preimage bytes
-/// and proposed postimage bytes, so recovery can complete the move OR roll it
-/// back from the record alone.
-///
-/// Returns the record identifier, or `null` when no record was composed. `null`
-/// is NOT a failure and never refuses the move: a degenerate move (every
-/// participant resolves to one file) needs no record because the ordinary
-/// base-revision guard already makes a single save safe, and an unavailable
-/// app-private root leaves the move exactly as convergent as it was before B2
-/// rather than making a page unmovable on a box whose data home is unwritable
-/// (`docs/contracts/direct-move-recovery.md` §4 — preferring degraded recovery
-/// to a refusal with no in-scope threat scenario).
-#[tauri::command]
-pub(crate) async fn begin_direct_cross_page_move(
-    destination: tine_core::model::PageDto,
-    sources: Vec<tine_core::model::PageDto>,
-    state: crate::state::GraphContext<'_>,
-) -> Result<Option<String>, crate::command_error::CommandError> {
-    let (app, label, binding_generation) = crate::state::owned_graph_context(state)
-        .map_err(crate::command_error::CommandError::from)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let app_state = app.state::<AppState>();
-        let slot =
-            crate::state::slot_for_bound_window(&app_state, &label, Some(binding_generation))
-                .map_err(crate::command_error::CommandError::from)?;
-        let graph = slot.graph();
-        let Some(store_root) = crate::backup::direct_move_recovery_dir(&app, &graph.root) else {
-            crate::debug::diag(
-                "Direct move recovery store unavailable; this cross-page move is unbracketed"
-                    .to_string(),
-            );
-            return Ok(None);
-        };
-        let prepared = match graph.prepare_direct_cross_page_move(&destination, &sources) {
-            Ok(Some(prepared)) => prepared,
-            Ok(None) => return Ok(None),
-            Err(error) => {
-                // Composition failed (an unreadable file, or the serializer's own
-                // corruption firewall). The save about to run will report the real
-                // error itself; do not turn a diagnostic into a refusal.
-                crate::debug::diag(format!(
-                    "Direct move record not composed; move proceeds unbracketed: {}",
-                    error.kind()
-                ));
-                return Ok(None);
-            }
-        };
-        let store = tine_core::direct_move_recovery::RecoveryStore::new(store_root);
-        let move_id = prepared.record.move_id.clone();
-        match store.commit_record(&prepared.record, &prepared.images) {
-            Ok(()) => Ok(Some(move_id)),
-            Err(error) => {
-                crate::debug::diag(format!(
-                    "Direct move record not published; move proceeds unbracketed: {}",
-                    error.kind()
-                ));
-                Ok(None)
-            }
-        }
-    })
-    .await
-    .map_err(crate::command_error::CommandError::worker)?
-}
-
-/// Retire a move record once every participant is durably terminal.
-///
-/// Retires ONLY when the whole move has landed. A record whose participants are
-/// not all terminal is deliberately left in place: either a page save is still
-/// conflicted — in which case the live conflict UI owns the decision and
-/// recovery must not silently overwrite the user's page — or the process is
-/// about to die, and the next open converges it. Returns whether the record was
-/// retired.
-#[tauri::command]
-pub(crate) async fn finish_direct_cross_page_move(
-    move_id: String,
-    state: crate::state::GraphContext<'_>,
-) -> Result<bool, crate::command_error::CommandError> {
-    let (app, label, binding_generation) = crate::state::owned_graph_context(state)
-        .map_err(crate::command_error::CommandError::from)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let app_state = app.state::<AppState>();
-        let slot =
-            crate::state::slot_for_bound_window(&app_state, &label, Some(binding_generation))
-                .map_err(crate::command_error::CommandError::from)?;
-        let graph = slot.graph();
-        let Some(store_root) = crate::backup::direct_move_recovery_dir(&app, &graph.root) else {
-            return Ok(false);
-        };
-        Ok(tine_core::direct_move_recovery::retire_if_terminal(
-            &store_root,
-            &graph.root,
-            &move_id,
-        ))
-    })
-    .await
-    .map_err(crate::command_error::CommandError::worker)?
 }
 
 /// This process's local clock: UTC offset in minutes and the instant sampled.
@@ -1051,143 +676,101 @@ pub(crate) fn app_platform() -> &'static str {
 }
 
 #[tauri::command]
-pub(crate) fn default_graph_parent(
-    app: tauri::AppHandle,
-) -> Result<String, crate::command_error::CommandError> {
-    let dir = app.path().app_data_dir().map_err(|e| {
-        crate::command_error::CommandError::graph(format!("couldn't resolve app data dir: {e}"))
-    })?;
-    std::fs::create_dir_all(&dir).map_err(|e| {
-        crate::command_error::CommandError::graph(format!("couldn't create app data dir: {e}"))
-    })?;
+pub(crate) fn default_graph_parent(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("couldn't resolve app data dir: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("couldn't create app data dir: {e}"))?;
     Ok(dir.display().to_string())
 }
 
-/// Run the graph's index owner off the hot path. We let the frontend's first
-/// journal load get ahead of it, then the owner validates or builds
-/// the index in the background, and keeps answering what the index needs for
-/// as long as this graph is bound to the window. When nothing is coming any
-/// more (and this graph is still the current one — generation check), flip
-/// `warm_done` and tell the frontend, which has been HOLDING its whole-graph
-/// fetches (aliases, ref-count badges) so graph open never does graph-sized
-/// work in the foreground.
+/// Wait for Store::open's background parse off the hot path. Let the frontend's
+/// first journal load a head start before this warm task waits for the
+/// whole-graph cache. When the
+/// warm completes (and this graph is still the current one — generation check),
+/// flip `warm_done` and tell the frontend, which has been HOLDING its
+/// whole-graph fetches (aliases, ref-count badges) so graph open never does
+/// graph-sized work in the foreground.
 pub(crate) fn warm_cache_async(
     app: tauri::AppHandle,
     window_label: String,
     slot: Arc<GraphSlot>,
-    warm: WarmTicket,
-) -> Result<(), crate::command_error::CommandError> {
-    let graph = slot.graph();
-    // The ticket's owner was registered before the graph was published, not
-    // after the delay below; it is dropped when this thread ends, however it
-    // ends.
-    let WarmTicket {
-        generation: warm_generation,
-        owner,
-    } = warm;
+    warm_generation: u64,
+) {
     std::thread::spawn(move || {
-        // Brief delay so the first journal paint (which only needs a few pages)
-        // is not competing with a whole-graph pass for cores and storage; then
-        // index in the background so the first search / query / `g j` agenda
-        // doesn't pay for parsing every file in the foreground.
+        // Brief delay to reduce contention with the first journal paint.
+        // Store::open owns the initial parse; whole_graph waits for its result.
         std::thread::sleep(std::time::Duration::from_millis(250));
-        if warm_revoked(&slot, warm_generation) {
+        if slot.background_cancelled.load(Ordering::Acquire)
+            || slot.warm_generation.load(Ordering::Acquire) != warm_generation
+        {
             return; // the graph was switched while we slept — a newer warm owns it
         }
-        // At most one process-wide whole-graph index pass reads files at a
-        // time: every graph's owner takes this permit for its passes only.
-        // Rapid switches cannot amplify disk/CPU work; revoked slots stop
-        // between page parses.
+        // Serialize these post-open readiness waits process-wide. Store::open
+        // may already have started a parse worker for each open slot. The lock
+        // guards no data, so a warm that panicked while holding it must not
+        // poison every later graph's warm.
         static WARM_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        let permit = WARM_WORK.get_or_init(|| std::sync::Mutex::new(()));
-        let cancelled = || warm_revoked(&slot, warm_generation);
+        let _worker = WARM_WORK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let cancelled = || {
+            slot.background_cancelled.load(Ordering::Acquire)
+                || slot.warm_generation.load(Ordering::Acquire) != warm_generation
+        };
+        if cancelled() {
+            return;
+        }
         settle_launch_warm(
-            |settle| graph.run_index_owner(owner, permit, cancelled, settle),
+            || {
+                // A failed whole-graph read still settles: the waiting reads
+                // then take their ordinary (error-reporting) route.
+                let _ = slot.store.whole_graph();
+            },
             cancelled,
             || {
                 let state: State<'_, AppState> = app.state();
                 let current = state.graphs.read().unwrap().slot(&window_label);
-                if finish_warm(current, &slot, warm_generation) {
+                let still_current = current.as_ref().is_some_and(|current| {
+                    current.binding_generation == slot.binding_generation
+                        && current.root_key == slot.root_key
+                });
+                if still_current && current.unwrap().finish_startup_warm(warm_generation) {
                     let _ = app.emit_to(&window_label, "warm-cache-done", ());
-                    crate::watcher::announce_unreadable_pages(&app, &window_label, &graph);
                 }
             },
         );
     });
-    Ok(())
 }
 
-/// Whether the launch warm `warm_generation` of `slot` no longer owns the
-/// window: the slot's background work was cancelled (switch, close), a newer
-/// warm replaced it, or its graph was retired. A refresh retires the old
-/// graph before it swaps the slot -- it cannot cancel the background work the
-/// two slots share -- and a check without retirement let the old owner's
-/// launch completion announce `warm-cache-done` for a pass that never
-/// finished (GH #543, audit R8-05).
-fn warm_revoked(slot: &GraphSlot, warm_generation: u64) -> bool {
-    slot.background_cancelled.load(Ordering::Acquire)
-        || slot.warm_generation.load(Ordering::Acquire) != warm_generation
-        || slot.graph().is_retired()
-}
-
-/// Mark indexing finished for the window, if this warm still owns it. Only
-/// the warm of the slot currently installed for the window may: a
-/// same-root refresh keeps the binding generation and copies the warm
-/// generation, so comparing those let a retired slot's warm settle the
-/// replacement's pending requests before the replacement's own pass had
-/// begun (GH #543, audit R3-05).
-fn finish_warm(
-    current: Option<Arc<GraphSlot>>,
-    slot: &Arc<GraphSlot>,
-    warm_generation: u64,
-) -> bool {
-    let Some(current) = current.filter(|current| Arc::ptr_eq(current, slot)) else {
-        return false;
-    };
-    if current.warm_generation.load(Ordering::Acquire) != warm_generation {
-        return false;
-    }
-    current.warm_done.store(true, Ordering::Release);
-    true
-}
-
-/// Run the index owner and settle its launch completion signal, at most
-/// once. The signal is `warm-cache-done`: the frontend's alias, page-identity
-/// and block-ref-count fetches and the indexing progress bar wait for it, and
-/// nothing else ends that wait. The owner sends it through the callback it is
-/// given, the first time nothing is coming; an owner that ended before that
-/// for any reason other than cancellation -- the worker gone, a failed build,
-/// a panic -- still sends it, and the waiting reads then take their ordinary
-/// route. Only a cancelled owner (graph switched or closed) stays silent,
-/// because a newer owner has the window (GH #543, IT-04).
-fn settle_launch_warm(
-    owner: impl FnOnce(&mut dyn FnMut()),
-    cancelled: impl Fn() -> bool,
-    finish: impl FnOnce(),
-) {
+/// Run a launch warm's `work` and then send its completion signal (`finish`)
+/// exactly once, however the work ended: normally, with a failed read, or by
+/// panicking. The frontend's alias and block-ref-count fetches wait for
+/// `warm-cache-done` and nothing else ends that wait, so a silent end left them
+/// empty for the session (master 39b88bd69, GH #543). Only a cancelled warm
+/// (`cancelled()` true: graph switched or closed, a newer warm owns the window)
+/// stays silent. O(1) beyond `work`.
+fn settle_launch_warm(work: impl FnOnce(), cancelled: impl Fn() -> bool, finish: impl FnOnce()) {
     struct Settle<C: Fn() -> bool, F: FnOnce()> {
         cancelled: C,
         finish: Option<F>,
     }
-    impl<C: Fn() -> bool, F: FnOnce()> Settle<C, F> {
-        fn fire(&mut self) {
-            if let Some(finish) = self.finish.take() {
-                finish();
-            }
-        }
-    }
     impl<C: Fn() -> bool, F: FnOnce()> Drop for Settle<C, F> {
         fn drop(&mut self) {
             if !(self.cancelled)() {
-                self.fire();
+                if let Some(finish) = self.finish.take() {
+                    finish();
+                }
             }
         }
     }
-    let mut settle = Settle {
+    let _settle = Settle {
         cancelled,
         finish: Some(finish),
     };
-    owner(&mut || settle.fire());
+    work();
 }
 
 /// "Have the whole-graph derived caches finished warming for the current graph?"
@@ -1197,75 +780,64 @@ fn settle_launch_warm(
 pub(crate) fn warm_done(
     window: tauri::WebviewWindow,
     state: State<'_, AppState>,
-) -> Result<bool, crate::command_error::CommandError> {
-    Ok(slot_for_window(&state, window.label())
-        .map_err(crate::command_error::CommandError::from)?
+) -> Result<bool, String> {
+    Ok(slot_for_window(&state, window.label())?
         .warm_done
         .load(Ordering::Acquire))
 }
 
-/// How far the graph-sized index work has got, for the indexing progress bar
-/// (GH #543). `None` once search is answered by a current index. Polled by
-/// the frontend while it shows the bar; cheap (atomics and one short lock).
-#[tauri::command]
-pub(crate) fn indexing_progress(
-    window: tauri::WebviewWindow,
-    state: State<'_, AppState>,
-) -> Result<
-    Option<tine_core::indexing_progress::IndexingProgress>,
-    crate::command_error::CommandError,
-> {
-    Ok(slot_for_window(&state, window.label())
-        .map_err(crate::command_error::CommandError::from)?
-        .graph()
-        .indexing_progress())
-}
-
-/// The user's Retry after the index failed (GH #594, index liveness L4):
-/// reopen the graph, which starts a new index worker with a fresh budget of
-/// attempts, exactly as the next launch would.
-#[tauri::command]
-pub(crate) async fn retry_index(
-    state: crate::state::GraphContext<'_>,
-) -> Result<(), crate::command_error::CommandError> {
-    let (app, label, _) = crate::state::owned_graph_context(state)?;
-    crate::state::refresh_graph(app, label, || Ok(())).await
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::path::{Path, PathBuf};
 
-    /// GH #543 (IT-04): a launch warm that ended without being cancelled always
-    /// sends its completion signal. A failed warm used to return silently, and
-    /// the alias, page-identity and ref-count fetches and the indexing
-    /// progress poll waited for a signal that never came.
+    #[test]
+    fn background_startup_result_is_owned_once_and_open_errors_reach_load() {
+        let dir = scratch("startup-owned-result");
+        let startup = StartupGraph::default();
+        startup.begin(dir.clone(), None, Default::default(), None);
+        // Wait for completion before the webview requests its result: warming
+        // starts at setup rather than at the first load command.
+        while !startup.0.lock().unwrap().as_ref().unwrap().1.is_finished() {
+            std::thread::yield_now();
+        }
+        let loaded = startup.take(&dir).unwrap().unwrap();
+        assert_eq!(loaded.meta.root, dir.display().to_string());
+        assert!(
+            startup.take(&dir).is_none(),
+            "launch result has exactly one owner"
+        );
+        drop(loaded);
+        let missing = dir.join("missing");
+        startup.begin(missing.clone(), None, Default::default(), None);
+        assert!(
+            startup.take(&missing).unwrap().is_err(),
+            "I-22: open errors reach the load command, never setup"
+        );
+        startup.begin(dir.clone(), None, Default::default(), None);
+        assert!(
+            startup.take(&missing).is_none(),
+            "a changed launch target cannot consume the old graph"
+        );
+        assert!(startup.take(&dir).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Master 39b88bd69 (GH #543): a launch warm that ended without being
+    /// cancelled always sends its completion signal exactly once -- on success,
+    /// after a failed read, and after a panic; a cancelled warm stays silent.
     #[test]
     fn a_launch_warm_that_ends_uncancelled_always_signals_completion() {
-        for (case, settles) in [("settled", true), ("ended unsettled", false)] {
-            let signalled = std::cell::Cell::new(0);
-            settle_launch_warm(
-                |settle| {
-                    if settles {
-                        settle();
-                        settle();
-                    }
-                },
-                || false,
-                || signalled.set(signalled.get() + 1),
-            );
-            assert_eq!(
-                signalled.get(),
-                1,
-                "{case}: not exactly one completion signal"
-            );
-        }
+        let signalled = std::cell::Cell::new(0);
+        settle_launch_warm(|| {}, || false, || signalled.set(signalled.get() + 1));
+        assert_eq!(
+            signalled.get(),
+            1,
+            "ended: not exactly one completion signal"
+        );
 
         let signalled = std::sync::atomic::AtomicBool::new(false);
         let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             settle_launch_warm(
-                |_| panic!("owner panicked"),
+                || panic!("warm panicked"),
                 || false,
                 || signalled.store(true, Ordering::Release),
             )
@@ -1277,14 +849,27 @@ mod tests {
         );
 
         let signalled = std::cell::Cell::new(false);
-        settle_launch_warm(|_| {}, || true, || signalled.set(true));
+        settle_launch_warm(|| {}, || true, || signalled.set(true));
         assert!(
             !signalled.get(),
             "cancelled: a newer warm owns the window's signal"
         );
     }
+    use super::*;
+    use std::path::{Path, PathBuf};
 
-    use crate::test_support::rust_module_source;
+    #[test]
+    fn moved_last_graph_reaches_a_canonical_root_error() {
+        let missing =
+            std::env::temp_dir().join(format!("tine-moved-last-graph-{}", std::process::id()));
+        assert!(Store::canonical_root(&missing).is_err());
+        assert_eq!(
+            usable_last_graph_path(Some(missing.display().to_string())),
+            None
+        );
+        let present = Path::new(env!("CARGO_MANIFEST_DIR")).display().to_string();
+        assert_eq!(usable_last_graph_path(Some(present.clone())), Some(present));
+    }
 
     fn scratch(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("tine-graph-{tag}-{}", std::process::id()));
@@ -1294,534 +879,227 @@ mod tests {
         dir
     }
 
-    fn tree_bytes(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
-        fn collect(root: &Path, relative: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
-            for entry in std::fs::read_dir(root.join(relative)).unwrap() {
-                let entry = entry.unwrap();
-                let child = relative.join(entry.file_name());
-                let kind = entry.file_type().unwrap();
-                assert!(!kind.is_symlink(), "fixture must not contain symlinks");
-                if kind.is_dir() {
-                    collect(root, &child, files);
-                } else {
-                    assert!(kind.is_file(), "fixture must contain only regular files");
-                    files.push((child.clone(), std::fs::read(root.join(child)).unwrap()));
-                }
-            }
-        }
-
-        let mut files = Vec::new();
-        collect(root, Path::new(""), &mut files);
-        files.sort_by(|left, right| left.0.cmp(&right.0));
-        files
-    }
-
-    /// GH #543 (audit R3-05): a same-root refresh installs a replacement
-    /// slot and starts its own warm. The retired slot's warm must neither
-    /// mark the replacement finished (its pending alias and ref-count
-    /// requests would be answered from a graph that has not indexed yet) nor
-    /// keep parsing the graph nothing reads any more.
-    #[test]
-    fn a_retired_warm_cannot_finish_indexing_for_its_replacement() {
-        let root =
-            std::env::temp_dir().join(format!("tine-r3-retired-warm-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        for dir in ["pages", "journals", "logseq"] {
-            std::fs::create_dir_all(root.join(dir)).unwrap();
-        }
-        std::fs::write(root.join("logseq/config.edn"), "{}\n").unwrap();
-        std::fs::write(root.join("pages/Source.md"), "- [[OnlyReferenced]]\n").unwrap();
-        let root_key = std::fs::canonicalize(&root).unwrap();
-        let state = direct_test_state();
-        let (old, old_warm) =
-            publish_direct_files_slot(&state, "main", Graph::open(&root), root_key.clone())
-                .unwrap();
-        let old_generation = old_warm.generation;
-        let services = DirectFilesServicePaths {
-            projection: Ok(root.join("private/projection.sqlite")),
-            concord_ledger: None,
-        };
-        let replacement = Arc::new(
-            crate::state::prepare_legacy_refresh(&old, None, services)
-                .unwrap()
-                .commit(&old),
-        );
-        let replacement_generation = begin_warm_cache(&replacement).generation;
-        assert!(state.graphs.write().unwrap().swap_refreshed(
-            "main",
-            &old,
-            Arc::clone(&replacement)
-        ));
-
-        assert_ne!(
-            old.warm_generation.load(Ordering::Acquire),
-            old_generation,
-            "the retired warm keeps parsing a graph nothing reads"
-        );
-        let current = state.graphs.read().unwrap().slot("main");
-        assert!(!finish_warm(current, &old, old_generation));
-        assert!(
-            !replacement.warm_done.load(Ordering::Acquire),
-            "a retired warm settled the replacement's pending requests before its pass began"
-        );
-
-        let current = state.graphs.read().unwrap().slot("main");
-        assert!(finish_warm(current, &replacement, replacement_generation));
-        assert!(replacement.warm_done.load(Ordering::Acquire));
-        replacement
-            .graph()
-            .detach_direct_projection(std::time::Duration::from_secs(5));
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    /// GH #543: a refresh retires the old graph in `commit` but moves the old
-    /// slot's warm generation only in `swap_refreshed`. In between, the old
-    /// owner is cancelled by retirement; the launch-settle guard and
-    /// `finish_warm` must treat that as revoked (`warm_revoked`) rather than
-    /// consult only the slot, or the retired warm announces `warm-cache-done`
-    /// before the replacement's pass has begun.
-    #[test]
-    fn a_refresh_does_not_announce_the_retired_warm() {
-        let root =
-            std::env::temp_dir().join(format!("tine-refresh-retired-warm-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        for dir in ["pages", "journals", "logseq"] {
-            std::fs::create_dir_all(root.join(dir)).unwrap();
-        }
-        std::fs::write(root.join("logseq/config.edn"), "{}\n").unwrap();
-        std::fs::write(root.join("pages/Source.md"), "- [[OnlyReferenced]]\n").unwrap();
-        let root_key = std::fs::canonicalize(&root).unwrap();
-        let state = direct_test_state();
-        let (old, old_warm) =
-            publish_direct_files_slot(&state, "main", Graph::open(&root), root_key.clone())
-                .unwrap();
-        let old_generation = old_warm.generation;
-        let services = DirectFilesServicePaths {
-            projection: Ok(root.join("private/projection.sqlite")),
-            concord_ledger: None,
-        };
-        let prepared = crate::state::prepare_legacy_refresh(&old, None, services).unwrap();
-        let replacement = Arc::new(prepared.commit(&old));
-        // Between commit and swap: the old graph is retired, so its owner's
-        // own `cancelled` is true and it returns without settling.
-        let slot_cancelled = || warm_revoked(&old, old_generation);
-        let mut announced = false;
-        settle_launch_warm(
-            |_settle| { /* owner returned: cancelled by retirement, never settled */ },
-            slot_cancelled,
-            || {
-                let current = state.graphs.read().unwrap().slot("main");
-                announced = finish_warm(current, &old, old_generation);
-            },
-        );
-        let _ = begin_warm_cache(&replacement);
-        let _ =
-            state
-                .graphs
-                .write()
-                .unwrap()
-                .swap_refreshed("main", &old, Arc::clone(&replacement));
-        replacement
-            .graph()
-            .detach_direct_projection(std::time::Duration::from_secs(5));
-        let _ = std::fs::remove_dir_all(&root);
-        assert!(
-            !announced,
-            "a retired owner's launch settle emitted warm-cache-done for the window before the replacement's pass began"
-        );
-    }
-
-    fn direct_test_state() -> AppState {
-        AppState {
-            graphs: std::sync::RwLock::new(crate::state::GraphRegistry::default()),
-            storage_supervisor:
-                crate::storage_transition_supervisor::StorageTransitionSupervisor::default(),
-            watch_ctl: std::sync::Mutex::new(None),
-            last_focused: std::sync::Mutex::new(None),
+    fn bound_state(root: &Path, window: &str, focused: &str) -> Arc<AppState> {
+        let state = AppState {
+            graphs: std::sync::RwLock::new(Default::default()),
+            graph_load: std::sync::Mutex::new(()),
+            last_focused: std::sync::Mutex::new(Some(focused.into())),
             capture_graph: std::sync::Mutex::new(Default::default()),
             #[cfg(desktop)]
-            next_window: std::sync::atomic::AtomicU64::new(1),
-        }
+            next_window: std::sync::atomic::AtomicU64::new(2),
+        };
+        let store = Store::open(root, OpenOptions::default()).unwrap().0;
+        state
+            .graphs
+            .write()
+            .unwrap()
+            .bind(
+                window.into(),
+                Arc::new(GraphSlot::new(store, root.to_path_buf())),
+            )
+            .unwrap();
+        Arc::new(state)
     }
 
     #[test]
-    fn remembered_startup_lookup_has_one_bounded_terminal_receipt_without_paths() {
-        let dir = scratch("startup-lookup-diagnostics");
-        let settings = dir.join("tine-settings.json");
-        let remembered = dir.join("remembered-graph");
-        std::fs::write(
-            &settings,
-            serde_json::json!({ "last_graph_path": remembered }).to_string(),
-        )
-        .unwrap();
-        let mut receipts = Vec::new();
-        let result =
-            remembered_startup_graph_path_at(None, Some(&settings), |phase, terminal, outcome| {
-                receipts.push((phase, terminal, outcome));
+    fn opening_a_root_bound_in_another_window_survives_a_queued_registry_writer() {
+        // R2 / I-21: the "already open in another window" branch must not hold
+        // a registry read guard while it activates that window and re-reads
+        // the registry. std's RwLock blocks a new reader behind a queued
+        // writer (a window bind or the `Destroyed` handler), so a guard kept
+        // alive by an `if let` scrutinee (edition 2021) deadlocks both threads
+        // and the UI. Exemplar: `route_bound_root` snapshots, then acts.
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+        let dir = scratch("bound-root-queued-writer");
+        let state = bound_state(&dir, "graph-1", "graph-2");
+        let (entered_tx, entered) = channel();
+        let (go, go_rx) = channel::<()>();
+        let (done_tx, done) = channel();
+        let routing = {
+            let (state, dir) = (state.clone(), dir.clone());
+            std::thread::spawn(move || {
+                let result = route_bound_root(
+                    &state,
+                    &dir,
+                    "graph-2",
+                    |_| {
+                        entered_tx.send(()).unwrap();
+                        go_rx.recv().unwrap();
+                        true
+                    },
+                    |_| {},
+                );
+                let _ = done_tx.send(result.map(|routed| routed.is_some()));
+            })
+        };
+        entered.recv_timeout(Duration::from_secs(30)).unwrap();
+        let (wrote_tx, wrote) = channel();
+        {
+            let state = state.clone();
+            std::thread::spawn(move || {
+                drop(state.graphs.write().unwrap());
+                let _ = wrote_tx.send(());
             });
-        assert_eq!(result, Some(remembered.display().to_string()));
+        }
+        // Give the writer time to queue behind any guard the router holds.
+        std::thread::sleep(Duration::from_millis(300));
+        go.send(()).unwrap();
+        let routed = done.recv_timeout(Duration::from_secs(10));
         assert_eq!(
-            receipts
-                .iter()
-                .map(|(phase, ..)| *phase)
-                .collect::<Vec<_>>(),
-            vec![
-                "lookup.entry",
-                "lookup.app_data",
-                "lookup.settings_stat",
-                "lookup.settings_read",
-                "lookup.settings_parse",
-                "lookup.complete",
-            ]
+            routed,
+            Ok(Ok(true)),
+            "the bound-root branch deadlocked against a queued registry writer"
         );
+        wrote.recv_timeout(Duration::from_secs(10)).unwrap();
+        routing.join().unwrap();
         assert_eq!(
-            receipts.iter().filter(|(_, terminal, _)| *terminal).count(),
-            1
-        );
-        assert_eq!(
-            receipts.last(),
-            Some(&("lookup.complete", true, Some("ok")))
+            state.last_focused.lock().unwrap().as_deref(),
+            Some("graph-1"),
+            "activation still moves capture routing to the owning window"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// A `Graph` that reaches the window registry carries the Direct Files
-    /// projection. Both producers of such a graph — the open and the
-    /// configuration refresh — must attach through the ONE shared function;
-    /// a second direct `attach_direct_projection(` call site in production is
-    /// how the refresh path drifted into attaching nothing.
-    #[test]
-    fn every_direct_files_graph_is_attached_through_one_function() {
-        /// Byte offsets of every `needle` that is NOT inside a `#[cfg(test)]`
-        /// module. A module is open from its `#[cfg(test)]\nmod` header until
-        /// the next closing brace at column 0; the files here use several such
-        /// modules, not one trailing `mod tests`.
-        fn production_sites(source: &str, needle: &str) -> Vec<usize> {
-            // Spelled without a literal closing brace: `typedErrorRatchet.test.ts`
-            // brace-counts this file to skip its test modules, and a closing brace inside
-            // a string literal would end this module early for it.
-            let close = format!("\n{}\n", char::from(0x7du8));
-            let mut test_ranges = Vec::new();
-            let mut from = 0;
-            while let Some(found) = source[from..].find("\n#[cfg(test)]\nmod ") {
-                let start = from + found;
-                let end = source[start..]
-                    .find(close.as_str())
-                    .map(|at| start + at + close.len())
-                    .unwrap_or(source.len());
-                test_ranges.push(start..end);
-                from = end;
-            }
-            source
-                .match_indices(needle)
-                .map(|(at, _)| at)
-                .filter(|at| !test_ranges.iter().any(|range| range.contains(at)))
-                .collect()
-        }
-        let graph = include_str!("graph.rs");
-        assert_eq!(
-            production_sites(graph, "attach_direct_projection(").len(),
-            1,
-            "graph.rs attaches the projection in `attach_direct_files_services` only"
-        );
-        for (name, source) in [
-            ("state.rs", include_str!("state.rs").to_owned()),
-            ("commands.rs", rust_module_source("commands.rs")),
-            ("backup.rs", include_str!("backup.rs").to_owned()),
-            ("watcher.rs", rust_module_source("watcher.rs")),
-        ] {
-            assert_eq!(
-                production_sites(&source, "attach_direct_projection(").len(),
-                0,
-                "{name} must attach through `attach_direct_files_services`"
-            );
-        }
-        fn production(source: &str) -> &str {
-            source
-                .split("\n#[cfg(test)]\nmod tests")
-                .next()
-                .expect("production source")
-        }
-        let open = &graph[graph
-            .find("pub(crate) fn prepare_direct_files_open")
-            .expect("open path")..];
-        assert!(
-            open.find("attach_direct_files_services(") < open.find("Ok(PreparedDirectFilesOpen"),
-            "the open path attaches before it publishes"
-        );
-        let state = production(include_str!("state.rs"));
-        let prepare = &state[state
-            .find("pub(crate) fn prepare_legacy_refresh")
-            .expect("refresh preparation")..];
-        let prepare = &prepare[..prepare.find("\n}\n").expect("end of preparation")];
-        assert!(
-            prepare.contains("Graph::open_checked_with_assets(")
-                && !prepare.contains("retire(")
-                && !prepare.contains("detach_direct_projection("),
-            "refresh preparation reopens the root and leaves the bound graph serving"
-        );
-        let refresh = &state[state
-            .find("pub(crate) fn commit(self, old: &GraphSlot) -> GraphSlot")
-            .expect("refresh commit")..];
-        let retire = refresh.find(".retire()").expect("old graph retired");
-        let detach = refresh
-            .find("detach_direct_projection(")
-            .expect("old worker retired");
-        let attach = refresh
-            .find("attach_direct_files_services(")
-            .expect("refresh attaches");
-        let slot = refresh
-            .find("GraphSlot::refreshed(")
-            .expect("refresh publishes");
-        assert!(
-            retire < detach && detach < attach && attach < slot,
-            "refresh commit retires the old graph, stops its projection worker, \
-             attaches, then builds the slot"
-        );
-        // The open path starts the owner of a published graph before
-        // anything that can fail: an error in between dropped the warm ticket
-        // and left the graph's index unowned (GH #543, audit R7-03).
-        let open = &graph[graph
-            .find("pub(crate) fn publish_prepared_direct_files(")
-            .expect("open publication")..];
-        let open = &open[..open.find("\n}\n").expect("open publication ends")];
-        let published = open
-            .find("publish_direct_files_slot(")
-            .expect("open publishes");
-        let warmed = open.find("warm_cache_async(").expect("open warms");
-        let between = &open[published..warmed];
-        assert!(
-            published < warmed && between.matches('?').count() == 1,
-            "nothing fallible sits between publishing the graph and starting its \
-             index owner: {between}"
-        );
-        let refresh_entry = &state[state
-            .find("\nfn refresh_graph_for_label")
-            .expect("refresh entry")..];
-        assert!(
-            refresh_entry.find(".commit(&old)") < refresh_entry.find("warm_cache_async("),
-            "the refreshed slot is warmed, or the projection never receives its payload"
-        );
-        // The warm ticket announces the warm, so it is taken before the graph
-        // is published; otherwise the first command on the new graph finds no
-        // warm coming and parses the whole graph (GH #543).
-        assert!(
-            refresh_entry
-                .find("begin_warm_cache(")
-                .expect("refresh reserves its warm")
-                < refresh_entry
-                    .find("swap_refreshed(")
-                    .expect("refresh publishes"),
-            "a refreshed graph's warm is announced before the swap publishes it"
-        );
-        let source = include_str!("graph.rs");
-        let publish = &source[source
-            .find("fn publish_direct_files_slot(")
-            .expect("open publication")..];
-        assert!(
-            publish
-                .find("begin_warm_cache(")
-                .expect("open reserves its warm")
-                < publish.find(".bind(").expect("open binds the slot"),
-            "an opened graph's warm is announced before the slot is bound"
-        );
-    }
-
-    #[test]
-    fn startup_lookup_keeps_all_settings_io_inside_spawn_blocking() {
-        let source = include_str!("graph.rs");
-        let start = source
-            .find("pub(crate) async fn startup_graph_path")
-            .expect("startup lookup command");
-        let command = &source[start
-            ..source[start..]
-                .find("#[tauri::command]")
-                .map(|end| start + end)
-                .unwrap_or(source.len())];
-        let blocking = command
-            .find("tauri::async_runtime::spawn_blocking")
-            .expect("startup lookup worker");
-        assert!(
-            !command[..blocking].contains("settings_path"),
-            "invoke dispatch must not synchronously read device settings"
-        );
-        assert!(command[blocking..].contains("startup_graph_path_blocking"));
-    }
-
     #[test]
     fn graph_load_proposes_journal_renames_instead_of_performing_them() {
-        let dir = scratch("pre-migrate-backup");
+        let dir = scratch("propose-journal-rename");
         std::fs::create_dir_all(dir.join("logseq")).unwrap();
         std::fs::write(
             dir.join("logseq").join("config.edn"),
             "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
         )
         .unwrap();
-        std::fs::write(
-            dir.join("journals").join("Thursday, 25-06-2026.org"),
+        let title_named = dir.join("journals").join("Thursday, 25-06-2026.org");
+        std::fs::write(&title_named, "* original title-named journal\n").unwrap();
+
+        let loaded =
+            open_graph_for_load(dir.to_str().unwrap(), None, Default::default(), None).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&title_named).unwrap(),
             "* original title-named journal\n",
-        )
-        .unwrap();
-        let before = std::fs::read(dir.join("journals").join("Thursday, 25-06-2026.org")).unwrap();
-
-        let loaded = open_graph_for_load(dir.to_str().unwrap(), None).unwrap();
-
-        // Concord invariant 4: opening PROPOSES the rename and performs none.
-        assert_eq!(
-            loaded.graph.journal_filename_migrations(),
-            vec![tine_core::model::JournalFilenameMigration {
-                from: "journals/Thursday, 25-06-2026.org".into(),
-                to: "journals/2026_06_25.org".into(),
-            }],
-            "the rename is offered"
-        );
-        assert!(
-            dir.join("journals")
-                .join("Thursday, 25-06-2026.org")
-                .exists(),
-            "opening a graph must not rename a journal file"
-        );
-        assert_eq!(
-            std::fs::read(dir.join("journals").join("Thursday, 25-06-2026.org")).unwrap(),
-            before,
-            "opening a graph must not rewrite a journal file either"
+            "opening a graph must not rename journal files"
         );
         assert!(!dir.join("journals").join("2026_06_25.org").exists());
-
-        // The repair is still one call away, and it is the SAME selection.
-        assert_eq!(loaded.graph.migrate_journal_filenames_checked().unwrap(), 1);
-        assert!(dir.join("journals").join("2026_06_25.org").exists());
-        assert!(loaded.graph.journal_filename_migrations().is_empty());
-
+        assert_eq!(
+            tine_graph_features::journals::journal_filename_migrations(&loaded.store).unwrap(),
+            vec![tine_graph_features::journals::JournalFilenameMigration {
+                from: "Thursday, 25-06-2026.org".into(),
+                to: "2026_06_25.org".into(),
+            }],
+            "the rename is proposed instead"
+        );
+        drop(loaded);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Master e6f9b6e1ceae: journal files are renamed only when the user applies
+    /// the Settings proposal, after a snapshot. A second caller (graph open, a
+    /// journal-format change) renames the user's files unasked. Exemplar:
+    /// `commands.rs::apply_journal_filename_migrations`.
     #[test]
-    fn ordinary_direct_publish_treats_v1_and_return_recovery_as_inert() {
-        let dir = scratch("direct-with-inert-legacy-and-recovery");
-        let page = dir.join("pages/representative.md");
-        let recovery = dir.join(".tine-sync/recovery/v2-returned-from-desktop/receipt");
-        let v1 = dir.join(".tine-sync/v1");
-        std::fs::write(&page, "- exact Direct Files bytes\n").unwrap();
-        std::fs::create_dir_all(v1.join("genesis")).unwrap();
-        std::fs::write(v1.join("genesis/inert-v1-sentinel"), b"legacy v1 bytes\n").unwrap();
-        std::fs::create_dir_all(recovery.parent().unwrap()).unwrap();
-        std::fs::write(&recovery, "preserved provider recovery evidence\n").unwrap();
-        let page_before = std::fs::read(&page).unwrap();
-        let v1_before = tree_bytes(&v1);
-        let recovery_before = std::fs::read(&recovery).unwrap();
-        let graph_before = tree_bytes(&dir);
-
-        Graph::open_checked(&dir)
-            .expect("inert legacy-v1 bytes must not reject a checked Direct Files open");
-        let root_key = std::fs::canonicalize(&dir).unwrap();
-        let loaded = open_graph_for_load(dir.to_str().unwrap(), None).unwrap();
-        assert_eq!(loaded.graph.meta().root, dir.display().to_string());
-        let state = direct_test_state();
-        let (slot, warm) =
-            publish_direct_files_slot(&state, "ordinary", loaded.graph, root_key.clone()).unwrap();
-        let installed = state
-            .graphs
-            .read()
-            .unwrap()
-            .slot("ordinary")
-            .expect("ordinary publish must install a graph slot");
-        assert!(Arc::ptr_eq(&installed, &slot));
-        assert_eq!(installed.root_key, root_key);
-        assert_eq!(installed.binding_generation, slot.binding_generation);
+    fn only_the_applied_proposal_renames_journal_files() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let mut callers = Vec::new();
+        for dir in ["src-tauri/src", "crates/tine-graph-features/src"] {
+            for entry in std::fs::read_dir(root.join(dir)).unwrap() {
+                let path = entry.unwrap().path();
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                // A call, not the definition or this census's own string literals.
+                let calls = text.lines().filter(|line| {
+                    line.contains("migrate_journal_filenames(")
+                        && !line.contains("fn migrate_journal_filenames(")
+                        && !line.contains('"')
+                });
+                if calls.count() > 0 {
+                    callers.push(path.file_name().unwrap().to_string_lossy().into_owned());
+                }
+            }
+        }
         assert_eq!(
-            installed.warm_generation.load(Ordering::Acquire),
-            warm.generation,
-            "the installed Direct slot owns the scheduled warm generation"
+            callers,
+            ["commands.rs"],
+            "only apply_journal_filename_migrations may rename journal files (master e6f9b6e1ceae)"
         );
-        assert_eq!(std::fs::read(&page).unwrap(), page_before);
-        assert_eq!(std::fs::read(&recovery).unwrap(), recovery_before);
-        assert_eq!(tree_bytes(&v1), v1_before);
-        assert_eq!(tree_bytes(&dir), graph_before);
-
-        let no_v1 = scratch("direct-publish-does-not-create-v1");
-        std::fs::write(no_v1.join("pages/representative.md"), b"- direct only\n").unwrap();
-        let no_v1_before = tree_bytes(&no_v1);
-        let no_v1_root = std::fs::canonicalize(&no_v1).unwrap();
-        let loaded = open_graph_for_load(no_v1.to_str().unwrap(), None).unwrap();
-        publish_direct_files_slot(&state, "direct-only", loaded.graph, no_v1_root).unwrap();
-        assert!(
-            !no_v1.join(".tine-sync/v1").exists(),
-            "ordinary Direct Files publishing must not create or activate v1"
-        );
-        assert_eq!(tree_bytes(&no_v1), no_v1_before);
-
-        // A pre-release v1 prototype could also have stopped before it had
-        // created a directory-shaped store.  The retired child is never
-        // traversed, so this malformed-but-inert shape must be just as harmless
-        // to the checked Direct Files path as a representative directory tree.
-        let v1_file = scratch("direct-publish-with-inert-v1-file");
-        let v1_file_path = v1_file.join(".tine-sync/v1");
-        std::fs::write(
-            v1_file.join("pages/representative.md"),
-            b"- direct with old v1 file\n",
-        )
-        .unwrap();
-        std::fs::create_dir_all(v1_file_path.parent().unwrap()).unwrap();
-        std::fs::write(&v1_file_path, b"incomplete retired v1 bytes\n").unwrap();
-        let v1_file_before = tree_bytes(&v1_file);
-        Graph::open_checked(&v1_file)
-            .expect("an inert non-directory v1 child must not reject Direct Files");
-        let v1_file_root = std::fs::canonicalize(&v1_file).unwrap();
-        let loaded = open_graph_for_load(v1_file.to_str().unwrap(), None).unwrap();
-        publish_direct_files_slot(&state, "inert-v1-file", loaded.graph, v1_file_root).unwrap();
-        assert_eq!(
-            tree_bytes(&v1_file),
-            v1_file_before,
-            "Direct Files must neither inspect nor rewrite inert malformed v1 bytes"
-        );
-
-        let _ = std::fs::remove_dir_all(&v1_file);
-        let _ = std::fs::remove_dir_all(&no_v1);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
     #[test]
-    #[ignore = "manual large-graph startup benchmark"]
-    fn direct_large_graph_open_manual_benchmark() {
-        let page_count = std::env::var("TINE_DIRECT_OPEN_BENCH_PAGES")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(13_000);
-        let asset_count = std::env::var("TINE_DIRECT_OPEN_BENCH_ASSETS")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(12_884);
-        let dir = scratch("direct-large-open-bench");
-        let assets = dir.join("assets");
-        std::fs::create_dir_all(&assets).unwrap();
-        for index in 0..page_count {
-            std::fs::write(
-                dir.join("pages").join(format!("page-{index:05}.md")),
-                format!("- page {index}\n"),
-            )
+    fn open_error_adapter_keeps_legacy_layout_text() {
+        let dir = scratch("layout-error-text");
+        let outside = scratch("layout-outside");
+        std::fs::remove_dir(dir.join("pages")).unwrap();
+        std::os::unix::fs::symlink(outside.join("pages"), dir.join("pages")).unwrap();
+        let new = open_graph_for_load(dir.to_str().unwrap(), None, Default::default(), None)
+            .err()
             .unwrap();
-        }
-        for index in 0..asset_count {
-            let bucket = assets.join(format!("bucket-{:03}", index % 281));
-            std::fs::create_dir_all(&bucket).unwrap();
-            let file = std::fs::File::create(bucket.join(format!("asset-{index:05}.bin"))).unwrap();
-            file.set_len(2 * 1024 * 1024).unwrap();
-        }
-
-        let started = std::time::Instant::now();
-        let loaded = open_graph_for_load(dir.to_str().unwrap(), None).unwrap();
-        let elapsed = started.elapsed();
-        assert_eq!(loaded.graph.meta().root, dir.display().to_string());
-        eprintln!(
-            "direct open: pages={page_count}, assets={asset_count}, apparent_asset_gib={:.1}, elapsed={elapsed:?}",
-            asset_count as f64 * 2.0 / 1024.0
+        assert_eq!(
+            new,
+            "unsafe graph layout: pages directory escapes graph root: \"pages\""
         );
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(outside);
+    }
 
-        if std::env::var_os("TINE_DIRECT_OPEN_BENCH_KEEP").is_some() {
-            eprintln!("retained benchmark graph at {}", dir.display());
-        } else {
-            let _ = std::fs::remove_dir_all(&dir);
-        }
+    /// ADR 0070, item 4 (2026-10-02): the launch checkpoint lives in Tauri's
+    /// app-data dir on all five shipped targets. The `dirs` crate the first
+    /// revision used has no Android arm (it resolves `$HOME/.local/share`,
+    /// outside the app sandbox), so Android and iOS kept no checkpoint.
+    #[test]
+    fn launch_checkpoints_live_in_tauri_app_data_on_every_platform() {
+        let app_data = Path::new("/app-data");
+        let path = launch_checkpoint_path(app_data, Path::new("/graphs/notes"));
+        assert!(path.starts_with(app_data.join("launch-checkpoints")));
+        assert_eq!(path.extension().unwrap(), "bin");
+        let source = include_str!("graph.rs");
+        let production = &source[..source.find("#[cfg(test)]\nmod tests").unwrap()];
+        let start = production
+            .find("pub(crate) fn checkpoint_app_data")
+            .expect("the checkpoint dir comes from checkpoint_app_data (Tauri app_data_dir)");
+        let body = &production[start..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        assert!(
+            body.contains("app.path().app_data_dir()"),
+            "the checkpoint dir is Tauri's app_data_dir, as concord_ledger::attach uses"
+        );
+        assert!(
+            !body.contains("cfg(target_os") && !body.contains("dirs::"),
+            "no platform branch: one rule names Linux, Windows, macOS, iOS and Android"
+        );
+        assert!(
+            !production
+                .contains("current_app_data_dir().map(|dir| dir.join(\"launch-checkpoints\")"),
+            "the dirs-based checkpoint dir is gone"
+        );
+    }
+
+    /// ADR 0070, item 5 (2026-10-02): removing a graph deletes its
+    /// checkpoint, best-effort.
+    #[test]
+    fn forgetting_a_graph_deletes_its_checkpoint_best_effort() {
+        let app_data = scratch("forget-checkpoint");
+        let root = "/graphs/notes";
+        let path = launch_checkpoint_path(&app_data, Path::new(root));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"TINECKPT").unwrap();
+        let other = launch_checkpoint_path(&app_data, Path::new("/graphs/other"));
+        std::fs::write(&other, b"TINECKPT").unwrap();
+        forget_launch_checkpoint(Some(&app_data), root);
+        assert!(!path.exists(), "the removed graph's checkpoint is deleted");
+        assert!(other.exists(), "another graph's checkpoint is kept");
+        // Already gone, or no app-data dir: nothing to do, nothing fails.
+        forget_launch_checkpoint(Some(&app_data), root);
+        forget_launch_checkpoint(None, root);
+        let settings = include_str!("settings.rs");
+        let command = &settings[settings
+            .find("pub(crate) async fn forget_known_graph")
+            .expect("the removal command")..];
+        let command = &command[..command.find("\n}\n").unwrap()];
+        assert!(
+            command.contains("forget_launch_checkpoint("),
+            "forget_known_graph deletes the graph's launch checkpoint"
+        );
+        let _ = std::fs::remove_dir_all(app_data);
     }
 }

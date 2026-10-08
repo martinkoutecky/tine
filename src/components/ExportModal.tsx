@@ -1,17 +1,19 @@
+import { optionsUpdater } from "./primitives";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
-import { exportModal, closeExportModal, pushToast, typographyMode, graphMeta, graphTransitioning, type ExportRequest } from "../ui";
-import { doc, exportNodesFor, formatForPage } from "../store";
-import { backend, OperationCancelledError, QueryUnavailableError } from "../backend";
-import { graphBinding } from "../persistence";
-import { onGraphRebound } from "../modeHooks";
-import { runQueryWhenReady, type QueryReadinessOwner } from "../queryReadiness";
+import { graphOwner, readOwned, type Owner } from "../owned";
+import { reportUiFailure } from "../uiFailure";
+import { exportModal, closeExportModal, typographyMode, type ExportRequest } from "../ui";
+import { pushToast } from "../toasts";
+import { graphMeta } from "../graphSession";
+import { exportNodesFor, formatForPage } from "../document";
+import { backend } from "../backend";
 import { writeClipboardText } from "../clipboard";
 import { resolveBlockBatched, resolvedBlockRefSync } from "../resolveBatch";
 import { expandTemplate } from "../render/inline";
-import { visibleBody } from "../render/block";
-import { parseBlock } from "../render/parse";
-import { isQueryMacroName, queryMacroExtentAtSpan } from "../editor/queryMacro";
-import { macroTextDialect, sourceOriginal } from "../editor/queryIr";
+import { visibleBody, isRenderHiddenProp } from "../render/block";
+import { parseBlock, blockRegions, propertyValueInline } from "../render/parse";
+import { splitTrailingMap } from "../editor/edn";
+import { formFamilyForMacroName, isQueryMacroName } from "../editor/queryMacro";
 import {
   exportOutline,
   DEFAULT_EXPORT_OPTIONS,
@@ -49,13 +51,12 @@ function saveOptions(o: ExportOptions): void {
   }
 }
 
-// The two content choices must name the OUTPUT the user gets, not the internal
-// mode: GH #352 showed "Rendered"/"Source" left the preserve-Markdown option
-// undiscoverable on the reporter's screen. The option values stay
-// "rendered"/"source" so persisted settings keep working.
+// The two content choices name the OUTPUT the user gets, not the internal mode
+// (GH #352: "Rendered"/"Source" left the preserve-Markdown option
+// undiscoverable). Values stay "rendered"/"source" so saved settings still work.
 const CONTENT_STYLES: { value: ExportContent; label: string; hint: string }[] = [
   { value: "rendered", label: "Plain text", hint: "cleaned — the text as displayed, without markup markers (bold, highlighting, links)" },
-  { value: "source", label: "Markdown", hint: "preserved — original source syntax (bold, highlighting, links, properties)" },
+  { value: "source", label: "Markdown", hint: "formatting preserved — block references resolved and embeds expanded" },
 ];
 
 const FORMAT_STYLES: { value: ExportFormat; label: string }[] = [
@@ -105,15 +106,12 @@ const BUILT_IN_MACRO_NAMES = new Set([
 
 function isBuiltInMacro(name: string): boolean {
   const n = name.toLowerCase();
-  return BUILT_IN_MACRO_NAMES.has(n) || n.startsWith("zotero-");
+  return BUILT_IN_MACRO_NAMES.has(n) || isQueryMacroName(n) || n.startsWith("zotero-");
 }
 
 interface WarmTargets {
   refs: Set<string>;
-  /** `raw` is the macro's exact source argument when the collector could anchor
-   *  it by offset (§4.3.1); absent when it could not, and the caller then falls
-   *  back to the lossy `args` reconstruction. */
-  macros: Map<string, { name: string; args: string[]; raw?: string }>;
+  macros: Map<string, { name: string; args: string[] }>;
 }
 
 type WarmedMacro =
@@ -152,6 +150,8 @@ function pageRefTarget(s: string): string | null {
   return /^\[\[([^\]]+)\]\]$/.exec(s.trim())?.[1] ?? null;
 }
 
+/** Project a bounded DTO subtree into the export serializer's read-only forest.
+ * Cost is O(blocks and descendants); it does not read or write the graph. */
 export function blockDtosToExportNodes(blocks: BlockDto[], format: Format): ExportNode[] {
   return blocks.map((b) => ({ raw: b.raw, format, children: blockDtosToExportNodes(b.children, format) }));
 }
@@ -195,35 +195,21 @@ function literalBuiltInMacroText(name: string, args: string[]): string | null {
   return null;
 }
 
-function collectInlineTargets(inlines: Inline[], targets: WarmTargets, sourceRaw?: string): void {
+function collectInlineTargets(inlines: Inline[], targets: WarmTargets): void {
   for (const s of inlines) {
     switch (s.k) {
       case "emphasis":
       case "subscript":
       case "superscript":
       case "tag":
-        collectInlineTargets(s.children, targets, sourceRaw);
+        collectInlineTargets(s.children, targets);
         break;
       case "link":
         if (s.url.type === "block_ref") targets.refs.add(s.url.v);
-        if (s.label) collectInlineTargets(s.label, targets, sourceRaw);
+        if (s.label) collectInlineTargets(s.label, targets);
         break;
       case "macro": {
-        // §4.3.1: "Export collection must retain the SOURCE/offset alongside the
-        // parsed node rather than only `name,args`." `args` came through mldoc's
-        // comma split and stops before the first `}`, so a query with an options
-        // map or a literal comma cannot be rebuilt from it. `raw` is the exact
-        // slice, anchored by the macro's own source offset; it is undefined only
-        // when the node had no span or no extent covers it, and the caller then
-        // falls back to the reconstruction.
-        const extent = sourceRaw !== undefined
-          ? queryMacroExtentAtSpan(sourceRaw, s.span)
-          : null;
-        targets.macros.set(macroKey(s.name, s.args), {
-          name: s.name,
-          args: s.args,
-          raw: extent?.argument,
-        });
+        targets.macros.set(macroKey(s.name, s.args), { name: s.name, args: s.args });
         if (s.name.toLowerCase() === "embed") {
           const uuid = blockRefTarget(macroArg(s.args));
           if (uuid) targets.refs.add(uuid);
@@ -234,43 +220,45 @@ function collectInlineTargets(inlines: Inline[], targets: WarmTargets, sourceRaw
   }
 }
 
-function collectListItemTargets(item: ListItem, targets: WarmTargets, sourceRaw?: string): void {
-  if (item.name) collectInlineTargets(item.name, targets, sourceRaw);
-  item.content.forEach((b) => collectBlockTargets(b, targets, sourceRaw));
-  item.items.forEach((child) => collectListItemTargets(child, targets, sourceRaw));
+function collectListItemTargets(item: ListItem, targets: WarmTargets): void {
+  if (item.name) collectInlineTargets(item.name, targets);
+  item.content.forEach((b) => collectBlockTargets(b, targets));
+  item.items.forEach((child) => collectListItemTargets(child, targets));
 }
 
-// `sourceRaw` is the block source these AST nodes were parsed from, carried down
-// so a query macro can be resolved back to its exact raw slice (§4.3.1).
-function collectBlockTargets(block: Block, targets: WarmTargets, sourceRaw?: string): void {
+function collectBlockTargets(block: Block, targets: WarmTargets): void {
   switch (block.kind) {
     case "paragraph":
     case "heading":
     case "bullet":
-      collectInlineTargets(block.inline, targets, sourceRaw);
+      collectInlineTargets(block.inline, targets);
       break;
     case "quote":
     case "custom":
-      block.children.forEach((b) => collectBlockTargets(b, targets, sourceRaw));
+      block.children.forEach((b) => collectBlockTargets(b, targets));
       break;
     case "list":
-      block.items.forEach((item) => collectListItemTargets(item, targets, sourceRaw));
+      block.items.forEach((item) => collectListItemTargets(item, targets));
       break;
     case "table":
-      if (block.header) block.header.forEach((c) => collectInlineTargets(c, targets, sourceRaw));
-      block.rows.forEach((r) => r.forEach((c) => collectInlineTargets(c, targets, sourceRaw)));
+      if (block.header) block.header.forEach((c) => collectInlineTargets(c, targets));
+      block.rows.forEach((r) => r.forEach((c) => collectInlineTargets(c, targets)));
       break;
     case "footnote_def":
-      collectInlineTargets(block.inline, targets, sourceRaw);
+      collectInlineTargets(block.inline, targets);
       break;
   }
 }
 
 function collectRawTargets(raw: string, format: Format, targets: WarmTargets): void {
   try {
-    parseBlock(raw, format === "org").forEach((b) => collectBlockTargets(b, targets, raw));
-  } catch {
-    /* keep export usable if a malformed block misses pre-warm */
+    parseBlock(raw, format === "org").forEach((b) => collectBlockTargets(b, targets));
+    for (const property of blockRegions(raw, format).properties) {
+      if (!isRenderHiddenProp(property.key)) collectInlineTargets(propertyValueInline(property, format), targets);
+    }
+  } catch (error) {
+    // Keep the export usable if a malformed block misses pre-warm, and say so (I-9).
+    reportUiFailure("export-preview", error);
   }
 }
 
@@ -285,6 +273,7 @@ async function warmMacro(
   macro: { name: string; args: string[] },
   warmed: Map<string, WarmedMacro>,
   pages: PageReadCache,
+  owner: Owner,
 ): Promise<void> {
   const key = macroKey(macro.name, macro.args);
   const name = macro.name.toLowerCase();
@@ -293,7 +282,9 @@ async function warmMacro(
     if (name === "embed") {
       const uuid = blockRefTarget(arg);
       if (uuid) {
-        const preview = await backend().previewBlock(uuid, EMBED_EXPORT_NODE_LIMIT);
+        const result = await readOwned(owner, backend().previewBlock(uuid, EMBED_EXPORT_NODE_LIMIT));
+        if (result.kind === "stale") return;
+        const preview = result.value;
         if (preview) warmed.set(key, {
           kind: "nodes",
           nodes: refGroupToExportNodes(preview.group),
@@ -305,67 +296,40 @@ async function warmMacro(
       }
       const page = pageRefTarget(arg);
       if (page) {
-        const dto = await cachedPage(pages, page, "page");
+        const result = await readOwned(owner, cachedPage(pages, page, "page"));
+        if (result.kind === "stale") return;
+        const dto = result.value;
         if (dto) warmed.set(key, { kind: "nodes", nodes: pageToExportNodes(dto) });
         return;
       }
     }
     const text = literalBuiltInMacroText(name, macro.args);
     if (text != null) warmed.set(key, { kind: "text", text });
-  } catch {
-    /* fall back to the literal macro text */
+  } catch (error) {
+    // Fall back to the literal macro text, and say so (I-9).
+    if (owner()) reportUiFailure("export-preview", error);
   }
 }
 
 async function warmQueryMacros(
-  macros: { name: string; args: string[]; raw?: string }[],
+  macros: { name: string; args: string[] }[],
   warmed: Map<string, WarmedMacro>,
-  currentPage: string | undefined,
-  owner: QueryReadinessOwner,
+  owner: Owner,
 ): Promise<void> {
   if (!macros.length) return;
-  // §7.1, I-12: Export no longer splits the options map and no longer decides
-  // OG-vs-advanced with its own regex. It asks `query_parse` with the macro's
-  // OWN name, which splits once in Rust and picks the grammar with the one Rust
-  // discriminator — so a `:find` inside a string literal is text here and in the
-  // renderer, instead of being datalog in whichever of the two looked first.
-  const parsed = await Promise.all(macros.map(async (macro) => {
-    const argument = macro.raw ?? macroArg(macro.args);
-    try {
-      // The macro parse takes the SAME readiness owner the export batch below
-      // takes: `query_parse`'s registry read is SQL-only now, so a not-ready
-      // index is a retry, not a silent fall back to the literal macro text.
-      const { query } = await runQueryWhenReady(
-        () => backend().parseQuery(argument, macroTextDialect(macro.name)),
-        owner,
-      );
-      return { macro, source: query.source };
-    } catch {
-      // A parse that rejects must not silently export as an OG query: fall back
-      // to the literal macro text, which is what an unresolvable macro already
-      // does everywhere else in this file.
-      return { macro, source: null };
-    }
-  }));
-  const specs: QueryExportSpec[] = parsed.flatMap(({ macro, source }) => {
-    if (source === null || source.kind === "builder") return [];
-    return [{
+  const specs: QueryExportSpec[] = macros.map((macro) => {
+    const { form } = splitTrailingMap(macroArg(macro.args));
+    return {
       key: macroKey(macro.name, macro.args),
-      query: sourceOriginal(source) ?? "",
-      advanced: source.kind === "advanced",
-      // Missing retains the legacy OG interpretation. TQL must be explicit:
-      // the original text is intentionally preserved rather than reprinted.
-      ...(source.kind === "tql" ? { simple_dialect: "tql" as const } : {}),
-      // T8 / §4.4: an exported advanced query must bind `?current-page` to the
-      // SAME page the rendered one did. Absent is the honest "no binding", never
-      // a guess — but a page-scoped export is not absent, and leaving it so
-      // resolved `:current-page` to None, which is a wrong answer.
-      current_page: currentPage,
-    }];
+      query: form,
+      // `{{tine-query}}` carries TQL; the macro name, not the text, chooses.
+      ...(formFamilyForMacroName(macro.name) === "tql" ? { dialect: "tql" as const } : {}),
+    };
   });
-  if (!specs.length) return;
   try {
-    const batch = await runQueryWhenReady(() => backend().exportQuerySubtrees(specs), owner);
+    const result = await readOwned(owner, backend().exportQuerySubtrees(specs));
+    if (result.kind === "stale") return;
+    const batch = result.value;
     const byKey = new Map(batch.results.map((result) => [result.key, result]));
     for (const spec of specs) {
       const result = byKey.get(spec.key);
@@ -391,52 +355,64 @@ async function warmQueryMacros(
       });
     }
   } catch (error) {
-    if (error instanceof OperationCancelledError || error instanceof QueryUnavailableError) throw error;
     // Leave the literal macro visible when native resolution rejects the bounded
-    // request; never fall back to whole-page hydration in the WebView.
+    // request; never fall back to whole-page hydration in the WebView. The
+    // failure is shown (I-9).
+    if (owner()) reportUiFailure("export-preview", error);
   }
 }
 
-export async function warmExportResolutions(
-  nodes: ExportNode[],
-  warmed: Map<string, WarmedMacro>,
-  currentPage?: string,
-  owner: QueryReadinessOwner = {
-    signal: new AbortController().signal, isCurrent: () => true, onPending: () => {},
-  },
-): Promise<void> {
-  const requireCurrent = () => {
-    if (owner.signal.aborted || !owner.isCurrent()) throw new OperationCancelledError();
-  };
-  requireCurrent();
+/** Resolve block refs and supported macros in export nodes into warmed.
+ * Ref lookups run in parallel, query macros use one bounded native export
+ * batch, and page embeds can read whole pages. Cost grows with refs, queries
+ * and embedded page content. Failed resolutions generally leave the literal
+ * macro for export; stale graph ownership stops later phases. */
+export function warmExportResolutions(nodes: ExportNode[], warmed: Map<string, WarmedMacro>): Promise<void> {
+  return warmExportResolutionsOwned(nodes, warmed, graphOwner());
+}
+
+async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<string, WarmedMacro>, owner: Owner): Promise<void> {
   const targets: WarmTargets = { refs: new Set(), macros: new Map() };
   const pages: PageReadCache = new Map();
+  const seenRefs = new Set<string>(), seenMacros = new Set<string>();
   collectNodeTargets(nodes, targets);
-  await Promise.all([...targets.refs].map((uuid) => resolveBlockBatched(uuid).catch(() => null)));
-  requireCurrent();
-  const macros = [...targets.macros.values()];
-  // §7.9: BOTH macro names are queries. Filtering on the literal `"query"` is
-  // exactly how a `{{tine-query …}}` block came to export as literal text.
-  await warmQueryMacros(
-    macros.filter((macro) => isQueryMacroName(macro.name)),
-    warmed,
-    currentPage,
-    owner,
-  );
-  requireCurrent();
-  // Page embeds are intentionally whole-page exports, but run them after the
-  // globally bounded query batch so their PageDto cache cannot overlap query
-  // source-page hydration (which no longer uses getPage at all).
-  await Promise.all(
-    macros
-      .filter((macro) => !isQueryMacroName(macro.name))
-      .map((macro) => warmMacro(macro, warmed, pages)),
-  );
+  // Follow resolved targets too: refs inside refs and embeds share the same
+  // graph-owned warming path. Bound work before each native read.
+  for (let depth = 0; depth < 6; depth++) {
+    for (let refDepth = 0; refDepth < 64; refDepth++) {
+      const refs = [...targets.refs].filter(uuid => !seenRefs.has(uuid)).slice(0, 2000 - seenRefs.size);
+      if (!refs.length) break;
+      refs.forEach(uuid => seenRefs.add(uuid));
+      await Promise.all(refs.map(uuid => readOwned(owner, resolveBlockBatched(uuid).catch((error) => {
+        if (owner()) reportUiFailure("export-preview", error);
+        return null;
+      }))));
+      if (!owner()) return;
+      for (const uuid of refs) {
+        const resolved = resolveExportBlockRef(uuid);
+        if (resolved) collectRawTargets(resolved.raw, resolved.format, targets);
+      }
+    }
+    const macros = [...targets.macros.entries()].filter(([key]) => !seenMacros.has(key)).slice(0, 2000 - seenMacros.size);
+    macros.forEach(([key]) => seenMacros.add(key));
+    if (!macros.length) break;
+    await warmQueryMacros(macros.map(([,macro]) => macro).filter(macro => isQueryMacroName(macro.name)), warmed, owner);
+    await Promise.all(macros.map(([,macro]) => macro).filter(macro => !isQueryMacroName(macro.name))
+      .map(macro => warmMacro(macro, warmed, pages, owner)));
+    if (!owner()) return;
+    for (const [key] of macros) {
+      const result = warmed.get(key);
+      if (result?.kind === "nodes") collectNodeTargets(result.nodes, targets);
+    }
+  }
 }
 
 // "Copy / Export" modal — live-preview Text/OPML/HTML export of a block forest,
 // with per-format controls mirroring OG Logseq's dialog. Read-only preview;
 // Copy writes the currently selected serializer payload to the clipboard.
+/** Render the shared read-only export preview for document ids or a caller's
+ * already materialized forest. Copy uses the currently selected serializer;
+ * only clipboard failure is reported to the user. */
 export function ExportModal(): JSX.Element {
   return (
     <Show when={exportModal()}>
@@ -455,63 +431,66 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   const [format, setFormat] = createSignal<ExportFormat>("text");
   const [warmRev, setWarmRev] = createSignal(0);
   const [warming, setWarming] = createSignal(false);
-  const [warmError, setWarmError] = createSignal<string | null>(null);
   const warmedMacros = new Map<string, WarmedMacro>();
-  const update = (patch: Partial<ExportOptions>) => {
-    const next = { ...opts(), ...patch };
-    setOpts(next);
-    saveOptions(next);
-  };
+  const update = optionsUpdater(opts, setOpts, saveOptions);
 
   // Build the node forest once (the selection is fixed while the modal is open);
   // the preview recomputes from it as options change. Rendered mode applies the
   // typographic glyphs exactly when the app displays them (not persisted).
-  const nodes = "ids" in props.request ? exportNodesFor(props.request.ids) : props.request.nodes;
-  // T8 / §4.4: the export knows the page it is exporting FROM, so an advanced
-  // query's `?current-page` resolves to the same page it would have rendered
-  // against. A selection spanning several pages has no single answer, so it
-  // supplies none — an unbound input is a stated limitation, a WRONG page is a
-  // wrong answer. A prebuilt node forest (the reference batch export) likewise
-  // has no owning page.
-  const currentPage = (): string | undefined => {
-    if (!("ids" in props.request)) return undefined;
-    const pages = new Set(
-      props.request.ids.map((id) => doc.byId[id]?.page).filter((p): p is string => !!p),
-    );
-    return pages.size === 1 ? [...pages][0] : undefined;
-  };
-  // Name the preserved syntax after the selection's actual format: a Markdown
-  // forest offers "Markdown", an Org forest "Org", a mix "Markdown/Org" — so
-  // the preserve choice says what it preserves (GH #352).
+  const nodes = "nodes" in props.request ? props.request.nodes : exportNodesFor(props.request.ids);
+  // Name the preserved syntax after the selection's actual format (GH #352).
   const sourceLabel = () => {
     const formats = new Set(nodes.map((n) => n.format ?? "md"));
     if (formats.size === 1 && formats.has("org")) return "Org";
     if (formats.size === 1) return "Markdown";
     return "Markdown/Org";
   };
+  const expanding = new Set<string>();
+  let expansions = 0;
   const resolveMacro = (name: string, args: string[]) => {
-    const warmed = warmedMacros.get(macroKey(name, args));
+    const key = macroKey(name, args);
+    const warmed = warmedMacros.get(key);
     if (warmed?.kind === "text") return { raw: "", format: "md" as const, text: warmed.text };
     if (warmed?.kind === "nodes") {
-      const body = exportOutline(warmed.nodes, {
-        ...opts(),
-        content: "rendered",
-        indent: "spaces",
-        typographicGlyphs: typographyMode() === "render",
-        resolveBlockRef: resolveExportBlockRef,
-        resolveMacro,
-      });
-      const lines = [body || warmed.emptyText, warmed.note, warmed.truncation].filter((s): s is string => !!s);
-      return { raw: "", format: "md" as const, text: lines.join("\n") };
+      // This callback reenters exportOutline, so its per-call rendering budget
+      // cannot protect it. One preview owns the cycle/depth/fan-out budget.
+      if (expanding.has(key) || expanding.size >= 64 || expansions >= EMBED_EXPORT_NODE_LIMIT) {
+        return { raw: "", format: "md" as const, text: "[embed expansion omitted]" };
+      }
+      expansions++;
+      expanding.add(key);
+      try {
+        const body = exportOutline(warmed.nodes, {
+          ...opts(),
+          content: "rendered",
+          indent: "spaces",
+          typographicGlyphs: typographyMode() === "render",
+          resolveBlockRef: resolveExportBlockRef,
+          resolveMacro,
+        });
+        const lines = [body || warmed.emptyText, warmed.note, warmed.truncation].filter((s): s is string => !!s);
+        return { raw: "", format: "md" as const, text: lines.join("\n") };
+      } finally { expanding.delete(key); }
     }
     return resolveExportMacro(name, args);
   };
   const payload = createMemo(() => {
     warmRev();
-    if (format() === "opml") return exportOpml(nodes, opts());
-    if (format() === "html") return exportHtml(nodes, opts());
+    expansions = 0;
+    const markupOptions = {
+      ...opts(), resolveBlockRef: resolveExportBlockRef,
+      resolveEmbed: (name: string, args: string[]) => {
+        const result = warmedMacros.get(macroKey(name, args));
+        return result?.kind === "nodes" ? [
+          ...result.nodes,
+          ...[result.note, result.truncation].filter((text): text is string => !!text).map(raw => ({raw, children:[]})),
+        ] : null;
+      },
+    };
+    if (format() === "opml") return exportOpml(nodes, markupOptions);
+    if (format() === "html") return exportHtml(nodes, markupOptions);
     return exportOutline(nodes, {
-      ...opts(),
+      ...markupOptions,
       typographicGlyphs: typographyMode() === "render",
       resolveBlockRef: resolveExportBlockRef,
       resolveMacro,
@@ -519,32 +498,21 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   });
 
   const copy = () => {
-    if (format() === "text" && opts().content === "rendered" && (warming() || warmError())) return;
-    void writeClipboardText(payload());
-    pushToast("Copied to clipboard", "success");
-    closeExportModal();
+    if (warming()) return;
+    const request = exportModal();
+    void writeClipboardText(payload())
+      .then(() => { pushToast("Copied to clipboard", "success"); if (exportModal() === request) closeExportModal(); })
+      .catch(() => pushToast("Couldn't copy: clipboard write failed.", "error"));
   };
 
   let disposed = false;
-  const queryController = new AbortController();
-  onCleanup(onGraphRebound(() => queryController.abort()));
-  const binding = graphBinding();
-  const graphRoot = graphMeta()?.root;
-  const current = () => !disposed && graphBinding() === binding
-    && graphMeta()?.root === graphRoot && !graphTransitioning();
-  createEffect(() => { if (!current()) queryController.abort(); });
   onCleanup(() => {
     disposed = true;
-    queryController.abort();
   });
 
   onMount(() => {
     setWarming(true);
-    void warmExportResolutions(nodes, warmedMacros, currentPage(), {
-      signal: queryController.signal, isCurrent: current, onPending: () => {},
-    }).catch(error => {
-      if (!disposed) setWarmError(error instanceof Error ? error.message : String(error));
-    }).finally(() => {
+    void warmExportResolutionsOwned(nodes, warmedMacros, graphOwner(() => !disposed)).finally(() => {
       if (disposed) return;
       setWarmRev(warmRev() + 1);
       setWarming(false);
@@ -570,7 +538,7 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
     return undefined;
   };
 
-  const blockCount = "ids" in props.request ? props.request.ids.length : props.request.count;
+  const blockCount = "nodes" in props.request ? props.request.count : props.request.ids.length;
   return (
     <div class="modal-overlay" onClick={closeExportModal}>
       <div ref={root} class="export-modal" onClick={(e) => e.stopPropagation()}>
@@ -672,12 +640,11 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
           <button class="export-btn-secondary" onClick={closeExportModal}>Close</button>
           <button
             class="export-btn-primary"
-            disabled={format() === "text" && opts().content === "rendered" && (warming() || !!warmError())}
+            disabled={warming()}
             onClick={copy}
           >
-            {format() === "text" && opts().content === "rendered" && warming() ? "Resolving..." : "Copy"}
+            {warming() ? "Resolving..." : "Copy"}
           </button>
-          <Show when={warmError()}>{error => <span role="alert">{error()}</span>}</Show>
         </div>
       </div>
     </div>

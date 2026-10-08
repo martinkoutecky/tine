@@ -5,8 +5,8 @@
 
 import { assetNameFormat } from "./assetSettings";
 import type { Format } from "./types";
-import { appNow } from "./journal";
 
+import { appNow } from "./journal";
 // Image extensions Tine renders as <img> (unchanged from the prior inline check).
 export const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
 // OG's media format sets (deps/.../config.cljs): reused so a clone graph stays
@@ -213,73 +213,11 @@ export function recordingExt(mime: string): string {
   return "webm"; // audio/webm and unknown
 }
 
-export interface AssetMarkdownFixupTarget {
-  insertedAt: number;
-  occurrence: number;
-}
-
-function occurrenceAt(raw: string, needle: string, offset: number): number {
-  let occurrence = 0;
-  let pos = raw.indexOf(needle);
-  while (pos >= 0) {
-    if (pos === offset) return occurrence;
-    if (pos > offset) return occurrence;
-    occurrence += 1;
-    pos = raw.indexOf(needle, pos + needle.length);
-  }
-  return occurrence;
-}
-
-export function insertedAssetMarkdownTarget(
-  raw: string,
-  markdown: string,
-  insertedAt: number
-): AssetMarkdownFixupTarget {
-  return { insertedAt, occurrence: occurrenceAt(raw, markdown, insertedAt) };
-}
-
-function replaceAt(raw: string, start: number, len: number, replacement: string): string {
-  return raw.slice(0, start) + replacement + raw.slice(start + len);
-}
-
-export function replaceInsertedAssetMarkdown(
-  raw: string,
-  candidate: string,
-  stored: string,
-  target: AssetMarkdownFixupTarget
-): string {
-  const from = assetMarkdown(candidate);
-  const to = assetMarkdown(stored);
-  if (!from || from === to) return raw;
-  const positions: number[] = [];
-  let pos = raw.indexOf(from);
-  while (pos >= 0) {
-    positions.push(pos);
-    pos = raw.indexOf(from, pos + from.length);
-  }
-  if (!positions.length) return raw;
-  const exact = positions[target.occurrence];
-  if (exact !== undefined) return replaceAt(raw, exact, from.length, to);
-  const afterOriginalOffset = positions.find((p) => p >= target.insertedAt);
-  return replaceAt(raw, afterOriginalOffset ?? positions[0], from.length, to);
-}
-
-export function removeInsertedAssetMarkdown(
-  raw: string,
-  candidate: string,
-  target: AssetMarkdownFixupTarget
-): string {
-  const from = assetMarkdown(candidate);
-  if (!from) return raw;
-  const positions: number[] = [];
-  let pos = raw.indexOf(from);
-  while (pos >= 0) {
-    positions.push(pos);
-    pos = raw.indexOf(from, pos + from.length);
-  }
-  if (!positions.length) return raw;
-  const exact = positions[target.occurrence];
-  if (exact !== undefined) return replaceAt(raw, exact, from.length, "");
-  const afterOriginalOffset = positions.find((p) => p >= target.insertedAt);
-  return replaceAt(raw, afterOriginalOffset ?? positions[0], from.length, "");
+/** Resolve a graph asset relative to `assets/`, normalizing separators and case
+ * of the directory name in O(URL bytes). Null when no asset directory occurs;
+ * the backend validates the returned path before reading. */
+export function assetRelPath(url: string): string | null {
+  const normalized = url.replace(/\\/g, "/");
+  const i = normalized.toLowerCase().indexOf("assets/");
+  return i === -1 ? null : normalized.slice(i + "assets/".length);
 }

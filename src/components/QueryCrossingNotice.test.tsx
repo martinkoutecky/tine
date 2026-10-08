@@ -1,3 +1,4 @@
+// Ported from master src/components/QueryCrossingNotice.test.tsx.
 // **The user half of the persisted-form crossing (SPEC §4.3 "Notice", §7.5; T3).**
 //
 // The mechanical half already shipped: an edit OG cannot express rewrites the
@@ -11,36 +12,40 @@
 //  C2  [Undo that change] is the ORDINARY undo, and is offered only while the
 //      ordinary undo would still take back THIS change — in both history modes.
 //      After the undo the block's bytes are what they were before the save.
-//  C3  [Keep it] closes it; "Don't show this again" is device-local and
-//      graph-keyed (I-18, D-11) and silences the NEXT crossing.
+//  C3  [Keep it] closes it; "Don't show this again" is device-local
+//      keyed by graph (D-11) and silences the NEXT crossing.
 //  C4  A save that does not cross says nothing.
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
+import { tryFreezeGraphRewrite } from "../document/graphRewriteState";
+import { toasts, setToasts } from "../toasts";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import {
-  doc,
-  historyPageOnlyMode,
-  resetStore,
-  setDoc,
-  setRaw,
-  toggleUndoRedoMode,
-  type FeedPage,
-  type Node as StoreNode,
-} from "../store";
-import { bumpGraphEpoch, resetDismissedNoticesForTests } from "../ui";
+import { flushPage, resetStore, setRaw, toggleUndoRedoMode, undo } from "../document";
+import { historyPageOnlyMode } from "../document/history";
+import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
+import { resetCrossingNoticeForTests as resetDismissedNoticesForTests } from "./Macro";
+import { bumpGraphEpoch } from "../graphSession";
 import type { ParsedQuery } from "../editor/queryIr";
-import { blockRunResult } from "../queryReadingsTestkit";
+import { blockRunResult } from "../tests/queryReadingsTestkit";
 import type { RefGroup } from "../types";
+import { resetQueryTextOpenForTests } from "../navSettings";
 
 beforeAll(async () => {
   await initParser();
 });
 
+// GH #619 item 4: the query text is behind an "Edit as text" toggle, closed by default. These
+// tests are about the text pane, so they open the toggle the way a user who wants the text has.
+beforeEach(() => {
+  resetQueryTextOpenForTests(true);
+});
+
 afterEach(() => {
+  setToasts([]);
   vi.restoreAllMocks();
   resetSharedQueryResultsForTests();
   resetStore();
@@ -50,6 +55,7 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
+const NOTICE_KEY = "queryCrossingNoticeDismissed";
 const NOTICE_TEXT =
   "This query now uses Tine features Logseq can't read. Logseq will show the block as plain text.";
 
@@ -151,7 +157,8 @@ function arrangeCrossing(dismissed: string[] = []): void {
   vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
   vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
   vi.spyOn(backend(), "printQuery").mockResolvedValue("-- task DONE");
-  vi.spyOn(backend(), "loadNotices").mockResolvedValue(JSON.stringify({ dismissed }));
+  vi.spyOn(backend(), "getAppBool").mockImplementation(async (key, fallback) =>
+    key === NOTICE_KEY ? dismissed.includes("query-crossing") : fallback);
   resetDismissedNoticesForTests();
   bumpGraphEpoch();
 }
@@ -214,7 +221,7 @@ describe("C4: a save that does not cross says nothing", () => {
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
     vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
     vi.spyOn(backend(), "printQuery").mockResolvedValue("(task DONE)");
-    const load_ = vi.spyOn(backend(), "loadNotices");
+    const load_ = vi.spyOn(backend(), "getAppBool");
 
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
@@ -223,7 +230,7 @@ describe("C4: a save that does not cross says nothing", () => {
       expect(doc.byId.query.raw).toBe("{{query (task DONE)}}");
       expect(notice(root)).toBeNull();
       // Nothing was crossed, so the device-local store is never even consulted.
-      expect(load_).not.toHaveBeenCalled();
+      expect(load_.mock.calls.filter(([key]) => key === NOTICE_KEY)).toHaveLength(0);
     } finally {
       dispose();
     }
@@ -246,6 +253,26 @@ describe("C4: a save that does not cross says nothing", () => {
 });
 
 describe("C2: [Undo that change] is the ordinary undo, and knows when it is not", () => {
+  it("keeps the notice and block when a frozen rewrite refuses Undo", async () => {
+    load('{{query (task TODO)}}');
+    arrangeCrossing();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    let release: (() => void) | null = null;
+    try {
+      await saveThroughPane(root, "-- task DONE");
+      const shown = await waitForNotice(root);
+      const crossed = doc.byId.query.raw;
+      release = tryFreezeGraphRewrite();
+      expect(release).not.toBeNull();
+      shown.querySelector<HTMLButtonElement>(".query-crossing-notice-undo")!.click();
+      expect(doc.byId.query.raw).toBe(crossed);
+      expect(notice(root)).not.toBeNull();
+      expect(toasts().some((toast) => toast.message.includes("Undo is unavailable"))).toBe(true);
+    } finally {
+      release?.();
+      dispose();
+    }
+  });
   for (const pageOnly of [false, true]) {
     it(`restores the block byte-for-byte and closes (${pageOnly ? "page-only" : "global"} history)`, async () => {
       load('{{query (task TODO)}}');
@@ -303,7 +330,7 @@ describe("C3: [Keep it] and the device-local dismissal", () => {
   it("closes on [Keep it] and writes nothing to the notices store", async () => {
     load('{{query (task TODO)}}');
     arrangeCrossing();
-    const save = vi.spyOn(backend(), "saveNotices").mockResolvedValue(undefined);
+    const save = vi.spyOn(backend(), "setAppBool").mockResolvedValue(undefined);
 
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
@@ -312,16 +339,16 @@ describe("C3: [Keep it] and the device-local dismissal", () => {
       keepButton().click();
       await vi.waitFor(() => expect(notice(root)).toBeNull());
       expect(doc.byId.query.raw).toContain("{{tine-query");
-      expect(save).not.toHaveBeenCalled();
+      expect(save.mock.calls.filter(([key]) => key === NOTICE_KEY)).toHaveLength(0);
     } finally {
       dispose();
     }
   });
 
-  it("writes [\"query-crossing\"] through saveNotices when the box is ticked", async () => {
+  it("writes the device preference when the box is ticked", async () => {
     load('{{query (task TODO)}}');
     arrangeCrossing();
-    const save = vi.spyOn(backend(), "saveNotices").mockResolvedValue(undefined);
+    const save = vi.spyOn(backend(), "setAppBool").mockResolvedValue(undefined);
 
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
@@ -333,9 +360,8 @@ describe("C3: [Keep it] and the device-local dismissal", () => {
       keepButton().click();
       await settle();
 
-      // I-18/D-11: the dismissal is app-data keyed by graph. Nothing about it
-      // reaches the graph's own bytes.
-      expect(save).toHaveBeenCalledWith(JSON.stringify({ dismissed: ["query-crossing"] }));
+      // D-11: the dismissal is graph-keyed device app-data, not graph content.
+      expect(save).toHaveBeenCalledWith(NOTICE_KEY, true);
       expect(doc.byId.query.raw).not.toContain("query-crossing");
     } finally {
       dispose();
@@ -359,10 +385,52 @@ describe("C3: [Keep it] and the device-local dismissal", () => {
     }
   });
 
+  it("reloads the dismissal after switching graphs without resetting the window cache", async () => {
+    load('{{query (task TODO)}}');
+    arrangeCrossing(["query-crossing"]);
+    const get = vi.mocked(backend().getAppBool);
+    let view = mount(() => <Block id="query" />);
+    try {
+      await saveThroughPane(view.root, "-- task DONE");
+      expect(notice(view.root)).toBeNull();
+      view.dispose();
+      resetStore();
+      bumpGraphEpoch();
+      load('{{query (task TODO)}}');
+      get.mockResolvedValue(false);
+      view = mount(() => <Block id="query" />);
+      await saveThroughPane(view.root, "-- task DONE");
+      await waitForNotice(view.root);
+      expect(get.mock.calls.filter(([key]) => key === NOTICE_KEY)).toHaveLength(2);
+    } finally { view.dispose(); }
+  });
+
+  it("ignores a graph A dismissal read that finishes after graph B crosses", async () => {
+    load('{{query (task TODO)}}');
+    arrangeCrossing();
+    let finish!: (value: boolean) => void;
+    const get = vi.mocked(backend().getAppBool);
+    get.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    let view = mount(() => <Block id="query" />);
+    try {
+      await saveThroughPane(view.root, "-- task DONE");
+      expect(notice(view.root)).toBeNull();
+      view.dispose(); resetStore(); bumpGraphEpoch();
+      load('{{query (task TODO)}}');
+      get.mockResolvedValue(false);
+      view = mount(() => <Block id="query" />);
+      await saveThroughPane(view.root, "-- task DONE");
+      await waitForNotice(view.root);
+      finish(true);
+      await settle();
+      expect(notice(view.root)).not.toBeNull();
+    } finally { view.dispose(); }
+  });
+
   it("still crosses, and still offers the notice, when the notices store cannot be read", async () => {
     load('{{query (task TODO)}}');
     arrangeCrossing();
-    vi.spyOn(backend(), "loadNotices").mockRejectedValue(new Error("no app-data dir"));
+    vi.spyOn(backend(), "getAppBool").mockRejectedValue(new Error("no app-data dir"));
     resetDismissedNoticesForTests();
     bumpGraphEpoch();
 
@@ -441,6 +509,51 @@ describe("C5: the notice is one instance that changes host with the sheet", () =
       // print dialect on the save path, which the print-dialect pin forbids.
       const dialects = print.mock.calls.map(([, , dialect]) => dialect);
       expect(dialects).not.toContain("og");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+// Kill-and-reopen for the crossing save (batch 14q4a). The crossing is two
+// store edits — `setRaw` (the macro rename) and `setBlockProperty` (the `tine.*`
+// view key the OG text can no longer carry) — in ONE undo unit. On disk it must
+// also be ONE write: a process killed after the save either finds both or
+// neither on reopen, never a `{{tine-query}}` without its sort. The page write
+// itself is temp+fsync+rename (the audited path); this pins that the two edits
+// reach it in the same page payload, and that undo takes both back together.
+describe("the crossing save is one page write", () => {
+  it("persists the renamed macro and its tine.* view key in a single savePages payload", async () => {
+    // The OG text carries the sort; TQL cannot, so the crossing moves it to
+    // `tine.sort` on the same block.
+    load("{{query (task TODO) (sort-by priority desc)}}");
+    arrangeCrossing();
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-2"] });
+    vi.spyOn(backend(), "parseQuery").mockImplementation(async (source: string) => ({
+      ...parsedAs(source), view: { sort: [["priority", "desc"]] },
+    }));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const input = await openPane(root);
+      input.value = "-- task DONE";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      const button = await vi.waitFor(() => {
+        const found = document.querySelector<HTMLButtonElement>(".query-text-pane-save");
+        if (!found || found.disabled) throw new Error("save is not enabled yet");
+        return found;
+      });
+      button.click();
+      await vi.waitFor(() => expect(doc.byId.query.raw).toContain("tine.sort:: priority desc"));
+      expect(doc.byId.query.raw.startsWith("{{tine-query -- task DONE}}")).toBe(true);
+
+      expect(await flushPage("Sheet")).toBe(true);
+      expect(save).toHaveBeenCalledTimes(1);
+      const written = JSON.stringify(save.mock.calls[0][0]);
+      expect(written).toContain("{{tine-query -- task DONE}}");
+      expect(written).toContain("tine.sort:: priority desc");
+
+      undo();
+      expect(doc.byId.query.raw).toBe("{{query (task TODO) (sort-by priority desc)}}");
     } finally {
       dispose();
     }

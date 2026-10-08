@@ -1,12 +1,13 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { loadSingle, resetStore, setRaw } from "../store";
+import { resetStore, setRaw } from "../document";
+import { loadSingle } from "../document/workingSet";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { MARKERS } from "../markers";
 import { parseBody } from "./facets";
-import { bumpDataRev } from "../ui";
+import { bumpDataRev } from "../graphSession";
 import * as router from "../router";
 import * as ui from "../ui";
 

@@ -13,11 +13,13 @@ icon:: 🧩
 	- Disable a plugin at any time without removing it. **Uninstall** removes only that app-local package version and never changes your graph or notes.
 	- Signed revocations are checked before saved plugins start. A revoked version stays disabled even when the live catalogue is temporarily unavailable.
 - ## Themes
-	- Declarative themes live under **Settings → Appearance → Themes**, separately from executable plugins. They contain validated colors and may select bounded Tine-owned presentation styles rather than running code.
-	- A selected token theme remains subordinate to your graph's `logseq/custom.css`, so your own CSS still wins.
+	- Declarative themes live under **Settings → Appearance → Themes**, separately from executable plugins. They contain validated colors and may select bounded Tine-owned presentation styles rather than running code: editorial reading type, a larger journal header, or a compact Today task count. **Style** (typography, journal headings and other presentation) and **Color scheme** (Default, Nord, Solarized, Gruvbox, or an installed package's colors) are chosen independently, so you can keep one package's style with another palette. They contain no scripts, selectors, imports, downloaded fonts, or remote assets, and no theme ever reads or writes your graph.
+	- A Today summary, when selected, is rendered by Tine from the journal page already on screen: it counts open task markers there and calls the `DOING`, `NOW`, `STARTED`, and `IN-PROGRESS` subset “in progress.” The theme receives neither those tasks nor a query interface.
+	- A selected theme remains subordinate to your graph's `logseq/custom.css`, so your own CSS still wins.
 - ## Create one yourself
 	- 1. Open **Settings → Plugins → Browse**.
 	- 2. Inspect a plugin's capabilities and safety report, then install it.
+		- A command or slash action reads only the block you run it on. A decoration sees the text of visible blocks only if the plugin declares `graph.read.visible`.
 	- 3. Switch to **Installed**, open its details, and enable it.
 	- 4. What you should see: only the host-owned command, slash action, or decoration that the plugin declared; disabling it removes that behavior while leaving your graph readable.
 	- For authoring, packaging, API versioning, and registry submission, see the [developer guide](https://github.com/martinkoutecky/tine/blob/master/docs/plugins/README.md).

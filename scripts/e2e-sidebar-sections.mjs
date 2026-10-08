@@ -7,11 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-import { openPageByLink } from "./lib/e2e-navigation.mjs";
-
-await ensureDisplay();
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -37,7 +33,7 @@ for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`,
 // Launching B merely to register it would leave Tine's single-instance graph
 // registry free to focus that peer window instead of exercising an in-place
 // switch in the A window under test.
-const appData = `${TMP}/xdg/data/page.tine.Tine`;
+const appData = `${TMP}/xdg/data/${APP_ID}`;
 fs.mkdirSync(appData, { recursive: true });
 fs.writeFileSync(`${appData}/tine-settings.json`, JSON.stringify({
   known_graphs: [
@@ -58,7 +54,7 @@ async function withApp(graph, index, fn) {
   const nativePort = NATIVE_BASE + index * 2;
   const logPath = `${TMP}/tauri-driver-${index}.log`;
   const log = fs.openSync(logPath, "w");
-  const td = spawn(TD, webdriverServerArgs(driverPort, nativePort, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), {
+  const td = spawn(TD, ["--port", String(driverPort), "--native-port", String(nativePort), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
     env: { ...baseEnv, TINE_GRAPH: graph }, stdio: ["ignore", log, log], detached: true,
   });
   await sleep(2500);
@@ -66,7 +62,7 @@ async function withApp(graph, index, fn) {
   try {
     browser = await remote({
       hostname: "127.0.0.1", port: driverPort, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
-      capabilities: tauriCapabilities(APP, "sidebar-sections"),
+      capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
     });
     await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
     await fn(browser);
@@ -78,11 +74,15 @@ async function withApp(graph, index, fn) {
   }
 }
 
-// One shared contract for routing through a rendered link: tolerate the
-// `[[ ]]` decoration `:ui/show-brackets?` adds by default, click and
-// retry in one round trip, and wait on the routed title. See
-// scripts/lib/e2e-navigation.mjs.
-const navigatePage = (browser, name) => openPageByLink(browser, name);
+async function navigatePage(browser, name) {
+  for (const selector of [`a.page-ref=${name}`, `span.page-ref=${name}`, `*=${name}`]) {
+    const link = await browser.$(selector);
+    if (await link.isExisting()) { await link.click(); break; }
+  }
+  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === name, {
+    timeout: 10_000, timeoutMsg: `${name} did not open`,
+  });
+}
 
 async function section(browser, name) {
   const control = await browser.$(`[data-sidebar-section="${name}"]`);

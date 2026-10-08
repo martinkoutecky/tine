@@ -4,7 +4,7 @@
 // block-selection state + ops (copy/cut/delete/indent/move) already exist in the
 // store and are keyboard-wired; this only adds the pointer entry point.
 
-import { selectBlock, extendSelectionTo } from "./store";
+import { selectBlock, extendSelectionTo } from "./document";
 
 // Interactive chrome whose drags mean something else (bullet = reorder handle,
 // links/buttons/chips = clicks). A text-selection drag must not start on these.

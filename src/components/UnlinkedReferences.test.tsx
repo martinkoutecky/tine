@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import { backend, QueryUnavailableError } from "../backend";
+import { createSignal } from "solid-js";
+import { backend } from "../backend";
 import type { RefGroup } from "../types";
-import { resetStore, setDoc } from "../store";
+import { resetStore } from "../document";
+import { setDoc } from "../document/model";
 import { editingId, endEdit } from "../editorController";
 import { route } from "../router";
 import { UnlinkedReferences } from "./UnlinkedReferences";
@@ -17,6 +19,28 @@ afterEach(() => {
 });
 
 describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
+  it("ignores an old target's failed read after the target changes", async () => {
+    let rejectOld!: (error: Error) => void;
+    vi.spyOn(backend(), "getUnlinkedRefs")
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectOld = reject; }))
+      .mockResolvedValueOnce([]);
+    const [name, setName] = createSignal("Old");
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <UnlinkedReferences name={name()} />, root);
+    try {
+      await tick();
+      (root.querySelector(".references-header") as HTMLElement).click();
+      setName("New");
+      await tick();
+      rejectOld(new Error("old read failed"));
+      await tick();
+      expect(root.querySelector('[role="alert"]'), "I-20: a retired unlinked read cannot report an error on the new target").toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
   it("routes authored DTO identities and focuses their loaded runtime owner", async () => {
     const runtimeId = "runtime-unlinked";
     const authoredId = "authored-unlinked";
@@ -38,7 +62,7 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
         title: "Source",
         preBlock: null,
         roots: [runtimeId],
-        path,
+        id: path,
         format: "md",
         readOnly: false,
         guide: false,
@@ -136,13 +160,11 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
     await tick();
     await tick();
     expect(root.querySelectorAll(".reference-excerpt-row")).toHaveLength(2);
-    // The highlighted mention IS the way into the source block (GH #200), so it
-    // must be a real control, not decorated text.
+    // The highlighted mention IS the way into the source block (master GH #200),
+    // so it must be a real control, not decorated text.
     const marks = root.querySelectorAll<HTMLButtonElement>(".reference-excerpt-mark");
     expect(marks[0]?.textContent).toBe("Target");
     expect(marks[0]?.tagName).toBe("BUTTON");
-    // The label names the source page it opens and the mention's own ordinal,
-    // not the excerpt segment's index.
     expect(marks[0]?.getAttribute("aria-label")).toBe("Open mention 1 in One");
     expect(root.querySelector(".reference-excerpt-text")!.textContent!.length).toBeLessThan(text.length);
 
@@ -206,7 +228,7 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
   });
 
   it("renders a bounded bridge error instead of an empty panel", async () => {
-    vi.spyOn(backend(), "getUnlinkedRefs").mockRejectedValue(new Error("result-too-large: 20001 matches"));
+    vi.spyOn(backend(), "getUnlinkedRefs").mockRejectedValue(new Error("result-too-large"));
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <UnlinkedReferences name="Target" />, root);
@@ -220,28 +242,26 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
     dispose();
   });
 
-  // GH #594 (index liveness L4).
-  it("shows a failed index with its code, Retry and the diagnostic report", async () => {
-    vi.spyOn(backend(), "getUnlinkedRefs").mockRejectedValue(
-      new QueryUnavailableError("index_failed", "The index couldn't be built.", "disk_full")
-    );
-    const retry = vi.spyOn(backend(), "retryIndex").mockResolvedValue();
+  // master 25f36f16dabd: the banner carries the backend's own explanation
+  // instead of a generic, transient-sounding sentence.
+  it("shows the backend's own error text in the references banner", async () => {
+    vi.spyOn(backend(), "getUnlinkedRefs").mockRejectedValue(new Error("io:PermissionDenied while reading pages/Target.md"));
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <UnlinkedReferences name="Target" />, root);
 
     root.querySelector<HTMLElement>(".references-header")!.click();
-    await vi.waitFor(() => {
-      expect(root.querySelector('[role="alert"]')?.textContent).toContain("code: disk_full");
-    });
-    expect(root.querySelector(".index-failed-report")?.textContent).toBe("Create diagnostic report");
-    root.querySelector<HTMLButtonElement>(".index-failed-retry")!.click();
-    expect(retry).toHaveBeenCalledTimes(1);
+    await tick();
+    await tick();
+    const message = root.querySelector<HTMLElement>('[role="alert"]')?.textContent ?? "";
+    expect(message).toContain("Couldn’t load references");
+    expect(message).toContain("io:PermissionDenied while reading pages/Target.md");
+    expect(message).not.toContain("backend request failed");
     dispose();
   });
 
   it("does not mislabel an ordinary backend failure as a bounded bridge error", async () => {
-    vi.spyOn(backend(), "getUnlinkedRefs").mockRejectedValue(new Error("database unavailable"));
+    vi.spyOn(backend(), "getUnlinkedRefs").mockRejectedValue(new Error("result-too-large: prose from another failure"));
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <UnlinkedReferences name="Target" />, root);

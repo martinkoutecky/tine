@@ -1,7 +1,10 @@
+// Master 3ce672cee: a highlighted block keeps a 4px background overhang, and the dot and
+// ordinal bullets share one 22px horizontal track so text starts at the same x.
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readAppStylesheet } from "../testSource";
 
-const css = readAppStylesheet();
+const css = fs.readFileSync(path.join(process.cwd(), "src/styles/app.css"), "utf8");
 
 function ruleBody(selector: string, requiredDeclaration?: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

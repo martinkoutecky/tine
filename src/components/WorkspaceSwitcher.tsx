@@ -1,8 +1,9 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { bindingOwner, readOwned, writeOwned } from "../owned";
 import { EmojiText } from "../render/emoji";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
-import { pushToast } from "../ui";
+import { pushToast } from "../toasts";
 import {
   activeWorkspaceId,
   createWorkspace,
@@ -24,7 +25,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
   // The edit's identity and its typed text are separate signals on purpose. The
   // form renders under a keyed <Show>; keying it on a state object rebuilt on
   // every keystroke replaced the <input> each time and destroyed any IME
-  // composition in progress (GH #498).
+  // composition in progress (master GH #498).
   const [edit, setEdit] = createSignal<EditState | null>(null);
   const [editValue, setEditValue] = createSignal("");
   const openEdit = (state: EditState) => {
@@ -75,10 +76,12 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
   };
 
   const remove = async (workspace: Workspace) => {
+    const owner = bindingOwner();
     const name = workspaceDisplayName(workspace);
-    if (!(await backend().confirm(`Delete workspace “${name}”?`, "Delete workspace"))) return;
+    const confirmed = await readOwned(owner, backend().confirm(`Delete workspace “${name}”?`, "Delete workspace"));
+    if (confirmed.kind === "stale" || !confirmed.value) return;
     try {
-      await deleteWorkspace(workspace.id);
+      await writeOwned(owner, deleteWorkspace(workspace.id));
     } catch (error) {
       pushToast(`Couldn't delete workspace: ${String(error)}`, "error");
     }

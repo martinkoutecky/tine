@@ -1,21 +1,24 @@
+import { codeWrapping } from "../codeDisplay";
+import { LineGutter } from "./LineGutter";
+import { TableWrap } from "../components/TableWrap";
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
 
-import { For, Show, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, createContext, createMemo, createResource, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { InlineText, renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
+import { renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
 import { EmojiText } from "./emoji";
-import type { Block as AstBlock, ListItem as AstListItem, Format } from "./ast";
+import type { Block as AstBlock, Inline as AstInline, ListItem as AstListItem, Format } from "./ast";
 import { hiccupToHtml } from "./hiccup";
-import { coarseSpanAttrs, type SpanDomAttrs } from "./spans";
+import { coarseSpanAttrs, rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
 import { evalCalc } from "../editor/calc";
-import { toggleListItemAtIndex, doc, formatForBlock } from "../store";
-import { graphMeta } from "../ui";
-import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "./block";
+import { toggleListItemAtIndex, formatForBlock, node as docNode } from "../document";
+import { PropertyRows } from "./PropertyRows";
+import { isPropertyLine } from "./block";
 import { TableV2, tableV2Options, type TableV2Options } from "./tableV2";
 import { isQuarantined, parserReady } from "./parse";
-import { parseBody, stripPlanningLines } from "./facets";
-import { observeNear, unobserveNear, renderedBlocks } from "../lazyObserve";
+import { parseBody, renderedProperties, stripPlanningLines } from "./facets";
+import { createNearBlockMount } from "../createNearBlockMount";
 import { BeginQuery, inspectBeginQuery } from "../components/BeginQuery";
 import { readOr } from "../resourceRead";
 
@@ -48,7 +51,9 @@ function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs
     }
   });
   return (
-    <pre class="code-block" {...(props.spanAttrs ?? {})}>
+    <pre class="code-block" classList={{ "code-wrapping": codeWrapping() }} {...(props.spanAttrs ?? {})}>
+      <Show when={props.lang}><span class="code-language">{props.lang.toLowerCase()}</span></Show>
+      <LineGutter lines={(props.code.endsWith("\n") ? props.code.slice(0, -1) : props.code).split("\n")} code />
       <CopyButton text={props.code} title="Copy code" class="code-copy" />
       <code class="hljs" innerHTML={html()} />
     </pre>
@@ -66,7 +71,7 @@ export function CalcBlock(props: { src: string; spanAttrs?: SpanDomAttrs }): JSX
         {(ln, i) => (
           <>
             <div class="calc-lineno">{i() + 1}</div>
-            <div class="calc-in" classList={{ "calc-error": !!ln.error }}>{ln.input || " "}</div>
+            <div class="calc-in" classList={{ "calc-error": !!ln.error }}>{ln.input || " "}</div>
             <div class="calc-out" classList={{ "calc-error": !!ln.error }}>
               {ln.output ?? ""}
               <Show when={ln.output !== null && !ln.error}>
@@ -144,11 +149,13 @@ export function renderBlocks(
   format: Format = "md",
   tableOptions?: TableV2Options,
 ): JSX.Element {
+  const propertyEntries = renderedProperties(blocks, format);
+  const displayBlocks = blocks.filter(block => block.kind !== "properties" || block.props === propertyEntries);
   const content = (
-    <For each={blocks}>
+    <For each={displayBlocks}>
       {(b, i) => (
         <>
-          <Show when={i() > 0 && isInlineFlow(b) && isInlineFlow(blocks[i() - 1])}>
+          <Show when={i() > 0 && isInlineFlow(b) && isInlineFlow(displayBlocks[i() - 1])}>
             <br />
           </Show>
           {/* A `# heading` block's size applies ONLY to the heading's own line (the
@@ -196,7 +203,7 @@ function renderBlock(b: AstBlock, blockId?: string, macroExpansion = false, form
     case "custom":
       return renderCustom(b, blockId, macroExpansion, format, tableOptions);
     case "list":
-      return <AstList items={b.items} blockId={blockId} cbItems={flattenCheckboxItems(b.items)} spanAttrs={coarseSpanAttrs(b.span)} macroExpansion={macroExpansion} format={format} tableOptions={tableOptions} />;
+      return <AstList items={b.items} blockId={blockId} spanAttrs={coarseSpanAttrs(b.span)} macroExpansion={macroExpansion} format={format} tableOptions={tableOptions} />;
     case "table":
       return renderTable(b, blockId, macroExpansion, format, tableOptions);
     case "properties":
@@ -309,10 +316,9 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string, 
     const align = b.aligns[i] ?? null;
     return align ? { "text-align": align } : undefined;
   };
-  // Wrap in a horizontal-scroll container (mirrors OG's `div.table-wrapper`):
-  // a wide table scrolls instead of cram-wrapping its cells down to nothing.
+  // One pane-bounded viewport for Markdown and Org tables (I-12).
   return (
-    <div class="md-table-wrap">
+    <TableWrap>
       <table class="md-table" {...(coarseSpanAttrs(b.span) ?? {})}>
         <Show when={b.header}>
           <thead>
@@ -331,50 +337,24 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string, 
           </For>
         </tbody>
       </table>
-    </div>
+    </TableWrap>
   );
 }
 
 function renderProps(b: Extract<AstBlock, { kind: "properties" }>, blockId?: string, macroExpansion = false, format: Format = "md"): JSX.Element {
-  const visible = b.props.filter(([k]) => !isRenderHiddenProp(k, graphMeta()?.block_hidden_properties ?? []));
-  const fmt = formatForBlock(blockId) ?? format; // parse org property values as org
-  return (
-    <Show when={visible.length > 0}>
-      <span class="block-properties">
-        <For each={visible}>
-          {([k, v]) => (
-            <span class="block-property">
-              <span class="block-property-key">{propertyKeyNorm(k)}</span>{" "}
-              <span class="block-property-val"><InlineText text={v} format={fmt} macroExpansion={macroExpansion} /></span>
-            </span>
-          )}
-        </For>
-      </span>
-    </Show>
-  );
+  return <PropertyRows entries={b.props} format={formatForBlock(blockId) ?? format} blockId={blockId} macroExpansion={macroExpansion} />;
 }
 
-// The AST carries no source line (contract R12), so to toggle a checkbox we map the
-// clicked item to its `[ ]`/`[x]` line in `raw` BY DOCUMENT POSITION, not by text:
-// `flattenCheckboxItems` lists every checkbox item depth-first (the same order the
-// `[ ]` lines appear in `raw`), and the click flips the Nth such raw line. Positional
-// targeting is what makes two items with the same label toggle independently.
-function flattenCheckboxItems(items: AstListItem[]): AstListItem[] {
-  const out: AstListItem[] = [];
-  const walk = (xs: AstListItem[]) => {
-    for (const it of xs) {
-      if (it.checkbox !== undefined) out.push(it);
-      if (it.items.length) walk(it.items);
-    }
-  };
-  walk(items);
-  return out;
-}
+// The raw text this body was parsed from. A checkbox click maps its item to a raw
+// line through the item's own lsdoc source span, which is a position in THIS text;
+// `toggleAstCheckbox` refuses when it is not the block's current raw (a macro
+// expansion, or a render older than the text), so a click never edits a line the
+// renderer did not draw. Direct `renderBlocks` callers provide none: inert.
+const CheckboxSourceContext = createContext<string>();
 
-// An in-block list from the AST (`ListItem[]`). `cbItems` is the block-wide
-// depth-first list of checkbox items, shared across nested AstLists so each
-// checkbox knows its global index.
-function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstListItem[]; spanAttrs?: SpanDomAttrs; macroExpansion?: boolean; format?: Format; tableOptions?: TableV2Options }): JSX.Element {
+// An in-block list from the AST (`ListItem[]`).
+function AstList(props: { items: AstListItem[]; blockId?: string; spanAttrs?: SpanDomAttrs; macroExpansion?: boolean; format?: Format; tableOptions?: TableV2Options }): JSX.Element {
+  const sourceRaw = useContext(CheckboxSourceContext);
   const ordered = props.items[0]?.ordered ?? false;
   return (
     <Dynamic component={ordered ? "ol" : "ul"} class="md-list" {...(props.spanAttrs ?? {})}>
@@ -395,7 +375,7 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
                 aria-checked={item.checkbox === true}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (props.blockId) toggleAstCheckbox(props.blockId, props.cbItems.indexOf(item));
+                  if (props.blockId && sourceRaw !== undefined) toggleAstCheckbox(props.blockId, sourceRaw, item);
                 }}
               />{" "}
             </Show>
@@ -406,7 +386,7 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
             </Show>
             {renderBlocks(item.content, props.blockId, undefined, props.macroExpansion ?? false, props.format, props.tableOptions)}
             <Show when={item.items.length > 0}>
-              <AstList items={item.items} blockId={props.blockId} cbItems={props.cbItems} macroExpansion={props.macroExpansion} format={props.format} tableOptions={props.tableOptions} />
+              <AstList items={item.items} blockId={props.blockId} macroExpansion={props.macroExpansion} format={props.format} tableOptions={props.tableOptions} />
             </Show>
           </li>
         )}
@@ -441,8 +421,10 @@ function renderBody(raw: string, format: Format, blockId?: string, headingLevel?
   const blocks = bodyBlocks(parsed, raw);
   const beginQuery = inspectBeginQuery(raw, format, blocks);
   return beginQuery
-    ? <BeginQuery match={beginQuery} currentPage={blockId ? doc.byId[blockId]?.page : undefined} />
-    : renderBlocks(blocks, blockId, headingLevel, macroExpansion, format, tableV2Options(properties));
+    ? <BeginQuery match={beginQuery} currentPage={blockId ? docNode(blockId)?.page : undefined} />
+    : <CheckboxSourceContext.Provider value={raw}>
+        {renderBlocks(blocks, blockId, headingLevel, macroExpansion, format, tableV2Options(properties))}
+      </CheckboxSourceContext.Provider>;
 }
 
 /** Render a block's body. Parses the WHOLE block's `raw` (re-bulleted like OG, via
@@ -456,15 +438,14 @@ function renderBody(raw: string, format: Format, blockId?: string, headingLevel?
  *  parser failed to load (degraded mode), so content is never silently blank. */
 /** Deferred (off-screen) placeholder text: raw minus property lines (cheap, no
  *  parse) — a good height proxy, replaced by the real render once near. Split out
- *  of `AstBody` so a block that is ALREADY near (render-once-keep latches every
- *  block that has ever scrolled into view) never computes a placeholder it will
- *  not show, and so the line split happens once instead of once for the height
- *  reserve and again for the text. */
-function PlaceholderText(props: { raw: string }): JSX.Element {
-  return <>{placeholderLines(props.raw).join("\n")}</>;
-}
+ *  of `AstBody` so a block ALREADY near (render-once-keep latches every block that
+ *  has scrolled in) never computes a placeholder it will not show, and the line
+ *  split happens once for the height reserve and the text together. */
 function placeholderLines(raw: string): string[] {
   return raw.split("\n").filter((l) => !isPropertyLine(l));
+}
+function PlaceholderText(props: { raw: string }): JSX.Element {
+  return <>{placeholderLines(props.raw).join("\n")}</>;
 }
 
 export function AstBody(props: { raw: string; blockId?: string; format?: Format; headingLevel?: number | null; macroExpansion?: boolean }): JSX.Element {
@@ -472,22 +453,10 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
   // AST→DOM build until the block is near the viewport. Render-once-keep: once a
   // block has rendered (latched by id in `renderedBlocks`) it renders eagerly
   // forever — no second placeholder↔real transition, so zero scroll-height churn.
-  const id = props.blockId;
-  const [near, setNear] = createSignal(id == null || renderedBlocks.has(id));
-  let deferredEl: Element | undefined;
-  const observe = (el: Element) => {
-    deferredEl = el;
-    observeNear(el, () => {
-      if (id != null) renderedBlocks.add(id);
-      setNear(true);
-    });
-  };
-  onCleanup(() => {
-    if (deferredEl) unobserveNear(deferredEl);
-  });
+  const observe = createNearBlockMount(props);
   return (
     <Show
-      when={near()}
+      when={observe.near()}
       fallback={
         <span
           class="ast-fallback ast-deferred"
@@ -531,22 +500,37 @@ export function estimateBodyReserve(lines: string[], headingLevel: number | null
   return undefined;
 }
 
-// Flip the `cbIndex`-th checkbox of the block: find the cbIndex-th `[ ]`/`[x]`
-// list line in `raw` (document order) and toggle exactly that line. No text match,
-// so duplicate labels and `**markup**` in the item never mis-target.
-function toggleAstCheckbox(blockId: string, cbIndex: number) {
-  if (cbIndex < 0) return;
-  const node = doc.byId[blockId];
-  if (!node) return;
-  const lines = node.raw.split("\n");
-  const re = /^\s*(?:[-+*]|\d+[.)])\s+\[[ xX]\]\s+/;
-  let seen = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (re.test(lines[i])) {
-      if (++seen === cbIndex) {
-        toggleListItemAtIndex(blockId, i);
-        return;
-      }
+/** The first source-positioned inline of a list item's label (depth-first). */
+function firstInlineSpanStart(item: AstListItem): number | undefined {
+  const inInlines = (xs: AstInline[] | undefined): number | undefined => {
+    for (const x of xs ?? []) {
+      if (x.span) return x.span[0];
+      const nested = "children" in x && Array.isArray(x.children) ? inInlines(x.children as AstInline[]) : undefined;
+      if (nested !== undefined) return nested;
     }
+    return undefined;
+  };
+  for (const block of item.content) {
+    const at = "inline" in block && Array.isArray(block.inline) ? inInlines(block.inline as AstInline[]) : undefined;
+    if (at !== undefined) return at;
   }
+  return inInlines(item.name);
+}
+
+// Flip the clicked item's own `[ ]`/`[x]`: its label's lsdoc source span (a UTF-8
+// offset into the re-bulleted `sourceRaw`) names its raw line, so literal content
+// (code/src/example, `$$` math, drawers) and quoted items never mis-target, and two
+// items with the same label stay independent. No second recognizer of "which line
+// is checkbox N" (I-12). Refuses unless the line's text before the label ends in
+// the checkbox, and unless `sourceRaw` is still the block's raw.
+function toggleAstCheckbox(blockId: string, sourceRaw: string, item: AstListItem) {
+  const node = docNode(blockId);
+  if (!node || node.raw !== sourceRaw) return;
+  const start = firstInlineSpanStart(item);
+  if (start === undefined) return;
+  const at = utf8ByteToUtf16Offset(sourceRaw, rebulletedSourceByteToRawByte(sourceRaw, start));
+  const lineStart = sourceRaw.lastIndexOf("\n", at - 1) + 1;
+  const checkbox = /\[[ xX]\]\s*$/.exec(sourceRaw.slice(lineStart, at));
+  if (!checkbox) return;
+  toggleListItemAtIndex(blockId, sourceRaw.slice(0, lineStart).split("\n").length - 1, checkbox.index);
 }

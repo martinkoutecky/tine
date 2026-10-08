@@ -6,12 +6,14 @@ function editableTarget(target: EventTarget | null): boolean {
   return !!element?.closest("textarea,input,select,[contenteditable='true']");
 }
 
-/** Ordinary block rows keep desktop right-click, but Android long-press may
+/** Desktop code editors with a caret offer the existing block actions; selected
+ * text retains its native menu. Ordinary rows keep desktop right-click, but Android long-press may
  * open Tine's block menu only from the explicit bullet affordance. */
 export function shouldOpenBlockContextMenu(
   target: EventTarget | null,
   mobile = isMobilePlatform,
 ): boolean {
+  if (!mobile && target instanceof HTMLTextAreaElement && target.classList.contains("code-edit") && target.selectionStart === target.selectionEnd) return true;
   if (editableTarget(target)) return false;
   const element = target instanceof Element ? target : null;
   return !mobile || !!element?.closest(".bullet-container");

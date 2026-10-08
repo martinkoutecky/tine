@@ -1,11 +1,5 @@
 [workspace]
-members = [
-    "crates/tine-core",
-    "crates/tine-search",
-    "plugin-sdk/rust",
-    "src-tauri",
-    "src-tauri/ios-folder-picker-native",
-]
+members = ["crates/tine-search", "crates/tine-core", "crates/tine-store", "crates/tine-graph-features", "plugin-sdk/rust", "src-tauri"]
 # lsdoc-wasm is built ONLY by `npm run build:wasm` (wasm-pack, wasm32 target) to
 # regenerate the vendored frontend parser. Excluded so normal `cargo build`/`cargo
 # test --workspace` (host target) never touch it. See docs/wasm-parse-plan.md.
@@ -16,8 +10,8 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "0.6.987"
-edition = "2024"
+version = "0.7.0"
+edition = "2021"
 license = "AGPL-3.0-only"
 authors = ["Martin Koutecký"]
 
@@ -30,10 +24,7 @@ authors = ["Martin Koutecký"]
 codegen-units = 1
 
 [workspace.dependencies]
-serde = { version = "1", features = ["derive"] }
-# TQL is SQLite expression syntax (SPEC §4.2): one parser, not a hand-rolled
-# grammar (D-14). `visitor` gives the AST whitelist walk the guards need (I-22).
-sqlparser = { version = "0.62", features = ["visitor"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 

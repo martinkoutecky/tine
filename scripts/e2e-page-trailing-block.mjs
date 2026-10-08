@@ -14,11 +14,7 @@ import {
   tauriCapabilities,
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
-import { waitForFileText } from "./e2e-file-poll.mjs";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
-await ensureDisplay();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -77,11 +73,8 @@ async function openPage(name) {
   await browser.waitUntil(async () => (await browser.$$(".nav-page")).length > 0, { timeout: 15_000, timeoutMsg: "page index did not load" });
   const result = await browser.execute((wanted) => {
     const row = [...document.querySelectorAll(".nav-page")].find((element) => element.textContent?.trim() === wanted);
-    const label = row?.querySelector(".nav-page-label");
-    if (!label) return { ok: false, names: [...document.querySelectorAll(".nav-page")].map((element) => element.textContent?.trim()) };
-    // GH #464 deliberately made only the title a navigation target; the spare
-    // row width is reorder grab space. Drive the real user link, not the row.
-    label.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    if (!row) return { ok: false, names: [...document.querySelectorAll(".nav-page")].map((element) => element.textContent?.trim()) };
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
     return { ok: true, names: [] };
   }, name);
   if (!result.ok) throw new Error(`missing page ${name}: ${JSON.stringify(result.names)}`);
@@ -109,7 +102,13 @@ async function activeEditorReceipt(label) {
 }
 
 async function waitForFile(text, label) {
-  return waitForFileText(PAGE_FILE, (body) => body.includes(text), label);
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const body = fs.readFileSync(PAGE_FILE, "utf8");
+    if (body.includes(text)) return body;
+    await sleep(100);
+  }
+  throw new Error(`${label} did not persist: ${JSON.stringify(fs.readFileSync(PAGE_FILE, "utf8"))}`);
 }
 
 async function target() {
@@ -124,10 +123,6 @@ try {
     hostname: "127.0.0.1", port: DRIVER, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
     capabilities: tauriCapabilities(APP, "default", process.platform, webviewTarget.debuggerAddress),
   });
-  // The Windows driver does not reliably attach to the app window: it can land
-  // on the Quick Capture window, where every application selector is legitimately
-  // absent. Three windows-smoke journeys failed that way in one run, each
-  // reporting its own missing element instead of the shared cause.
   await ensureMainWindow(browser);
   await browser.$(".page-title").waitForExist({ timeout: 20_000 });
   await sleep(2500);

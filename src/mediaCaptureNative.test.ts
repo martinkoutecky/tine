@@ -1,21 +1,5 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { readBlockModuleSource } from "./testSource";
-
-function rustModuleSource(path: string): string {
-  const files = [path];
-  const visit = (directory: string) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const child = join(directory, entry.name);
-      if (entry.isDirectory()) visit(child);
-      else if (entry.isFile() && entry.name.endsWith(".rs")) files.push(child);
-    }
-  };
-  const moduleDirectory = path.replace(/\.rs$/, "");
-  if (existsSync(moduleDirectory)) visit(moduleDirectory);
-  return files.sort().map((file) => readFileSync(file, "utf8")).join("\n");
-}
 
 describe("Android voice-recording bounds", () => {
   it("caps duration and bytes, then hands the native temp to Rust without base64", () => {
@@ -36,17 +20,20 @@ describe("Android voice-recording bounds", () => {
     expect(source.indexOf("recorder = rec")).toBeLessThan(source.indexOf("rec.prepare()"));
     expect(source).toMatch(/listFiles\(\)[\s\S]*startsWith\("tine_memo_"\)[\s\S]*forEach \{ it\.delete\(\) \}/);
 
-    const commands = rustModuleSource("src-tauri/src/commands.rs");
+    const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
     expect(commands).toMatch(/pub\(crate\) async fn import_native_capture/);
-    expect(commands).toMatch(/import_asset_file\(&mut capture, name, max_bytes\)/);
+    expect(commands).toMatch(/import_asset_file\(\s*target\.store\(\),\s*&name,/);
+    expect(commands).toMatch(/Content::Stream\s*\{\s*source: capture\.into_std\(\),\s*max_bytes,\s*\}/);
     const bridge = readFileSync("src-tauri/src/android_media.rs", "utf8");
     const result = bridge.slice(
       bridge.indexOf("struct MediaCaptureResult"),
       bridge.indexOf("#[cfg(target_os = \"android\")]", bridge.indexOf("struct MediaCaptureResult"))
     );
     expect(result).toMatch(/path:\s*Option<String>/);
-    const block = readBlockModuleSource();
-    expect(block).toMatch(/backend\(\)\.importNativeCapture\(res\.path, candidate\)/);
+    const block = readFileSync("src/components/Block.tsx", "utf8");
+    expect(block).toMatch(/voiceMemoToggle[\s\S]*importCaptureToOrigin\(editorToken, res\.path, candidate\)/);
+    // og H1b: the capture names the graph it was started in.
+    expect(readFileSync("src/assetLanding.ts", "utf8")).toMatch(/backend\(\)\.importNativeCapture\(path, candidate, generation, origin\)/);
   });
 
   it("streams captured and picked photos through a bounded native cache token", () => {
@@ -63,10 +50,10 @@ describe("Android voice-recording bounds", () => {
     expect(photo).not.toContain("Base64.encodeToString");
     expect(source).toMatch(/copyPickedPhoto[\s\S]*MAX_PHOTO_BYTES/);
 
-    const commands = rustModuleSource("src-tauri/src/commands.rs");
+    const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
     expect(commands).toMatch(/tine_photo_/);
     expect(commands).toMatch(/MAX_PHOTO_BYTES/);
-    const block = readBlockModuleSource();
-    expect(block).toMatch(/capturePhoto[\s\S]*importNativeCapture\(res\.path, candidate\)/);
+    const block = readFileSync("src/components/Block.tsx", "utf8");
+    expect(block).toMatch(/capturePhoto[\s\S]*importCaptureToOrigin\(editorToken, res\.path, candidate\)/);
   });
 });

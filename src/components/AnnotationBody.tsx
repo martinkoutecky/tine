@@ -1,7 +1,7 @@
 import { type JSX } from "solid-js";
 import { openPdf } from "../panes";
 import { InlineText } from "../render/inline";
-import { formatForPage } from "../store";
+import { formatForPage } from "../document";
 import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";
 import { pdfFileForPage } from "../editor/annotation";
 

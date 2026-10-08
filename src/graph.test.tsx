@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GraphFolderPickResult, PreparedGraphFolder } from "./backend";
-import type { GraphMeta, PageDto } from "./types";
+import type { GraphMeta, PageDto, PageRead } from "./types";
 
 const META: GraphMeta = {
   root: "/tmp/template-graph",
@@ -9,8 +8,7 @@ const META: GraphMeta = {
   preferred_workflow: "now",
   shortcuts: {},
   start_of_week: 6,
-  block_hidden_properties: [],
-  linked_references_collapsed_threshold: 100,
+  block_hidden_properties: [], linked_references_collapsed_threshold: 100,
   default_journal_template: "Daily",
   favorites: [],
   journal_page_title_format: "MMM do, yyyy",
@@ -22,38 +20,29 @@ const META: GraphMeta = {
   logbook_with_second_support: true,
   logbook_enabled_in_timestamped_blocks: false,
   logbook_enabled_in_all_blocks: false,
-  guide_announced: true,
+  guide_announced: true, mobile_gestures_disabled_in_block_with_tags: [],
 };
 
-const DIRECT_ADMISSION = { binding_generation: 1 };
-
 async function loadHarness(
-  existing: PageDto | null,
+  existing: PageRead | null,
   access = { graph_root: META.root, external_assets_path: null as string | null, approved: true },
   confirm = true,
   warm = false,
-  platform: "android" | "ios" | "desktop" = "desktop",
-  pickerResult: GraphFolderPickResult = { status: "cancelled" }
+  onEpoch?: () => void,
+  journal?: { journalTitle: () => string; setJournalTitleFormat: (format: string | null | undefined) => void },
 ) {
   vi.resetModules();
   const events: string[] = [];
   let meta: GraphMeta | null = null;
-  let epoch = 0;
   const api = {
     inspectGraphAccess: vi.fn(async () => access),
     approveExternalAssets: vi.fn(async () => {}),
     confirm: vi.fn(async () => confirm),
-    loadGraph: vi.fn(async () => ({
-      kind: "loaded" as const,
-      meta: META,
-      binding_generation: 1,
-      application_page_admission: DIRECT_ADMISSION,
-    })),
+    loadGraph: vi.fn(async () => ({ kind: "loaded" as const, meta: META, binding_generation: 1 })),
+    pickFolder: vi.fn(async () => "/tmp"),
+    createGraph: vi.fn(async () => META.root),
     getPage: vi.fn(async () => existing),
-    renamePage: vi.fn(async () => {}),
-    mergePages: vi.fn(async () => {}),
-    getAppString: vi.fn(async (_key: string, fallback: string) => fallback),
-    setAppString: vi.fn(async (_key: string, _value: string) => {}),
+    resolvePage: vi.fn(async () => ({ kind: "absent" as const, id: "journals/2026_07_10.md" })),
     listTemplates: vi.fn(async () => [
       {
         name: "Daily",
@@ -62,430 +51,379 @@ async function loadHarness(
         blocks: [{ id: "template", raw: "Template body", collapsed: false, children: [] }],
       },
     ]),
-    savePage: vi.fn(async () => {
+    savePages: vi.fn(async (_entries: import("./backend").SavePageEntry[], _bindingGeneration?: number) => {
       events.push("save-template");
-      return "new-rev";
+      return { ok: ["new-rev"] };
     }),
     readCustomCss: vi.fn(async () => ""),
-    pickGraphFolder: vi.fn(async () => pickerResult),
-    prepareGraphFolder: vi.fn(async (): Promise<PreparedGraphFolder> => ({ status: "ready", location: "local" })),
-    defaultGraphParent: vi.fn(async () => "/mock"),
-    createGraph: vi.fn(async () => META.root),
-    pageAliases: vi.fn(async () => [["page1", "other"], ["shortcut", "other"]] as [string, string][]),
-    listPages: vi.fn(async () => [
-      { name: "page1", kind: "page" as const, date_key: null, path: "pages/page1.md" },
-      { name: "Jul 10th, 2026", kind: "journal" as const, date_key: 20260710, path: "journals/2026_07_10.md" },
-    ]),
+    storeDraft: vi.fn(async (_record: import("./types").DraftRecord, _graphRoot?: string) => {}),
   };
-  const setAliasMap = vi.fn();
-  const bumpAliasRev = vi.fn();
+  // Records how many events preceded each reset (order without adding events).
+  const resetPageIndex = vi.fn(() => { resetAt.push(events.length); });
+  const resetAt: number[] = [];
+  const waitForWarmCache = vi.fn(async () => warm);
   const applyTemplateVars = vi.fn((raw: string, _currentPage?: string) => raw);
   const prepareTemplateVars = vi.fn(async () => {});
+  const openPage = vi.fn();
   const drainPdfWork = vi.fn(async () => {
     events.push("drain-pdf");
     return true;
   });
   const retirePdfOwnership = vi.fn(() => { events.push("retire-pdf"); });
   const activatePdfOwnership = vi.fn((root: string) => { events.push(`activate-pdf:${root}`); });
-  const suspendPdfForGraphTransition = vi.fn(() => {
-    events.push("suspend-pdf");
-    return { filename: "assets/paper.pdf", label: "Paper" };
-  });
-  const restorePdfSessionTarget = vi.fn(() => {
-    events.push("restore-pdf");
-    return true;
-  });
-  const restorePendingPdfSessionTarget = vi.fn(() => {
-    events.push("restore-pending-pdf");
-    return true;
-  });
-  const pushToast = vi.fn();
+  const resetTabsToJournals = vi.fn(() => { events.push("reset-tabs"); });
+  const flushAll = vi.fn(async () => true);
+  const unsaved: { name: string; state: string; path: string | null; page: PageDto | null }[] = [];
+  const resetStore = vi.fn(() => { unsaved.length = 0; });
 
   vi.doMock("./backend", () => ({ backend: () => api }));
-  // graph.ts's own page-list reads, one per request: the shared memo across
-  // readers (src/pageList.ts) is pinned in launchReadsGh543.test.tsx.
-  vi.doMock("./pageList", () => ({ listGraphPages: () => api.listPages() }));
   vi.doMock("./ui", () => ({
     setGraphMeta: (next: GraphMeta | null) => { meta = next; },
     graphMeta: () => meta,
-    graphEpoch: () => epoch,
-    bumpGraphEpoch: () => { epoch += 1; events.push("bump-epoch"); },
+    graphEpoch: () => 0,
+    bumpDataRev: vi.fn(),
+    bumpGraphEpoch: () => { events.push("bump-epoch"); onEpoch?.(); },
     setWorkflow: vi.fn(),
     setRightSidebar: vi.fn(),
-    setAliasMap,
-    bumpAliasRev,
-    pageIdentityKey: (name: string) => {
-      const lowered = name.trim().toLowerCase();
-      const withoutLeading = lowered.startsWith("/") ? lowered.slice(1) : lowered;
-      const withoutBoundaries = withoutLeading.endsWith("/")
-        ? withoutLeading.slice(0, -1)
-        : withoutLeading;
-      return withoutBoundaries.normalize("NFC");
-    },
-    // Read by applyConfigDerivedState, which declines to re-seed favorites the
-    // user is already being shown (docs/contracts/config-live-reload.md §4).
-    favorites: () => [] as { name: string; kind: string }[],
     seedFavorites: vi.fn(),
+    favorites: () => [],
+    renamePageInNavigation: vi.fn(),
     pruneSidebarBlocks: vi.fn(),
-    pushToast,
+    pushToast: vi.fn(),
     refreshJournalConflicts: vi.fn(async () => {}),
     refreshSyncConflicts: vi.fn(async () => {}),
-    resetGraphConflicts: vi.fn(),
-    restoreLiveSaveConflicts: vi.fn(),
-    conflicts: vi.fn(() => []),
     clearRecent: vi.fn(),
     resetLeftSidebarSections: vi.fn(),
     graphTransitioning: () => false,
     setGraphTransitioning: vi.fn(),
-    suspendPdfForGraphTransition,
-    restorePdfSessionTarget,
-    restorePendingPdfSessionTarget,
+    closePageProps: vi.fn(),
+    setAudioPlayer: vi.fn(),
+  }));
+  vi.doMock("./graphSession", () => ({
+    setGraphMeta: (next: GraphMeta | null) => { meta = next; },
+    graphMeta: () => meta,
+    graphEpoch: () => 0,
+    bumpDataRev: vi.fn(),
+    bumpGraphEpoch: () => { events.push("bump-epoch"); onEpoch?.(); },
   }));
   vi.doMock("./pdfOwnership", () => ({
     drainPdfWork,
     retirePdfOwnership,
     activatePdfOwnership,
   }));
-  vi.doMock("./graphBindingRuntime", () => ({
-    graphBindingRuntime: {
-      bind: vi.fn(),
-      clear: vi.fn(),
-      snapshot: () => ({ bindingGeneration: null, applicationPageAdmission: null }),
-    },
+  vi.doMock("./document", () => ({
+    resetStore, flushAll, unsavedDrafts: () => unsaved, installDraftKeeper: vi.fn(),
+    installRenameRefreshHandler: vi.fn(),
+    favoritesArrangementPage: vi.fn(), favoritesArrangementBlocks: vi.fn(),
+    reloadHlsIfLoaded: vi.fn(),
+    createPage: (_name: string, dto: PageDto, options: { id: string; baseRev: string | null; bindingGeneration: number }) =>
+      api.savePages([{ id: options.id, page: dto, baseRev: options.baseRev, force: false,
+        kinds: [options.baseRev === null ? "create-page" : "replace-page"] }], options.bindingGeneration).then((result) => result.ok[0]),
+    journalTemplatePage: (title: string, blocks: unknown[], page?: PageRead | null) => ({
+      name: title, kind: "journal", title, pre_block: page?.pre_block ?? null, blocks, format: page?.format,
+    }),
+    demoJournalPage: (title: string) => ({ name: title, kind: "journal", title, pre_block: null, blocks: [{
+      id: "", raw: "👋 This is **today's journal** — your daily notes land here. Try your quick-capture hotkey, or open [[Welcome to Tine]] for the tour.",
+      collapsed: false, children: [],
+    }] }),
   }));
-  vi.doMock("./store", () => ({ resetStore: vi.fn(), flushAll: vi.fn(async () => true) }));
   vi.doMock("./assetCache", () => ({ clearAssetBlobCache: vi.fn() }));
   vi.doMock("./router", () => ({
-    resetTabsToJournals: vi.fn(),
-    openPage: vi.fn(),
+    resetTabsToJournals,
+    openPage,
+    openJournals: vi.fn(),
+    route: () => ({ kind: "journals" }),
+    sameRoute: (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b),
     restoreSession: vi.fn(async () => {}),
     flushSession: vi.fn(async () => {}),
-    route: vi.fn(() => ({ kind: "journals" })),
-    sameRoute: vi.fn((left, right) => JSON.stringify(left) === JSON.stringify(right)),
   }));
-  vi.doMock("./panes", () => ({
-    resetPaneLayoutToSingle: vi.fn(),
-    removePageTargetAcrossPanes: vi.fn(),
-  }));
+  const focused = { activeId: () => "tab", routeIntentRevision: () => 0, route: () => ({ kind: "journals" }), openPage };
+  vi.doMock("./panes", () => ({ resetPaneLayoutToSingle: vi.fn(), focusedRouter: () => focused }));
   vi.doMock("./journal", () => ({
-    journalTitle: () => "Jul 10th, 2026",
-    localDayKey: (date = new Date()) =>
-      date.getFullYear() * 10_000 + (date.getMonth() + 1) * 100 + date.getDate(),
-    localDayRolloverDelay: vi.fn(() => 1),
-    setJournalTitleFormat: vi.fn(() => { events.push("set-title-format"); }),
+    journalTitle: journal?.journalTitle ?? (() => "Jul 10th, 2026"),
+    appNow: () => new Date(),
+    localDayKey: (date = new Date()) => date.getFullYear() * 10_000 + (date.getMonth() + 1) * 100 + date.getDate(),
+    setJournalTitleFormat: journal?.setJournalTitleFormat ?? vi.fn(),
+    isJournalTitle: () => false,
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
-  vi.doMock("./warmCache", () => ({ waitForWarmCache: vi.fn(async () => warm) }));
+  vi.doMock("./warmCache", () => ({ waitForWarmCache }));
+  vi.doMock("./pageIndex", () => ({ resetPageIndex }));
   vi.doMock("./lsShim", () => ({ CUSTOM_CSS_STYLE_ID: "test-css", ensureLsShimStyle: vi.fn() }));
   vi.doMock("./themeGallery", () => ({ ensureThemeStyle: vi.fn() }));
-  vi.doMock("./platform", () => ({ isMobile: () => platform !== "desktop", platformKind: vi.fn(async () => platform) }));
+  vi.doMock("./platform", () => ({ isMobile: () => false, platformKind: vi.fn(async () => "desktop") }));
   vi.doMock("./guide", () => ({ maybeShowGuideAnnouncement: vi.fn() }));
+  vi.doMock("./workspaces", () => ({ clearWorkspaces: vi.fn() }));
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
 
-  const { createNewGraph, ensureJournalTemplateForDay, loadGraphPath, refreshAliases, refreshPageIdentities, renameOrMergePage, switchGraph } = await import("./graph");
+  const { loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange } = await import("./graph");
   return {
-    createNewGraph, ensureJournalTemplateForDay, loadGraphPath, refreshAliases, refreshPageIdentities, renameOrMergePage, switchGraph,
-    api, events, setAliasMap, bumpAliasRev, pushToast,
-    drainPdfWork, retirePdfOwnership, activatePdfOwnership,
-    suspendPdfForGraphTransition, restorePdfSessionTarget,
-    restorePendingPdfSessionTarget,
-    applyTemplateVars, prepareTemplateVars,
-    setMeta: (next: GraphMeta | null) => { meta = next; },
-    bumpEpoch: () => { epoch += 1; },
+    loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange, api, events, resetPageIndex, resetAt, waitForWarmCache,
+    drainPdfWork, retirePdfOwnership, activatePdfOwnership, resetTabsToJournals, flushAll, resetStore, unsaved,
+    applyTemplateVars, prepareTemplateVars, openPage,
   };
 }
-
-describe("mobile graph folder picker", () => {
-  it("opens a picked graph from Tine's iOS Documents container", async () => {
-    const harness = await loadHarness(
-      null,
-      undefined,
-      true,
-      true,
-      "ios",
-      { status: "picked", path: META.root }
-    );
-
-    await expect(harness.switchGraph()).resolves.toEqual({ kind: "loaded", root: META.root });
-    expect(harness.api.pickGraphFolder).toHaveBeenCalledOnce();
-    expect(harness.api.prepareGraphFolder).toHaveBeenCalledWith(META.root);
-    expect(harness.api.loadGraph).toHaveBeenCalledWith(META.root);
-  });
-
-  it("opens the rebased iOS container path after an app update", async () => {
-    const stale = "/var/mobile/Containers/Data/Application/OLD/Documents/template-graph";
-    const harness = await loadHarness(null, undefined, true, true, "ios");
-    harness.api.prepareGraphFolder.mockResolvedValue({
-      status: "ready",
-      location: "local",
-      path: META.root,
-    } as PreparedGraphFolder);
-
-    await expect(harness.loadGraphPath(stale)).resolves.toEqual({ kind: "loaded", root: META.root });
-    expect(harness.api.prepareGraphFolder).toHaveBeenCalledWith(stale);
-    expect(harness.api.inspectGraphAccess).toHaveBeenCalledWith(META.root);
-    expect(harness.api.loadGraph).toHaveBeenCalledWith(META.root);
-  });
-
-  it("shows a clear refusal when iOS returns an outside-container folder", async () => {
-    const harness = await loadHarness(
-      null,
-      undefined,
-      true,
-      false,
-      "ios",
-      { status: "refused" }
-    );
-
-    await expect(harness.switchGraph()).resolves.toEqual({ kind: "aborted" });
-    expect(harness.api.loadGraph).not.toHaveBeenCalled();
-    expect(harness.pushToast).toHaveBeenCalledWith(
-      "Choose a folder inside On My iPhone or iCloud Drive → TineOutline. Other Files providers aren't supported yet.",
-      "info"
-    );
-  });
-
-  it("prepares the chosen iCloud location before creating an iOS graph", async () => {
-    const harness = await loadHarness(
-      null,
-      undefined,
-      true,
-      true,
-      "ios",
-      { status: "picked", path: META.root }
-    );
-
-    await expect(harness.createNewGraph()).resolves.toEqual({ kind: "loaded", root: META.root });
-    expect(harness.api.pickGraphFolder).toHaveBeenCalledOnce();
-    expect(harness.api.defaultGraphParent).not.toHaveBeenCalled();
-    expect(harness.api.prepareGraphFolder).toHaveBeenNthCalledWith(1, META.root);
-    expect(harness.api.createGraph).toHaveBeenCalledWith(META.root);
-  });
-
-  it("refuses an iOS graph before native graph inspection when its container is outside scope", async () => {
-    const harness = await loadHarness(
-      null,
-      undefined,
-      true,
-      false,
-      "ios",
-      { status: "picked", path: META.root }
-    );
-    harness.api.prepareGraphFolder.mockResolvedValue({ status: "refused" });
-
-    await expect(harness.switchGraph()).resolves.toEqual({ kind: "aborted" });
-    expect(harness.api.inspectGraphAccess).not.toHaveBeenCalled();
-    expect(harness.api.loadGraph).not.toHaveBeenCalled();
-  });
-});
 
 afterEach(() => {
   document.body.innerHTML = "";
   document.head.querySelector("#test-css")?.remove();
   localStorage.clear();
-  vi.clearAllTimers();
-  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.resetModules();
 });
 
-describe("page rename collisions", () => {
-  it("asks before merging into a real existing page and carries rename identities", async () => {
-    const destination: PageDto = {
-      name: "A",
-      kind: "page",
-      title: "A",
-      pre_block: null,
-      blocks: [],
-      path: "pages/A.md",
-    };
-    const harness = await loadHarness(destination);
-    const confirm = vi.fn(() => true);
-    vi.spyOn(globalThis, "confirm").mockImplementation(confirm);
-
-    await expect(harness.renameOrMergePage("B", "A", "pages/B.md", [])).resolves.toEqual({ status: "merged" });
-
-    expect(confirm).toHaveBeenCalledWith("Page “A” already exists. Merge “B” into it?");
-    expect(harness.api.mergePages).toHaveBeenCalledWith(
-      "pages/B.md",
-      "pages/A.md",
-      { from: "B", to: "A" },
-    );
-    expect(harness.api.renamePage).not.toHaveBeenCalled();
-  });
-
-  it("cancels without mutating either page", async () => {
-    const destination: PageDto = {
-      name: "A",
-      kind: "page",
-      title: "A",
-      pre_block: null,
-      blocks: [],
-      path: "pages/A.md",
-    };
-    const harness = await loadHarness(destination);
-    vi.spyOn(globalThis, "confirm").mockReturnValue(false);
-
-    await expect(harness.renameOrMergePage("B", "A", "pages/B.md", [])).resolves.toEqual({ status: "cancelled" });
-    expect(harness.api.mergePages).not.toHaveBeenCalled();
-    expect(harness.api.renamePage).not.toHaveBeenCalled();
-  });
-
-  it("keeps the ordinary rename path when the destination has no file", async () => {
-    const harness = await loadHarness(null);
-
-    await expect(harness.renameOrMergePage("B", "C", "pages/B.md", ["pages/Other.md"])).resolves.toMatchObject({ status: "renamed" });
-    expect(harness.api.renamePage).toHaveBeenCalledWith("B", "C", "pages/B.md", ["pages/Other.md"]);
-    expect(harness.api.mergePages).not.toHaveBeenCalled();
-  });
-
-  it("refuses a merge while any page is unsaved, because a merge still reloads every page (GH #535)", async () => {
-    const destination: PageDto = {
-      name: "A",
-      kind: "page",
-      title: "A",
-      pre_block: null,
-      blocks: [],
-      path: "pages/A.md",
-    };
-    const harness = await loadHarness(destination);
-    const confirm = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
-
-    await expect(harness.renameOrMergePage("B", "A", "pages/B.md", ["pages/Other.md"])).rejects.toThrow("Couldn't");
-    expect(confirm).not.toHaveBeenCalled();
-    expect(harness.api.mergePages).not.toHaveBeenCalled();
-  });
-});
-
 describe("default journal template graph bind", () => {
-  it("loads real page identities once and lets them win colliding aliases", async () => {
-    const { loadGraphPath, refreshAliases, refreshPageIdentities, api, setAliasMap } = await loadHarness(null, undefined, true, true);
-
-    await loadGraphPath(META.root);
-    await vi.waitFor(() => expect(setAliasMap).toHaveBeenLastCalledWith({
-      page1: "page1",
-      shortcut: "other",
-    }));
-    expect(api.listPages).toHaveBeenCalledTimes(1);
-
-    await refreshAliases();
-    expect(api.pageAliases).toHaveBeenCalledTimes(2);
-    expect(api.listPages).toHaveBeenCalledTimes(1);
-
-    await refreshPageIdentities();
-    expect(api.listPages).toHaveBeenCalledTimes(2);
+  // Master 5bb8ce020 (GH #266): graph open does not await the optional
+  // default-journal template (a getPage + listTemplates that can wait for the
+  // whole-graph parse). The visible Journals surface owns materialization and
+  // awaits it before its first feed read (Page.tsx), preserving #73.
+  it("opens the graph without awaiting the default-journal template's page read", async () => {
+    const { loadGraphPath, api } = await loadHarness(null);
+    api.getPage.mockImplementation(() => new Promise(() => {}));
+    const outcome = await Promise.race([
+      loadGraphPath(META.root),
+      new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 200)),
+    ]);
+    expect(outcome).toMatchObject({ kind: "loaded" });
+    expect(api.getPage).not.toHaveBeenCalled();
+    expect(api.savePages).not.toHaveBeenCalled();
   });
 
-  // GH #484. `existing_page_names` answers over page names UNION alias names, so
-  // an alias edit changes which [[refs]] resolve while creating no file — and
-  // `pageInventoryRev` never moves for it. This commit point is the one producer
-  // of that revision, so both halves of its contract are pinned here: it fires on
-  // a real change, and it stays silent on a recommit of the same map (this runs
-  // after EVERY save, so a bump-always version would drop the exists-cache on
-  // every keystroke lull).
-  it("publishes an alias revision when the alias map actually changes", async () => {
-    const { loadGraphPath, refreshAliases, refreshPageIdentities, api, bumpAliasRev } =
-      await loadHarness(null, undefined, true, true);
+  it("shares one template write across simultaneous feed refreshes", async () => {
+    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(null);
     await loadGraphPath(META.root);
-    await vi.waitFor(() => expect(api.listPages).toHaveBeenCalledTimes(1));
-    bumpAliasRev.mockClear();
-
-    api.pageAliases.mockResolvedValue([["page1", "Page Two"]]);
-    api.listPages.mockResolvedValue([
-      { name: "Page Two", kind: "page" as const, date_key: null, path: "pages/Page Two.md" },
-    ]);
-    await Promise.all([refreshAliases(), refreshPageIdentities()]);
-
-    expect(bumpAliasRev).toHaveBeenCalled();
+    api.savePages.mockClear();
+    let finishRead!: (value: PageRead | null) => void;
+    api.getPage.mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
+    const first = ensureJournalTemplateForDay(new Date());
+    const second = ensureJournalTemplateForDay(new Date());
+    finishRead(null);
+    expect(await Promise.all([first, second])).toEqual(["ready", "ready"]);
+    expect(api.getPage).toHaveBeenCalledTimes(1); // graph bind reads none; one shared refresh
+    expect(api.savePages).toHaveBeenCalledTimes(1);
   });
-
-  it("publishes no alias revision when the same map is recommitted", async () => {
-    const { loadGraphPath, refreshAliases, refreshPageIdentities, api, bumpAliasRev } =
-      await loadHarness(null, undefined, true, true);
-    await loadGraphPath(META.root);
-    await vi.waitFor(() => expect(api.listPages).toHaveBeenCalledTimes(1));
-
-    api.pageAliases.mockResolvedValue([["page1", "Page Two"]]);
-    api.listPages.mockResolvedValue([
-      { name: "Page Two", kind: "page" as const, date_key: null, path: "pages/Page Two.md" },
-    ]);
-    await Promise.all([refreshAliases(), refreshPageIdentities()]);
-    bumpAliasRev.mockClear();
-
-    // A second save with no alias edit: same answer, same map, no revision.
-    await Promise.all([refreshAliases(), refreshPageIdentities()]);
-    expect(bumpAliasRev).not.toHaveBeenCalled();
-  });
-
-  it("refreshes real-page precedence after a same-session page creation", async () => {
-    const { loadGraphPath, refreshAliases, refreshPageIdentities, api, setAliasMap } = await loadHarness(null, undefined, true, true);
-    await loadGraphPath(META.root);
-    await vi.waitFor(() => expect(api.listPages).toHaveBeenCalledTimes(1));
-
-    api.pageAliases.mockResolvedValue([["new page", "Alias target"]]);
-    api.listPages.mockResolvedValue([
-      { name: "page1", kind: "page" as const, date_key: null, path: "pages/page1.md" },
-      { name: "New Page", kind: "page" as const, date_key: null, path: "pages/New Page.md" },
-    ]);
-    await Promise.all([refreshAliases(), refreshPageIdentities()]);
-
-    expect(setAliasMap).toHaveBeenLastCalledWith({
-      "new page": "New Page",
-      page1: "page1",
+  // OG-C5 L12-S1: opening Journals must never replace text the user wrote with the
+  // template. `memo:: keep` is ordinary prose in an Org heading, and a root `id::`
+  // is a block identity other pages may reference; neither is an empty journal.
+  for (const [name, format, raw] of [
+    ["Org heading prose that looks like a Markdown property", "org", "memo:: keep this sentence"],
+    ["a Markdown root carrying only a block id", "md", "id:: 6679f1c2-0000-4000-8000-000000000001"],
+    ["a property-shaped line nested under an empty root", "md", ""],
+  ] as const) {
+    it(`keeps today's journal when it holds ${name}`, async () => {
+      const children = raw === "" ? [{ id: "c", raw: "note:: keep me", collapsed: false, children: [] }] : [];
+      const existing = {
+        id: `journals/2026_07_10.${format === "org" ? "org" : "md"}`, rev: "rev-1", name: "Jul 10th, 2026", kind: "journal",
+        title: "Jul 10th, 2026", pre_block: null, format,
+        blocks: [{ id: "b", raw, collapsed: false, children }],
+      } as unknown as PageRead;
+      const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(existing);
+      await loadGraphPath(META.root);
+      api.savePages.mockClear();
+      expect(await ensureJournalTemplateForDay(new Date())).toBe("ready");
+      expect(api.savePages).not.toHaveBeenCalled();
     });
-  });
-
-  it("folds NFD alias keys before real-page precedence is applied", async () => {
-    const { loadGraphPath, api, setAliasMap } = await loadHarness(null, undefined, true, true);
-    api.pageAliases.mockResolvedValue([["Cafe\u{301}", "Alias owner"]]);
-    api.listPages.mockResolvedValue([
-      { name: "Café", kind: "page" as const, date_key: null, path: "pages/Café.md" },
-    ]);
-
+  }
+  it("still fills an existing journal whose blocks hold only whitespace", async () => {
+    const existing = {
+      id: "journals/2026_07_10.md", rev: "rev-1", name: "Jul 10th, 2026", kind: "journal",
+      title: "Jul 10th, 2026", pre_block: "title:: Jul 10th, 2026", format: "md",
+      blocks: [{ id: "b", raw: "  \n", collapsed: false, children: [{ id: "c", raw: "", collapsed: false, children: [] }] }],
+    } as unknown as PageRead;
+    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(existing);
     await loadGraphPath(META.root);
-    await vi.waitFor(() => expect(setAliasMap).toHaveBeenLastCalledWith({ café: "Café" }));
+    api.savePages.mockClear();
+    expect(await ensureJournalTemplateForDay(new Date())).toBe("ready");
+    expect(api.savePages).toHaveBeenCalledTimes(1);
+    const [[entry]] = api.savePages.mock.calls[0];
+    expect(entry).toMatchObject({ baseRev: "rev-1", page: { pre_block: "title:: Jul 10th, 2026" } });
   });
-
-  it("discards an older same-epoch page-inventory response", async () => {
-    const { loadGraphPath, refreshPageIdentities, api, setAliasMap } = await loadHarness(null, undefined, true, true);
+  it("returns a typed template read failure for the feed to surface and retry", async () => {
+    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(null);
     await loadGraphPath(META.root);
-    await vi.waitFor(() => expect(api.listPages).toHaveBeenCalledTimes(1));
-
-    let releaseStale!: (entries: Awaited<ReturnType<typeof api.listPages>>) => void;
-    const stale = new Promise<Awaited<ReturnType<typeof api.listPages>>>((resolve) => {
-      releaseStale = resolve;
+    api.getPage.mockRejectedValueOnce(new Error("template read denied"));
+    const result = await ensureJournalTemplateForDay(new Date());
+    expect(result).toMatchObject({ kind: "error", error: expect.any(Error) });
+    if (typeof result !== "string") expect(String(result.error)).toContain("template read denied");
+  });
+  it("keeps an edit typed while the next graph loads in the old graph's draft store (og T4)", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    const page = { name: "Typed", kind: "page", title: "Typed", pre_block: null,
+      blocks: [{ id: "b", raw: "typed during the load", collapsed: false, children: [] }] } as PageDto;
+    harness.api.loadGraph.mockImplementationOnce(async () => {
+      // The last flush already ran; this edit lands while load_graph is in flight.
+      harness.unsaved.push({ name: "Typed", state: "Not saved", path: "pages/Typed.md", page });
+      return { kind: "loaded" as const, meta: { ...META, root: "/tmp/next-graph" }, binding_generation: 2 };
     });
-    api.listPages
-      .mockImplementationOnce(() => stale)
-      .mockResolvedValueOnce([
-        { name: "Newest", kind: "page" as const, date_key: null, path: "pages/Newest.md" },
-      ]);
-
-    const older = refreshPageIdentities();
-    const newer = refreshPageIdentities();
-    await newer;
-    releaseStale([
-      { name: "Stale", kind: "page" as const, date_key: null, path: "pages/Stale.md" },
-    ]);
-    await older;
-
-    expect(setAliasMap).toHaveBeenLastCalledWith(expect.objectContaining({ newest: "Newest" }));
-    expect(setAliasMap).not.toHaveBeenLastCalledWith(expect.objectContaining({ stale: "Stale" }));
+    await harness.loadGraphPath("/tmp/next-graph");
+    expect(harness.api.storeDraft).toHaveBeenCalledTimes(1);
+    const [record, root] = harness.api.storeDraft.mock.calls[0];
+    expect(root).toBe(META.root);
+    expect(record).toMatchObject({ kind: "unsaved", page_name: "Typed", path: "pages/Typed.md", page });
+    expect(harness.resetStore).toHaveBeenCalled(); // the reset drops the working set (harness)
+  });
+  it("MX: the switch waits until the old graph's late edit is durably drafted", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    const page = { name: "Typed", kind: "page", title: "Typed", pre_block: null,
+      blocks: [{ id: "b", raw: "typed during the load", collapsed: false, children: [] }] } as PageDto;
+    let finish!: () => void;
+    harness.api.storeDraft.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    harness.api.loadGraph.mockImplementationOnce(async () => {
+      harness.unsaved.push({ name: "Typed", state: "Not saved", path: "pages/Typed.md", page });
+      return { kind: "loaded" as const, meta: { ...META, root: "/tmp/next-graph" }, binding_generation: 2 };
+    });
+    let done = false;
+    const switching = harness.loadGraphPath("/tmp/next-graph").then((outcome) => { done = true; return outcome; });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(harness.api.storeDraft).toHaveBeenCalledTimes(1);
+    expect(done, "the switch must not finish while the only copy of the edit is not durable").toBe(false);
+    expect(harness.resetTabsToJournals).not.toHaveBeenCalled();
+    finish();
+    await expect(switching).resolves.toMatchObject({ kind: "loaded", root: "/tmp/next-graph" });
+    expect(harness.resetTabsToJournals).toHaveBeenCalled();
+  });
+  it("MX: a late edit whose draft the store refuses stays in this window, and a sticky error says where", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    const page = { name: "Typed", kind: "page", title: "Typed", pre_block: null,
+      blocks: [{ id: "b", raw: "typed during the load", collapsed: false, children: [] }] } as PageDto;
+    harness.api.storeDraft.mockRejectedValueOnce(new Error("the draft store keeps at most 64 pages"));
+    harness.api.loadGraph.mockImplementationOnce(async () => {
+      harness.unsaved.push({ name: "Typed", state: "Not saved", path: "pages/Typed.md", page });
+      return { kind: "loaded" as const, meta: { ...META, root: "/tmp/next-graph" }, binding_generation: 2 };
+    });
+    await harness.loadGraphPath("/tmp/next-graph");
+    const draftStore = await import("./draftStore");
+    expect(draftStore.switchHeldDrafts?.().map((held) => [held.root, held.record.page_name, held.record.page.blocks[0].raw]))
+      .toEqual([[META.root, "Typed", "typed during the load"]]);
+    const { toasts } = await import("./toasts");
+    const error = toasts().find((toast) => toast.kind === "error" && toast.message.includes("Typed"));
+    expect(error).toMatchObject({ sticky: true, action: { label: "Review unsaved" } });
+    // Dismissing is the user's explicit release.
+    draftStore.dismissHeldDraft(draftStore.switchHeldDrafts()[0].record.id);
+    expect(draftStore.switchHeldDrafts()).toEqual([]);
+  });
+  it("still switches graph when the current session cannot be saved", async () => {
+    const { loadGraphPath, api } = await loadHarness(null);
+    await loadGraphPath(META.root);
+    const { flushSession } = await import("./router");
+    vi.mocked(flushSession).mockRejectedValueOnce(new Error("session disk full"));
+    expect(await loadGraphPath("/tmp/another-graph")).not.toEqual({ kind: "aborted" });
+    expect(api.loadGraph).toHaveBeenCalledTimes(2);
+  });
+  it("releases a graph transition invalidated during blur", async () => {
+    const { loadGraphPath, api } = await loadHarness(null);
+    const { invalidateBinding } = await import("./binding");
+    const { setGraphTransitioning } = await import("./ui");
+    const pending = loadGraphPath(META.root);
+    invalidateBinding();
+    expect(await pending).toEqual({ kind: "aborted" });
+    expect(setGraphTransitioning).toHaveBeenLastCalledWith(false);
+    expect(api.loadGraph).not.toHaveBeenCalled();
+  });
+  it("does not open an old folder-picker choice after a newer graph binding", async () => {
+    const { switchGraph, api } = await loadHarness(null);
+    let finish!: (path: string) => void;
+    api.pickFolder.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = switchGraph();
+    await vi.waitFor(() => expect(api.pickFolder).toHaveBeenCalled());
+    const { invalidateBinding } = await import("./binding");
+    invalidateBinding();
+    finish("/tmp/old-choice");
+    await pending;
+    expect(api.loadGraph).not.toHaveBeenCalled();
   });
 
-  it("materializes on the visible-journal request without reopening the graph", async () => {
+  it("clears the previous graph's expanded audio player on rebind", async () => {
+    const { loadGraphPath } = await loadHarness(null);
+    const { setAudioPlayer } = await import("./ui");
+    await loadGraphPath(META.root);
+    expect(setAudioPlayer).toHaveBeenCalledWith(null);
+  });
+
+  it("does not inject CSS from a graph whose read completes after rebinding", async () => {
+    const { loadGraphPath, api } = await loadHarness(null);
+    let finish!: (css: string) => void;
+    api.readCustomCss.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await loadGraphPath(META.root);
+    await vi.waitFor(() => expect(api.readCustomCss).toHaveBeenCalledOnce());
+    const { invalidateBinding } = await import("./binding");
+    invalidateBinding();
+    finish("body { color: red; }");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(document.head.querySelector("#test-css")?.textContent ?? "").not.toContain("red");
+  });
+
+  it("drops template insertion when its page read lands after a graph switch (I-20)", async () => {
+    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(null);
+    let finish!: (page: PageRead | null) => void;
+    api.getPage.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await loadGraphPath(META.root);
+    const materializing = ensureJournalTemplateForDay(new Date());
+    await vi.waitFor(() => expect(api.getPage).toHaveBeenCalled());
+    const { invalidateBinding } = await import("./binding");
+    invalidateBinding();
+    finish(null);
+    await materializing;
+    expect(api.savePages).not.toHaveBeenCalled();
+  });
+
+  it("drops demo seed and Welcome navigation when its page read lands after a graph switch (I-20)", async () => {
+    const { createNewGraph, api, openPage } = await loadHarness(null);
+    let finish!: (page: PageRead | null) => void;
+    // Graph open no longer reads today's journal (master 5bb8ce020), so the
+    // demo seed's page read is the first one.
+    api.getPage.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const creating = createNewGraph();
+    await vi.waitFor(() => expect(api.getPage).toHaveBeenCalledTimes(1));
+    const before = api.savePages.mock.calls.length;
+    const { invalidateBinding } = await import("./binding");
+    invalidateBinding();
+    finish(null);
+    await creating;
+    expect(api.savePages).toHaveBeenCalledTimes(before);
+    expect(openPage).not.toHaveBeenCalled();
+  });
+
+  // Ported from "loads real page identities once and lets them win colliding
+  // aliases" (with "refreshes real-page precedence after a same-session page
+  // creation", "folds NFD alias keys…" and "discards an older same-epoch
+  // page-inventory response"): the name answering and its refresh moved to
+  // pageIndex.ts and are pinned in pageIndex.test.ts. graph.ts keeps only the
+  // reset on bind, before the epoch bump that refetches, and waits for no warm
+  // cache (page_inventory waits for the load itself).
+  it("resets the page index on bind before the epoch bump, with no warm-cache gate", async () => {
+    const { loadGraphPath, events, resetPageIndex, resetAt, waitForWarmCache } = await loadHarness(null, undefined, true, true);
+
+    await loadGraphPath(META.root);
+    expect(resetPageIndex).toHaveBeenCalledTimes(1);
+    expect(resetAt[0]).toBe(events.indexOf("bump-epoch"));
+    expect(waitForWarmCache).not.toHaveBeenCalled();
+  });
+
+  it("resets the page index after a rename, before the epoch bump", async () => {
+    const { refreshAfterRename, events, resetPageIndex, resetAt } = await loadHarness(null);
+
+    refreshAfterRename("Old", "New");
+    expect(resetPageIndex).toHaveBeenCalledTimes(1);
+    expect(resetAt).toEqual([0]);
+    expect(events).toEqual(["bump-epoch"]);
+  });
+
+  it("invalidates stale loads on bind; the visible-journal request materializes the template", async () => {
     const { loadGraphPath, ensureJournalTemplateForDay, events } = await loadHarness(null);
 
     await loadGraphPath(META.root);
+    expect(events).toEqual([`activate-pdf:${META.root}`, "bump-epoch"]);
     await ensureJournalTemplateForDay(new Date());
 
-    // GH #550: the journal title format is set before the epoch bump that
-    // wakes the Journals surface (and re-applied by the config-derived state).
     expect(events).toEqual([
       `activate-pdf:${META.root}`,
-      "set-title-format",
       "bump-epoch",
-      "set-title-format",
       "save-template",
     ]);
   });
@@ -498,115 +436,62 @@ describe("default journal template graph bind", () => {
 
     expect(prepareTemplateVars).toHaveBeenCalledOnce();
     expect(applyTemplateVars).toHaveBeenCalledWith("Template body", "Jul 10th, 2026");
-    expect(api.savePage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        blocks: [expect.objectContaining({ raw: "Template body" })],
-      }),
-      null,
-      false
+    // No journal file yet: the save goes to the backend's Absent id (B15b).
+    expect(api.resolvePage).toHaveBeenCalledWith("Jul 10th, 2026", "journal");
+    expect(api.savePages).toHaveBeenCalledWith(
+      [expect.objectContaining({
+        id: "journals/2026_07_10.md",
+        page: expect.objectContaining({ blocks: [expect.objectContaining({ raw: "Template body" })] }),
+        baseRev: null,
+        force: false,
+      })],
+      0
     );
   });
 
   it("uses an empty journal's revision as the conflict baseline", async () => {
-    const existing: PageDto = {
+    const existing: PageRead = {
       name: "Jul 10th, 2026",
       kind: "journal",
       title: "Jul 10th, 2026",
       pre_block: null,
       blocks: [{ id: "empty", raw: "", collapsed: false, children: [] }],
       rev: "empty-journal-rev",
+      id: "journals/Jul 10th, 2026.org",
     };
     const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(existing);
 
     await loadGraphPath(META.root);
     await ensureJournalTemplateForDay(new Date());
 
-    expect(api.savePage).toHaveBeenCalledWith(expect.any(Object), "empty-journal-rev", false);
+    // The empty journal's own file (its id), with its rev as the baseline; no
+    // name lookup.
+    expect(api.savePages).toHaveBeenCalledWith([{ id: "journals/Jul 10th, 2026.org", page: expect.any(Object), baseRev: "empty-journal-rev", force: false, kinds: ["replace-page"] }], 0);
+    expect(api.resolvePage).not.toHaveBeenCalled();
   });
 
-  it("never overwrites a journal that already has content", async () => {
-    const existing: PageDto = {
-      name: "Jul 10th, 2026",
-      kind: "journal",
-      title: "Jul 10th, 2026",
-      pre_block: null,
-      blocks: [{ id: "existing", raw: "user content", collapsed: false, children: [] }],
-      rev: "existing-rev",
+  it("keeps a journal whose only real content is in a descendant block", async () => {
+    const existing: PageRead = {
+      name: "Jul 10th, 2026", kind: "journal", title: "Jul 10th, 2026", pre_block: null,
+      blocks: [{ id: "parent", raw: "", collapsed: false,
+        children: [{ id: "child", raw: "A real note", collapsed: false, children: [] }] }],
+      rev: "existing-rev", id: "journals/2026_07_10.md",
     };
     const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(existing);
+    await loadGraphPath(META.root);
+    await ensureJournalTemplateForDay(new Date());
+    expect(api.savePages).not.toHaveBeenCalled();
+  });
+
+  it("refuses to write a template journal onto an alias name (B15b)", async () => {
+    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(null);
+    api.resolvePage.mockResolvedValue({ kind: "alias", owners: ["pages/Owner.md"] } as never);
 
     await loadGraphPath(META.root);
     await ensureJournalTemplateForDay(new Date());
 
-    expect(api.listTemplates).not.toHaveBeenCalled();
-    expect(api.savePage).not.toHaveBeenCalled();
-  });
-
-  it("GH #550: never overwrites text typed into a child block of an empty-parent journal", async () => {
-    // The usual Logseq template shape leaves an empty parent with children;
-    // typing into a child must count as content, or the next launch/focus
-    // re-applies the template over it.
-    const existing: PageDto = {
-      name: "Jul 10th, 2026",
-      kind: "journal",
-      title: "Jul 10th, 2026",
-      pre_block: null,
-      blocks: [{
-        id: "parent",
-        raw: "",
-        collapsed: false,
-        children: [{ id: "child", raw: "user typed this", collapsed: false, children: [] }],
-      }],
-      rev: "child-content-rev",
-    };
-    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(existing);
-
-    await loadGraphPath(META.root);
-    await ensureJournalTemplateForDay(new Date());
-
-    expect(api.savePage).not.toHaveBeenCalled();
-  });
-
-  it("drops template work that becomes stale across an in-place graph switch", async () => {
-    const harness = await loadHarness(null);
-    await harness.loadGraphPath(META.root);
-    harness.api.getPage.mockClear();
-    harness.api.listTemplates.mockClear();
-    harness.api.savePage.mockClear();
-
-    let releaseTemplates!: (templates: Awaited<ReturnType<typeof harness.api.listTemplates>>) => void;
-    harness.api.listTemplates.mockImplementationOnce(() => new Promise((resolve) => {
-      releaseTemplates = resolve;
-    }));
-    const pending = harness.ensureJournalTemplateForDay(new Date());
-    await vi.waitFor(() => expect(harness.api.listTemplates).toHaveBeenCalledTimes(1));
-
-    harness.setMeta({ ...META, root: "/tmp/rebound-graph" });
-    harness.bumpEpoch();
-    releaseTemplates([{
-      name: "Daily",
-      page: "Templates",
-      kind: "page",
-      blocks: [{ id: "template", raw: "must stay out", collapsed: false, children: [] }],
-    }]);
-
-    await expect(pending).resolves.toBe("stale");
-    expect(harness.api.savePage).not.toHaveBeenCalled();
-  });
-
-  it("does no journal I/O when the loaded graph has no configured template", async () => {
-    const harness = await loadHarness(null);
-    await harness.loadGraphPath(META.root);
-    harness.api.getPage.mockClear();
-    harness.api.listTemplates.mockClear();
-    harness.api.savePage.mockClear();
-    harness.setMeta({ ...META, default_journal_template: null });
-
-    await expect(harness.ensureJournalTemplateForDay(new Date())).resolves.toBe("ready");
-
-    expect(harness.api.getPage).not.toHaveBeenCalled();
-    expect(harness.api.listTemplates).not.toHaveBeenCalled();
-    expect(harness.api.savePage).not.toHaveBeenCalled();
+    expect(api.resolvePage).toHaveBeenCalledWith("Jul 10th, 2026", "journal");
+    expect(api.savePages).not.toHaveBeenCalled();
   });
 });
 
@@ -653,21 +538,17 @@ describe("PDF graph ownership", () => {
     const nextMeta = { ...META, root: "/tmp/other-graph" };
     harness.api.loadGraph.mockImplementationOnce(async () => {
       harness.events.push("load-next");
-      return {
-        kind: "loaded" as const,
-        meta: nextMeta,
-        binding_generation: 2,
-        application_page_admission: { binding_generation: 2 },
-      };
+      return { kind: "loaded" as const, meta: nextMeta, binding_generation: 2 };
     });
 
     await harness.loadGraphPath(nextMeta.root);
 
     expect(harness.events).toEqual(expect.arrayContaining([
-      "drain-pdf", "retire-pdf", "load-next",
+      "drain-pdf", "retire-pdf", "load-next", "reset-tabs",
     ]));
     expect(harness.events.indexOf("drain-pdf")).toBeLessThan(harness.events.indexOf("retire-pdf"));
     expect(harness.events.indexOf("retire-pdf")).toBeLessThan(harness.events.indexOf("load-next"));
+    expect(harness.events.indexOf("load-next")).toBeLessThan(harness.events.indexOf("reset-tabs"));
     expect(harness.activatePdfOwnership).toHaveBeenLastCalledWith(nextMeta.root);
   });
 
@@ -682,7 +563,7 @@ describe("PDF graph ownership", () => {
     expect(harness.drainPdfWork).toHaveBeenCalledOnce();
     expect(harness.events).toEqual([]);
     expect(harness.retirePdfOwnership).not.toHaveBeenCalled();
-    expect(harness.suspendPdfForGraphTransition).not.toHaveBeenCalled();
+    expect(harness.resetTabsToJournals).not.toHaveBeenCalled();
     expect(harness.api.loadGraph).toHaveBeenCalledOnce();
   });
 
@@ -692,87 +573,198 @@ describe("PDF graph ownership", () => {
     harness.events.length = 0;
     (harness.api.loadGraph as any).mockImplementationOnce(async () => {
       harness.events.push("load-refresh");
-      return {
-        kind: "already_current" as const,
-        meta: META,
-        binding_generation: 1,
-        application_page_admission: DIRECT_ADMISSION,
-      };
+      return { kind: "already_current" as const, meta: META, binding_generation: 1 };
     });
 
     await harness.loadGraphPath(META.root, { forceRefresh: true });
 
-    expect(harness.events.slice(0, 6)).toEqual([
+    expect(harness.events.slice(0, 4)).toEqual([
       "drain-pdf",
       "retire-pdf",
       "load-refresh",
       `activate-pdf:${META.root}`,
-      "set-title-format",
-      "bump-epoch",
     ]);
+    expect(harness.resetTabsToJournals).not.toHaveBeenCalled();
     expect(harness.activatePdfOwnership).toHaveBeenCalledTimes(2);
-    expect(harness.restorePdfSessionTarget).not.toHaveBeenCalled();
-  });
-
-  it("restores fresh old-graph ownership while route state remains installed when rebind fails", async () => {
-    const harness = await loadHarness(null);
-    await harness.loadGraphPath(META.root);
-    harness.events.length = 0;
-    harness.api.loadGraph.mockRejectedValueOnce(new Error("rebind failed"));
-
-    await expect(harness.loadGraphPath("/tmp/other-graph")).rejects.toThrow("rebind failed");
-
-    expect(harness.events).toEqual([
-      "drain-pdf",
-      "retire-pdf",
-      `activate-pdf:${META.root}`,
-    ]);
-    expect(harness.restorePdfSessionTarget).not.toHaveBeenCalled();
   });
 });
 
-describe("graph home page (GH #245)", () => {
-  const DIRECTORY: PageDto = { name: "Directory", kind: "page", title: "Directory", pre_block: null, format: "md", blocks: [] };
+describe("an edit typed while a graph switch is in flight (og A, 20B open item 5)", () => {
+  // The first flush runs before the session save, the access prompt and the
+  // PDF drain; an edit that lands during those awaits used to reach resetStore
+  // unsaved and was discarded with the old graph's working set.
+  it("flushes again as the last step before binding another graph", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    harness.flushAll.mockClear();
+    harness.drainPdfWork.mockClear();
+    harness.api.loadGraph.mockClear();
+    const next = { ...META, root: "/tmp/other-graph" };
+    harness.api.loadGraph.mockResolvedValueOnce({ kind: "loaded" as const, meta: next, binding_generation: 2 });
+    await harness.loadGraphPath(next.root);
+    const flushes = harness.flushAll.mock.invocationCallOrder;
+    expect(flushes.length).toBe(2);
+    expect(flushes[1]).toBeGreaterThan(harness.drainPdfWork.mock.invocationCallOrder[0]);
+    expect(flushes[1]).toBeLessThan(harness.api.loadGraph.mock.invocationCallOrder[0]);
+  });
+
+  it("keeps the old graph (and its PDF owner) when that late edit cannot be saved", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    harness.events.length = 0;
+    harness.flushAll.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    await expect(harness.loadGraphPath("/tmp/other-graph")).resolves.toEqual({ kind: "aborted" });
+    expect(harness.api.loadGraph).toHaveBeenCalledOnce();
+    expect(harness.resetTabsToJournals).not.toHaveBeenCalled();
+    expect(harness.activatePdfOwnership).toHaveBeenLastCalledWith(META.root);
+    const { toasts } = await import("./toasts");
+    expect(toasts().at(-1)).toMatchObject({ kind: "error", message: expect.stringContaining("couldn't be saved") });
+  });
+});
+
+describe("graph home page on open (config.edn :default-home)", () => {
+  const DIRECTORY: PageRead = { id: "pages/Directory.md", name: "Directory", kind: "page", title: "Directory", pre_block: null, blocks: [], read_only: false, guide: false };
+  const withHome = (home: string | null, root = META.root): GraphMeta => ({ ...META, root, default_home: home });
+  const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+
+  async function harnessWithHome(home: string | null, page: PageRead | null) {
+    const harness = await loadHarness(null);
+    harness.api.loadGraph.mockImplementation(async (path?: string) =>
+      ({ kind: "loaded" as const, meta: withHome(home, path ?? META.root), binding_generation: 1 }) as never);
+    const getPage = harness.api.getPage as unknown as { mockImplementation(fn: (name: string) => Promise<PageRead | null>): void };
+    getPage.mockImplementation(async (name) => (name === home ? page : null));
+    return harness;
+  }
 
   it("opens the configured home page in place on an ordinary first load", async () => {
-    const harness = await loadHarness(DIRECTORY);
-    harness.api.getAppString.mockResolvedValue("Directory");
-
+    const harness = await harnessWithHome("Directory", DIRECTORY);
     await harness.loadGraphPath(META.root);
-
-    const router = await import("./router");
-    expect(router.openPage).toHaveBeenCalledWith("Directory", "page", { inPlace: true });
+    await settle();
+    expect(harness.api.getPage).toHaveBeenCalledWith("Directory", "page");
+    expect(harness.openPage).toHaveBeenCalledWith("Directory", "page", { inPlace: true });
   });
 
-  it("keeps the ordinary landing when the configured page no longer resolves — nothing is created", async () => {
-    const harness = await loadHarness(null);
-    harness.api.getAppString.mockResolvedValue("Ghost");
-
+  it("opens it on a graph switch too", async () => {
+    const harness = await harnessWithHome("Directory", DIRECTORY);
     await harness.loadGraphPath(META.root);
-
-    const router = await import("./router");
-    expect(router.openPage).not.toHaveBeenCalled();
+    await settle();
+    harness.openPage.mockClear();
+    await harness.loadGraphPath("/tmp/other-graph");
+    await settle();
+    expect(harness.openPage).toHaveBeenCalledWith("Directory", "page", { inPlace: true });
   });
 
-  it("does not navigate when no home page is configured", async () => {
-    const harness = await loadHarness(DIRECTORY);
+  it("keeps the ordinary landing when none is configured or the page no longer resolves", async () => {
+    const none = await harnessWithHome(null, DIRECTORY);
+    await none.loadGraphPath(META.root);
+    await settle();
+    expect(none.openPage).not.toHaveBeenCalled();
 
-    await harness.loadGraphPath(META.root);
-
-    const router = await import("./router");
-    expect(router.openPage).not.toHaveBeenCalled();
+    const ghost = await harnessWithHome("Ghost", null);
+    await ghost.loadGraphPath(META.root);
+    await settle();
+    expect(ghost.api.getPage).toHaveBeenCalledWith("Ghost", "page");
+    expect(ghost.openPage).not.toHaveBeenCalled();
+    expect(ghost.api.savePages.mock.calls.flatMap(([entries]) => entries.map((entry) => entry.page.name)))
+      .not.toContain("Ghost"); // nothing is created for a missing home page
   });
 
   it("does not home-navigate on a same-graph force refresh", async () => {
-    const harness = await loadHarness(DIRECTORY);
-    harness.api.getAppString.mockResolvedValue("Directory");
+    const harness = await harnessWithHome("Directory", DIRECTORY);
     await harness.loadGraphPath(META.root);
-    const router = await import("./router");
-    vi.mocked(router.openPage).mockClear();
-
+    await settle();
+    harness.openPage.mockClear();
     await harness.loadGraphPath(META.root, { forceRefresh: true });
+    await settle();
+    expect(harness.openPage).not.toHaveBeenCalled();
+  });
+});
 
-    expect(router.openPage).not.toHaveBeenCalled();
-    expect(harness.api.getAppString).toHaveBeenCalledTimes(1); // only the first load read it
+
+it("reports unreadable custom CSS once at graph open while applying no CSS", async () => {
+  const { loadGraphPath, api } = await loadHarness(null);
+  const failure = await import("./uiFailure");
+  const report = vi.spyOn(failure, "reportUiFailure");
+  api.readCustomCss.mockRejectedValue(new Error("CSS read denied"));
+  expect(await loadGraphPath(META.root)).toMatchObject({ kind: "loaded" });
+  await vi.waitFor(() => expect(report).toHaveBeenCalledWith("custom-css", expect.any(Error)));
+  expect(report.mock.calls.filter(([family]) => family === "custom-css")).toHaveLength(1);
+  expect(document.head.querySelector("#test-css")?.textContent).toBe("");
+});
+
+it("opens with the config-read problem available to Settings and clears it on a repaired reopen", async () => {
+  const { loadGraphPath, api } = await loadHarness(null);
+  const problem = { kind: "config-read" as const, message: "config read denied" };
+  api.loadGraph.mockResolvedValueOnce({ kind: "loaded", meta: META, binding_generation: 1, config_problem: problem } as Awaited<ReturnType<typeof api.loadGraph>>);
+  const failure = await import("./uiFailure");
+  const report = vi.spyOn(failure, "reportUiFailure");
+  expect(await loadGraphPath(META.root)).toMatchObject({ kind: "loaded" });
+  const { graphConfigProblem } = await import("./graph");
+  expect(graphConfigProblem()).toEqual(problem);
+  expect(report).toHaveBeenCalledWith("config-read", problem);
+  expect(api.savePages).not.toHaveBeenCalled();
+  expect(await loadGraphPath(META.root, { forceRefresh: true })).toMatchObject({ kind: "loaded" });
+  expect(graphConfigProblem()).toBeNull();
+});
+
+
+describe("OG-R3B custom journal format publication (I-4)", () => {
+  for (const publication of ["open", "live"] as const) {
+    it(`publishes the custom title before ${publication} wakes journal materialization`, async () => {
+      let format = "MMM do, yyyy";
+      let observe = false;
+      let materialization: Promise<unknown> | undefined;
+      let requested = "";
+      const customTitle = "2026-07-10";
+      const journal = {
+        journalTitle: () => format === "yyyy-MM-dd" ? customTitle : "Jul 10th, 2026",
+        setJournalTitleFormat: (next: string | null | undefined) => { format = next ?? "MMM do, yyyy"; },
+      };
+      const harness = await loadHarness(null, undefined, true, false,
+        () => { if (observe) materialization = harness.ensureJournalTemplateForDay(new Date()); }, journal);
+      const customMeta = { ...META, journal_page_title_format: "yyyy-MM-dd" };
+      const delivered: PageRead = { id: "journals/2026_07_10.md", name: customTitle,
+        kind: "journal", title: customTitle, pre_block: null, rev: "synced-rev",
+        blocks: [{ id: "synced", raw: "Synced custom-format journal", collapsed: false, children: [] }] };
+      harness.api.getPage.mockImplementation(async (...args: unknown[]) => {
+        requested = args[0] as string;
+        return requested === customTitle ? delivered : null;
+      });
+      if (publication === "live") await harness.loadGraphPath(META.root);
+      observe = true;
+      if (publication === "open") {
+        harness.api.loadGraph.mockResolvedValueOnce({ kind: "loaded", meta: customMeta, binding_generation: 1 });
+        await harness.loadGraphPath(META.root);
+      } else {
+        const { captureBinding } = await import("./binding");
+        harness.applyGraphConfigChange({ meta: customMeta, binding_generation: captureBinding().backendGeneration! });
+      }
+      await materialization;
+      expect(requested, "I-4: journal template must read the delivered custom-format journal; exemplar src/graph.ts").toBe(customTitle);
+      expect(harness.api.savePages).not.toHaveBeenCalled();
+    });
+  }
+});
+
+describe("graph open failure recovery (master 9a9122b1544d)", () => {
+  it("keeps a picked graph's open failure sticky and retries the same path", async () => {
+    const harness = await loadHarness(null);
+    harness.api.pickFolder.mockResolvedValue(META.root);
+    harness.api.loadGraph.mockRejectedValue(new Error("disk went away"));
+    const toastModule = await import("./toasts");
+    toastModule.setToasts([]);
+
+    await expect(harness.switchGraph()).resolves.toEqual({ kind: "aborted" });
+    const failures = toastModule.toasts().filter((toast) => toast.kind === "error");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]!.message).toContain("disk went away");
+    expect(failures[0]!.sticky).toBe(true);
+    expect(failures[0]!.action?.label).toBe("Retry");
+
+    failures[0]!.action!.run();
+    await vi.waitFor(() => expect(harness.api.loadGraph).toHaveBeenCalledTimes(2));
+    expect(harness.api.loadGraph).toHaveBeenLastCalledWith(META.root);
+    // Retry reopens the same target; it never re-asks the picker.
+    expect(harness.api.pickFolder).toHaveBeenCalledTimes(1);
   });
 });

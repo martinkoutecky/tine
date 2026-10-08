@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { resetStore, setDoc, type FeedPage } from "../store";
+import { resetStore } from "../document";
+import { setDoc, type FeedPage } from "../document/model";
 import { TodayTaskSummary, summarizePageTasks } from "./TodayTaskSummary";
 
 beforeAll(async () => {

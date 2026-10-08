@@ -1,86 +1,111 @@
 use crate::settings::{settings_path, update_settings};
 use crate::state::{slot_for_context, GraphContext, GraphSlot};
-use cap_std::{
-    ambient_authority,
-    fs::{Dir, OpenOptions},
-};
 use sha2::{Digest, Sha256};
+use std::io::ErrorKind;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::Manager;
-use tine_core::{model::Graph, GraphTextScope, GRAPH_TEXT_SCOPE_VERSION};
+use tine_store::{is_asset_sidecar, is_graph_text, Area, RestoreFile, Store};
+
+mod restore;
+pub(crate) use restore::restore_backup;
 
 // Snapshot the graph's Markdown/Org into the OS app-data dir on open, keeping the
 // last few. Local-only (outside the graph, so Syncthing never sees it); a safety
-// net against a bad write or accidental edit. Best-effort and fully detached so
-// it never blocks startup or competes with it for storage during file copies.
+// net against a bad write or accidental edit. Source validation runs at launch;
+// the file copy runs in a detached best-effort worker.
 const BACKUP_KEEP_DEFAULT: usize = 12;
-const ASSET_RESTORE_RECOVERY_DIR: &str = ".tine-restore-recovery";
 static BACKUP_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
 
-/// GH #550: the launch snapshot copies the whole graph, so it waits until
-/// startup has gone idle — the background warm has finished (the same
-/// `warm-cache-done` signal that releases the frontend's held whole-graph
-/// fetches) and a quiet period has passed after it. On a phone the copy used to
-/// start one second after open and compete with the first journal paint and the
-/// warm for storage I/O. The deadline keeps the safety net if a warm never
-/// reports done. Edits made before the snapshot are still covered by the
-/// previous launch's snapshot, which the keep-count retains.
-const LAUNCH_BACKUP_QUIET: std::time::Duration = std::time::Duration::from_secs(5);
-const LAUNCH_BACKUP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(180);
-const LAUNCH_BACKUP_POLL: std::time::Duration = std::time::Duration::from_millis(250);
-
-fn launch_backup_due(
-    since_open: std::time::Duration,
-    since_warm_done: Option<std::time::Duration>,
-) -> bool {
-    since_warm_done.is_some_and(|quiet| quiet >= LAUNCH_BACKUP_QUIET)
-        || since_open >= LAUNCH_BACKUP_DEADLINE
+#[derive(Clone, Debug)]
+pub(crate) struct BackupFailure {
+    phase: &'static str,
+    kind: ErrorKind,
 }
 
-/// `warm_done` of the window's CURRENT binding: a same-root config refresh
-/// replaces the slot, and the warm then reports on the replacement.
-fn launch_warm_done(app: &tauri::AppHandle, window_label: &str, slot: &GraphSlot) -> bool {
-    let state = app.state::<crate::state::AppState>();
-    let current = state.graphs.read().unwrap().slot(window_label);
-    match current {
-        Some(current)
-            if current.binding_generation == slot.binding_generation
-                && current.root_key == slot.root_key =>
-        {
-            current.warm_done.load(Ordering::Acquire)
-        }
-        _ => slot.warm_done.load(Ordering::Acquire),
+impl BackupFailure {
+    fn wire(&self) -> String {
+        format!("backup-failed:{}:{:?}", self.phase, self.kind)
     }
 }
 
-pub(crate) fn backup_async(
-    app: tauri::AppHandle,
-    window_label: String,
-    slot: Arc<GraphSlot>,
-) -> Result<(), crate::command_error::CommandError> {
-    let graph = slot.graph();
-    let source = BackupSource::from_graph(&graph);
-    drop(graph);
+#[derive(Debug)]
+pub(crate) struct BackupOutcome {
+    pub(crate) copied: usize,
+    pub(crate) failure: Option<BackupFailure>,
+}
+
+impl BackupOutcome {
+    pub(crate) fn success(copied: usize) -> Self {
+        Self {
+            copied,
+            failure: None,
+        }
+    }
+
+    pub(crate) fn failed(copied: usize, phase: &'static str, kind: ErrorKind) -> Self {
+        Self {
+            copied,
+            failure: Some(BackupFailure { phase, kind }),
+        }
+    }
+}
+
+fn launch_failure_token(outcome: &BackupOutcome) -> Option<String> {
+    outcome
+        .failure
+        .as_ref()
+        .filter(|failure| failure.phase != "cancelled")
+        .map(BackupFailure::wire)
+}
+
+pub(crate) fn report_launch_outcome(outcome: &BackupOutcome) {
+    if let Some(token) = launch_failure_token(outcome) {
+        eprintln!("[tine] {token}");
+        crate::debug::diag_private("backup-failed", token);
+    }
+}
+// The event carries only fixed phase/kind and the binding that owns the failure.
+// A detached backup must not show feedback in a replacement graph window.
+fn report_launch_failure(app: &tauri::AppHandle, slot: &GraphSlot, outcome: &BackupOutcome) {
+    use tauri::Emitter;
+    report_launch_outcome(outcome);
+    if let Some(failure) = launch_failure_token(outcome) {
+        if let Err(error) = app.emit(
+            "backup-failed",
+            serde_json::json!({
+                "bindingGeneration": slot.binding_generation, "failure": failure
+            }),
+        ) {
+            crate::debug::diag_private("backup-feedback-failed", error.to_string());
+        }
+    }
+}
+
+#[cfg(test)]
+const ASSET_RESTORE_RECOVERY_DIR: &str = ".tine-restore-recovery";
+
+// Master GH #550 policy, driven by the owning warm/cancellation signals.
+const LAUNCH_BACKUP_QUIET: std::time::Duration = std::time::Duration::from_secs(5);
+const LAUNCH_BACKUP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(180);
+
+fn wait_launch_backup(slot: &GraphSlot) -> bool {
+    slot.wait_startup_idle(LAUNCH_BACKUP_QUIET, LAUNCH_BACKUP_DEADLINE)
+}
+
+pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
+    let source = match BackupSource::from_store(&slot.store, &slot.root_key) {
+        Ok(source) => source,
+        Err((kind, _)) => {
+            report_launch_failure(&app, &slot, &BackupOutcome::failed(0, "source", kind));
+            return;
+        }
+    };
     std::thread::spawn(move || {
-        let opened = std::time::Instant::now();
-        let mut warm_done_at = None;
-        loop {
-            if slot.background_cancelled.load(Ordering::Acquire) {
-                return;
-            }
-            if warm_done_at.is_none() && launch_warm_done(&app, &window_label, &slot) {
-                warm_done_at = Some(std::time::Instant::now());
-            }
-            if launch_backup_due(
-                opened.elapsed(),
-                warm_done_at.map(|at: std::time::Instant| at.elapsed()),
-            ) {
-                break;
-            }
-            std::thread::sleep(LAUNCH_BACKUP_POLL);
+        if !wait_launch_backup(&slot) {
+            return;
         }
         // Bound whole-graph copying process-wide. Revoked bindings check again
         // after obtaining the permit and between directory entries/files.
@@ -91,19 +116,44 @@ pub(crate) fn backup_async(
         if slot.background_cancelled.load(Ordering::Acquire) {
             return;
         }
-        let _ = do_backup_source_cancellable(&app, source, "", &|| {
+        let outcome = do_backup_source_cancellable(&app, &slot.store, source, "", &|| {
             slot.background_cancelled.load(Ordering::Acquire)
-        }); // launch snapshot is best-effort
+        });
+        if !slot.background_cancelled.load(Ordering::Acquire) {
+            report_launch_failure(&app, &slot, &outcome);
+        }
     });
-    Ok(())
 }
 
 pub(crate) fn backup_graph_now(
     app: &tauri::AppHandle,
-    graph: &Graph,
+    store: &Store,
+    root: &std::path::Path,
     suffix: &str,
-) -> (usize, bool) {
-    do_backup_source(app, BackupSource::from_graph(graph), suffix)
+) -> BackupOutcome {
+    let source = match BackupSource::from_store(store, root) {
+        Ok(source) => source,
+        Err((kind, _)) => return BackupOutcome::failed(0, "source", kind),
+    };
+    do_backup_source(app, store, source, suffix)
+}
+
+/// Snapshot the graph before a rewrite the user asked for, refusing the rewrite
+/// when the snapshot failed so the original files stay recoverable in Backups &
+/// recovery. The tagged snapshot is exempt from the keep-count prune.
+pub(crate) fn snapshot_before_rewrite(
+    app: &tauri::AppHandle,
+    slot: &GraphSlot,
+    suffix: &str,
+) -> Result<(), String> {
+    rewrite_snapshot_result(backup_graph_now(app, &slot.store, &slot.root_key, suffix))
+}
+
+fn rewrite_snapshot_result(outcome: BackupOutcome) -> Result<(), String> {
+    match outcome.failure {
+        None => Ok(()),
+        Some(failure) => Err(failure.wire()),
+    }
 }
 
 /// Take one snapshot of the current graph now (synchronous). Returns the number
@@ -111,40 +161,64 @@ pub(crate) fn backup_graph_now(
 /// app-settings file and prunes old snapshots afterwards. `suffix` tags special
 /// snapshots (e.g. "pre-restore") so they get a distinct, collision-proof
 /// directory name and are exempt from the keep-count prune.
-/// Returns (files copied, complete) — `complete` is false if ANY graph
-/// text/config/asset-sidecar copy failed, so the caller (restore) can refuse to
-/// proceed without a full rollback snapshot.
+/// The typed outcome records any graph text/config/asset-sidecar copy failure,
+/// so the caller (restore) can refuse to proceed without a full rollback snapshot.
 #[derive(Clone)]
 struct BackupSource {
-    assets: PathBuf,
-    cfg: PathBuf,
     root: PathBuf,
     journals_dir: String,
     pages_dir: String,
-    graph_text_scope: GraphTextScope,
-    graph_text_policy: SnapshotGraphTextPolicy,
+    assets_dir_name: String,
+    hidden: Vec<String>,
+    hidden_parse_failed_closed: bool,
 }
 
 impl BackupSource {
-    fn from_graph(g: &Graph) -> Self {
-        Self {
-            assets: g.assets_path(),
-            cfg: g.root.join("logseq").join("config.edn"),
-            root: g.root.clone(),
-            journals_dir: g.config().journals_dir.clone(),
-            pages_dir: g.config().pages_dir.clone(),
-            graph_text_scope: g.graph_text_scope(),
-            graph_text_policy: SnapshotGraphTextPolicy {
-                version: GRAPH_TEXT_SCOPE_VERSION,
-                hidden: g.config().hidden.clone(),
-                hidden_parse_failed_closed: g.config().hidden_parse_failed_closed,
-            },
-        }
+    /// The live layout to snapshot, or why it can't be read: the error kind
+    /// for the `backup-failed:source:<kind>` token (I-9) and a message.
+    fn from_store(store: &Store, root: &std::path::Path) -> Result<Self, (ErrorKind, String)> {
+        let config = store.config();
+        let root = Store::canonical_root(root).map_err(|error| {
+            let kind = match &error {
+                tine_store::OpenError::NotAFolder(_) => ErrorKind::NotADirectory,
+                tine_store::OpenError::Unresolvable { .. } => ErrorKind::NotFound,
+                tine_store::OpenError::Io(io) => io.kind,
+                tine_store::OpenError::CreateFailed { cause, .. } => cause.kind,
+                _ => ErrorKind::InvalidInput,
+            };
+            (kind, error.to_string())
+        })?;
+        // Verify the live assets target before using the store's backup layout.
+        store.scan_area(Area::Assets, None).map_err(|error| {
+            (
+                store_error_kind(&error),
+                format!("unsafe assets directory: {error:?}"),
+            )
+        })?;
+        let assets_dir_name = config.assets_directory_name.clone();
+        Ok(Self {
+            root,
+            journals_dir: config.journals_dir.clone(),
+            pages_dir: config.pages_dir.clone(),
+            assets_dir_name,
+            hidden: config.hidden.clone(),
+            hidden_parse_failed_closed: config.hidden_parse_failed_closed,
+        })
     }
 }
 
-const LEGACY_SNAPSHOT_SCHEMA: u32 = 2;
+/// Schema 3 (og-B, ADR 0062) keeps graph text under `graph/<graph-relative
+/// path>` and records the graph-text scope it covered; schema 2 kept only the
+/// configured `journals/` and `pages/` roots and still lists and restores.
+/// Both are master's wire formats, so either build reads the other's.
 const SNAPSHOT_SCHEMA: u32 = 3;
+const LEGACY_SNAPSHOT_SCHEMA: u32 = 2;
+/// Master's `GRAPH_TEXT_SCOPE_VERSION`: the discovery exclusions this build's
+/// `graph_text_eligible` applies (`published-queries/` included).
+const GRAPH_TEXT_SCOPE_VERSION: u32 = 2;
+/// Marks this build's schema-3 snapshots; master ignores the field. Prune
+/// counts only snapshots this build wrote (docs/app-identity.md).
+const SNAPSHOT_WRITER: &str = "og";
 const SNAPSHOT_MANIFEST: &str = "snapshot.json";
 
 #[cfg(test)]
@@ -166,10 +240,16 @@ struct SnapshotManifest {
     pages_dir: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     graph_text_policy: Option<SnapshotGraphTextPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    writer: Option<String>,
     files: Vec<SnapshotFile>,
     complete: bool,
 }
 
+/// The graph-text scope a schema-3 snapshot covered: restore retires only
+/// unlisted live text inside it. A `:hidden` value that failed to parse hides
+/// all graph text, so the snapshot holds none and records
+/// `hidden_parse_failed_closed: true` (restore then retires none).
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct SnapshotGraphTextPolicy {
     version: u32,
@@ -177,23 +257,8 @@ struct SnapshotGraphTextPolicy {
     hidden_parse_failed_closed: bool,
 }
 
-impl SnapshotGraphTextPolicy {
-    fn scope(&self) -> Result<GraphTextScope, crate::command_error::CommandError> {
-        if self.version != GRAPH_TEXT_SCOPE_VERSION {
-            return Err(crate::command_error::CommandError::backup(format!(
-                "backup uses unsupported graph-text policy version {}",
-                self.version
-            )));
-        }
-        Ok(GraphTextScope::new(
-            &self.hidden,
-            self.hidden_parse_failed_closed,
-        ))
-    }
-}
-
-fn root_backup_id(root: &std::path::Path) -> String {
-    let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+pub(crate) fn root_backup_id(root: &std::path::Path) -> String {
+    let canonical = Store::canonical_root(root).unwrap_or_else(|_| root.to_path_buf());
     let mut hasher = Sha256::new();
     hasher.update(canonical.to_string_lossy().as_bytes());
     let digest = format!("{:x}", hasher.finalize());
@@ -224,8 +289,75 @@ fn write_manifest(dir: &std::path::Path, manifest: &SnapshotManifest) -> std::io
     use std::io::Write;
     file.write_all(&bytes)?;
     file.sync_all()?;
+    record_backup_op("manifest_sync");
     drop(file);
-    std::fs::rename(tmp, path)
+    crate::device_io::move_file_noreplace(&tmp, &path)?;
+    tine_store::directory_durability::sync_directory_entry(dir)
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static BACKUP_OPS: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn record_backup_op(op: &'static str) {
+    #[cfg(test)]
+    BACKUP_OPS.with(|ops| ops.borrow_mut().push(op));
+    #[cfg(not(test))]
+    let _ = op;
+}
+
+fn write_payload(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_WRITE_THROUGH);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    record_backup_op("payload_sync");
+    Ok(())
+}
+
+/// Sync every payload directory, children before parents. An explicit stack:
+/// a snapshot mirrors the graph's depth, which costs heap, not stack (I-22).
+fn sync_payload_dirs(dir: &std::path::Path) -> std::io::Result<()> {
+    let mut pending = vec![(dir.to_path_buf(), false)];
+    while let Some((dir, children_synced)) = pending.pop() {
+        if children_synced {
+            tine_store::directory_durability::sync_directory_entry(&dir)?;
+            record_backup_op("payload_dir_sync");
+            continue;
+        }
+        pending.push((dir.clone(), true));
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                pending.push((entry.path(), false));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn publish_snapshot(
+    partial: &std::path::Path,
+    final_dest: &std::path::Path,
+    manifest: &SnapshotManifest,
+) -> std::io::Result<()> {
+    sync_payload_dirs(partial)?;
+    write_manifest(partial, manifest)?;
+    crate::device_io::move_file_noreplace(partial, final_dest)?;
+    record_backup_op("publish_rename");
+    tine_store::directory_durability::sync_directory_entry(
+        final_dest.parent().expect("snapshot has parent"),
+    )?;
+    record_backup_op("publication_dir_sync");
+    Ok(())
 }
 
 fn read_manifest(dir: &std::path::Path) -> Option<SnapshotManifest> {
@@ -297,12 +429,160 @@ fn verify_snapshot(dir: &std::path::Path, manifest: &SnapshotManifest) -> bool {
         .unwrap_or(false)
 }
 
-fn do_backup_source(app: &tauri::AppHandle, source: BackupSource, suffix: &str) -> (usize, bool) {
+fn do_backup_source(
+    app: &tauri::AppHandle,
+    store: &Store,
+    source: BackupSource,
+    suffix: &str,
+) -> BackupOutcome {
     let _worker = BACKUP_WORK
         .get_or_init(|| std::sync::Mutex::new(()))
         .lock()
         .unwrap();
-    do_backup_source_cancellable(app, source, suffix, &|| false)
+    do_backup_source_cancellable(app, store, source, suffix, &|| false)
+}
+
+fn copy_store_area(
+    store: &Store,
+    area: Area,
+    dest: &std::path::Path,
+    include: fn(&tine_store::FileId) -> bool,
+    cancelled: &dyn Fn() -> bool,
+) -> (usize, usize, Option<BackupFailure>) {
+    let phase = match area {
+        Area::Journals => "journals",
+        Area::Pages => "pages",
+        Area::Assets => "assets",
+        Area::Meta => "config",
+        Area::Trash => "trash",
+        Area::Graph => "graph",
+    };
+    if cancelled() {
+        return (
+            0,
+            1,
+            Some(BackupFailure {
+                phase,
+                kind: ErrorKind::Interrupted,
+            }),
+        );
+    }
+    if let Err(error) = std::fs::create_dir_all(dest) {
+        return (
+            0,
+            1,
+            Some(BackupFailure {
+                phase,
+                kind: error.kind(),
+            }),
+        );
+    }
+    let listing = match store.scan_area(area, None) {
+        Ok(listing) => listing,
+        Err(error) => {
+            return (
+                0,
+                1,
+                Some(BackupFailure {
+                    phase,
+                    kind: store_error_kind(&error),
+                }),
+            )
+        }
+    };
+    let mut copied = 0;
+    let mut first_failure = listing
+        .unreadable
+        .iter()
+        .find(|(_, error)| error.kind != ErrorKind::NotFound)
+        .map(|(_, error)| BackupFailure {
+            phase,
+            kind: error.kind,
+        });
+    let mut failed = listing
+        .unreadable
+        .iter()
+        .filter(|(_, error)| error.kind != ErrorKind::NotFound)
+        .count();
+    for entry in listing.files {
+        if cancelled() {
+            return (
+                copied,
+                failed + 1,
+                Some(BackupFailure {
+                    phase,
+                    kind: ErrorKind::Interrupted,
+                }),
+            );
+        }
+        if !include(&entry.id) {
+            continue;
+        }
+        let target = dest.join(&entry.rel);
+        match store.read(&entry.id, None) {
+            Ok((bytes, _)) => {
+                let result = target
+                    .parent()
+                    .ok_or_else(|| std::io::Error::from(ErrorKind::InvalidInput))
+                    .and_then(std::fs::create_dir_all)
+                    .and_then(|_| write_payload(&target, &bytes));
+                match result {
+                    Ok(()) => copied += 1,
+                    Err(error) => {
+                        failed += 1;
+                        first_failure.get_or_insert(BackupFailure {
+                            phase,
+                            kind: error.kind(),
+                        });
+                    }
+                }
+            }
+            Err(error) => {
+                failed += 1;
+                first_failure.get_or_insert(BackupFailure {
+                    phase,
+                    kind: store_error_kind(&error),
+                });
+            }
+        }
+    }
+    (copied, failed, first_failure)
+}
+
+fn store_error_kind(error: &tine_store::StoreError) -> ErrorKind {
+    match error {
+        tine_store::StoreError::Io(error) => error.kind(),
+        tine_store::StoreError::NotFound => ErrorKind::NotFound,
+        tine_store::StoreError::Undecodable | tine_store::StoreError::Unparseable(_) => {
+            ErrorKind::InvalidData
+        }
+        tine_store::StoreError::InvalidTarget(_)
+        | tine_store::StoreError::PageSource(_)
+        | tine_store::StoreError::StreamSymlink(_) => ErrorKind::InvalidInput,
+        tine_store::StoreError::TooLarge { .. } => ErrorKind::FileTooLarge,
+        tine_store::StoreError::Closed => ErrorKind::BrokenPipe,
+    }
+}
+
+/// The live graph-text count a snapshot must match, or the failure that
+/// prevented counting: the scan's own error, or the first unreadable entry
+/// (I-9: the cause reaches the backup token, not a fixed `Other`).
+fn count_store_text(store: &Store, area: Area) -> Result<usize, ErrorKind> {
+    let listing = store
+        .scan_area(area, None)
+        .map_err(|error| store_error_kind(&error))?;
+    if let Some((_, error)) = listing
+        .unreadable
+        .iter()
+        .find(|(_, error)| error.kind != ErrorKind::NotFound)
+    {
+        return Err(error.kind);
+    }
+    Ok(listing
+        .files
+        .iter()
+        .filter(|entry| is_graph_text(&entry.id))
+        .count())
 }
 
 struct PartialBackup {
@@ -336,18 +616,34 @@ fn cleanup_partial_backups(base: &std::path::Path) {
 
 fn do_backup_source_cancellable(
     app: &tauri::AppHandle,
+    store: &Store,
     source: BackupSource,
     suffix: &str,
     cancelled: &dyn Fn() -> bool,
-) -> (usize, bool) {
+) -> BackupOutcome {
     if cancelled() {
-        return (0, false);
+        return BackupOutcome::failed(0, "cancelled", ErrorKind::Interrupted);
     }
     let Ok(data_dir) = app.path().app_data_dir() else {
-        return (0, false);
+        return BackupOutcome::failed(0, "app-data", ErrorKind::NotFound);
     };
     let base = data_dir.join("backups").join(root_backup_id(&source.root));
-    let stamp = backup_stamp();
+    let outcome = write_snapshot(&base, store, source, suffix, cancelled);
+    if outcome.failure.is_none() && outcome.copied > 0 {
+        prune_backups(&base, backup_keep(app));
+    }
+    outcome
+}
+
+/// Copy one snapshot into `base` and publish it; the caller prunes.
+fn write_snapshot(
+    base: &std::path::Path,
+    store: &Store,
+    source: BackupSource,
+    suffix: &str,
+    cancelled: &dyn Fn() -> bool,
+) -> BackupOutcome {
+    let stamp = tine_core::date::utc_backup_stamp();
     let name = if suffix.is_empty() {
         stamp
     } else {
@@ -360,7 +656,9 @@ fn do_backup_source_cancellable(
     // snapshots' files, leaving a later restore with stale notes/sidecars. `create_dir`
     // (non-recursive) fails atomically if the name is taken, so we bump a counter
     // until we win an unused name.
-    let _ = std::fs::create_dir_all(&base);
+    if let Err(error) = std::fs::create_dir_all(&base) {
+        return BackupOutcome::failed(0, "reserve", error.kind());
+    }
     cleanup_partial_backups(&base);
     let mut final_dest = base.join(&name);
     let mut dest = base.join(format!(".partial-{name}"));
@@ -373,67 +671,134 @@ fn do_backup_source_cancellable(
                 dest = base.join(format!(".partial-{name}-{k}"));
                 k += 1;
             }
-            Err(_) => return (0, false),
+            Err(error) => return BackupOutcome::failed(0, "reserve", error.kind()),
         }
     }
     let mut partial = PartialBackup {
         path: dest.clone(),
         committed: false,
     };
-    let (ct, ft) = copy_graph_text_tree_cancellable(
-        &source.root,
+    let live_text_n = match count_store_text(store, Area::Graph) {
+        Ok(count) => count,
+        Err(kind) => return BackupOutcome::failed(0, "inventory", kind),
+    };
+    // Graph text anywhere in the graph-text scope, at its graph-relative path.
+    let (ct, ft, et) = copy_store_area(
+        store,
+        Area::Graph,
         &dest.join("graph"),
-        &source.graph_text_scope,
+        is_graph_text,
         cancelled,
     );
-    let (ca, fa) = copy_asset_sidecars_dir_cancellable(
-        &source.assets,
-        &dest.join(dir_name(&source.assets)),
+    let (ca, fa, ea) = copy_store_area(
+        store,
+        Area::Assets,
+        &dest.join(&source.assets_dir_name),
+        is_asset_sidecar,
         cancelled,
     );
     let mut n = ct + ca;
     let mut failed = ft + fa;
-    if !cancelled() && source.cfg.exists() {
-        let out = dest.join("logseq");
-        if std::fs::create_dir_all(&out).is_ok()
-            && std::fs::copy(&source.cfg, out.join("config.edn")).is_ok()
-        {
-            n += 1;
-        } else {
-            failed += 1;
+    let mut first_failure = et.or(ea);
+    if !cancelled() {
+        match store.scan_area(Area::Meta, None) {
+            Ok(listing) => {
+                failed += listing
+                    .unreadable
+                    .iter()
+                    .filter(|(_, error)| error.kind != std::io::ErrorKind::NotFound)
+                    .count();
+                if first_failure.is_none() {
+                    first_failure = listing
+                        .unreadable
+                        .iter()
+                        .find(|(_, error)| error.kind != ErrorKind::NotFound)
+                        .map(|(_, error)| BackupFailure {
+                            phase: "config",
+                            kind: error.kind,
+                        });
+                }
+                if let Some(config) = listing.files.iter().find(|entry| entry.rel == "config.edn") {
+                    match store.read(&config.id, None) {
+                        Ok((bytes, _)) => {
+                            let result =
+                                std::fs::create_dir_all(dest.join("logseq")).and_then(|_| {
+                                    write_payload(&dest.join("logseq/config.edn"), &bytes)
+                                });
+                            match result {
+                                Ok(()) => n += 1,
+                                Err(error) => {
+                                    failed += 1;
+                                    first_failure.get_or_insert(BackupFailure {
+                                        phase: "config",
+                                        kind: error.kind(),
+                                    });
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            failed += 1;
+                            first_failure.get_or_insert(BackupFailure {
+                                phase: "config",
+                                kind: store_error_kind(&error),
+                            });
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                failed += 1;
+                first_failure.get_or_insert(BackupFailure {
+                    phase: "config",
+                    kind: store_error_kind(&error),
+                });
+            }
         }
     }
-    let complete = !cancelled() && failed == 0;
+    if cancelled() {
+        return BackupOutcome::failed(n, "cancelled", ErrorKind::Interrupted);
+    }
+    if failed != 0 {
+        return BackupOutcome {
+            copied: n,
+            failure: first_failure.or(Some(BackupFailure {
+                phase: "copy",
+                kind: ErrorKind::Other,
+            })),
+        };
+    }
+    if ct != live_text_n {
+        return BackupOutcome::failed(n, "inventory", ErrorKind::InvalidData);
+    }
     if n == 0 {
-        return (0, complete);
+        return BackupOutcome::success(0);
     }
-    if complete {
-        let Ok(files) = snapshot_inventory(&dest) else {
-            return (n, false);
-        };
-        if files.len() != n {
-            return (n, false);
-        }
-        let manifest = SnapshotManifest {
-            schema: SNAPSHOT_SCHEMA,
-            root: std::fs::canonicalize(&source.root)
-                .unwrap_or(source.root.clone())
-                .display()
-                .to_string(),
-            journals_dir: source.journals_dir,
-            pages_dir: source.pages_dir,
-            graph_text_policy: Some(source.graph_text_policy),
-            files,
-            complete: true,
-        };
-        if write_manifest(&dest, &manifest).is_err() || std::fs::rename(&dest, &final_dest).is_err()
-        {
-            return (n, false);
-        }
-        partial.committed = true;
+    let files = match snapshot_inventory(&dest) {
+        Ok(files) => files,
+        Err(error) => return BackupOutcome::failed(n, "inventory", error.kind()),
+    };
+    if files.len() != n {
+        return BackupOutcome::failed(n, "inventory", ErrorKind::InvalidData);
     }
-    prune_backups(&base, backup_keep(app));
-    (n, complete)
+    let manifest = SnapshotManifest {
+        schema: SNAPSHOT_SCHEMA,
+        root: source.root.display().to_string(),
+        journals_dir: source.journals_dir,
+        pages_dir: source.pages_dir,
+        graph_text_policy: Some(SnapshotGraphTextPolicy {
+            version: GRAPH_TEXT_SCOPE_VERSION,
+            hidden: source.hidden,
+            hidden_parse_failed_closed: source.hidden_parse_failed_closed,
+        }),
+        writer: Some(SNAPSHOT_WRITER.into()),
+        files,
+        complete: true,
+    };
+    if let Err(error) = publish_snapshot(&dest, &final_dest, &manifest) {
+        return BackupOutcome::failed(n, "publish", error.kind());
+    }
+    partial.committed = true;
+    BackupOutcome::success(n)
 }
 
 fn backup_keep(app: &tauri::AppHandle) -> usize {
@@ -456,32 +821,34 @@ pub(crate) fn get_backup_keep(app: tauri::AppHandle) -> usize {
     backup_keep(&app)
 }
 
-/// Async: lowering the cap deletes whole-graph snapshot copies.
 #[tauri::command]
 pub(crate) async fn set_backup_keep(
     keep: usize,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
-) -> Result<(), crate::command_error::CommandError> {
+) -> Result<(), String> {
     let keep = keep.clamp(1, 1000);
-    update_settings(&app, |json| {
-        json["backup_keep"] = serde_json::json!(keep);
-    })?;
-    // Apply the new (possibly lower) cap to the current graph's snapshots now.
-    let graph = slot_for_context(&state)?.graph();
-    drop(state);
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Some(base) = backup_base(&app, &graph) {
+    // Resolved first, as before the write: a stale binding still writes the
+    // setting (device-wide) but prunes nothing, exactly like the old order.
+    let slot = slot_for_context(&state);
+    // Settings fsync and snapshot pruning (R3): off the main thread.
+    crate::state::off_ui(move || {
+        update_settings(&app, |json| {
+            json["backup_keep"] = serde_json::json!(keep);
+        })?;
+        // Apply the new (possibly lower) cap to the current graph's snapshots now.
+        let slot = slot?;
+        if let Some(base) = backup_base(&app, &slot.root_key) {
             prune_backups(&base, keep);
         }
+        Ok(())
     })
     .await
-    .map_err(crate::command_error::CommandError::worker)
 }
 
 /// The backup directory for the currently-open graph (`<app-data>/backups/<id>`).
-fn backup_base(app: &tauri::AppHandle, graph: &Graph) -> Option<PathBuf> {
-    backup_base_for_root(app, &graph.root)
+fn backup_base(app: &tauri::AppHandle, root: &std::path::Path) -> Option<PathBuf> {
+    backup_base_for_root(app, root)
 }
 
 fn backup_base_for_root(app: &tauri::AppHandle, root: &std::path::Path) -> Option<PathBuf> {
@@ -489,47 +856,12 @@ fn backup_base_for_root(app: &tauri::AppHandle, root: &std::path::Path) -> Optio
     Some(data_dir.join("backups").join(root_backup_id(root)))
 }
 
-/// The Concord base-ledger directory for a graph root
-/// (`<app-data>/concord-ledger/<id>`, same root-id convention as backups —
-/// outside the sync tree, invisible to transports). See ADR 0056.
-pub(crate) fn concord_ledger_dir(
-    app: &tauri::AppHandle,
-    root: &std::path::Path,
-) -> Option<PathBuf> {
-    let data_dir = app.path().app_data_dir().ok()?;
-    Some(data_dir.join("concord-ledger").join(root_backup_id(root)))
-}
-
-/// The Direct-move recovery store for a graph root
-/// (`<app-data>/direct-move-recovery/<id>`, the same root-id convention as
-/// backups and the Concord ledger).
-///
-/// App-private and graph-keyed, deliberately OUTSIDE the graph tree: the graph
-/// directory is Logseq-shared surface and a sync transport carries it, so a
-/// device's in-flight move record must never travel with it
-/// (`docs/contracts/direct-move-recovery.md` §2).
-pub(crate) fn direct_move_recovery_dir(
-    app: &tauri::AppHandle,
-    root: &std::path::Path,
-) -> Option<PathBuf> {
-    let data_dir = app.path().app_data_dir().ok()?;
-    Some(
-        data_dir
-            .join("direct-move-recovery")
-            .join(root_backup_id(root)),
-    )
-}
-
 #[tauri::command]
 pub(crate) async fn list_backups(
     app: tauri::AppHandle,
     state: GraphContext<'_>,
-) -> Result<Vec<BackupInfo>, crate::command_error::CommandError> {
-    let root = slot_for_context(&state)
-        .map_err(crate::command_error::CommandError::from)?
-        .graph()
-        .root
-        .clone();
+) -> Result<Vec<BackupInfo>, String> {
+    let root = slot_for_context(&state)?.root_key.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let Some(base) = backup_base_for_root(&app, &root) else {
             return Vec::new();
@@ -537,11 +869,11 @@ pub(crate) async fn list_backups(
         list_backups_from_base(&base, &root)
     })
     .await
-    .map_err(crate::command_error::CommandError::worker)
+    .map_err(|error| error.to_string())
 }
 
 fn list_backups_from_base(base: &std::path::Path, root: &std::path::Path) -> Vec<BackupInfo> {
-    let current_root = std::fs::canonicalize(root)
+    let current_root = Store::canonical_root(root)
         .unwrap_or_else(|_| root.to_path_buf())
         .display()
         .to_string();
@@ -570,1465 +902,24 @@ fn list_backups_from_base(base: &std::path::Path, root: &std::path::Path) -> Vec
     out
 }
 
-/// Restore a snapshot into the live graph. Schema 3 restores graph text at its
-/// exact graph-relative path; schema 2 retains the original configured-root
-/// behavior. Asset `.edn` sidecars and `config.edn` are restored by both.
-/// Takes a fresh safety snapshot of the *current* state first.
-/// Destructive — the frontend confirms.
-#[tauri::command]
-pub(crate) async fn restore_backup(
-    stamp: String,
-    app: tauri::AppHandle,
-    state: GraphContext<'_>,
-) -> Result<(), crate::command_error::CommandError> {
-    // Guard against path traversal — a stamp is only ever `YYYY-MM-DD_HH-MM-SS`.
-    if stamp.is_empty()
-        || !stamp
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(crate::command_error::CommandError::prose(
-            "invalid backup id",
-        ));
-    }
-    let slot = slot_for_context(&state).map_err(crate::command_error::CommandError::from)?;
-    let graph = slot.graph();
-    let source = BackupSource::from_graph(&graph);
-    drop(graph);
-    drop(slot);
-    let restore_app = app.clone();
-    let (app, label, _) = crate::state::owned_graph_context(state)?;
-    // The restore rewrites graph text and config.edn under the transition
-    // lane, so the reopen below is the only one (GH #543, audit R9-15b).
-    crate::state::refresh_graph(app, label, move || {
-        let base = backup_base_for_root(&restore_app, &source.root)
-            .ok_or_else(|| crate::command_error::CommandError::prose("no app-data dir"))?;
-        restore_from_backup_source(&stamp, &base, source, |source| {
-            do_backup_source(&restore_app, source.clone(), "pre-restore")
-        })
-    })
-    .await
-}
-
-fn restore_from_backup_source(
-    stamp: &str,
-    base: &std::path::Path,
-    source: BackupSource,
-    snapshot_current: impl FnOnce(&BackupSource) -> (usize, bool),
-) -> Result<(), crate::command_error::CommandError> {
-    let assets = source.assets.clone();
-    let cfg_dest = source.cfg.clone();
-    let src = base.join(&stamp);
-    if !src.is_dir() {
-        return Err(crate::command_error::CommandError::prose(
-            "backup not found",
-        ));
-    }
-    let manifest = read_manifest(&src).ok_or_else(|| {
-        crate::command_error::CommandError::prose("backup is incomplete or unverified")
-    })?;
-    let current_root = std::fs::canonicalize(&source.root).unwrap_or_else(|_| source.root.clone());
-    if manifest.root != current_root.display().to_string() {
-        return Err(crate::command_error::CommandError::prose(
-            "backup belongs to a different graph",
-        ));
-    }
-    if !verify_snapshot(&src, &manifest) {
-        return Err(crate::command_error::CommandError::prose(
-            "backup contents do not match the verified manifest",
-        ));
-    }
-    let safe_dir = |raw: &str| -> Result<PathBuf, crate::command_error::CommandError> {
-        let rel = std::path::Path::new(raw);
-        if raw.is_empty()
-            || raw.contains('\\')
-            || rel.is_absolute()
-            || rel
-                .components()
-                .any(|c| !matches!(c, std::path::Component::Normal(_)))
-        {
-            return Err(crate::command_error::CommandError::prose(
-                "backup contains an unsafe graph directory",
-            ));
-        }
-        Ok(current_root.join(rel))
+/// A snapshot the keep-count must leave alone: another Tine wrote it.
+fn is_foreign_snapshot(dir: &std::path::Path) -> bool {
+    let Some(manifest) = std::fs::read(dir.join(SNAPSHOT_MANIFEST))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+    else {
+        return false;
     };
-    let legacy_restore_roots = (manifest.schema == LEGACY_SNAPSHOT_SCHEMA)
-        .then(|| {
-            Ok::<_, crate::command_error::CommandError>((
-                safe_dir(&manifest.journals_dir)?,
-                safe_dir(&manifest.pages_dir)?,
-            ))
-        })
-        .transpose()?;
-    let validate_live_layout = || -> Result<(), crate::command_error::CommandError> {
-        ensure_target_within_root(&current_root, &cfg_dest).map_err(|e| {
-            crate::command_error::CommandError::backup(format!("unsafe live config path: {e}"))
-        })?;
-        if let Some((journals, pages)) = &legacy_restore_roots {
-            for (label, path) in [("journals", journals), ("pages", pages)] {
-                ensure_target_within_root(&current_root, path).map_err(|e| {
-                    crate::command_error::CommandError::backup(format!(
-                        "unsafe live {label} path: {e}"
-                    ))
-                })?;
-            }
+    match manifest.get("schema").and_then(serde_json::Value::as_u64) {
+        None => false,
+        Some(schema) if schema == u64::from(LEGACY_SNAPSHOT_SCHEMA) => false,
+        Some(schema) if schema == u64::from(SNAPSHOT_SCHEMA) => {
+            manifest.get("writer").and_then(serde_json::Value::as_str) != Some(SNAPSHOT_WRITER)
         }
-        // Assets have a separate, explicitly-approved capability and therefore
-        // validate against their own canonical root. For ordinary graphs this is
-        // still `<graph>/assets`; for GH #127 it is the approved external target.
-        ensure_target_within_root(&assets, &assets).map_err(|e| {
-            crate::command_error::CommandError::backup(format!("unsafe live assets path: {e}"))
-        })?;
-        Ok(())
-    };
-    validate_live_layout()?;
-    let recovery_id = format!(
-        "{}-pre-restore-extras-{}-{}",
-        backup_stamp(),
-        std::process::id(),
-        RESTORE_RECOVERY_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    );
-    let graph_recovery = reserve_restore_recovery(
-        &current_root,
-        std::path::Path::new("logseq/.tine-trash"),
-        &recovery_id,
-    )
-    .map_err(|e| {
-        crate::command_error::CommandError::backup(format!(
-            "couldn't create restore recovery area: {e}"
-        ))
-    })?;
-    let asset_recovery = reserve_restore_recovery(
-        &assets,
-        std::path::Path::new(ASSET_RESTORE_RECOVERY_DIR),
-        &recovery_id,
-    )
-    .map_err(|e| {
-        crate::command_error::CommandError::backup(format!(
-            "couldn't create asset restore recovery area: {e}"
-        ))
-    })?;
-    // Safety net: snapshot the current (pre-restore) state first, under a distinct
-    // name so it can't collide with (or be pruned by) the launch snapshot the
-    // post-restore reload will take. Abort if the snapshot fails while the live
-    // graph has content — never run a destructive restore without a way back.
-    let (_, complete) = snapshot_current(&source);
-    // A destructive restore must be fully reversible. A successful empty
-    // snapshot is valid; any failed copy or traversal aborts the restore.
-    if !complete {
-        return Err(crate::command_error::CommandError::backup(
-            "couldn't create a complete pre-restore safety snapshot — restore aborted",
-        ));
-    }
-    // The safety snapshot can take time. Revalidate after it so a symlink swap
-    // cannot redirect the destructive copy/delete phase outside the graph.
-    validate_live_layout()?;
-    let snapshot_scope = match manifest.schema {
-        LEGACY_SNAPSHOT_SCHEMA => source.graph_text_scope.clone(),
-        SNAPSHOT_SCHEMA => manifest
-            .graph_text_policy
-            .as_ref()
-            .ok_or_else(|| {
-                crate::command_error::CommandError::prose(
-                    "backup does not record its graph-text policy",
-                )
-            })?
-            .scope()?,
-        _ => {
-            return Err(crate::command_error::CommandError::prose(
-                "backup uses an unsupported snapshot schema",
-            ))
-        }
-    };
-    // Copies happen before extras are moved to recovery, so failure leaves
-    // either the original or a recoverable copy.
-    match manifest.schema {
-        LEGACY_SNAPSHOT_SCHEMA => {
-            let (restore_journals, restore_pages) = legacy_restore_roots
-                .as_ref()
-                .expect("legacy restore roots were validated");
-            restore_md_dir(
-                &src.join("journals"),
-                restore_journals,
-                &graph_recovery,
-                std::path::Path::new("journals"),
-            )
-            .map_err(|e| {
-                crate::command_error::CommandError::backup(format!("restore journals failed: {e}"))
-            })?;
-            restore_md_dir(
-                &src.join("pages"),
-                restore_pages,
-                &graph_recovery,
-                std::path::Path::new("pages"),
-            )
-            .map_err(|e| {
-                crate::command_error::CommandError::backup(format!("restore pages failed: {e}"))
-            })?;
-        }
-        SNAPSHOT_SCHEMA => restore_graph_text_tree(
-            &src.join("graph"),
-            &current_root,
-            &snapshot_scope,
-            &graph_recovery,
-        )
-        .map_err(|e| {
-            crate::command_error::CommandError::backup(format!("restore graph text failed: {e}"))
-        })?,
-        _ => {
-            return Err(crate::command_error::CommandError::prose(
-                "backup uses an unsupported snapshot schema",
-            ))
-        }
-    }
-    restore_asset_sidecars_dir(
-        &src.join(dir_name(&assets)),
-        &assets,
-        &asset_recovery,
-        std::path::Path::new(""),
-    )
-    .map_err(|e| {
-        crate::command_error::CommandError::backup(format!("restore asset sidecars failed: {e}"))
-    })?;
-    let src_cfg = src.join("logseq").join("config.edn");
-    if src_cfg.exists() {
-        let cfg_relative = live_relative(&graph_recovery, &cfg_dest).map_err(|e| {
-            crate::command_error::CommandError::backup(format!("unsafe live config path: {e}"))
-        })?;
-        open_or_create_real_parent(
-            &graph_recovery.root,
-            cfg_relative
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new("")),
-            &graph_recovery.directory_barriers,
-            RestoreDirectoryRoot::Live,
-            false,
-        )
-        .map_err(|e| {
-            crate::command_error::CommandError::backup(format!(
-                "couldn't prepare live config directory: {e}"
-            ))
-        })?;
-        if cfg_dest.exists() {
-            move_live_to_recovery(
-                &graph_recovery,
-                &cfg_dest,
-                std::path::Path::new("logseq/config.edn"),
-            )
-            .map_err(|e| {
-                crate::command_error::CommandError::backup(format!(
-                    "recover current config failed: {e}"
-                ))
-            })?;
-        }
-        atomic_copy_new_into_live(&graph_recovery, &src_cfg, &cfg_dest).map_err(|e| {
-            crate::command_error::CommandError::backup(format!("restore config failed: {e}"))
-        })?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-fn collect_legacy_restore_graph_text(
-    snapshot: &Path,
-    journals_dir: &str,
-    pages_dir: &str,
-) -> Result<Vec<(String, String)>, crate::command_error::CommandError> {
-    fn collect(
-        source: &Path,
-        graph_dir: &str,
-        relative: &Path,
-        output: &mut Vec<(String, String)>,
-    ) -> Result<(), crate::command_error::CommandError> {
-        let entries = std::fs::read_dir(source).map_err(|error| {
-            crate::command_error::CommandError::backup(format!(
-                "cannot read verified backup directory: {error}"
-            ))
-        })?;
-        for entry in entries {
-            let entry = entry.map_err(|error| {
-                crate::command_error::CommandError::backup(format!(
-                    "cannot read verified backup: {error}"
-                ))
-            })?;
-            let path = entry.path();
-            let child = relative.join(entry.file_name());
-            if is_graph_text(&path) {
-                let tail = child
-                    .components()
-                    .map(|component| match component {
-                        std::path::Component::Normal(value) => {
-                            value.to_str().map(str::to_string).ok_or_else(|| {
-                                crate::command_error::CommandError::prose(
-                                    "backup contains a non-UTF-8 graph path",
-                                )
-                            })
-                        }
-                        _ => Err(crate::command_error::CommandError::prose(
-                            "backup contains an unsafe graph path",
-                        )),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-                    .join("/");
-                let content = std::fs::read_to_string(&path).map_err(|error| {
-                    crate::command_error::CommandError::backup(format!(
-                        "cannot read verified backup page: {error}"
-                    ))
-                })?;
-                output.push((format!("{graph_dir}/{tail}"), content));
-            } else if is_visible_real_dir(&entry).map_err(|error| {
-                crate::command_error::CommandError::backup(format!(
-                    "cannot inspect verified backup: {error}"
-                ))
-            })? {
-                collect(&path, graph_dir, &child, output)?;
-            }
-        }
-        Ok(())
-    }
-
-    let mut files = Vec::new();
-    collect(
-        &snapshot.join("journals"),
-        journals_dir,
-        Path::new(""),
-        &mut files,
-    )?;
-    collect(
-        &snapshot.join("pages"),
-        pages_dir,
-        Path::new(""),
-        &mut files,
-    )?;
-    files.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(files)
-}
-
-#[cfg(test)]
-fn collect_scoped_restore_graph_text(
-    source: &Path,
-    scope: &GraphTextScope,
-) -> Result<Vec<(String, String)>, crate::command_error::CommandError> {
-    let mut files = Vec::new();
-    if !source.is_dir() {
-        return Ok(files);
-    }
-    let mut stack = vec![(source.to_path_buf(), PathBuf::new())];
-    while let Some((directory, relative)) = stack.pop() {
-        let entries = std::fs::read_dir(&directory).map_err(|error| {
-            crate::command_error::CommandError::backup(format!(
-                "cannot read verified backup directory: {error}"
-            ))
-        })?;
-        for entry in entries {
-            let entry = entry.map_err(|error| {
-                crate::command_error::CommandError::backup(format!(
-                    "cannot read verified backup: {error}"
-                ))
-            })?;
-            let file_type = entry.file_type().map_err(|error| {
-                crate::command_error::CommandError::backup(format!(
-                    "cannot inspect verified backup: {error}"
-                ))
-            })?;
-            let child = relative.join(entry.file_name());
-            let child_text = graph_relative_text(&child).ok_or_else(|| {
-                crate::command_error::CommandError::prose("backup contains an unsafe graph path")
-            })?;
-            if file_type.is_file() && scope.is_eligible(&child_text) {
-                let content = std::fs::read_to_string(entry.path()).map_err(|error| {
-                    crate::command_error::CommandError::backup(format!(
-                        "cannot read verified backup page: {error}"
-                    ))
-                })?;
-                files.push((child_text, content));
-            } else if file_type.is_dir() && scope.should_descend(&child_text) {
-                stack.push((entry.path(), child));
-            } else if file_type.is_symlink() {
-                return Err(crate::command_error::CommandError::prose(
-                    "backup contains a symbolic link",
-                ));
-            }
-        }
-    }
-    files.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(files)
-}
-
-struct RestoreRecovery {
-    root_path: PathBuf,
-    root: Dir,
-    dir: Dir,
-    directory_barriers: RestoreDirectoryBarriers,
-    #[cfg(test)]
-    path: PathBuf,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum RestoreDirectoryRoot {
-    Live,
-    Recovery,
-}
-
-#[derive(Default)]
-struct RestoreDirectoryBarriers {
-    synced: std::sync::Mutex<
-        std::collections::HashMap<
-            (RestoreDirectoryRoot, std::path::PathBuf),
-            tine_core::directory_identity::DirectoryIdentity,
-        >,
-    >,
-}
-
-impl RestoreDirectoryBarriers {
-    fn observe_or_sync_changed(
-        &self,
-        root: RestoreDirectoryRoot,
-        relative: &std::path::Path,
-        identity: tine_core::directory_identity::DirectoryIdentity,
-        directory: &Dir,
-        reprove_first_observation: bool,
-    ) -> std::io::Result<()> {
-        let mut synced = self
-            .synced
-            .lock()
-            .map_err(|_| std::io::Error::other("restore directory barrier cache is poisoned"))?;
-        let key = (root, relative.to_path_buf());
-        if synced.get(&key) == Some(&identity) {
-            return Ok(());
-        }
-        if synced.contains_key(&key) || reprove_first_observation {
-            sync_restore_directory(directory)?;
-        }
-        synced.insert(key, identity);
-        Ok(())
-    }
-
-    fn record_changed(
-        &self,
-        root: RestoreDirectoryRoot,
-        relative: &std::path::Path,
-        identity: tine_core::directory_identity::DirectoryIdentity,
-    ) -> std::io::Result<()> {
-        self.synced
-            .lock()
-            .map_err(|_| std::io::Error::other("restore directory barrier cache is poisoned"))?
-            .insert((root, relative.to_path_buf()), identity);
-        Ok(())
+        Some(_) => true,
     }
 }
 
-#[cfg(test)]
-thread_local! {
-    static RESTORE_DIRECTORY_SYNC_FAILURE: std::cell::Cell<Option<(usize, i32)>> =
-        const { std::cell::Cell::new(None) };
-    static RESTORE_DIRECTORY_SYNC_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-fn fail_restore_directory_sync_at(call: usize, errno: i32) {
-    assert!(call > 0);
-    RESTORE_DIRECTORY_SYNC_FAILURE.with(|failure| failure.set(Some((call, errno))));
-}
-
-#[cfg(test)]
-fn reset_restore_directory_sync_count() {
-    RESTORE_DIRECTORY_SYNC_COUNT.with(|count| count.set(0));
-}
-
-#[cfg(test)]
-fn restore_directory_sync_count() -> usize {
-    RESTORE_DIRECTORY_SYNC_COUNT.with(std::cell::Cell::get)
-}
-
-fn sync_restore_directory(dir: &Dir) -> std::io::Result<()> {
-    #[cfg(test)]
-    RESTORE_DIRECTORY_SYNC_COUNT.with(|count| count.set(count.get().saturating_add(1)));
-    #[cfg(test)]
-    RESTORE_DIRECTORY_SYNC_FAILURE.with(|failure| {
-        if let Some((remaining, errno)) = failure.get() {
-            if remaining == 1 {
-                failure.set(None);
-                return Err(std::io::Error::from_raw_os_error(errno));
-            }
-            failure.set(Some((remaining - 1, errno)));
-        }
-        Ok(())
-    })?;
-
-    match dir.try_clone()?.into_std_file().sync_all() {
-        Ok(()) => Ok(()),
-        Err(error) if tine_core::model::dir_fsync_error_is_unsupported(&error) => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
-/// A cross-directory rename changes two directory entries. Persist the
-/// destination first so the retained copy becomes durable before acknowledging
-/// retirement of the only live name.
-fn sync_restore_rename_parents(destination: &Dir, source: &Dir) -> std::io::Result<()> {
-    sync_restore_directory(destination)?;
-    sync_restore_directory(source)
-}
-
-/// Reserve and bind a unique recovery directory beneath a live graph/assets
-/// capability. All later writes and moves are relative to these handles: a
-/// pre-existing symlink ancestor is rejected by cap-std, and a pathname swap
-/// after reservation cannot redirect recovery outside the approved root.
-fn reserve_restore_recovery(
-    root_path: &std::path::Path,
-    recovery_parent: &std::path::Path,
-    recovery_id: &str,
-) -> std::io::Result<RestoreRecovery> {
-    let root = Dir::open_ambient_dir(root_path, ambient_authority())?;
-    let directory_barriers = RestoreDirectoryBarriers::default();
-    let parent = open_or_create_real_parent(
-        &root,
-        recovery_parent,
-        &directory_barriers,
-        RestoreDirectoryRoot::Live,
-        true,
-    )?;
-    parent.create_dir(recovery_id)?;
-    sync_restore_directory(&parent)?;
-    let dir = parent.open_dir(recovery_id)?;
-    let recovery_relative = recovery_parent.join(recovery_id);
-    let recovery_identity = tine_core::directory_identity::directory_identity(&dir)
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
-    directory_barriers.record_changed(
-        RestoreDirectoryRoot::Live,
-        &recovery_relative,
-        recovery_identity,
-    )?;
-    Ok(RestoreRecovery {
-        root_path: root_path.to_path_buf(),
-        root,
-        dir,
-        directory_barriers,
-        #[cfg(test)]
-        path: root_path.join(recovery_parent).join(recovery_id),
-    })
-}
-
-fn open_or_create_real_parent(
-    root: &Dir,
-    relative: &std::path::Path,
-    barriers: &RestoreDirectoryBarriers,
-    root_kind: RestoreDirectoryRoot,
-    reprove_first_observation: bool,
-) -> std::io::Result<Dir> {
-    let mut current = root.try_clone()?;
-    let mut current_relative = std::path::PathBuf::new();
-    for component in relative.components() {
-        let std::path::Component::Normal(name) = component else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "restore recovery path is not relative",
-            ));
-        };
-        let created = match current.create_dir(name) {
-            Ok(()) => true,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
-            Err(error) => return Err(error),
-        };
-        let metadata = current.symlink_metadata(name)?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "restore recovery path contains a non-directory entry",
-            ));
-        }
-        let child = current.open_dir(name)?;
-        let child_identity = tine_core::directory_identity::directory_identity(&child)
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
-        let child_relative = current_relative.join(name);
-        if created {
-            sync_restore_directory(&current)?;
-            barriers.record_changed(root_kind, &child_relative, child_identity)?;
-        } else {
-            // Re-prove a possible prior-attempt residue once per exact opened
-            // child identity. A concurrent replacement at the same path gets a
-            // different identity and therefore a fresh parent barrier.
-            barriers.observe_or_sync_changed(
-                root_kind,
-                &child_relative,
-                child_identity,
-                &current,
-                reprove_first_observation,
-            )?;
-        }
-        current = child;
-        current_relative = child_relative;
-    }
-    Ok(current)
-}
-
-fn open_real_parent(root: &Dir, relative: &std::path::Path) -> std::io::Result<Dir> {
-    let mut current = root.try_clone()?;
-    for component in relative.components() {
-        let std::path::Component::Normal(name) = component else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "live restore path is not relative",
-            ));
-        };
-        let metadata = current.symlink_metadata(name)?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "live restore path contains a non-directory entry",
-            ));
-        }
-        current = current.open_dir(name)?;
-    }
-    Ok(current)
-}
-
-fn live_relative(area: &RestoreRecovery, live: &std::path::Path) -> std::io::Result<PathBuf> {
-    live.strip_prefix(&area.root_path)
-        .map(PathBuf::from)
-        .map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "live restore path is outside its bound root",
-            )
-        })
-}
-
-/// Rename relative to two already-bound directory handles and fail if the
-/// destination exists. Linux/Android and Apple expose native no-replace
-/// rename-at syscalls. Windows uses a capability-bound hard link followed by
-/// source removal, so a concurrent sync-service delivery cannot be replaced.
-fn rename_noreplace_between(
-    from_dir: &Dir,
-    from: &std::path::Path,
-    to_dir: &Dir,
-    to: &std::ffi::OsStr,
-) -> std::io::Result<()> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
-        let from = std::ffi::CString::new(from.as_os_str().as_bytes())?;
-        let to = std::ffi::CString::new(to.as_bytes())?;
-        // Invoke the renameat2 SYSCALL directly instead of libc's `renameat2`
-        // wrapper. The wrapper is a bionic symbol only exported from Android
-        // API 30, so linking it leaves libtine_lib.so with an unresolved
-        // `renameat2` that fails `dlopen` at launch on Android 9 / API 28
-        // (GH #192). The syscall itself has existed since Linux 3.15 (present on
-        // Android's kernel), and `syscall` is exported since API 1, so no
-        // API-gated symbol remains. Behaviour and errno handling are unchanged.
-        let result = unsafe {
-            libc::syscall(
-                libc::SYS_renameat2,
-                from_dir.as_raw_fd(),
-                from.as_ptr(),
-                to_dir.as_raw_fd(),
-                to.as_ptr(),
-                libc::RENAME_NOREPLACE as libc::c_uint,
-            )
-        };
-        return (result == 0)
-            .then_some(())
-            .ok_or_else(std::io::Error::last_os_error);
-    }
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    {
-        use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
-        let from = std::ffi::CString::new(from.as_os_str().as_bytes())?;
-        let to = std::ffi::CString::new(to.as_bytes())?;
-        let result = unsafe {
-            libc::renameatx_np(
-                from_dir.as_raw_fd(),
-                from.as_ptr(),
-                to_dir.as_raw_fd(),
-                to.as_ptr(),
-                libc::RENAME_EXCL as libc::c_uint,
-            )
-        };
-        return (result == 0)
-            .then_some(())
-            .ok_or_else(std::io::Error::last_os_error);
-    }
-    #[cfg(target_os = "windows")]
-    {
-        from_dir.hard_link(from, to_dir, std::path::Path::new(to))?;
-        from_dir.remove_file(from)
-    }
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "windows"
-    )))]
-    {
-        compile_error!("backup restore publication requires an audited Tine platform arm");
-    }
-}
-
-/// Publish a fully-written same-directory temp without replacing a concurrent
-/// creator. Android needs rename rather than hard links because graph storage
-/// may live on emulated/external filesystems; Windows uses a capability-bound
-/// hard link because its portable rename primitive may replace the target.
-fn publish_temp_noreplace(
-    parent: &Dir,
-    temp: &std::path::Path,
-    name: &std::ffi::OsStr,
-) -> std::io::Result<()> {
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "ios"
-    ))]
-    {
-        rename_noreplace_between(parent, temp, parent, name)
-    }
-    #[cfg(target_os = "windows")]
-    {
-        parent.hard_link(temp, parent, std::path::Path::new(name))?;
-        parent.remove_file(temp)
-    }
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "windows"
-    )))]
-    {
-        compile_error!("backup temp publication requires an audited Tine platform arm");
-    }
-}
-
-/// Copy a verified snapshot file into a bound live directory without following
-/// ambient pathnames or replacing a concurrent creator. A same-directory temp
-/// is fsynced and then published with an atomic create-if-absent rename.
-fn atomic_copy_new_into_live(
-    area: &RestoreRecovery,
-    source: &std::path::Path,
-    live: &std::path::Path,
-) -> std::io::Result<()> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COPY_SEQ: AtomicU64 = AtomicU64::new(0);
-
-    let relative = live_relative(area, live)?;
-    let name = relative.file_name().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "live restore destination has no file name",
-        )
-    })?;
-    let parent = open_or_create_real_parent(
-        &area.root,
-        relative
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("")),
-        &area.directory_barriers,
-        RestoreDirectoryRoot::Live,
-        false,
-    )?;
-    let temp = format!(
-        ".tine-restore-{}-{}.tmp",
-        std::process::id(),
-        COPY_SEQ.fetch_add(1, Ordering::Relaxed)
-    );
-    let result = (|| {
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        let mut output = parent.open_with(&temp, &options)?.into_std();
-        let mut input = std::fs::File::open(source)?;
-        std::io::copy(&mut input, &mut output)?;
-        output.sync_all()?;
-        drop(output);
-        publish_temp_noreplace(&parent, std::path::Path::new(&temp), name)?;
-        // The live name is authoritative after the atomic no-replace rename.
-        // Same dir-fsync policy as the save path (DUP-5): tolerate
-        // "unsupported here", REPORT a real EIO/ENOSPC — a restore whose
-        // rename may not survive a crash must not report success.
-        sync_restore_directory(&parent)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = parent.remove_file(&temp);
-    }
-    result
-}
-
-fn ensure_target_within_root(
-    root: &std::path::Path,
-    target: &std::path::Path,
-) -> std::io::Result<()> {
-    let canonical_root = std::fs::canonicalize(root)?;
-    let mut existing = target;
-    while std::fs::symlink_metadata(existing).is_err() {
-        existing = existing.parent().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "target has no existing ancestor",
-            )
-        })?;
-    }
-    let canonical_existing = std::fs::canonicalize(existing)?;
-    let expected = existing
-        .strip_prefix(root)
-        .map(|rel| canonical_root.join(rel))
-        .map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "target is outside graph root",
-            )
-        })?;
-    if canonical_existing == expected {
-        Ok(())
-    } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "target escapes graph root",
-        ))
-    }
-}
-
-/// Atomically detach the current live name into the restore recovery tree. A
-/// writer with an open handle continues writing the recovered inode; a writer
-/// that recreates the live name is left untouched. The recovery roots are kept
-/// on the live graph/assets filesystems; if an unexpected nested mount still
-/// makes `rename` cross-device, preserve a copy but abort the restore without
-/// removing the live file rather than risk a copy-then-delete race.
-fn move_live_to_recovery(
-    area: &RestoreRecovery,
-    live: &std::path::Path,
-    recovery_relative: &std::path::Path,
-) -> std::io::Result<()> {
-    let live_relative = live_relative(area, live)?;
-    let live_name = live_relative.file_name().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "live restore source has no file name",
-        )
-    })?;
-    let live_parent = open_real_parent(
-        &area.root,
-        live_relative
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("")),
-    )?;
-    let recovery_name = recovery_relative.file_name().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "restore recovery destination has no file name",
-        )
-    })?;
-    let recovery_parent = open_or_create_real_parent(
-        &area.dir,
-        recovery_relative
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("")),
-        &area.directory_barriers,
-        RestoreDirectoryRoot::Recovery,
-        true,
-    )?;
-    match recovery_parent.symlink_metadata(recovery_name) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Ok(_) => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "restore recovery destination already exists",
-            ))
-        }
-        Err(error) => return Err(error),
-    }
-    match rename_noreplace_between(
-        &live_parent,
-        std::path::Path::new(live_name),
-        &recovery_parent,
-        recovery_name,
-    ) {
-        Ok(()) => {
-            sync_restore_rename_parents(&recovery_parent, &live_parent)?;
-            Ok(())
-        }
-        Err(rename_err) => {
-            // Unexpected nested mounts can still produce EXDEV. Preserve a
-            // bounded copy inside the bound recovery directory, but leave the
-            // live name untouched and abort instead of copy-then-delete.
-            let mut source = live_parent.open(live_name)?.into_std();
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            let mut copy = recovery_parent
-                .open_with(recovery_name, &options)?
-                .into_std();
-            std::io::copy(&mut source, &mut copy)?;
-            copy.sync_all()?;
-            sync_restore_directory(&recovery_parent)?;
-            Err(std::io::Error::new(
-                rename_err.kind(),
-                format!(
-                    "live file copied to recovery but could not be atomically detached: {rename_err}"
-                ),
-            ))
-        }
-    }
-}
-
-/// Restore graph text files in `dest` from `src`. Each file is copied through
-/// the shared atomic helper, so a failure or power-loss mid-copy can never leave
-/// a live note truncated/half-written. Copies happen FIRST; only after they all
-/// succeed do we move `dest` graph text files not in the backup to a recovery
-/// area. A copy error returns early leaving a superset of files. Other files are
-/// left untouched.
-static RESTORE_RECOVERY_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-fn restore_md_dir(
-    src: &std::path::Path,
-    dest: &std::path::Path,
-    recovery: &RestoreRecovery,
-    recovery_prefix: &std::path::Path,
-) -> std::io::Result<()> {
-    if !src.is_dir() {
-        return Ok(());
-    }
-    ensure_target_within_root(&recovery.root_path, dest)?;
-    let dest_relative = live_relative(recovery, dest)?;
-    open_or_create_real_parent(
-        &recovery.root,
-        &dest_relative,
-        &recovery.directory_barriers,
-        RestoreDirectoryRoot::Live,
-        false,
-    )?;
-    let mut restored: std::collections::HashSet<std::path::PathBuf> =
-        std::collections::HashSet::new();
-    restore_md_copy(
-        src,
-        dest,
-        std::path::Path::new(""),
-        &mut restored,
-        recovery,
-        recovery_prefix,
-    )?;
-    delete_unrestored_md(
-        dest,
-        std::path::Path::new(""),
-        &restored,
-        recovery,
-        recovery_prefix,
-    )?;
-    Ok(())
-}
-
-fn restore_graph_text_tree(
-    source: &Path,
-    graph_root: &Path,
-    scope: &GraphTextScope,
-    recovery: &RestoreRecovery,
-) -> std::io::Result<()> {
-    if !source.is_dir() {
-        return Ok(());
-    }
-    ensure_target_within_root(&recovery.root_path, graph_root)?;
-    let mut restored = std::collections::HashSet::new();
-    restore_scoped_graph_text_copy(
-        source,
-        graph_root,
-        Path::new(""),
-        scope,
-        &mut restored,
-        recovery,
-    )?;
-    retire_unrestored_graph_text(graph_root, Path::new(""), scope, &restored, recovery)
-}
-
-fn restore_scoped_graph_text_copy(
-    source: &Path,
-    graph_root: &Path,
-    relative: &Path,
-    scope: &GraphTextScope,
-    restored: &mut std::collections::HashSet<PathBuf>,
-    recovery: &RestoreRecovery,
-) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(source.join(relative))? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let child = relative.join(entry.file_name());
-        let child_text = graph_relative_text(&child).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "non-UTF-8 graph path")
-        })?;
-        if file_type.is_file() && scope.is_eligible(&child_text) {
-            let target = graph_root.join(&child);
-            ensure_target_within_root(&recovery.root_path, &target)?;
-            if target.exists() {
-                move_live_to_recovery(recovery, &target, &Path::new("graph").join(&child))?;
-            }
-            atomic_copy_new_into_live(recovery, &entry.path(), &target)?;
-            restored.insert(child);
-        } else if file_type.is_dir() && scope.should_descend(&child_text) {
-            ensure_target_within_root(&recovery.root_path, &graph_root.join(&child))?;
-            restore_scoped_graph_text_copy(source, graph_root, &child, scope, restored, recovery)?;
-        } else if file_type.is_symlink() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "snapshot graph tree contains a symbolic link",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn retire_unrestored_graph_text(
-    graph_root: &Path,
-    relative: &Path,
-    scope: &GraphTextScope,
-    restored: &std::collections::HashSet<PathBuf>,
-    recovery: &RestoreRecovery,
-) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(graph_root.join(relative))? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let child = relative.join(entry.file_name());
-        let Some(child_text) = graph_relative_text(&child) else {
-            continue;
-        };
-        if file_type.is_file() && scope.is_eligible(&child_text) {
-            if !restored.contains(&child) {
-                let live = graph_root.join(&child);
-                ensure_target_within_root(&recovery.root_path, &live)?;
-                move_live_to_recovery(recovery, &live, &Path::new("graph").join(&child))?;
-            }
-        } else if file_type.is_dir() && scope.should_descend(&child_text) {
-            retire_unrestored_graph_text(graph_root, &child, scope, restored, recovery)?;
-        }
-    }
-    Ok(())
-}
-
-fn restore_md_copy(
-    src: &std::path::Path,
-    dest: &std::path::Path,
-    rel: &std::path::Path,
-    restored: &mut std::collections::HashSet<std::path::PathBuf>,
-    recovery: &RestoreRecovery,
-    recovery_prefix: &std::path::Path,
-) -> std::io::Result<()> {
-    for e in std::fs::read_dir(src)? {
-        let e = e?;
-        let p = e.path();
-        let rel_child = rel.join(e.file_name());
-        if is_graph_text(&p) {
-            let target = dest.join(&rel_child);
-            ensure_target_within_root(&recovery.root_path, &target)?;
-            if target.exists() {
-                move_live_to_recovery(recovery, &target, &recovery_prefix.join(&rel_child))?;
-            }
-            atomic_copy_new_into_live(recovery, &p, &target)?;
-            restored.insert(rel_child);
-        } else if is_visible_real_dir(&e)? {
-            ensure_target_within_root(&recovery.root_path, &dest.join(&rel_child))?;
-            let child_relative = live_relative(recovery, &dest.join(&rel_child))?;
-            open_or_create_real_parent(
-                &recovery.root,
-                &child_relative,
-                &recovery.directory_barriers,
-                RestoreDirectoryRoot::Live,
-                false,
-            )?;
-            restore_md_copy(&p, dest, &rel_child, restored, recovery, recovery_prefix)?;
-        }
-    }
-    Ok(())
-}
-
-fn delete_unrestored_md(
-    dest: &std::path::Path,
-    rel: &std::path::Path,
-    restored: &std::collections::HashSet<std::path::PathBuf>,
-    recovery: &RestoreRecovery,
-    recovery_prefix: &std::path::Path,
-) -> std::io::Result<()> {
-    let dir = dest.join(rel);
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    for e in std::fs::read_dir(&dir)? {
-        let e = e?;
-        let p = e.path();
-        let rel_child = rel.join(e.file_name());
-        if is_graph_text(&p) {
-            if !restored.contains(&rel_child) {
-                ensure_target_within_root(&recovery.root_path, &p)?;
-                move_live_to_recovery(recovery, &p, &recovery_prefix.join(&rel_child))?;
-            }
-        } else if is_visible_real_dir(&e)? {
-            delete_unrestored_md(dest, &rel_child, restored, recovery, recovery_prefix)?;
-        }
-    }
-    Ok(())
-}
-
-fn restore_asset_sidecars_dir(
-    src: &std::path::Path,
-    dest: &std::path::Path,
-    recovery: &RestoreRecovery,
-    recovery_prefix: &std::path::Path,
-) -> std::io::Result<()> {
-    if !src.is_dir() {
-        return Ok(());
-    }
-    ensure_target_within_root(&recovery.root_path, dest)?;
-    let dest_relative = live_relative(recovery, dest)?;
-    open_or_create_real_parent(
-        &recovery.root,
-        &dest_relative,
-        &recovery.directory_barriers,
-        RestoreDirectoryRoot::Live,
-        false,
-    )?;
-    let mut restored: std::collections::HashSet<std::path::PathBuf> =
-        std::collections::HashSet::new();
-    restore_asset_sidecars_copy(
-        src,
-        dest,
-        std::path::Path::new(""),
-        &mut restored,
-        recovery,
-        recovery_prefix,
-    )?;
-    delete_unrestored_asset_sidecars(
-        dest,
-        std::path::Path::new(""),
-        &restored,
-        recovery,
-        recovery_prefix,
-    )?;
-    Ok(())
-}
-
-fn restore_asset_sidecars_copy(
-    src: &std::path::Path,
-    dest: &std::path::Path,
-    rel: &std::path::Path,
-    restored: &mut std::collections::HashSet<std::path::PathBuf>,
-    recovery: &RestoreRecovery,
-    recovery_prefix: &std::path::Path,
-) -> std::io::Result<()> {
-    for e in std::fs::read_dir(src)? {
-        let e = e?;
-        let ft = e.file_type()?;
-        let rel_child = rel.join(e.file_name());
-        let p = e.path();
-        if ft.is_dir() && !is_asset_restore_recovery_entry(&e) {
-            ensure_target_within_root(&recovery.root_path, &dest.join(&rel_child))?;
-            let child_relative = live_relative(recovery, &dest.join(&rel_child))?;
-            open_or_create_real_parent(
-                &recovery.root,
-                &child_relative,
-                &recovery.directory_barriers,
-                RestoreDirectoryRoot::Live,
-                false,
-            )?;
-            restore_asset_sidecars_copy(&p, dest, &rel_child, restored, recovery, recovery_prefix)?;
-        } else if ft.is_file() && is_asset_sidecar(&p) {
-            let target = dest.join(&rel_child);
-            ensure_target_within_root(&recovery.root_path, &target)?;
-            if target.exists() {
-                move_live_to_recovery(recovery, &target, &recovery_prefix.join(&rel_child))?;
-            }
-            atomic_copy_new_into_live(recovery, &p, &target)?;
-            restored.insert(rel_child);
-        }
-    }
-    Ok(())
-}
-
-fn delete_unrestored_asset_sidecars(
-    dest: &std::path::Path,
-    rel: &std::path::Path,
-    restored: &std::collections::HashSet<std::path::PathBuf>,
-    recovery: &RestoreRecovery,
-    recovery_prefix: &std::path::Path,
-) -> std::io::Result<()> {
-    let dir = dest.join(rel);
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    for e in std::fs::read_dir(&dir)? {
-        let e = e?;
-        let ft = e.file_type()?;
-        let rel_child = rel.join(e.file_name());
-        let p = e.path();
-        if ft.is_dir() && !is_asset_restore_recovery_entry(&e) {
-            delete_unrestored_asset_sidecars(
-                dest,
-                &rel_child,
-                restored,
-                recovery,
-                recovery_prefix,
-            )?;
-        } else if ft.is_file() && is_asset_sidecar(&p) && !restored.contains(&rel_child) {
-            ensure_target_within_root(&recovery.root_path, &p)?;
-            move_live_to_recovery(recovery, &p, &recovery_prefix.join(&rel_child))?;
-        }
-    }
-    Ok(())
-}
-
-/// Page/journal text files Tine snapshots + restores: Markdown and Org. Asset
-/// `.edn` sidecars are handled separately under `assets`; binary asset bytes stay
-/// excluded from snapshots by design.
-fn is_graph_text(p: &std::path::Path) -> bool {
-    p.extension().and_then(|x| x.to_str()).is_some_and(|ext| {
-        ext.eq_ignore_ascii_case("md")
-            || ext.eq_ignore_ascii_case("markdown")
-            || ext.eq_ignore_ascii_case("org")
-    })
-}
-
-fn graph_relative_text(relative: &Path) -> Option<String> {
-    let components = relative
-        .components()
-        .map(|component| match component {
-            std::path::Component::Normal(value) => value.to_str(),
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>()?;
-    (!components.is_empty()).then(|| components.join("/"))
-}
-
-fn is_asset_sidecar(p: &std::path::Path) -> bool {
-    matches!(p.extension().and_then(|x| x.to_str()), Some("edn"))
-}
-
-fn is_asset_restore_recovery_entry(e: &std::fs::DirEntry) -> bool {
-    e.file_name() == std::ffi::OsStr::new(ASSET_RESTORE_RECOVERY_DIR)
-}
-
-fn is_visible_real_dir(e: &std::fs::DirEntry) -> std::io::Result<bool> {
-    let hidden = e
-        .file_name()
-        .to_str()
-        .map(|s| s.starts_with('.'))
-        .unwrap_or(true);
-    if hidden {
-        return Ok(false);
-    }
-    e.file_type().map(|ft| ft.is_dir())
-}
-
-fn dir_name(p: &std::path::Path) -> String {
-    p.file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("dir")
-        .to_string()
-}
-/// Copy every graph text file from `src` to `dest`. Returns (copied, failed) so
-/// the caller can tell a complete snapshot from a partial one.
-#[cfg(test)]
-fn copy_md_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) {
-    copy_md_dir_cancellable(src, dest, &|| false)
-}
-
-#[cfg(test)]
-fn copy_md_dir_cancellable(
-    src: &std::path::Path,
-    dest: &std::path::Path,
-    cancelled: &dyn Fn() -> bool,
-) -> (usize, usize) {
-    if cancelled() {
-        return (0, 1);
-    }
-    // Materialize the dest dir up front, even when src has no .md files — so the
-    // snapshot records "this dir existed and was empty". Otherwise restore can't
-    // tell an empty-at-backup dir from a missing one, and leaves destination .md
-    // extras in place (mixing current files into the restored snapshot).
-    let _ = std::fs::create_dir_all(dest);
-    match std::fs::read_dir(src) {
-        Ok(_) => {}
-        // A genuinely-absent source dir (e.g. a graph with no pages/) is not a
-        // failure — there's nothing to snapshot. But a dir we CAN'T read
-        // (permission / I/O) MUST count as failed, so a pre-restore safety
-        // snapshot isn't falsely reported complete and a destructive restore can
-        // refuse to proceed without a trustworthy rollback.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (0, 0),
-        Err(_) => return (0, 1),
-    }
-    let (mut copied, mut failed) = (0usize, 0usize);
-    let mut stack = vec![(src.to_path_buf(), std::path::PathBuf::new())];
-    while let Some((dir, rel)) = stack.pop() {
-        if cancelled() {
-            return (copied, failed + 1);
-        }
-        let target_dir = dest.join(&rel);
-        let _ = std::fs::create_dir_all(&target_dir);
-        let rd = match std::fs::read_dir(&dir) {
-            Ok(rd) => rd,
-            Err(_) => {
-                failed += 1;
-                continue;
-            }
-        };
-        for entry in rd {
-            if cancelled() {
-                return (copied, failed + 1);
-            }
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(_) => {
-                    failed += 1;
-                    continue;
-                }
-            };
-            let p = entry.path();
-            let rel_child = rel.join(entry.file_name());
-            if is_graph_text(&p) {
-                let target = dest.join(&rel_child);
-                let copied_ok = target
-                    .parent()
-                    .map(std::fs::create_dir_all)
-                    .unwrap_or(Ok(()))
-                    .is_ok()
-                    && std::fs::copy(&p, &target).is_ok();
-                if copied_ok {
-                    copied += 1;
-                } else {
-                    failed += 1;
-                }
-            } else {
-                match is_visible_real_dir(&entry) {
-                    Ok(true) => stack.push((p, rel_child)),
-                    Ok(false) => {}
-                    Err(_) => failed += 1,
-                }
-            }
-        }
-    }
-    (copied, failed)
-}
-
-fn copy_graph_text_tree_cancellable(
-    root: &Path,
-    destination: &Path,
-    scope: &GraphTextScope,
-    cancelled: &dyn Fn() -> bool,
-) -> (usize, usize) {
-    if cancelled() {
-        return (0, 1);
-    }
-    if let Err(error) = std::fs::read_dir(root) {
-        return if error.kind() == std::io::ErrorKind::NotFound {
-            (0, 0)
-        } else {
-            (0, 1)
-        };
-    }
-    if std::fs::create_dir_all(destination).is_err() {
-        return (0, 1);
-    }
-
-    let (mut copied, mut failed) = (0usize, 0usize);
-    let mut stack = vec![(root.to_path_buf(), PathBuf::new())];
-    while let Some((directory, relative)) = stack.pop() {
-        if cancelled() {
-            return (copied, failed + 1);
-        }
-        let entries = match std::fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(_) => {
-                failed += 1;
-                continue;
-            }
-        };
-        for entry in entries {
-            if cancelled() {
-                return (copied, failed + 1);
-            }
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(_) => {
-                    failed += 1;
-                    continue;
-                }
-            };
-            let file_type = match entry.file_type() {
-                Ok(file_type) => file_type,
-                Err(_) => {
-                    failed += 1;
-                    continue;
-                }
-            };
-            let child = relative.join(entry.file_name());
-            let Some(child_text) = graph_relative_text(&child) else {
-                continue;
-            };
-            if file_type.is_file() && scope.is_eligible(&child_text) {
-                let target = destination.join(&child);
-                let copied_ok = target
-                    .parent()
-                    .map(std::fs::create_dir_all)
-                    .unwrap_or(Ok(()))
-                    .is_ok()
-                    && std::fs::copy(entry.path(), target).is_ok();
-                if copied_ok {
-                    copied += 1;
-                } else {
-                    failed += 1;
-                }
-            } else if file_type.is_dir() && scope.should_descend(&child_text) {
-                stack.push((entry.path(), child));
-            }
-        }
-    }
-    (copied, failed)
-}
-
-#[cfg(test)]
-fn copy_asset_sidecars_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) {
-    copy_asset_sidecars_dir_cancellable(src, dest, &|| false)
-}
-
-fn copy_asset_sidecars_dir_cancellable(
-    src: &std::path::Path,
-    dest: &std::path::Path,
-    cancelled: &dyn Fn() -> bool,
-) -> (usize, usize) {
-    if cancelled() {
-        return (0, 1);
-    }
-    let _ = std::fs::create_dir_all(dest);
-    let rd = match std::fs::read_dir(src) {
-        Ok(rd) => rd,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (0, 0),
-        Err(_) => return (0, 1),
-    };
-    let (mut copied, mut failed) = (0usize, 0usize);
-    for entry in rd {
-        if cancelled() {
-            return (copied, failed + 1);
-        }
-        let Ok(entry) = entry else {
-            failed += 1;
-            continue;
-        };
-        let p = entry.path();
-        let Ok(ft) = entry.file_type() else {
-            failed += 1;
-            continue;
-        };
-        let target = dest.join(entry.file_name());
-        if ft.is_dir() && !is_asset_restore_recovery_entry(&entry) {
-            let (c, f) = copy_asset_sidecars_dir_cancellable(&p, &target, cancelled);
-            copied += c;
-            failed += f;
-        } else if ft.is_file() && is_asset_sidecar(&p) {
-            if std::fs::create_dir_all(dest).is_ok() && std::fs::copy(&p, &target).is_ok() {
-                copied += 1;
-            } else {
-                failed += 1;
-            }
-        }
-    }
-    (copied, failed)
-}
 fn prune_backups(base: &std::path::Path, keep: usize) {
     let Ok(rd) = std::fs::read_dir(base) else {
         return;
@@ -2053,34 +944,16 @@ fn prune_backups(base: &std::path::Path, keep: usize) {
                     .unwrap_or(false)
         })
         .collect();
+    // A snapshot another Tine sharing this app-data dir wrote (master's schema
+    // 3, which carries no og writer mark; docs/app-identity.md) is listed and
+    // restorable here but is not ours to count or delete.
+    dirs.retain(|dir| !is_foreign_snapshot(dir));
     dirs.sort(); // timestamp-named → chronological
     if dirs.len() > keep {
         for d in &dirs[..dirs.len() - keep] {
             let _ = std::fs::remove_dir_all(d);
         }
     }
-}
-/// UTC `YYYY-MM-DD_HH-MM-SS` from the system clock (Hinnant civil-from-days).
-fn backup_stamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let days = secs.div_euclid(86_400);
-    let rem = secs.rem_euclid(86_400);
-    let (h, mi, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    let z = days + 719_468;
-    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if m <= 2 { y + 1 } else { y };
-    format!("{year:04}-{m:02}-{d:02}_{h:02}-{mi:02}-{s:02}")
 }
 
 #[cfg(test)]
@@ -2094,23 +967,125 @@ mod tests {
         dir
     }
 
+    /// A released Tine sharing this app-data dir (docs/app-identity.md) writes
+    /// schema-3 snapshots without this build's writer mark. They list and
+    /// restore here, but the launch keep-count must never delete them: they
+    /// are that Tine's backups. This build's own schema-2 and marked schema-3
+    /// snapshots are the ones the keep-count counts.
     #[test]
-    fn gh550_launch_backup_waits_for_startup_to_go_idle() {
-        use std::time::Duration;
-        let s = Duration::from_secs;
-        // The old schedule copied the graph one second after open, whatever
-        // startup was still doing.
-        assert!(!launch_backup_due(s(1), None));
-        assert!(!launch_backup_due(s(60), None), "warm still running");
-        assert!(
-            !launch_backup_due(s(60), Some(s(1))),
-            "the frontend's released whole-graph fetches follow warm-done"
+    fn prune_never_deletes_another_tines_snapshots() {
+        let base = scratch("backup-prune-foreign");
+        let snapshot = |name: &str, schema: u32, writer: &str| {
+            let dir = base.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join(SNAPSHOT_MANIFEST),
+                format!(r#"{{"schema":{schema},"root":"/g","journals_dir":"journals","pages_dir":"pages",{writer}"files":[],"complete":true}}"#),
+            )
+            .unwrap();
+        };
+        let ours = format!(r#""writer":"{SNAPSHOT_WRITER}","#);
+        snapshot("2026-09-01_00-00-00", 3, "");
+        snapshot("2026-09-02_00-00-00", LEGACY_SNAPSHOT_SCHEMA, "");
+        snapshot("2026-09-03_00-00-00", 3, r#""writer":"master","#);
+        snapshot("2026-09-04_00-00-00", SNAPSHOT_SCHEMA, &ours);
+        snapshot("2026-09-05_00-00-00", SNAPSHOT_SCHEMA, &ours);
+
+        prune_backups(&base, 2);
+
+        let mut left: Vec<String> = std::fs::read_dir(&base)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "2026-09-01_00-00-00",
+                "2026-09-03_00-00-00",
+                "2026-09-04_00-00-00",
+                "2026-09-05_00-00-00"
+            ]
         );
-        assert!(launch_backup_due(s(60), Some(LAUNCH_BACKUP_QUIET)));
-        assert!(
-            launch_backup_due(LAUNCH_BACKUP_DEADLINE, None),
-            "a warm that never reports done must not cost the safety net"
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// I-22: a snapshot mirrors the graph's directory depth. Linux caps a
+    /// path near 2000 one-letter levels, Windows long paths near 16,000, so
+    /// the Linux-maximal tree runs on one ninth of a 2 MiB worker stack.
+    #[test]
+    fn deep_payload_directories_sync_without_recursion() {
+        let root = scratch("backup-deep-payload");
+        let mut dir = root.clone();
+        while dir.as_os_str().len() < 3990 {
+            dir.push("d");
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024 / 9)
+            .spawn(move || sync_payload_dirs(&root))
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn backup_payload_and_directories_sync_before_publication() {
+        let root = scratch("backup-publication-order");
+        let partial = root.join(".partial-1");
+        std::fs::create_dir_all(partial.join("pages/nested")).unwrap();
+        BACKUP_OPS.with(|ops| ops.borrow_mut().clear());
+        write_payload(&partial.join("pages/nested/a.md"), b"- durable\n").unwrap();
+        let final_dest = root.join("complete-1");
+        let manifest = SnapshotManifest {
+            schema: LEGACY_SNAPSHOT_SCHEMA,
+            root: "test".into(),
+            journals_dir: "journals".into(),
+            pages_dir: "pages".into(),
+            graph_text_policy: None,
+            writer: None,
+            files: vec![],
+            complete: true,
+        };
+        publish_snapshot(&partial, &final_dest, &manifest).unwrap();
+        let ops = BACKUP_OPS.with(|ops| ops.borrow().clone());
+        let position = |name| ops.iter().position(|op| *op == name).unwrap();
+        assert!(position("payload_sync") < position("payload_dir_sync"));
+        assert!(position("payload_dir_sync") < position("manifest_sync"));
+        assert!(position("manifest_sync") < position("publish_rename"));
+        assert!(position("publish_rename") < position("publication_dir_sync"),
+            "I-1/I-2: backup publication follows fsynced payload and directory; exemplar backup.rs publish_snapshot");
+        assert_eq!(
+            std::fs::read(final_dest.join("pages/nested/a.md")).unwrap(),
+            b"- durable\n"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn launch_backup_copy_failure_reaches_diagnostic_adapter() {
+        let root = scratch("launch-backup-copy-error");
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::write(root.join("pages/note.md"), b"- keep\n").unwrap();
+        let dest = root.join("blocked-destination");
+        std::fs::write(&dest, b"already a file").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let (copied, failed, failure) =
+            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| false);
+        assert_eq!((copied, failed), (0, 1));
+        let failure = failure.unwrap();
+        let token = launch_failure_token(&BackupOutcome {
+            copied,
+            failure: Some(failure.clone()),
+        })
+        .unwrap();
+        assert_eq!(token, format!("backup-failed:pages:{:?}", failure.kind),
+            "I-9: forced copy failure must reach the launch diagnostic adapter; exemplar backup.rs backup_async");
+        store.close();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2122,6 +1097,98 @@ mod tests {
         std::fs::create_dir_all(&underscore).unwrap();
         assert_ne!(root_backup_id(&dash), root_backup_id(&underscore));
         assert_eq!(root_backup_id(&dash), root_backup_id(&dash));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_backup_reads_graph_files_through_store() {
+        let root = scratch("store-backup-read");
+        std::fs::create_dir_all(root.join("pages/nested")).unwrap();
+        std::fs::create_dir_all(root.join("journals")).unwrap();
+        std::fs::write(root.join("pages/nested/Note.md"), b"- note\n").unwrap();
+        std::fs::write(root.join("pages/Ignore.txt"), b"skip").unwrap();
+        let (store, _, _) = Store::open(&root, tine_store::OpenOptions::default()).unwrap();
+        let dest = root.join("backup-out");
+        let (copied, failed, failure) =
+            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| false);
+        assert_eq!((copied, failed), (1, 0));
+        assert!(failure.is_none());
+        assert_eq!(
+            std::fs::read(dest.join("nested/Note.md")).unwrap(),
+            b"- note\n"
+        );
+        assert!(!dest.join("Ignore.txt").exists());
+        store.close();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_source_refuses_retargeted_external_assets() {
+        let root = scratch("retargeted-backup-assets");
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::create_dir_all(root.join("journals")).unwrap();
+        let first = root.with_extension("assets-first");
+        let second = root.with_extension("assets-second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::os::unix::fs::symlink(&first, root.join("assets")).unwrap();
+        let (store, _, _) = Store::open(
+            &root,
+            tine_store::OpenOptions {
+                approved_external_assets: Some(first.clone()),
+                watch: Default::default(),
+                launch_checkpoint: None,
+            },
+        )
+        .unwrap();
+        assert!(BackupSource::from_store(&store, &root).is_ok());
+        std::fs::remove_file(root.join("assets")).unwrap();
+        std::os::unix::fs::symlink(&second, root.join("assets")).unwrap();
+        assert!(BackupSource::from_store(&store, &root).is_err());
+        store.close();
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(first);
+        let _ = std::fs::remove_dir_all(second);
+    }
+
+    /// REG-OG-C5-L06-B1 (I-9): a graph inventory that cannot be read names
+    /// its cause in the backup token. Before, every inventory failure became
+    /// `backup-failed:inventory:Other`, hiding a permission or disk error.
+    #[cfg(unix)]
+    #[test]
+    fn inventory_failure_keeps_its_error_kind() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("inventory-error-kind");
+        let graph = root.join("graph");
+        for dir in ["pages/locked", "journals", "assets", "logseq"] {
+            std::fs::create_dir_all(graph.join(dir)).unwrap();
+        }
+        std::fs::write(graph.join("pages/locked/a.md"), b"- a\n").unwrap();
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        let locked = graph.join("pages/locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let outcome = write_snapshot(&root.join("backups"), &store, source, "", &|| false);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let failure = outcome
+            .failure
+            .expect("an unreadable page directory fails the backup");
+        assert_eq!(
+            (failure.phase, failure.kind),
+            ("inventory", ErrorKind::PermissionDenied),
+            "I-9: the inventory failure's cause must reach the backup token; exemplar backup.rs count_store_text"
+        );
+
+        // A store closed under the backup reports that, not `Other`.
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        store.close();
+        let outcome = write_snapshot(&root.join("backups"), &store, source, "", &|| false);
+        let failure = outcome.failure.expect("a closed store fails the backup");
+        assert_eq!(
+            (failure.phase, failure.kind),
+            ("inventory", ErrorKind::BrokenPipe)
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2150,403 +1217,34 @@ mod tests {
     #[test]
     fn cancellable_copy_stops_before_traversing_the_tree() {
         let root = scratch("backup-cancel");
-        let src = root.join("src");
+        let graph = root.join("graph");
+        let src = graph.join("pages");
         let dest = root.join("dest");
         std::fs::create_dir_all(&src).unwrap();
+        for dir in ["journals", "assets", "logseq"] {
+            std::fs::create_dir_all(graph.join(dir)).unwrap();
+        }
         std::fs::write(src.join("note.md"), b"secret").unwrap();
-        assert_eq!(copy_md_dir_cancellable(&src, &dest, &|| true), (0, 1));
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let (copied, failed, failure) =
+            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| true);
+        assert_eq!((copied, failed), (0, 1));
+        assert_eq!(failure.unwrap().kind, ErrorKind::Interrupted);
         assert!(!dest.exists());
+        drop(store);
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn restore_recovery_roots_live_on_the_filesystems_they_detach_from() {
-        let root = scratch("restore-recovery-roots");
-        let graph = root.join("mounted-graph");
-        let assets = root.join("mounted-assets");
-        std::fs::create_dir_all(graph.join("logseq")).unwrap();
-        std::fs::create_dir_all(&assets).unwrap();
-        let graph_recovery = reserve_restore_recovery(
-            &graph,
-            std::path::Path::new("logseq/.tine-trash"),
-            "restore-1",
-        )
-        .unwrap();
-        let asset_recovery = reserve_restore_recovery(
-            &assets,
-            std::path::Path::new(ASSET_RESTORE_RECOVERY_DIR),
-            "restore-1",
-        )
-        .unwrap();
-
-        assert!(graph_recovery
-            .path
-            .starts_with(graph.join("logseq/.tine-trash")));
-        assert!(asset_recovery
-            .path
-            .starts_with(assets.join(".tine-restore-recovery")));
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn restore_recovery_creation_refuses_to_ack_a_failed_directory_barrier() {
-        let root = scratch("restore-recovery-create-barrier");
-        std::fs::create_dir_all(root.join("logseq/.tine-trash")).unwrap();
-
-        fail_restore_directory_sync_at(3, 5);
-        let error = match reserve_restore_recovery(
-            &root,
-            std::path::Path::new("logseq/.tine-trash"),
-            "restore-failure",
-        ) {
-            Ok(_) => panic!("a real directory barrier failure must reject recovery reservation"),
-            Err(error) => error,
-        };
-        assert_eq!(error.raw_os_error(), Some(5));
-        assert!(root.join("logseq/.tine-trash/restore-failure").is_dir());
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn restore_retirement_preserves_complete_bytes_when_a_directory_barrier_fails() {
-        let root = scratch("restore-retire-barrier");
-        let live = root.join("pages/note.md");
-        std::fs::create_dir_all(live.parent().unwrap()).unwrap();
-        std::fs::write(&live, b"authoritative live bytes").unwrap();
-        let recovery = reserve_restore_recovery(
-            &root,
-            std::path::Path::new("logseq/.tine-trash"),
-            "restore-retire",
-        )
-        .unwrap();
-        std::fs::create_dir_all(recovery.path.join("graph")).unwrap();
-
-        fail_restore_directory_sync_at(2, 5);
-        let error = move_live_to_recovery(&recovery, &live, std::path::Path::new("graph/note.md"))
-            .expect_err("retirement must not report success before both directory barriers");
-        assert_eq!(error.raw_os_error(), Some(5));
-        assert!(!live.exists());
-        assert_eq!(
-            std::fs::read(recovery.path.join("graph/note.md")).unwrap(),
-            b"authoritative live bytes"
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn restore_publication_never_acknowledges_an_unsynced_live_name() {
-        let root = scratch("restore-publish-barrier");
-        std::fs::create_dir_all(root.join("pages")).unwrap();
-        let source = root.join("snapshot-note.md");
-        let live = root.join("pages/note.md");
-        std::fs::write(&source, b"complete snapshot bytes").unwrap();
-        let recovery = reserve_restore_recovery(
-            &root,
-            std::path::Path::new("logseq/.tine-trash"),
-            "restore-publish",
-        )
-        .unwrap();
-
-        fail_restore_directory_sync_at(1, 5);
-        let error = atomic_copy_new_into_live(&recovery, &source, &live)
-            .expect_err("publication must fail closed when its directory barrier fails");
-        assert_eq!(error.raw_os_error(), Some(5));
-        assert_eq!(std::fs::read(&live).unwrap(), b"complete snapshot bytes");
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn restore_sibling_publications_do_not_repeat_ancestor_barriers() {
-        let root = scratch("restore-sibling-barriers");
-        std::fs::create_dir_all(root.join("pages")).unwrap();
-        let first_source = root.join("snapshot-first.md");
-        let second_source = root.join("snapshot-second.md");
-        std::fs::write(&first_source, b"first").unwrap();
-        std::fs::write(&second_source, b"second").unwrap();
-        let recovery = reserve_restore_recovery(
-            &root,
-            std::path::Path::new("logseq/.tine-trash"),
-            "restore-siblings",
-        )
-        .unwrap();
-
-        reset_restore_directory_sync_count();
-        atomic_copy_new_into_live(&recovery, &first_source, &root.join("pages/first.md")).unwrap();
-        atomic_copy_new_into_live(&recovery, &second_source, &root.join("pages/second.md"))
-            .unwrap();
-        assert_eq!(
-            restore_directory_sync_count(),
-            2,
-            "each sibling needs its changed leaf-parent barrier, but stable ancestors are proved once per restore"
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn restore_rebarriers_an_honestly_replaced_directory_identity() {
-        let root = scratch("restore-replaced-directory-barrier");
-        let pages = root.join("pages");
-        let displaced = root.join("pages.displaced");
-        std::fs::create_dir_all(&pages).unwrap();
-        let first_source = root.join("snapshot-first.md");
-        let second_source = root.join("snapshot-second.md");
-        std::fs::write(&first_source, b"first").unwrap();
-        std::fs::write(&second_source, b"second").unwrap();
-        let recovery = reserve_restore_recovery(
-            &root,
-            std::path::Path::new("logseq/.tine-trash"),
-            "restore-replacement",
-        )
-        .unwrap();
-
-        reset_restore_directory_sync_count();
-        atomic_copy_new_into_live(&recovery, &first_source, &pages.join("first.md")).unwrap();
-        std::fs::rename(&pages, &displaced).unwrap();
-        std::fs::create_dir(&pages).unwrap();
-        atomic_copy_new_into_live(&recovery, &second_source, &pages.join("second.md")).unwrap();
-
-        assert_eq!(std::fs::read(displaced.join("first.md")).unwrap(), b"first");
-        assert_eq!(std::fs::read(pages.join("second.md")).unwrap(), b"second");
-        assert_eq!(
-            restore_directory_sync_count(),
-            3,
-            "two leaf publications plus one changed-identity parent barrier are required"
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn restore_stack_keeps_capability_bound_publication_and_orders_crash_barriers() {
-        let source = include_str!("backup.rs");
-        let shared_publish = ["tine_core::model::", "atomic_write("].concat();
-        assert!(
-            !source.contains(&shared_publish),
-            "backup restore keeps its separate capability-bound publication stack"
-        );
-
-        let reserve = function_source(source, "fn reserve_restore_recovery(");
-        assert!(reserve.contains("sync_restore_directory(&parent)?"));
-
-        let create_parent = function_source(source, "fn open_or_create_real_parent(");
-        assert!(create_parent.contains("sync_restore_directory(&current)?"));
-
-        let publish = function_source(source, "fn atomic_copy_new_into_live(");
-        assert!(publish.contains("sync_restore_directory(&parent)?"));
-
-        let retire = function_source(source, "fn move_live_to_recovery(");
-        assert!(retire.contains("sync_restore_rename_parents(&recovery_parent, &live_parent)?"));
-
-        let no_replace = function_source(source, "fn rename_noreplace_between(");
-        assert!(no_replace.contains("#[cfg(target_os = \"windows\")]"));
-        assert!(no_replace.contains("from_dir.hard_link("));
-        assert!(no_replace.contains("target_os = \"windows\""));
-        assert!(no_replace.contains("compile_error!"));
-        assert!(
-            !no_replace.contains("#[cfg(not(any(\n        target_os = \"linux\",\n        target_os = \"android\",\n        target_os = \"macos\",\n        target_os = \"ios\"\n    )))]"),
-            "the fallback must not silently mean Windows"
-        );
-    }
-
-    fn function_source<'a>(source: &'a str, signature: &str) -> &'a str {
-        let start = source.find(signature).expect("function remains present");
-        &source[start
-            ..source[start..]
-                .find("\n}\n")
-                .map(|offset| start + offset + 3)
-                .unwrap_or(source.len())]
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn restore_recovery_symlink_cannot_redirect_or_replace_outside() {
-        use std::os::unix::fs::symlink;
-
-        let root = scratch("restore-recovery-symlink");
-        let graph = root.join("graph");
-        let outside = root.join("outside");
-        let live = graph.join("pages/secret.md");
-        let outside_target = outside.join("restore-1/pages/secret.md");
-        std::fs::create_dir_all(graph.join("logseq")).unwrap();
-        std::fs::create_dir_all(live.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(outside_target.parent().unwrap()).unwrap();
-        std::fs::write(&live, b"live graph data").unwrap();
-        std::fs::write(&outside_target, b"outside sentinel").unwrap();
-        symlink(&outside, graph.join("logseq/.tine-trash")).unwrap();
-
-        let result = reserve_restore_recovery(
-            &graph,
-            std::path::Path::new("logseq/.tine-trash"),
-            "restore-1",
-        );
-
-        assert!(
-            result.is_err(),
-            "a symlinked recovery ancestor must be rejected"
-        );
-        assert!(
-            live.exists(),
-            "an unsafe recovery setup must leave the live file untouched"
-        );
-        assert_eq!(std::fs::read(&outside_target).unwrap(), b"outside sentinel");
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn restore_recovery_path_swap_stays_on_the_bound_directory() {
-        use std::os::unix::fs::symlink;
-
-        let root = scratch("restore-recovery-swap");
-        let graph = root.join("graph");
-        let live = graph.join("pages/secret.md");
-        let outside = root.join("outside");
-        std::fs::create_dir_all(graph.join("logseq")).unwrap();
-        std::fs::create_dir_all(live.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(outside.join("pages")).unwrap();
-        std::fs::write(&live, b"live graph data").unwrap();
-        std::fs::write(outside.join("pages/secret.md"), b"outside sentinel").unwrap();
-        let recovery = reserve_restore_recovery(
-            &graph,
-            std::path::Path::new("logseq/.tine-trash"),
-            "restore-1",
-        )
-        .unwrap();
-        let displaced = recovery.path.with_extension("displaced");
-        std::fs::rename(&recovery.path, &displaced).unwrap();
-        symlink(&outside, &recovery.path).unwrap();
-
-        move_live_to_recovery(&recovery, &live, std::path::Path::new("pages/secret.md")).unwrap();
-
-        assert!(!live.exists());
-        assert_eq!(
-            std::fs::read(displaced.join("pages/secret.md")).unwrap(),
-            b"live graph data"
-        );
-        assert_eq!(
-            std::fs::read(outside.join("pages/secret.md")).unwrap(),
-            b"outside sentinel"
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn restore_live_path_swap_cannot_move_or_publish_outside() {
-        use std::os::unix::fs::symlink;
-
-        let root = scratch("restore-live-swap");
-        let graph = root.join("graph");
-        let pages = graph.join("pages");
-        let outside = root.join("outside");
-        let snapshot = root.join("snapshot.md");
-        std::fs::create_dir_all(graph.join("logseq")).unwrap();
-        std::fs::create_dir_all(&pages).unwrap();
-        std::fs::create_dir_all(&outside).unwrap();
-        std::fs::write(pages.join("secret.md"), b"live graph data").unwrap();
-        std::fs::write(outside.join("secret.md"), b"outside sentinel").unwrap();
-        std::fs::write(&snapshot, b"snapshot data").unwrap();
-        let recovery = reserve_restore_recovery(
-            &graph,
-            std::path::Path::new("logseq/.tine-trash"),
-            "restore-1",
-        )
-        .unwrap();
-        let displaced = graph.join("pages.displaced");
-        std::fs::rename(&pages, &displaced).unwrap();
-        symlink(&outside, &pages).unwrap();
-
-        assert!(move_live_to_recovery(
-            &recovery,
-            &pages.join("secret.md"),
-            std::path::Path::new("pages/secret.md"),
-        )
-        .is_err());
-        assert!(atomic_copy_new_into_live(&recovery, &snapshot, &pages.join("new.md")).is_err());
-
-        assert_eq!(
-            std::fs::read(displaced.join("secret.md")).unwrap(),
-            b"live graph data"
-        );
-        assert_eq!(
-            std::fs::read(outside.join("secret.md")).unwrap(),
-            b"outside sentinel"
-        );
-        assert!(!outside.join("new.md").exists());
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn restore_recovery_never_replaces_an_existing_entry() {
-        let root = scratch("restore-recovery-no-replace");
-        let graph = root.join("graph");
-        let live = graph.join("pages/secret.md");
-        std::fs::create_dir_all(graph.join("logseq")).unwrap();
-        std::fs::create_dir_all(live.parent().unwrap()).unwrap();
-        std::fs::write(&live, b"live graph data").unwrap();
-        let recovery = reserve_restore_recovery(
-            &graph,
-            std::path::Path::new("logseq/.tine-trash"),
-            "restore-1",
-        )
-        .unwrap();
-        recovery.dir.create_dir("pages").unwrap();
-        recovery
-            .dir
-            .write("pages/secret.md", b"recovery sentinel")
-            .unwrap();
-
-        assert!(
-            move_live_to_recovery(&recovery, &live, std::path::Path::new("pages/secret.md"),)
-                .is_err()
-        );
-        assert_eq!(std::fs::read(&live).unwrap(), b"live graph data");
-        assert_eq!(
-            std::fs::read(recovery.path.join("pages/secret.md")).unwrap(),
-            b"recovery sentinel"
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn windows_backup_recovery_rejects_a_concurrent_sync_delivery() {
-        let root = scratch("windows-restore-concurrent-delivery");
-        let live_path = root.join("live");
-        let recovery_path = root.join("recovery");
-        std::fs::create_dir_all(&live_path).unwrap();
-        std::fs::create_dir_all(&recovery_path).unwrap();
-        std::fs::write(live_path.join("page.md"), b"live source").unwrap();
-        std::fs::write(recovery_path.join("page.md"), b"sync delivery").unwrap();
-        let live = Dir::open_ambient_dir(&live_path, cap_std::ambient_authority()).unwrap();
-        let recovery = Dir::open_ambient_dir(&recovery_path, cap_std::ambient_authority()).unwrap();
-
-        assert!(rename_noreplace_between(
-            &live,
-            std::path::Path::new("page.md"),
-            &recovery,
-            std::ffi::OsStr::new("page.md"),
-        )
-        .is_err());
-        assert_eq!(
-            std::fs::read(live_path.join("page.md")).unwrap(),
-            b"live source"
-        );
-        assert_eq!(
-            std::fs::read(recovery_path.join("page.md")).unwrap(),
-            b"sync delivery"
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn complete_v2_and_v3_manifests_are_readable() {
+    fn only_complete_v2_manifests_are_readable() {
         let root = scratch("backup-manifest");
-        let mut manifest = SnapshotManifest {
+        let manifest = SnapshotManifest {
             schema: LEGACY_SNAPSHOT_SCHEMA,
             root: root.display().to_string(),
             journals_dir: "diary".into(),
             pages_dir: "archive/pages".into(),
             graph_text_policy: None,
+            writer: None,
             files: Vec::new(),
             complete: true,
         };
@@ -2554,16 +1252,6 @@ mod tests {
         let read = read_manifest(&root).unwrap();
         assert_eq!(read.pages_dir, "archive/pages");
         assert!(verify_snapshot(&root, &read));
-        let v3 = root.join("v3");
-        std::fs::create_dir_all(&v3).unwrap();
-        manifest.schema = SNAPSHOT_SCHEMA;
-        manifest.graph_text_policy = Some(SnapshotGraphTextPolicy {
-            version: GRAPH_TEXT_SCOPE_VERSION,
-            hidden: Vec::new(),
-            hidden_parse_failed_closed: false,
-        });
-        write_manifest(&v3, &manifest).unwrap();
-        assert_eq!(read_manifest(&v3).unwrap().schema, SNAPSHOT_SCHEMA);
         std::fs::write(root.join("journals.md"), "- changed\n").unwrap();
         assert!(!verify_snapshot(&root, &read));
         std::fs::remove_file(root.join("journals.md")).unwrap();
@@ -2593,6 +1281,7 @@ mod tests {
                 journals_dir: "journals".into(),
                 pages_dir: "pages".into(),
                 graph_text_policy: None,
+                writer: None,
                 files: vec![SnapshotFile {
                     path: "pages/note.md".into(),
                     sha256: "manifest metadata only".into(),
@@ -2616,69 +1305,15 @@ mod tests {
     }
 
     #[test]
-    fn restore_verifies_a_selected_snapshot_before_mutating_the_graph() {
-        let root = scratch("restore-verification-before-mutation");
-        let graph = root.join("graph");
-        let base = root.join("backups");
-        let stamp = "2026-07-22_12-00-00";
-        let snapshot = base.join(stamp);
-        let live_page = graph.join("pages/note.md");
-        std::fs::create_dir_all(live_page.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(snapshot.join("pages")).unwrap();
-        std::fs::write(&live_page, b"live graph data").unwrap();
-        std::fs::write(snapshot.join("pages/note.md"), b"tampered payload").unwrap();
-        write_manifest(
-            &snapshot,
-            &SnapshotManifest {
-                schema: LEGACY_SNAPSHOT_SCHEMA,
-                root: std::fs::canonicalize(&graph).unwrap().display().to_string(),
-                journals_dir: "journals".into(),
-                pages_dir: "pages".into(),
-                graph_text_policy: None,
-                files: vec![SnapshotFile {
-                    path: "pages/note.md".into(),
-                    sha256: "does not match the payload".into(),
-                }],
-                complete: true,
-            },
-        )
-        .unwrap();
-        let source = BackupSource {
-            assets: graph.join("assets"),
-            cfg: graph.join("logseq/config.edn"),
-            root: graph.clone(),
-            journals_dir: "journals".into(),
-            pages_dir: "pages".into(),
-            graph_text_scope: GraphTextScope::new(&[], false),
-            graph_text_policy: SnapshotGraphTextPolicy {
-                version: GRAPH_TEXT_SCOPE_VERSION,
-                hidden: Vec::new(),
-                hidden_parse_failed_closed: false,
-            },
-        };
-
-        PAYLOAD_HASH_READS.with(|reads| reads.set(0));
-        let result = restore_from_backup_source(stamp, &base, source, |_| {
-            std::fs::write(&live_page, b"mutated graph data").unwrap();
-            (1, true)
-        });
-
-        assert_eq!(
-            PAYLOAD_HASH_READS.with(|reads| reads.get()),
-            1,
-            "restoring must verify the selected snapshot payload"
-        );
-        assert!(result.is_err());
-        assert_eq!(std::fs::read(&live_page).unwrap(), b"live graph data");
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn copy_asset_sidecars_dir_copies_only_edn_recursively() {
         let root = scratch("copy-sidecars");
-        let src = root.join("assets");
+        let graph = root.join("graph");
+        let src = graph.join("assets");
         let dst = root.join("backup").join("assets");
         std::fs::create_dir_all(src.join("nested")).unwrap();
+        for dir in ["pages", "journals", "logseq"] {
+            std::fs::create_dir_all(graph.join(dir)).unwrap();
+        }
         std::fs::write(src.join("doc.edn"), "{:a 1}\n").unwrap();
         std::fs::write(src.join("nested").join("hl.edn"), "{:b 2}\n").unwrap();
         std::fs::write(src.join("image.png"), b"png").unwrap();
@@ -2690,7 +1325,11 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(copy_asset_sidecars_dir(&src, &dst), (2, 0));
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let (copied, failed, failure) =
+            copy_store_area(&store, Area::Assets, &dst, is_asset_sidecar, &|| false);
+        assert_eq!((copied, failed), (2, 0));
+        assert!(failure.is_none());
         assert_eq!(
             std::fs::read_to_string(dst.join("doc.edn")).unwrap(),
             "{:a 1}\n"
@@ -2702,506 +1341,146 @@ mod tests {
         assert!(!dst.join("image.png").exists());
         assert!(!dst.join("nested").join("image.png").exists());
         assert!(!dst.join(ASSET_RESTORE_RECOVERY_DIR).exists());
+        drop(store);
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn restore_preflight_collects_nested_text_with_configured_graph_paths() {
-        let root = scratch("restore-preflight");
-        let snapshot = root.join("snapshot");
-        std::fs::create_dir_all(snapshot.join("journals")).unwrap();
-        std::fs::create_dir_all(snapshot.join("pages").join("nested")).unwrap();
-        std::fs::write(snapshot.join("journals").join("day.org"), "* day\n").unwrap();
-        std::fs::write(
-            snapshot.join("pages").join("nested").join("Page.md"),
-            "- page\n",
-        )
-        .unwrap();
-        std::fs::write(snapshot.join("pages").join("ignored.txt"), "ignored\n").unwrap();
-
-        let files = collect_legacy_restore_graph_text(&snapshot, "diary", "notes").unwrap();
-        assert_eq!(
-            files,
-            vec![
-                ("diary/day.org".into(), "* day\n".into()),
-                ("notes/nested/Page.md".into(), "- page\n".into()),
-            ]
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn graph_wide_snapshot_preserves_eligible_paths_and_excludes_internal_trees() {
-        let root = scratch("graph-wide-snapshot");
-        let graph = root.join("graph");
-        let snapshot = root.join("snapshot/graph");
-        for directory in [
-            "pages",
-            "archive/自由",
-            "assets",
-            "logseq/.tine-trash/pages",
-            ".hidden",
-            "private",
-        ] {
-            std::fs::create_dir_all(graph.join(directory)).unwrap();
-        }
-        for (relative, bytes) in [
-            ("Root.md", b"root\n".as_slice()),
-            ("pages/Normal.org", b"* normal\n".as_slice()),
-            ("archive/自由/Elsewhere.Markdown", b"elsewhere\n".as_slice()),
-            ("assets/ignored.md", b"asset\n".as_slice()),
-            ("logseq/.tine-trash/pages/ignored.md", b"trash\n".as_slice()),
-            (".hidden/ignored.md", b"hidden\n".as_slice()),
-            ("private/ignored.md", b"private\n".as_slice()),
-        ] {
-            std::fs::write(graph.join(relative), bytes).unwrap();
-        }
-
-        let scope = GraphTextScope::new(&["private".into()], false);
-        let result = copy_graph_text_tree_cancellable(&graph, &snapshot, &scope, &|| false);
-
-        assert_eq!(result, (3, 0));
-        assert_eq!(std::fs::read(snapshot.join("Root.md")).unwrap(), b"root\n");
-        assert_eq!(
-            std::fs::read(snapshot.join("archive/自由/Elsewhere.Markdown")).unwrap(),
-            b"elsewhere\n"
-        );
-        for excluded in [
-            "assets/ignored.md",
-            "logseq/.tine-trash/pages/ignored.md",
-            ".hidden/ignored.md",
-            "private/ignored.md",
-        ] {
-            assert!(!snapshot.join(excluded).exists(), "{excluded}");
-        }
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn graph_wide_restore_is_exact_for_eligible_text_and_leaves_exclusions_untouched() {
-        let root = scratch("graph-wide-restore");
-        let graph = root.join("graph");
-        let snapshot = root.join("snapshot/graph");
-        for directory in [
-            "pages",
-            "archive/自由",
-            "assets",
-            "logseq/.tine-trash/pages",
-            ".hidden",
-            "private",
-        ] {
-            std::fs::create_dir_all(graph.join(directory)).unwrap();
-        }
-        std::fs::create_dir_all(snapshot.join("pages")).unwrap();
-        std::fs::create_dir_all(snapshot.join("archive/自由")).unwrap();
-        std::fs::write(snapshot.join("Root.md"), b"snapshot root\n").unwrap();
-        std::fs::write(snapshot.join("pages/Normal.org"), b"* snapshot\n").unwrap();
-        std::fs::write(
-            snapshot.join("archive/自由/Elsewhere.markdown"),
-            b"snapshot elsewhere\n",
-        )
-        .unwrap();
-        std::fs::write(graph.join("Root.md"), b"live root\n").unwrap();
-        std::fs::write(graph.join("archive/Stale.md"), b"stale\n").unwrap();
-        for (relative, bytes) in [
-            ("assets/untouched.md", b"asset\n".as_slice()),
-            (
-                "logseq/.tine-trash/pages/untouched.md",
-                b"trash\n".as_slice(),
-            ),
-            (".hidden/untouched.md", b"hidden\n".as_slice()),
-            ("private/untouched.md", b"private\n".as_slice()),
-        ] {
-            std::fs::write(graph.join(relative), bytes).unwrap();
-        }
-        let recovery = reserve_restore_recovery(
-            &graph,
-            Path::new("logseq/.tine-trash"),
-            "restore-graph-wide",
-        )
-        .unwrap();
-        let scope = GraphTextScope::new(&["private".into()], false);
-
-        restore_graph_text_tree(&snapshot, &graph, &scope, &recovery).unwrap();
-
-        assert_eq!(
-            std::fs::read(graph.join("Root.md")).unwrap(),
-            b"snapshot root\n"
-        );
-        assert_eq!(
-            std::fs::read(graph.join("archive/自由/Elsewhere.markdown")).unwrap(),
-            b"snapshot elsewhere\n"
-        );
-        assert!(!graph.join("archive/Stale.md").exists());
-        assert_eq!(
-            std::fs::read(recovery.path.join("graph/archive/Stale.md")).unwrap(),
-            b"stale\n"
-        );
-        for (relative, bytes) in [
-            ("assets/untouched.md", b"asset\n".as_slice()),
-            (
-                "logseq/.tine-trash/pages/untouched.md",
-                b"trash\n".as_slice(),
-            ),
-            (".hidden/untouched.md", b"hidden\n".as_slice()),
-            ("private/untouched.md", b"private\n".as_slice()),
-        ] {
-            assert_eq!(
-                std::fs::read(graph.join(relative)).unwrap(),
-                bytes,
-                "{relative}"
-            );
-        }
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn restore_collection_keeps_graph_relative_paths() {
-        let root = scratch("graph-restore-graph-wide");
-        let graph = root.join("graph");
-        std::fs::create_dir_all(graph.join("archive/自由")).unwrap();
-        std::fs::write(graph.join("Root.md"), "- root\n").unwrap();
-        std::fs::write(graph.join("archive/自由/Page.markdown"), "- nested\n").unwrap();
-        let scope = GraphTextScope::new(&[], false);
-
-        let files = collect_scoped_restore_graph_text(&graph, &scope).unwrap();
-
-        assert_eq!(
-            files,
-            vec![
-                ("Root.md".into(), "- root\n".into()),
-                ("archive/自由/Page.markdown".into(), "- nested\n".into()),
-            ]
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn schema_v3_restore_dispatches_graph_wide_payload() {
-        let root = scratch("schema-v3-restore");
-        let graph = root.join("graph");
-        let base = root.join("backups");
-        let snapshot = base.join("2026-08-11_12-00-00");
-        for directory in ["logseq", "assets", "archive"] {
-            std::fs::create_dir_all(graph.join(directory)).unwrap();
-        }
-        std::fs::create_dir_all(snapshot.join("graph/archive/自由")).unwrap();
-        std::fs::write(snapshot.join("graph/Root.md"), b"snapshot root\n").unwrap();
-        std::fs::write(
-            snapshot.join("graph/archive/自由/Page.markdown"),
-            b"snapshot nested\n",
-        )
-        .unwrap();
-        std::fs::write(graph.join("Root.md"), b"live root\n").unwrap();
-        std::fs::write(graph.join("archive/Stale.org"), b"* stale\n").unwrap();
-        let files = snapshot_inventory(&snapshot).unwrap();
-        write_manifest(
-            &snapshot,
-            &SnapshotManifest {
-                schema: SNAPSHOT_SCHEMA,
-                root: std::fs::canonicalize(&graph).unwrap().display().to_string(),
-                // Schema 3 paths are carried by graph/, not these schema-2
-                // compatibility fields.
-                journals_dir: "../unused-legacy-root".into(),
-                pages_dir: "/unused-legacy-root".into(),
-                graph_text_policy: Some(SnapshotGraphTextPolicy {
-                    version: GRAPH_TEXT_SCOPE_VERSION,
-                    hidden: Vec::new(),
-                    hidden_parse_failed_closed: false,
-                }),
-                files,
-                complete: true,
-            },
-        )
-        .unwrap();
-        let source = BackupSource {
-            assets: graph.join("assets"),
-            cfg: graph.join("logseq/config.edn"),
-            root: graph.clone(),
-            journals_dir: "journals".into(),
-            pages_dir: "pages".into(),
-            graph_text_scope: GraphTextScope::new(&[], false),
-            graph_text_policy: SnapshotGraphTextPolicy {
-                version: GRAPH_TEXT_SCOPE_VERSION,
-                hidden: Vec::new(),
-                hidden_parse_failed_closed: false,
-            },
-        };
-
-        restore_from_backup_source("2026-08-11_12-00-00", &base, source, |_| (1, true)).unwrap();
-
-        assert_eq!(
-            std::fs::read(graph.join("Root.md")).unwrap(),
-            b"snapshot root\n"
-        );
-        assert_eq!(
-            std::fs::read(graph.join("archive/自由/Page.markdown")).unwrap(),
-            b"snapshot nested\n"
-        );
-        assert!(!graph.join("archive/Stale.org").exists());
-        let recovered = graph.join("logseq/.tine-trash");
-        assert!(walk_contains(
-            &recovered,
-            Path::new("graph/archive/Stale.org")
-        ));
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    fn walk_contains(root: &Path, suffix: &Path) -> bool {
-        let mut stack = vec![root.to_path_buf()];
-        while let Some(directory) = stack.pop() {
-            let Ok(entries) = std::fs::read_dir(directory) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                if entry.path().ends_with(suffix) {
-                    return true;
-                }
-                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-                    stack.push(entry.path());
-                }
-            }
-        }
-        false
-    }
-
-    #[test]
-    fn restore_asset_sidecars_dir_restores_sidecars_and_leaves_binary_assets() {
-        let root = scratch("restore-sidecars");
-        let src = root.join("backup").join("assets");
-        let dest = root.join("graph").join("assets");
-        std::fs::create_dir_all(src.join("nested")).unwrap();
-        std::fs::create_dir_all(dest.join("nested")).unwrap();
-        std::fs::write(src.join("doc.edn"), "new\n").unwrap();
-        std::fs::write(src.join("nested").join("hl.edn"), "nested new\n").unwrap();
-        std::fs::write(dest.join("doc.edn"), "old\n").unwrap();
-        std::fs::write(dest.join("stale.edn"), "stale\n").unwrap();
-        std::fs::write(dest.join("image.png"), b"keep").unwrap();
-        std::fs::write(dest.join("nested").join("stale.edn"), "stale\n").unwrap();
-        std::fs::write(dest.join("nested").join("image.png"), b"keep").unwrap();
-
-        let recovery = reserve_restore_recovery(
-            &dest,
-            std::path::Path::new(ASSET_RESTORE_RECOVERY_DIR),
-            "restore-sidecars",
-        )
-        .unwrap();
-        restore_asset_sidecars_dir(&src, &dest, &recovery, std::path::Path::new("")).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(dest.join("doc.edn")).unwrap(),
-            "new\n"
-        );
-        assert_eq!(
-            std::fs::read_to_string(dest.join("nested").join("hl.edn")).unwrap(),
-            "nested new\n"
-        );
-        assert!(!dest.join("stale.edn").exists());
-        assert!(!dest.join("nested").join("stale.edn").exists());
-        assert_eq!(
-            std::fs::read_to_string(recovery.path.join("stale.edn")).unwrap(),
-            "stale\n"
-        );
-        assert_eq!(std::fs::read(dest.join("image.png")).unwrap(), b"keep");
-        assert_eq!(
-            std::fs::read(dest.join("nested").join("image.png")).unwrap(),
-            b"keep"
-        );
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn graph_text_backup_and_restore_include_nested_pages() {
-        let root = scratch("nested-md");
+    fn graph_text_backup_includes_nested_pages() {
+        let root = scratch("nested-md-backup");
         let graph = root.join("graph");
         let pages = graph.join("pages");
         let journals = graph.join("journals");
         let backup = root.join("backup");
         std::fs::create_dir_all(pages.join("client-a")).unwrap();
+        for dir in ["assets", "logseq"] {
+            std::fs::create_dir_all(graph.join(dir)).unwrap();
+        }
         std::fs::create_dir_all(&journals).unwrap();
         std::fs::write(pages.join("Top.md"), b"top\n").unwrap();
-        std::fs::write(pages.join("client-a").join("Deep.md"), b"deep\n").unwrap();
+        std::fs::write(pages.join("client-a/Deep.md"), b"deep\n").unwrap();
         std::fs::write(journals.join("2026_07_09.md"), b"journal\n").unwrap();
-
-        let (copied_pages, failed_pages) = copy_md_dir(&pages, &backup.join("pages"));
-        let (copied_journals, failed_journals) = copy_md_dir(&journals, &backup.join("journals"));
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let live_pages = count_store_text(&store, Area::Pages).unwrap();
+        let live_journals = count_store_text(&store, Area::Journals).unwrap();
+        let (copied_pages, failed_pages, _) = copy_store_area(
+            &store,
+            Area::Pages,
+            &backup.join("pages"),
+            is_graph_text,
+            &|| false,
+        );
+        let (copied_journals, failed_journals, _) = copy_store_area(
+            &store,
+            Area::Journals,
+            &backup.join("journals"),
+            is_graph_text,
+            &|| false,
+        );
         let copied = copied_pages + copied_journals;
         let failed = failed_pages + failed_journals;
-        let complete = failed == 0 && copied == 3;
-
+        let complete = failed == 0 && copied == live_pages + live_journals;
+        assert_eq!(live_pages, 2);
+        assert_eq!(live_journals, 1);
         assert!(complete);
         assert_eq!(
-            std::fs::read(backup.join("pages").join("Top.md")).unwrap(),
+            std::fs::read(backup.join("pages/Top.md")).unwrap(),
             b"top\n"
         );
         assert_eq!(
-            std::fs::read(backup.join("pages").join("client-a").join("Deep.md")).unwrap(),
+            std::fs::read(backup.join("pages/client-a/Deep.md")).unwrap(),
             b"deep\n"
         );
         assert_eq!(
-            std::fs::read(backup.join("journals").join("2026_07_09.md")).unwrap(),
+            std::fs::read(backup.join("journals/2026_07_09.md")).unwrap(),
             b"journal\n"
         );
-
-        std::fs::write(pages.join("client-a").join("Deep.md"), b"corrupt\n").unwrap();
-        std::fs::write(pages.join("client-a").join("Stale.md"), b"stale\n").unwrap();
-        std::fs::write(pages.join("client-a").join("notes.txt"), b"keep\n").unwrap();
-        let recovery = reserve_restore_recovery(
-            &graph,
-            std::path::Path::new("logseq/.tine-trash"),
-            "restore-pages",
-        )
-        .unwrap();
-        restore_md_dir(
-            &backup.join("pages"),
-            &pages,
-            &recovery,
-            std::path::Path::new("pages"),
-        )
-        .unwrap();
-        assert_eq!(
-            std::fs::read(pages.join("client-a").join("Deep.md")).unwrap(),
-            b"deep\n"
-        );
-        assert!(!pages.join("client-a").join("Stale.md").exists());
-        assert_eq!(
-            std::fs::read_to_string(recovery.path.join("pages/client-a/Stale.md")).unwrap(),
-            "stale\n"
-        );
-        assert_eq!(
-            std::fs::read(pages.join("client-a").join("notes.txt")).unwrap(),
-            b"keep\n"
-        );
-
-        let _ = std::fs::remove_dir_all(&root);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
     }
+}
 
-    #[cfg(unix)]
+#[cfg(test)]
+mod fail_read_tests {
+    use super::*;
     #[test]
-    fn complete_restore_crosses_from_app_data_to_a_distinct_live_filesystem() {
-        use std::os::unix::fs::MetadataExt;
+    fn fail_read_backup_refusal_keeps_phase_and_io_kind() {
+        let error = rewrite_snapshot_result(BackupOutcome::failed(
+            0,
+            "pages",
+            ErrorKind::PermissionDenied,
+        ))
+        .unwrap_err();
+        assert_eq!(error, "backup-failed:pages:PermissionDenied");
+    }
+}
 
-        // GH #130's actual fault boundary: Android's app-data snapshot and the
-        // user-selected graph can have distinct st_dev values.  Use /dev/shm as
-        // the live device when the host exposes it; skip only on hosts where it
-        // is unavailable or aliases the temp filesystem.
-        let app_data = scratch("restore-cross-device-source");
-        let live_root = PathBuf::from("/dev/shm").join(format!(
-            "tine-restore-cross-device-live-{}",
-            std::process::id()
+#[cfg(test)]
+mod launch_schedule_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn launch_backup_does_not_copy_while_startup_is_still_running() {
+        let root = tempfile::tempdir().unwrap();
+        let slot = Arc::new(GraphSlot::new(
+            Store::open(root.path(), Default::default()).unwrap().0,
+            root.path().to_path_buf(),
         ));
-        let _ = std::fs::remove_dir_all(&live_root);
-        if std::fs::create_dir_all(&live_root).is_err()
-            || std::fs::metadata(&app_data).unwrap().dev()
-                == std::fs::metadata(&live_root).unwrap().dev()
-        {
-            let _ = std::fs::remove_dir_all(&app_data);
-            let _ = std::fs::remove_dir_all(&live_root);
-            return;
-        }
+        let (sent, received) = std::sync::mpsc::channel();
+        let worker_slot = slot.clone();
+        let worker = std::thread::spawn(move || {
+            sent.send(wait_launch_backup(&worker_slot)).unwrap();
+        });
+        let early = received.recv_timeout(Duration::from_millis(1200));
+        // End the worker after observing the result, even on the old schedule.
+        slot.cancel_background();
+        worker.join().unwrap();
+        assert!(early.is_err(), "I-20: launch backup must wait for the owning warm completion signal; exemplar src-tauri/src/backup.rs");
+    }
+}
 
-        let snapshot = app_data.join("snapshot");
-        for dir in ["pages", "journals", "assets", "logseq"] {
-            std::fs::create_dir_all(snapshot.join(dir)).unwrap();
-            std::fs::create_dir_all(live_root.join(dir)).unwrap();
-        }
-        std::fs::write(snapshot.join("pages/Kept.md"), b"snapshot page\n").unwrap();
-        std::fs::write(
-            snapshot.join("journals/2026_07_15.md"),
-            b"snapshot journal\n",
-        )
-        .unwrap();
-        std::fs::write(snapshot.join("assets/doc.edn"), b"{:snapshot true}\n").unwrap();
-        std::fs::write(snapshot.join("logseq/config.edn"), b"{:snapshot true}\n").unwrap();
-        std::fs::write(live_root.join("pages/Kept.md"), b"live page\n").unwrap();
-        std::fs::write(live_root.join("pages/Stale.md"), b"stale page\n").unwrap();
-        std::fs::write(live_root.join("journals/Old.md"), b"old journal\n").unwrap();
-        std::fs::write(live_root.join("assets/doc.edn"), b"{:live true}\n").unwrap();
-        std::fs::write(live_root.join("assets/stale.edn"), b"{:stale true}\n").unwrap();
-        std::fs::write(live_root.join("assets/binary.pdf"), b"keep binary").unwrap();
-        std::fs::write(live_root.join("logseq/config.edn"), b"{:live true}\n").unwrap();
+#[cfg(test)]
+mod idle_signal_tests {
+    use super::*;
+    use std::time::Duration;
 
-        let graph_recovery = reserve_restore_recovery(
-            &live_root,
-            std::path::Path::new("logseq/.tine-trash"),
-            "restore-cross-device",
-        )
-        .unwrap();
-        let asset_recovery = reserve_restore_recovery(
-            &live_root.join("assets"),
-            std::path::Path::new(ASSET_RESTORE_RECOVERY_DIR),
-            "restore-cross-device",
-        )
-        .unwrap();
-
-        restore_md_dir(
-            &snapshot.join("pages"),
-            &live_root.join("pages"),
-            &graph_recovery,
-            std::path::Path::new("pages"),
-        )
-        .unwrap();
-        restore_md_dir(
-            &snapshot.join("journals"),
-            &live_root.join("journals"),
-            &graph_recovery,
-            std::path::Path::new("journals"),
-        )
-        .unwrap();
-        restore_asset_sidecars_dir(
-            &snapshot.join("assets"),
-            &live_root.join("assets"),
-            &asset_recovery,
-            std::path::Path::new(""),
-        )
-        .unwrap();
-        let live_config = live_root.join("logseq/config.edn");
-        move_live_to_recovery(
-            &graph_recovery,
-            &live_config,
-            std::path::Path::new("logseq/config.edn"),
-        )
-        .unwrap();
-        atomic_copy_new_into_live(
-            &graph_recovery,
-            &snapshot.join("logseq/config.edn"),
-            &live_config,
-        )
-        .unwrap();
-
-        assert_eq!(
-            std::fs::read(live_root.join("pages/Kept.md")).unwrap(),
-            b"snapshot page\n"
+    #[test]
+    fn warm_completion_quiet_deadline_and_revocation_own_the_backup_wait() {
+        let root = tempfile::tempdir().unwrap();
+        let slot = Arc::new(GraphSlot::new(
+            Store::open(root.path(), Default::default()).unwrap().0,
+            root.path().to_path_buf(),
+        ));
+        let old = slot.begin_startup_warm();
+        let current = slot.begin_startup_warm();
+        slot.finish_startup_warm(old);
+        assert!(
+            !slot.warm_done.load(Ordering::Acquire),
+            "an old warm cannot release the current backup"
         );
-        assert!(!live_root.join("pages/Stale.md").exists());
-        assert_eq!(
-            std::fs::read(live_root.join("journals/2026_07_15.md")).unwrap(),
-            b"snapshot journal\n"
+        let (sent, received) = std::sync::mpsc::channel();
+        let waiting = slot.clone();
+        let worker = std::thread::spawn(move || {
+            sent.send(waiting.wait_startup_idle(Duration::from_millis(80), Duration::from_secs(5)))
+                .unwrap();
+        });
+        assert!(received.recv_timeout(Duration::from_millis(20)).is_err());
+        slot.finish_startup_warm(current);
+        assert!(
+            received.recv_timeout(Duration::from_millis(20)).is_err(),
+            "completion must retain a quiet turn"
         );
-        assert!(!live_root.join("journals/Old.md").exists());
-        assert_eq!(
-            std::fs::read(live_root.join("assets/doc.edn")).unwrap(),
-            b"{:snapshot true}\n"
-        );
-        assert!(!live_root.join("assets/stale.edn").exists());
-        assert_eq!(
-            std::fs::read(live_root.join("assets/binary.pdf")).unwrap(),
-            b"keep binary"
-        );
-        assert_eq!(std::fs::read(&live_config).unwrap(), b"{:snapshot true}\n");
-        assert_eq!(
-            std::fs::read(graph_recovery.path.join("pages/Stale.md")).unwrap(),
-            b"stale page\n"
-        );
-        assert_eq!(
-            std::fs::read(graph_recovery.path.join("logseq/config.edn")).unwrap(),
-            b"{:live true}\n"
-        );
-        assert_eq!(
-            std::fs::read(asset_recovery.path.join("stale.edn")).unwrap(),
-            b"{:stale true}\n"
-        );
-
-        let _ = std::fs::remove_dir_all(&app_data);
-        let _ = std::fs::remove_dir_all(&live_root);
+        assert!(received.recv_timeout(Duration::from_secs(2)).unwrap());
+        worker.join().unwrap();
+        // A missed warm signal still preserves the safety net at the deadline.
+        slot.begin_startup_warm();
+        assert!(slot.wait_startup_idle(Duration::from_secs(5), Duration::from_millis(1)));
+        let waiting = slot.clone();
+        let worker = std::thread::spawn(move || {
+            waiting.wait_startup_idle(Duration::from_secs(5), Duration::from_secs(180))
+        });
+        slot.cancel_background();
+        assert!(!worker.join().unwrap());
     }
 }

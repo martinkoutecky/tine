@@ -7,8 +7,10 @@
 // are the grammar's sqrt/log/ln/exp/abs/trig/inverse-trig set, plus Tine's
 // floor/ceil/round extensions (kept as a deliberate superset of calc.bnf so
 // existing Tine graphs don't break; OG shows an error for these). PI and E.
-// The upstream source is /aux/koutecky/logseq/og at 6e7afa8eb; precise semantic
+// The upstream source is Logseq at 6e7afa8eb; precise semantic
 // citations appear alongside each grammar/evaluation transcription below.
+
+import { codeFences, type LiteralContainer } from "./fences";
 
 export interface CalcLine {
   input: string;
@@ -17,19 +19,21 @@ export interface CalcLine {
   error?: boolean;
 }
 
-/** If `text` is a ```calc fenced block, return its inner source (the lines
- *  between the fences); otherwise null. Tolerates a missing closing fence (the
- *  block is mid-edit) by taking everything after the opener — so the editor's
- *  live preview keeps working while you type. */
+function calcFence(text: string): LiteralContainer | null {
+  const fence = codeFences(text)[0];
+  return fence && fence.lang === "calc" && !text.slice(0, fence.start).includes("\n") && text.slice(0, fence.start).trim() === "" ? fence : null;
+}
+
+/** If `text` is a ```calc fenced block (the parser's source container with language `calc`, on the
+ *  text's first line), return its inner source (the lines between the fences); otherwise null.
+ *  Tolerates a missing closing fence (the block is mid-edit) by taking everything after the
+ *  opener — so the editor's live preview keeps working while you type. */
 export function calcSource(text: string): string | null {
-  const lines = text.split("\n");
-  if ((lines[0]?.trim().toLowerCase() ?? "") !== "```calc") return null;
-  const inner: string[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    if (lines[i].trim() === "```") break;
-    inner.push(lines[i]);
-  }
-  return inner.join("\n");
+  const fence = calcFence(text);
+  if (!fence) return null;
+  if (!fence.closed) return text.slice(Math.min(fence.openEnd, text.length));
+  const body = text.slice(fence.openEnd, fence.closeStart);
+  return body.endsWith("\n") ? body.slice(0, -1) : body;
 }
 
 /** Wrap calc expression lines back into a ```calc fenced block — the inverse of
@@ -39,20 +43,37 @@ export function wrapCalc(inner: string): string {
   return "```calc\n" + inner + "\n```";
 }
 
-/** Serialize the calc editor's visible buffer for an exit commit. Accept either
- *  the normal bare expression buffer or an already-fenced calc value, and always
- *  write one canonical ```calc fence. */
-export function serializeCalcExitCommit(text: string): string {
-  return wrapCalc(calcSource(text) ?? text);
+/** Wrap bare text or expressions in a first-line ```calc fence in a new fence.
+ * A missing close uses all later lines as expressions. Keep lines after the
+ * first close in text; if none exist, use the suffix after the first close in
+ * previousRaw, even when text is fenced. Malformed input is wrapped, not
+ * rejected. Pure O(text length + previousRaw length). */
+export function serializeCalcExitCommit(text: string, previousRaw?: string): string {
+  const source = calcSource(text);
+  const suffixAfterFence = (raw?: string): string[] => {
+    const fence = raw === undefined ? undefined : codeFences(raw)[0];
+    const closerEnd = fence?.closed ? raw!.indexOf("\n", fence.closeStart) : -1;
+    return closerEnd === -1 ? [] : raw!.slice(closerEnd + 1).split("\n");
+  };
+  const suffix = source !== null ? suffixAfterFence(text) : [];
+  if (suffix.length === 0) suffix.push(...suffixAfterFence(previousRaw));
+  return [wrapCalc(source ?? text), ...suffix].join("\n");
 }
 
 // This is intentionally a local decimal implementation rather than a dependency.
 // OG uses bignumber.js values and default division precision in its evaluator
-// (/aux/koutecky/logseq/og/src/main/frontend/extensions/calc.cljc:41-117).
+// (upstream Logseq src/main/frontend/extensions/calc.cljc:41-117).
 const TEN = 10n;
 const DIVISION_PLACES = 20;
+const MAX_CALC_DIGITS = 10_000;
+const MAX_CALC_LINE_CHARS = 16_000;
+
+function checkPlaces(places: number): void {
+  if (!Number.isSafeInteger(places) || places < 0 || places > MAX_CALC_DIGITS) throw new Error("calc result too large");
+}
 
 function pow10(places: number): bigint {
+  checkPlaces(places);
   return TEN ** BigInt(places);
 }
 
@@ -69,6 +90,8 @@ class Decimal {
 
   static finite(sign: number, coefficient: bigint, scale = 0): Decimal {
     if (coefficient === 0n) return new Decimal(0, 0n, 0);
+    if (!Number.isSafeInteger(scale) || Math.abs(scale) > MAX_CALC_DIGITS) throw new Error("calc result too large");
+    if (coefficient.toString().length > MAX_CALC_DIGITS) throw new Error("calc result too large");
     let normalized = coefficient < 0n ? -coefficient : coefficient;
     let normalizedScale = scale;
     while (normalizedScale > 0 && normalized % TEN === 0n) {
@@ -157,6 +180,9 @@ class Decimal {
   multipliedBy(other: Decimal): Decimal {
     const special = this.specialBinary(other, "multiply");
     if (special) return special;
+    if (this.coefficient.toString().length + other.coefficient.toString().length > MAX_CALC_DIGITS + 1) {
+      throw new Error("calc result too large");
+    }
     return Decimal.finite(this.sign * other.sign, this.coefficient * other.coefficient, this.scale + other.scale);
   }
 
@@ -209,6 +235,9 @@ class Decimal {
     const exponent = other.integerValue();
     if (exponent === null || !this.isFinite()) return Decimal.fromNumber(Math.pow(this.toNumber(), other.toNumber()));
     if (exponent === 0n) return Decimal.finite(1, 1n);
+    if (exponent > BigInt(MAX_CALC_DIGITS) || exponent < -BigInt(MAX_CALC_DIGITS)) {
+      throw new Error("calc exponent too large");
+    }
     const negativeExponent = exponent < 0n;
     let remaining = negativeExponent ? -exponent : exponent;
     let base: Decimal = this;
@@ -259,6 +288,7 @@ class Decimal {
 
   toExponential(places?: number): string {
     if (!this.isFinite()) return this.toString();
+    if (places !== undefined) checkPlaces(places);
     if (this.sign === 0) {
       const decimals = places === undefined ? "" : places === 0 ? "" : `.${"0".repeat(places)}`;
       return `0${decimals}e+0`;
@@ -477,7 +507,7 @@ interface CalcEnvironment {
 }
 
 // The production forms and precedence below transcribe OG's grammar exactly:
-// /aux/koutecky/logseq/og/src/resources/grammar/calc.bnf:1-52.
+// upstream Logseq src/resources/grammar/calc.bnf:1-52.
 class Parser {
   pos = 0;
   constructor(
@@ -572,7 +602,7 @@ class Parser {
 
 // OG accepts only non-negative integer factorial inputs below 254; its
 // `isPositive` check includes BigNumber's positive zero, so 0! is 1
-// (/aux/koutecky/logseq/og/src/main/frontend/extensions/calc.cljc:58-61).
+// (upstream Logseq src/main/frontend/extensions/calc.cljc:58-61).
 function factorial(value: Decimal): Decimal {
   const n = value.integerValue();
   if (n === null || n < 0n || n >= 254n) return Decimal.nan();
@@ -737,14 +767,13 @@ function formatValue(env: CalcEnvironment, value: Decimal): string {
   return formatNormal(env, value);
 }
 
-/** Evaluate a multi-line calc source; returns one entry per input line,
- *  except trailing blank lines, which never mint rows (GH #339): a committed
- *  ```calc block's AST `code` ends with a newline, and rendering a row for it
- *  showed one phantom empty line after the last expression. Interior blanks
- *  keep their position. Blank lines never touch the environment, so dropping
- *  only trailing ones cannot change any result. */
+/** Evaluate lines in order, carrying assignments forward; blank/comment lines
+ * have null output. Invalid/oversized expressions become error rows. */
 export function evalCalc(src: string): CalcLine[] {
   const env: CalcEnvironment = { values: new Map() };
+  // Trailing blank lines never mint rows (GH #339): a committed ```calc block's
+  // code ends with a newline, which rendered one phantom empty row. Interior
+  // blanks keep their position; blanks never touch the environment.
   const lines = src.split("\n");
   let end = lines.length;
   while (end > 0 && /^\s*$/.test(lines[end - 1])) end--;
@@ -752,6 +781,7 @@ export function evalCalc(src: string): CalcLine[] {
     const noComment = line.split("#")[0];
     if (!noComment.trim()) return { input: line, output: null };
     try {
+      if (noComment.length > MAX_CALC_LINE_CHARS) throw new Error("calc line too long");
       let value: CalcValue | undefined;
       if (noComment.trimStart().startsWith(":")) {
         const directive = parseDirective(noComment);

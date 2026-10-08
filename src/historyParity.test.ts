@@ -1,6 +1,9 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { produce } from "solid-js/store";
-import * as historyStoreModule from "./store";
+import { doc, setDoc } from "./document/model";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import * as historyStoreModule from "./document";
+import { pageToDto } from "./document/convert";
+import { historyPageOnlyMode } from "./document/history";
 import * as editorControllerModule from "./editorController";
 import { paletteCommands } from "./keybindings";
 import {
@@ -11,19 +14,12 @@ import {
   resetPaneLayoutToSingle,
   splitPane,
 } from "./panes";
-import {
-  rightSidebar,
-  rightSidebarOpen,
-  setRightSidebar,
-  setRightSidebarOpen,
-  setToasts,
-  toasts,
-} from "./ui";
+import { rightSidebar, rightSidebarOpen, setRightSidebar, setRightSidebarOpen } from "./ui";
+import { setToasts, toasts } from "./toasts";
 import type { BlockDto, PageDto } from "./types";
 import { initParser } from "./render/parse";
 
 type HistoryStoreApi = typeof historyStoreModule & {
-  historyPageOnlyMode(): boolean;
   toggleUndoRedoMode(): "Page only" | "Global";
 };
 type HistoryEditorTarget = {
@@ -61,7 +57,7 @@ function page(name: string, blocks: BlockDto[]): PageDto {
 }
 
 function dtoBytes(name: string): string {
-  return JSON.stringify(store.pageToDto(name));
+  return JSON.stringify(pageToDto(name));
 }
 
 function setRoute(name: string) {
@@ -95,7 +91,7 @@ beforeEach(() => {
   setRightSidebarOpen(false);
   setToasts([]);
   editor.clearPendingHistoryEditorRestore?.();
-  if (store.historyPageOnlyMode?.()) store.toggleUndoRedoMode();
+  if (historyPageOnlyMode()) store.toggleUndoRedoMode();
 });
 
 afterEach(() => {
@@ -107,28 +103,30 @@ afterEach(() => {
 });
 
 describe("history parity", () => {
-  it("scoped snapshots retain the mounted page while restoring all optional metadata", async () => {
-    await store.loadFeed([page("A", [block("a", "original")])]);
-    store.setDoc(produce((state) => { delete state.pages[0].path; }));
+  // master 7fcd4c98d (historyParity "scoped snapshots retain the mounted page…"),
+  // with og's page identity field `id` for master's `path`.
+  it("scoped snapshots retain the mounted page while restoring all optional metadata", () => {
+    store.loadFeed([page("A", [block("a", "original")])]);
+    setDoc(produce((state) => { delete state.pages[0].id; }));
     setRoute("A");
     const mountedPage = store.pageByName("A")!;
-    expect(Object.hasOwn(mountedPage, "path")).toBe(false);
+    expect(Object.hasOwn(mountedPage, "id")).toBe(false);
     store.withUndoUnit("query-sheet-edit", ["A"], () => {
       store.setRaw("a", "edited");
-      store.setDoc("pages", 0, "path", "pages/A.md");
+      setDoc("pages", 0, "id", "pages/A.md");
     });
     store.undo();
     expect(store.pageByName("A")).toBe(mountedPage);
-    expect(store.doc.byId.a.raw).toBe("original");
-    expect(Object.hasOwn(mountedPage, "path")).toBe(false);
+    expect(doc.byId.a.raw).toBe("original");
+    expect(Object.hasOwn(mountedPage, "id")).toBe(false);
     store.redo();
     expect(store.pageByName("A")).toBe(mountedPage);
-    expect(store.doc.byId.a.raw).toBe("edited");
-    expect(mountedPage.path).toBe("pages/A.md");
+    expect(doc.byId.a.raw).toBe("edited");
+    expect(mountedPage.id).toBe("pages/A.md");
   });
 
-  it("page-only undo/redo removes only A's newest interleaved raw/structural entries", async () => {
-    await store.loadFeed([
+  it("page-only undo/redo removes only A's newest interleaved raw/structural entries", () => {
+    store.loadFeed([
       page("A", [block("a", "alpha")]),
       page("B", [block("b", "beta")]),
     ]);
@@ -153,7 +151,7 @@ describe("history parity", () => {
       store.undo(); // A raw entry; B's structural + raw entries remain in place
       expect(dtoBytes("B")).toBe(bBytes);
       expect(mainRouter().route()).toEqual({ kind: "page", name: "B", pageKind: "page" });
-      expect(store.pageToDto("A")?.blocks.map((item) => item.raw)).toEqual(["alpha"]);
+      expect(pageToDto("A")?.blocks.map((item) => item.raw)).toEqual(["alpha"]);
 
       editor.startEditing("a", 2, "owner-a", "pane:main");
       store.redo();
@@ -165,8 +163,8 @@ describe("history parity", () => {
     }
   });
 
-  it("defaults to global selection and the mode toggle switches to route-page selection", async () => {
-    await store.loadFeed([
+  it("defaults to global selection and the mode toggle switches to route-page selection", () => {
+    store.loadFeed([
       page("A", [block("a", "alpha")]),
       page("B", [block("b", "beta")]),
     ]);
@@ -174,16 +172,16 @@ describe("history parity", () => {
     store.setRaw("a", "A edited");
     store.setRaw("b", "B edited");
 
-    expect(store.historyPageOnlyMode()).toBe(false);
+    expect(historyPageOnlyMode()).toBe(false);
     store.undo();
-    expect(store.doc.byId.b.raw).toBe("beta");
-    expect(store.doc.byId.a.raw).toBe("A edited");
+    expect(store.node("b").raw).toBe("beta");
+    expect(store.node("a").raw).toBe("A edited");
     store.redo();
 
     expect(store.toggleUndoRedoMode()).toBe("Page only");
     store.undo();
-    expect(store.doc.byId.a.raw).toBe("alpha");
-    expect(store.doc.byId.b.raw).toBe("B edited");
+    expect(store.node("a").raw).toBe("alpha");
+    expect(store.node("b").raw).toBe("B edited");
   });
 
   it("registers a palette-only mode command and reports the resulting mode", () => {
@@ -191,12 +189,12 @@ describe("history parity", () => {
     expect(command).toMatchObject({ label: "Toggle undo/redo mode", binding: "" });
 
     command!.run();
-    expect(store.historyPageOnlyMode()).toBe(true);
+    expect(historyPageOnlyMode()).toBe(true);
     expect(toasts().at(-1)?.message).toBe("Undo/redo mode: Page only");
   });
 
-  it("captures raw-entry route/sidebar/editor context and restores a clamped selection request", async () => {
-    await store.loadFeed([
+  it("captures raw-entry route/sidebar/editor context and restores a clamped selection request", () => {
+    store.loadFeed([
       page("A", [block("a", "abc")]),
       page("B", [block("b", "beta")]),
     ]);
@@ -218,7 +216,7 @@ describe("history parity", () => {
 
     store.undo();
 
-    expect(store.doc.byId.a.raw).toBe("abc");
+    expect(store.node("a").raw).toBe("abc");
     expect(focusedPaneId()).toBe(historyPane);
     expect(paneRouter(historyPane!).route()).toEqual({ kind: "page", name: "A", pageKind: "page" });
     expect(rightSidebarOpen()).toBe(true);
@@ -243,7 +241,7 @@ describe("history parity", () => {
     setRightSidebarOpen(false);
 
     store.undo();
-    expect(store.doc.byId.a.raw).toBe("abc");
+    expect(store.node("a").raw).toBe("abc");
     expect(focusedPaneId()).toBe(historyPane);
     expect(rightSidebarOpen()).toBe(true);
     expect(rightSidebar()).toEqual([{ kind: "page", name: "A", pageKind: "page" }]);
@@ -255,8 +253,8 @@ describe("history parity", () => {
     });
   });
 
-  it("keeps data replay and stack order intact when saved route/block context is missing", async () => {
-    await store.loadFeed([page("B", [block("b", "before")])]);
+  it("keeps data replay and stack order intact when saved route/block context is missing", () => {
+    store.loadFeed([page("B", [block("b", "before")])]);
     const before = dtoBytes("B");
     setRoute("Deleted page");
     editTarget("deleted-block", { start: 7, end: 12 }, "gone-owner", "gone-surface");

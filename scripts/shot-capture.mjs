@@ -1,4 +1,3 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Dedicated quick-capture screenshot. The capture window is a *frameless* OS
 // mini-window (capture.html); the mock can only render its web content, so we
 // (a) drive the real editor to open the slash menu — proving the capture window
@@ -6,7 +5,7 @@ import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // drop-shadow + rounded corners the window manager gives the real floating
 // window, so the shot reads as a window rather than a bare div.
 // Usage: node scripts/shot-capture.mjs   (source scripts/env.sh first)
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -19,9 +18,19 @@ const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--stric
   stdio: "inherit",
 });
 
+async function waitForServer(url, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) return;
+    } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 40, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   // Transparent page so the window card's shadow shows against the README.
   const page = await browser.newPage({

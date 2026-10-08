@@ -1,58 +1,35 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import { Show } from "solid-js";
+import { backend } from "../backend";
+import { setToasts, toasts } from "../toasts";
+import { OUTLINE_MAX_DEPTH } from "../editor/outline";
+import type { ConflictInventory, ConflictObject, DiffRow, SyncConflictDiff } from "../types";
+
+// og 8c: the in-page resolver for the two artifact sources (a sync tool's
+// conflict copy, a VCS merge's markers). All content is synthetic.
+
+const doc = vi.hoisted(() => ({
+  dirty: false,
+  conflicted: false,
+  applyGraphChange: vi.fn(async () => {}),
+  flushPage: vi.fn(async () => true),
+}));
+vi.mock("../document", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../document")>(),
+  isDirty: () => doc.dirty,
+  isSaving: () => false,
+  isConflicted: () => doc.conflicted,
+  applyGraphChange: doc.applyGraphChange,
+  flushPage: doc.flushPage,
+}));
 import { PageConflictResolution } from "./ConflictResolution";
-import { __setBackendForTest, SaveConflictError, type Backend } from "../backend";
-import {
-  doc,
-  loadSingle,
-  pageByName,
-  resetStore,
-  setRaw,
-  setDoc,
-  takeEditorLease,
-} from "../store";
-import {
-  conflictQueue,
-  registerLiveSaveConflict,
-  restoreLiveSaveConflicts,
-  setConflictQueue,
-  setGraphMeta,
-  setToasts,
-  toasts,
-} from "../ui";
-import type {
-  ConflictObject,
-  MarkerConflictDiff,
-  MergeDecision,
-  PageDto,
-  SyncConflictDiff,
-} from "../types";
+import { conflictQueue, setConflictInventory } from "../conflictQueue";
 
-// Concord P4 (L4 + L5). Fail-before: nothing in Tine could resolve a
-// VCS-marker conflict at all — a marker-bearing page showed a banner telling the
-// user to go and fix it in another tool, and a conflict copy could only be
-// merged from a Settings modal. These assert the in-page surface: the sides the
-// artifact itself named, a suggested resolution pre-selected from the markers'
-// own common ancestor, keep-both as the no-loss fallback, and an apply that goes
-// through the guarded backend path with the file's own base_rev.
-
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-afterEach(() => {
-  document.body.innerHTML = "";
-  __setBackendForTest(null);
-  setConflictQueue([]);
-  setGraphMeta(null);
-  setToasts([]);
-  localStorage.clear();
-  resetStore();
-});
-
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
 const view = (text: string) => ({ uuid: "", text, child_count: 0 });
 
-const markerObject: ConflictObject = {
+const markerConflict: ConflictObject = {
   id: "markers:pages/Merged.md",
   source: "vcs-markers",
   page_name: "Merged",
@@ -61,1029 +38,283 @@ const markerObject: ConflictObject = {
   sides: [
     { role: "mine", label: "HEAD" },
     { role: "theirs", label: "feature" },
-    { role: "base", label: "Common ancestor" },
+    { role: "base", label: "merged common ancestors" },
   ],
   block_conflicts: 2,
-  markers: ["<<<<<<<", "|||||||", "=======", ">>>>>>>"],
+  markers: ["<<<<<<<", "=======", ">>>>>>>"],
 };
 
-/** A 3-way marker diff: one row only we changed, one only they changed, and one
- *  both changed (so it has no suggestion and falls back to keep-both). */
-const markerDiff: MarkerConflictDiff = {
-  mine_label: "HEAD",
-  theirs_label: "feature",
-  regions: 1,
-  diff: {
-    base_rev: "marker-file-rev",
-    conflict_rev: "marker-file-rev",
-    rows: [
-      { id: "0", kind: "unchanged", mine: view("shared top"), theirs: view("shared top"), children: [] },
-      {
-        id: "1",
-        kind: "modified",
-        mine: view("alpha edited here"),
-        theirs: view("alpha"),
-        children: [],
-        verdict: "mine-only",
-        suggestion: "mine",
-      },
-      {
-        id: "2",
-        kind: "modified",
-        mine: view("beta"),
-        theirs: view("beta edited there"),
-        children: [],
-        verdict: "theirs-only",
-        suggestion: "theirs",
-      },
-      {
-        id: "3",
-        kind: "modified",
-        mine: view("gamma my way"),
-        theirs: view("gamma their way"),
-        children: [],
-        verdict: "both-changed",
-      },
-    ],
-    mine_pre: null,
-    theirs_pre: null,
-    pre_differs: false,
-    blocks_identical: false,
-    three_way: true,
-  },
+const copyConflict: ConflictObject = {
+  id: "copy:pages/Plan.sync-conflict-20260705-141233-ABCDEFG.md",
+  source: "sync-copy",
+  page_name: "Plan",
+  page_path: "pages/Plan.md",
+  kind: "page",
+  sides: [
+    { role: "mine", label: "This device", path: "pages/Plan.md" },
+    { role: "theirs", label: "sync-conflict-20260705-141233-ABCDEFG", path: "pages/Plan.sync-conflict-20260705-141233-ABCDEFG.md" },
+  ],
+  block_conflicts: 1,
 };
 
-function stubBackend(overrides: Partial<Backend>): void {
-  __setBackendForTest({
-    vcsMarkerConflictDiff: async () => markerDiff,
-    syncConflictDiff: async () => null,
-    resolveVcsMarkerConflict: async () => {},
-    resolveSyncConflict: async () => {},
-    conflictInventory: async () => ({
-      sync_conflicts: [],
-      vcs_markers: [],
-      queue: [],
-    }),
-    liveSaveConflictDiff: async () => markerDiff.diff,
-    captureLiveSaveConflict: async () => ({
-      diff: markerDiff.diff,
-      base_text: "- base\n",
-      disk_rev: "disk-rev",
-    }),
-    durableLiveSaveConflictDiff: async () => markerDiff.diff,
-    resolveDurableLiveSaveConflict: async (page: PageDto) => ({ ...page, rev: "resolved-rev" }),
-    resolveLiveSaveConflict: async (page: PageDto) => ({ ...page, rev: "resolved-rev" }),
-    ...overrides,
-  } as unknown as Backend);
+function diff(rows: DiffRow[], rev = "rev-1"): SyncConflictDiff {
+  return { base_rev: rev, conflict_rev: "copy-rev", rows, mine_pre: null, theirs_pre: null, pre_differs: false, blocks_identical: false };
 }
 
-function mount(conflict: ConflictObject): { host: HTMLElement; dispose: () => void } {
+const threeWayRows: DiffRow[] = [
+  { id: "0", kind: "modified", mine: view("TODO ship Friday"), theirs: view("TODO ship Thursday"), children: [], verdict: "theirs-only", suggestion: "theirs" },
+  { id: "1", kind: "modified", mine: view("A mine"), theirs: view("A theirs"), children: [], verdict: "both-changed" },
+];
+
+function inventoryWith(conflict: ConflictObject): ConflictInventory {
+  return {
+    sync_conflicts: conflict.source === "sync-copy"
+      ? [{ path: conflict.sides[1].path!, base_name: conflict.page_name, base_path: conflict.page_path, kind: "page", tag: conflict.sides[1].label, preview: "" }]
+      : [],
+    vcs_markers: conflict.source === "vcs-markers" ? [{ path: conflict.page_path, name: conflict.page_name, kind: "page", markers: conflict.markers ?? [] }] : [],
+    queue: [conflict],
+  };
+}
+
+function mount(conflict: ConflictObject) {
   const host = document.createElement("div");
-  document.body.appendChild(host);
+  document.body.append(host);
   const dispose = render(() => <PageConflictResolution conflict={conflict} />, host);
   return { host, dispose };
 }
 
+const button = (host: HTMLElement, text: string) =>
+  [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(text))!;
+
+beforeEach(() => {
+  doc.dirty = false;
+  doc.conflicted = false;
+  doc.applyGraphChange.mockClear();
+  doc.flushPage.mockClear();
+  setToasts([]);
+});
+afterEach(() => {
+  document.body.innerHTML = "";
+  setConflictInventory({ sync_conflicts: [], vcs_markers: [], queue: [] });
+  vi.restoreAllMocks();
+});
+
 describe("in-page conflict resolution", () => {
-  it("has no message-sniffing conflict branch in the production component", () => {
-    const source = readFileSync("src/components/ConflictResolution.tsx", "utf8");
-    expect(source).not.toContain('.includes("conflict")');
-    expect(source).not.toContain("String(e)");
-  });
-
-  it("routes ordinary prose containing conflict through the generic failure path", async () => {
-    stubBackend({
-      resolveVcsMarkerConflict: async () => {
-        throw new Error("ordinary prose containing conflict");
-      },
-    });
-    const { host, dispose } = mount(markerObject);
-    try {
-      await flush();
-      await flush();
-      [...host.querySelectorAll("button")]
-        .find((button) => button.textContent?.includes("Apply resolution"))!
-        .click();
-      await flush();
-      await flush();
-      expect(toasts().at(-1)?.message).toBe(
-        "Couldn’t resolve it: ordinary prose containing conflict",
-      );
-      expect(toasts().some((toast) => toast.message.includes("file changed on disk"))).toBe(false);
-    } finally {
-      dispose();
-    }
-  });
-
-  it("takes the disk-changed recovery branch only for the typed conflict the call funnel mints", async () => {
-    // Fail-before (wave-2 review H2-1): the seven resolve commands rejected with
-    // the raw `conflict:<epoch>` string, only save_page was classified, and this
-    // branch was unreachable — the user got a generic failure instead of a
-    // re-read. The funnel now types every native rejection; the component
-    // consumes the type and nothing else.
-    stubBackend({
-      resolveVcsMarkerConflict: async () => {
-        throw new SaveConflictError(7);
-      },
-    });
-    const { host, dispose } = mount(markerObject);
-    try {
-      await flush();
-      await flush();
-      [...host.querySelectorAll("button")]
-        .find((button) => button.textContent?.includes("Apply resolution"))!
-        .click();
-      await flush();
-      await flush();
-      expect(toasts().at(-1)?.message).toContain("file changed on disk");
-    } finally {
-      dispose();
-    }
-  });
-
-  it("names the sides the marker file itself named", async () => {
-    stubBackend({});
-    const { host, dispose } = mount(markerObject);
-    try {
-      await flush();
-      await flush();
-      const legend = host.querySelector(".page-conflict-legend")!;
-      expect(legend.textContent).toContain("HEAD");
-      expect(legend.textContent).toContain("feature");
-      // The third side is a first-class part of the object, not an assumption
-      // that a conflict has exactly two sides.
-      expect(legend.textContent).toContain("Common ancestor");
-    } finally {
-      dispose();
-    }
+  it("names the sides the marker file itself named and says why saves are refused", async () => {
+    vi.spyOn(backend(), "vcsMarkerConflictDiff").mockResolvedValue({ mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows) });
+    const { host, dispose } = mount(markerConflict);
+    await settle();
+    expect(host.querySelector(".page-conflict-side.mine")!.textContent).toBe("HEAD");
+    expect(host.querySelector(".page-conflict-side.theirs")!.textContent).toBe("feature");
+    expect(host.querySelector(".page-conflict-side.base")!.textContent).toContain("merged common ancestors");
+    expect(host.querySelector(".page-conflict-refusal")!.textContent).toContain("refuses to save");
+    dispose();
   });
 
   it("pre-selects the suggested side, and keeps BOTH where no side is suggested", async () => {
-    stubBackend({});
-    const { host, dispose } = mount(markerObject);
-    try {
-      await flush();
-      await flush();
-      const active = (id: string) =>
-        host
-          .querySelector(`[data-row-id="${id}"]`)!
-          .querySelector(".sync-merge-seg.active")!
-          .getAttribute("data-decision");
-      expect(active("1")).toBe("mine"); // suggestion: mine
-      expect(active("2")).toBe("theirs"); // suggestion: theirs
-      // Both sides moved away from the ancestor: no suggestion is possible, so
-      // the no-loss default takes over instead of silently dropping a side.
-      expect(active("3")).toBe("both");
-    } finally {
-      dispose();
-    }
-  });
-
-  it("counts the regions needing a decision and offers navigation", async () => {
-    stubBackend({});
-    const { host, dispose } = mount(markerObject);
-    try {
-      await flush();
-      await flush();
-      expect(host.querySelector(".page-conflict-count")!.textContent).toBe("3 conflicts");
-      expect(host.querySelectorAll(".page-conflict-nav button").length).toBe(2);
-    } finally {
-      dispose();
-    }
-  });
-
-  it("applies through the guarded marker path with the file's own base_rev", async () => {
-    const resolve = vi.fn(async () => {});
-    stubBackend({ resolveVcsMarkerConflict: resolve as unknown as Backend["resolveVcsMarkerConflict"] });
-    const { host, dispose } = mount(markerObject);
-    try {
-      await flush();
-      await flush();
-      expect(resolve).not.toHaveBeenCalled(); // nothing auto-applies
-      const apply = [...host.querySelectorAll("button")].find((b) =>
-        b.textContent?.includes("Apply resolution")
-      )!;
-      apply.click();
-      await flush();
-      await flush();
-      expect(resolve).toHaveBeenCalledTimes(1);
-      const [path, decisions, baseRev] = resolve.mock.calls[0] as unknown as [
-        string,
-        Record<string, string>,
-        string,
-      ];
-      expect(path).toBe("pages/Merged.md");
-      expect(baseRev).toBe("marker-file-rev");
-      expect(decisions).toEqual({ "1": "mine", "2": "theirs", "3": "both" });
-    } finally {
-      dispose();
-    }
-  });
-
-  it("routes a conflict copy through the existing resolve path, not the marker one", async () => {
-    const copyDiff: SyncConflictDiff = {
-      base_rev: "winner-rev",
-      conflict_rev: "copy-rev",
-      rows: [{ id: "0", kind: "modified", mine: view("mine"), theirs: view("theirs"), children: [] }],
-      mine_pre: null,
-      theirs_pre: null,
-      pre_differs: false,
-      blocks_identical: false,
-    };
-    const resolveCopy = vi.fn(async (): Promise<PageDto> => ({
-      name: "Note",
-      kind: "page",
-      title: "Note",
-      pre_block: null,
-      path: "pages/Note.md",
-      rev: "merged-rev",
-      blocks: [{ id: "note", raw: "mine", collapsed: false, children: [] }],
-    }));
-    const resolveMarkers = vi.fn(async () => {});
-    stubBackend({
-      syncConflictDiff: (async () => copyDiff) as unknown as Backend["syncConflictDiff"],
-      resolveSyncConflict: resolveCopy as unknown as Backend["resolveSyncConflict"],
-      resolveVcsMarkerConflict: resolveMarkers as unknown as Backend["resolveVcsMarkerConflict"],
-    });
-    const copyObject: ConflictObject = {
-      id: "copy:pages/Note.sync-conflict-20260817-101010-ABCDEFG.md",
-      source: "sync-copy",
-      page_name: "Note",
-      page_path: "pages/Note.md",
-      kind: "page",
-      sides: [
-        { role: "mine", label: "This device", path: "pages/Note.md" },
-        {
-          role: "theirs",
-          label: "sync-conflict-20260817-101010-ABCDEFG",
-          path: "pages/Note.sync-conflict-20260817-101010-ABCDEFG.md",
-        },
-      ],
-      block_conflicts: 1,
-    };
-    setDoc({
-      byId: {
-        note: { id: "note", raw: "mine", collapsed: false, parent: null, page: "Note", children: [] },
-      },
-      pages: [{
-        name: "Note",
-        kind: "page",
-        title: "Note",
-        preBlock: null,
-        roots: ["note"],
-        format: "md",
-        readOnly: false,
-        guide: false,
-        path: "pages/Note.md",
-      }],
-      feed: ["Note"],
-      loaded: true,
-    });
-    const { host, dispose } = mount(copyObject);
-    try {
-      await flush();
-      await flush();
-      [...host.querySelectorAll("button")]
-        .find((b) => b.textContent?.includes("Apply resolution"))!
-        .click();
-      await flush();
-      await flush();
-      expect(resolveMarkers).not.toHaveBeenCalled();
-      expect(resolveCopy).toHaveBeenCalledTimes(1);
-      const [winner, copy, , baseRev, conflictRev] = resolveCopy.mock
-        .calls[0] as unknown as [string, string, unknown, string, string];
-      expect(winner).toBe("pages/Note.md");
-      expect(copy).toBe("pages/Note.sync-conflict-20260817-101010-ABCDEFG.md");
-      expect(baseRev).toBe("winner-rev");
-      expect(conflictRev).toBe("copy-rev");
-    } finally {
-      dispose();
-    }
-  });
-
-  it("replaces the open editor with the exact page committed by a conflict-copy resolution", async () => {
-    const copyDiff: SyncConflictDiff = {
-      base_rev: "winner-rev",
-      conflict_rev: "copy-rev",
-      rows: [{ id: "0", kind: "modified", mine: view("desktop"), theirs: view("phone"), children: [] }],
-      mine_pre: null,
-      theirs_pre: null,
-      pre_differs: false,
-      blocks_identical: false,
-    };
-    const resolved: PageDto = {
-      name: "Note",
-      kind: "page",
-      title: "Note",
-      pre_block: null,
-      path: "pages/Note.md",
-      rev: "merged-rev",
-      blocks: [{ id: "merged", raw: "desktop and phone", collapsed: false, children: [] }],
-    };
-    setDoc({
-      byId: {
-        old: { id: "old", raw: "desktop", collapsed: false, parent: null, page: "Note", children: [] },
-      },
-      pages: [{
-        name: "Note",
-        kind: "page",
-        title: "Note",
-        preBlock: null,
-        roots: ["old"],
-        format: "md",
-        readOnly: false,
-        guide: false,
-        path: "pages/Note.md",
-      }],
-      feed: ["Note"],
-      loaded: true,
-    });
-    const resolveCopy = vi.fn(async () => resolved);
-    stubBackend({
-      syncConflictDiff: async () => copyDiff,
-      resolveSyncConflict: resolveCopy as unknown as Backend["resolveSyncConflict"],
-      activateEditor: async (path) => ({ activation: 17, target: path, prospective: false }),
-    });
-    const copyObject: ConflictObject = {
-      id: "copy:pages/Note.sync-conflict-20260817-101010-ABCDEFG.md",
-      source: "sync-copy",
-      page_name: "Note",
-      page_path: "pages/Note.md",
-      kind: "page",
-      sides: [
-        { role: "mine", label: "This device", path: "pages/Note.md" },
-        { role: "theirs", label: "Phone", path: "pages/Note.sync-conflict-20260817-101010-ABCDEFG.md" },
-      ],
-      block_conflicts: 1,
-    };
-    const { host, dispose } = mount(copyObject);
-    try {
-      await flush();
-      await flush();
-      [...host.querySelectorAll("button")]
-        .find((button) => button.textContent?.includes("Apply resolution"))!
-        .click();
-      await flush();
-      await flush();
-      await flush();
-      const installed = pageByName("Note")!;
-      expect(installed.roots).toHaveLength(1);
-      expect(doc.byId[installed.roots[0]].raw).toBe("desktop and phone");
-    } finally {
-      dispose();
-    }
-  });
-
-  it("does not commit a conflict-copy resolution over component-local uncommitted input", async () => {
-    const copyDiff: SyncConflictDiff = {
-      base_rev: "winner-rev",
-      conflict_rev: "copy-rev",
-      rows: [{ id: "0", kind: "modified", mine: view("desktop"), theirs: view("phone"), children: [] }],
-      mine_pre: null,
-      theirs_pre: null,
-      pre_differs: false,
-      blocks_identical: false,
-    };
-    setDoc({
-      byId: {
-        note: { id: "note", raw: "desktop", collapsed: false, parent: null, page: "Note", children: [] },
-      },
-      pages: [{
-        name: "Note",
-        kind: "page",
-        title: "Note",
-        preBlock: null,
-        roots: ["note"],
-        format: "md",
-        readOnly: false,
-        guide: false,
-        path: "pages/Note.md",
-      }],
-      feed: ["Note"],
-      loaded: true,
-    });
-    const resolveCopy = vi.fn(async () => {
-      throw new Error("must not be called");
-    });
-    stubBackend({
-      syncConflictDiff: async () => copyDiff,
-      resolveSyncConflict: resolveCopy as unknown as Backend["resolveSyncConflict"],
-    });
-    const releaseLease = takeEditorLease("Note");
-    const copyObject: ConflictObject = {
-      id: "copy:pages/Note.sync-conflict-20260822-120000-PHONE.md",
-      source: "sync-copy",
-      page_name: "Note",
-      page_path: "pages/Note.md",
-      kind: "page",
-      sides: [
-        { role: "mine", label: "This device", path: "pages/Note.md" },
-        { role: "theirs", label: "Phone", path: "pages/Note.sync-conflict-20260822-120000-PHONE.md" },
-      ],
-      block_conflicts: 1,
-    };
-    const { host, dispose } = mount(copyObject);
-    try {
-      await flush();
-      await flush();
-      [...host.querySelectorAll("button")]
-        .find((button) => button.textContent?.includes("Apply resolution"))!
-        .click();
-      await flush();
-      expect(resolveCopy).not.toHaveBeenCalled();
-      expect(doc.byId.note.raw).toBe("desktop");
-    } finally {
-      releaseLease();
-      dispose();
-    }
-  });
-
-  it("routes an in-memory save conflict through Concord's guarded live resolution", async () => {
-    const draft: PageDto = {
-      name: "Note",
-      kind: "page",
-      title: "Note",
-      pre_block: null,
-      path: "pages/Note.md",
-      rev: "editor-base-rev",
-      activation: 7,
-      blocks: [{ id: "1", raw: "my edit", collapsed: false, children: [] }],
-    };
-    const liveDiff: SyncConflictDiff = {
-      ...markerDiff.diff,
-      base_rev: "editor-base-rev",
-      conflict_rev: "42",
-    };
-    const resolve = vi.fn(async (
-      _page: PageDto,
-      _baseRev: string | null,
-      _epoch: number,
-      _decisions: Record<string, MergeDecision>,
-      _preChoice?: "mine" | "theirs" | "union",
-    ) => ({ ...draft, rev: "resolved-rev" }));
-    stubBackend({
-      liveSaveConflictDiff: (async () => liveDiff) as Backend["liveSaveConflictDiff"],
-      resolveLiveSaveConflict: resolve as Backend["resolveLiveSaveConflict"],
-      getPageByPath: async () => null,
-    });
-    const liveObject: ConflictObject = {
-      id: "live:pages/Note.md",
-      source: "live-save",
-      page_name: "Note",
-      page_path: "pages/Note.md",
-      kind: "page",
-      sides: [
-        { role: "mine", label: "Your retained draft" },
-        { role: "theirs", label: "Current file on disk" },
-        { role: "base", label: "Last version this editor loaded" },
-      ],
-      live: { page: draft, base_rev: "editor-base-rev", conflict_epoch: 42, draft_version: 1 },
-    };
-    loadSingle(draft);
-    const { host, dispose } = mount(liveObject);
-    try {
-      await flush();
-      await flush();
-      expect(host.querySelector(".page-conflict-title")!.textContent).toContain(
-        "Your draft and the current file both changed",
-      );
-      [...host.querySelectorAll("button")]
-        .find((button) => button.textContent?.includes("Apply resolution"))!
-        .click();
-      await flush();
-      await flush();
-      expect(resolve).toHaveBeenCalledTimes(1);
-      const [page, baseRev, epoch, decisions] = resolve.mock.calls[0];
-      expect(page).toMatchObject({
-        name: draft.name,
-        path: draft.path,
-        blocks: draft.blocks,
-      });
-      expect(baseRev).toBe("editor-base-rev");
-      expect(epoch).toBe(42);
-      expect(decisions).toEqual({ "1": "mine", "2": "theirs", "3": "both" });
-    } finally {
-      dispose();
-    }
-  });
-
-  it("requires a fresh review instead of discarding a draft changed after the live diff appeared", async () => {
-    const draft: PageDto = {
-      name: "Note",
-      kind: "page",
-      title: "Note",
-      pre_block: null,
-      path: "pages/Note.md",
-      blocks: [{ id: "1", raw: "reviewed draft", collapsed: false, children: [] }],
-    };
-    loadSingle(draft);
-    const resolve = vi.fn(async (page: PageDto) => ({ ...page, rev: "resolved-rev" }));
-    stubBackend({ resolveLiveSaveConflict: resolve as Backend["resolveLiveSaveConflict"] });
-    const liveObject: ConflictObject = {
-      id: "live:pages/Note.md",
-      source: "live-save",
-      page_name: "Note",
-      page_path: "pages/Note.md",
-      kind: "page",
-      sides: [
-        { role: "mine", label: "Your retained draft" },
-        { role: "theirs", label: "Current file on disk" },
-        { role: "base", label: "Last version this editor loaded" },
-      ],
-      live: { page: draft, base_rev: "base", conflict_epoch: 9, draft_version: 1 },
-    };
-    const { host, dispose } = mount(liveObject);
-    try {
-      await flush();
-      await flush();
-      setRaw("1", "reviewed draft plus a newer edit");
-      [...host.querySelectorAll("button")]
-        .find((button) => button.textContent?.includes("Apply resolution"))!
-        .click();
-      await flush();
-      await flush();
-      expect(resolve).not.toHaveBeenCalled();
-      expect(doc.byId["1"].raw).toBe("reviewed draft plus a newer edit");
-    } finally {
-      dispose();
-    }
-  });
-
-  it("rehydrates a durable live conflict and applies the currently reviewed disk revision", async () => {
-    const draft: PageDto = {
-      name: "Durable",
-      kind: "page",
-      title: "Durable",
-      pre_block: null,
-      path: "pages/Durable.md",
-      rev: "base-rev",
-      blocks: [{ id: "1", raw: "draft", collapsed: false, children: [] }],
-    };
-    setGraphMeta({ root: "/graph", preferred_format: "md" } as never);
-    registerLiveSaveConflict(draft, "base-rev", 5, {
-      base_text: "- base\n",
-      disk_rev: "disk-rev",
-    });
-    setConflictQueue([]); // process memory is gone; app-private capsule remains
-    restoreLiveSaveConflicts("/graph");
-    const restored = conflictQueue()[0];
-    expect(restored.live?.page.blocks[0].raw).toBe("draft");
-    loadSingle({
-      ...draft,
-      rev: "newer-disk-rev",
-      blocks: [{ id: "disk", raw: "disk from phone", collapsed: false, children: [] }],
-    });
-
-    const resolve = vi.fn(async (
-      _page: PageDto,
-      _diskRev: string,
-      _decisions: Record<string, MergeDecision>,
-      _preChoice?: "mine" | "theirs" | "union",
-    ) => ({ ...draft, rev: "resolved-rev" }));
-    stubBackend({
-      durableLiveSaveConflictDiff: async () => ({
-        ...markerDiff.diff,
-        conflict_rev: "newer-disk-rev",
-      }),
-      resolveDurableLiveSaveConflict: resolve,
-      getPageByPath: async () => null,
-    });
-    const { host, dispose } = mount(restored);
-    try {
-      await flush();
-      await flush();
-      [...host.querySelectorAll("button")]
-        .find((button) => button.textContent?.includes("Apply resolution"))!
-        .click();
-      await flush();
-      await flush();
-      expect(resolve).toHaveBeenCalledTimes(1);
-      expect(resolve.mock.calls[0][0].blocks[0].raw).toBe("draft");
-      expect(resolve.mock.calls[0][1]).toBe("newer-disk-rev");
-    } finally {
-      dispose();
-    }
-  });
-
-  it("restores a detached retained draft only through explicit guarded Apply (GH #541)", async () => {
-    const draft: PageDto = { name: "Missing", title: "Missing", kind: "page", path: "pages/Missing.md",
-      pre_block: null, rev: "old", blocks: [{ id: "kept", raw: "Retained writing", children: [], collapsed: false }] };
-    const conflict: ConflictObject = { id: "live:pages/Missing.md", source: "live-save",
-      page_name: draft.name, page_path: draft.path!, kind: "page", sides: [],
-      live: { page: draft, base_rev: "old", base_text: "- old\n", disk_rev: "old", conflict_epoch: 1, draft_version: 1, restored: true } };
-    const resolve = vi.fn(async () => ({ ...draft, rev: "restored" }));
-    stubBackend({ durableLiveSaveConflictDiff: async () => ({ ...markerDiff.diff, conflict_rev: "absent" }),
-      resolveDurableLiveSaveConflict: resolve, getPageByPath: async () => null,
-      activateEditor: async (path) => ({ target: path, activation: 1, prospective: false }) });
-    setGraphMeta({ root: "/graph", preferred_format: "md" } as never);
-    setConflictQueue([conflict]);
-    const host = document.createElement("div"); document.body.append(host);
-    const onResolved = vi.fn();
-    const dispose = render(() => <Show when={conflictQueue().find((item) => item.id === conflict.id)}>
-      {(current) => <PageConflictResolution conflict={current()} unavailable onResolved={onResolved} />}
-    </Show>, host);
-    try {
-      await flush(); await flush();
-      expect(resolve).not.toHaveBeenCalled();
-      [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Apply resolution"))!.click();
-      await flush(); await flush();
-      expect(resolve).toHaveBeenCalledWith(draft, "absent", expect.any(Object), "union");
-      expect(pageByName("Missing"), JSON.stringify(toasts())).toBeDefined();
-      expect(conflictQueue()).toHaveLength(0);
-      expect(onResolved).toHaveBeenCalledOnce();
-    } finally { dispose(); }
-  });
-
-  it("does not retire or load another graph's same-name draft after delayed retirement", async () => {
-    const draft: PageDto = { name: "Missing", title: "Missing", kind: "page", path: "pages/Missing.md",
-      pre_block: null, rev: "old", blocks: [{ id: "kept", raw: "Graph A draft", children: [], collapsed: false }] };
-    const conflict: ConflictObject = { id: "live:pages/Missing.md", source: "live-save",
-      page_name: draft.name, page_path: draft.path!, kind: "page", sides: [],
-      live: { page: draft, base_rev: "old", disk_rev: "old", conflict_epoch: 1, draft_version: 1, restored: true } };
-    let finishRetirement!: () => void;
-    const retire = vi.fn(() => new Promise<void>((resolve) => { finishRetirement = resolve; }));
-    const activate = vi.fn(async (path: string) => ({ target: path, activation: 1, prospective: false }));
-    stubBackend({ durableLiveSaveConflictDiff: async () => ({ ...markerDiff.diff, conflict_rev: "absent" }),
-      resolveDurableLiveSaveConflict: async () => ({ ...draft, rev: "restored" }),
-      retireConflictCapsule: retire, activateEditor: activate });
-    setGraphMeta({ root: "/graph-A", preferred_format: "md" } as never);
-    setConflictQueue([conflict]);
-    const host = document.createElement("div"); document.body.append(host);
-    const onResolved = vi.fn();
-    const dispose = render(() => <PageConflictResolution conflict={conflict} unavailable onResolved={onResolved} />, host);
-    try {
-      await flush(); await flush();
-      [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Apply resolution"))!.click();
-      await flush(); await flush();
-      expect(retire).toHaveBeenCalledWith("/graph-A", "Missing");
-      resetStore();
-      setGraphMeta({ root: "/graph-B", preferred_format: "md" } as never);
-      const newer = { ...conflict, live: { ...conflict.live!, page: { ...draft,
-        blocks: [{ ...draft.blocks[0], raw: "Graph B draft" }] } } };
-      setConflictQueue([newer]);
-      finishRetirement();
-      await flush(); await flush();
-      expect(conflictQueue()).toEqual([newer]);
-      expect(pageByName("Missing")).toBeUndefined();
-      expect(activate).not.toHaveBeenCalled();
-      expect(onResolved).not.toHaveBeenCalled();
-    } finally { dispose(); }
-  });
-
-  // Concord P5. The Settings modal was the only surface that let the user choose
-  // what happens to the page's OWN properties when the two sides' pre-blocks
-  // differ; the in-page resolver hardcoded "union". Retiring the modal without
-  // this would have silently dropped a capability.
-  it("offers the page-property choice the retired Settings modal used to own", async () => {
-    const resolve = vi.fn(async () => {});
-    const preDiff: MarkerConflictDiff = {
-      ...markerDiff,
-      diff: {
-        ...markerDiff.diff,
-        mine_pre: "alias:: here",
-        theirs_pre: "alias:: there",
-        pre_differs: true,
-      },
-    };
-    stubBackend({
-      vcsMarkerConflictDiff: (async () => preDiff) as unknown as Backend["vcsMarkerConflictDiff"],
-      resolveVcsMarkerConflict: resolve as unknown as Backend["resolveVcsMarkerConflict"],
-    });
-    const { host, dispose } = mount(markerObject);
-    try {
-      await flush();
-      await flush();
-      const choice = host.querySelector<HTMLSelectElement>(".page-conflict-preblock-choice")!;
-      // No-loss by default, consistent with this surface's row policy.
-      expect(choice.value).toBe("union");
-      expect([...choice.options].map((o) => o.value)).toEqual(["union", "mine", "theirs"]);
-
-      choice.value = "mine";
-      choice.dispatchEvent(new Event("change"));
-      [...host.querySelectorAll("button")]
-        .find((b) => b.textContent?.includes("Apply resolution"))!
-        .click();
-      await flush();
-      await flush();
-      const [, , , preChoice] = resolve.mock.calls[0] as unknown as [
-        string,
-        Record<string, string>,
-        string,
-        string,
-      ];
-      expect(preChoice).toBe("mine");
-    } finally {
-      dispose();
-    }
-  });
-
-  it("hides the page-property choice when the two sides agree on them", async () => {
-    stubBackend({});
-    const { host, dispose } = mount(markerObject);
-    try {
-      await flush();
-      await flush();
-      expect(host.querySelector(".page-conflict-preblock-choice")).toBeNull();
-    } finally {
-      dispose();
-    }
-  });
-
-  // Concord's fourth outcome. The surface treats a suggested MERGED body like
-  // any other suggestion — it is counted, "Apply all suggested" restores it, and
-  // the decision reaches the guarded resolver as the plain string the backend
-  // re-derives from. Nothing about the merged text itself is ever sent.
-  it("counts a merged suggestion and sends it through the guarded copy resolver", async () => {
-    const copyDiff: SyncConflictDiff = {
-      base_rev: "winner-rev",
-      conflict_rev: "copy-rev",
-      rows: [{
-        id: "0",
-        kind: "modified",
-        mine: view("Desktop"),
-        theirs: view("Desktop 5 kk"),
-        children: [],
-        verdict: "both-changed",
-        suggestion: "merged",
-        merged: { text: "Desktop kk", source: "computed" },
-      }],
-      mine_pre: null,
-      theirs_pre: null,
-      pre_differs: false,
-      blocks_identical: false,
-      three_way: true,
-    };
-    const resolveCopy = vi.fn(async (): Promise<PageDto> => ({
-      name: "Note",
-      kind: "page",
-      title: "Note",
-      pre_block: null,
-      path: "pages/Note.md",
-      rev: "merged-rev",
-      blocks: [{ id: "note", raw: "Desktop kk", collapsed: false, children: [] }],
-    }));
-    stubBackend({
-      syncConflictDiff: (async () => copyDiff) as unknown as Backend["syncConflictDiff"],
-      resolveSyncConflict: resolveCopy as unknown as Backend["resolveSyncConflict"],
-    });
-    const copyObject: ConflictObject = {
-      id: "copy:pages/Note.sync-conflict-20260824-090000-MERGED1.md",
-      source: "sync-copy",
-      page_name: "Note",
-      page_path: "pages/Note.md",
-      kind: "page",
-      sides: [
-        { role: "mine", label: "This device", path: "pages/Note.md" },
-        { role: "theirs", label: "Phone", path: "pages/Note.sync-conflict-20260824-090000-MERGED1.md" },
-      ],
-      block_conflicts: 1,
-    };
-    setDoc({
-      byId: {
-        note: { id: "note", raw: "Desktop", collapsed: false, parent: null, page: "Note", children: [] },
-      },
-      pages: [{
-        name: "Note",
-        kind: "page",
-        title: "Note",
-        preBlock: null,
-        roots: ["note"],
-        format: "md",
-        readOnly: false,
-        guide: false,
-        path: "pages/Note.md",
-      }],
-      feed: ["Note"],
-      loaded: true,
-    });
-    const { host, dispose } = mount(copyObject);
-    try {
-      await flush();
-      await flush();
-      expect(host.querySelector(".sync-merge-toolbar")!.textContent).toContain("1 of 1 pre-selected");
-      expect(
-        host.querySelector(".sync-merge-seg.active")!.getAttribute("data-decision"),
-      ).toBe("merged");
-      // Overriding and then restoring goes through the same suggestion path.
-      (host.querySelector('.sync-merge-seg[data-decision="both"]') as HTMLElement).click();
-      await flush();
-      [...host.querySelectorAll("button")]
-        .find((b) => b.textContent?.includes("Apply all suggested"))!
-        .click();
-      await flush();
-      expect(
-        host.querySelector(".sync-merge-seg.active")!.getAttribute("data-decision"),
-      ).toBe("merged");
-      [...host.querySelectorAll("button")]
-        .find((b) => b.textContent?.includes("Apply resolution"))!
-        .click();
-      await flush();
-      await flush();
-      const [, , decisions] = resolveCopy.mock.calls[0] as unknown as [
-        string,
-        string,
-        Record<string, MergeDecision>,
-      ];
-      expect(decisions).toEqual({ "0": "merged" });
-    } finally {
-      dispose();
-    }
-  });
-
-  it("warns quietly — never blocks — when the page is left unresolved", async () => {
-    stubBackend({});
-    setConflictQueue([markerObject]);
-    const { dispose } = mount(markerObject);
-    await flush();
-    await flush();
-    // Unmounting IS leaving the page. The object is still queued, so a note is
-    // pushed; no dialog and no navigation veto exist anywhere in this path.
+    vi.spyOn(backend(), "vcsMarkerConflictDiff").mockResolvedValue({ mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows) });
+    const { host, dispose } = mount(markerConflict);
+    await settle();
+    const active = (id: string) => host.querySelector(`[data-row-id="${id}"] .sync-merge-seg.active`)!.getAttribute("data-decision");
+    expect(active("0")).toBe("theirs");
+    expect(active("1")).toBe("both");
+    expect(host.querySelector(".page-conflict-count")!.textContent).toBe("2 conflicts");
     dispose();
-    await flush();
-    expect(document.querySelector(".sync-merge-overlay")).toBeNull();
-    expect(conflictQueue()).toHaveLength(1);
   });
-});
 
-// The conflict dock (spec: tine-agents/specs/concord-conflict-dock.md).
-// Fail-before: the panel rendered only at the top of the page and scrolled
-// away with it — on a phone a conflict was invisible until the user happened
-// to scroll up. These assert the dock's state machine with a hand-fired
-// IntersectionObserver (jsdom has none): bar when the panel is entirely above
-// the viewport, unroll-in-place of the SAME panel node, Escape/scroll-back
-// collapse, and decision state surviving the moves.
-class ManualIO {
-  static instances: ManualIO[] = [];
-  callback: IntersectionObserverCallback;
-  constructor(cb: IntersectionObserverCallback) {
-    this.callback = cb;
-    ManualIO.instances.push(this);
-  }
-  observe(): void {}
-  unobserve(): void {}
-  disconnect(): void {}
-  takeRecords(): IntersectionObserverEntry[] {
-    return [];
-  }
-  fire(isIntersecting: boolean, top: number): void {
-    this.callback(
-      [{ isIntersecting, boundingClientRect: { top } } as unknown as IntersectionObserverEntry],
-      this as unknown as IntersectionObserver,
+  it("applies through the guarded marker path with the file's own base_rev, then reloads the page", async () => {
+    setConflictInventory(inventoryWith(markerConflict));
+    vi.spyOn(backend(), "vcsMarkerConflictDiff").mockResolvedValue({ mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows, "marker-rev") });
+    const resolve = vi.spyOn(backend(), "resolveVcsMarkerConflict").mockResolvedValue();
+    const sync = vi.spyOn(backend(), "resolveSyncConflict").mockResolvedValue();
+    // The follow-up re-derivation never lands: the object must leave the queue
+    // because the guarded write retired it, not because a later walk did.
+    vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount(markerConflict);
+    await settle();
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(resolve).toHaveBeenCalledWith("pages/Merged.md", { "0": "theirs", "1": "both" }, "marker-rev", ["replace-page"], "union");
+    expect(sync).not.toHaveBeenCalled();
+    expect(conflictQueue()).toEqual([]);
+    expect(doc.applyGraphChange).toHaveBeenCalledWith({ path: "pages/Merged.md", name: "Merged", kind: "page", created: false, removed: false }, true); // a resolution is shown even under "always ask" (22a)
+    dispose();
+  });
+
+  // og 20a (master ADR 0056): a sync copy reviewed 3-way against the Concord
+  // base ledger sends the base's identity back, so the resolve applies a
+  // "merged" row only against the base the user saw.
+  it("sends the reviewed ledger base back with a sync-copy resolve", async () => {
+    setConflictInventory(inventoryWith(copyConflict));
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue({ ...diff([threeWayRows[0]], "winner-rev"), three_way: true, merge_base_rev: "base-sha" });
+    const sync = vi.spyOn(backend(), "resolveSyncConflict").mockResolvedValue();
+    vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount(copyConflict);
+    await settle();
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(sync).toHaveBeenCalledWith(
+      "pages/Plan.md", "pages/Plan.sync-conflict-20260705-141233-ABCDEFG.md", { "0": "theirs" },
+      "winner-rev", "copy-rev", ["replace-page", "delete-page"], "union", "base-sha",
     );
-  }
-}
-
-describe("the conflict dock", () => {
-  const realIO = globalThis.IntersectionObserver;
-  const withIO = async (run: (io: ManualIO, host: HTMLElement) => Promise<void>) => {
-    (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver =
-      ManualIO as unknown as typeof IntersectionObserver;
-    stubBackend({});
-    const { host, dispose } = mount(markerObject);
-    try {
-      await flush();
-      await flush();
-      const io = ManualIO.instances.at(-1)!;
-      expect(io).toBeDefined();
-      await run(io, host);
-    } finally {
-      dispose();
-      ManualIO.instances = [];
-      (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver = realIO;
-    }
-  };
-
-  it("shows no bar while the panel is in view", async () => {
-    await withIO(async (io, host) => {
-      io.fire(true, 120);
-      await flush();
-      expect(host.querySelector(".page-conflict-dock")).toBeNull();
-      expect(host.querySelector(".page-conflict-slot .page-conflict")).not.toBeNull();
-    });
-  });
-
-  it("docks a slim bar carrying the title and count when the panel scrolls above the viewport", async () => {
-    await withIO(async (io, host) => {
-      io.fire(false, -40);
-      await flush();
-      const bar = host.querySelector(".page-conflict-dockbar")!;
-      expect(bar).not.toBeNull();
-      expect(bar.getAttribute("aria-expanded")).toBe("false");
-      expect(bar.textContent).toContain("Unresolved merge from your version-control tool");
-      expect(bar.textContent).toContain("3 to review");
-      // Collapsed bar renders no second panel; the inline one keeps its slot.
-      expect(host.querySelector(".page-conflict-sheet")).toBeNull();
-      expect(host.querySelector(".page-conflict-slot .page-conflict")).not.toBeNull();
-    });
-  });
-
-  it("does NOT dock for a sentinel below the fold (short window at page top)", async () => {
-    await withIO(async (io, host) => {
-      io.fire(false, 900);
-      await flush();
-      expect(host.querySelector(".page-conflict-dock")).toBeNull();
-    });
-  });
-
-  it("unrolls the SAME panel node into the sheet and returns it on Escape", async () => {
-    await withIO(async (io, host) => {
-      const panel = host.querySelector(".page-conflict")!;
-      io.fire(false, -40);
-      await flush();
-      (host.querySelector(".page-conflict-dockbar") as HTMLButtonElement).click();
-      await flush();
-      const sheet = host.querySelector(".page-conflict-sheet")!;
-      expect(sheet.querySelector(".page-conflict")).toBe(panel);
-      expect(host.querySelector(".page-conflict-slot .page-conflict")).toBeNull();
-      expect(
-        host.querySelector(".page-conflict-dockbar")!.getAttribute("aria-expanded"),
-      ).toBe("true");
-      sheet.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-      );
-      await flush();
-      expect(host.querySelector(".page-conflict-sheet")).toBeNull();
-      expect(host.querySelector(".page-conflict-slot .page-conflict")).toBe(panel);
-    });
-  });
-
-  it("keeps decisions made inside the sheet after collapsing and undocking", async () => {
-    await withIO(async (io, host) => {
-      io.fire(false, -40);
-      await flush();
-      (host.querySelector(".page-conflict-dockbar") as HTMLButtonElement).click();
-      await flush();
-      const seg = host.querySelector(
-        '[data-row-id="1"] .sync-merge-seg[data-decision="theirs"]',
-      ) as HTMLButtonElement;
-      seg.click();
-      await flush();
-      io.fire(true, 60); // scrolled back to top: undock + collapse
-      await flush();
-      expect(host.querySelector(".page-conflict-dock")).toBeNull();
-      const active = host
-        .querySelector('[data-row-id="1"]')!
-        .querySelector(".sync-merge-seg.active")!;
-      expect(active.getAttribute("data-decision")).toBe("theirs");
-    });
-  });
-});
-
-// GH #490. A rejected diff must become a message, never a permanently stuck
-// panel. Reading an errored Solid resource THROWS (solid.js read()), and there
-// is no ErrorBoundary anywhere in src/, so the throw reaches runUpdates' catch,
-// which nulls the pending Effects queue before rehandling. The effect that would
-// have swapped the fallback text off "Reading both versions…" is in that queue,
-// and so is every other DOM effect batched with it -- which is why the reporter
-// saw a frozen panel AND a blank page body at the same time.
-describe("a conflict diff that fails (GH #490)", () => {
-  const failingCopy: ConflictObject = {
-    id: "copy:pages/Stuck.sync-conflict-20260905-101010-ABCDEFG.md",
-    source: "sync-copy",
-    page_name: "Stuck",
-    page_path: "pages/Stuck.md",
-    kind: "page",
-    sides: [
-      { role: "mine", label: "This device", path: "pages/Stuck.md" },
-      {
-        role: "theirs",
-        label: "sync-conflict-20260905-101010-ABCDEFG",
-        path: "pages/Stuck.sync-conflict-20260905-101010-ABCDEFG.md",
-      },
-    ],
-    block_conflicts: 1,
-  };
-
-  it("says it could not be read instead of staying on “Reading both versions…”", async () => {
-    stubBackend({
-      syncConflictDiff: (async () => {
-        throw new Error("the conflict copy could not be read");
-      }) as unknown as Backend["syncConflictDiff"],
-    });
-    const { host, dispose } = mount(failingCopy);
-    await flush();
-    await flush();
-
-    const empty = host.querySelector(".page-conflict-empty")?.textContent ?? "";
-    expect(empty).not.toContain("Reading both versions");
-    expect(empty).toContain("Couldn’t read this conflict");
     dispose();
   });
 
-  // "Couldn't read this conflict." on its own tells the user nothing they can
-  // act on or report. The reason the backend gave belongs on screen.
-  it("names the reason the backend gave", async () => {
-    stubBackend({
-      syncConflictDiff: (async () => {
-        throw new Error("the conflict copy could not be read");
-      }) as unknown as Backend["syncConflictDiff"],
-    });
-    const { host, dispose } = mount(failingCopy);
-    await flush();
-    await flush();
+  it("routes a conflict copy through the sync resolve path, not the marker one", async () => {
+    setConflictInventory(inventoryWith(copyConflict));
+    const diffCall = vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue(diff([threeWayRows[1]], "winner-rev"));
+    const sync = vi.spyOn(backend(), "resolveSyncConflict").mockResolvedValue();
+    const marker = vi.spyOn(backend(), "resolveVcsMarkerConflict").mockResolvedValue();
+    // The follow-up re-derivation never lands: the object must leave the queue
+    // because the guarded write retired it, not because a later walk did.
+    vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount(copyConflict);
+    await settle();
+    expect(diffCall).toHaveBeenCalledWith("pages/Plan.md", "pages/Plan.sync-conflict-20260705-141233-ABCDEFG.md");
+    expect(host.querySelector(".page-conflict-side.theirs")!.textContent).toMatch(/^Sync copy · Jul 5/);
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(sync).toHaveBeenCalledWith(
+      "pages/Plan.md", "pages/Plan.sync-conflict-20260705-141233-ABCDEFG.md", { "1": "both" },
+      "winner-rev", "copy-rev", ["replace-page", "delete-page"], "union", undefined,
+    );
+    expect(marker).not.toHaveBeenCalled();
+    expect(conflictQueue()).toEqual([]);
+    dispose();
+  });
 
-    expect(host.querySelector(".page-conflict-empty")?.textContent)
-      .toContain("the conflict copy could not be read");
+  // master 042054c1b: a journal's conflict copy settles and reloads the
+  // JOURNAL, addressed by its file and kind, not a same-titled page.
+  it("settles a journal conflict copy and reloads it as a journal", async () => {
+    const journal: ConflictObject = {
+      ...copyConflict,
+      id: "copy:journals/2026_07_05.sync-conflict-20260705-141233-ABCDEFG.md",
+      page_name: "Jul 5th, 2026",
+      page_path: "journals/2026_07_05.md",
+      kind: "journal",
+      sides: [
+        { role: "mine", label: "This device", path: "journals/2026_07_05.md" },
+        { role: "theirs", label: "sync-conflict-20260705-141233-ABCDEFG", path: "journals/2026_07_05.sync-conflict-20260705-141233-ABCDEFG.md" },
+      ],
+    };
+    setConflictInventory(inventoryWith(journal));
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue(diff([threeWayRows[1]], "journal-rev"));
+    const sync = vi.spyOn(backend(), "resolveSyncConflict").mockResolvedValue();
+    vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount(journal);
+    await settle();
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(sync).toHaveBeenCalledWith(
+      "journals/2026_07_05.md", "journals/2026_07_05.sync-conflict-20260705-141233-ABCDEFG.md", { "1": "both" },
+      "journal-rev", "copy-rev", ["replace-page", "delete-page"], "union", undefined,
+    );
+    expect(conflictQueue()).toEqual([]);
+    expect(doc.applyGraphChange).toHaveBeenCalledWith({ path: "journals/2026_07_05.md", name: "Jul 5th, 2026", kind: "journal", created: false, removed: false }, true);
+    dispose();
+  });
+
+  it("saves pending edits first and asks for a fresh review instead of writing over them", async () => {
+    doc.dirty = true;
+    const read = vi.spyOn(backend(), "vcsMarkerConflictDiff").mockResolvedValue({ mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows) });
+    const resolve = vi.spyOn(backend(), "resolveVcsMarkerConflict").mockResolvedValue();
+    const { host, dispose } = mount(markerConflict);
+    await settle();
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(doc.flushPage).toHaveBeenCalledWith("Merged");
+    expect(resolve).not.toHaveBeenCalled();
+    expect(read).toHaveBeenCalledTimes(2);
+    dispose();
+  });
+
+  it("refuses while the page holds its own save conflict", async () => {
+    doc.conflicted = true;
+    vi.spyOn(backend(), "vcsMarkerConflictDiff").mockResolvedValue({ mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows) });
+    const resolve = vi.spyOn(backend(), "resolveVcsMarkerConflict").mockResolvedValue();
+    const { host, dispose } = mount(markerConflict);
+    await settle();
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(resolve).not.toHaveBeenCalled();
+    expect(toasts().map((t) => t.message)).toContain("Resolve this page’s save conflict first, then apply this resolution.");
+    dispose();
+  });
+
+  it("re-reads the file when the guarded write reports it changed on disk", async () => {
+    setConflictInventory(inventoryWith(markerConflict));
+    const read = vi.spyOn(backend(), "vcsMarkerConflictDiff").mockResolvedValue({ mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows) });
+    vi.spyOn(backend(), "resolveVcsMarkerConflict").mockRejectedValue(new Error("conflict"));
+    const { host, dispose } = mount(markerConflict);
+    await settle();
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(conflictQueue().map((c) => c.id)).toEqual([markerConflict.id]);
+    expect(doc.applyGraphChange).not.toHaveBeenCalled();
+    expect(toasts().some((t) => t.message.startsWith("The file changed on disk"))).toBe(true);
+    dispose();
+  });
+
+  it("routes ordinary prose containing 'conflict' through the generic failure path", async () => {
+    const read = vi.spyOn(backend(), "vcsMarkerConflictDiff").mockResolvedValue({ mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows) });
+    vi.spyOn(backend(), "resolveVcsMarkerConflict").mockRejectedValue(new Error("a conflict of interest"));
+    const { host, dispose } = mount(markerConflict);
+    await settle();
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(toasts().map((t) => t.message)).toContain("Couldn’t resolve it: a conflict of interest");
+    dispose();
+  });
+
+  it("shows an unreadable conflict as text instead of blanking the page", async () => {
+    vi.spyOn(backend(), "vcsMarkerConflictDiff").mockRejectedValue(new Error("io:NotFound"));
+    const { host, dispose } = mount(markerConflict);
+    await settle();
+    expect(host.querySelector(".page-conflict-empty")!.textContent).toBe("Couldn’t read this conflict. (io:NotFound)");
+    dispose();
+  });
+});
+
+// Moved from the retired Settings merge modal (og 15b, I-22 / I-4): both files
+// are admitted at the parse cap, so a diff is at most OUTLINE_MAX_DEPTH deep and
+// must render in full, in document order.
+describe("resolver review depth", () => {
+  function deepRows(levels: number): DiffRow[] {
+    let row: DiffRow | null = null;
+    for (let level = levels; level >= 1; level--) {
+      const v = (text: string) => ({ uuid: "", text, child_count: row ? 1 : 0 });
+      row = { id: String(level), kind: "modified", mine: v(`mine ${level}`), theirs: v(`copy ${level}`), children: row ? [row] : [] };
+    }
+    return [row!];
+  }
+  const shown = () => [...document.querySelectorAll<HTMLElement>(".sync-merge-row")].map((row) => `${row.style.paddingLeft}:${row.querySelector(".mine")?.textContent}`);
+
+  it("renders a conflict diff exactly at the outline cap", async () => {
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue(diff(deepRows(OUTLINE_MAX_DEPTH)));
+    const { dispose } = mount(copyConflict);
+    await settle();
+    const rows = document.querySelectorAll(".sync-merge-row");
+    expect(rows.length).toBe(OUTLINE_MAX_DEPTH);
+    expect(rows[rows.length - 1].textContent).toContain(`copy ${OUTLINE_MAX_DEPTH}`);
+    dispose();
+  });
+
+  it("keeps document order and hides an unchanged row with its subtree", async () => {
+    const row = (id: string, kind: DiffRow["kind"], children: DiffRow[] = []): DiffRow => ({ id, kind, mine: view(id), theirs: view(id), children });
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue(diff([
+      row("A", "modified", [row("B", "unchanged", [row("C", "modified")]), row("E", "added")]),
+      row("D", "removed"),
+    ]));
+    const { dispose } = mount(copyConflict);
+    await settle();
+    expect(shown()).toEqual(["0px:A", "16px:E", "0px:D"]);
+    const toggle = document.querySelector<HTMLInputElement>(".sync-merge-showunchanged input")!;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+    expect(shown()).toEqual(["0px:A", "16px:B", "32px:C", "16px:E", "0px:D"]);
     dispose();
   });
 });

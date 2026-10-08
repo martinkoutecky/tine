@@ -3,7 +3,8 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { resetNearObserverForTests } from "../lazyObserve";
 import { initParser } from "../render/parse";
-import { loadSingle, resetStore } from "../store";
+import { resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
 import { Block } from "./Block";
 
 class ManualNearObserver implements IntersectionObserver {

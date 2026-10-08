@@ -5,14 +5,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { resolveTauriDriver, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-
-await ensureDisplay();
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
-const TD = resolveTauriDriver();
+const TD = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver") : "tauri-driver");
+// TAURI_DRIVER overrides CARGO_HOME/bin/tauri-driver; otherwise search PATH.
+if (process.argv.includes("--help")) {
+  console.log(`Usage: node scripts/e2e-plugin-graph-ownership.mjs
+TINE_APP: ${APP}
+TAURI_DRIVER: ${TD} (default: CARGO_HOME/bin/tauri-driver, or PATH)`);
+  process.exit(0);
+}
 const WD = process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver";
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4494);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4495);
@@ -38,7 +42,7 @@ for (const root of [A, B]) {
   fs.writeFileSync(journalPath(root), sourceBytes);
 }
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(XDG, dir), { recursive: true });
-const appData = path.join(XDG, "data", "page.tine.Tine");
+const appData = path.join(XDG, "data", APP_ID);
 const packageDir = path.join(appData, "plugins", manifest.id, manifest.version);
 fs.mkdirSync(packageDir, { recursive: true });
 fs.writeFileSync(path.join(packageDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -62,7 +66,7 @@ const env = {
 };
 const logPath = path.join(TMP, "tauri-driver.log");
 const log = fs.openSync(logPath, "w");
-const driver = spawn(TD, webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, WD), {
+const driver = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", WD], {
   env, stdio: ["ignore", log, log], detached: true,
 });
 await sleep(2500);
@@ -72,7 +76,7 @@ try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error",
     connectionRetryCount: 1, connectionRetryTimeout: 60_000,
-    capabilities: tauriCapabilities(APP, "plugin-graph-ownership"),
+    capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
   });
   await browser.$('[data-block-ref="shared-id"] .block-content').waitForExist({ timeout: 20_000 });
   await browser.$('[data-block-ref="shared-id"] .block-content').click();

@@ -2,11 +2,13 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { loadSingle, resetStore } from "../store";
-import type { BlockDto, PageDto, RefGroup } from "../types";
+import { resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
+import type { BlockDto, PageDto, PageRead, RefGroup } from "../types";
 import { Block } from "./Block";
 import { LinkDepthContext } from "./linkDepth";
-import { blockRunResult } from "../queryReadingsTestkit";
+import { blockRunResult } from "../tests/queryReadingsTestkit";
+import { OUTLINE_MAX_DEPTH } from "../editor/outline";
 
 let liveGroupBudget = Number.POSITIVE_INFINITY;
 let observedLiveGroups = 0;
@@ -58,6 +60,17 @@ function mountBlock(id: string, initialLinkDepth = 0) {
   ), root);
   return { root, dispose };
 }
+
+it("renders a legal 128-level outline in jsdom without overflowing", () => {
+  let child: BlockDto = { id: "deep-127", raw: "deepest leaf", collapsed: false, children: [] };
+  for (let depth = OUTLINE_MAX_DEPTH - 2; depth >= 0; depth--) {
+    child = { id: `deep-${depth}`, raw: `level ${depth}`, collapsed: false, children: [child] };
+  }
+  loadSingle(page("Deep", [child]));
+  const { root, dispose } = mountBlock(child.id);
+  expect(root.textContent).toContain("deepest leaf");
+  dispose();
+});
 
 function page(name: string, blocks: BlockDto[]): PageDto {
   return { name, title: name, kind: "page", pre_block: null, blocks };
@@ -148,7 +161,7 @@ describe("shared embed/ref render depth (GH #206)", () => {
     }]);
     loadSingle(selfPage);
     liveGroupBudget = 2;
-    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(selfPage);
+    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(selfPage as PageRead);
 
     const { root, dispose } = mountBlock(hostId);
     try {
@@ -191,7 +204,8 @@ describe("shared embed/ref render depth (GH #206)", () => {
     }
   });
 
-  // A query returning its OWN block is no longer a way to reach this bound: that
+  // Ported from master (GH #469 split the GH #206 case in two).
+// A query returning its OWN block is no longer a way to reach this bound: that
   // exact shape is excluded at the membership boundary now (GH #469), and
   // QueryMacro.test.tsx pins it. The depth bound is the last resort for every
   // OTHER route into the same live-render loop, so this drives one of them — the

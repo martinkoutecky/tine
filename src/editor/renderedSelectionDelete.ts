@@ -15,7 +15,7 @@
 // delete), and the block opens in the editor with the caret at the join point
 // so the user lands exactly where OG would leave them.
 
-import { doc, setRaw, blockWritable, pageByName } from "../store";
+import { node as docNode, setRaw, blockWritable, pageByName } from "../document";
 import { startEditing, editingId } from "../editorController";
 import { splitProps, joinProps, isBuiltinHidden } from "../editor/properties";
 import { editorOffsetFromRenderedRange } from "../render/spans";
@@ -29,8 +29,13 @@ function blockRowOf(node: Node | null): Element | null {
 }
 
 /** Delete the current rendered text selection inside one block. Returns true
- *  when the key press was consumed (text deleted), false to leave the event to
- *  its default (or other) handling. */
+ *  when the key press was consumed (text deleted through `setRaw`: one undo
+ *  step, one `save-block` dirty mark, then the block opens in the editor at the
+ *  join point); false to leave the event to its default handling. Refuses
+ *  (false) a collapsed or cross-block selection, a reference/embed/query
+ *  rendering, the block being edited, a read-only page, annotation or calc
+ *  blocks, an open modal, and any selection point that does not map to source.
+ *  Cost: O(length of that block). */
 export function deleteRenderedTextSelection(): boolean {
   if (typeof window === "undefined" || typeof document === "undefined") return false;
   // A modal owns keystrokes while open — never mutate background blocks behind it.
@@ -56,14 +61,14 @@ export function deleteRenderedTextSelection(): boolean {
   const id = row.getAttribute("data-block-id");
   if (!id) return false;
   if (editingId() === id) return false; // that block's editor owns the keys
-  const node = doc.byId[id];
+  const node = docNode(id);
   if (!node || !blockWritable(id)) return false;
   // Annotation and calc blocks have non-plain rendered views; never splice them
   // through reconstructed text state (same rule as editor merge/delete paths).
-  if (isAnnotationBlock(node.raw) || calcSource(node.raw) !== null) return false;
   const page = pageByName(node.page);
   if (!page) return false;
   const fmt = page.format === "org" ? "org" : "md";
+  if (isAnnotationBlock(node.raw, fmt) || calcSource(node.raw) !== null) return false;
 
   const start = editorOffsetFromRenderedRange(
     wrapper,

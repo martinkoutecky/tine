@@ -1,7 +1,7 @@
 # GH #161 manager row R1 — right-sidebar close safety
 
 Date: 2026-07-16  
-Worktree: `/aux/koutecky/logseq/tine-agent-worktrees/batch-reference-and-polish-v0510`  
+Worktree: the isolated `batch-reference-and-polish-v0510` worktree<br>
 Scope: manager checklist row R1 only  
 Status: implemented and focused verification green; no commit created
 

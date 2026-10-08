@@ -1,6 +1,6 @@
 // Screenshot the new OG macros on the kitchen-sink page (user :macros, twitter,
 // vimeo, bilibili, youtube-timestamp, cloze, zotero).
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 const PORT = 5205;

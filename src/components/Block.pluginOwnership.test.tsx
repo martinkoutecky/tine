@@ -4,9 +4,12 @@ import { startEditing } from "../editorController";
 import { pluginManager } from "../plugins/manager";
 import type { PluginEffect } from "../plugins/protocol";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, resetStore } from "../store";
+import { resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
 import type { GraphMeta, PageDto } from "../types";
-import { bumpGraphEpoch, setGraphMeta, setGraphTransitioning } from "../ui";
+import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
+import { setGraphTransitioning } from "../ui";
 import { Block } from "./Block";
 
 beforeAll(() => initParser());
@@ -17,7 +20,7 @@ function meta(root: string): GraphMeta {
     shortcuts: {}, start_of_week: 6, block_hidden_properties: [], linked_references_collapsed_threshold: 100, default_journal_template: null,
     favorites: [], journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "yyyy_MM_dd",
     preferred_format: "md", macros: {}, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
-    logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true,
+    logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true, mobile_gestures_disabled_in_block_with_tags: [],
   };
 }
 

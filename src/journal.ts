@@ -1,38 +1,28 @@
-// Journal page title formatting. Mirrors the Rust `date::Format` so a title the
-// frontend computes for "today" matches the one the backend derives from the
-// journal file — including a graph's custom `:journal/page-title-format`. The
-// current format is fed in from GraphMeta on graph load (see graph.ts);
-// it defaults to Logseq's "MMM do, yyyy".
-
 import { createSignal } from "solid-js";
+import { format_journal_date, parse_journal_format_json } from "./render/wasm/lsdoc_wasm.js";
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const MONTHS_FULL = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
-// Indexed by Date.getDay() (0 = Sunday), matching the Rust formatter.
-const WD_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const WD_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const WD_2 = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
-const WD_1 = ["S", "M", "T", "W", "T", "F", "S"];
+/** Journal dates and title formatting. `journalTitle` and `parseJournalTitle`
+ * read the graph's active display format set by `setJournalTitleFormat`;
+ * `formatJournal` and `parseJournalWith` take an explicit format. All operations
+ * are independent of graph size and write no files. Parsing returns null for
+ * unrecognized/invalid titles; a configured format defaults to "MMM do, yyyy".
+ * Await initParser() before formatting/parsing, as app boot does. Parser init
+ * failures propagate; there is no alternate date grammar. */
 
-const DEFAULT_TITLE_FORMAT = "MMM do, yyyy";
+export const DEFAULT_TITLE_FORMAT = "MMM do, yyyy";
 let titleFormat = DEFAULT_TITLE_FORMAT;
 
-export type JournalDateParts = { y: number; m: number; d: number };
-
-/// The app's wall clock (GH #607). The backend's time-zone rules are the
-/// calendar authority: journal membership, the feed's `as_of_day` and relative
-/// queries all use them. A WebView can carry older zone rules than the OS (the
-/// AppImage bundles its own ICU, which still applied Mexico City's abolished
-/// daylight saving time), and a frontend "today" read from `new Date()` then
-/// disagreed with the backend's for an hour a night, stalling the journal feed.
-/// `appNow()` is `new Date()` shifted by the difference between the two zone
-/// offsets at one instant: zero whenever both sides agree, so it changes nothing
-/// for a WebView with current rules. Its local getters read the backend's wall
-/// clock. Every frontend read of "now" goes through here
-/// (`src/appClock.guard.test.ts`).
+/** The app's wall clock (GH #607). The backend's time-zone rules are the
+ * calendar authority: journal membership, the feed's `as_of_day` and relative
+ * queries all use them. A WebView can carry older zone rules than the OS (the
+ * AppImage bundles its own ICU, which still applied Mexico City's abolished
+ * daylight saving time), and a frontend "today" read from `new Date()` then
+ * disagreed with the backend's for an hour a night, stalling the journal feed.
+ * `appNow()` is `new Date()` shifted by the difference between the two zone
+ * offsets at one instant: zero whenever both sides agree, so it changes nothing
+ * for a WebView with current rules. Its local getters read the backend's wall
+ * clock. Every frontend read of "now" goes through here
+ * (`src/appClock.guard.test.ts`). O(1), no I/O. */
 type BackendClock = { offset_minutes: number; unix_ms: number };
 let zoneSkewMs = 0;
 
@@ -85,64 +75,70 @@ export function installBackendClock(read: () => Promise<BackendClock>): void {
   });
 }
 
-/** Stable local-calendar identity. Unlike elapsed-millisecond arithmetic this
- * remains correct across short/long DST days and month/year boundaries. */
+/** Stable local calendar day, also across DST changes. */
 export function localDayKey(now = appNow()): number {
   return now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
 }
 
-/** Delay to the next local calendar day, including a small post-midnight margin.
- * Constructing the next date in local time yields 23/24/25-hour days correctly. */
+/** Inverse for a valid local yyyymmdd key, returning local midnight. Invalid
+ * keys normalize as JS dates do; nonfinite keys produce an invalid Date. */
+export function localDateFromDayKey(key: number): Date {
+  const date = new Date(0);
+  date.setHours(0, 0, 0, 0);
+  date.setFullYear(Math.floor(key / 10_000), Math.floor((key % 10_000) / 100) - 1, key % 100);
+  return date;
+}
+
+/** Milliseconds until the next local midnight plus margin, clamped to at least 1. */
 export function localDayRolloverDelay(now = appNow(), marginMs = 25): number {
   const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
   return Math.max(1, next.getTime() - now.getTime() + marginMs);
 }
+
+const [dayKey, setDayKey] = createSignal(localDayKey());
+let dayKeyArmed = false;
+
+/** Test-only override of the reactive day signal until the next clock sync or
+ * rollover timer; the real clock is unchanged. */
+export function setCurrentDayKeyForTest(key: number): void { setDayKey(key); }
+
+/** Reactive local day for controls that stay mounted through midnight. O(1),
+ * without file I/O. The first browser call synchronizes from the clock and
+ * installs one recurring midnight timer plus focus/visibility listeners for
+ * the module lifetime; later calls read the signal. There is no disposer. */
+export function currentDayKey(): number {
+  if (!dayKeyArmed && typeof window !== "undefined") {
+    dayKeyArmed = true;
+    setDayKey(localDayKey());
+    const arm = () => {
+      window.setTimeout(() => { setDayKey(localDayKey()); arm(); }, localDayRolloverDelay());
+    };
+    arm();
+    const sync = () => setDayKey(localDayKey());
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) sync(); });
+  }
+  return dayKey();
+}
+
+export type JournalDateParts = { readonly y: number; readonly m: number; readonly d: number };
 
 /// Set the active journal title format (from `GraphMeta.journal_page_title_format`).
 export function setJournalTitleFormat(fmt: string | undefined | null): void {
   titleFormat = fmt && fmt.trim() ? fmt : DEFAULT_TITLE_FORMAT;
 }
 
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-function ordinal(n: number): string {
-  const a = n % 10;
-  const b = n % 100;
-  const suffix =
-    a === 1 && b !== 11 ? "st" : a === 2 && b !== 12 ? "nd" : a === 3 && b !== 13 ? "rd" : "th";
-  return `${n}${suffix}`;
-}
-
-/// Format a date with an explicit cljs-time/Joda-style pattern (the subset Logseq
-/// uses). Unknown characters are emitted literally.
+/** Native format grammar with a bounded compiled-pattern cache. O(format + title), no I/O. */
 export function formatJournal(d: Date, fmt: string): string {
-  const y = d.getFullYear();
-  const mo = d.getMonth(); // 0-based
-  const day = d.getDate();
-  const dow = d.getDay(); // 0 = Sunday
-  let out = "";
-  let i = 0;
-  const at = (s: string) => fmt.startsWith(s, i);
-  while (i < fmt.length) {
-    if (at("yyyy")) { out += String(y).padStart(4, "0"); i += 4; }
-    else if (at("yy")) { out += pad2(((y % 100) + 100) % 100); i += 2; }
-    else if (at("y")) { out += String(y); i += 1; }
-    else if (at("MMMM")) { out += MONTHS_FULL[mo]; i += 4; }
-    else if (at("MMM")) { out += MONTHS[mo]; i += 3; }
-    else if (at("MM")) { out += pad2(mo + 1); i += 2; }
-    else if (at("M")) { out += String(mo + 1); i += 1; }
-    else if (at("dd")) { out += pad2(day); i += 2; }
-    else if (at("do")) { out += ordinal(day); i += 2; }
-    else if (at("d")) { out += String(day); i += 1; }
-    else if (at("EEEE")) { out += WD_FULL[dow]; i += 4; }
-    else if (at("EEE")) { out += WD_ABBR[dow]; i += 3; }
-    else if (at("EE")) { out += WD_2[dow]; i += 2; }
-    else if (at("E")) { out += WD_1[dow]; i += 1; }
-    else { out += fmt[i]; i += 1; }
-  }
-  return out;
+  return format_journal_date(d.getFullYear(), d.getMonth() + 1, d.getDate(), fmt);
+}
+
+/** Construct local calendar parts without Date's 1900 offset for years 0–99.
+ * Reject impossible dates. O(1), no I/O; month is zero-based. */
+export function localCalendarDate(y: number, m: number, d: number): Date | null {
+  const date = new Date(2000, 0, 1);
+  date.setFullYear(y, m, d);
+  return date.getFullYear() === y && date.getMonth() === m && date.getDate() === d ? date : null;
 }
 
 /// The journal page title for a date, in the graph's configured title format.
@@ -154,134 +150,38 @@ export function journalTitle(d: Date): string {
 /// the token subset Logseq uses). Mirrors the Rust `Format::parse` so a
 /// `[[journal title]]` link can be routed to the journal page rather than opened
 /// as an empty regular page. Returns the date iff the whole string is valid.
+// Fixed-capacity pure cache: no graph state, no per-lookup key allocation.
+const parsedTitles: ({fmt:string; input:string; parts:JournalDateParts|null} | undefined)[] = Array(64);
+let parsedTitleSlot = 0;
 export function parseJournalWith(s: string, fmt: string): JournalDateParts | null {
-  let i = 0;
-  let f = 0;
-  let y: number | null = null;
-  let mo: number | null = null;
-  let d: number | null = null;
-  const at = (t: string) => fmt.startsWith(t, f);
-  const digits = (max: number): number | null => {
-    const st = i;
-    while (i < s.length && i - st < max && s[i] >= "0" && s[i] <= "9") i++;
-    return i > st ? parseInt(s.slice(st, i), 10) : null;
-  };
-  const matchName = (tables: string[][]): number | null => {
-    for (const tbl of tables) {
-      for (let idx = 0; idx < tbl.length; idx++) {
-        const nm = tbl[idx];
-        if (nm && s.substr(i, nm.length).toLowerCase() === nm.toLowerCase()) {
-          i += nm.length;
-          return idx;
-        }
-      }
-    }
-    return null;
-  };
-  while (f < fmt.length) {
-    if (at("yyyy")) { const v = digits(4); if (v === null) return null; y = v; f += 4; }
-    else if (at("yy")) { const v = digits(2); if (v === null) return null; y = 2000 + v; f += 2; }
-    else if (at("y")) { const v = digits(4); if (v === null) return null; y = v; f += 1; }
-    else if (at("MMMM") || at("MMM")) {
-      const idx = matchName([MONTHS_FULL, MONTHS]);
-      if (idx === null) return null;
-      mo = idx + 1;
-      f += at("MMMM") ? 4 : 3;
-    } else if (at("MM")) { const v = digits(2); if (v === null) return null; mo = v; f += 2; }
-    else if (at("M")) { const v = digits(2); if (v === null) return null; mo = v; f += 1; }
-    else if (at("dd")) { const v = digits(2); if (v === null) return null; d = v; f += 2; }
-    else if (at("do")) {
-      const v = digits(2);
-      if (v === null) return null;
-      d = v;
-      f += 2;
-      // OG cljs-time's parse-ordinal-suffix accepts any suffix string here; it
-      // does not validate that "st"/"nd"/"rd"/"th" matches the day number.
-      if (!["st", "nd", "rd", "th"].includes(s.substr(i, 2).toLowerCase())) return null;
-      i += 2;
-    } else if (at("d")) { const v = digits(2); if (v === null) return null; d = v; f += 1; }
-    else if (at("EEEE") || at("EEE") || at("EE") || at("E")) {
-      const tok = at("EEEE") ? 4 : at("EEE") ? 3 : at("EE") ? 2 : 1;
-      if (matchName([WD_FULL, WD_ABBR, WD_2, WD_1]) === null) return null;
-      f += tok;
-    } else {
-      if (s[i] !== fmt[f]) return null;
-      i += 1;
-      f += 1;
-    }
-  }
-  if (
-    i !== s.length ||
-    y === null ||
-    mo === null ||
-    d === null ||
-    mo < 1 ||
-    mo > 12 ||
-    d < 1 ||
-    d > 31
-  ) {
-    return null;
-  }
-  return { y, m: mo, d };
-}
-
-/// Reactive local day key, ticking at each local midnight. UI that derives
-/// "is this journal page TODAY?" from the wall clock must read this instead of
-/// a bare `new Date()`: without a reactive tick the comparison is computed once
-/// at mount and goes stale when the calendar rolls over (e.g. the journal-title
-/// carry buttons kept showing today's pull-in actions on what had become
-/// yesterday). Constructed dates (not 24h arithmetic) stay correct across DST.
-const [dayKey, setDayKey] = createSignal(localDayKey());
-let dayKeyArmed = false;
-
-/** Test-only: force the reactive day key (and leave the clock alone). */
-export function setCurrentDayKeyForTest(k: number): void {
-  setDayKey(k);
-}
-
-/** Inverse of {@link localDayKey}: the local Date of that day key. Kept beside
- *  the key so consumers compare journal titles against the SAME reactive value
- *  that ticks at midnight (rather than a fresh wall-clock read). */
-export function localDateFromDayKey(k: number): Date {
-  return new Date(Math.floor(k / 10_000), Math.floor((k % 10_000) / 100) - 1, k % 100);
-}
-
-export function currentDayKey(): number {
-  if (!dayKeyArmed && typeof window !== "undefined") {
-    dayKeyArmed = true;
-    const arm = () => {
-      window.setTimeout(() => {
-        setDayKey(localDayKey());
-        arm();
-      }, localDayRolloverDelay(appNow()));
-    };
-    arm();
-    // Sleeping machines miss the midnight timeout — re-sync on wake/focus.
-    const sync = () => setDayKey(localDayKey());
-    window.addEventListener("focus", sync);
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) sync();
-    });
-    // App-lifetime singleton: no cleanup.
-  }
-  return dayKey();
+  const cached = parsedTitles.find(entry => entry?.fmt === fmt && entry.input === s);
+  if (cached) return cached.parts;
+  const parts = JSON.parse(parse_journal_format_json(s, fmt)) as JournalDateParts | null;
+  if (parts) Object.freeze(parts);
+  parsedTitles[parsedTitleSlot] = {fmt, input:s, parts};
+  parsedTitleSlot = (parsedTitleSlot + 1) % parsedTitles.length;
+  return parts;
 }
 
 /// Whether `name` is a journal date in the graph's title format (or a common
 /// default) — so a `[[name]]` link / quick-switch pick opens the journal, not an
 /// empty page. Mirrors the backend's `safe-journal-title-formatters` leniency.
 export function isJournalTitle(name: string): boolean {
-  if (!name.trim()) return false;
-  return [titleFormat, DEFAULT_TITLE_FORMAT, "yyyy-MM-dd"].some((f) => parseJournalWith(name, f) !== null);
+  return journalParts(name) !== null;
 }
 
-/// Parse a journal page title back to a local-calendar `Date`, trying the
-/// graph's configured format, the default, and yyyy-MM-dd. Returns null if the
-/// title is not a recognizable journal date.
-export function parseJournalTitle(name: string): Date | null {
-  for (const fmt of [titleFormat, DEFAULT_TITLE_FORMAT, "yyyy-MM-dd"]) {
-    const parts = parseJournalWith(name, fmt);
-    if (parts) return new Date(parts.y, parts.m - 1, parts.d);
+/** Parse a journal title as a local Date from the active format, default title
+ * format, ISO or underscore date. Returns null on invalid/unrecognized input.
+ * O(title length), independent of graph size; never reads a page. */
+function journalParts(name: string): JournalDateParts | null {
+  for (const fmt of [titleFormat, DEFAULT_TITLE_FORMAT, "yyyy-MM-dd", "yyyy_MM_dd"]) {
+    const parts = parseJournalWith(name.trim(), fmt);
+    if (parts) return parts;
   }
   return null;
+}
+
+export function parseJournalTitle(name: string): Date | null {
+  const parts = journalParts(name);
+  return parts ? localCalendarDate(parts.y, parts.m - 1, parts.d) : null;
 }

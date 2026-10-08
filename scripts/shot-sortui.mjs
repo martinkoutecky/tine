@@ -1,10 +1,9 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Verify + screenshot the query-builder Sort popover redesign: a grid of
 // one-click presets (Newest first / Priority / Page / Deadline / …) over a
 // free-text property fallback — so the common cases need no typing. Headless
 // Chromium over the mock backend (the "Jun 14th, 2026" journal has a pure
-// {{query}} block whose SHEET footer carries the "+ sort" control).
-import { chromium } from "./lib/playwright.mjs";
+// {{query}} block whose builder bar shows the "+ sort" control).
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -12,9 +11,16 @@ const PORT = 5216;
 const OUT = "screenshots";
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 
+async function waitForServer(url, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try { const r = await fetch(url); if (r.ok) return; } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 40, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   const page = await browser.newPage({ viewport: { width: 1200, height: 1300 }, deviceScaleFactor: 2 });
   page.on("pageerror", (e) => console.log("pageerror:", String(e).split("\n")[0]));
@@ -23,13 +29,7 @@ try {
   await page.waitForSelector(".page-title", { timeout: 8000 });
   await sleep(500);
 
-  // Sort lives in the SHEET's footer now, so the sheet has to be open first:
-  // press the resting sentence's ⚙.
-  const gear = page.locator(".qs-gear").first();
-  await gear.scrollIntoViewIfNeeded();
-  await gear.click();
-  await page.waitForSelector(".qs-sheet", { timeout: 4000 });
-  const sortBtn = page.locator(".qs-sheet .qb-sort").first();
+  const sortBtn = page.locator(".qb-sort").first();
   await sortBtn.scrollIntoViewIfNeeded();
   await sortBtn.click();
   await page.waitForSelector(".qb-sort-picker", { timeout: 4000 });
@@ -39,10 +39,10 @@ try {
   console.log("presets:", presets.join(" | "));
 
   // Screenshot the open popover. Clip generously around the picker element itself.
-  const sheet = page.locator(".qs-sheet").first();
-  const box = await sheet.boundingBox();
+  const bar = page.locator(".qb-bar").first();
+  const box = await bar.boundingBox();
   const pick = await page.locator(".qb-sort-picker").boundingBox();
-  console.log("sheet box:", JSON.stringify(box), "| picker box:", JSON.stringify(pick));
+  console.log("bar box:", JSON.stringify(box), "| picker box:", JSON.stringify(pick));
   await page.screenshot({ path: `${OUT}/sort-full.png` });
   console.log(`wrote ${OUT}/sort-full.png (full viewport)`);
   if (pick) {
@@ -61,9 +61,9 @@ try {
   // Apply "Newest first" and confirm the chip reflects it + popover closed.
   await page.locator(".qb-sort-preset", { hasText: "Newest first" }).click();
   await sleep(400);
-  const chip = await page.locator(".qb-sort", { hasText: "sort:" }).allInnerTexts().catch(() => []);
+  const chip = await page.locator(".qb-chip", { hasText: "sort:" }).allInnerTexts().catch(() => []);
   const stillOpen = await page.locator(".qb-sort-picker").count();
-  console.log("after apply — sort pill(s):", chip.join(" | ") || "(none found)", "| popover open:", stillOpen);
+  console.log("after apply — sort chip(s):", chip.join(" | ") || "(none found)", "| popover open:", stillOpen);
 
   // Coalescing check: a page heading must not repeat for consecutive same-page
   // results. Walk the sorted result headings (.query-crumb) + count that no two

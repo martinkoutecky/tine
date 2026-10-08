@@ -1,20 +1,11 @@
+import { readdirSync, readFileSync } from "node:fs";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
-import { doc, resetStore, setDoc, undo, type FeedPage, type Node } from "../store";
+import { resetStore, undo } from "../document";
+import { type FeedPage, type Node } from "../document/model";
+import { doc, setDoc } from "../document/model";
 import { setWorkflow } from "../ui";
-import {
-  cycleField,
-  fieldIdsForBlocks,
-  fieldIdsForRecords,
-  fieldLabel,
-  groupKeysForBlock,
-  isFieldId,
-  queryAggregateFieldName,
-  readField,
-  rowTitle,
-  writeField,
-  writeTagDelta,
-} from "./fields";
+import { cycleField, fieldIdsForBlocks, fieldLabel, groupKeysForBlock, isFieldId, readField, writeField, writeTagDelta } from "./fields";
 
 beforeAll(async () => {
   await initParser();
@@ -71,67 +62,6 @@ describe("sheet fields", () => {
     ]);
   });
 
-  it("discovers DTO fields through the shared ordered facet accessor", () => {
-    expect(fieldIdsForRecords([
-      {
-        id: "dto-a",
-        page: "Remote",
-        dto: {
-          id: "dto-a",
-          raw: "TODO [#A] One #tag",
-          collapsed: false,
-          children: [],
-          marker: "TODO",
-          priority: "A",
-          tags: ["tag"],
-          properties: [["id", "hidden"], ["owner", "Martin"]],
-        },
-      },
-      {
-        id: "dto-b",
-        page: "Remote",
-        dto: {
-          id: "dto-b",
-          raw: "Two",
-          collapsed: false,
-          children: [],
-          scheduled: "2026-09-03 Thu",
-          deadline: "2026-09-04 Fri",
-          properties: [["estimate", "2h"]],
-        },
-      },
-    ], true)).toEqual([
-      "state",
-      "priority",
-      "scheduled",
-      "deadline",
-      "tags",
-      "prop:owner",
-      "prop:estimate",
-      "page",
-    ]);
-  });
-
-  it("preserves the table and board row-title modes", () => {
-    const row = {
-      id: "dto",
-      page: "Remote",
-      dto: { id: "dto", raw: "First line\nSecond line", collapsed: false, children: [] },
-    };
-    expect(rowTitle(row, "first-line")).toBe("First line");
-    expect(rowTitle(row, "joined-with-placeholder")).toBe("First line Second line");
-    expect(rowTitle({
-      id: "parent",
-      page: "Remote",
-      dto: {
-        id: "parent",
-        raw: "",
-        collapsed: false,
-        children: [{ id: "child", raw: "Child", collapsed: false, children: [] }],
-      },
-    }, "joined-with-placeholder")).toBe("—");
-  });
-
   it("keeps field (column) order stable when a cell value is edited (GH #216)", () => {
     setDoc({
       byId: { r: node("r", "row\nfirst:: 23\nsecond:: 46\nthird:: 69") },
@@ -152,7 +82,7 @@ describe("sheet fields", () => {
 
     expect(readField("a", "state")).toEqual({ text: "TODO", raw: "TODO" });
     expect(readField("a", "priority")).toEqual({ text: "[#A]", raw: "A" });
-    expect(readField("a", "tags")).toEqual({ text: "#sheets", raw: "sheets" });
+    expect(readField("a", "tags")).toEqual({ text: "#sheets", raw: "sheets", items: ["sheets"] });
     expect(readField("a", "prop:owner")).toEqual({ text: "Martin", raw: "Martin" });
   });
 
@@ -350,44 +280,11 @@ describe("writeTagDelta", () => {
   });
 });
 
-// **The aggregate grammar is not the columns grammar** (P5B, contract §5/§6).
-//
-// `tine.col-aggregates` keys are LITERAL property names: the `prop:`/`formula:`
-// prefixes mean nothing there, and a builtin's bare name is not reserved,
-// because no builtin has a key in that property at all. The footer and the
-// panel both used the COLUMNS check, which reserves the six builtin names — so
-// an ordinary property named `state` or `page` had a saved aggregate the app
-// would neither show nor let the user edit.
-describe("queryAggregateFieldName", () => {
-  it("keeps a property named like a builtin aggregatable", () => {
-    for (const name of ["state", "priority", "scheduled", "deadline", "tags", "page"]) {
-      expect(queryAggregateFieldName(`prop:${name}`)).toBe(name);
-    }
-  });
-
-  it("keeps a literal prop:/formula: property name as itself", () => {
-    expect(queryAggregateFieldName("prop:prop:cost")).toBe("prop:cost");
-    expect(queryAggregateFieldName("prop:formula:effort")).toBe("formula:effort");
-  });
-
-  it("refuses a name the segment grammar cannot carry", () => {
-    // `;` separates segments and `=` splits key from function
-    // (`view.rs::parse_col_aggregates`); CR/LF/NUL end a property line; an
-    // empty key is the whole-result count, not this property.
-    expect(queryAggregateFieldName("prop:a;b")).toBeNull();
-    expect(queryAggregateFieldName("prop:a=b")).toBeNull();
-    expect(queryAggregateFieldName("prop:a\nb")).toBeNull();
-    expect(queryAggregateFieldName("prop:a\rb")).toBeNull();
-    expect(queryAggregateFieldName("prop:a\0b")).toBeNull();
-    expect(queryAggregateFieldName("prop:")).toBeNull();
-    // The reader trims each segment, so a padded key would come back renamed.
-    expect(queryAggregateFieldName("prop: cost")).toBeNull();
-    expect(queryAggregateFieldName("prop:cost ")).toBeNull();
-  });
-
-  it("gives no aggregate key to a builtin field or a formula", () => {
-    expect(queryAggregateFieldName("state")).toBeNull();
-    expect(queryAggregateFieldName("page")).toBeNull();
-    expect(queryAggregateFieldName("formula:effort")).toBeNull();
+describe("cell edits report refusal (I-9)", () => {
+  it("no component calls the silent writeField: user-driven cell writes go through writeFieldVisibly", () => {
+    const offenders = readdirSync("src/components")
+      .filter((name) => /\.tsx?$/.test(name) && !/\.test\./.test(name))
+      .filter((name) => /\bwriteField\(/.test(readFileSync(`src/components/${name}`, "utf8")));
+    expect(offenders, "I-9: a refused cell write must be shown; use writeFieldVisibly (src/sheet/fields.ts), see SheetTable's FieldCell.commit").toEqual([]);
   });
 });

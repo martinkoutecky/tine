@@ -41,12 +41,11 @@ fn property_value<'a>(block_properties: &'a [(String, String)], name: &str) -> O
 /// query-visible field names; `tine.fields::` keeps the typed schema
 /// (`name=type`), and a value containing `=` is therefore never a column list.
 ///
-/// Every consumer — `merge_block_property_view` here, and the static publisher
-/// in `publish.rs` — calls THIS function rather than re-deriving the
-/// precedence, so a published page cannot disagree with the app about which
-/// columns a query shows (D-4/D-12: one producer of one answer). The
-/// TypeScript half is `src/editor/queryViewProperties.ts`, and the two are
-/// pinned to one another by `tests/fixtures/query-columns/resolution.json`.
+/// Every consumer calls THIS function rather than re-deriving the precedence
+/// (D-4/D-12: one producer of one answer). In og the only consumer so far is
+/// `merge_block_property_view`; master's static publisher and TypeScript half
+/// (`src/editor/queryViewProperties.ts`) are later lanes, and the precedence is
+/// pinned by `query/fixtures/query-columns/resolution.json`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryColumns {
     /// A property named these columns, in this order. Token spelling is
@@ -151,34 +150,13 @@ pub enum QueryGrouping {
     Unset,
 }
 
-/// The six sheet builtins a canonical grouping `FieldId` can name.
-const GROUP_BUILTINS: [&str; 6] = ["state", "priority", "scheduled", "deadline", "tags", "page"];
+#[path = "group_field.rs"]
+mod group_field;
+use group_field::{group_token_serializable, GROUP_BUILTINS};
 
-/// A token that could survive a property line at all. `;` is legal in a
-/// grouping value (it is a single field, not a list) but a NUL or a line break
-/// is not: it would not read back.
-fn group_token_serializable(token: &str) -> bool {
-    !token.contains(|c| matches!(c, '\0' | '\r' | '\n'))
-}
-
-/// The **new** key's grammar: exactly a builtin, or `prop:`/`formula:` with a
-/// nonempty suffix, after trimming. Anything else — including the empty value —
-/// is an explicit no-grouping statement rather than a value to guess at.
+/// Canonical grouping field, using the shared borrowed grammar (O(value bytes)).
 pub fn canonical_group_field(value: &str) -> Option<Field> {
-    let token = value.trim();
-    if token.is_empty() || !group_token_serializable(token) {
-        return None;
-    }
-    if GROUP_BUILTINS.contains(&token) {
-        return Some(Field::new(token));
-    }
-    if let Some(rest) = token.strip_prefix("prop:") {
-        return (!rest.is_empty()).then(|| Field::new(token));
-    }
-    if let Some(rest) = token.strip_prefix("formula:") {
-        return (!rest.is_empty()).then(|| Field::new(token));
-    }
-    None
+    group_field::canonical_group_token(value).map(Field::new)
 }
 
 /// The **legacy** token's meaning, captured at the view the note is CURRENTLY
@@ -248,11 +226,10 @@ fn effective_view_kind(block_properties: &[(String, String)], parsed: &ViewSetti
 ///     way.
 ///  4. otherwise `Unset`.
 ///
-/// Called by `merge_block_property_view` here and by the query-backed publisher
-/// in `publish.rs`; `src/editor/queryViewProperties.ts::resolveQueryGrouping` is
-/// the TypeScript adapter, and the pair is pinned by
-/// `tests/fixtures/query-grouping/resolution.json`. Components never interpret
-/// the property themselves.
+/// In og, called by `merge_block_property_view`; master's query-backed
+/// publisher and TypeScript adapter (`resolveQueryGrouping`) are later lanes.
+/// The precedence is pinned by `query/fixtures/query-grouping/resolution.json`.
+/// Components never interpret the property themselves.
 pub fn resolve_query_grouping(
     block_properties: &[(String, String)],
     parsed: &ViewSettings,
@@ -287,9 +264,20 @@ pub fn resolve_query_grouping(
 /// property is absent. The merge happens in exactly one place, this function,
 /// so a caller cannot get the order wrong.
 ///
-/// A property whose value does not parse is not a reason to drop the field: the
-/// DSL's value stands, because a half-read property is worse evidence than the
-/// text the author wrote. Nothing here rewrites the query.
+/// For `view`, `sort`, `col-aggregates` and `sample`, a property whose value
+/// does not parse (or parses to nothing) is not a reason to drop the field: the
+/// DSL's value stands. `col-aggregates` is read partially: unknown segments are
+/// dropped and the recognised ones replace the DSL's list.
+///
+/// Grouping and columns are different: they go through
+/// [`resolve_query_grouping`] and [`resolve_query_columns`], where a PRESENT
+/// but empty or unreadable `tine.group-field` / `tine.columns` is an explicit
+/// clear that overrides the DSL. An explicit no-grouping is returned as
+/// `group_by = Some(Field(""))` (distinct from `None`, "nothing said
+/// anything", the only state a Board default may fill); an explicit no-columns
+/// empties `columns`. A legacy `tine.group-by` or DSL `(group-by …)` value is
+/// returned rewritten to its canonical `FieldId`, interpreted at the current
+/// view. Nothing here rewrites the query.
 pub fn merge_block_property_view(
     parsed: &ViewSettings,
     block_properties: &[(String, String)],
@@ -603,61 +591,25 @@ pub struct EmptyExplanation {
     pub without: Option<usize>,
 }
 
-/// Why a query returned nothing: for a root `And` after normalization, one
-/// entry per top-level conjunct with the rows it matches alone and the rows the
-/// rest match without it; for any other root, one entry for the whole query
-/// (N19). Every count is the ANCHOR row count of the same evaluator the query
-/// itself ran through — nothing here is a second engine.
+/// Why a query returned nothing, as a plan (N19): for a root `And` after
+/// normalization, one entry per top-level conjunct with the rows it matches
+/// alone and the rows the rest match without it; for any other root, one
+/// entry for the whole query. It decomposes the RESOLVED tree (§4.4); when the
+/// binding failed there is nothing honest to count and the plan is empty.
 ///
-/// **It decomposes the RESOLVED tree** (§4.4). Explain-empty is the one place a
-/// query is taken apart and re-run piece by piece, so a decomposition of the
-/// unbound advanced placeholder would explain a query the user never ran. When
-/// the binding failed there is nothing honest to count: the rows are empty and
-/// the caller gets the diagnostics and the support report instead of a table of
-/// zeroes that reads like a result.
-#[cfg(test)]
-pub(crate) fn explain_empty(
-    source: &dyn crate::query::QueryPageSource,
-    resolved: &crate::query::ResolvedQuery,
-    view: &ViewSettings,
-    bounds: crate::query::ir::Bounds,
-) -> crate::query::ir::ExplainEmptyResult {
-    let plan = explain_empty_plan(resolved);
-    let counts = plan
-        .probes
-        .iter()
-        .map(|probe| {
-            let answer =
-                crate::query::run_query_result_over(source, probe, view, resolved.today(), bounds);
-            // Explain retains its count-only purpose: a sorted display sample
-            // does not constrain these pre-view probes.
-            if probe.anchor == super::ir::Anchor::Block && !view.sort.is_empty() {
-                answer.matched_total.unwrap_or(answer.total)
-            } else {
-                answer.total
-            }
-        })
-        .collect::<Vec<_>>();
-    // The oracle counts every probe of the plan it was handed, in order, so the
-    // central length check cannot fail here. It is still the same check: the
-    // oracle does not get a private path around it.
-    plan.answer(resolved, &counts)
-        .expect("the oracle counts exactly one row per probe of its own plan")
-}
-
-/// The DECOMPOSITION half of [`explain_empty`], separated from the evaluator so
+/// The decomposition is separated from the evaluator so
 /// that one explanation's probes can be answered from ONE coherent snapshot
 /// rather than one page walk each (RET1).
 ///
 /// Nothing here reads a graph: it takes the resolved tree apart, prints each
 /// conjunct and states which probe queries have to be counted. The evaluator is
-/// the caller's — the database read for both backends, the walk for the oracle
-/// — and [`ExplainPlan::answer`] reassembles the same rows either way, so the
+/// the caller's (in og, lane Q2's; nothing counts probes yet), and
+/// [`ExplainPlan::answer`] reassembles the rows from its counts, so the
 /// decomposition, the printing and the `And`/non-`And` rule exist once.
-pub(crate) struct ExplainPlan {
+pub struct ExplainPlan {
     /// Every probe query, in the order the evaluator must count them. Empty
     /// when the binding failed: there is nothing honest to count then.
-    pub(crate) probes: Vec<crate::query::ir::Query>,
+    pub probes: Vec<crate::query::ir::Query>,
     /// One entry per answer row: the printed conjunct, the index of its `alone`
     /// probe, and of its `without` probe when the root is an `And`.
     rows: Vec<(String, usize, Option<usize>)>,
@@ -670,7 +622,7 @@ pub(crate) struct ExplainPlan {
 /// backend's bounded availability vocabulary — `InvalidSnapshot` on both — and
 /// a length is not something a user can act on.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ExplainCountMismatch;
+pub struct ExplainCountMismatch;
 
 impl ExplainPlan {
     /// The rows, given EXACTLY one count per [`ExplainPlan::probes`] entry, in
@@ -684,7 +636,7 @@ impl ExplainPlan {
     /// an empty vector is the one valid empty case (a refused binding has
     /// nothing honest to count), and it is accepted by the same rule rather
     /// than by an exception.
-    pub(crate) fn answer(
+    pub fn answer(
         &self,
         resolved: &crate::query::ResolvedQuery,
         counts: &[usize],
@@ -709,7 +661,24 @@ impl ExplainPlan {
     }
 }
 
-pub(crate) fn explain_empty_plan(resolved: &crate::query::ResolvedQuery) -> ExplainPlan {
+/// The most conjuncts that are explained one by one. The per-conjunct plan
+/// holds two probes per conjunct, the second carrying every OTHER conjunct, so
+/// its size and the evaluator's work grow with the square of the conjunct
+/// count; a 64 KB query source can hold thousands (I-22). Past this bound the
+/// query is explained as one whole conjunct, which is the same honest answer
+/// ("this query matches N rows") without the quadratic plan.
+pub const EXPLAIN_MAX_CONJUNCTS: usize = 64;
+
+/// Build the [`ExplainPlan`] for a resolved query. A non-executable query
+/// ([`ResolvedQuery::is_executable`](crate::query::ResolvedQuery::is_executable)
+/// false) gets an empty plan. Otherwise the evaluable (`Off`-free), normalized
+/// filter is decomposed: a root `And` of two or more conjuncts yields two
+/// probes per conjunct (it alone, then the `And` of all the others), and any
+/// other root yields one probe for the whole filter. Each probe keeps the
+/// query's anchor and source, has its diagnostics cleared, and is printed as
+/// TQL for the row label. Pure; O(conjuncts²) filter clones, bounded by
+/// [`EXPLAIN_MAX_CONJUNCTS`] (beyond it one whole-filter probe, O(conjuncts)).
+pub fn explain_empty_plan(resolved: &crate::query::ResolvedQuery) -> ExplainPlan {
     use crate::query::ir::Filter;
 
     let query = resolved.query();
@@ -739,7 +708,7 @@ pub(crate) fn explain_empty_plan(resolved: &crate::query::ResolvedQuery) -> Expl
     let mut evaluable = query.clone();
     evaluable.filter = query.evaluable_filter();
     match evaluable.normalized().filter {
-        Filter::And { items } if items.len() > 1 => {
+        Filter::And { items } if (2..=EXPLAIN_MAX_CONJUNCTS).contains(&items.len()) => {
             for (index, item) in items.iter().enumerate() {
                 let others = items
                     .iter()
@@ -827,6 +796,32 @@ mod tests {
         assert_eq!(merged.sample, Some(3));
         assert_eq!(merged.view, Some(ViewKind::Table));
         assert!(merged.sort.is_empty());
+    }
+
+    /// I-12: the aggregate-list grammar has one authority (`parse_col_aggregates`);
+    /// the frontend's `decodeAggregateSegment(_, "query")` (Display editor and
+    /// schema rename) reads this same golden (`src/sheet/ogDupd3Codecs.test.ts`).
+    #[test]
+    fn the_shared_col_aggregates_golden_parses_as_recorded() {
+        let golden: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/i12-col-aggregates-golden.json"
+        ))
+        .expect("golden parses");
+        for case in golden["cases"].as_array().expect("cases") {
+            let value = case[0].as_str().unwrap();
+            let actual: Vec<serde_json::Value> = parse_col_aggregates(value)
+                .into_iter()
+                .map(|(field, agg)| {
+                    let name = match agg {
+                        AggFn::Count => "count",
+                        AggFn::Sum => "sum",
+                        AggFn::Avg => "avg",
+                    };
+                    serde_json::json!([field.as_str(), name])
+                })
+                .collect();
+            assert_eq!(case[1], serde_json::Value::Array(actual), "{value:?}");
+        }
     }
 
     #[test]
@@ -1008,7 +1003,7 @@ mod tests {
     #[test]
     fn scoped_display_properties_follow_the_golden_contract() {
         let fixtures: Vec<ScopedDisplayFixture> = serde_json::from_str(include_str!(
-            "../../tests/fixtures/query-ir/scoped_display_settings.json"
+            "fixtures/query-ir/scoped_display_settings.json"
         ))
         .expect("scoped display fixtures parse");
         for fixture in fixtures {
@@ -1079,8 +1074,12 @@ mod tests {
         );
     }
 }
-/// Resolve the implicit Board grouping for execution without authoring a saved
-/// default. Q3 consumes this same effective-view seam after scoped resolution.
+/// The view statistics actually execute under, without authoring a saved
+/// default. Three rewrites, in order: a Board with no grouping groups by
+/// `state` (ADR 0030); an explicit empty grouping (`Some(Field(""))`) becomes
+/// `None`; and a view that groups but requests no aggregate gains one
+/// whole-result `("", Count)` aggregate. Q3 consumes this same effective-view
+/// seam after scoped resolution. Pure.
 pub fn effective_statistics_view(view: &super::ir::ViewSettings) -> super::ir::ViewSettings {
     use super::ir::{AggFn, Field, ViewKind};
     let mut effective = view.clone();
@@ -1102,7 +1101,7 @@ pub fn effective_statistics_view(view: &super::ir::ViewSettings) -> super::ir::V
 
 /// Advanced result transforms do not request query-wide statistics. Keep their
 /// ordering/sample settings while explicitly clearing even implicit grouping.
-pub(crate) fn statistics_execution_view(
+pub fn statistics_execution_view(
     query: &super::ir::Query,
     view: &super::ir::ViewSettings,
 ) -> super::ir::ViewSettings {

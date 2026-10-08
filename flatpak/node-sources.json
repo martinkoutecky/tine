@@ -783,20 +783,6 @@
     },
     {
         "type": "file",
-        "url": "https://registry.npmjs.org/@tanstack/solid-virtual/-/solid-virtual-3.13.37.tgz",
-        "sha512": "471242f27ffa9e714770fbc318c83b664a92cc2554728e09370ddcb480a18f51e3a0ab3923dc2de67b14f83515b4c54488c7e2cd4c4e031e133c837c4878f151",
-        "dest-filename": "42f27ffa9e714770fbc318c83b664a92cc2554728e09370ddcb480a18f51e3a0ab3923dc2de67b14f83515b4c54488c7e2cd4c4e031e133c837c4878f151",
-        "dest": "flatpak-node/npm-cache/_cacache/content-v2/sha512/47/12"
-    },
-    {
-        "type": "file",
-        "url": "https://registry.npmjs.org/@tanstack/virtual-core/-/virtual-core-3.17.8.tgz",
-        "sha512": "05f12f7a1369393ef9af92ac739c56e8d66e5ee8d37dbee795213256ee171c6de0771360d4aa97aee59b0dec17394694608a38a116d27e48c86a3cf83004fcb4",
-        "dest-filename": "2f7a1369393ef9af92ac739c56e8d66e5ee8d37dbee795213256ee171c6de0771360d4aa97aee59b0dec17394694608a38a116d27e48c86a3cf83004fcb4",
-        "dest": "flatpak-node/npm-cache/_cacache/content-v2/sha512/05/f1"
-    },
-    {
-        "type": "file",
         "url": "https://registry.npmjs.org/@tauri-apps/api/-/api-2.11.0.tgz",
         "sha512": "ec28a760e0e1932f6598edb7c479d416fd17b78ddf6ed58ccb165c2dc44194591c8172ae122ac1bc7a66b49f3d60c87278672adb45ae738ec56b85e3ca78b2c0",
         "dest-filename": "a760e0e1932f6598edb7c479d416fd17b78ddf6ed58ccb165c2dc44194591c8172ae122ac1bc7a66b49f3d60c87278672adb45ae738ec56b85e3ca78b2c0",
@@ -3700,12 +3686,6 @@
     },
     {
         "type": "inline",
-        "contents": "287062ea7d430965416af9a9dc8fe2bba7e67063\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/@tanstack/virtual-core/-/virtual-core-3.17.8.tgz\", \"integrity\": \"sha512-BfEvehNpOT75r5Ksc5xW6NZuXujTfb7nlSEyVu4XHG3gdxNg1KqXruWbDewXOUaUYIo4oRbSfkjIajz4MAT8tA==\", \"time\": 0, \"size\": 103247, \"metadata\": {\"url\": \"https://registry.npmjs.org/@tanstack/virtual-core/-/virtual-core-3.17.8.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
-        "dest-filename": "c367656ea138f85b8203315c569348ecb2fc7093037a1ec5a35dcf50ce02",
-        "dest": "flatpak-node/npm-cache/_cacache/index-v5/8a/90"
-    },
-    {
-        "type": "inline",
         "contents": "28d7ebeb799af7c5bba4f90b93011f8d5892b69f\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/loglevel/-/loglevel-1.9.2.tgz\", \"integrity\": \"sha512-HgMmCqIJSAKqo68l0rS2AanEWfkxaZ5wNiEFb5ggm08lDs9Xl2KxBlX3PTcaD2chBM1gXAYf491/M2Rv8Jwayg==\", \"time\": 0, \"size\": 22983, \"metadata\": {\"url\": \"https://registry.npmjs.org/loglevel/-/loglevel-1.9.2.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
         "dest-filename": "94ab231f0191530125f23d1df6cabdaf58f470d73809dc4ee5cf50c660bb",
         "dest": "flatpak-node/npm-cache/_cacache/index-v5/4e/13"
@@ -4807,12 +4787,6 @@
         "contents": "94d364f29b64cdf403b5b6ab287958c5cbfcd568\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/tinyexec/-/tinyexec-0.3.2.tgz\", \"integrity\": \"sha512-KQQR9yN7R5+OSwaK0XQoj22pwHoTlgYqmUscPYoknOoWCWfj/5/ABTMRi69FrKU5ffPVh5QcFikpWJI/P1ocHA==\", \"time\": 0, \"size\": 11266, \"metadata\": {\"url\": \"https://registry.npmjs.org/tinyexec/-/tinyexec-0.3.2.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
         "dest-filename": "3b39289cebf40a8594d69713501d2f3f55dd9f6593f918d4d98e58bf776c",
         "dest": "flatpak-node/npm-cache/_cacache/index-v5/80/4c"
-    },
-    {
-        "type": "inline",
-        "contents": "9502bcbf39c3184e2959e8dc33ed24c4759e1c51\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/@tanstack/solid-virtual/-/solid-virtual-3.13.37.tgz\", \"integrity\": \"sha512-RxJC8n/6nnFHcPvDGMg7ZkqSzCVUco4JNw3ctIChj1HjoKs5I9wt5nsU+DUVtMVEiMfizUxOAx4TPIN8SHjxUQ==\", \"time\": 0, \"size\": 4770, \"metadata\": {\"url\": \"https://registry.npmjs.org/@tanstack/solid-virtual/-/solid-virtual-3.13.37.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
-        "dest-filename": "bbf2112841dea39c662a1e799106e58fe958dce86c289e06fbc51c242e29",
-        "dest": "flatpak-node/npm-cache/_cacache/index-v5/59/65"
     },
     {
         "type": "inline",

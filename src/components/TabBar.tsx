@@ -1,46 +1,58 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
-import { Portal } from "solid-js/web";
-import { routeTitle, type PaneRouter, type Route } from "../router";
-import { doc, formatForBlock } from "../store";
+import { FloatingPortal } from "./FloatingPortal";
+import { resolveRouteBlock, routeTitle, type PaneRouter, type Route, type Tab } from "../router";
+import { formatForBlock, node as docNode } from "../document";
 import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
+import { parseBlock, parserReady } from "../render/parse";
+import { inlineText } from "../render/facets";
 import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane, layoutHasMultiplePanes } from "../panes";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
+
+/** One predicate for the strip's ✕ and the overview's close button: closing is
+ *  effective when another tab remains, or when this lone non-feed tab can close
+ *  its whole split pane (the router's closeTab hands it to the pane close). */
+function closeOffered(router: PaneRouter, t: Tab): boolean {
+  return router.tabs().length > 1 || (router.tabRoute(t).kind !== "journals" && layoutHasMultiplePanes());
+}
 
 const MAX_TITLE = 32;
 const DRAG_THRESHOLD_PX = 4;
 const EDGE_ZONE_PX = 24;
 
 // A short, plain-text summary of a zoomed-into block, for the tab label. Drops
-// the hidden id::/collapsed:: lines, takes the first non-empty line, and strips
-// the common markdown decorations so the pill reads like the block's text.
-function blockSummary(raw: string, format: PropFormat, truncate = true): string {
+// the hidden id::/collapsed:: lines, takes the first non-empty line, and reads it
+// as the PARSER does (I-12): links show their label, page refs their name, emphasis
+// and code spans their text, and a heading its title - no regex over the markup.
+export function blockSummary(raw: string, format: PropFormat, truncate = true): string {
   const { visible } = splitProps(raw, isBuiltinHidden, format);
   const line =
     visible
       .split("\n")
       .map((s) => s.trim())
       .find((s) => s.length > 0) ?? "";
-  const plain = line
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1") // image → alt text
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1") // link → label
-    .replace(/\[\[([^\]]+)\]\]/g, "$1") // page ref → name
-    .replace(/\(\(([^)]+)\)\)/g, "$1") // block ref → inner
-    .replace(/==/g, "") // highlight markers
-    .replace(/[*_~`]{1,3}/g, "") // bold / italic / strike / code
-    .replace(/^#{1,6}\s+/, "") // markdown heading
-    .replace(/\s+/g, " ")
-    .trim();
+  const first = line && parserReady() ? parseBlock(line, format === "org")[0] : undefined;
+  const text = first && "inline" in first && Array.isArray(first.inline) ? inlineText(first.inline) : line;
+  const marker = first && "marker" in first && first.marker ? `${first.marker} ` : "";
+  const plain = (marker + text).replace(/\s+/g, " ").trim();
   return truncate && plain.length > MAX_TITLE ? plain.slice(0, MAX_TITLE - 1).trimEnd() + "…" : plain;
+}
+
+// The loaded block a zoomed tab shows. A restored (position-saved) zoom has no
+// trustworthy key until its page loads, so it resolves by position.
+function tabBlockId(r: Route): string | undefined {
+  if (r.kind !== "page" || !r.block) return undefined;
+  return r.blockPos ? resolveRouteBlock(r) ?? undefined : r.block;
 }
 
 // Tab label: a zoomed-into block shows its (shortened) content; everything else
 // shows the page name (falling back to it when the block isn't loaded or empty).
 function tabTitle(r: Route): string {
   if (r.kind === "page" && r.block) {
-    const n = doc.byId[r.block];
+    const id = tabBlockId(r);
+    const n = id ? docNode(id) : undefined;
     if (n) {
-      const s = blockSummary(n.raw, formatForBlock(r.block));
+      const s = blockSummary(n.raw, formatForBlock(id!));
       if (s) return s;
     }
   }
@@ -49,9 +61,10 @@ function tabTitle(r: Route): string {
 
 function tabFullTitle(r: Route): string {
   if (r.kind === "page" && r.block) {
-    const n = doc.byId[r.block];
+    const id = tabBlockId(r);
+    const n = id ? docNode(id) : undefined;
     if (n) {
-      const summary = blockSummary(n.raw, formatForBlock(r.block), false);
+      const summary = blockSummary(n.raw, formatForBlock(id), false);
       if (summary) return summary;
     }
   }
@@ -194,7 +207,7 @@ export function tabDropTargetAt(
   if (el.closest(".tab-bar")) return null;
   const pane = el.closest("[data-pane-id]") as HTMLElement | null;
   const paneId = pane?.dataset.paneId;
-  if (!pane || !paneId) return null;
+  if (!pane || !paneId || paneId === "pdf") return null;
   const side = edgeSideAt(x, y, pane.getBoundingClientRect());
   if (side) {
     return isRootEdge(pane, side)
@@ -624,11 +637,11 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
             <span class="tab-title"><EmojiText text={tabTitle(router.tabRoute(t))} /></span>
             {/* Offer ✕ only when closing actually works: another tab remains, OR
                 this lone tab can close its whole split pane (GH #207 — closeTab
-                hands a lone non-feed tab to closePane). The window's very last
-                tab and a feed pane's last tab stay unclosable, so they hide it.
+                hands a lone non-feed tab to the pane's last-tab handler). The
+                window's very last tab and a feed pane's last tab stay unclosable.
                 A real button with its own title: keyboard-operable, and its hover
                 tooltip can't fall back to the tab's pin hint (GH #340). */}
-            <Show when={router.tabs().length > 1 || (router.tabRoute(t).kind !== "journals" && layoutHasMultiplePanes())}>
+            <Show when={closeOffered(router, t)}>
               <button
                 class="tab-close"
                 type="button"
@@ -661,7 +674,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
           onClick={() => overviewOpen() ? dismissOverview() : setOverviewOpen(true)}
         >⌄</button>
         <Show when={overviewOpen()}>
-          <Portal>
+          <FloatingPortal>
           <div
             id={overviewId}
             class="tab-overview"
@@ -712,8 +725,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
                   <span class="tab-overview-active" aria-hidden="true">{tab.id === router.activeId() ? "✓" : ""}</span>
                   <Show when={tab.pinned}><span class="tab-overview-pin" title="Pinned"><EmojiText text="📌" /></span></Show>
                   <span class="tab-overview-title"><EmojiText text={tabFullTitle(router.tabRoute(tab))} /></span>
-                  {/* Same close predicate as the strip's ✕ (GH #207). */}
-                  <Show when={router.tabs().length > 1 || (router.tabRoute(tab).kind !== "journals" && layoutHasMultiplePanes())}>
+                  <Show when={closeOffered(router, tab)}>
                     <button
                       class="tab-overview-close"
                       type="button"
@@ -728,7 +740,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
               )}
             </For>
           </div>
-          </Portal>
+          </FloatingPortal>
         </Show>
       </Show>
     </div>

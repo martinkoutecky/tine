@@ -2,7 +2,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { readBlockModuleSource } from "./testSource";
 
 const DIRECT_BACKEND_WRITERS = new Set(["writeText", "writeRich", "copyImageToClipboard"]);
 const ALLOWED = new Set(["src/clipboard.ts", "src/backend.ts", "src/mock.ts"]);
@@ -72,15 +71,13 @@ describe("clipboard writer facade guard", () => {
       "src/copyImage.ts": /writeClipboardImage\(/,
       "src/sheet/mutations.ts": /copyRich\(text, html\)/,
       "src/components/ContextMenu.tsx": /writeClipboardText\(/,
-      "src/components/Block.tsx": /writeClipboardText\(/,
+      "src/components/Block.tsx": /copyBlockLink\(props\.id, "ref"\)/,
+      "src/components/blockLinkCopy.ts": /writeClipboardText\(refs\.join\("\\n"\)\)/,
       "src/components/PdfViewer.tsx": /writeClipboardText\(/,
       "src/components/ImproveTab.tsx": /writeClipboardTextStrict\(/,
     };
     for (const [file, pattern] of Object.entries(expected)) {
-      const source = file === "src/components/Block.tsx"
-        ? readBlockModuleSource()
-        : readFileSync(file, "utf8");
-      expect(source, file).toMatch(pattern);
+      expect(readFileSync(file, "utf8"), file).toMatch(pattern);
     }
   });
 

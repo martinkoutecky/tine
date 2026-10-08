@@ -1,19 +1,22 @@
-import { describe, it, expect } from "vitest";
+import { beforeAll, describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { initParser } from "./render/parse";
+import { clearSeededFacets, facetsOf } from "./render/facets";
 import { MARKERS, OPEN_MARKERS, DONE_MARKERS, matchLeadingMarker, leadingMarker, taskCheckboxState } from "./markers";
-import { leadingMarker as leadingMarkerViaEditor } from "./editor/marker";
+import { cycleMarker, leadingMarker as leadingMarkerViaEditor, setMarker } from "./editor/marker";
+import { setPriority } from "./editor/format";
 
 describe("task markers (single source of truth)", () => {
   it("matches the backend set (crates/tine-core/src/doc.rs MARKERS) — keep in sync", () => {
-    // If doc.rs::MARKERS changes, update this list (and vice-versa). The two can't
-    // share a literal across the language boundary, so this is the drift guard.
-    // This set must equal lsdoc's recognizer (lsdoc/src/parse.rs MARKERS, the
-    // mldoc/OG-faithful authority) — Tine treats exactly what OG treats as a task.
-    expect([...MARKERS].sort()).toEqual(
-      [
-        "CANCELED", "CANCELLED", "DOING", "DONE", "IN-PROGRESS",
-        "LATER", "NOW", "STARTED", "TODO", "WAIT", "WAITING",
-      ].sort()
-    );
+    // Read the Rust source itself (I-12): a literal copied into this test could
+    // not notice doc.rs changing. This set must equal lsdoc's recognizer
+    // (lsdoc/src/parse.rs MARKERS, the mldoc/OG-faithful authority) — Tine
+    // treats exactly what OG treats as a task.
+    const source = readFileSync("crates/tine-core/src/doc.rs", "utf8");
+    const block = /pub const MARKERS: &\[&str\] = &\[([^\]]*)\];/.exec(source)?.[1] ?? "";
+    const rust = [...block.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect(rust.length).toBeGreaterThan(0);
+    expect([...MARKERS].sort()).toEqual(rust.sort());
   });
 
   it("OPEN ∪ DONE partitions MARKERS with no overlap", () => {
@@ -35,6 +38,7 @@ describe("task markers (single source of truth)", () => {
     }
     expect(taskCheckboxState("CANCELED")).toBeNull(); // closed-but-not-done → no box (OG)
     expect(taskCheckboxState("CANCELLED")).toBeNull();
+    expect(taskCheckboxState("NOT-A-MARKER")).toBeNull(); // Rust render_facets::task_checkbox_state, same table
     expect(taskCheckboxState(null)).toBeNull();
     expect(taskCheckboxState(undefined)).toBeNull();
   });
@@ -91,6 +95,14 @@ describe("task markers (single source of truth)", () => {
       expect(leadingMarkerViaEditor(raw)).toBe(want);
     });
 
+    // The table above is a claim about lsdoc; hold it against the wasm this
+    // build actually ships (the renderer's own marker projection).
+    beforeAll(() => initParser());
+    it.each(cases)("vendored lsdoc agrees: %j -> %s", (raw, want) => {
+      clearSeededFacets();
+      expect(facetsOf(raw, "md").marker).toBe(want);
+    });
+
     it("exposes splice-safe marker offsets (start/end) for editor splices", () => {
       expect(matchLeadingMarker("TODO x")).toEqual({ marker: "TODO", start: 0, end: 4 });
       expect(matchLeadingMarker("  TODO x")).toEqual({ marker: "TODO", start: 2, end: 6 });
@@ -99,5 +111,15 @@ describe("task markers (single source of truth)", () => {
       expect(matchLeadingMarker("\n\nWAITING x")?.start).toBe(2);
       expect(matchLeadingMarker("\n\nWAITING x")?.end).toBe(9);
     });
+  });
+
+  // DUP-7 consumers splice at the recognized offsets: an indented or
+  // blank-line-led task gets its marker replaced, never a second one prepended,
+  // and a tab-separated word that renders no checkbox is not treated as a task.
+  it("marker writers splice at the shared recognizer's offsets", () => {
+    expect(cycleMarker("  TODO x", "todo").raw).toBe("  DOING x");
+    expect(setMarker("\nTODO x", "DONE")).toBe("\nDONE x");
+    expect(setMarker("TODO\tx", "DONE")).toBe("DONE TODO\tx");
+    expect(setPriority("TODO\tx", "A")).toBe("[#A] TODO\tx");
   });
 });

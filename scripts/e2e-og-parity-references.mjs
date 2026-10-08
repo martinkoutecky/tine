@@ -16,9 +16,7 @@ import {
   tauriCapabilities,
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-
-await ensureDisplay();
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release", process.platform === "win32" ? "tine.exe" : "tine");
@@ -36,7 +34,7 @@ const TEST_PAGE = `${GRAPH}/pages/OG Parity References.md`;
 const APP_DATA_ROOT = process.platform === "win32"
   ? path.join(TMP, "appdata")
   : path.join(TMP, "xdg", "data");
-const APP_DATA = path.join(APP_DATA_ROOT, "page.tine.Tine");
+const APP_DATA = path.join(APP_DATA_ROOT, APP_ID);
 const SETTINGS = `${APP_DATA}/tine-settings.json`;
 
 /** WebDriver's `addValue` is a convenience mutation, not the literal key path
@@ -123,7 +121,7 @@ const popupSnapshot = (browser) => browser.execute(() => ({
 const selectSetting = async (browser, value) => {
   await browser.$('button[title^="Settings"]').click();
   await browser.$(".settings-modal").waitForExist({ timeout: 5000 });
-  await browser.$('.settings-nav-item[data-settings-tab="editor"]').click();
+  await browser.$("//button[contains(concat(' ', normalize-space(@class), ' '), ' settings-nav-item ') and normalize-space(.)='Editor']").click();
   const advanced = await browser.$(".settings-advanced-toggle");
   if ((await advanced.getAttribute("aria-expanded")) !== "true") await advanced.click();
   const select = await browser.$('select[aria-label="Link autocomplete default"]');
@@ -455,6 +453,8 @@ try {
     A: await slashSentinel("A", "Priority A", ["Priority A"]),
     priority: await slashSentinel("priority", "Priority A", ["Priority A", "Priority B", "Priority C"]),
     kanban: await slashSentinel("kanban", "Board", ["Board"]),
+    // The single Query command opens the sheet (master 2617ff194); a
+    // separate visual-builder alias is not part of reference authoring.
     query: await slashSentinel("query", "Query", ["Query"]),
   };
   await clearActiveEditor(browser);
@@ -533,7 +533,7 @@ try {
   await browser.keys(["Escape"]);
   await browser.$('button[title^="Settings"]').click();
   await browser.$(".settings-modal").waitForExist({ timeout: 5000 });
-  await browser.$('.settings-nav-item[data-settings-tab="shortcuts"]').click();
+  await browser.$("//button[contains(concat(' ', normalize-space(@class), ' '), ' settings-nav-item ') and normalize-space(.)='Keyboard shortcuts']").click();
   const insertLinkKeycap = await browser.$("//span[contains(concat(' ', normalize-space(@class), ' '), ' help-shortcut-id ') and normalize-space(.)='editor/insert-link']/ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' help-shortcut-row ')]//button[contains(concat(' ', normalize-space(@class), ' '), ' help-keycap-button ')]");
   await insertLinkKeycap.waitForExist({ timeout: 5000 });
   await insertLinkKeycap.click();
@@ -642,6 +642,13 @@ try {
   await browser.waitUntil(() => persistedSplitValue() === "[[Fuzzy Existing]] ", {
     timeout: 10_000,
     timeoutMsg: "split acceptance did not commit through the guarded save path",
+  }).catch(async (error) => {
+    const state = await browser.execute(() => ({
+      editor: document.querySelector('[data-pane-id]:not([data-pane-id="main"]) [data-block-ref="33333333-3333-4333-8333-333333333333"] textarea.block-editor')?.value,
+      toasts: [...document.querySelectorAll('.toast')].map((el) => el.textContent),
+      block: document.querySelector('[data-pane-id]:not([data-pane-id="main"]) [data-block-ref="33333333-3333-4333-8333-333333333333"] .block-content')?.textContent,
+    }));
+    throw new Error(`${error.message}; disk=${JSON.stringify(persistedSplitValue())}; state=${JSON.stringify(state)}`);
   });
   receipt.observations.commitBeforeReload = { disk: persistedSplitValue() };
 
@@ -668,8 +675,13 @@ try {
     throw new Error(`committed page reference did not survive reload: ${JSON.stringify(receipt.observations.reload)}`);
   }
   await sleep(300);
-  await browser.saveScreenshot(`${ARTIFACTS}/rendered.png`);
   fs.writeFileSync(`${ARTIFACTS}/receipt.json`, `${JSON.stringify(receipt, null, 2)}\n`);
+  // The rendered text and exact committed bytes above are the reload proof.
+  // WebKitGTK can time out capturing this restarted split-window session;
+  // retain the receipt and the earlier popup image even if that artifact fails.
+  await browser.saveScreenshot(`${ARTIFACTS}/rendered.png`).catch((error) => {
+    console.warn(`Reload screenshot unavailable after successful outcome proof: ${error.message}`);
+  });
 } finally {
   try { await browser?.deleteSession(); } catch {}
   killDriverTree();

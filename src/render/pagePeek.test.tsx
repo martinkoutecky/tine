@@ -64,6 +64,8 @@ function popup(): HTMLElement | null {
 }
 
 describe("page hover-peek (GH #40)", () => {
+  // Master cab80f016: a touch hold synthesizes hover in Android/iOS
+  // WebViews; only a real mouse may arm the preview.
   it.each(["touch", "pen"])("ignores %s compatibility hover but still accepts a later real mouse on the same link", async (pointerType) => {
     const { root, dispose } = mountAttached("A link to [[Tine]] here");
     try {

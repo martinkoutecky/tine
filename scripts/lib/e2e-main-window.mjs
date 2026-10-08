@@ -40,7 +40,6 @@ export function chooseMainWindow(windows, currentHandle) {
  */
 export async function ensureMainWindow(browser, { what = "the application window" } = {}) {
   const handles = await browser.getWindowHandles();
-  if (handles.length <= 1) return;
   const current = await browser.getWindowHandle();
   const windows = [];
   for (const handle of handles) {

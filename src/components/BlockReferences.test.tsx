@@ -1,8 +1,9 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { setDoc } from "../store";
-import { bumpDataRev, requestBlockReferences, setBlockReferencesRequest } from "../ui";
+import { setDoc } from "../document/model";
+import { bumpDataRev } from "../graphSession";
+import { requestBlockReferences, setBlockReferencesRequest } from "../ui";
 import { initParser } from "../render/parse";
 import { Block } from "./Block";
 
@@ -121,109 +122,53 @@ describe("block referrer panel durable identity (GH #154)", () => {
   });
 });
 
-// GH #344: the expanded block-reference locations view offers Collapse all /
-// Expand all. Collapsed groups show only their source page title, stay
-// individually expandable, and re-expand to their full breadcrumb + block
-// context. The state is LOCAL to this panel instance (never leaked into the
-// page-level Linked References section state).
-describe("block referrer panel group collapse (GH #344)", () => {
-  const targetId = "collapse-target-block";
-
-  beforeAll(() => {
-    setDoc({
-      byId: {
-        [targetId]: {
-          id: targetId,
-          raw: "Referenced everywhere",
-          collapsed: false,
-          parent: null,
-          page: "Target page",
-          children: [],
-        },
-      },
-      pages: [{
-        name: "Target page",
-        kind: "page",
-        title: "Target page",
-        preBlock: null,
-        roots: [targetId],
-        format: "md",
-        readOnly: false,
-        guide: false,
-      }],
-      feed: ["Target page"],
-      loaded: true,
-    });
-  });
-
-  const threeGroups = () => [
-    { page: "Alpha", kind: "page", blocks: [{ id: "ra1", raw: "x", collapsed: false, children: [] }] },
-    { page: "Beta", kind: "page", blocks: [{ id: "rb1", raw: "y", collapsed: false, children: [] }] },
-    { page: "Gamma", kind: "journal", blocks: [{ id: "rg1", raw: "z", collapsed: false, children: [] }] },
-  ];
-
-  async function mountPanel(groups: { page: string; kind: string; blocks: { id: string; raw: string; collapsed: boolean; children: never[] }[] }[]) {
-    vi.spyOn(backend(), "getBlockReferrers").mockResolvedValue(groups as never);
-    const { BlockReferences } = await import("./BlockReferences");
-    const root = document.createElement("div");
-    document.body.append(root);
-    const dispose = render(() => <BlockReferences id={targetId} />, root);
-    await vi.waitFor(() => expect(root.querySelectorAll(".reference-group").length).toBe(groups.length));
-    return { root, dispose };
-  }
-
-  it("collapse-all reduces every group to its source page title, and a single disclosure re-expands it", async () => {
-    const { collapsedGroupsFor } = await import("../referenceSectionState");
-    const { root, dispose } = await mountPanel(threeGroups());
-
-    expect(root.querySelectorAll(".reference-blocks").length).toBe(3);
-    const bulk = [...root.querySelectorAll<HTMLButtonElement>(".reference-bulk-controls button")];
-    expect(bulk.map((b) => b.textContent)).toEqual(["Collapse all", "Expand all"]);
-
-    bulk[0].click(); // Collapse all
+it("collapses every block-reference location and reopens one source", async () => {
+  vi.spyOn(backend(), "getBlockReferrers").mockResolvedValue([
+    { page: "A", kind: "page", blocks: [{ id: "a", raw: "x", collapsed: false, children: [] }] },
+    { page: "B", kind: "page", blocks: [{ id: "b", raw: "y", collapsed: false, children: [] }] },
+  ]);
+  const { BlockReferences } = await import("./BlockReferences");
+  const root = document.createElement("div");
+  document.body.append(root);
+  const dispose = render(() => <BlockReferences id="target" />, root);
+  try {
+    await vi.waitFor(() => expect(root.querySelectorAll(".reference-group").length).toBe(2));
+    const controls = root.querySelectorAll<HTMLButtonElement>(".reference-bulk-controls button");
+    expect(controls.length).toBe(2);
+    controls[0].click();
     expect(root.querySelectorAll(".reference-blocks").length).toBe(0);
-    expect(root.querySelectorAll(".reference-group").length).toBe(3);
-    // Every group still shows its source page title.
-    for (const pageName of ["Alpha", "Beta", "Gamma"]) {
-      expect([...root.querySelectorAll(".reference-page")].map((el) => el.textContent)).toContain(pageName);
-    }
-    // State stays local: the page-level Linked References section is untouched.
-    expect(collapsedGroupsFor("linked", "Target page").size).toBe(0);
-
-    // Individual disclosure re-expands that group's breadcrumb + block context.
-    const beta = [...root.querySelectorAll<HTMLButtonElement>(".reference-group-disclosure")]
-      .find((b) => b.getAttribute("aria-label")?.includes("Beta"))!;
-    expect(beta.getAttribute("aria-expanded")).toBe("false");
-    beta.click();
+    root.querySelector<HTMLButtonElement>('.reference-group-disclosure[aria-label*="B"]')!.click();
     expect(root.querySelectorAll(".reference-blocks").length).toBe(1);
-    expect(beta.getAttribute("aria-expanded")).toBe("true");
-    dispose();
-  });
+    controls[1].click();
+    expect(root.querySelectorAll(".reference-blocks").length).toBe(2);
+  } finally { dispose(); }
+});
 
-  it("expand-all restores every group's detail after collapse-all", async () => {
-    const { root, dispose } = await mountPanel(threeGroups());
-    const bulk = [...root.querySelectorAll<HTMLButtonElement>(".reference-bulk-controls button")];
-    bulk[0].click();
-    expect(root.querySelectorAll(".reference-blocks").length).toBe(0);
-
-    bulk[1].click(); // Expand all
-    expect(root.querySelectorAll(".reference-blocks").length).toBe(3);
-    expect([...root.querySelectorAll(".reference-group-disclosure")]
-      .every((el) => el.getAttribute("aria-expanded") === "true")).toBe(true);
-    dispose();
-  });
-
-  it("offers no bulk controls for a single group, but the group still collapses", async () => {
-    const { root, dispose } = await mountPanel([
-      { page: "Only", kind: "page", blocks: [{ id: "ro1", raw: "x", collapsed: false, children: [] }] },
+// master c5279d186 (GH #490/#332): a rejected referrers read used to throw out of
+// the panel's render; now the panel says it could not load and Retry recovers.
+it("shows a failure row instead of throwing, and Retry loads the references", async () => {
+  const referrers = vi.spyOn(backend(), "getBlockReferrers")
+    .mockRejectedValueOnce(new Error("referrers unavailable"))
+    .mockResolvedValue([
+      { page: "A", kind: "page", blocks: [{ id: "a", raw: "x", collapsed: false, children: [] }] },
     ]);
-
-    expect(root.querySelector(".reference-bulk-controls")).toBeNull();
-    const disclosure = root.querySelector<HTMLButtonElement>(".reference-group-disclosure")!;
-    disclosure.click();
-    expect(root.querySelectorAll(".reference-blocks").length).toBe(0);
-    disclosure.click();
-    expect(root.querySelectorAll(".reference-blocks").length).toBe(1);
-    dispose();
-  });
+  const { BlockReferences } = await import("./BlockReferences");
+  const root = document.createElement("div");
+  document.body.append(root);
+  const dispose = render(() => (
+    <>
+      <BlockReferences id="target" />
+      <div class="sibling">still rendered</div>
+    </>
+  ), root);
+  try {
+    await vi.waitFor(() => expect(root.querySelector(".resource-failure")).not.toBeNull());
+    expect(root.querySelector(".resource-failure")!.textContent).toContain("Couldn’t load references to this block.");
+    expect(root.querySelector(".resource-failure")!.textContent).not.toContain("referrers unavailable");
+    expect(root.querySelector(".sibling")?.textContent).toBe("still rendered");
+    root.querySelector<HTMLButtonElement>(".resource-failure-retry")!.click();
+    await vi.waitFor(() => expect(root.querySelectorAll(".reference-group").length).toBe(1));
+    expect(root.querySelector(".resource-failure")).toBeNull();
+    expect(referrers).toHaveBeenCalledTimes(2);
+  } finally { dispose(); }
 });

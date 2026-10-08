@@ -12,28 +12,23 @@ import {
   type AdoptedTab,
   type PaneSnapshot,
   type PaneRouter,
-  type PdfRoute,
   type Route,
   type PageTarget,
+  type PdfRoute,
 } from "./router";
 import { publishPdfNavigationIntent } from "./pdfNavigation";
 import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
-import {
-  clearSelection,
-  doc,
-  pageByName,
-  registerPaneRouteProvider,
-  installHistoryRouteContextAdapter,
-} from "./store";
+import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter, node as docNode, feedNames } from "./document";
 import { journalTitle, appNow } from "./journal";
 import { isSinglePaneShell } from "./nativeChrome";
 import {
-  companionPane,
+  nearestPane,
   nearestPaneInDirection,
   takeBlockSelectionForPaneReturn,
   type PaneDirection,
 } from "./paneSelect";
+import { graphScopedSignal } from "./binding";
 
 export type LayoutNode =
   | {
@@ -48,23 +43,20 @@ export const [layoutRoot, setLayoutRoot] = createSignal<LayoutNode>({
   kind: "pane",
   paneId: "main",
 });
+const maximizedPane = graphScopedSignal<string>();
+const maximizedPaneId = maximizedPane[0];
+const setMaximizedPaneId = maximizedPane[1];
 
-// Transient maximize state (GH #285): the maximized pane borrows the whole
-// pane area while layoutRoot() keeps the complete split tree and its ratios,
-// so toggling back restores the exact arrangement and session/workspace
-// persistence never sees a maximized-looking layout.
-const [maximizedPaneId, setMaximizedPaneId] = createSignal<string | null>(null);
-export { maximizedPaneId };
-
-/**
- * The subtree to render in the pane area: only the maximized leaf, falling
- * back to the real tree when nothing (valid) is maximized.
- */
+/** Return the pane tree shown on screen. Maximizing a pane leaves the saved
+ * split tree and ratios intact; an unknown pane id falls back to that tree.
+ * Cost: O(panes). No I/O or failure. */
 export function visibleLayoutNode(): LayoutNode {
   const id = maximizedPaneId();
   return id && layoutPaneIds().includes(id) ? { kind: "pane", paneId: id } : layoutRoot();
 }
 
+/** Toggle a pane's transient full-area view. Returns false when no split or
+ * target exists. Cost: O(panes); never changes the persisted layout. */
 export function togglePaneMaximize(paneId = focusedPaneId()): boolean {
   if (maximizedPaneId() === paneId) {
     setMaximizedPaneId(null);
@@ -75,32 +67,27 @@ export function togglePaneMaximize(paneId = focusedPaneId()): boolean {
   return true;
 }
 
-// Single mutation choke point: a layout change that drops the maximized pane
-// clears the transient state instead of maximizing a stale id.
 function commitLayout(node: LayoutNode) {
   const id = maximizedPaneId();
   if (id && !layoutPaneIds(node).includes(id)) setMaximizedPaneId(null);
   setLayoutRoot(node);
 }
-
 const [focusedPaneIdAccessor, writeFocusedPaneId] = createSignal("main");
 export const focusedPaneId = focusedPaneIdAccessor;
-const [lastFocusedLayoutPaneIdAccessor, writeLastFocusedLayoutPaneId] = createSignal("main");
-export const lastFocusedLayoutPaneId = lastFocusedLayoutPaneIdAccessor;
 
-export function setFocusedPaneId(paneId: string, rememberLayout = true) {
-  // Every focus route, including history/session adapters, must reveal the pane
-  // it focuses. Keeping this at the state boundary prevents a hidden pane from
-  // becoming the logical target while another pane remains maximized.
+/**
+ * The one focus-state boundary: records `paneId` as the focused pane, clearing
+ * block/cell selection when focus moves, and un-maximizes any other pane so the
+ * focused pane is always visible (history/session adapters call this directly).
+ * Does not validate that the pane exists or activate its route; see focusPane.
+ */
+export function setFocusedPaneId(paneId: string) {
   if (maximizedPaneId() && maximizedPaneId() !== paneId) setMaximizedPaneId(null);
   if (focusedPaneId() !== paneId) {
     clearSelection();
     setCellSel(null);
   }
   writeFocusedPaneId(paneId);
-  if (rememberLayout && layoutPaneIds().includes(paneId)) {
-    writeLastFocusedLayoutPaneId(paneId);
-  }
 }
 
 const routers = new Map<string, PaneRouter>([["main", mainPaneRouter]]);
@@ -235,11 +222,11 @@ export function closeLayoutPane(
 }
 
 function routeForJournalsDuplicate(anchor: string | null): Route {
-  const selectedDay = anchor ? doc.byId[anchor]?.page : undefined;
+  const selectedDay = anchor ? docNode(anchor)?.page : undefined;
   const today = journalTitle(appNow());
   const name =
-    (selectedDay && doc.feed.includes(selectedDay) ? selectedDay : undefined) ??
-    (doc.feed.includes(today) ? today : doc.feed[0] ?? today);
+    (selectedDay && feedNames().includes(selectedDay) ? selectedDay : undefined) ??
+    (feedNames().includes(today) ? today : feedNames()[0] ?? today);
   return { kind: "page", name, pageKind: pageByName(name)?.kind ?? "journal" };
 }
 
@@ -360,13 +347,9 @@ export function closePane(paneId = focusedPaneId()): boolean {
   return true;
 }
 
-export function focusPane(paneId: string, rememberLayout = true) {
-  if (!layoutPaneIds().includes(paneId)) return;
-  if (focusedPaneId() === paneId) {
-    if (rememberLayout) writeLastFocusedLayoutPaneId(paneId);
-    return;
-  }
-  setFocusedPaneId(paneId, rememberLayout);
+export function focusPane(paneId: string) {
+  if (!layoutPaneIds().includes(paneId) || focusedPaneId() === paneId) return;
+  setFocusedPaneId(paneId);
   paneRouter(paneId).activateCurrentRoute();
 }
 
@@ -408,12 +391,15 @@ export function moveActiveTabToPane(sourcePaneId: string, targetPaneId: string):
   return moveTabToPane(sourcePaneId, paneRouter(sourcePaneId).activeId(), targetPaneId);
 }
 
-// Directional "Move tab to pane" (GH #282): a real move when a pane lies that
-// way, but with no neighbor the command grows the layout in the requested
-// direction — the VS Code gesture a one-pane workflow uses to spawn its second
-// pane. A multi-tab source donates its active tab into the new pane; a one-tab
-// source cannot be emptied (Tine has no empty-pane route), so the new pane
-// opens as a mirror of the current tab/history instead and the original stays.
+/**
+ * Directional "Move tab to pane" (GH #282). When a pane lies in `dir` from
+ * `sourcePaneId`, moves the source's active tab into it. With no neighbor the
+ * layout grows in that direction: a multi-tab source donates its active tab to
+ * the new pane; a one-tab source cannot be emptied (there is no empty-pane
+ * route), so the new pane opens as a mirror of the current tab and the original
+ * stays. Returns the pane that received the tab, or null when nothing changed
+ * (unknown source, a refused move, or a platform without split panes). O(panes).
+ */
 export function moveActiveTabInDirection(sourcePaneId: string, dir: PaneDirection): string | null {
   if (!layoutPaneIds().includes(sourcePaneId)) return null;
   const target = nearestPaneInDirection(layoutRoot(), sourcePaneId, dir);
@@ -504,25 +490,21 @@ export function setSplitRatio(path: number[], ratio: number) {
 
 function panePath(node: LayoutNode, paneId: string, prefix: number[] = []): number[] | null {
   if (node.kind === "pane") return node.paneId === paneId ? prefix : null;
-  return (
-    panePath(node.children[0], paneId, [...prefix, 0]) ??
-    panePath(node.children[1], paneId, [...prefix, 1])
-  );
+  return panePath(node.children[0], paneId, [...prefix, 0])
+    ?? panePath(node.children[1], paneId, [...prefix, 1]);
 }
 
-// Keyboard pane sizing (GH #286): nudge the NEAREST ancestor split of the
-// matching axis by five percentage points so the pane's subtree enlarges or
-// shrinks through it. setSplitRatio applies the 15–85% clamps; a pane whose
-// ancestor chain has no split of that axis is a deliberate no-op.
+/** Resize a pane by five percentage points at its nearest split on `axis`.
+ * Returns false if no matching ancestor exists. Ratios clamp to 15–85% and
+ * the normal session save persists the change. Cost: O(panes). */
 export function adjustPaneSize(paneId: string, axis: "width" | "height", grow: boolean): boolean {
   const path = panePath(layoutRoot(), paneId);
-  if (!path || path.length === 0) return false;
+  if (!path) return false;
   const dir = axis === "width" ? "row" : "col";
   for (let depth = path.length - 1; depth >= 0; depth--) {
     const ancestor = nodeAtPath(layoutRoot(), path.slice(0, depth));
     if (!ancestor || ancestor.kind !== "split" || ancestor.dir !== dir) continue;
-    const activeIsFirst = path[depth] === 0;
-    const delta = (grow ? 0.05 : -0.05) * (activeIsFirst ? 1 : -1);
+    const delta = (grow ? 0.05 : -0.05) * (path[depth] === 0 ? 1 : -1);
     setSplitRatio(path.slice(0, depth), ancestor.ratio + delta);
     return true;
   }
@@ -530,7 +512,8 @@ export function adjustPaneSize(paneId: string, axis: "width" | "height", grow: b
 }
 
 export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId()): string | null {
-  let target = companionPane(layoutRoot(), sourcePaneId);
+  const ids = layoutPaneIds();
+  let target = nearestPane(layoutRoot(), sourcePaneId) ?? ids.find((id) => id !== sourcePaneId) ?? null;
   const created = !target;
   if (!target) target = splitPane(sourcePaneId, "row", { focusNew: false });
   if (!target) return null;
@@ -541,9 +524,7 @@ export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId(
     // source context (matching the embryo-switcher flow) — openInNewTab here
     // would leave a stray duplicate tab beside the target.
     if (route.kind === "journals") router.openJournals();
-    else if (route.kind === "conflicts") router.openConflicts();
-    else if (route.kind === "query") router.replaceActiveRoute(route);
-    else if (route.kind === "pdf" || route.kind === "invalid") router.replaceActiveRoute(route);
+    else if (route.kind === "query" || route.kind === "pdf" || route.kind === "invalid" || route.kind === "conflicts") router.replaceActiveRoute(route);
     else if (route.block) router.openPageAtBlock(route.name, route.pageKind, route.block, route.path);
     else if (route.path) router.openFile(route.path, route.name, route.pageKind);
     else router.openPage(route.name, route.pageKind);
@@ -571,85 +552,54 @@ export interface OpenPdfOptions {
   anotherView?: boolean;
 }
 
-/** Open a graph PDF as an ordinary route. Desktop preserves the source in a
- * reusable companion pane; mobile uses the current route history so hardware
- * Back returns to the link. Deliberate duplicates are a separate operation and
- * remain disabled until shared annotation mutation ownership lands. */
-export function openPdf(
-  filename: string,
-  label: string,
-  page?: number,
-  highlightId?: string,
-  options: OpenPdfOptions = {},
-): PdfRoute | null {
-  const sourcePaneId = options.sourcePaneId && layoutPaneIds().includes(options.sourcePaneId)
-    ? options.sourcePaneId
-    : focusedPaneId();
+/** Open a graph PDF as an ordinary route. Reuses one view per file, keeping its
+ * page when no target is requested. Desktop uses a companion pane; mobile uses
+ * the current tab's history. Cost O(open tabs), no graph I/O. */
+export function openPdf(filename: string, label: string, page?: number,
+  highlightId?: string, options: OpenPdfOptions = {}): PdfRoute | null {
+  const ids = layoutPaneIds();
+  const sourcePaneId = options.sourcePaneId && ids.includes(options.sourcePaneId)
+    ? options.sourcePaneId : focusedPaneId();
   const existing = options.anotherView ? null : pdfTab(filename);
   if (existing) {
     const router = paneRouter(existing.paneId);
     router.setActiveTab(existing.tabId);
     if (page !== undefined) router.updateActivePdfViewState({ page });
-    // Reopening the resource that is ALREADY current, with no page and no
-    // highlight asked for, is a no-op -- not an implicit jump. An intent IS a
-    // request to move: the viewer's navigation effect resolves `target.page ?? 1`
-    // and clears the highlight overlay, so publishing an empty one here threw
-    // away your place in the PDF you were already reading. Pinned by
-    // "reopening the PDF you are already reading keeps your place" in
-    // src/panes.test.ts, together with its companion proving a real page or
-    // highlight request still navigates.
     if (page !== undefined || highlightId !== undefined) {
       publishPdfNavigationIntent(existing.route.viewId, { page, highlightId });
     }
     if (!options.background) focusPane(existing.paneId);
     return existing.route;
   }
-
-  // Do not expose editable duplicate views until the shared annotation session
-  // and committed-merge backend reply exist.
+  // A second editable view needs shared annotation mutation ownership.
   if (options.anotherView) return null;
-
   const route = makePdfRoute(filename, label, { page });
   publishPdfNavigationIntent(route.viewId, { page, highlightId });
   if (isSinglePaneShell() || options.inPlace) {
     paneRouter(sourcePaneId).openPdf(route);
     return route;
   }
-
-  const companion = companionPane(layoutRoot(), sourcePaneId);
+  const companion = nearestPane(layoutRoot(), sourcePaneId) ?? ids.find((id) => id !== sourcePaneId) ?? null;
   if (companion) {
     paneRouter(companion).openInNewTab(route, !options.background);
     if (!options.background) focusPane(companion);
-    else setFocusedPaneId(sourcePaneId);
     return route;
   }
-
-  const created = splitPane(sourcePaneId, "row", {
-    focusNew: !options.background,
-    snapshot: {
-      tabs: [{ history: [route], pos: 0, pinned: false }],
-      activeIndex: 0,
-      scrolls: [null],
-    },
-  });
-  if (!created) return null;
-  if (options.background) setFocusedPaneId(sourcePaneId);
-  return route;
+  const created = splitPane(sourcePaneId, "row", { focusNew: !options.background,
+    snapshot: { tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0, scrolls: [null] } });
+  return created ? route : null;
 }
 
-export function openPdfNotes(
-  sourcePaneId: string,
-  notesPage: string,
-  block?: string,
-): string | null {
+/** Open a PDF's notes in the companion pane, reusing its existing page tab.
+ * On mobile the notes enter the current route history. Cost O(open tabs). */
+export function openPdfNotes(sourcePaneId: string, notesPage: string, block?: string): string | null {
   if (isSinglePaneShell()) {
     const router = paneRouter(sourcePaneId);
     if (block) router.openPageAtBlock(notesPage, "page", block);
     else router.openPage(notesPage, "page");
     return sourcePaneId;
   }
-
-  const targetPaneId = companionPane(layoutRoot(), sourcePaneId);
+  const targetPaneId = nearestPane(layoutRoot(), sourcePaneId);
   if (targetPaneId) {
     const router = paneRouter(targetPaneId);
     const existing = router.tabs().find((tab) => {
@@ -659,17 +609,12 @@ export function openPdfNotes(
     if (existing) {
       router.setActiveTab(existing.id);
       if (block) router.openPageAtBlock(notesPage, "page", block);
-      setFocusedPaneId(sourcePaneId);
+      focusPane(sourcePaneId);
       return targetPaneId;
     }
   }
-
-  return openRouteInOtherPane({
-    kind: "page",
-    name: notesPage,
-    pageKind: "page",
-    ...(block ? { block } : {}),
-  }, sourcePaneId);
+  return openRouteInOtherPane({ kind: "page", name: notesPage, pageKind: "page",
+    ...(block ? { block } : {}) }, sourcePaneId);
 }
 
 export function resetPaneLayoutToSingle(snapshot?: PaneSnapshot) {

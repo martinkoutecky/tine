@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { bumpDataRev } from "./ui";
-import { setDoc } from "./store";
+import { bumpDataRev, bumpGraphEpoch } from "./graphSession";
+import { applyGraphAnswers } from "./graphAnswers";
+import { setDoc } from "./document/model";
+
+vi.mock("./warmCache", () => ({
+  waitForWarmCache: vi.fn(async () => true),
+}));
 
 async function waitUntil(predicate: () => boolean): Promise<void> {
   for (let i = 0; i < 50; i++) {
@@ -17,7 +22,7 @@ afterEach(() => {
 });
 
 describe("block reference count refresh (GH #154)", () => {
-  it("refetches the count map after a saved block reference lands", async () => {
+  it("updates the count map from the native save signal after a block reference lands", async () => {
     let snapshot: Record<string, number> = {};
     const getCounts = vi
       .spyOn(backend(), "getBlockRefCounts")
@@ -27,12 +32,12 @@ describe("block reference count refresh (GH #154)", () => {
     await waitUntil(() => getCounts.mock.calls.length >= 1);
     expect(blockRefCount("target-block")).toBe(0);
 
-    snapshot = { "target-block": 1 };
+    applyGraphAnswers({ rev: "2", inventoryChanged: false, blockRefCounts: { "target-block": 1 } });
     bumpDataRev();
 
-    await waitUntil(() => getCounts.mock.calls.length >= 2);
-    // The answer lands a tick after the call: wait for the count itself.
     await waitUntil(() => blockRefCount("target-block") === 1);
+    expect(getCounts).toHaveBeenCalledTimes(1);
+    expect(blockRefCount("target-block")).toBe(1);
   });
 
   it("reads two referrers under a freshly assigned durable id while the live key stays transient", async () => {
@@ -58,7 +63,7 @@ describe("block reference count refresh (GH #154)", () => {
         format: "md",
         readOnly: false,
         guide: false,
-        path: "pages/Target page.md",
+        id: "pages/Target page.md",
       }],
       feed: ["Target page"],
       loaded: true,
@@ -68,8 +73,9 @@ describe("block reference count refresh (GH #154)", () => {
       .mockResolvedValue({ [durable]: 2 });
     const { blockRefCount } = await import("./blockRefCounts");
 
-    bumpDataRev();
+    bumpGraphEpoch();
     await waitUntil(() => getCounts.mock.calls.length >= 1);
-    await waitUntil(() => blockRefCount(transient) === 2);
+
+    expect(blockRefCount(transient)).toBe(2);
   });
 });

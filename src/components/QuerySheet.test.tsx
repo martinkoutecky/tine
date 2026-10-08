@@ -1,12 +1,15 @@
+// Ported from master src/components/QuerySheet.test.tsx. og changes: no mock query
+// fixture seam (the spies already answer print/parse) and no index readiness
+// error type (a registry read failure is a plain error on og).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
-import { backend, QueryUnavailableError } from "../backend";
-import { installMockQueryFixture } from "../mock";
+import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
-import { encodePropertyLeaf, pageRefFilter, propertyFilter, taskFilter } from "../editor/queryBuilder";
+import { anyTaskFilter, encodePropertyLeaf, betweenFilter, journalFilter, pageRefFilter, propertyFilter, taskFilter } from "../editor/queryBuilder";
+import { diagnosticFor, PropertyValueCell } from "./querySheetParts";
 import type { Filter, ParsedQuery, RegistrySnapshot } from "../editor/queryIr";
 
 // **The sheet itself** (SPEC §7.2–§7.4): what the resting sentence expands into.
@@ -62,7 +65,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  installMockQueryFixture(null);
   clearTransientLayersForTest();
   resetSharedQueryResultsForTests();
   vi.restoreAllMocks();
@@ -138,6 +140,66 @@ describe("a typed property leaf reopens as the row that wrote it", () => {
   });
 });
 
+it("adds a numeric between condition with both bounds", async () => {
+  vi.spyOn(backend(), "queryRegistry").mockResolvedValue({
+    rows: [{ normalized_name: "cost", observed_type: "number", cardinality: "one", count_blocks: 3, count_pages: 0, mismatch_count: 0 }],
+    generation: 1,
+  });
+  const builder = mountBuilder({ kind: "and", items: [] });
+  try {
+    const sheet = builder.open();
+    await settle();
+    sheet.querySelector<HTMLButtonElement>(".qs-add")!.click();
+    const cost = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find((item) => item.textContent?.trim() === "cost");
+    expect(cost).toBeDefined();
+    cost!.click();
+    const between = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find((item) => item.textContent?.includes("between"));
+    expect(between).toBeDefined();
+    between!.click();
+    const from = document.querySelector<HTMLInputElement>('input[aria-label="From"]')!;
+    const to = document.querySelector<HTMLInputElement>('input[aria-label="To"]')!;
+    expect(from).toBeDefined();
+    expect(to).toBeDefined();
+    from.value = "3"; from.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    to.value = "7"; to.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>(".qs-commit")!.click();
+    expect(builder.changes).toHaveLength(1);
+    expect(builder.session().query.filter).toEqual({ kind: "and", items: [encodePropertyLeaf({ id: "between", key: "cost", values: ["3", "7"], type: "number" })] });
+  } finally {
+    builder.dispose();
+  }
+});
+
+it("matches two same-kind raw diagnostics by their distinct spans", () => {
+  const query = session({ kind: "true" }).query;
+  query.diagnostics = [
+    { kind: "syntax", span: { start: 1, end: 2 }, message: "first" },
+    { kind: "syntax", span: { start: 5, end: 6 }, message: "second" },
+  ];
+  expect(diagnosticFor(query, { kind: "raw", text: "b", diagnostic_kind: "syntax", span: { start: 5, end: 6 } })?.message).toBe("second");
+});
+
+it("does not commit a property value when its untouched input blurs", () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const onCommit = vi.fn();
+  const dispose = render(() => <PropertyValueCell
+    test={{ id: "is", key: "cost", values: ["3"], throughPage: false }}
+    effective={{ type: "number", cardinality: "one" }}
+    disabled={false}
+    registry={{ rows: () => [], pending: () => false, failure: () => null, unavailable: () => false, request: () => {}, retry: () => {} }}
+    onCommit={onCommit}
+  />, host);
+  try {
+    host.querySelector<HTMLInputElement>("input")!.dispatchEvent(new FocusEvent("blur"));
+    expect(onCommit).not.toHaveBeenCalled();
+  } finally {
+    dispose();
+  }
+});
+
 describe("switching what the query selects re-validates it and says how much it costs", () => {
   const notApplicable = (): ParsedQuery => ({
     query: {
@@ -158,9 +220,7 @@ describe("switching what the query selects re-validates it and says how much it 
   }) as unknown as ParsedQuery;
 
   it("counts the conditions that stop applying and offers a way out of each", async () => {
-    // jsdom has no engine, so the round trip runs through the ONE mock-only
-    // fixture seam (`mockQueryFixture.guard.test.ts` pins that it is mock-only).
-    installMockQueryFixture({ print: "@page and task = 'TODO'", parse: notApplicable() });
+    // jsdom has no engine, so the print-then-parse round trip is stubbed.
     vi.spyOn(backend(), "printQuery").mockResolvedValue("@page and task = 'TODO'");
     vi.spyOn(backend(), "parseQuery").mockResolvedValue(notApplicable());
 
@@ -197,7 +257,6 @@ describe("switching what the query selects re-validates it and says how much it 
   });
 
   it("cancels back to the query it had, with nothing changed", async () => {
-    installMockQueryFixture({ print: "@page and task = 'TODO'", parse: notApplicable() });
     vi.spyOn(backend(), "printQuery").mockResolvedValue("@page and task = 'TODO'");
     vi.spyOn(backend(), "parseQuery").mockResolvedValue(notApplicable());
 
@@ -615,6 +674,31 @@ describe("reordering: the drag and the keyboard reach the same tree", () => {
     }
   });
 
+  it("draws no drop bar at a slot beside the dragged condition itself (GH #619)", () => {
+    // Two conditions, dragging the LOWER one up. Only one slot changes anything: above the first. The slot
+    // between the two (the first's lower edge or the dragged row's own upper edge) and the slot below the
+    // dragged row are no-ops, and a bar there reads as a hidden third condition.
+    const builder = mountBuilder({ kind: "and", items: [A, B] });
+    try {
+      const sheet = builder.open();
+      const bars = () => rootItems(sheet).map((item) => [item.classList.contains("qs-drop-before"), item.classList.contains("qs-drop-after")]);
+      const none = [[false, false], [false, false]];
+      for (const [over, before] of [[0, false], [1, true], [1, false]] as const) {
+        const drop = dragOnto(rootItems(sheet), 1, over, before);
+        expect(bars()).toEqual(none);
+        drop();
+      }
+      expect(builder.changes).toHaveLength(0);
+      const drop = dragOnto(rootItems(sheet), 1, 0, true);
+      expect(bars()).toEqual([[true, false], [false, false]]);
+      drop();
+      expect(builder.changes).toHaveLength(1);
+      expect(filterOf(builder)).toEqual({ kind: "and", items: [B, A] });
+    } finally {
+      builder.dispose();
+    }
+  });
+
   it("moves a whole group, wrappers and subtree together", () => {
     const group: Filter = { kind: "off", inner: { kind: "or", items: [B, C] } };
     const builder = mountBuilder({ kind: "and", items: [A, group] });
@@ -628,7 +712,7 @@ describe("reordering: the drag and the keyboard reach the same tree", () => {
     }
   });
 
-  it("refuses a drop whose target is in another list", () => {
+  it("drops into another group when the pointer is over one of its rows (GH #619 item 6)", () => {
     const builder = mountBuilder({
       kind: "and",
       items: [A, { kind: "and", items: [B, C] }],
@@ -637,25 +721,94 @@ describe("reordering: the drag and the keyboard reach the same tree", () => {
       const sheet = builder.open();
       const outer = rootItems(sheet);
       const nested = [...sheet.querySelector<HTMLElement>(".qs-group .qs-rows")!.children] as HTMLElement[];
-      // The pointer is over a row of the nested list. `closest()` resolves it to
-      // the GROUP's item in the dragged row's own list, so the only thing this
-      // drop can express is "after the group" — never "into it".
       stackRects([...outer, ...nested]);
       const handle = outer[0]!.querySelector<HTMLElement>(".qs-drag-handle")!;
       handle.dispatchEvent(pointer("pointerdown", 10, 10));
       const previous = document.elementFromPoint;
       try {
         document.elementFromPoint = () => nested[1]!;
-        document.dispatchEvent(pointer("pointermove", 10, 130));
-        document.dispatchEvent(pointer("pointerup", 10, 130));
+        document.dispatchEvent(pointer("pointermove", 10, 155));
+        // The bar is drawn on the nested row, in the nested list, not on the group.
+        expect(nested[1]!.classList.contains("qs-drop-after")).toBe(true);
+        document.dispatchEvent(pointer("pointerup", 10, 155));
       } finally {
         document.elementFromPoint = previous;
       }
+      // A is now the last condition of the inner group; the outer list keeps only that group.
       expect(filterOf(builder)).toEqual({
         kind: "and",
-        items: [{ kind: "and", items: [B, C] }, A],
+        items: [{ kind: "and", items: [B, C, A] }],
       });
       expect(builder.changes).toHaveLength(1);
+    } finally {
+      builder.dispose();
+    }
+  });
+
+  it("dissolves a group left with one condition when its other condition is dragged out", () => {
+    const builder = mountBuilder({
+      kind: "and",
+      items: [A, { kind: "and", items: [B, C] }],
+    });
+    try {
+      const sheet = builder.open();
+      const outer = rootItems(sheet);
+      const nested = [...sheet.querySelector<HTMLElement>(".qs-group .qs-rows")!.children] as HTMLElement[];
+      stackRects([...outer, ...nested]);
+      const handle = nested[1]!.querySelector<HTMLElement>(".qs-drag-handle")!;
+      handle.dispatchEvent(pointer("pointerdown", 10, 70));
+      const previous = document.elementFromPoint;
+      try {
+        document.elementFromPoint = () => outer[0]!;
+        document.dispatchEvent(pointer("pointermove", 10, 5));
+        document.dispatchEvent(pointer("pointerup", 10, 5));
+      } finally {
+        document.elementFromPoint = previous;
+      }
+      // C goes to the top; B is alone in its group, so B takes the group's place.
+      expect(filterOf(builder)).toEqual({ kind: "and", items: [C, A, B] });
+      expect(builder.changes).toHaveLength(1);
+      expect(sheet.querySelector(".qs-group")).toBeNull();
+    } finally {
+      builder.dispose();
+    }
+  });
+
+  it("never drops a group into itself, and draws no bar there", () => {
+    const start: Filter = { kind: "and", items: [A, { kind: "and", items: [B, C] }] };
+    const builder = mountBuilder(start);
+    try {
+      const sheet = builder.open();
+      const outer = rootItems(sheet);
+      const nested = [...sheet.querySelector<HTMLElement>(".qs-group .qs-rows")!.children] as HTMLElement[];
+      stackRects([...outer, ...nested]);
+      const handle = sheet.querySelector<HTMLElement>(".qs-group-header .qs-drag-handle")!;
+      handle.dispatchEvent(pointer("pointerdown", 10, 50));
+      const previous = document.elementFromPoint;
+      try {
+        document.elementFromPoint = () => nested[1]!;
+        document.dispatchEvent(pointer("pointermove", 10, 155));
+        expect(sheet.querySelector(".qs-drop-before, .qs-drop-after")).toBeNull();
+        document.dispatchEvent(pointer("pointerup", 10, 155));
+      } finally {
+        document.elementFromPoint = previous;
+      }
+      expect(builder.changes).toHaveLength(0);
+      expect(filterOf(builder)).toEqual(start);
+    } finally {
+      builder.dispose();
+    }
+  });
+
+  it("dropping on a condition only inserts beside it; it never creates a group", () => {
+    const builder = mountBuilder({ kind: "and", items: [A, B, C] });
+    try {
+      const sheet = builder.open();
+      const drop = dragOnto(rootItems(sheet), 0, 1);
+      drop();
+      // Beside it, in the same list: a reorder, never a new group.
+      expect(filterOf(builder)).toEqual({ kind: "and", items: [B, A, C] });
+      expect(sheet.querySelector(".qs-group")).toBeNull();
     } finally {
       builder.dispose();
     }
@@ -817,7 +970,7 @@ describe("the P6 controls are not type-dependent, so a registry that has not lan
   const start = (): Filter => ({ kind: "and", items: [propertyFilter("cost", "3"), A] });
 
   it.each([
-    ["failed", () => Promise.reject(new QueryUnavailableError("projection.failed", "The index could not be rebuilt."))],
+    ["failed", () => Promise.reject(new Error("The registry could not be read."))],
     ["pending", () => new Promise<never>(() => {})],
   ])("keeps disabling and reordering usable while the read has %s", async (_case, reply) => {
     vi.spyOn(backend(), "queryRegistry").mockImplementation(reply as () => Promise<never>);
@@ -908,6 +1061,74 @@ describe("a group that has been switched off is still a group", () => {
         items: [{ kind: "off", inner: { kind: "and", items: [A, B] } }, C],
       });
       expect(builder.changes).toHaveLength(2);
+    } finally {
+      builder.dispose();
+    }
+  });
+});
+
+// GH #619 items 2, 3 and 5 at the sheet: what the user sees and clicks.
+describe("GH #619: Any status, In a journal page, no advanced chip for builder shapes", () => {
+  it("offers Any status on the Task value menu, writes every OG marker, and reads it back as Any status", async () => {
+    const builder = mountBuilder({ kind: "and", items: [taskFilter(["TODO"])] });
+    try {
+      const sheet = builder.open();
+      await settle();
+      sheet.querySelector<HTMLButtonElement>(".qs-value")!.click();
+      const any = document.querySelector<HTMLButtonElement>(".qs-any-option");
+      expect(any).not.toBeNull();
+      expect(any!.textContent).toBe("Any status");
+      any!.click();
+      await settle();
+      expect(builder.changes).toHaveLength(1);
+      expect(builder.session().query.filter).toEqual({ kind: "and", items: [anyTaskFilter()] });
+      expect(sheet.querySelector(".qs-value")!.textContent).toBe("Any status");
+    } finally {
+      builder.dispose();
+    }
+  });
+
+  it("names the journal condition 'In a journal page' and shows it as a condition, not as dates", async () => {
+    const builder = mountBuilder({ kind: "and", items: [journalFilter()] });
+    try {
+      const sheet = builder.open();
+      await settle();
+      const row = sheet.querySelector(".qs-row")!;
+      expect(row.querySelector(".qs-field")!.textContent).toContain("In a journal page");
+      expect(row.textContent).not.toMatch(/2000|-2000y|\+2000y/);
+    } finally {
+      builder.dispose();
+    }
+  });
+
+  it("names the date a range row is about: Scheduled and Deadline, not 'Between dates'", async () => {
+    const builder = mountBuilder({
+      kind: "and",
+      items: [betweenFilter("scheduled", "today", "+7d"), betweenFilter("deadline", "today", "+7d")],
+    });
+    try {
+      const sheet = builder.open();
+      await settle();
+      const fields = [...sheet.querySelectorAll(".qs-row .qs-field")].map((f) => f.textContent ?? "");
+      expect(fields[0]).toContain("Scheduled");
+      expect(fields[1]).toContain("Deadline");
+      expect(fields.join(" ")).not.toContain("Between dates");
+    } finally {
+      builder.dispose();
+    }
+  });
+
+  it("does not call a builder-made scheduled condition inside an any-of group advanced", async () => {
+    const nested: Filter = {
+      kind: "and",
+      items: [pageRefFilter("x"), { kind: "or", items: [betweenFilter("scheduled", "-7d", "+7d"), betweenFilter("journal", "today", "+7d")] }],
+    };
+    const builder = mountBuilder(nested);
+    try {
+      const text = builder.host.textContent ?? "";
+      expect(text).not.toMatch(/advanced/i);
+      expect(text).toContain("scheduled: 7 days ago to 7 days ahead");
+      expect(text).toContain("journal date: next 7 days");
     } finally {
       builder.dispose();
     }

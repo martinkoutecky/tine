@@ -3,7 +3,8 @@ import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
-import { loadSingle, pageByName, resetStore } from "../store";
+import { pageByName, resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
 

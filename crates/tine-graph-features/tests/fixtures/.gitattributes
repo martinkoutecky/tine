@@ -1,0 +1,3 @@
+# Expected-output fixtures are compared byte for byte (CRLF cases included);
+# never normalize their line endings.
+* -text

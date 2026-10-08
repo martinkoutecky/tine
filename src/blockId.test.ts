@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { existingBlockId, rawWithBlockId } from "./store";
+import { existingBlockId, rawWithBlockId, orgRawWithProperty } from "./document/edits/identity";
 
 describe("existingBlockId", () => {
   it("reads a markdown id:: trailer, case-insensitively", () => {
@@ -45,4 +45,11 @@ describe("rawWithBlockId", () => {
       "Title\n:PROPERTIES:\n:foo: bar\n:id: U\n:END:"
     );
   });
+});
+
+
+it("Org ID and generic property additions use the same parser placement (L13:85 already fixed)", () => {
+  for (const raw of ["Title\nbody\nSCHEDULED: <2026-09-29 Tue>", "Title\nSCHEDULED: <2026-09-29 Tue>\nbody", "Title\n#+BEGIN_SRC\nSCHEDULED: <2026-09-29 Tue>\n#+END_SRC"]) {
+    expect(orgRawWithProperty(raw, "note", "uuid").replace(":note: uuid", ":id: uuid")).toBe(rawWithBlockId(raw, "uuid", "org"));
+  }
 });

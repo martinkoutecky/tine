@@ -1,122 +1,84 @@
-// Concord P5 — the one user-visible conflict policy switch (Obsidian 1.9.7's
-// idea, landscape survey U3).
+// Concord P5 "always ask" (master; family 10). Tine's only silent adoption of
+// external bytes is freshness: a page you have loaded, with nothing unsaved,
+// changes on disk and Tine shows the new content (what VS Code and IntelliJ
+// do). With ALWAYS ASK on, that one case is HELD instead: the page keeps what
+// you were reading and offers Reload from disk / Keep mine.
 //
-// Tine's ONLY silent adoption of external bytes is L0 freshness: a page you have
-// open, with nothing unsaved, changes on disk and Tine simply shows the new
-// content. That is the right default — it is what VS Code and IntelliJ do, and
-// the alternative is a prompt for every keystroke a co-editing tool makes.
-//
-// It is not right for everyone. If you edit the same graph from a second machine
-// through a sync tool, "the page under my eyes just changed" is exactly the
-// moment you want told about rather than shown. With ALWAYS ASK on, such a
-// change is HELD: the page keeps what you were reading and offers Reload /
-// Keep mine.
-//
-// What the switch deliberately does NOT touch: every existing safety path. A
-// dirty page still gets its divergence proof, a mid-edit page still defers
-// through the P1 replay machinery, and a conflicted save is still refused. This
-// only converts the silent case into an asked one — nothing that used to ask
-// stops asking.
-//
-// Holding is frontend-only by design: the backend cache has already adopted the
-// bytes, which is what makes "Keep mine" honest — the next save is refused by
-// the base_rev guard and raises the ordinary conflict banner, i.e. exactly
-// Obsidian's "create a conflict to review".
-
+// Nothing that already asks stops asking: a dirty page still takes the
+// conflict path, a page being edited still defers (deferredReload.ts). Holding
+// is frontend-only and writes nothing: the backend cache already has the new
+// bytes, so after "Keep mine" the next save meets the base-revision guard and
+// raises the ordinary conflict bar.
 import { createSignal } from "solid-js";
-import { backend } from "./backend";
-import type { GraphChange } from "./backend";
+import { backend, type GraphChange } from "./backend";
+import { graphScopedSignal } from "./binding";
+import { advanceRevision, currentRevision, readOwned, revisionOwner, writeOwned } from "./owned";
+import { pushToast } from "./toasts";
 
 const KEY = "concord_always_ask";
+const [alwaysAsk, setAlwaysAsk] = createSignal(false);
+const preferenceKey = {};
 
-const [alwaysAsk, setAlwaysAskSig] = createSignal(false);
-
-/** Reactive: hold external changes for review instead of applying them silently. */
+/** Reactive: hold external changes for review instead of applying them. */
 export const conflictPolicyAlwaysAsk = alwaysAsk;
 
+/** Device preference; a later choice wins a delayed load, a failed write is
+ *  reported (the in-session choice still applies). */
 export function setConflictPolicyAlwaysAsk(on: boolean): void {
-  setAlwaysAskSig(on);
-  if (!on) clearHeldExternalChanges(); // turning it off releases the queue's grip
-  void backend().setAppBool(KEY, on).catch(() => {});
+  const revision = advanceRevision(preferenceKey);
+  setAlwaysAsk(on);
+  if (!on) clearHeldExternalChanges();
+  void writeOwned(revisionOwner(preferenceKey, revision), backend().setAppBool(KEY, on))
+    .catch((error) => pushToast(`Could not remember “Always ask”: ${String(error)}`, "error"));
 }
 
-/** Set the policy WITHOUT persisting it — tests only. */
-export function setConflictPolicyAlwaysAskForTest(on: boolean): void {
-  setAlwaysAskSig(on);
-}
-
-/** Load the persisted preference at startup. Default OFF (current behavior). */
+/** Load the persisted preference. Default off (silent freshness); a failed
+ *  read keeps the default and says so. */
 export async function initConflictPolicy(): Promise<void> {
+  const owner = revisionOwner(preferenceKey, currentRevision(preferenceKey));
   try {
-    setAlwaysAskSig(await backend().getAppBool(KEY, false));
-  } catch {
-    /* default off */
+    const loaded = await readOwned(owner, backend().getAppBool(KEY, false));
+    if (loaded.kind === "current") setAlwaysAsk(loaded.value);
+  } catch (error) {
+    pushToast(`Could not load “Always ask”: ${String(error)}`, "error");
   }
 }
 
-// --- held external changes ---
+// Page name -> the newest held change. Graph-scoped: a graph switch drops it,
+// so a held change never applies in another graph.
+const [heldChanges, setHeldChanges] = graphScopedSignal<Record<string, GraphChange>>();
 
-export interface HeldExternalChange {
-  change: GraphChange;
-  binding: number;
+/** Whether page `name` has an external change waiting for its owner. */
+export function heldExternalChangeFor(name: string | undefined): boolean {
+  return !!name && !!heldChanges()?.[name];
 }
 
-const [held, setHeld] = createSignal<Record<string, HeldExternalChange>>({});
-
-/** The change waiting for this page's owner to decide, if any. */
-export function heldExternalChangeFor(name: string | undefined): HeldExternalChange | undefined {
-  return name ? held()[name] : undefined;
+/** Record a change the policy asks about; the latest observation wins (the
+ *  apply refetches the page, so only the newest change matters). */
+export function holdExternalChange(name: string, change: GraphChange): void {
+  setHeldChanges({ ...(heldChanges() ?? {}), [name]: change });
 }
 
-/** How many pages are waiting on a decision (a calm count, never a modal).
- *  A plain accessor, not a module-scope memo: a memo created outside a root is
- *  never disposed, and this derivation is one Object.keys. */
-export function heldExternalChangeCount(): number {
-  return Object.keys(held()).length;
-}
-
-/** Record a change the policy says must be asked about. Latest observation wins
- *  — applying refetches the DTO, so only the newest change's shape matters. */
-export function holdExternalChange(change: GraphChange, binding: number): void {
-  setHeld((current) => ({ ...current, [change.name]: { change, binding } }));
-}
-
-function take(name: string): HeldExternalChange | undefined {
-  const pending = held()[name];
-  if (!pending) return undefined;
-  setHeld((current) => {
-    const next = { ...current };
-    delete next[name];
-    return next;
-  });
+function take(name: string): GraphChange | undefined {
+  const current = heldChanges() ?? {};
+  const pending = current[name];
+  if (pending) { const { [name]: _, ...rest } = current; setHeldChanges(rest); }
   return pending;
 }
 
-export function clearHeldExternalChanges(): void {
-  setHeld({});
-}
+export function clearHeldExternalChanges(): void { setHeldChanges(null); }
 
-let applier: ((change: GraphChange, binding: number) => void) | null = null;
+let applier: ((change: GraphChange) => void) | null = null;
+/** Installed once by the watcher handler: the bar re-enters the SAME
+ *  external-change path, never a private reload. */
+export function installHeldExternalChangeApplier(handler: (change: GraphChange) => void): void { applier = handler; }
 
-/** Wired once by the watcher handler's module, like P1's replay handler: the
- *  bar must go through the SAME external-change path, not a private reload. */
-export function installHeldExternalChangeApplier(
-  handler: (change: GraphChange, binding: number) => void
-): void {
-  applier = handler;
-}
-
-/** "Reload from disk": re-dispatch through the ordinary handler, with the policy
- *  bypassed for this one change so it is not held again. Every other gate —
- *  disposition, editor leases, deferred replay — still applies. */
+/** "Reload from disk": re-dispatch with the policy bypassed for this change;
+ *  every other gate (disposition, editing, deferred replay) still applies. */
 export function applyHeldExternalChange(name: string): void {
   const pending = take(name);
-  if (pending) applier?.(pending.change, pending.binding);
+  if (pending) applier?.(pending);
 }
 
-/** "Keep mine": drop the record. Nothing is written; the page keeps showing what
- *  the user was reading, and the next save meets the base_rev guard and raises
- *  the ordinary conflict banner. */
-export function dismissHeldExternalChange(name: string): void {
-  take(name);
-}
+/** "Keep mine": drop the record; nothing is written. */
+export function dismissHeldExternalChange(name: string): void { take(name); }

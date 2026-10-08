@@ -3,7 +3,9 @@
 // divergences you can paste into a bug report. The heavy lifting is in
 // ../devtools/lsdoc-diff/* (a faithful port of lsdoc's graph-check.mjs). mldoc is
 // lazy-loaded only when you press Run, so it costs nothing at startup.
-import { createSignal, Show, For, type JSX } from "solid-js";
+import { APP_PRODUCT_NAME } from "../appIdentity";
+import { createSignal, Show, For, onCleanup, type JSX } from "solid-js";
+import { graphOwner, latestOwner } from "../owned";
 import {
   runComparison,
   type DiffOptions,
@@ -17,6 +19,9 @@ import { writeClipboardTextStrict } from "../clipboard";
 const ISSUES_URL = "https://github.com/martinkoutecky/lsdoc/issues";
 
 export function ImproveTab(): JSX.Element {
+  const requestScope = {};
+  let alive = true;
+  onCleanup(() => { alive = false; });
   const [mode, setMode] = createSignal<"diff" | "bench" | "both">("both");
   const [journals, setJournals] = createSignal(true);
   const [fast, setFast] = createSignal(false);
@@ -27,18 +32,19 @@ export function ImproveTab(): JSX.Element {
   const [copied, setCopied] = createSignal("");
 
   const run = async () => {
+    const owner = latestOwner(requestScope, "comparison", graphOwner(() => alive));
     setRunning(true);
     setError("");
     setReport(null);
     setProgress(null);
     try {
       const opts: DiffOptions = { mode: mode(), includeJournals: journals(), fast: fast(), timeoutMs: 10_000 };
-      setReport(await runComparison(opts, setProgress));
+      const result = await runComparison(opts, (event) => { if (owner()) setProgress(event); }, owner);
+      if (result.kind === "current") setReport(result.value);
     } catch (e) {
-      setError(String(e));
+      if (owner()) setError(String(e));
     } finally {
-      setRunning(false);
-      setProgress(null);
+      if (owner()) { setRunning(false); setProgress(null); }
     }
   };
 
@@ -77,7 +83,7 @@ export function ImproveTab(): JSX.Element {
     return [
       "## lsdoc divergences from my Tine graph",
       "",
-      `Tine version: ${report()?.tineVersion ?? "unknown"}`,
+      `${APP_PRODUCT_NAME} version: ${report()?.tineVersion ?? "unknown"}`,
       `lsdoc version: ${report()?.lsdocVersion ?? "unknown"}`,
       "",
       "These snippets are anonymized (page content scrubbed) and each still reproduces the divergence between lsdoc and Logseq's mldoc.",
@@ -162,7 +168,10 @@ export function ImproveTab(): JSX.Element {
         {(r) => (
           <div class="improve-report">
             <div class="settings-hint">
-              Tine {r().tineVersion} · lsdoc {r().lsdocVersion} · Scanned {r().stats.files} file(s), {fmtBytes(r().stats.totalBytes)}.
+              {APP_PRODUCT_NAME} {r().tineVersion} · lsdoc {r().lsdocVersion} · Scanned {r().stats.files} file(s), {fmtBytes(r().stats.totalBytes)}.
+              <Show when={r().stats.skipped?.length}>
+                {" "}<span title={r().stats.skipped?.join("\n")}>Skipped {r().stats.skipped?.length} unreadable or oversized file(s).</span>
+              </Show>
             </div>
 
             <Show when={!r().lsdocAvailable}>

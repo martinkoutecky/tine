@@ -1,10 +1,14 @@
+import { isPackageId, isPackageVersion } from "../packageIdentity";
+import { schemaGuards } from "../schemaGuards";
 import { createSignal } from "solid-js";
 import { backend, type PluginRegistryCacheLoad } from "../backend";
-import { isPublishedExport } from "../publishedBackend";
+import { ownedWhen, writeOwned } from "../owned";
 import {
   PLUGIN_API_VERSION,
   PLUGIN_CAPABILITIES,
+  PLUGIN_MANIFEST_MAX_BYTES,
   PLUGIN_PLATFORMS,
+  PLUGIN_WASM_MAX_BYTES,
   parsePluginManifest,
   type PluginCapability,
   type PluginPlatform,
@@ -13,7 +17,7 @@ import { pluginManager } from "./manager";
 import { SUPPORTED_THEME_API_VERSIONS, parseThemeManifest, type ThemeApiVersion } from "../themes/manifest";
 import { applyThemeRevocations, installThemePackage, themeVersionIsRevoked } from "../themes/manager";
 import { reapplyThemeSelection } from "../themeGallery";
-import { serializedWrites } from "../serializedWrites";
+import { pushToast } from "../toasts";
 
 export const COMMUNITY_REGISTRY_URL =
   "https://raw.githubusercontent.com/martinkoutecky/tine-plugin-registry/main/index.json";
@@ -26,7 +30,6 @@ export const COMMUNITY_REGISTRY_URL =
 // false, and refreshCommunityRegistry() below is a no-op.
 export const COMMUNITY_REGISTRY_ENABLED = __TINE_COMMUNITY_REGISTRY__;
 const MAX_INDEX_BYTES = 2 * 1024 * 1024;
-const MAX_WASM_BYTES = 8 * 1024 * 1024;
 const MAX_AUDIT_BYTES = 256 * 1024;
 const NETWORK_READ_TIMEOUT_MS = 15_000;
 const CACHE_LOAD_TIMEOUT_MS = 2_000;
@@ -128,23 +131,13 @@ let hasVerifiedRegistry = false;
 let unsafeCacheHeld = false;
 let refreshGeneration = 0;
 let latestVerifiedGeneration = 0;
-const liveApplyWrites = serializedWrites("community-registry-live-apply");
+let liveApplyChain = Promise.resolve();
 
-function object(value: unknown, where: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${where} is invalid`);
-  return value as Record<string, unknown>;
-}
-
-function knownKeys(value: Record<string, unknown>, where: string, allowed: readonly string[]): void {
-  const known = new Set(allowed);
-  const unknown = Object.keys(value).find((key) => !known.has(key));
-  if (unknown) throw new Error(`${where} contains unknown field ${unknown}`);
-}
-
-function text(value: unknown, where: string, max = 500): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > max) throw new Error(`${where} is invalid`);
-  return value;
-}
+const { record: object, knownKeys, text } = schemaGuards(Error, {
+  object: (where) => `${where} is invalid`,
+  string: (where, _max) => `${where} is invalid`,
+  plainText: false,
+});
 
 function https(value: unknown, where: string): string {
   const result = text(value, where, 1_000);
@@ -175,7 +168,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
     const item = object(candidate, `plugins[${pluginIndex}]`);
     knownKeys(item, `plugins[${pluginIndex}]`, ["id", "name", "description", "source", "license", "aiDevelopment", "versions"]);
     const id = text(item.id, `plugins[${pluginIndex}].id`, 64);
-    if (!/^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])?$/.test(id) || !id.includes(".")) {
+    if (!isPackageId(id)) {
       throw new Error(`plugins[${pluginIndex}].id is invalid`);
     }
     if (ids.has(id)) throw new Error(`duplicate registry plugin ${id}`);
@@ -196,7 +189,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
         throw new Error(`${id} version metadata is invalid`);
       }
       const parsedVersion = text(version.version, `${id}.version`, 64);
-      if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(parsedVersion)) {
+      if (!isPackageVersion(parsedVersion)) {
         throw new Error(`${id} has an invalid version`);
       }
       if (seenVersions.has(parsedVersion)) throw new Error(`${id} has duplicate version ${parsedVersion}`);
@@ -268,7 +261,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
     const item = object(candidate, `themes[${themeIndex}]`);
     knownKeys(item, `themes[${themeIndex}]`, ["id", "name", "description", "source", "license", "aiDevelopment", "versions"]);
     const id = text(item.id, `themes[${themeIndex}].id`, 64);
-    if (!/^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])?$/.test(id) || !id.includes(".")) {
+    if (!isPackageId(id)) {
       throw new Error(`themes[${themeIndex}].id is invalid`);
     }
     if (ids.has(id)) throw new Error(`duplicate registry extension ${id}`);
@@ -281,7 +274,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
         "version", "apiVersion", "modes", "manifestSha256", "manifestUrl", "audit", "publishedAt",
       ]);
       const parsedVersion = text(version.version, `${id}.version`, 64);
-      if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(parsedVersion)) {
+      if (!isPackageVersion(parsedVersion)) {
         throw new Error(`${id} has an invalid version`);
       }
       if (seenVersions.has(parsedVersion)) throw new Error(`${id} has duplicate version ${parsedVersion}`);
@@ -381,16 +374,21 @@ async function boundedBytes(url: string, max: number, timeoutMs = NETWORK_READ_T
     const chunks: Uint8Array[] = [];
     let length = 0;
     const reader = response.body.getReader();
+    let complete = false;
     try {
       while (true) {
         const { done, value } = await abortable(reader.read(), controller.signal);
-        if (done) break;
+        if (done) { complete = true; break; }
         length += value.byteLength;
         if (length > max) throw new Error("registry response is too large");
         chunks.push(value);
       }
     } finally {
-      reader.releaseLock();
+      try {
+        if (!complete) await abortable(reader.cancel(), controller.signal);
+      } finally {
+        reader.releaseLock();
+      }
     }
     const bytes = new Uint8Array(length);
     let offset = 0;
@@ -399,6 +397,9 @@ async function boundedBytes(url: string, max: number, timeoutMs = NETWORK_READ_T
       offset += chunk.byteLength;
     }
     return bytes;
+  } catch (error) {
+    controller.abort(error);
+    throw error;
   } finally {
     clearTimeout(deadline);
   }
@@ -483,7 +484,7 @@ async function applyLiveSnapshot(
   generation: number,
   cache: { indexJson: string; signature: string }
 ): Promise<void> {
-  await liveApplyWrites.run(async () => {
+  liveApplyChain = liveApplyChain.then(async () => {
     if (generation !== latestVerifiedGeneration) return;
     await pluginManager.applyRevocations(current.revoked);
     if (generation !== latestVerifiedGeneration) return;
@@ -498,20 +499,22 @@ async function applyLiveSnapshot(
     try {
       // Atomic publication remains in the accepted-generation queue. A stale
       // response writes nothing; a failed write leaves the previous envelope.
-      await backend().storePluginRegistryCache(cache.indexJson, cache.signature);
-      setRegistryPersistenceError(null);
+      const result = await writeOwned(ownedWhen(() => generation === latestVerifiedGeneration),
+        backend().storePluginRegistryCache(cache.indexJson, cache.signature));
+      if (result.kind === "current") setRegistryPersistenceError(null);
     } catch (error) {
-      setRegistryPersistenceError(`The verified live registry is active but was not saved for restart: ${error instanceof Error ? error.message : String(error)}`);
+      pushToast(`Could not cache verified plugin registry: ${String(error)}`, "error");
+      if (generation === latestVerifiedGeneration)
+        setRegistryPersistenceError(`The verified live registry is active but was not saved for restart: ${error instanceof Error ? error.message : String(error)}`);
     }
   });
+  await liveApplyChain;
 }
 
 export async function refreshCommunityRegistry(
   options: { timeoutMs?: number } = {}
 ): Promise<void> {
-  // A published export never fetches the registry (startup skips it and so
-  // must every later retry).
-  if (!COMMUNITY_REGISTRY_ENABLED || isPublishedExport()) return;
+  if (!COMMUNITY_REGISTRY_ENABLED) return;
   const generation = ++refreshGeneration;
   setRegistryState("loading");
   try {
@@ -616,6 +619,11 @@ export function parseSafetyReport(
 
 const safetyReportRequests = new Map<string, Promise<PluginSafetyReport>>();
 
+/** Fetch a bounded (256 KiB, timeout) audit report and verify digest and signed
+ * identity/summary. On failure, accept only a similarly verified cache entry;
+ * reject if neither works. Successful fetches cache best-effort, with write
+ * errors toasted. Requests share an audit digest key. Cost includes network
+ * latency, bounded hashing/parsing and optional device cache I/O. */
 export function loadSafetyReport(plugin: RegistryPlugin, version: RegistryVersion): Promise<PluginSafetyReport> {
   const key = version.audit.sha256;
   const existing = safetyReportRequests.get(key);
@@ -626,7 +634,8 @@ export function loadSafetyReport(plugin: RegistryPlugin, version: RegistryVersio
       bytes = await boundedBytes(version.audit.url, MAX_AUDIT_BYTES);
       if ((await digestHex(bytes)) !== version.audit.sha256) throw new Error("safety report digest does not match the signed registry");
       const report = parseSafetyReport(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), plugin, version);
-      await backend().setAppString(`plugin-audit:${key}`, new TextDecoder().decode(bytes)).catch(() => {});
+      await backend().setAppString(`plugin-audit:${key}`, new TextDecoder().decode(bytes))
+        .catch(() => pushToast("Could not cache plugin safety report.", "error"));
       return report;
     } catch (networkError) {
       const cached = await backend().getAppString(`plugin-audit:${key}`, "");
@@ -644,8 +653,8 @@ export function loadSafetyReport(plugin: RegistryPlugin, version: RegistryVersio
 export async function installCommunityPlugin(plugin: RegistryPlugin, version: RegistryVersion) {
   if (version.audit.status !== "passed") throw new Error("registry audit is not passing");
   const [manifestBytes, wasm] = await Promise.all([
-    boundedBytes(version.manifestUrl, 64 * 1024),
-    boundedBytes(version.wasmUrl, MAX_WASM_BYTES),
+    boundedBytes(version.manifestUrl, PLUGIN_MANIFEST_MAX_BYTES),
+    boundedBytes(version.wasmUrl, PLUGIN_WASM_MAX_BYTES),
   ]);
   if ((await digestHex(manifestBytes)) !== version.manifestSha256) {
     throw new Error("plugin manifest digest does not match the signed registry");

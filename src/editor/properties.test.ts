@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { caretInFence } from "./fences";
 import {
-  caretInFence,
   multilineExitTrim,
   isSheetCellHidden,
   joinProps,
@@ -10,22 +10,33 @@ import {
   isBuiltinHidden,
   rawOffsetToVisibleOffset,
   isPageHeaderPropertiesOnly,
-  parsePageHeaderPropertyLine,
   splitPagePreamble,
-  orgPreBlockWithProperty,
+  pagePartsWithProperty,
+  pagePropertyEntries,
   hideAll,
+  isEditablePropertyKey,
 } from "./properties";
 
 describe("canonical Markdown page-header grammar (GH #163)", () => {
   it("accepts Unicode/plugin keys and preserves internal blank separators", () => {
-    expect(parsePageHeaderPropertyLine("klíč:: hodnota")).toEqual({ key: "klíč", value: " hodnota" });
-    expect(parsePageHeaderPropertyLine("e\u0301/plugin.key::value")).toEqual({ key: "e\u0301/plugin.key", value: "value" });
+    expect(pagePropertyEntries("klíč:: hodnota", "md")).toEqual([{ key: "klíč", value: "hodnota", line: 0 }]);
+    expect(pagePropertyEntries("e\u0301/plugin.key:: value", "md").map((e) => e.key)).toEqual(["e\u0301/plugin.key"]);
     expect(isPageHeaderPropertiesOnly("alias:: book\n\nklíč:: hodnota")).toBe(true);
     expect(splitPagePreamble("alias:: book\n\nklíč:: hodnota\n\nIntro")).toEqual({
       properties: "alias:: book\n\nklíč:: hodnota",
       content: "Intro",
       remainder: "\n\nIntro",
     });
+  });
+
+  // Martin 2026-10-01: the page header follows the parser. lsdoc accepts a nonempty value only after
+  // `:: `, so `key::value` (once pinned here for `e\u0301/plugin.key`) is not a header property, as
+  // in block lines since OG-P12. An empty `key::` is accepted.
+  it("follows the parser for the separating space (no-space key::value is prose)", () => {
+    expect(pagePropertyEntries("e\u0301/plugin.key::value", "md")).toEqual([]);
+    expect(isPageHeaderPropertiesOnly("alias:: x\nplugin::value")).toBe(false);
+    expect(splitPagePreamble("plugin::value\nalias:: x").properties).toBeNull();
+    expect(pagePropertyEntries("empty::\nalias:: x", "md").map((e) => [e.key, e.value])).toEqual([["empty", ""], ["alias", "x"]]);
   });
 
   it("rejects leading whitespace, headings, prose, fences and trailing blanks", () => {
@@ -66,6 +77,20 @@ describe("sheet-cell property splitting", () => {
 });
 
 describe("property line helpers", () => {
+  it("updates and removes Unicode keys admitted by the page header", () => {
+    expect(upsertPropertyLine("klíč:: old\ntags:: x", "klíč", "new")).toBe("klíč:: new\ntags:: x");
+    expect(upsertPropertyLine("e\u0301/key:: old", "e\u0301/key", null)).toBeNull();
+    expect(readPropertyValue("klíč:: new", "klíč")).toBe("new");
+  });
+
+  it("round-trips Org page directives without changing unrelated preamble text", () => {
+    const old = "#+TITLE: Book\n#+STATUS: old\nIntro";
+    const [updated] = pagePartsWithProperty([old], "org", "status", "new");
+    expect(updated).toBe("#+TITLE: Book\n#+status: new\nIntro");
+    expect(pagePropertyEntries(updated, "org").map((e) => [e.key, e.value])).toEqual([["title", "Book"], ["status", "new"]]);
+    expect(pagePartsWithProperty([updated], "org", "status", null)).toEqual(["#+TITLE: Book\nIntro"]);
+    expect(pagePartsWithProperty([""], "org", "tags", "x")).toEqual(["#+tags: x"]);
+  });
   it("reads a value case-insensitively", () => {
     expect(readPropertyValue("alias:: Foo, Bar\npublic:: true", "alias")).toBe("Foo, Bar");
     expect(readPropertyValue("Alias:: Foo", "alias")).toBe("Foo");
@@ -90,82 +115,6 @@ describe("property line helpers", () => {
 
   it("trims the value while preserving blank separators", () => {
     expect(upsertPropertyLine("\n\ntags:: x\n\n", "alias", "  Foo  ")).toBe("alias:: Foo\n\n\ntags:: x\n\n");
-  });
-
-  // GH #164 packet, spec section B3. The canonical recognizer is
-  // crates/tine-core/src/property_line.rs (transcribed from lsdoc's
-  // markdown_property_line): a key is non-empty and contains no colon, parser
-  // space, CR or LF -- it is NOT an ASCII character class, which is why
-  // `unicode.klíč` parses there (property_line.rs:100-103). PROP_LINE here is
-  // ASCII-only, so it WRITES a non-ASCII key (the new-key path is an
-  // unconditional unshift) but can never MATCH one again: the property becomes
-  // write-once, and neither an update nor a removal can reach it. The page is
-  // meanwhile happy to LIST it -- parsePageHeaderPropertyLine accepts Unicode
-  // keys (pinned above, line 19), as does render/block.ts pageProperties.
-  it("updates and removes a property whose key is not ASCII (GH #164)", () => {
-    // Fail-before: today this returns "klíč:: nová\nklíč:: hodnota" -- the
-    // original line is not matched, so the edit duplicates the key instead of
-    // replacing it.
-    expect(upsertPropertyLine("klíč:: hodnota", "klíč", "nová")).toBe("klíč:: nová");
-
-    // Fail-before: today the line survives, so the property cannot be deleted.
-    expect(upsertPropertyLine("klíč:: hodnota", "klíč", null)).toBe(null);
-
-    // And the single-key reader cannot see it at all, so the editor would show
-    // an empty field for a property that is plainly present in the text.
-    expect(readPropertyValue("klíč:: hodnota", "klíč")).toBe("hodnota");
-  });
-
-  // GH #164 packet, spec section B2. Org carries PAGE properties as `#+key:`
-  // file directives; the `:PROPERTIES:` drawer is the BLOCK form, which is why
-  // orgRawWithProperty is the wrong tool for a preamble. Transcribed from
-  // Logseq `frontend.util.page-property/insert-property` (og 6e7afa8eb,
-  // src/main/frontend/util/page_property.cljs:10-32) against its block writer
-  // `frontend.util.property/build-properties-str` (property.cljs:169-177).
-  it("writes an org page property as a lower-cased `#+key:` directive (GH #164)", () => {
-    expect(orgPreBlockWithProperty("#+TITLE: My Page", "tags", "reference"))
-      .toBe("#+tags: reference\n#+TITLE: My Page");
-
-    // An existing directive is matched case-insensitively and replaced IN
-    // PLACE, so the file's own property order is user data, not formatting.
-    expect(orgPreBlockWithProperty("#+TITLE: My Page\n#+TAGS: old", "tags", "new"))
-      .toBe("#+TITLE: My Page\n#+tags: new");
-
-    // OG matches on the `#+key: ` prefix INCLUDING its trailing space, so a
-    // directive written without one is not this key and is left alone.
-    expect(orgPreBlockWithProperty("#+TAGS:x", "tags", "new"))
-      .toBe("#+tags: new\n#+TAGS:x");
-  });
-
-  // The two deliberate departures from OG, pinned because the writer's
-  // docstring claims them: OG replaces only the first match and leaves later
-  // duplicates in the file, and it has no null-value path at all. Tine collapses
-  // duplicates to the first slot and removes on null, so an org page and a
-  // markdown page agree about what a second `tags` line means.
-  it("collapses duplicate org directives and removes the key on a null value (GH #164)", () => {
-    expect(orgPreBlockWithProperty("#+tags: one\n#+TITLE: P\n#+TAGS: two", "tags", "three"))
-      .toBe("#+tags: three\n#+TITLE: P");
-    expect(orgPreBlockWithProperty("#+TITLE: P\n#+tags: one", "tags", null))
-      .toBe("#+TITLE: P");
-    // Nothing nonblank left: the preamble becomes null, as upsertPropertyLine does.
-    expect(orgPreBlockWithProperty("#+tags: one", "tags", null)).toBe(null);
-  });
-
-  // GH #164 packet, spec section B3, remaining counterexample INSIDE the file
-  // whose grammar B3 widened. splitProps classifies each raw line through
-  // propLineKey, which carried its own ASCII-only regex, so a non-ASCII-keyed
-  // property line was never offered to `isHidden` at all. Every BUILTIN hidden
-  // key is ASCII (`id`, `collapsed`, `logseq.order-list-type`), which is why
-  // isBuiltinHidden cannot expose this; hideAll can, and hideAll is a real path
-  // -- annotation (PDF highlight) blocks hide every property and edit only their
-  // text, so such a block would show raw metadata in its edit textarea.
-  it("hides a non-ASCII-keyed property line like any other (GH #164)", () => {
-    const raw = "Body line\nklíč:: hodnota";
-    const { visible, hidden } = splitProps(raw, hideAll);
-    expect(visible).toBe("Body line");
-    expect(hidden).toBe("klíč:: hodnota");
-    // And the split must be reversible, like every other property split.
-    expect(joinProps(visible, hidden)).toBe(raw);
   });
 
   it("preserves the issue-163 page-property layout byte-for-byte outside the edited line", () => {
@@ -212,20 +161,24 @@ describe("caretInFence", () => {
     expect(caretInFence(raw, raw.indexOf("const"))).toBe(true);
   });
 
-  it("does not close a four-character fence with a shorter run", () => {
+  it("hides properties accepted after mldoc's shorter backtick close", () => {
     const raw = "````text\nalpha\n```\nid:: literal-code\n````\nid:: real-id";
-    expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(true);
+    // The parser's literal ends at the shorter close (Martin 2026-10-01: fences
+    // follow mldoc, not CommonMark), so the property after it is not code.
+    expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(false);
     const { visible, hidden } = splitProps(raw, isBuiltinHidden);
-    expect(visible).toContain("id:: literal-code");
-    expect(hidden).toBe("id:: real-id");
+    // mldoc 1.5.9 emits two Property_Drawer nodes after the shorter Src close.
+    expect(visible).toBe("````text\nalpha\n```\n````");
+    expect(hidden).toBe("id:: literal-code\nid:: real-id");
   });
 
-  it("uses the opening run length for tilde fences too", () => {
+  it("hides properties accepted after mldoc's shorter tilde close", () => {
     const raw = "~~~~text\n~~~\ncollapsed:: literal-code\n~~~~\ncollapsed:: true";
-    expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(true);
+    expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(false);
     const { visible, hidden } = splitProps(raw, isBuiltinHidden);
-    expect(visible).toContain("collapsed:: literal-code");
-    expect(hidden).toBe("collapsed:: true");
+    // mldoc 1.5.9 emits both collapsed properties outside Src.
+    expect(visible).toBe("~~~~text\n~~~\n~~~~");
+    expect(hidden).toBe("collapsed:: literal-code\ncollapsed:: true");
   });
 });
 
@@ -268,6 +221,13 @@ describe("org :PROPERTIES: drawer hiding (GH #37)", () => {
     expect(visible).toBe(raw);
     expect(hidden).toBe("");
     expect(joinProps(visible, hidden, "org")).toBe(raw);
+  });
+
+  it("keeps a body drawer and its id lookalike visible", () => {
+    const raw = "Title\nBody\n:PROPERTIES:\n:id: body-id\n:END:";
+    const split = splitProps(raw, isBuiltinHidden, "org");
+    expect(split.visible, "Org drawer rule: splitProps must leave the body drawer exemplar visible").toBe(raw);
+    expect(split.hidden).toBe("");
   });
 
   it("does NOT treat a stray md `key::` line in an org block as metadata", () => {
@@ -314,5 +274,22 @@ describe("org caret mapping across a hidden drawer", () => {
     const insideDrawer = raw.indexOf(":id:") + 2;
     const visOff = rawOffsetToVisibleOffset(raw, insideDrawer, isBuiltinHidden, "org");
     expect(visOff).toBe("Title".length);
+  });
+});
+
+// GH #164 (og 14 Q5): the classifier and the add-row validator ask the same
+// Unicode key class as the matcher that later has to find the key again.
+describe("non-ASCII property keys (GH #164)", () => {
+  it("hides a non-ASCII-keyed property line like any other, reversibly", () => {
+    const raw = "Body line\nklíč:: hodnota";
+    const { visible, hidden } = splitProps(raw, hideAll);
+    expect(visible).toBe("Body line");
+    expect(hidden).toBe("klíč:: hodnota");
+    expect(joinProps(visible, hidden)).toBe(raw);
+  });
+
+  it("the panel writes only keys every Tine reader finds again (full list: editablePropertyKeys.test.ts)", () => {
+    for (const ok of ["status", "my-key", "a_1", "klíč", "日本", "a/b", "a.b"]) expect(isEditablePropertyKey(ok), ok).toBe(true);
+    for (const bad of ["", "a b", "a::b", "a:b", "#tag", "k\nv"]) expect(isEditablePropertyKey(bad), bad).toBe(false);
   });
 });

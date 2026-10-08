@@ -2,8 +2,8 @@
 //!
 //! **Atomization is transcribed (D-9, M22); typing is Tine's own — OG is
 //! untyped.** Every transcribed rule cites `deps/graph-parser/src/logseq/
-//! graph_parser/text.cljs` (and `property.cljs`) at the read-only OG checkout
-//! `/aux/koutecky/logseq/og` commit `6e7afa8eb` (`git describe`:
+//! graph_parser/text.cljs` (and `property.cljs`) in upstream Logseq at
+//! commit `6e7afa8eb` (`git describe`:
 //! `1.0.0-12-g6e7afa8eb`; the spec's "0.10.15" label is imprecise — Wave A
 //! recorded the correction).
 //!
@@ -13,9 +13,7 @@
 //! 1. key ∈ `unparsed-built-in-properties` ∪ `config.ignored_page_references_keywords`
 //!    → **no reference parsing**: step 3 is skipped entirely and the value's
 //!    `[[x]]`/`#x` text stays literal inside the plain segments. Steps 2 and 4
-//!    still run — Q21's comma split is decided for EVERY key, and a literally
-//!    transcribed one-atom rule would silently remove matches today's
-//!    `value_matches` gives (it splits these keys too).
+//!    still run; the fallback value stays one string.
 //! 2. the value is wrapped in double quotes (`wrapped-by-quotes?`) → one
 //!    `Plain` atom, the trimmed raw text **including the quotes** (K19).
 //! 3. the value's page refs ∪, for a comma-configured key, the comma-split
@@ -23,20 +21,55 @@
 //!    text is dropped. **Ordering and collision are Tine's (K19, J8):** refs
 //!    first in document order, then comma segments in text order,
 //!    de-duplicated by [`atom_key`] with first occurrence winning.
-//! 4. else (**Q21**): split the trimmed text on `,`/`，` into `Plain` atoms —
-//!    Tine's intentional divergence from OG, which keeps one string here.
+//! 4. else: keep the trimmed value as one `Plain` atom (Martin D2, 2026-10-04).
 //!
-//! The value is parsed with `lsdoc::inline(value, format)` — the transcription
+//! The value is parsed with `lsdoc::inline(value, format)` (through the bounded
+//! door `render::parse_inline_bounded`, I-22) — the transcription
 //! of OG parsing the value with mldoc in `extract-refs-by-commas` /
 //! `extract-refs-from-mldoc-ast`. It is **not** read off
 //! `BlockProjection.refs_page`, which aggregates the whole block's refs without
 //! saying which property value produced each (K11).
 
-use crate::config::ParseConfig;
-use crate::date::{JournalDate, JournalFormat};
+use crate::date::JournalDate;
 use crate::doc::property_key_norm;
 use crate::query::ir::ObservedType;
-pub use crate::vocab::atom_key;
+use unicode_normalization::UnicodeNormalization;
+
+/// The comparison form of an atom's text: NFC-lowercased and trimmed.
+pub fn atom_key(text: &str) -> String {
+    text.trim().to_lowercase().nfc().collect()
+}
+
+/// The parse-relevant slice of the graph config the atomizer and registry
+/// read (master `config::ParseConfig`, SPEC §5.8), filled from `config.edn`
+/// by [`ParseConfig::from_config`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ParseConfig {
+    pub separated_by_commas: Vec<String>,
+    pub ignored_page_references_keywords: Vec<String>,
+    pub hidden_properties: Vec<String>,
+    pub journal_page_title_format: Option<String>,
+    pub journal_file_name_format: Option<String>,
+}
+
+impl ParseConfig {
+    /// The parse-relevant slice of `config`. O(configured keys).
+    pub fn from_config(config: &crate::config::Config) -> ParseConfig {
+        ParseConfig {
+            separated_by_commas: config.separated_by_commas.clone(),
+            ignored_page_references_keywords: config.ignored_page_references_keywords.clone(),
+            hidden_properties: config.block_hidden_properties.clone(),
+            journal_page_title_format: config.journal_page_title_format.clone(),
+            journal_file_name_format: config.journal_file_name_format.clone(),
+        }
+    }
+}
+
+impl Default for ParseConfig {
+    fn default() -> Self {
+        ParseConfig::from_config(&crate::config::Config::default())
+    }
+}
 
 /// Whether a page is Markdown or Org — the only thing the atomizer needs to
 /// know about the file it came from (the inline grammar differs).
@@ -47,11 +80,11 @@ pub enum AtomFormat {
     Org,
 }
 
-impl From<crate::vocab::Format> for AtomFormat {
-    fn from(format: crate::vocab::Format) -> AtomFormat {
+impl From<crate::model::Format> for AtomFormat {
+    fn from(format: crate::model::Format) -> AtomFormat {
         match format {
-            crate::vocab::Format::Org => AtomFormat::Org,
-            crate::vocab::Format::Md => AtomFormat::Markdown,
+            crate::model::Format::Org => AtomFormat::Org,
+            crate::model::Format::Md => AtomFormat::Markdown,
         }
     }
 }
@@ -90,19 +123,6 @@ pub struct Atom {
     /// Position within the key's flattened atom list, renumbered `0..n` by the
     /// registry producer (§5.8); the atomizer numbers within one value.
     pub ordinal: u32,
-    /// The UTF-16 length of OG's stored value for the `key:: value` line this
-    /// atom came from, when OG's `text/parse-property` holds that value as a
-    /// bare **string**; `None` when OG holds a set (refs, or a comma-separated
-    /// key) or a parsed number/boolean.
-    ///
-    /// It exists because OG's `:property` rule ends in `(contains? ?v ?val)`,
-    /// and `contains?` on a ClojureScript string is an INDEX lookup, so the
-    /// only thing the rule needs from the stored string is its length
-    /// (`rules.cljc:129-138`; measured, `shapes.cljs`). Read ONLY by the four
-    /// counterfactual §8.1 modes — never by production matching, which is
-    /// [`CompareMode::Both`] (SPEC §8 v16 evidence correction: "Do not add OG's
-    /// string-index quirk to production typed matching").
-    pub og_string_len: Option<u32>,
 }
 
 /// OG `gp-property/unparsed-built-in-properties` (`property.cljs:110-121`):
@@ -175,27 +195,11 @@ fn wrapped_by_quotes(value: &str) -> bool {
     value.len() > 1 && value.starts_with('"') && value.ends_with('"')
 }
 
-/// OG `text/parse-non-string-property-value` (`text.cljs:87-98`): `"true"` and
-/// `"false"` become booleans, an unsigned run of ASCII digits becomes an
-/// integer, everything else stays the string it was written as.
-fn og_parses_as_non_string(value: &str) -> bool {
-    value == "true"
-        || value == "false"
-        || (!value.is_empty() && value.chars().all(|c| c.is_ascii_digit()))
-}
-
-/// The [`Atom::og_string_len`] of a value OG holds as a bare string: its length
-/// in UTF-16 code units, because that is what ClojureScript's `(.-length s)`
-/// counts and what the `contains?` index bound compares against.
-fn og_string_len(value: &str) -> Option<u32> {
-    Some(value.encode_utf16().count() as u32)
-}
-
 /// OG `sep-by-comma` (`text.cljs:132-139`): split on one `,` or `，`, trim, drop
 /// blanks. OG returns a set; Tine keeps text order (K19).
 fn sep_by_comma(value: &str) -> Vec<&str> {
     value
-        .split([',', '，'])
+        .split(crate::refs::is_linkable_property_separator)
         .map(str::trim)
         .filter(|segment| !segment.is_empty())
         .collect()
@@ -250,106 +254,6 @@ fn plain_segments(nodes: &[lsdoc::ast::Inline], out: &mut Vec<String>) {
     }
 }
 
-/// The five counterfactual modes of SPEC §8.1, as parameters of the atomizer
-/// and the comparator.
-///
-/// Gate 1 asks a question no single implementation can answer: when the walk
-/// and OG disagree on a corpus query, WHICH decision caused it? The only honest
-/// way to answer is to run the same walk with each decision switched off and
-/// see which switch closes the gap. These are those switches — production code,
-/// not a test scaffold, because gate 1 runs them from an example binary over
-/// real graphs.
-///
-/// [`CompareMode::Both`] is Tine. Every other mode is a deliberate regression
-/// towards OG, and nothing in the product ever selects one.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub enum CompareMode {
-    /// OG's own rule: OG's split (`alias`/`aliases`/`tags` plus the configured
-    /// `separated-by-commas` keys, and no other key), case-SENSITIVE property
-    /// equality, case-insensitive page identity for refs, and no effective-type
-    /// coercion — an atom matching `^\d+$` compares as an integer to a numeric
-    /// literal, every other atom as text (v13 §8.1, Y3).
-    Og,
-    /// OG, plus Q20: atom identity is NFC-lowercased.
-    Q20Only,
-    /// OG, plus Q21: every key splits on commas.
-    Q21Only,
-    /// Q20 and Q21, with OG's comparison otherwise — no coercion.
-    BothUntyped,
-    /// Tine: Q20, Q21 and §6.3 effective-type coercion.
-    #[default]
-    Both,
-}
-
-impl CompareMode {
-    /// Whether the comma split applies to EVERY key (Q21) or only to the keys
-    /// OG splits.
-    pub fn splits_every_key(self) -> bool {
-        matches!(
-            self,
-            CompareMode::Q21Only | CompareMode::BothUntyped | CompareMode::Both
-        )
-    }
-
-    /// Whether atom identity folds case and normalizes to NFC (Q20).
-    pub fn folds_case(self) -> bool {
-        matches!(
-            self,
-            CompareMode::Q20Only | CompareMode::BothUntyped | CompareMode::Both
-        )
-    }
-
-    /// The same mode with case folding switched ON, for the keys OG resolves
-    /// to page names (`tags`, `alias`, `aliases`), whose identity is
-    /// case-insensitive in OG too. Folding is the only decision this changes,
-    /// so an OG-ward mode stays OG-ward.
-    pub fn folding_case(self) -> CompareMode {
-        match self {
-            CompareMode::Og => CompareMode::Q20Only,
-            CompareMode::Q21Only => CompareMode::BothUntyped,
-            other => other,
-        }
-    }
-
-    /// Whether a property atom is coerced by its key's effective type (§6.3).
-    /// Only Tine does; every OG-ward mode compares as OG compares.
-    pub fn coerces_by_effective_type(self) -> bool {
-        matches!(self, CompareMode::Both)
-    }
-
-    /// The five modes in the order gate 1 reports them.
-    pub fn all() -> [CompareMode; 5] {
-        [
-            CompareMode::Og,
-            CompareMode::Q20Only,
-            CompareMode::Q21Only,
-            CompareMode::BothUntyped,
-            CompareMode::Both,
-        ]
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            CompareMode::Og => "OG",
-            CompareMode::Q20Only => "Q20-only",
-            CompareMode::Q21Only => "Q21-only",
-            CompareMode::BothUntyped => "both-untyped",
-            CompareMode::Both => "both",
-        }
-    }
-}
-
-/// Atom identity under one mode: Tine's NFC-lowercased [`atom_key`], or — for
-/// the OG-ward modes — the trimmed text as written, because OG's property
-/// equality is case-SENSITIVE (measured, `case.cljs`).
-pub fn atom_key_in(text: &str, mode: CompareMode) -> String {
-    if mode.folds_case() {
-        atom_key(text)
-    } else {
-        text.trim().to_string()
-    }
-}
-
 /// The ONE atomizer (SPEC §6.2), as Tine runs it. `key` is the raw source key;
 /// it is normalized with the existing [`property_key_norm`] before every rule
 /// test.
@@ -359,18 +263,6 @@ pub fn property_atoms(
     format: AtomFormat,
     config: &ParseConfig,
 ) -> Vec<Atom> {
-    property_atoms_in(key, value, format, config, CompareMode::Both)
-}
-
-/// [`property_atoms`] under one of the §8.1 modes. Gate 1's only entry point;
-/// everything in the product calls [`property_atoms`].
-pub fn property_atoms_in(
-    key: &str,
-    value: &str,
-    format: AtomFormat,
-    config: &ParseConfig,
-    mode: CompareMode,
-) -> Vec<Atom> {
     let key_norm = property_key_norm(key);
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -379,36 +271,24 @@ pub fn property_atoms_in(
         return Vec::new();
     }
 
-    // OG's `text/parse-property` decides the SHAPE of the stored value, and its
-    // shape is what the `:property` rule's `contains?` branch means: set
-    // membership on a set, an index lookup on a string, always false on a
-    // number. Steps 1 and 2 below return the raw string; step 3 is OG's set;
-    // step 4 is OG's `parse-non-string-property-value` or the string. Recorded
-    // per atom as `og_string_len`, and read only by the §8.1 modes.
     let suppressed = reference_parsing_suppressed(&key_norm, config);
 
     // Step 2 — a quoted value is one atom, quotes included (K19). OG checks this
     // after the unparsed-key branch and so do we; for a step-1 key OG returns the
     // same raw string either way.
     if wrapped_by_quotes(trimmed) {
-        return vec![make_atom(
-            trimmed.to_string(),
-            AtomOrigin::Plain,
-            0,
-            config,
-            mode,
-            // Both branches hand `v'` back unparsed, so OG holds the string.
-            og_string_len(trimmed),
-        )];
+        return vec![make_atom(trimmed.to_string(), AtomOrigin::Plain, 0, config)];
     }
 
     let mut atoms: Vec<Atom> = Vec::new();
-    let mut seen: Vec<String> = Vec::new();
+    let mut seen = AtomDeduper::default();
 
     // Step 3 — refs, plus comma segments for a comma-configured key. Skipped
     // entirely for a step-1 key (A1).
     if !suppressed {
-        let nodes = lsdoc::inline(trimmed, format.lsdoc_name());
+        // Too deep for the bounded door (I-22) ⇒ no ref or comma atoms.
+        let nodes =
+            crate::render::parse_inline_bounded(trimmed, format.lsdoc_name()).unwrap_or_default();
         let mut refs: Vec<String> = Vec::new();
         for node in &nodes {
             ref_from_inline(node, &mut refs);
@@ -423,105 +303,57 @@ pub fn property_atoms_in(
                 }
             }
         }
-        // OG's step 3 returns a SET (`(if (seq refs) refs …)`), and `contains?`
-        // on a set is real membership — no index lookup — so these atoms carry
-        // no `og_string_len`.
         for text in refs {
-            push_atom(
-                &mut atoms,
-                &mut seen,
-                text,
-                AtomOrigin::Ref,
-                config,
-                mode,
-                None,
-            );
+            push_atom(&mut atoms, &mut seen, text, AtomOrigin::Ref, config);
         }
         for text in segments {
-            push_atom(
-                &mut atoms,
-                &mut seen,
-                text,
-                AtomOrigin::Plain,
-                config,
-                mode,
-                None,
-            );
+            push_atom(&mut atoms, &mut seen, text, AtomOrigin::Plain, config);
         }
         if !atoms.is_empty() {
             return atoms;
         }
     }
 
-    // Step 4 — Q21: split on commas for every key. A value with no comma is one
-    // atom, which is exactly OG's single string for the keys OG does not split.
-    // Under an OG-ward mode without Q21 the value stays whole, which is what
-    // makes `Q21-sufficient` an attributable label rather than a guess.
-    let segments: Vec<String> = if mode.splits_every_key() {
-        sep_by_comma(trimmed)
-            .into_iter()
-            .map(str::to_string)
-            .collect()
-    } else {
-        vec![trimmed.to_string()]
-    };
-    // OG's own value here is the WHOLE trimmed line — `v'`, never a segment —
-    // held as a string unless `parse-non-string-property-value` claimed it, or
-    // unconditionally as a string for a step-1 key (that branch returns before
-    // the number parse). Q21's split changes which ATOMS exist; it does not
-    // change what OG stored, so the same length rides on every segment.
-    let stored = (suppressed || !og_parses_as_non_string(trimmed))
-        .then(|| og_string_len(trimmed))
-        .flatten();
-    for segment in segments {
-        push_atom(
-            &mut atoms,
-            &mut seen,
-            segment,
-            AtomOrigin::Plain,
-            config,
-            mode,
-            stored,
-        );
-    }
+    // Step 4 — OG parse-property fallback: one string (Martin D2).
+    push_atom(
+        &mut atoms,
+        &mut seen,
+        trimmed.to_string(),
+        AtomOrigin::Plain,
+        config,
+    );
     atoms
 }
 
-#[allow(clippy::too_many_arguments)]
 fn push_atom(
     atoms: &mut Vec<Atom>,
-    seen: &mut Vec<String>,
+    seen: &mut AtomDeduper,
     text: String,
     origin: AtomOrigin,
     config: &ParseConfig,
-    mode: CompareMode,
-    og_string_len: Option<u32>,
 ) {
-    let key = atom_key_in(&text, mode);
-    if key.is_empty() || seen.iter().any(|existing| existing == &key) {
+    if !seen.admit(&atom_key(&text)) {
         return;
     }
-    seen.push(key);
     let ordinal = atoms.len() as u32;
-    atoms.push(make_atom(
-        text,
-        origin,
-        ordinal,
-        config,
-        mode,
-        og_string_len,
-    ));
+    atoms.push(make_atom(text, origin, ordinal, config));
 }
 
-fn make_atom(
-    text: String,
-    origin: AtomOrigin,
-    ordinal: u32,
-    config: &ParseConfig,
-    mode: CompareMode,
-    og_string_len: Option<u32>,
-) -> Atom {
-    let key = atom_key_in(&text, mode);
+/// First-occurrence admission for already-normalized atom keys (I-12/I-22).
+/// Both single-row atomization and cross-row flattening use this answerer.
+/// Each admission costs O(log distinct keys), with O(total key bytes) memory;
+/// empty keys are excluded. Callers emit accepted atoms in their source order.
+#[derive(Default)]
+pub struct AtomDeduper(std::collections::BTreeSet<String>);
+
+impl AtomDeduper {
+    pub fn admit(&mut self, key: &str) -> bool {
+        !key.is_empty() && self.0.insert(key.to_owned())
+    }
+}
+
+fn make_atom(text: String, origin: AtomOrigin, ordinal: u32, config: &ParseConfig) -> Atom {
+    let key = atom_key(&text);
     let class = classify_text(&text, origin, config);
     Atom {
         num: (class == ObservedType::Number)
@@ -534,7 +366,6 @@ fn make_atom(
         key,
         origin,
         ordinal,
-        og_string_len,
     }
 }
 
@@ -548,8 +379,8 @@ fn parse_number(text: &str) -> Option<f64> {
 
 /// The date rule: `yyyy-mm-dd`, or an 8-digit `yyyymmdd` that is a valid
 /// calendar date in 1900–2100, or a title in `journal_page_title_format` ONLY
-/// (through [`JournalFormat::parse_title`], not `parse`, which also holds the
-/// file pattern and the defaults — B6).
+/// (the title pattern alone, never the file pattern or the default fallback
+/// list `JournalFormat::parse` walks — B6).
 fn classify_day(text: &str, config: &ParseConfig) -> Option<i64> {
     let trimmed = text.trim();
     if let Some(day) = iso_day(trimmed) {
@@ -558,11 +389,13 @@ fn classify_day(text: &str, config: &ParseConfig) -> Option<i64> {
     if let Some(day) = compact_day(trimmed) {
         return Some(day);
     }
-    JournalFormat::new(
-        config.journal_file_name_format.as_deref(),
-        config.journal_page_title_format.as_deref(),
+    crate::date::Format::compile(
+        config
+            .journal_page_title_format
+            .as_deref()
+            .unwrap_or(crate::date::DEFAULT_TITLE_FORMAT),
     )
-    .parse_title(trimmed)
+    .parse(trimmed)
     .map(|date| date.ordinal_key())
 }
 
@@ -581,21 +414,24 @@ fn compact_day(text: &str) -> Option<i64> {
     if text.len() != 8 || !text.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    let year: i32 = text[0..4].parse().ok()?;
+    let year: i32 = text.get(0..4)?.parse().ok()?;
     if !(1900..=2100).contains(&year) {
         return None;
     }
-    valid_day(year, text[4..6].parse().ok()?, text[6..8].parse().ok()?)
+    valid_day(
+        year,
+        text.get(4..6)?.parse().ok()?,
+        text.get(6..8)?.parse().ok()?,
+    )
 }
 
 fn valid_day(year: i32, month: u32, day: u32) -> Option<i64> {
-    if !(1..=12).contains(&month)
-        || day < 1
-        || day > u32::from(crate::date::days_in_month(year, month))
-    {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
-    Some(JournalDate { year, month, day }.ordinal_key())
+    // A calendar-valid day survives the day-number round trip unchanged.
+    let date = JournalDate { year, month, day };
+    (JournalDate::from_days(date.to_days()) == date).then(|| date.ordinal_key())
 }
 
 /// Classification of one atom, first match wins (§6.2): **checkbox** if exactly
@@ -627,7 +463,7 @@ impl Atom {
 
 /// A number written back as a comparison operand: integers without a `.0` tail,
 /// so `prop('k') = 12` compares against the atom text `12`.
-pub(crate) fn format_number(number: f64) -> String {
+pub fn format_number(number: f64) -> String {
     if number.fract() == 0.0 && number.abs() < 1e15 {
         format!("{}", number as i64)
     } else {
@@ -641,6 +477,24 @@ mod tests {
 
     fn config() -> ParseConfig {
         ParseConfig::default()
+    }
+
+    #[test]
+    fn b_query_many_distinct_and_repeated_atoms_keep_source_order() {
+        let distinct = (0..20_000)
+            .map(|i| format!("v{i:05}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let start = std::time::Instant::now();
+        let atoms = md("tags", &format!("{distinct},{distinct}"), &config());
+        assert_eq!(atoms.len(), 20_000);
+        assert_eq!(atoms[19_999].ordinal, 19_999);
+        assert_eq!(atoms[19_999].text, "v19999");
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "I-22: admitted flat atoms must not scan all earlier atoms"
+        );
+        assert_eq!(md("tags", &"same,".repeat(20_000), &config()).len(), 1);
     }
 
     fn texts(atoms: &[Atom]) -> Vec<String> {
@@ -665,7 +519,6 @@ mod tests {
                 num: None,
                 day: None,
                 ordinal: 0,
-                og_string_len: Some(3),
             }]
         );
     }
@@ -697,17 +550,15 @@ mod tests {
     }
 
     #[test]
-    fn q21_splits_a_non_configured_key_too() {
-        // The intentional divergence: OG keeps `"a, b"` as one string here.
-        assert_eq!(texts(&md("k", "a, b", &config())), vec!["a", "b"]);
+    fn d2_keeps_a_non_configured_key_whole() {
+        assert_eq!(texts(&md("k", "a, b", &config())), vec!["a, b"]);
     }
 
     #[test]
-    fn q21_costs_a_decimal_comma_its_number() {
+    fn d2_keeps_a_decimal_comma_as_text() {
         let atoms = md("k", "1,5", &config());
-        assert_eq!(texts(&atoms), vec!["1", "5"]);
-        assert_eq!(atoms[0].num, Some(1.0));
-        assert_eq!(atoms[1].num, Some(5.0));
+        assert_eq!(texts(&atoms), vec!["1,5"]);
+        assert_eq!(atoms[0].num, None);
     }
 
     #[test]
@@ -751,11 +602,11 @@ mod tests {
     // --- v12 §6.2 step-1 fixtures (VERIFY-11 A1) ---------------------------
 
     #[test]
-    fn an_ignored_reference_key_keeps_its_brackets_literal_and_still_splits() {
+    fn an_ignored_reference_key_keeps_the_whole_value_literal() {
         let mut config = ParseConfig::default();
         config.ignored_page_references_keywords = vec!["url".into()];
         let atoms = md("url", "http://a.b/x, [[y]]", &config);
-        assert_eq!(texts(&atoms), vec!["http://a.b/x", "[[y]]"]);
+        assert_eq!(texts(&atoms), vec!["http://a.b/x, [[y]]"]);
         assert!(
             atoms.iter().all(|atom| atom.origin == AtomOrigin::Plain),
             "step 1 suppresses reference parsing, so `[[y]]` is literal text"
@@ -771,8 +622,8 @@ mod tests {
     }
 
     #[test]
-    fn an_unparsed_built_in_with_a_comma_still_splits_q21() {
-        assert_eq!(texts(&md("title", "A, B", &config())), vec!["A", "B"]);
+    fn an_unparsed_built_in_with_a_comma_stays_whole() {
+        assert_eq!(texts(&md("title", "A, B", &config())), vec!["A, B"]);
     }
 
     // --- classification ----------------------------------------------------
@@ -839,19 +690,16 @@ mod tests {
         );
     }
 
-    /// The accepted cost of Q21, stated as a test rather than left to be
-    /// discovered: the comma split runs BEFORE classification, so a journal
-    /// title whose format contains a comma (`MMM do, yyyy` — Logseq's default)
-    /// is two atoms in a property value and therefore not a date. Quoting opts
-    /// out, exactly as it does for `"Smith, John"`.
+    /// D2 preserves a comma-bearing journal title for date classification.
     #[test]
-    fn q21_splits_a_comma_bearing_journal_title_before_it_can_classify_as_a_date() {
+    fn d2_preserves_a_comma_bearing_journal_title_as_a_date() {
         let mut config = ParseConfig::default();
         config.journal_page_title_format = Some("MMM do, yyyy".into());
         assert_eq!(
             texts(&md("k", "Sep 4th, 2026", &config)),
-            vec!["Sep 4th", "2026"]
+            vec!["Sep 4th, 2026"]
         );
+        assert_eq!(md("k", "Sep 4th, 2026", &config)[0].day, Some(20260904));
         let quoted = md("k", "\"Sep 4th, 2026\"", &config);
         assert_eq!(texts(&quoted), vec!["\"Sep 4th, 2026\""]);
 

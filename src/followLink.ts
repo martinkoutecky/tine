@@ -1,4 +1,4 @@
-// GH #274: open the page under the caret without reaching for the mouse.
+// GH #274: open the link at the caret without reaching for the mouse.
 //
 // OG bindings this reproduces (`frontend/modules/shortcut/config.cljs`):
 //   :editor/follow-link          mod+o        -> editor-handler/follow-link-under-cursor!
@@ -9,72 +9,91 @@
 // found, and how to read the caret out of the live editor.
 
 import { nearestLink, type NearestLink } from "./editor/nearestLink";
+import { node as docNode, pageByName } from "./document";
+import { editingId } from "./editorController";
+import type { Format } from "./render/ast";
 import { openPage, openPageAtBlock } from "./router";
-import { openPageInSidebar, openBlockInSidebar, pushToast } from "./ui";
-import { blockExternalId, doc } from "./store";
+import { openPageInSidebar, openBlockInSidebar } from "./ui";
+import { pushToast } from "./toasts";
 import { backend } from "./backend";
+import { blockRefTarget, resolveBlockBatched } from "./resolveBatch";
+import { ownedWhen, readOwned } from "./owned";
+import { focusedSurfaceOwner } from "./focusedSurface";
 
-/** The focused block editor's text and caret, or null when not editing. */
-function caretContext(): { text: string; caret: number } | null {
+type CaretContext = { text: string; caret: number; format: Format };
+
+/** The focused block editor's text, caret and source format, or null when not
+ *  editing. The format is the editing block's page format: Org and Markdown
+ *  disagree on what is literal (e.g. `~[[x]]~` is Org code). */
+function caretContext(): CaretContext | null {
   if (typeof document === "undefined") return null;
   const active = document.activeElement;
   if (!(active instanceof HTMLTextAreaElement)) return null;
-  return { text: active.value, caret: active.selectionStart ?? 0 };
-}
-
-/** Resolve a bare `((uuid))` to the page that holds it. Unlike a parsed inline
- *  block ref, the raw text carries no page, and Tine's store is keyed by page.
- *  Best-effort by design: a block outside the loaded working set is simply not
- *  found, which matches OG (`open-link-in-sidebar!` gives up when `db/get-page`
- *  misses). */
-function blockOwner(uuid: string): { page: string; pageKind: "journal" | "page" } | null {
-  // The store key is not always the durable uuid: a freshly created block keeps
-  // its transient `b…` key even after Copy block ref writes an `id::` into raw,
-  // so the external identity has to come from `blockExternalId`.
-  const key = doc.byId[uuid]
-    ? uuid
-    : Object.keys(doc.byId).find((id) => blockExternalId(id) === uuid);
-  const page = key ? doc.byId[key]?.page : undefined;
-  if (!page) return null;
-  const owner = doc.pages.find((p) => p.name === page);
-  return owner ? { page, pageKind: owner.kind } : null;
+  const id = editingId();
+  const node = id ? docNode(id) : undefined;
+  const format: Format = node && pageByName(node.page)?.format === "org" ? "org" : "md";
+  return { text: active.value, caret: active.selectionStart ?? 0, format };
 }
 
 export interface FollowLinkDeps {
-  read?(): { text: string; caret: number } | null;
+  /** Source of the editor text, caret and format; defaults to the focused textarea. */
+  read?(): CaretContext | null;
 }
 
-/** `mod+o`. URLs open externally; everything else navigates in place. */
+/** `mod+o`: follow the link nearest the caret in the block being edited.
+ *
+ *  Contract: returns false (and does nothing) when nothing is being edited or
+ *  the text holds no link; otherwise dispatches and returns true. URLs open
+ *  externally (a failure is toasted); page refs and tags navigate in place;
+ *  a bare `((uuid))` resolves its owner asynchronously through the shared
+ *  block-ref resolver and toasts when the block is not found. */
 export function followLinkUnderCaret(deps: FollowLinkDeps = {}): boolean {
   const context = (deps.read ?? caretContext)();
   if (!context) return false;
-  const link = nearestLink(context.text, context.caret, { includeUrls: true });
+  const link = nearestLink(context.text, context.caret, { includeUrls: true, format: context.format });
   if (!link) return false;
   return dispatch(link, "here");
 }
 
-/** `mod+shift+o`. No URL handling — a URL has no sidebar representation, which
- *  is also why OG's sidebar command omits the url pattern. */
+/** `mod+shift+o`: as `followLinkUnderCaret`, but opens in the right sidebar
+ *  and never considers URLs — a URL has no sidebar representation, which is
+ *  also why OG's sidebar command omits the url pattern. */
 export function openLinkUnderCaretInSidebar(deps: FollowLinkDeps = {}): boolean {
   const context = (deps.read ?? caretContext)();
   if (!context) return false;
-  const link = nearestLink(context.text, context.caret);
+  const link = nearestLink(context.text, context.caret, { format: context.format });
   if (!link) return false;
   return dispatch(link, "sidebar");
 }
 
 function dispatch(link: NearestLink, where: "here" | "sidebar"): boolean {
   if (link.kind === "url") {
-    void backend().openExternal(link.value).catch(() => {
+    // Not graph-scoped: opening a URL stays meaningful across graph switches,
+    // so the owner is always live and a failure is always surfaced (I-9).
+    void readOwned(ownedWhen(), backend().openExternal(link.value)).catch(() => {
       pushToast(`Couldn't open ${link.value}`, "error");
     });
     return true;
   }
   if (link.kind === "block") {
-    const owner = blockOwner(link.value);
-    if (!owner) return false;
-    if (where === "sidebar") openBlockInSidebar({ uuid: link.value, ...owner });
-    else openPageAtBlock(owner.page, owner.pageKind, link.value);
+    // Raw `((uuid))` carries no page: resolve it the same way a rendered block
+    // ref does (working set first, then the backend), so a block outside the
+    // loaded pages is still found — master gave up there.
+    const uuid = link.value;
+    // The key press acts on the surface in front of the user; if they move to
+    // another pane, tab or route before the resolver answers, the answer must
+    // not navigate them back (I-20). `undefined` is a FAILED read that the
+    // resolver already reported (I-9); only `null` means the block is absent.
+    const owner = focusedSurfaceOwner();
+    void readOwned(owner, resolveBlockBatched(uuid)).then((result) => {
+      if (result.kind === "stale") return;
+      const g = result.value;
+      if (g === undefined) return;
+      if (!g) { pushToast("Couldn't find the referenced block", "error"); return; }
+      const ref = blockRefTarget(uuid, g);
+      if (where === "sidebar") openBlockInSidebar(ref);
+      else openPageAtBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
+    });
     return true;
   }
   // Page and tag are the same destination; OG strips the `#` and routes both

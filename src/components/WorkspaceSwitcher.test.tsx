@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
+import { resetStore } from "../document";
+import { setToasts, toasts } from "../toasts";
 import { resetPaneLayoutToSingle } from "../panes";
 import { buildPersistedSession } from "../session";
 import {
@@ -25,7 +27,7 @@ beforeEach(async () => {
     activeId: "default",
     workspaces: [{ id: "default", name: "Alpha", blob: buildPersistedSession() }],
   }));
-  vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
+  vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
   vi.spyOn(backend(), "saveSession").mockResolvedValue();
   await initializeWorkspaces();
   await createWorkspace("Beta");
@@ -40,6 +42,45 @@ afterEach(() => {
 });
 
 describe("WorkspaceSwitcher", () => {
+  it("does not delete the new graph's colliding workspace after an old confirmation", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    setToasts([]);
+    dispose = render(() => <WorkspaceSwitcher />, host);
+    let finish!: (confirmed: boolean) => void;
+    vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    host.querySelector<HTMLButtonElement>(".workspace-switcher-btn")!.click();
+    host.querySelector<HTMLButtonElement>('[aria-label="Delete Alpha"]')!.click();
+    resetStore();
+    resetWorkspacesForTest();
+    await initializeWorkspaces();
+    const save = vi.mocked(backend().saveWorkspaces);
+    save.mockClear();
+    finish(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(activeWorkspaceId()).toBe("default");
+    expect(save).not.toHaveBeenCalled();
+    expect(toasts()).toEqual([]);
+  });
+
+  it("reports the original delete write failure after a graph switch", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    setToasts([]);
+    dispose = render(() => <WorkspaceSwitcher />, host);
+    vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    let rejectSave!: (reason: Error) => void;
+    vi.mocked(backend().saveWorkspaces).mockImplementationOnce(() => new Promise((_, reject) => { rejectSave = reject; }));
+    host.querySelector<HTMLButtonElement>(".workspace-switcher-btn")!.click();
+    host.querySelector<HTMLButtonElement>('[aria-label="Delete Alpha"]')!.click();
+    await vi.waitFor(() => expect(rejectSave).toBeTypeOf("function"));
+    resetStore();
+    rejectSave(Object.assign(new Error("workspace disk failed"), { family: "io" }));
+    await vi.waitFor(() => expect(toasts().some((toast) => toast.message.includes("workspace disk failed"))).toBe(true));
+  });
+
   it("renders the collapsed-sidebar fallback as the compact W control without a workspace label", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -79,12 +120,10 @@ describe("WorkspaceSwitcher", () => {
     expect(confirm).toHaveBeenCalledWith("Delete workspace “Alpha”?", "Delete workspace");
     expect(activeWorkspaceId()).not.toBe("default");
   });
-
-  // GH #498: the name field was rendered under a keyed <Show> whose key was the
-  // whole edit state, and every input event replaced that state, so each
-  // keystroke tore the <input> down and built a new one. Latin typing survives
-  // that; an IME composition does not, because its element is destroyed
-  // mid-composition and Windows cancels or commits the raw keystrokes.
+  // Master GH #498: the name field was rendered under a keyed <Show> whose key
+  // was the whole edit state, and every input event replaced that state, so each
+  // keystroke rebuilt the <input>. Latin typing survives that; an IME
+  // composition does not, because its element is destroyed mid-composition.
   it("keeps the same name field while the user types, so an IME composition survives", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);

@@ -1,7 +1,7 @@
 //! OG DSL ⇄ IR (SPEC §4.1, §4.3).
 //!
 //! Transcribed (D-9) from OG `src/main/frontend/db/query_dsl.cljs` at the
-//! read-only checkout `/aux/koutecky/logseq/og` commit `6e7afa8eb`
+//! read-only checkout of upstream Logseq commit `6e7afa8eb`
 //! (`git describe`: `1.0.0-12-g6e7afa8eb`): `pre-transform` (`:452-472`),
 //! `simplify-query` (`:505-516`), `build-query` (`:377-445`) and its
 //! `build-*` helpers, `parse-property-value` (`:242-252`),
@@ -333,6 +333,70 @@ fn read_string(src: &str, at: usize) -> (String, usize) {
     (text, (j + 1).min(src.len()))
 }
 
+/// Read one Clojure collection (`[..]`, `#{..}`, `(..)`) of NAMES from `src` at
+/// `at`, as OG's `read-string` would after `pre-transform`: strings, bare
+/// symbols/keywords, `[[page]]` / `#tag` refs (pre-transform quotes those), commas
+/// as whitespace. Returns the names and the offset just past the closing
+/// delimiter. A nested collection has no `name` in OG (the query throws), and an
+/// unterminated or mismatched collection is a reader error; both are `Err` with
+/// the offset to resume from.
+fn read_collection(src: &str, at: usize) -> Result<(Vec<String>, usize), (String, usize)> {
+    let (close, mut i) = if src[at..].starts_with("#{") {
+        ('}', at + 2)
+    } else if src[at..].starts_with('[') {
+        (']', at + 1)
+    } else {
+        (')', at + 1)
+    };
+    let mut names = Vec::new();
+    loop {
+        let Some(c) = src[i..].chars().next() else {
+            return Err(("this collection is never closed".to_string(), src.len()));
+        };
+        if c.is_whitespace() || c == ',' {
+            i += c.len_utf8();
+        } else if c == close {
+            return Ok((names, i + 1));
+        } else if matches!(c, ')' | ']' | '}') {
+            return Err((
+                "this collection is closed by the wrong bracket".to_string(),
+                i + 1,
+            ));
+        } else if src[i..].starts_with("[[") {
+            let (name, end) = read_page_ref(src, i);
+            names.push(name);
+            i = end;
+        } else if src[i..].starts_with("#[[") {
+            let (name, end) = read_page_ref(src, i + 1);
+            names.push(name);
+            i = end;
+        } else if matches!(c, '[' | '(' | '{') || src[i..].starts_with("#{") {
+            return Err((
+                "a nested collection is not a name, so Logseq cannot run this query".to_string(),
+                i + 1,
+            ));
+        } else if c == '"' {
+            let (text, end) = read_string(src, i);
+            names.push(text);
+            i = end;
+        } else {
+            let mut j = i;
+            while j < src.len() {
+                let d = src[j..].chars().next().expect("char boundary");
+                if d.is_whitespace() || matches!(d, ',' | '(' | ')' | '[' | ']' | '{' | '}' | '"') {
+                    break;
+                }
+                j += d.len_utf8();
+            }
+            let word = &src[i..j];
+            // `#tag` is a page ref; a keyword's `name` has no colon.
+            let word = word.strip_prefix('#').unwrap_or(word);
+            names.push(word.trim_start_matches(':').to_string());
+            i = j.max(i + c.len_utf8());
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // parse-property-value (OG query_dsl.cljs:242-252), transcribed
 // ---------------------------------------------------------------------------
@@ -451,6 +515,81 @@ impl<'a> OgParse<'a> {
         out
     }
 
+    /// OG `build-task` / `build-priority` / `build-page-tags`
+    /// (`query_dsl.cljs:279-320`): `(if (coll? (first (rest e))) (first (rest e))
+    /// (rest e))`. The FIRST argument, when it is any Clojure collection the
+    /// reader accepts (vector `[A B]`, set `#{A B}`, list `(A B)`), supplies the
+    /// whole list and everything after it is ignored; otherwise the names are
+    /// variadic. Elements go through `name`, so a keyword loses its `:`
+    /// (`(task :todo)`), while a quoted string keeps it. Commas are whitespace
+    /// to Clojure's reader.
+    fn vector_or_names(&mut self) -> Vec<String> {
+        let opens = self.toks.get(self.pos).is_some_and(|t| {
+            let rest = &self.src[t.start..];
+            t.tok == Tok::LParen
+                || rest.starts_with("#{")
+                || (rest.starts_with('[') && !rest.starts_with("[["))
+        });
+        if !opens {
+            return self.variadic_names();
+        }
+        let at = self.toks[self.pos].start;
+        let (names, end) = match read_collection(self.src, at) {
+            Ok(read) => read,
+            Err((message, end)) => {
+                let span = Some(Span::from_byte_range(self.src, at, end));
+                self.diagnose(DiagnosticKind::Syntax, message, span);
+                (Vec::new(), end)
+            }
+        };
+        // The collection was read from the source text, so the tokens the
+        // tokenizer cut out of it (it knows nothing of brackets) are dropped and
+        // the rest of the form is tokenized afresh from where the collection
+        // ended; spans stay offsets into the original text.
+        self.toks.truncate(self.pos);
+        self.toks
+            .extend(tokenize(&self.src[end..]).into_iter().map(|t| Spanned {
+                tok: t.tok,
+                start: t.start + end,
+                end: t.end + end,
+            }));
+        // Whatever follows the collection is ignored by OG; consume it so the
+        // form still closes cleanly (an ignored argument may itself be a list).
+        self.skip_args();
+        names
+    }
+
+    /// Skip every argument up to, not including, the `)` that closes the form
+    /// being read, stepping over nested lists whole.
+    fn skip_args(&mut self) {
+        let mut depth = 0usize;
+        while let Some(tok) = self.peek() {
+            match tok {
+                Tok::LParen => depth += 1,
+                Tok::RParen if depth == 0 => return,
+                Tok::RParen => depth -= 1,
+                _ => {}
+            }
+            self.pos += 1;
+        }
+    }
+
+    /// The variadic spelling: every remaining name token. A bare keyword
+    /// (`:todo`) is a Clojure keyword, whose `name` has no colon; a quoted
+    /// string is a string and is taken as written.
+    fn variadic_names(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+        loop {
+            let keyword = matches!(self.peek(), Some(Tok::Word(w)) if w.starts_with(':'));
+            match self.name() {
+                Some(name) if keyword => out.push(name.trim_start_matches(':').to_string()),
+                Some(name) => out.push(name),
+                None => break,
+            }
+        }
+        out
+    }
+
     /// Skip to just past the `)` closing the form that opened at depth 0 here.
     fn skip_to_close(&mut self) {
         let mut depth = 1usize;
@@ -541,10 +680,21 @@ impl<'a> OgParse<'a> {
         let filter = match head {
             "and" => Filter::and(lift_directives(self.list(depth + 1))),
             "or" => Filter::or(lift_directives(self.list(depth + 1))),
-            "not" => Filter::not(self.expr(depth + 1)?),
+            // OG `build-and-or-not` (`query_dsl.cljs:128-142,174-202`) emits a
+            // datalog `(not c1 c2 ...)`, which excludes a row only when ALL its
+            // clauses hold: `not` is variadic and negates their conjunction.
+            "not" => {
+                let operands = lift_directives(self.list(depth + 1));
+                // A `not` of nothing but directives has no clause (OG drops it).
+                match operands.len() {
+                    0 => Filter::True,
+                    1 => Filter::not(operands.into_iter().next().expect("one operand")),
+                    _ => Filter::not(Filter::and(operands)),
+                }
+            }
             "task" | "todo" => {
                 self.blocks = true;
-                let markers = self.names();
+                let markers = self.vector_or_names();
                 // OG drops `(task)` with no markers; Tine's shipped behaviour
                 // reads it as "any open task" and the corpus depends on it.
                 let markers = if markers.is_empty() {
@@ -561,7 +711,7 @@ impl<'a> OgParse<'a> {
             }
             "priority" => {
                 self.blocks = true;
-                let levels = self.names();
+                let levels = self.vector_or_names();
                 let levels = if levels.is_empty() {
                     vec!["A".to_string(), "B".to_string(), "C".to_string()]
                 } else {
@@ -584,12 +734,15 @@ impl<'a> OgParse<'a> {
                     Value::text(self.name()?),
                 ))
             }
-            // OG `(namespace x)` is recursive membership: the normalized page
-            // name starts with `x/` (§3.2 M20).
+            // OG's simple-query `(namespace x)` is the IMMEDIATE-parent rule
+            // (rules.cljc:124-127: `[?p :block/namespace ?parent] [?parent
+            // :block/name "x"]`): `x/a` matches, `x/a/b` does not. The recursive
+            // rule (rules.cljc:7-12) is reachable only from advanced queries,
+            // which lower to a name prefix in `advanced_patterns.rs`.
             "namespace" => through_page(Filter::attr(
-                Attr::Name,
-                CmpOp::StartsWith,
-                Value::text(format!("{}/", self.name()?)),
+                Attr::Namespace,
+                CmpOp::Eq,
+                Value::text(self.name()?),
             )),
             "property" => {
                 self.blocks = true;
@@ -603,7 +756,7 @@ impl<'a> OgParse<'a> {
                 property_leaf(key, value)
             }),
             "page-tags" | "tags" => {
-                let tags = self.names();
+                let tags = self.vector_or_names();
                 through_page(Filter::rel(
                     Rel::Props,
                     Quant::Any,
@@ -613,8 +766,11 @@ impl<'a> OgParse<'a> {
                     ]),
                 ))
             }
-            // OG `build-all-page-tags` (`:322-325`): pages carrying at least one
-            // tag. It takes no arguments.
+            // OG `build-all-page-tags` (`:322-325`) + `rules.cljc:96-98`
+            // `[_ :block/tags ?p]`: every page that some page uses as a tag.
+            // The relation is INCOMING (the page is named by another page's
+            // `tags::`), so it is the graph-wide `used_as_tag` page attribute,
+            // never a property of the page's own header. It takes no arguments.
             "all-page-tags" => {
                 let extra = self.names();
                 if !extra.is_empty() {
@@ -625,21 +781,11 @@ impl<'a> OgParse<'a> {
                         span,
                     );
                 }
-                // Use the canonical presence and blank forms: both have a
-                // lossless TQL spelling. A bare `atom_count > 0` has none.
-                // Presence is required because `not(blank)` includes absence.
-                let key = Filter::attr(Attr::Key, CmpOp::Eq, Value::text("tags"));
-                Filter::and(vec![
-                    through_page(Filter::rel(Rel::Props, Quant::Any, key.clone())),
-                    Filter::not(through_page(Filter::rel(
-                        Rel::Props,
-                        Quant::Any,
-                        Filter::and(vec![
-                            key,
-                            Filter::attr(Attr::AtomCount, CmpOp::Eq, Value::Number { number: 0.0 }),
-                        ]),
-                    ))),
-                ])
+                through_page(Filter::attr(
+                    Attr::UsedAsTag,
+                    CmpOp::Eq,
+                    Value::Bool { value: true },
+                ))
             }
             // Tine extensions, kept parsing for existing files, never OG-expressible.
             "search" => {
@@ -671,6 +817,7 @@ impl<'a> OgParse<'a> {
                 self.between()
             }
             "sample" => {
+                // OG `build-sample` (`query_dsl.cljs:327-332`) only reads an integer.
                 if let Some(n) = self.name().and_then(|s| s.trim().parse::<u32>().ok()) {
                     self.view.sample = Some(n);
                 }
@@ -678,11 +825,12 @@ impl<'a> OgParse<'a> {
             }
             "sort-by" => {
                 let field = self.name().unwrap_or_default();
-                // OG's own default here is `:desc`; Tine has always defaulted to
-                // ascending and the shipped behaviour is what P0 must preserve.
+                // OG `build-sort-by` (`query_dsl.cljs:335-348`): the order is
+                // `:asc` only when the keyword is exactly `asc`; anything else,
+                // including no order at all, is `:desc`.
                 let dir = match self.opt_word_or_string() {
-                    Some(d) if d.eq_ignore_ascii_case("desc") => SortDir::Desc,
-                    _ => SortDir::Asc,
+                    Some(d) if d.trim_start_matches(':') == "asc" => SortDir::Asc,
+                    _ => SortDir::Desc,
                 };
                 self.view.sort = vec![(Field::new(field), dir)];
                 Filter::True
@@ -757,6 +905,22 @@ impl<'a> OgParse<'a> {
             Deadline,
             Any,
         }
+        // OG's three-argument form: the field names a block TIMESTAMP property,
+        // spelled `created-at` / `created_at` / `last-modified-at` /
+        // `last_modified_at` in any case (`->timestamp`'s `string/replace "-"
+        // "_"`), and both bounds must resolve (query_dsl.cljs:214-229).
+        if let Some(Tok::Word(w)) = self.peek() {
+            let key = w.to_ascii_lowercase().replace('-', "_");
+            let attr = match key.as_str() {
+                "created_at" => Some(Attr::CreatedAt),
+                "last_modified_at" => Some(Attr::LastModifiedAt),
+                _ => None,
+            };
+            if let Some(attr) = attr {
+                self.pos += 1;
+                return self.timestamp_between(attr);
+            }
+        }
         let field = match self.peek() {
             Some(Tok::Word(w)) => match w.to_ascii_lowercase().as_str() {
                 "journal" => {
@@ -786,8 +950,26 @@ impl<'a> OgParse<'a> {
         let bound = |token: Option<String>| -> Option<String> {
             token.map(|token| token.strip_prefix(':').unwrap_or(&token).to_string())
         };
+        let at = self.pos;
         let low = bound(self.name());
         let high = bound(self.name());
+        for (index, token) in [low.as_deref(), high.as_deref()].into_iter().enumerate() {
+            if let Some(token) = token {
+                if crate::query::DateToken::parse(token)
+                    == Some(crate::query::DateToken::OutOfRange)
+                {
+                    let span = self.span_at(at + index);
+                    self.diagnose(
+                        DiagnosticKind::Syntax,
+                        format!(
+                            "date offset `{token}` is out of range (at most {} years)",
+                            crate::query::MAX_DATE_OFFSET_YEARS
+                        ),
+                        span,
+                    );
+                }
+            }
+        }
         let range = |attr: Attr| bounded(attr, low.as_deref(), high.as_deref());
         match field {
             BetweenField::Journal => through_page(range(Attr::Day)),
@@ -798,6 +980,49 @@ impl<'a> OgParse<'a> {
                 range(Attr::Scheduled),
                 range(Attr::Deadline),
             ]),
+        }
+    }
+}
+
+impl OgParse<'_> {
+    /// The two bounds of `(between created-at START END)`. A missing or
+    /// unresolvable bound makes the query invalid, as OG's `when (and start
+    /// end)` makes it produce no clause.
+    fn timestamp_between(&mut self, attr: Attr) -> Filter {
+        let at = self.pos;
+        let low = self
+            .name()
+            .map(|t| t.strip_prefix(':').unwrap_or(&t).to_string());
+        let high = self
+            .name()
+            .map(|t| t.strip_prefix(':').unwrap_or(&t).to_string());
+        for (index, token) in [&low, &high].into_iter().enumerate() {
+            let ok = token
+                .as_deref()
+                .is_some_and(crate::query::is_timestamp_token);
+            if !ok {
+                let span = self.span_at(at + index);
+                let shown = token.as_deref().unwrap_or("(missing)");
+                self.diagnose(
+                    DiagnosticKind::Syntax,
+                    format!(
+                        "`{shown}` is not a timestamp bound (`now`, `today`, `yesterday`, \
+                         `tomorrow`, a journal page, or an offset such as `-7d`, `-3h`, `-30n`)"
+                    ),
+                    span,
+                );
+                return Filter::False;
+            }
+        }
+        match (low, high) {
+            (Some(low), Some(high)) => Filter::attr(
+                attr,
+                CmpOp::Between,
+                Value::List {
+                    items: vec![Value::date(low), Value::date(high)],
+                },
+            ),
+            _ => Filter::False,
         }
     }
 }
@@ -848,23 +1073,14 @@ pub(crate) fn content_like(text: &str) -> Filter {
     Filter::attr(
         Attr::Content,
         CmpOp::Like,
-        Value::text(format!("%{}%", escape_like(text))),
+        Value::text(format!(
+            "%{}%",
+            crate::query::text::escape_like_literal(text)
+        )),
     )
 }
 
-/// Escape the LIKE metacharacters so a literal `%`/`_`/`\` in user text is data.
-pub(crate) fn escape_like(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        if matches!(ch, '%' | '_' | '\\') {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out
-}
-
-/// The inverse of [`escape_like`] for a pattern that is exactly `%<literal>%`.
+/// The inverse of [`crate::query::text::escape_like_literal`] for a pattern that is exactly `%<literal>%`.
 pub(crate) fn plain_like_substring(pattern: &str) -> Option<String> {
     let inner = pattern.strip_prefix('%')?.strip_suffix('%')?;
     let mut out = String::with_capacity(inner.len());
@@ -890,8 +1106,14 @@ pub(crate) fn plain_like_substring(pattern: &str) -> Option<String> {
 /// dispatch may split first and still call in here.
 pub(crate) fn parse_og(text: &str, _today: JournalDate) -> (Query, ViewSettings) {
     let (form, og_options) = split_trailing_map(text);
+    let mut toks = tokenize(&form);
+    // OG reader/read-string reads the first form; the trailing table marker
+    // selects presentation in components/query.cljs, never another predicate.
+    if toks.len() > 1 && matches!(toks.last().map(|t| &t.tok), Some(Tok::Word(w)) if w == "table") {
+        toks.pop();
+    }
     let mut parse = OgParse {
-        toks: tokenize(&form),
+        toks,
         pos: 0,
         src: &form,
         view: ViewSettings::default(),
@@ -923,8 +1145,19 @@ pub(crate) fn parse_og(text: &str, _today: JournalDate) -> (Query, ViewSettings)
             }
         }
     }
+    let had_clauses = !items.is_empty();
     let items = lift_directives(items);
+    // OG parses a query made only of directives (`(sort-by x)`, `(sample 3)`,
+    // `(and (sort-by x))`) to a nil query, which runs nothing and renders no
+    // results (`query_dsl.cljs:521-547`, `query` returns nil). Not "everything".
+    let only_directives = had_clauses
+        && match items.as_slice() {
+            [] => true,
+            [Filter::And { items } | Filter::Or { items }] => items.is_empty(),
+            _ => false,
+        };
     let filter = match items.len() {
+        _ if only_directives => Filter::False,
         0 => Filter::True,
         1 => items.into_iter().next().expect("one"),
         _ => Filter::and(items),
@@ -979,7 +1212,7 @@ pub(crate) fn split_trailing_map(arg: &str) -> (String, String) {
 /// walk evaluates it exactly as it always has (a `(page-property …)` query
 /// returns the BLOCKS of the matching pages). At the `@page` anchor every leaf
 /// is a page-row leaf, so the wrap is total and exact.
-pub(crate) fn rebase_to_block(filter: &Filter) -> Filter {
+pub fn rebase_to_block(filter: &Filter) -> Filter {
     match filter {
         Filter::And { items } => Filter::and(items.iter().map(rebase_to_block).collect()),
         Filter::Or { items } => Filter::or(items.iter().map(rebase_to_block).collect()),
@@ -993,6 +1226,22 @@ pub(crate) fn rebase_to_block(filter: &Filter) -> Filter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reader B (og 14 Q2): an out-of-range relative `between` bound is a
+    /// diagnostic, not a garbage day.
+    #[test]
+    fn an_out_of_range_between_bound_is_a_diagnostic() {
+        let query = parse("(between scheduled -9223372036854775807d today)");
+        assert!(
+            query
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("out of range")),
+            "{:?}",
+            query.diagnostics
+        );
+        assert!(!parse("(between scheduled -7d today)").is_invalid());
+    }
 
     fn parse(source: &str) -> Query {
         parse_og(source, JournalDate::from_ordinal(20260904)).0
@@ -1047,13 +1296,7 @@ mod tests {
         );
 
         let page_query = parse("(and (and (namespace Alpha) (namespace Beta)) (namespace Gamma))");
-        let namespace = |name: &str| {
-            Filter::attr(
-                Attr::Name,
-                CmpOp::StartsWith,
-                Value::text(format!("{name}/")),
-            )
-        };
+        let namespace = |name: &str| Filter::attr(Attr::Namespace, CmpOp::Eq, Value::text(name));
         let page_filter = Filter::And {
             items: vec![
                 Filter::And {
@@ -1176,20 +1419,17 @@ mod tests {
 
     /// REG-P0-QUERY-ALL-PAGE-TAGS-001. OG has `(all-page-tags)`; Tine did not,
     /// so a graph carrying one silently returned nothing.
+    /// OG `rules.cljc:96-98`: `(all-page-tags)` is the INCOMING relation (pages
+    /// some page uses as a tag), spelled `used_as_tag` in the IR, never a test
+    /// of the page's own `tags::` (og lane qfix #2a).
     #[test]
-    fn all_page_tags_is_the_pages_tags_property_with_at_least_one_atom() {
+    fn all_page_tags_is_the_pages_some_page_uses_as_a_tag() {
         let query = parse("(all-page-tags)");
         assert!(!query.is_invalid(), "{:?}", query.diagnostics);
         assert_eq!(query.anchor, Anchor::Page);
         assert_eq!(
             query.normalized().filter,
-            super::super::tql::parse_tql(
-                "@page and prop('tags') is not null and not prop('tags') = ''",
-                crate::query::registry::Registry::none(),
-            )
-            .0
-            .normalized()
-            .filter
+            Filter::attr(Attr::UsedAsTag, CmpOp::Eq, Value::Bool { value: true })
         );
     }
 

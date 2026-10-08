@@ -22,10 +22,10 @@ pub(crate) struct AndroidSystemBars<R: Runtime>(PluginHandle<R>);
 
 #[cfg(target_os = "android")]
 impl<R: Runtime> AndroidSystemBars<R> {
-    fn set_appearance(&self, dark: bool) -> Result<(), crate::command_error::CommandError> {
+    fn set_appearance(&self, dark: bool) -> Result<(), String> {
         self.0
             .run_mobile_plugin::<()>("setAppearance", SystemBarAppearance { dark })
-            .map_err(crate::command_error::CommandError::platform)
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -35,15 +35,13 @@ pub(crate) async fn set_system_bar_appearance<R: Runtime>(
     _app: AppHandle<R>,
     bars: State<'_, AndroidSystemBars<R>>,
     dark: bool,
-) -> Result<(), crate::command_error::CommandError> {
+) -> Result<(), String> {
     bars.set_appearance(dark)
 }
 
 #[cfg(not(target_os = "android"))]
 #[tauri::command]
-pub(crate) async fn set_system_bar_appearance(
-    dark: bool,
-) -> Result<(), crate::command_error::CommandError> {
+pub(crate) async fn set_system_bar_appearance(dark: bool) -> Result<(), String> {
     let _ = dark;
     Ok(())
 }

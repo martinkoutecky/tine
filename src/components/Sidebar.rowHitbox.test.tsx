@@ -21,7 +21,6 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { openJournals, resetTabsToJournals, route, tabs } from "../router";
 import {
-  bumpGraphEpoch,
   closeContextMenu,
   contextMenu,
   favorites,
@@ -30,7 +29,7 @@ import {
   setFavorites,
   setRecentPages,
 } from "../ui";
-import type { PageEntry } from "../types";
+import { refreshPageIndex } from "../pageIndex";
 import { Sidebar } from "./Sidebar";
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
@@ -59,11 +58,16 @@ function clickRow(row: HTMLElement) {
   row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
 }
 
+/** The element inside the row that holds the page name. og rows carry no
+ *  dedicated label span (master's `.nav-page-label` only exists to ellipsise a
+ *  long name), so the title is the row's last child element, else the row. */
+function titleOf(row: HTMLElement): HTMLElement {
+  return (row.lastElementChild as HTMLElement | null) ?? row;
+}
+
 /** A real click on the page title. */
 function clickTitle(row: HTMLElement) {
-  const label = row.querySelector<HTMLElement>(".nav-page-label");
-  expect(label).not.toBeNull();
-  label!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  titleOf(row).dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
 }
 
 afterEach(async () => {
@@ -128,9 +132,14 @@ describe("left-sidebar row hitbox (GH #468)", () => {
   });
 
   it("navigates when the blank part of an All pages row is clicked, as it does from the title", async () => {
-    const pages: PageEntry[] = [{ name: "Listed page", path: "pages/listed-page.md", kind: "page", date_key: null }];
-    vi.spyOn(backend(), "listPages").mockResolvedValue(pages);
-    bumpGraphEpoch();
+    vi.spyOn(backend(), "pageInventory").mockResolvedValue({
+      rev: "1",
+      entries: [{
+        key: "listed page", name: "Listed page", is_journal: false, day: null,
+        target: { kind: "existing", id: "pages/listed-page.md", others: [] },
+      }],
+    });
+    await refreshPageIndex();
     const { root, dispose } = mount();
     try {
       const header = [...root.querySelectorAll<HTMLElement>(".nav-section-header")]
@@ -159,7 +168,7 @@ describe("left-sidebar row hitbox (GH #468)", () => {
       const before = tabs().length;
       beta.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }));
       expect(tabs()).toHaveLength(before + 1);
-      beta.querySelector<HTMLElement>(".nav-page-label")!
+      titleOf(beta)
         .dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }));
       expect(tabs()).toHaveLength(before + 2);
     } finally {

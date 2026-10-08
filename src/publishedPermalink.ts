@@ -1,22 +1,20 @@
 import type { PaneRouter, Route } from "./router";
 import type { PublishedSnapshot } from "./publishedBackend";
 import type { BlockDto, PageDto } from "./types";
+import { pageIdentityKey } from "./pageIdentity";
+import { blockRegions } from "./render/parse";
 
 export type PublishedPermalinkTarget =
   | { kind: "page"; page: string }
   | { kind: "block"; block: string };
 
 export interface ResolvedPublishedPermalink {
-  page: PageDto;
+  page: PublishedSnapshot["pages"][number];
   block?: string;
 }
 
 const PAGE_PREFIX = "#/page/";
 const BLOCK_PREFIX = "#/block/";
-
-function identityFold(value: string): string {
-  return value.trim().toLowerCase();
-}
 
 function decodeSegment(value: string): string | null {
   try {
@@ -49,20 +47,10 @@ export function parsePublishedPermalinkHash(hash: string): PublishedPermalinkTar
     : { kind: "block", block: decoded };
 }
 
-/** Absolute copyable URL, preserving the deployment path and query string. */
-export function publishedPermalinkUrl(
-  target: PublishedPermalinkTarget,
-  currentHref: string = window.location.href,
-): string {
-  const url = new URL(currentHref);
-  url.hash = publishedPermalinkHash(target).slice(1);
-  return url.href;
-}
-
-function findBlock(blocks: PageDto["blocks"], wanted: string): BlockDto | null {
+function findBlock(blocks: PageDto["blocks"], wanted: string, format: "md" | "org"): BlockDto | null {
   for (const block of blocks) {
-    if (block.id === wanted || block.raw.includes(`id:: ${wanted}`)) return block;
-    const child = findBlock(block.children, wanted);
+    if ((blockRegions(block.raw, format).id?.value.trim() ?? block.id) === wanted) return block;
+    const child = findBlock(block.children, wanted, format);
     if (child) return child;
   }
   return null;
@@ -70,24 +58,27 @@ function findBlock(blocks: PageDto["blocks"], wanted: string): BlockDto | null {
 
 /** Resolve a link only within the baked snapshot. Page aliases remain valid,
  *  while block UUIDs are graph-wide so moving a block does not break its link
- *  after the next export. */
+ *  after the next export. Canonical page identity and parser-owned block IDs
+ *  match publishedBackend. O(snapshot content bytes) for a block, O(page/alias
+ *  name bytes) for a page. Returns null for an absent target; block lookup
+ *  requires the initialized parser and throws when it is not ready. */
 export function resolvePublishedPermalink(
   snapshot: PublishedSnapshot,
   target: PublishedPermalinkTarget,
 ): ResolvedPublishedPermalink | null {
   if (target.kind === "block") {
     for (const page of snapshot.pages) {
-      if (findBlock(page.blocks, target.block)) return { page, block: target.block };
+      if (findBlock(page.blocks, target.block, page.format ?? "md")) return { page, block: target.block };
     }
     return null;
   }
 
-  const wanted = identityFold(target.page);
-  let page = snapshot.pages.find((candidate) => identityFold(candidate.name) === wanted);
+  const wanted = pageIdentityKey(target.page);
+  let page = snapshot.pages.find((candidate) => pageIdentityKey(candidate.name) === wanted);
   if (!page) {
-    const alias = snapshot.aliases.find(([from]) => identityFold(from) === wanted);
+    const alias = snapshot.aliases.find(([from]) => pageIdentityKey(from) === wanted);
     if (alias) {
-      page = snapshot.pages.find((candidate) => identityFold(candidate.name) === identityFold(alias[1]));
+      page = snapshot.pages.find((candidate) => pageIdentityKey(candidate.name) === pageIdentityKey(alias[1]));
     }
   }
   return page ? { page } : null;

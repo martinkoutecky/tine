@@ -1,0 +1,10 @@
+[
+  { "name": "empty", "blocks": [], "hasContent": false },
+  { "name": "properties only", "blocks": [{ "raw": "id:: abc\npriority:: A", "children": [] }], "hasContent": false },
+  { "name": "nested content", "blocks": [{ "raw": "id:: abc", "children": [{ "raw": "A real note", "children": [] }] }], "hasContent": true },
+  { "name": "mixed lines", "blocks": [{ "raw": "id:: abc\nA real note", "children": [] }], "hasContent": true },
+  { "name": "hash-prefixed key is an lsdoc property", "blocks": [{ "raw": "#tag:: prose", "children": [] }], "hasContent": false },
+  { "name": "fenced property-shaped line is code", "blocks": [{ "raw": "```\nkey:: literal\n```", "children": [] }], "hasContent": true },
+  { "name": "unicode property only", "blocks": [{ "raw": "klíč:: hodnota", "children": [] }], "hasContent": false },
+  { "name": "no separator space is prose", "blocks": [{ "raw": "key::value", "children": [] }], "hasContent": true }
+]

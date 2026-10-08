@@ -1,3 +1,4 @@
+import policy from "../../fixtures/html-sanitize-policy.json";
 import DOMPurify from "dompurify";
 
 // The raw-HTML render policy — the single allowlist that both render surfaces
@@ -7,10 +8,10 @@ import DOMPurify from "dompurify";
 // the source bytes VERBATIM (byte-parity with mldoc — mldoc doesn't sanitize
 // either). Sanitizing is a *render-layer* safety decision, so it lives at each
 // render boundary, NOT in the parser. Tine has two such boundaries in two
-// languages, so this list is MIRRORED in crates/tine-core/src/html_sanitize.rs
-// (ammonia, for the static-HTML export). fixtures/html-sanitize-cases.json
-// contract-tests that the two agree. Keep them in lockstep — if you add a tag
-// or attribute here, add it there and add a fixture.
+// languages. fixtures/html-sanitize-policy.json owns the inventories; the
+// browser uses global attributes, native export uses tag-scoped attributes and
+// explicit URL schemes/rel. These engine policies intentionally remain distinct.
+// fixtures/html-sanitize-cases.json checks their common safety outcomes.
 //
 // Threat model: notes aren't self-authored (Syncthing sync, import, paste,
 // shared graphs), and in Tauri an injected `onerror=`/`<script>` can call Tine's
@@ -28,12 +29,7 @@ import DOMPurify from "dompurify";
  *  Deliberately excludes `<iframe>`, `<script>`, `<object>`, `<embed>`, forms,
  *  and anything executable. (The app renders a sandboxed-https `<iframe>` via a
  *  SEPARATE path in `renderRawHtml`, layered above this allowlist.) */
-export const RAW_HTML_TAGS = [
-  "b", "strong", "i", "em", "u", "ins", "del", "s", "strike", "sub", "sup",
-  "mark", "kbd", "abbr", "small", "code", "cite", "q", "span", "br",
-  "p", "div", "blockquote", "details", "summary", "a", "img",
-  "audio", "video", "source",
-];
+export const RAW_HTML_TAGS = policy.tags;
 
 /** Attributes that survive, across all allowed tags. Note the absence of
  *  `style` (positioning/tracking), `autoplay`, and any `on*` handler.
@@ -42,10 +38,7 @@ export const RAW_HTML_TAGS = [
  *  `poster` is the video placeholder; `type` lets `<source>` advertise its
  *  codec. `width`/`height` were already admitted for images and also bound the
  *  video box. URL-bearing `src`/`poster` receive the scheme guard below. */
-export const RAW_HTML_ATTRS = [
-  "class", "title", "href", "src", "alt", "width", "height", "open",
-  "controls", "loop", "muted", "preload", "poster", "type",
-];
+export const RAW_HTML_ATTRS = policy.browser.attributes;
 
 /** Defense-in-depth on top of DOMPurify: reject `javascript:` in `src`/`poster`
  *  even under control-character-obfuscated spellings. `data:` is deliberately
@@ -56,17 +49,14 @@ export const RAW_HTML_ATTRS = [
 function hasDeniedResourceScheme(value: string): boolean {
   const compact = value.replace(/[\u0000-\u0020]/g, "");
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(compact)?.[1]?.toLowerCase();
-  return scheme === "javascript";
+  return scheme !== undefined && policy.browser.deniedResourceSchemes.includes(scheme);
 }
 
 // --- Local-file `<img>` support (opt-in; see localFileSettings + ADR 0019) ---
 // The sanitizer strips a `file:`/absolute-path `src`, so a raw-HTML `<img>` pointing
 // at a local file loses its src. When the user has opted in, the app matches the
 // sanitized `<img>` elements (in document order) back to these scanned paths and
-// swaps in a blob URL read over the gated IPC. Pure/string-only so it's unit-tested.
-
-const IMG_RE = /<img\b[^>]*>/gi;
-const SRC_RE = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+// swaps in a blob URL read over the gated IPC. The paths are projected from the same inert DOM used for sanitizing.
 
 /** True if `src` is a local filesystem path (not a web / data / blob URL). */
 function isLocalSrc(src: string): boolean {
@@ -88,40 +78,52 @@ export function localImagePath(src: string): string | null {
   return p;
 }
 
-/** For each `<img>` in `text` (document order), its local filesystem path, or null
- *  for a web/data/blob/relative src. Aligns 1:1 with the `<img>` elements the
- *  sanitized HTML yields — `img` is allowlisted, so every one survives sanitizing. */
-export function rawHtmlLocalImages(text: string): (string | null)[] {
-  const out: (string | null)[] = [];
-  for (const m of text.matchAll(IMG_RE)) {
-    const s = SRC_RE.exec(m[0]);
-    const src = s ? (s[1] ?? s[2] ?? s[3] ?? "") : "";
-    out.push(src ? localImagePath(src) : null);
-  }
-  return out;
-}
+export interface HtmlIframe { src: string; width?: string; height?: string }
+export interface HtmlPresentation { html: string; localImages: (string | null)[]; iframe: HtmlIframe | null }
 
-/** Sanitize a raw-HTML fragment down to {@link RAW_HTML_TAGS}/{@link RAW_HTML_ATTRS}.
- *  Returns a safe HTML string for `innerHTML`. Everything outside the allowlist
- *  (tags, attributes, `javascript:`/`data:text` URIs) is stripped; the text
- *  content of stripped elements is preserved where DOMPurify preserves it. */
-export function sanitizeRawHtml(html: string): string {
-  const clean = DOMPurify.sanitize(html, {
+/** Raw HTML presentation owner: parse once in an inert DOM, optionally select
+ * the sandboxed HTTP(S) iframe, otherwise sanitize in place. Local image paths
+ * align with surviving sanitized images, including removed ancestor subtrees.
+ * O(fragment bytes/nodes); no IPC, fetching, shared hooks or retained DOM cache.
+ * Browser and native export security policies stay distinct in the shared JSON.
+ */
+export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPresentation {
+  const root = document.implementation.createHTMLDocument("").createElement("div");
+  root.innerHTML = text;
+  const frame = allowIframe ? root.querySelector("iframe") : null;
+  const src = frame?.getAttribute("src");
+  if (frame && src && /^https?:\/\//i.test(src)) {
+    const dimension = (name: "width" | "height") => {
+      const attr = /^(\d+px|\d+%|\d+)/i.exec(frame.getAttribute(name) ?? "")?.[1];
+      const style = frame.style.getPropertyValue(name);
+      return attr ?? (/^\d+(?:px|%)$/i.test(style) ? style : undefined);
+    };
+    return { html: "", localImages: [], iframe: { src, width: dimension("width"), height: dimension("height") } };
+  }
+  const paths = new WeakMap<Element, string | null>();
+  for (const image of root.querySelectorAll("img")) paths.set(image, localImagePath(image.getAttribute("src") ?? ""));
+  DOMPurify.sanitize(root, {
     ALLOWED_TAGS: RAW_HTML_TAGS,
     ALLOWED_ATTR: RAW_HTML_ATTRS,
     ALLOW_DATA_ATTR: false,
+    IN_PLACE: true,
   });
-
-  // Work on DOMPurify's already-safe output so entity/whitespace-obfuscated
-  // schemes are compared as the browser will interpret them, without installing
-  // a process-global DOMPurify hook shared with the editor's paste sanitizer.
-  const template = document.createElement("template");
-  template.innerHTML = clean;
-  for (const element of template.content.querySelectorAll<HTMLElement>("[src], [poster]")) {
+  for (const element of root.querySelectorAll<HTMLElement>("[src], [poster]")) {
     for (const attr of ["src", "poster"] as const) {
       const value = element.getAttribute(attr);
       if (value !== null && hasDeniedResourceScheme(value)) element.removeAttribute(attr);
     }
   }
-  return template.innerHTML;
+  return { html: root.innerHTML, localImages: [...root.querySelectorAll("img")].map((image) => paths.get(image) ?? null), iframe: null };
+}
+
+/** Paths for exactly the sanitized image sequence, derived by the same DOM
+ * owner as presentation (no source regex). O(fragment bytes/nodes). */
+export function rawHtmlLocalImages(text: string): (string | null)[] {
+  return rawHtmlPresentation(text).localImages;
+}
+
+/** Safe HTML insertion string, without iframe dispatch. O(fragment bytes/nodes). */
+export function sanitizeRawHtml(html: string): string {
+  return rawHtmlPresentation(html).html;
 }

@@ -1,0 +1,14 @@
+{
+  "comment": "Property key normalisation golden (I-12). Rust: tine_core::doc::property_key_norm (authoritative: trim, ASCII lowercase, space and underscore to hyphen). TS: render/block.ts propertyKeyNorm and components/legacyQueryTable.ts columnKey (which first drops one leading colon). Both suites read this file.",
+  "cases": [
+    ["Foo Bar", "foo-bar"],
+    ["FOO_BAR", "foo-bar"],
+    ["  Key  ", "key"],
+    ["a b_c-d", "a-b-c-d"],
+    ["query-sort-by", "query-sort-by"],
+    ["Étude", "Étude"],
+    ["İx", "İx"],
+    ["ÄÖ_X", "ÄÖ-x"],
+    ["", ""]
+  ]
+}

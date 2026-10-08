@@ -1,6 +1,6 @@
 import { createMemo, type Accessor } from "solid-js";
-import { dataRev } from "../ui";
-import { doc, formatForBlock, pageByName, type Node as StoreNode } from "../store";
+import { dataRev } from "../graphSession";
+import { formatForBlock, pageByName, type Node as StoreNode, node as docNode } from "../document";
 import { facetsFromDto, facetsOf } from "../render/facets";
 import { evaluate, parseFormula, type Ast, type FormulaValue, type ParseResult } from "./formula";
 import {
@@ -14,13 +14,16 @@ import {
 import { isPlainDecimalNumber, isoDatePrefix } from "./typed";
 import { fieldValueFromFacets, readField, type FieldId, type FieldValue } from "./fields";
 import type { BlockDto, PageKind } from "../types";
-import { appNow } from "../journal";
 
+import { appNow } from "../journal";
 export interface FormulaEvalRow {
   id: string;
   page: string;
   kind?: PageKind;
   dto?: BlockDto;
+  /** Evaluate from `dto` only, never the live document store: the static export
+   *  computes a page it may not have loaded, and must not read a different one. */
+  detached?: boolean;
 }
 
 export function formulaRowKey(row: Pick<FormulaEvalRow, "id" | "page" | "kind">): string {
@@ -28,7 +31,8 @@ export function formulaRowKey(row: Pick<FormulaEvalRow, "id" | "page" | "kind">)
 }
 
 export function liveFormulaRowNode(row: FormulaEvalRow): StoreNode | null {
-  const node = doc.byId[row.id];
+  if (row.detached) return null;
+  const node = docNode(row.id);
   if (!node || node.page !== row.page) return null;
   if (row.kind && pageByName(row.page)?.kind !== row.kind) return null;
   return node;
@@ -91,8 +95,7 @@ export function fieldValueToFormulaValue(field: FieldId, value: FieldValue | nul
   if (field === "tags") {
     return {
       kind: "list",
-      values: (value.raw ?? value.text)
-        .split(/\s+/)
+      values: (value.items ?? (value.raw ?? value.text).split(/\s+/))
         .map((tag) => tag.trim())
         .filter(Boolean)
         .map(textValue),
@@ -168,35 +171,84 @@ function observeFormulaRow(row: FormulaEvalRow): void {
   }
 }
 
+/** Every formula value for every row: O(rows x formulas). The ONE evaluator loop
+ *  for the live tables/boards and the static export; `onEvaluate` counts cells. */
+export function computeFormulaResults(
+  rows: readonly FormulaEvalRow[],
+  formulas: ReadonlyMap<string, string>,
+  now: Date,
+  onEvaluate?: () => void
+): { results: Map<string, FormulaValue>; evaluations: number } {
+  const names = [...formulas.keys()];
+  const results = new Map<string, FormulaValue>();
+  let evaluations = 0;
+  for (const row of rows) {
+    observeFormulaRow(row);
+    for (const name of names) {
+      evaluations += 1;
+      onEvaluate?.();
+      results.set(formulaResultKey(row, name), evaluateFormulaForRow(row, name, formulas, now));
+    }
+  }
+  return { results, evaluations };
+}
+
 export function createFormulaResultsMemo(opts: FormulaResultsOptions): Accessor<ReadonlyMap<string, FormulaValue>> {
   let warned = false;
   return createMemo(() => {
     dataRev();
-    const rows = opts.rows();
-    const formulas = opts.formulas();
-    const names = [...formulas.keys()];
-    const now = opts.now?.() ?? appNow();
-    const out = new Map<string, FormulaValue>();
-    let evaluations = 0;
-
-    for (const row of rows) {
-      observeFormulaRow(row);
-      for (const name of names) {
-        evaluations += 1;
-        opts.onEvaluate?.();
-        out.set(formulaResultKey(row, name), evaluateFormulaForRow(row, name, formulas, now));
-      }
-    }
-
+    const { results, evaluations } = computeFormulaResults(
+      opts.rows(),
+      opts.formulas(),
+      opts.now?.() ?? appNow(),
+      opts.onEvaluate
+    );
     const threshold = opts.warnThreshold ?? DEFAULT_EVAL_WARN_THRESHOLD;
     if (evaluations > threshold && !warned) {
       warned = true;
-      console.warn(
-        `SheetTable ${opts.ownerId ?? ""} evaluated ${evaluations} formula cells in one render pass; consider reducing rows or formula columns.`
-      );
+      console.warn("SheetTable evaluated many formula cells in one render pass");
     }
-    return out;
+    return results;
   });
+}
+
+/** The rows a `tine.filter` keeps, or the filter's error with every row kept.
+ *  Cost O(rows x expression); the ONE filter answer for the live tables/boards
+ *  and the static export. */
+export function filterFormulaRows<T extends FormulaEvalRow>(
+  rows: readonly T[],
+  expr: string | null,
+  formulas: ReadonlyMap<string, string>,
+  now: Date,
+  ownerId?: string
+): FormulaFilterState<T> {
+  const source = expr?.trim() ?? "";
+  if (!source) return { rows, error: null };
+
+  const parsed = parseCached(source);
+  if (!parsed.ok) {
+    return {
+      rows,
+      error: `Filter parse error at ${parsed.error.offset}: ${parsed.error.message}`,
+    };
+  }
+
+  const kept: T[] = [];
+  for (const row of rows) {
+    observeFormulaRow(row);
+    const value = evaluateAstForRow(row, parsed.ast, formulas, now);
+    if (value.kind === "boolean") {
+      if (value.value) kept.push(row);
+      continue;
+    }
+    const detail = value.kind === "error" ? value.message : `returned ${value.kind}`;
+    return {
+      rows,
+      error: `Filter disabled${ownerId ? ` for ${ownerId}` : ""}: ${detail}`,
+    };
+  }
+
+  return { rows: kept, error: null };
 }
 
 export function createFormulaFilterMemo<T extends FormulaEvalRow>(
@@ -204,36 +256,7 @@ export function createFormulaFilterMemo<T extends FormulaEvalRow>(
 ): Accessor<FormulaFilterState<T>> {
   return createMemo(() => {
     dataRev();
-    const rows = opts.rows();
-    const expr = opts.filter()?.trim() ?? "";
-    if (!expr) return { rows, error: null };
-
-    const parsed = parseCached(expr);
-    if (!parsed.ok) {
-      return {
-        rows,
-        error: `Filter parse error at ${parsed.error.offset}: ${parsed.error.message}`,
-      };
-    }
-
-    const formulas = opts.formulas();
-    const now = opts.now?.() ?? appNow();
-    const kept: T[] = [];
-    for (const row of rows) {
-      observeFormulaRow(row);
-      const value = evaluateAstForRow(row, parsed.ast, formulas, now);
-      if (value.kind === "boolean") {
-        if (value.value) kept.push(row);
-        continue;
-      }
-      const detail = value.kind === "error" ? value.message : `returned ${value.kind}`;
-      return {
-        rows,
-        error: `Filter disabled${opts.ownerId ? ` for ${opts.ownerId}` : ""}: ${detail}`,
-      };
-    }
-
-    return { rows: kept, error: null };
+    return filterFormulaRows(opts.rows(), opts.filter(), opts.formulas(), opts.now?.() ?? appNow(), opts.ownerId);
   });
 }
 

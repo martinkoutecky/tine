@@ -20,8 +20,8 @@ use gtk::{
     prelude::WidgetExt,
 };
 
-const APP_ID: &str = "page.tine.Tine";
-const DESKTOP_FILE: &str = "page.tine.Tine.desktop";
+use crate::app_identity::{APP_IDENTIFIER as APP_ID, PRODUCT_NAME};
+const DESKTOP_FILE: &str = concat!(env!("TINE_APP_IDENTIFIER"), ".desktop");
 const MANAGED_MARKER: &str = "X-Tine-Managed=true";
 
 const ICONS: &[(&str, &[u8])] = &[
@@ -62,11 +62,12 @@ fn desktop_entry(executable: &Path) -> String {
     format!(
         "[Desktop Entry]\n\
 Type=Application\n\
-Name=Tine\n\
+Name={PRODUCT_NAME}\n\
 GenericName=Outliner\n\
 Comment=Fast, local-first Logseq-compatible outliner\n\
 Exec={} %U\n\
 Icon={APP_ID}\n\
+MimeType=x-scheme-handler/tine;\n\
 Terminal=false\n\
 Categories=Office;Utility;\n\
 Keywords=outliner;logseq;markdown;notes;org;journal;\n\
@@ -89,24 +90,16 @@ fn atomic_write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("tine-identity");
-    // Standard atomic-publish shape (DUP-5): a per-write unique temp
-    // (pid + sequence, create_new) so two concurrent installs in one process
-    // can't truncate each other's temp mid-write, and a directory fsync so the
-    // rename survives a crash (unsupported-here outcomes tolerated, real
-    // errors reported — same policy as the save path).
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let temporary = parent.join(format!(".{file_name}.{}.{seq}.tmp", std::process::id()));
+    let temporary = parent.join(format!(".{file_name}.tmp-{}", std::process::id()));
     let result = (|| {
         let mut file = fs::OpenOptions::new()
-            .create_new(true)
+            .create(true)
+            .truncate(true)
             .write(true)
             .open(&temporary)?;
         file.write_all(bytes)?;
         file.sync_all()?;
-        fs::rename(&temporary, path)?;
-        tine_core::model::sync_dir_for_rename(parent)
+        fs::rename(&temporary, path)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
@@ -152,13 +145,25 @@ fn install_into(
             bytes,
         )?;
     }
-    atomic_write_if_changed(&desktop_path, desktop_entry(executable).as_bytes())?;
+    let mut entry = desktop_entry(executable);
+    // Tauri's deb/rpm desktop basename is the product name, whereas Wayland
+    // resolves our window app ID. Keep the lookup entry but only show the
+    // package's launcher in the app grid (GH #626). Also updates older managed
+    // entries; a later unpackaged run restores their visible launcher.
+    if system_data_dirs.iter().any(|base| {
+        base.join("applications")
+            .join(format!("{PRODUCT_NAME}.desktop"))
+            .is_file()
+    }) {
+        entry.push_str("NoDisplay=true\n");
+    }
+    atomic_write_if_changed(&desktop_path, entry.as_bytes())?;
     Ok(InstallOutcome::Installed)
 }
 
 /// Make the desktop-entry/icon lookup available for unpackaged release binaries
-/// before the first Wayland window is mapped. Packages already provide these
-/// files and user-managed entries are never overwritten.
+/// before the first Wayland window is mapped. Product-named package launchers
+/// keep the app-ID lookup entry hidden; user-managed entries are never overwritten.
 pub(crate) fn install_desktop_identity() {
     if cfg!(debug_assertions)
         || env::var_os("FLATPAK_ID").is_some()
@@ -188,7 +193,10 @@ pub(crate) fn install_desktop_identity() {
         return;
     };
     if let Err(error) = install_into(&data_home, &system_data_dirs, &executable) {
-        crate::debug::diag(format!("could not install Linux desktop identity: {error}"));
+        crate::debug::diag_private(
+            "linux-desktop-identity-failed",
+            format!("could not install Linux desktop identity: {error}"),
+        );
     }
 }
 
@@ -292,12 +300,14 @@ mod tests {
         let desktop = fs::read_to_string(
             data_home
                 .join("applications")
-                .join("page.tine.Tine.desktop"),
+                .join(format!("{APP_ID}.desktop")),
         )
         .unwrap();
         assert!(desktop.contains("Exec=\"/opt/Tine Builds/tine%%preview\" %U"));
-        assert!(desktop.contains("Icon=page.tine.Tine"));
-        assert!(desktop.contains("StartupWMClass=page.tine.Tine"));
+        assert!(desktop.contains("MimeType=x-scheme-handler/tine;\n"));
+        assert!(desktop.contains(&format!("Name={PRODUCT_NAME}\n")));
+        assert!(desktop.contains(&format!("Icon={APP_ID}\n")));
+        assert!(desktop.contains(&format!("StartupWMClass={APP_ID}\n")));
         assert!(desktop.contains(MANAGED_MARKER));
         for (size, bytes) in ICONS {
             assert_eq!(
@@ -305,7 +315,7 @@ mod tests {
                     data_home
                         .join("icons/hicolor")
                         .join(size)
-                        .join("apps/page.tine.Tine.png")
+                        .join(format!("apps/{APP_ID}.png"))
                 )
                 .unwrap(),
                 *bytes
@@ -364,6 +374,55 @@ mod tests {
             InstallOutcome::PackagedEntry
         );
         assert!(!data_home.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn product_named_package_keeps_one_visible_launcher() {
+        let root = temp_root("product-package");
+        let data_home = root.join("user");
+        let system_home = root.join("system");
+        let packaged = system_home
+            .join("applications")
+            .join(format!("{PRODUCT_NAME}.desktop"));
+        fs::create_dir_all(packaged.parent().unwrap()).unwrap();
+        let package_entry = format!("[Desktop Entry]\nName={PRODUCT_NAME}\nExec=tine\n");
+        fs::write(&packaged, &package_entry).unwrap();
+        // Covers an upgrade after an earlier raw/packaged run already published
+        // the managed app-ID launcher, as well as the first packaged launch.
+        for existing in [false, true] {
+            if existing {
+                fs::write(
+                    data_home.join("applications").join(DESKTOP_FILE),
+                    desktop_entry(Path::new("/old/tine")),
+                )
+                .unwrap();
+            }
+            install_into(
+                &data_home,
+                &[system_home.clone()],
+                Path::new("/usr/bin/tine"),
+            )
+            .unwrap();
+            let alias =
+                fs::read_to_string(data_home.join("applications").join(DESKTOP_FILE)).unwrap();
+            assert!(
+                alias.lines().any(|line| line == "NoDisplay=true"),
+                "GH #626: packaged and managed entries must not both appear in the app grid"
+            );
+            assert!(
+                alias.contains(&format!("Icon={APP_ID}\n")),
+                "Wayland app-ID lookup must retain its icon"
+            );
+            assert_eq!(fs::read_to_string(&packaged).unwrap(), package_entry);
+        }
+        fs::remove_file(&packaged).unwrap();
+        install_into(&data_home, &[], Path::new("/opt/tine")).unwrap();
+        assert!(
+            !fs::read_to_string(data_home.join("applications").join(DESKTOP_FILE))
+                .unwrap()
+                .contains("NoDisplay=true")
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

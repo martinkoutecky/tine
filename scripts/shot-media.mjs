@@ -1,4 +1,3 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Screenshots for the media features:
 //   audio-overlay.png      — the expanded audio player (waveform + skip controls)
 //   asset-name-setting.png — Settings → Backups → "Asset names" format field
@@ -7,7 +6,7 @@ import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // the in-app "Expand" button never appears in the mock.
 //
 // Usage:  source scripts/env.sh && npm run build && node scripts/shot-media.mjs
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -47,9 +46,16 @@ function makeWavDataUrl({ seconds = 5, rate = 16000 } = {}) {
 
 const PORT = 5198;
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+async function waitForServer(url, tries = 60) {
+  for (let i = 0; i < tries; i++) {
+    try { if ((await fetch(url)).ok) return; } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 const errors = [];
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 60, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({ args: ["--no-sandbox", "--autoplay-policy=no-user-gesture-required"] });
 
   // --- 1. Audio overlay (open the expanded player) -----------------------

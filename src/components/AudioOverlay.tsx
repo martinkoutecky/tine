@@ -8,15 +8,13 @@
 import { For, Show, createEffect, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { audioPlayer, setAudioPlayer } from "../ui";
 import { backend, isTauri } from "../backend";
+import { graphOwner, latestOwner, readOwned } from "../owned";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { registerTransientLayer } from "../transientLayers";
+import { reportUiFailure } from "../uiFailure";
 import { readOr } from "../resourceRead";
-
-/** Bare `assets/`-relative path of a media URL (mirrors inline.tsx's helper). */
-function relOf(url: string): string | null {
-  const i = url.indexOf("assets/");
-  return i === -1 ? null : url.slice(i + "assets/".length);
-}
+import { assetRelPath } from "../render/inline";
+import { mime_from_path } from "../render/wasm/lsdoc_wasm";
 const isExternal = (u: string) => /^(https?:|data:|blob:)/.test(u);
 
 function fmtTime(t: number): string {
@@ -61,28 +59,34 @@ function drawWave(canvas: HTMLCanvasElement | undefined, progress: number): void
   ctx.fillRect(Math.min(cssW - 2, p * cssW), 2, 2, cssH - 4);
 }
 
+/** Play the selected stream, acquiring a bounded blob only if streaming fails.
+ * Failed fallback or playback shows fixed text; stale reads are ignored. */
 export function AudioOverlay(): JSX.Element {
+  let alive = true;
+  onCleanup(() => { alive = false; });
   // Resolve to a range-aware native URL for graph assets (same path as the inline
   // embed), or the direct URL for external/http audio.
   const [srcResource] = createResource(
     () => audioPlayer()?.url ?? null,
     async (u) => {
       if (isExternal(u)) return u;
-      const r = relOf(u);
-      return r ? await backend().streamAsset(r) : "";
+      const r = assetRelPath(u);
+      if (!r) return "";
+      const result = await readOwned(graphOwner(() => alive && audioPlayer()?.url === u), backend().streamAsset(r));
+      return result.kind === "current" ? result.value : "";
     }
   );
-  const [blobFallback, setBlobFallback] = createSignal("");
   // A stream that fails leaves no src; the blob fallback below is exactly the
   // path that already handles "this element could not get a source".
   const src = () => readOr(srcResource, undefined, "overlay audio asset");
+  const [blobFallback, setBlobFallback] = createSignal("");
   const resolvedSrc = () => blobFallback() || src();
   let tryingBlobFallback = false;
   let blobLease: MediaBlobLease | null = null;
   let fallbackAbort: AbortController | null = null;
-  let fallbackGeneration = 0;
+  const fallbackScope = {};
   const releaseBlobFallback = () => {
-    fallbackGeneration += 1;
+    latestOwner(fallbackScope, "blob");
     fallbackAbort?.abort();
     fallbackAbort = null;
     blobLease?.release();
@@ -93,35 +97,31 @@ export function AudioOverlay(): JSX.Element {
   const retryAsBoundedBlob = () => {
     const u = audioPlayer()?.url;
     if (!u || isExternal(u) || tryingBlobFallback || blobFallback()) return;
-    const rel = relOf(u);
+    const rel = assetRelPath(u);
     if (!rel) return;
     tryingBlobFallback = true;
-    const generation = fallbackGeneration;
+    const owner = latestOwner(fallbackScope, "blob", graphOwner(() => alive && audioPlayer()?.url === u));
     const abort = new AbortController();
     fallbackAbort = abort;
-    const ext = rel.split(".").pop()?.toLowerCase();
-    const mime = ext === "mp3" || ext === "mpeg" ? "audio/mpeg" :
-      ext === "m4a" || ext === "aac" ? "audio/mp4" :
-      ext === "wav" ? "audio/wav" :
-      ext === "ogg" || ext === "oga" ? "audio/ogg" :
-      ext === "opus" ? "audio/opus" :
-      ext === "flac" ? "audio/flac" : "application/octet-stream";
-    void acquireMediaBlobFallback(rel, "audio", mime, abort.signal).then((lease) => {
-      if (generation !== fallbackGeneration || audioPlayer()?.url !== u) {
+    void acquireMediaBlobFallback(rel, "audio", mime_from_path(rel), abort.signal).then((lease) => {
+      if (!owner()) {
         lease.release();
         return;
       }
       blobLease = lease;
       setBlobFallback(lease.url);
-    }).catch(() => {});
+    }).catch((error) => { if (owner()) reportUiFailure("audio-load", error); });
   };
   onCleanup(releaseBlobFallback);
 
   // The component is app-lifetime mounted; closing the inner Show or switching
   // tracks must explicitly end the old fallback lease and invalidate late reads.
+  let cancelScrub = () => {};
+  onCleanup(() => cancelScrub());
   let activeUrl: string | null = null;
   createEffect(() => {
     const next = audioPlayer()?.url ?? null;
+    cancelScrub();
     if (next === activeUrl) return;
     activeUrl = next;
     releaseBlobFallback();
@@ -150,7 +150,7 @@ export function AudioOverlay(): JSX.Element {
   });
   const togglePlay = () => {
     if (!audioEl) return;
-    if (audioEl.paused) void audioEl.play().catch(() => {});
+    if (audioEl.paused) void audioEl.play().catch((error) => reportUiFailure("audio-play", error));
     else audioEl.pause();
   };
   const skip = (d: number) => {
@@ -196,9 +196,9 @@ export function AudioOverlay(): JSX.Element {
   createEffect(() => {
     if (!audioPlayer()) return;
     const redraw = () => drawWave(canvasEl, dur() ? cur() / dur() : 0);
-    requestAnimationFrame(redraw);
+    const frame = requestAnimationFrame(redraw);
     window.addEventListener("resize", redraw);
-    onCleanup(() => window.removeEventListener("resize", redraw));
+    onCleanup(() => { cancelAnimationFrame(frame); window.removeEventListener("resize", redraw); });
   });
 
   // Smooth playhead while playing (timeupdate alone fires only ~4×/s).
@@ -210,19 +210,31 @@ export function AudioOverlay(): JSX.Element {
   onCleanup(() => cancelAnimationFrame(raf));
 
   const onWavePointer = (e: PointerEvent) => {
-    const c = canvasEl;
-    if (!c) return;
+    const c = canvasEl, track = audioPlayer(), audio = audioEl;
+    if (!c || !track || !audio) return;
+    cancelScrub();
     e.preventDefault();
+    const owner = graphOwner(() => alive && audioPlayer() === track && audioEl === audio);
     const r = c.getBoundingClientRect();
-    const at = (x: number) => seekTo((x - r.left) / r.width);
-    at(e.clientX);
-    const onMove = (me: PointerEvent) => at(me.clientX);
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
+    const at = (x: number) => {
+      if (!owner()) { cancel(); return; }
+      seekTo((x - r.left) / r.width);
     };
+    const onMove = (next: PointerEvent) => { if (next.pointerId === e.pointerId) at(next.clientX); };
+    const end = (next: PointerEvent) => { if (next.pointerId === e.pointerId) cancel(); };
+    const cancel = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      c.removeEventListener("lostpointercapture", end);
+      if (cancelScrub === cancel) cancelScrub = () => {};
+    };
+    cancelScrub = cancel;
+    at(e.clientX);
     window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    c.addEventListener("lostpointercapture", end);
   };
 
   return (

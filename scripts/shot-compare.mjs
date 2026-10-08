@@ -1,6 +1,6 @@
 // Screenshot sections of website/compare.html (static file) to check the plugin
 // pills + query wording.
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { pathToFileURL } from "node:url";
 
 const src = process.argv[2] || new URL("../website/compare.html", import.meta.url).pathname;

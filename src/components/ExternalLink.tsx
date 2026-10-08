@@ -1,39 +1,27 @@
 import type { JSX } from "solid-js";
 import { backend } from "../backend";
-import { pushToast } from "../ui";
-import type { SpanDomAttrs } from "../render/spans";
-
-export interface ExternalLinkProps {
-  dest: string;
-  class?: string;
-  target?: string;
-  rel?: string;
-  attrs?: SpanDomAttrs;
-  open?: () => Promise<unknown> | unknown;
-  children: JSX.Element;
-}
+import { pushToast } from "../toasts";
+import { graphOwner, readOwned } from "../owned";
 
 /**
- * The single outbound-link boundary for graph-authored content.
- *
- * The href stays present for ordinary presentation and copy affordances, but
- * navigation is always prevented and routed through the native boundary. That
- * boundary owns the file/http(s)/mailto scheme allowlist; components must not
- * grow a second scheme parser.
+ * An outbound link in graph-authored content (master b61bb9d25303, I-22).
+ * The href stays for presentation and copying, but the click never navigates
+ * the WebView: it goes to the native opener, which owns the scheme allowlist,
+ * and a refused or failed open is shown to the user while the graph that
+ * showed the link is still bound.
  */
-export function ExternalLink(props: ExternalLinkProps): JSX.Element {
+export function ExternalLink(props: { dest: string; class?: string; children: JSX.Element }): JSX.Element {
   return (
     <a
       class={props.class ?? "external-link"}
       href={props.dest}
-      target={props.target}
-      rel={props.rel}
-      {...(props.attrs ?? {})}
+      target="_blank"
+      rel="noreferrer"
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        const opened = props.open?.() ?? backend().openExternal(props.dest);
-        void Promise.resolve(opened).catch((error) => reportLinkOpenFailure(props.dest, error));
+        void readOwned(graphOwner(), backend().openExternal(props.dest))
+          .catch((error) => reportLinkOpenFailure(props.dest, error));
       }}
     >
       {props.children}
@@ -41,7 +29,9 @@ export function ExternalLink(props: ExternalLinkProps): JSX.Element {
   );
 }
 
-/** Make every refused/failed outbound action visible to the initiating user. */
+/** Every refused or failed outbound open is shown to the initiating user: a
+ *  refused scheme, a missing file and a platform with no file manager otherwise
+ *  all look like a dead link (GH #444, master c817fb150). */
 export function reportLinkOpenFailure(dest: string, error: unknown): void {
   pushToast(`Couldn't open ${dest}. (${String(error)})`, "error");
 }

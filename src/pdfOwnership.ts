@@ -1,5 +1,3 @@
-import { createSignal } from "solid-js";
-
 /**
  * Window-local authority for graph-scoped PDF work.
  *
@@ -19,8 +17,7 @@ interface PdfParticipant {
 }
 
 let generation = 0;
-const [currentPdfOwnership, setCurrentPdfOwnership] = createSignal<PdfOwnership | null>(null);
-export { currentPdfOwnership };
+let current: PdfOwnership | null = null;
 const participants = new Map<number, Set<PdfParticipant>>();
 const mutations = new Map<number, Set<Promise<boolean>>>();
 
@@ -32,13 +29,15 @@ export class StalePdfOwnershipError extends Error {
 }
 
 export function activatePdfOwnership(graphRoot: string): PdfOwnership {
-  const owner = Object.freeze({ graphRoot, generation: ++generation });
-  setCurrentPdfOwnership(owner);
-  return owner;
+  current = Object.freeze({ graphRoot, generation: ++generation });
+  return current;
+}
+
+export function currentPdfOwnership(): PdfOwnership | null {
+  return current;
 }
 
 export function isPdfOwnershipCurrent(owner: PdfOwnership): boolean {
-  const current = currentPdfOwnership();
   return current?.generation === owner.generation && current.graphRoot === owner.graphRoot;
 }
 
@@ -100,7 +99,7 @@ export function trackPdfMutation<T>(owner: PdfOwnership, operation: () => Promis
  * active so graph switch/safe-close can follow their established abort policy.
  */
 export async function drainPdfWork(): Promise<boolean> {
-  const owner = currentPdfOwnership();
+  const owner = current;
   if (!owner) return true;
 
   const flushes = [...(participants.get(owner.generation) ?? [])]
@@ -121,9 +120,9 @@ export async function drainPdfWork(): Promise<boolean> {
 
 /** Invalidate first, then synchronously cancel every callback/task it owned. */
 export function retirePdfOwnership(): void {
-  const owner = currentPdfOwnership();
+  const owner = current;
   if (!owner) return;
-  setCurrentPdfOwnership(null);
+  current = null;
   const owned = [...(participants.get(owner.generation) ?? [])];
   participants.delete(owner.generation);
   for (const participant of owned) {
@@ -139,7 +138,7 @@ export function retirePdfOwnership(): void {
 /** Test-only state reset; production graph transitions use retire/activate. */
 export function resetPdfOwnershipForTest(): void {
   retirePdfOwnership();
-  setCurrentPdfOwnership(null);
+  current = null;
   participants.clear();
   mutations.clear();
   generation = 0;

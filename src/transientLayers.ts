@@ -1,15 +1,9 @@
-/** One dismissal stack for transient UI.  ACTIVATION order, rather than DOM
- * listener order or registration sequence, is the authority for Escape and
- * Android Back: every layer carries a monotonic `token` re-bumped whenever a
- * `focusin`/`pointerdown` lands inside its own root, or when
- * `activateTransientLayer` is called, and `topTransientLayer` ranks by that
- * token (through the semantic parent forest).  An older layer the user just
- * touched therefore outranks a newer one they have not — which is what a user
- * means by "the thing on top".  Pinned by
- * `transientRegistry.p1d1.lifecycle.test.tsx`.
+/** One dismissal stack for transient UI.  Registration order, rather than DOM
+ * listener order, is the authority for Escape and Android Back.
  *
  * "The user pressed outside" is a different question from Escape/Back, and
- * `dismissOnOutsidePointer` below is its one producer for the whole app. */
+ * `dismissOnOutsidePointer` below is its one producer for the whole app
+ * (GH #472, master 8198daf34). */
 import { createEffect, onCleanup } from "solid-js";
 
 export type TransientDismissReason = "escape" | "back" | "explicit";
@@ -61,53 +55,6 @@ export function registerTransientLayer(layer: TransientLayer): () => void {
     }
     if (layers.get(layer.id) === entry) layers.delete(layer.id);
   };
-}
-
-/** Close a popover when a pointer goes down outside it.
- *
- * The registry above answers Escape and Android Back.  "The user pressed
- * somewhere else" is a SEPARATE question, and this is its one producer — call
- * it, never hand-roll another capture listener.  GH #472 is what the hand-rolled
- * version costs: the Query Builder had this effect copied into two of its four
- * popovers, so a clause menu stayed open while the user clicked away and edited
- * a different block, while the sort popover beside it closed correctly.
- *
- * `inside` lists what does NOT count as outside.  It must include the trigger as
- * well as the popover root: a press on the trigger of an open popover has to
- * reach the trigger's own toggle, rather than being closed here and immediately
- * reopened by the click that follows.  It is read per event, so a portalled root
- * looked up by id is fine.
- *
- * Both `pointerdown` and `mousedown` are observed in the CAPTURE phase: touch
- * and pen deliver the first, synthesized and compatibility paths sometimes only
- * the second, and these popovers sit inside surfaces that stop propagation.
- * Dismissing twice is harmless — the effect tears its listeners down as soon as
- * `open` goes false. */
-export function dismissOnOutsidePointer(options: {
-  open: () => boolean;
-  inside: () => (HTMLElement | null | undefined)[];
-  dismiss: () => void;
-}): void {
-  createEffect(() => {
-    if (!options.open()) return;
-    if (typeof document === "undefined" || typeof document.addEventListener !== "function") return;
-    const onDown = (event: Event) => {
-      const target = event.target;
-      for (const element of options.inside()) {
-        if (element && containsEventTarget(element, target)) return;
-      }
-      options.dismiss();
-    };
-    for (const type of ["pointerdown", "mousedown"] as const) {
-      document.addEventListener(type, onDown, true);
-      onCleanup(() => document.removeEventListener(type, onDown, true));
-    }
-  });
-}
-
-export function activateTransientLayer(id: string) {
-  const layer = layers.get(id);
-  if (layer) layer.token = ++serial;
 }
 
 export function topTransientLayer(): Entry | undefined {
@@ -232,4 +179,45 @@ function restoreAfterTransientDismissal(top: Entry) {
 export function clearTransientLayersForTest() {
   layers.clear();
   serial = 0;
+}
+
+/** Close a popover when a pointer goes down outside it.
+ *
+ * The registry above answers Escape and Android Back.  "The user pressed
+ * somewhere else" is a SEPARATE question, and this is its one producer — call
+ * it, never hand-roll another capture listener.  GH #472 is what the hand-rolled
+ * version costs: a popover that forgot it stayed open while the user clicked
+ * away, while the one beside it closed.
+ *
+ * `inside` lists what does NOT count as outside.  It must include the trigger as
+ * well as the popover root: a press on the trigger of an open popover has to
+ * reach the trigger's own toggle, rather than being closed here and immediately
+ * reopened by the click that follows.  It is read per event, so a portalled root
+ * looked up by id is fine.
+ *
+ * Both `pointerdown` and `mousedown` are observed in the CAPTURE phase: touch
+ * and pen deliver the first, synthesized and compatibility paths sometimes only
+ * the second, and these popovers sit inside surfaces that stop propagation.
+ * Dismissing twice is harmless — the effect tears its listeners down as soon as
+ * `open` goes false. */
+export function dismissOnOutsidePointer(options: {
+  open: () => boolean;
+  inside: () => (HTMLElement | null | undefined)[];
+  dismiss: () => void;
+}): void {
+  createEffect(() => {
+    if (!options.open()) return;
+    if (typeof document === "undefined" || typeof document.addEventListener !== "function") return;
+    const onDown = (event: Event) => {
+      const target = event.target;
+      for (const element of options.inside()) {
+        if (element && containsEventTarget(element, target)) return;
+      }
+      options.dismiss();
+    };
+    for (const type of ["pointerdown", "mousedown"] as const) {
+      document.addEventListener(type, onDown, true);
+      onCleanup(() => document.removeEventListener(type, onDown, true));
+    }
+  });
 }

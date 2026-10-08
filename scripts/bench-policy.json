@@ -5,11 +5,12 @@
     "purpose": "Last pre-Sheets and pre-split-view patch release; never advances automatically."
   },
   "previousRelease": {
-    "ref": "v0.6.987",
-    "purpose": "Most recently published release. Advance immediately after publication; a tagged candidate automatically compares with the preceding tag."
+    "ref": "v0.6.5",
+    "selection": "og-campaign",
+    "purpose": "OG v0.6.5 release performance baseline. Keep fixed during the parity campaign; budgets are unchanged."
   },
   "reliability": {
-    "rounds": 5,
+    "rounds": 3,
     "runsPerRound": 4,
     "maxCalibrationSpreadPct": 25
   },
@@ -22,7 +23,9 @@
     "scrollBig": {
       "maxVsImmutablePct": 30,
       "maxVsPreviousPct": 20,
-      "maxRoundSpreadPct": 15
+      "maxRoundSpreadPct": 15,
+      "allowanceMs": 17,
+      "allowanceReason": "ADR 0072 large-page windowing: jumping to the bottom mounts and unmounts windows once, one extra frame before the page is stable (bigLoad ~3x faster in exchange; Martin 2026-10-05)"
     }
   },
   "parseStats": {

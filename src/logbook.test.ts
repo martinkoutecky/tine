@@ -10,6 +10,7 @@ describe("logbook wasm helpers", () => {
   it("summarizes stored CLOCK spans and exposes tooltip rows", () => {
     const info = logbookInfo(
       "DONE Ship\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00:00]--[2026-06-25 Thu 09:05:00] =>  00:05:00\nCLOCK: [2026-06-25 Thu 10:00:00]--[2026-06-25 Thu 10:30:45] =>  00:30:45\n:END:",
+      "md",
     );
     expect(info.seconds).toBe(35 * 60 + 45);
     expect(info.summary).toBe("35m45s");

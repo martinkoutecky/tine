@@ -1,12 +1,18 @@
 import { Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { graphOwner, readOwned } from "../owned";
 import { registerTransientLayer } from "../transientLayers";
 import type { JournalFile } from "../types";
 import { readOr } from "../resourceRead";
 
-/** One file of a duplicate journal day, shared by Settings and the in-page
- * Concord surface without pulling the complete Settings implementation into
- * the startup bundle. */
+// One file in a duplicate-day conflict. Click the name to reveal its full
+// contents; the action buttons let you reach and reconcile it (#21): Open
+// navigates to THIS specific file (editable, saves back to itself), Merge folds a
+// stray into the canonical day, Rename rescues it as a normal page, Trash removes
+// the redundant one (recoverable).
+/** Exported because the in-page conflict panel renders the same rows (master
+ *  9dc54e4a7): one renderer, not two that drift. `parentLayerId` attaches the
+ *  transient layers (content preview, rename box) to the hosting surface. */
 export function ConflictFileRow(props: {
   file: JournalFile;
   onOpen: () => void;
@@ -23,7 +29,17 @@ export function ConflictFileRow(props: {
   const [newName, setNewName] = createSignal("");
   const [contentResource] = createResource(
     () => (open() ? props.file.name : null),
-    async (name) => (name ? backend().readJournalFile(name).catch((e) => `(couldn’t read: ${String(e)})`) : "")
+    // Owned by the graph that listed the file: a switch empties the list, and
+    // a read landing after it shows nothing from the other graph.
+    async (name) => {
+      if (!name) return "";
+      try {
+        const read = await readOwned(graphOwner(), backend().readJournalFile(name));
+        return read.kind === "current" ? read.value : "";
+      } catch (e) {
+        return `(couldn’t read: ${String(e)})`;
+      }
+    }
   );
   // The fetcher already turns a read failure into readable text; this covers
   // the read itself, and says the same true thing rather than "(empty file)".
@@ -81,7 +97,9 @@ export function ConflictFileRow(props: {
           </button>
         </span>
       </div>
-      <div class="journal-conflict-preview">{props.file.preview}</div>
+      <div class="journal-conflict-preview">
+        {props.file.preview_error ? `Couldn't read this file: ${props.file.preview_error}` : props.file.preview}
+      </div>
       <Show when={renaming()}>
         <div ref={renameRoot} class="journal-conflict-rename">
           <input

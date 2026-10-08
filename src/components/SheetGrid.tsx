@@ -1,5 +1,7 @@
+import { sheetClickOffset, sheetCellMenu } from "../sheet/interactions";
+import { cellIsSelected, cellIsInLegacyRange } from "../sheet/selection";
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js";
-import { blockPageReadOnly, depthOf, doc, formatForBlock } from "../store";
+import { blockPageReadOnly, childIds, depthOf, formatForBlock, node as docNode } from "../document";
 import { AstBody } from "../render/body";
 import { visibleBody } from "../render/block";
 import { effectiveHeadingLevel, facetsOf } from "../render/facets";
@@ -16,16 +18,13 @@ import {
   cellOwner,
   cellSel,
   cellSurfaceKey,
-  aggregateFooterPinned,
   colSeamSel,
   growSheetEdge,
   rowSeamSel,
   registerSheetVisibilityHook,
   registerSheetViewAdapter,
   setCellSel,
-  setAggregateFooterPinned,
   startCellEditing,
-  toggleAggregateFooterPinned,
   type SheetSel,
 } from "../sheet/selection";
 import {
@@ -34,16 +33,15 @@ import {
   sheetGridIdFromEventTarget,
 } from "../sheet/pointerSelection";
 import { setColumnWidth } from "../sheet/mutations";
-import { editorOffsetFromRenderedRange } from "../render/spans";
 import { isSheetCellHidden, splitProps } from "../editor/properties";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { editingId, editingOwner, startEditing } from "../editorController";
-import { openSheetCellContextMenu, openSheetContextMenu } from "../ui";
+import { openSheetContextMenu } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
 import { Editor, SurfaceContext } from "./Block";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
-import { SheetAggregateCornerToggle, SheetAggregateFooterCell } from "./SheetAggregateFooter";
+import { SheetAggregateFooterCell, useSheetFooterCorner } from "./SheetAggregateFooter";
 import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
 
 const MAX_GRID_DEPTH = 5;
@@ -51,12 +49,12 @@ export const GRID_RENDER_PAGE = 200;
 export const GRID_RENDER_CELL_LIMIT = 2_000;
 
 function configForBlock(id: string) {
-  const node = doc.byId[id];
+  const node = docNode(id);
   return sheetConfig(node ? facetsOf(node.raw, formatForBlock(id)).properties : []);
 }
 
-function blockChildren(id: string): string[] {
-  return doc.byId[id]?.children ?? [];
+function blockChildren(id: string): readonly string[] {
+  return childIds(id);
 }
 
 function columnTracks(cols: number, widths: ReadonlyMap<number, number>, preview?: { col: number; px: number }, start = 0): string {
@@ -232,8 +230,12 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   const config = createMemo(() => configForBlock(props.id));
   const rowIds = createMemo(() => blockChildren(props.id));
   const hasAggregates = createMemo(() => config().colAggregates.size > 0);
-  const footerPinned = createMemo(() => aggregateFooterPinned(props.id));
-  const showFooter = createMemo(() => hasAggregates() || footerPinned());
+  const { footerPinned, showFooter, showFooterToggle, footerToggle } = useSheetFooterCorner({
+    ownerId: () => props.id,
+    hasAggregates,
+    overlay: sheetOverlay,
+    hovering: sheetHovering,
+  });
   const [renderLimit, setRenderLimit] = createSignal(GRID_RENDER_PAGE);
   const [rowStart, setRowStart] = createSignal(0);
   const [columnLimit, setColumnLimit] = createSignal(GRID_RENDER_PAGE);
@@ -277,7 +279,6 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   const columns = createMemo(() => columnTracks(renderedCols(), config().colWidths, undefined, columnStart()));
   const editingInThisGrid = () => editingOwner()?.startsWith(`sheet:${surfaceId}:${props.id}:`) ?? false;
   const effectiveColumns = () => stableColumns() ?? columns();
-  const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned()));
   const readOnly = () => blockPageReadOnly(props.id);
 
   const ensureSelectionVisible = (sel: SheetSel) => {
@@ -326,30 +327,6 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     bounds: () => ({ rows: rowIds().length, cols: rowIds().length ? fullColumnCount() : 0 }),
     blockIdAt: (row, col) => blockChildren(rowIds()[row] ?? "")[col] ?? null,
   }, surfaceId));
-
-  const toggleFooter = (e: MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    toggleAggregateFooterPinned(props.id);
-  };
-
-  const footerToggle = () => (
-    <SheetAggregateCornerToggle
-      active={footerPinned()}
-      onClick={toggleFooter}
-    />
-  );
-
-  createEffect(() => {
-    if (hasAggregates() && footerPinned()) setAggregateFooterPinned(props.id, false);
-  });
-
-  createEffect(() => {
-    if (!sheetOverlay) return;
-    sheetOverlay.setCorner(showFooterToggle() ? footerToggle() : null);
-  });
-
-  onCleanup(() => sheetOverlay?.setCorner(null));
 
   const captureStableColumns = () => {
     if (!gridRef) return;
@@ -497,7 +474,8 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
   const growAndEdit = (edge: "row" | "col") => {
     if (readOnly()) return;
-    growSheetEdge(props.id, edge, surfaceId, (target) => startCellEditing(target));
+    const target = growSheetEdge(props.id, edge, surfaceId);
+    if (target) startCellEditing(target);
   };
 
   const activateEmptyGrid = (e: MouseEvent | KeyboardEvent) => {
@@ -520,7 +498,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     return collectAggregateColumns(
       aggregateRows(),
       configured,
-      (id) => (id ? visibleBody(doc.byId[id]?.raw ?? "").join(" ") : ""),
+      (id) => (id ? visibleBody(docNode(id)?.raw ?? "").join(" ") : ""),
     );
   });
 
@@ -703,29 +681,11 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 }
 
 function sameSelectedCell(gridId: string, surfaceId: string, cell: MatrixCell): boolean {
-  const sel = cellSel();
-  if (!sel || sel.gridId !== gridId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
-  if (sel.kind === "cell") return sel.row === cell.row && sel.col === cell.col;
-  if (sel.kind === "range") return sel.focus.row === cell.row && sel.focus.col === cell.col;
-  return false;
+  return cellIsSelected(gridId, cell.row, cell.col, surfaceId);
 }
 
 function inSelectedRange(gridId: string, surfaceId: string, cell: MatrixCell): boolean {
-  const sel = cellSel();
-  if (!sel || sel.kind !== "range" || sel.gridId !== gridId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
-  const top = Math.min(sel.anchor.row, sel.focus.row);
-  const bottom = Math.max(sel.anchor.row, sel.focus.row);
-  const left = Math.min(sel.anchor.col, sel.focus.col);
-  const right = Math.max(sel.anchor.col, sel.focus.col);
-  return cell.row >= top && cell.row <= bottom && cell.col >= left && cell.col <= right;
-}
-
-function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw: string): number | null {
-  if (!contentRef) return null;
-  const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
-  const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
-  if (!range) return null;
-  return editorOffsetFromRenderedRange(contentRef, range, raw, isSheetCellHidden);
+  return cellIsInLegacyRange(gridId, cell.row, cell.col, surfaceId);
 }
 
 function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixCell; header: boolean; depth: number; freezeColumns: () => void }): JSX.Element {
@@ -733,7 +693,7 @@ function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixC
   let contentRef: HTMLDivElement | undefined;
   const bgColor = createMemo(() => {
     const id = props.cell.blockId;
-    const node = id ? doc.byId[id] : null;
+    const node = id ? docNode(id) : null;
     return node ? blockBackgroundColor(facetsOf(node.raw, formatForBlock(id!)).properties) : undefined;
   });
   const onDoubleClick = (e: MouseEvent) => {
@@ -744,32 +704,24 @@ function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixC
     props.freezeColumns();
     const blockId = props.cell.blockId;
     if (!blockId) return;
-    const node = doc.byId[blockId];
-    const offset = node ? clickOffset(e, contentRef, node.raw) : null;
+    const node = docNode(blockId);
+    const offset = node ? sheetClickOffset(e, contentRef, node.raw, isSheetCellHidden) : null;
     startCellEditing(sel(), offset ?? undefined);
   };
   const removeCtx = () => ({
-    rowId: doc.byId[props.gridId]?.children[props.cell.row],
+    rowId: docNode(props.gridId)?.children[props.cell.row],
     gridId: props.gridId,
     col: props.cell.col,
-    surfaceId: props.surfaceId,
   });
   const openCellMenu = (e: MouseEvent) => {
     const blockId = props.cell.blockId;
     if (!blockId) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setCellSel(sel());
-    openSheetCellContextMenu(e.clientX, e.clientY, blockId, removeCtx());
+    sheetCellMenu(e, () => setCellSel(sel()), blockId, removeCtx());
   };
   const openCellMenuFromHandle = (e: MouseEvent) => {
     const blockId = props.cell.blockId;
     if (!blockId) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setCellSel(sel());
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    openSheetCellContextMenu(rect.right, rect.bottom + 2, blockId, removeCtx());
+    sheetCellMenu(e, () => setCellSel(sel()), blockId, removeCtx(), true);
   };
 
   return (
@@ -832,7 +784,7 @@ function SheetBlock(props: {
   bodyRef?: (el: HTMLDivElement) => void;
 }): JSX.Element {
   let contentRef: HTMLDivElement | undefined;
-  const node = () => doc.byId[props.id];
+  const node = () => docNode(props.id);
   const fmt = () => formatForBlock(props.id);
   const facets = createMemo(() => (node() ? facetsOf(node().raw, fmt()) : null));
   const headingLevel = createMemo(() => {
@@ -860,7 +812,7 @@ function SheetBlock(props: {
     if (!n) return;
     const fallback = splitProps(n.raw, isSheetCellHidden).visible.length;
     setCellSel(props.cell);
-    startEditing(props.id, clickOffset(e, contentRef, n.raw) ?? fallback, cellOwner(props.cell));
+    startEditing(props.id, sheetClickOffset(e, contentRef, n.raw, isSheetCellHidden) ?? fallback, cellOwner(props.cell));
   };
 
   return (

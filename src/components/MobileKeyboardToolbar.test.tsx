@@ -93,6 +93,11 @@ describe("MobileKeyboardToolbar", () => {
       "Slash menu",
     ]);
 
+    // GH #599: visual golden for the selected conventional return-arrow glyphs.
+    // The Chromium fixture also paints these at the actual phone toolbar size.
+    expect(stripButtons.slice(8, 10).map((button) => button.querySelector("path")?.getAttribute("d")))
+      .toEqual(["M9 14l-4-4 4-4M5 10h10a4 4 0 0 1 0 8h-2", "M15 14l4-4-4-4M19 10H9a4 4 0 0 0 0 8h2"]);
+
     const hide = toolbar!.querySelector<HTMLButtonElement>(".mobile-keyboard-toolbar-hide");
     expect(hide?.closest(".mobile-keyboard-toolbar-strip")).toBeNull();
     expect(hide?.getAttribute("aria-label")).toBe("Hide keyboard");

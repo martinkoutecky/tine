@@ -3,7 +3,8 @@ import { App } from "./App";
 import "./session";
 import { restoreSession } from "./router";
 import { initParser } from "./render/parse";
-import { applyTheme, applyAccent, pushToast } from "./ui";
+import { applyTheme, applyAccent } from "./ui";
+import { pushToast } from "./toasts";
 import { startCommunityExtensions } from "./plugins/startup";
 import { backend, isTauri } from "./backend";
 import { installBackendClock } from "./journal";
@@ -20,28 +21,36 @@ import "katex/dist/katex.min.css";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./styles/theme.css";
 import "./lsShimInstall";
-import "./styles/app.css";
-import { installEditableEmojiPlatform } from "./editableEmoji";
-import { applyContentWidths } from "./contentWidth";
 import { installSystemInsetOwner } from "./systemInsets";
 import { installPlatformAttribute } from "./nativeChrome";
+import { installEditableEmojiPlatform } from "./editableEmoji";
+import "./styles/editableEmoji.css";
+import "./styles/app.css";
+import "./styles/touchGestures.css"; // after app.css: its .sel-toolbar-mobile overrides .sel-toolbar
+import "./styles/topbar.css";
+import "./styles/readiness.css";
+import "./styles/themePresentation.css";
+import "./styles/pdf-workspace.css";
+import "./styles/settingsControls.css";
+import "./styles/query.css";
+import "./styles/conflicts.css";
+import "./styles/region-failure.css";
+import "./styles/published.css";
 
-// index.html's engine check has already told the user why Tine cannot run here
-// (GH #572); starting anyway would replace that message with a half-broken app.
+// The ES5 check already explains GH #572; preserve its card and reveal the window.
 if ((window as { __tineUnsupportedEngine?: boolean }).__tineUnsupportedEngine) {
-  if (isTauri()) void getCurrentWindow().show().catch(() => {});
+  if (isTauri()) void getCurrentWindow().show().catch(() => console.error("failed to reveal unsupported-engine card"));
   throw new Error("Tine: unsupported web engine");
 }
 
 installPlatformAttribute();
 if (isTauri()) installBackendClock(() => backend().localClock());
 installSystemInsetOwner();
-const published = isPublishedExport();
 installEditableEmojiPlatform();
 applyTheme();
 applyAccent();
-applyContentWidths();
-const communityExtensionsReady = startCommunityExtensions()
+if (isPublishedExport()) document.documentElement.classList.add("tine-published");
+const communityExtensionsReady = isPublishedExport() ? Promise.resolve() : startCommunityExtensions()
   .then(({ pluginInitialization }) => {
     void pluginInitialization.catch((error) =>
       pushToast(`Plugins unavailable: ${String(error)}`, "error")
@@ -63,44 +72,32 @@ async function revealMainWindowAfterStableFrame(): Promise<void> {
   await getCurrentWindow().show();
 }
 
-// A published export (Stage 2) renders nothing without its baked snapshot, so
-// that fetch is the one startup dependency whose failure refuses to mount: the
-// readiness frame stays and says why (typically: opened from file://).
-const SNAPSHOT_REFUSAL = "Couldn't load snapshot.json — serve this folder over HTTP";
-let startupRefusal: string | null = null;
-const publishedSnapshotReady = published
-  ? loadPublishedSnapshot().then(
-      () => undefined,
-      (error) => {
-        console.error("published snapshot unavailable:", error);
-        startupRefusal = SNAPSHOT_REFUSAL;
-      },
-    )
-  : Promise.resolve();
-
 const mount = () => {
   const root = document.getElementById("root")!;
-  if (startupRefusal) {
-    const shell = root.querySelector(".startup-shell span:last-child");
-    if (shell) shell.textContent = startupRefusal;
-    else root.textContent = startupRefusal;
-    return;
-  }
   // index.html owns the immediate, dependency-free readiness frame. Remove it
   // only when Solid is ready to synchronously install the real application.
   root.replaceChildren();
   render(() => <App />, root);
   void revealMainWindowAfterStableFrame().catch((error) =>
-    console.error("failed to reveal the main window:", error)
+    console.error("failed to reveal the main window")
   );
 };
+const publishedSnapshotReady = isPublishedExport()
+  ? loadPublishedSnapshot().then(() => undefined, (error) => {
+      console.error("published snapshot unavailable");
+      document.getElementById("root")!.textContent = "Couldn't load snapshot.json — serve this folder over HTTP";
+      throw error;
+    })
+  : Promise.resolve();
 // Init the in-browser wasm parser before first paint so blocks render
-// synchronously (no IPC, no fallback flash). Runs concurrently with the (capped)
-// session restore; a parser-init failure is caught so it can't block startup —
-// the legacy fallback renderer still covers that case during the transition.
+// synchronously (no IPC, no fallback flash). A parser-init failure is caught so
+// it can't block startup. Session restore starts only after init settles:
+// restoring parses saved query views through the synchronous WASM page-identity
+// and group-field owners (OG-DUPF05), which must not run before init.
+const parserSettled = initParser().catch(() => console.error("lsdoc-wasm init failed"));
 void Promise.all([
-  initParser().catch((e) => console.error("lsdoc-wasm init failed:", e)),
-  Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))]),
+  parserSettled,
+  isPublishedExport() ? Promise.resolve() : parserSettled.then(() => Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))])),
   communityExtensionsReady,
   publishedSnapshotReady,
-]).then(mount, mount);
+]).then(mount, () => { if (!isPublishedExport()) mount(); else console.error("published app startup failed"); });

@@ -1,164 +1,69 @@
-import { For, Show, Switch, Match, createEffect, createMemo, createResource, createSignal, useContext, createUniqueId, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
-import { backend, OperationCancelledError, QueryPrintRefusedError, QueryUnavailableError, type QueryNotReadyError } from "../backend";
+import { FailureBoundary } from "./FailureBoundary";
+import { TableWrap } from "./TableWrap";
+import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { setBoardGroupBy } from "../sheet/mutations";
+import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
-import { focusedRouter, openRouteInOtherPane } from "../panes";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
-import { queryExportBudgetBytes } from "../queryExportBudget";
-import { CROSSING_NOTICE, dismissNotice, noticeDismissed, primeNoticeDismissals, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openQueryExport, dataRev, graphEpoch, graphMeta, pageIdentityKey } from "../ui";
-import { blockProperty, doc, formatForPage, formatForBlock, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit } from "../store";
+import { openPageInSidebar, openBlockInSidebar, pageIdentityKey, openQueryExport, switcherOpen } from "../ui";
+import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { bindingOwner, advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
+import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
 import { resolveBlockBatched } from "../resolveBatch";
-import { readLane } from "../readLane";
-import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
-import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { LiveRefGroup } from "./LiveRefGroup";
-import { CrossingNotice } from "./CrossingNotice";
+import { QueryGroups } from "./QueryGroup";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
+import { CrossingNotice } from "./CrossingNotice";
 import { SearchResultRow } from "./SearchResultRow";
-import { querySummary, type QuerySummary } from "../editor/queryAggregate";
-import { quoteEdnString, unquoteEdnString } from "../editor/edn";
-import { queryMacroExtents, QUERY_MACRO_NAMES } from "../editor/queryMacro";
-import {
-  groupingFromViewValue,
-  queryDisplayPropertyWrites,
-  queryPageMatchScopePropertyPatch,
-  queryScopedDisplayPropertyPatch,
-  queryViewPropertyPatch,
-  retainedQueryAggregateSegments,
-  serializeQuerySort,
-  viewAfterViewSwitch,
-  type QueryDisplayControl,
-} from "../editor/queryViewProperties";
-import {
-  queryParsedDisplaySettings,
-  queryScopedDraftFrom,
-  type FriendlyPageMatchScope,
-  type QueryDisplayDraft,
-} from "../editor/queryDisplayDraft";
-import { QueryResultSections } from "./QueryResultSections";
-import { QueryPageResults, type QueryPageHit } from "./QueryPageResults";
-import { QueryDisplay } from "./QueryDisplay";
-import { createQueryRegistryAccess } from "./QueryBuilder";
+import { editEdnTitle, readEdnOptions } from "../editor/edn";
+import { columnKey, compareCells, hostColumns, hostSort, type TableSort } from "./legacyQueryTable";
+import { queryMacroExtent, queryMacroExtents, type MacroExtent } from "../editor/queryMacro";
+import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import {
   macroPrintDialect,
   macroTextDialect,
   sourceOptions,
   sourceOriginal,
   sourcePrintDialect,
-  type Diagnostic,
-  type EmptyExplanation,
-  type PageRow,
+  VIEW_KINDS,
+  type ExecutionContext,
+  type ExplainEmptyResult,
   type ParsedQuery,
   type Query,
-  type QueryReport,
+  type QueryPrintDialect,
   type Source,
   type ViewSettings,
 } from "../editor/queryIr";
 import { visibleBody } from "../render/block";
 import { facetsOf } from "../render/facets";
 import { sheetConfig } from "../sheet/config";
-import {
-  boardGroupByOptions,
-  fieldIdsForRecords,
-  fieldLabel,
-  isFieldId,
-  type FieldId,
-  type QueryGroupingControl,
-} from "../sheet/fields";
-import {
-  type FormulaEvalRow,
-} from "../sheet/formulaEval";
-import { formulasOf } from "../sheet/formulaFields";
-import { InlineText } from "../render/inline";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
-import type { PageKind, QueryPublicationRequest, RefGroup } from "../types";
-import { sharedQueryResult, sharedQueryScope } from "../queryResultCache";
-import { graphBinding } from "../persistence";
-import { createReadyQueryResource } from "../createReadyQueryResource";
-import { componentLifetime, runQueryWhenCurrent } from "../queryReadiness";
-import { indexFailureOf } from "../lib/indexFailure";
-import { IndexFailedNotice } from "./IndexFailedNotice";
+import { QueryResultSections } from "./QueryResultSections";
+import { QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
+import type { PageKind, QueryHit, RefGroup } from "../types";
+import { sharedQueryResult } from "../queryResultCache";
+import { bothFamilies } from "../queryTwin";
+import { declaresCurrentPageInput, queryCurrentPage } from "../queryCurrentPage";
 import { savedDslToFriendlySearch } from "../editor/searchQuery";
-import type { QueryExecution, QueryHit } from "../types";
+import { displayPropertyPatch, isLegacyBareColumnList, mergeQueryAggregateValue } from "../editor/queryViewProperties";
+import { formulasOf } from "../sheet/formulaFields";
 import { LinkDepthContext, LinkDepthWarning, MAX_DEPTH_OF_LINKS } from "./linkDepth";
 import { blockDtoExternalId } from "../blockIdentity";
-import { ExternalLink } from "./ExternalLink";
-import { editingId } from "../editorController";
-import { createQueryRefreshRevision } from "../queryResultGrace";
+import { QueryPrintRefusedError } from "../backend";
 import { readLatestOr, readOr } from "../resourceRead";
+import { focusedRouter, openRouteInOtherPane } from "../panes";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
+import { pushToast, pushToastUnique } from "../toasts";
+import { ExternalLink } from "./ExternalLink";
+import {
+  boundedFeature, cellText, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY,
+  type BothFamilies, type QueryOperation, type Row,
+} from "./queryMacroSupport";
+export { boundedFeature, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY };
+import { QueryLegacyTable } from "./QueryLegacyTable";
 
-// Recognize the typed Logseq input without treating an example in a string or
-// `;;` comment as live. Only a direct token in the :inputs vector makes query
-// execution depend on focused-pane navigation.
-function declaresCurrentPageInput(source: string): boolean {
-  const boundary = (ch: string | undefined) =>
-    ch === undefined || /[\s,\[\](){}]/.test(ch);
-  let i = 0;
-  while (i < source.length) {
-    if (source[i] === '"') {
-      i += 1;
-      while (i < source.length) {
-        if (source[i] === "\\") i += 2;
-        else if (source[i] === '"') {
-          i += 1;
-          break;
-        } else i += 1;
-      }
-      continue;
-    }
-    if (source[i] === ";") {
-      while (i < source.length && source[i] !== "\n") i += 1;
-      continue;
-    }
-    if (
-      source.startsWith(":inputs", i) &&
-      boundary(source[i - 1]) &&
-      boundary(source[i + ":inputs".length])
-    ) {
-      let cursor = i + ":inputs".length;
-      while (cursor < source.length && /[\s,]/.test(source[cursor])) cursor += 1;
-      if (source[cursor] !== "[") return false;
-      let depth = 1;
-      cursor += 1;
-      while (cursor < source.length && depth > 0) {
-        if (source[cursor] === '"') {
-          cursor += 1;
-          while (cursor < source.length) {
-            if (source[cursor] === "\\") cursor += 2;
-            else if (source[cursor] === '"') {
-              cursor += 1;
-              break;
-            } else cursor += 1;
-          }
-          continue;
-        }
-        if (source[cursor] === ";") {
-          while (cursor < source.length && source[cursor] !== "\n") cursor += 1;
-          continue;
-        }
-        if ("[({".includes(source[cursor])) depth += 1;
-        else if ("])}".includes(source[cursor])) depth -= 1;
-        else if (
-          depth === 1 &&
-          source.slice(cursor, cursor + ":current-page".length).toLowerCase() ===
-            ":current-page" &&
-          boundary(source[cursor - 1]) &&
-          boundary(source[cursor + ":current-page".length])
-        ) {
-          return true;
-        }
-        cursor += 1;
-      }
-      return false;
-    }
-    i += 1;
-  }
-  return false;
-}
-
-type QueryView = "search" | "list" | "table" | "board";
-const QUERY_VIEWS: QueryView[] = ["search", "list", "table", "board"];
 const QUERY_VIEW_LABEL: Record<QueryView, string> = {
   search: "Search",
   list: "List",
@@ -189,821 +94,572 @@ function saveCollapsed(key: string, v: boolean) {
   }
 }
 
-interface Row {
-  page: string;
-  kind: PageKind;
-  path?: string;
-  text: string;
-  props: Record<string, string>;
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+const sameJson = <T,>(a: T, b: T) => JSON.stringify(a) === JSON.stringify(b);
+const CURRENT_PAGE_RE = /<%\s*current page\s*%>/i;
+const BLOCK_CHANGED = "The block changed while saving. Try this edit again.";
+
+// Device-local dismissal keyed by graph (D-11): one read per graph binding,
+// shared by every crossing in this window (I-12/I-13).
+const CROSSING_NOTICE_KEY = "queryCrossingNoticeDismissed";
+const [crossingNoticeDismissed, setCrossingNoticeDismissed] = createSignal<boolean | undefined>(undefined);
+const crossingNoticePreference = {};
+let crossingNoticePrimed: number | undefined;
+function primeCrossingNoticePreference(): void {
+  if (crossingNoticePrimed === graphEpoch()) return;
+  crossingNoticePrimed = graphEpoch();
+  setCrossingNoticeDismissed(undefined);
+  const revision = advanceRevision(crossingNoticePreference);
+  void readOwned(
+    revisionOwner(crossingNoticePreference, revision, graphOwner()),
+    backend().getAppBool(CROSSING_NOTICE_KEY, false),
+  ).then(
+    (read) => { if (read.kind === "current") setCrossingNoticeDismissed(read.value); },
+    // Recovery over refusal: an unreadable preference costs one extra notice.
+    () => setCrossingNoticeDismissed(false),
+  );
+}
+function dismissCrossingNoticeForever(): void {
+  const revision = advanceRevision(crossingNoticePreference);
+  setCrossingNoticeDismissed(true);
+  void writeOwned(
+    revisionOwner(crossingNoticePreference, revision, bindingOwner()),
+    backend().setAppBool(CROSSING_NOTICE_KEY, true),
+  ).catch((error: unknown) => pushToast(`Couldn't save the notice preference: ${errorText(error)}`, "error"));
+}
+export function resetCrossingNoticeForTests(): void {
+  crossingNoticePrimed = undefined;
+  advanceRevision(crossingNoticePreference);
+  setCrossingNoticeDismissed(undefined);
 }
 
-/** The message a rejected command carried. A `QueryPrintRefusedError` already
- *  carries the printer's OWN located message (I-9), so there is nothing to add
- *  here and nothing to replace it with. */
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+/** One parse request: the authored (or `<% current page %>`-substituted)
+ *  argument, the macro name it was written under, and the host block's
+ *  `tine.*` properties the engine merges into the view (§4.1). */
+interface ReadingRequest {
+  argument: string;
+  name: string;
+  properties: [string, string][];
+  epoch: number;
+}
+interface Reading {
+  request: ReadingRequest;
+  reading: ParsedQuery;
+}
+/** The engine's reading of a macro (`query_parse`, I-12), owned by the newest
+ *  request (I-20). */
+function createQueryReading(request: () => ReadingRequest | undefined) {
+  const owners = {};
+  const [resource] = createResource(request, async (req): Promise<Reading | undefined> => {
+    const landed = await readOwned(
+      latestOwner(owners, "parse", graphOwner()),
+      backend().parseQuery(req.argument, macroTextDialect(req.name), req.properties),
+    );
+    return landed.kind === "current" ? { request: req, reading: landed.value } : undefined;
+  });
+  return resource;
 }
 
-/** The advanced ran/ignored note, read off the run's report (M5) instead of a
- *  second command's return shape. `ran`/`ignored` are optional on the wire; an
- *  OG or TQL source reports neither. */
-function reportInfo(report: QueryReport): { ran: string[]; ignored: string[]; supported: boolean } {
-  return { ran: report.ran ?? [], ignored: report.ignored ?? [], supported: report.supported };
-}
-
-/** A bounded excerpt of ENGINE-PRINTED text, for the §7.5 notice.
- *
- *  It is bounded because the text is the author's own query, and a query can be
- *  as long as outside content chooses to make it; a notice is not a place to
- *  render an unbounded string (I-22). It is an excerpt of what the engine
- *  printed, and is labelled as that — it is not, and must not be described as,
- *  "the minimal unsupported subexpression". Nothing in the engine answers that
- *  question today, so nothing here claims it. */
-export function boundedFeature(message: string): string | null {
-  const single = message.replace(/\s+/g, " ").trim();
-  if (!single) return null;
-  return single.length > 120 ? `${single.slice(0, 119)}…` : single;
-}
-
-/** Remove the block a query is written in from that query's own results.
- *
- *  `{{query "xyz"}}` contains `xyz`, so the block matches its own query and the
- *  backend says so honestly. Rendering that match renders the page the query
- *  lives on, which renders the query, which lists the page again — the
- *  recursion in GH #469. OG removes exactly the host block for the same reason
- *  and states it where it does it (`frontend/components/query/result.cljs` at
- *  `6e7afa8e`: "exclude the current one, otherwise it'll loop forever"). Only
- *  the block itself goes; its children are ordinary results.
- *
- *  Returns the input unchanged when nothing matches, so a query whose results
- *  never contain its host keeps referential equality for downstream memos. */
-export function withoutHostBlock(groups: RefGroup[], hostBlockId: string | undefined): RefGroup[] {
-  if (!hostBlockId) return groups;
-  const hosts = (group: RefGroup) => group.blocks.some((block) => block.id === hostBlockId);
-  if (!groups.some(hosts)) return groups;
-  return groups
-    .map((group) =>
-      hosts(group)
-        ? { ...group, blocks: group.blocks.filter((block) => block.id !== hostBlockId) }
-        : group,
-    )
-    .filter((group) => group.blocks.length > 0);
-}
-
-// A {{query ...}} block: runs the query and renders matching blocks as a list
-// or a sortable table. When `blockId` is given (the block is a standalone query
-// block, not an inline-in-text macro) an interactive builder bar is shown and
-// edits rewrite the {{query ...}} macro in that block's raw text.
+/** Present a query macro through the Rust parse/run/print seam. Every mounted,
+ *  expanded block re-runs a graph-wide evaluation on each graph save; identical
+ *  requests share one in-flight run. Collapsed blocks retain their count without
+ *  re-running for unrelated saves. A `(search ...)` source uses bounded graph
+ *  search instead. Saves write the printed macro and any view facts the printer
+ *  cannot carry as `tine.*` properties in one undo unit. A refused print or
+ *  changed source extent leaves the block untouched and shows an error. */
+/** Unexpected render/resource failures stay within this query; Retry remounts it. */
 export function QueryMacro(props: {
   body: string;
-  /** The macro name this query was AUTHORED under (§7.9). Supplied by the render
-   *  dispatch, which recovered it from the raw source alongside the argument.
-   *  Absent for callers that build a body string themselves; the name is then
-   *  read back off `body`, and failing that defaults to the legacy spelling. */
-  macroName?: string;
   blockId?: string;
+  /** The parsed node's exact raw extent. Every write must still target these bytes. */
+  sourceExtent?: MacroExtent;
+  sourceRaw?: string;
   title?: string;
-  /** Read-only query surfaces can supply page context without a blockId, which
-   * would incorrectly enable editing controls. */
+  /** Owner page context for read-only surfaces such as BEGIN_QUERY. */
   currentPage?: string;
-  /** BEGIN_QUERY must never execute a partially understood query or expose its
-   * authored payload in an error. The ordinary {{query}} path keeps its existing
-   * partial-query diagnostics unless these read-only options are requested. */
+  /** For advanced sources, hide rows if the report has ignored clauses. (The
+   *  engine now refuses a query with any unlowerable clause, so `ignored` is
+   *  empty whenever `supported`; kept as a belt-and-braces display guard.) Pair
+   *  with `unsupportedLabel` to avoid showing the source. */
   strictAdvanced?: boolean;
   unsupportedLabel?: string;
-  // When set, render nothing at all if the query has no results (used for the
-  // app-inserted journal agenda, which should disappear once vacated — unlike a
-  // user-authored {{query}} block, which keeps showing "No results" so it stays
-  // editable).
+  // Render nothing when there are no results (the app-inserted journal agenda).
   hideWhenEmpty?: boolean;
 }): JSX.Element {
+  return <FailureBoundary region="Query results"><QueryMacroContent {...props} /></FailureBoundary>;
+}
+
+function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   if (linkDepth > MAX_DEPTH_OF_LINKS) return <LinkDepthWarning />;
 
-  // §7.9: strip whichever query macro name this block was authored under, not a
-  // hard-coded `query`. A `{{tine-query …}}` body whose name was not stripped
-  // would be handed to the parser as `tine-query @block and …`, which is not a
-  // query in any grammar.
-  const macroName = (): string => {
-    if (props.macroName) return props.macroName;
-    const authored = QUERY_MACRO_NAMES.find((name) =>
-      new RegExp(`^${name}(\\s|$)`, "i").test(props.body.trim()),
-    );
-    return authored ?? QUERY_MACRO_NAMES[0];
-  };
-  const arg = () =>
-    props.body.trim().replace(new RegExp(`^${macroName()}\\s*`, "i"), "").trim();
-  // The host block's `tine.*` properties, which §4.1 gives precedence over the
-  // directives lifted from the query text. Merging the two is the engine's job,
-  // so they are handed to it rather than reconciled here.
-  const blockDirectives = createMemo<[string, string][]>(() => {
+  // The macro name this query was AUTHORED under (§7.9): `query` or `tine-query`.
+  const macroBody = createMemo(() => queryMacroExtent(`{{${props.body.trim()}}}`));
+  const sourceError = () => macroBody() === null ? "Query source could not be parsed. Edit the block text to repair the macro." : undefined;
+  const macroName = (): string => macroBody()?.name ?? QUERY_MACRO_NAMES[0];
+  const arg = () => macroBody()?.argument.trim() ?? "";
+  const hostProperties = createMemo<[string, string][]>(() => {
     const id = props.blockId;
-    const node = id ? doc.byId[id] : undefined;
+    const node = id ? docNode(id) : undefined;
     if (!id || !node) return [];
-    return facetsOf(node.raw, formatForBlock(id)).properties.filter(([key]) =>
-      key.startsWith("tine."),
-    );
-  });
-  // **The macro argument is read by the ONE engine (§7.1, X4).** Where the
-  // trailing options map begins, and whether a `{{query …}}` holds the OG DSL or
-  // advanced datalog, are query-language questions that Rust already answers in
-  // `query_parse`. This component used to answer both a second time — with
-  // `splitTrailingMap` and an `ADVANCED_RE` regex — and the two answers differed
-  // on exactly the inputs that matter (a literal `}` inside a string, a `:find`
-  // inside a string). Both twins are gone (I-12, D-14).
-  const parseRequest = createMemo(() => ({
-    argument: arg(),
-    name: macroName(),
-    properties: blockDirectives(),
-  }));
-  // **Readiness, not sorted groups (RET2-Direct).** `query_parse` reads the
-  // property registry for its `UnknownIdent` suggestions, and that read is now
-  // SQL-only and fallible: it used to swallow every failure into an empty
-  // registry, which reported a declared property as unknown. So the parse
-  // retries typed `query-not-ready` the way every other query read does, gated
-  // on its OWN request still being current.
-  //
-  // The retry rides INSIDE the existing resource rather than replacing it with
-  // `createReadyQueryResource`: that owner also re-keys on the graph epoch and
-  // blanks its rows across a rebind, which would re-parse on every repaint and
-  // drop the reading the display derivations read through `latest`. Nothing
-  // about the result presentation, group ordering or the scroll harness is
-  // involved here.
-  //
-  // The retry's readiness state is surfaced like the run's: while the engine
-  // rebuilds there is no reading, so nothing runs and `total()` falls to 0 —
-  // which used to render "No results" plus a "why empty?" that opened onto an
-  // empty panel (2026-09-11, a fresh query while the projection recovered).
-  const [parsePending, setParsePending] = createSignal<QueryNotReadyError | null>(null);
-  // A removed block's parse is nobody's: its request never changes, so
-  // without this the retry polled `query_parse` for as long as the index
-  // stayed not ready (GH #543, audit R12-06).
-  const lifetime = componentLifetime();
-  const [parsedSnapshot] = createResource(parseRequest, async (request) => {
-    setParsePending(null);
-    return {
-      request,
-      reading: await runQueryWhenCurrent(
-        lifetime,
-        () => backend().parseQuery(request.argument, macroTextDialect(request.name), request.properties),
-        () => parseRequest() === request,
-        (error) => { if (!lifetime.ended() && parseRequest() === request) setParsePending(error); },
-      ),
-    };
-  });
-  // Keep each reading paired with the exact inputs it describes. A displayed
-  // reading can intentionally lag a local edit while its replacement loads.
-  const parsed = { get latest() { return readLatestOr(parsedSnapshot, undefined, "query reading")?.reading; } };
-  // `latest` rather than `parsed()`: a re-parse after an edit keeps the previous
-  // reading visible instead of blanking the query for a frame.
-  const source = (): Source | undefined => parsed.latest?.query.source;
-  /** **The COMPLETE display state a reading carries** (§7.6, Q3).
-   *
-   *  `query_parse` returns the singular `{query, view}` pair with the scoped
-   *  `tine.page-*` / `tine.block-*` state and the membership scope flattened
-   *  beside it, plus the names of any authored setting it could not read. The
-   *  optimistic commit below has to carry ALL of it: a commit that carried only
-   *  the singular view would, for one parse round-trip, show the block's scoped
-   *  settings as absent — which reads as "inherit", which is a different query
-   *  than the one the user just saved. */
-  type DisplayEnvelope = Pick<
-    ParsedQuery,
-    "page_presentation" | "block_presentation" | "page_display" | "block_display"
-    | "page_match_scope" | "unreadable_settings"
-  > & { view: ViewSettings };
-  const parsedEnvelope = (): DisplayEnvelope => {
-    const reading = parsed.latest;
-    if (!reading) return { view: {} };
-    // Presence is copied with `Object.hasOwn`, never with `??`: a present empty
-    // scoped draft is `{}`, and `{} ?? x` is `{}` but `undefined ?? x` is `x`.
-    return {
-      view: reading.view ?? {},
-      ...(reading.page_presentation !== undefined ? { page_presentation: reading.page_presentation } : {}),
-      ...(reading.block_presentation !== undefined ? { block_presentation: reading.block_presentation } : {}),
-      ...(Object.hasOwn(reading, "page_display") ? { page_display: reading.page_display } : {}),
-      ...(Object.hasOwn(reading, "block_display") ? { block_display: reading.block_display } : {}),
-      ...(reading.page_match_scope !== undefined ? { page_match_scope: reading.page_match_scope } : {}),
-      ...(reading.unreadable_settings ? { unreadable_settings: reading.unreadable_settings } : {}),
-    };
+    return facetsOf(node.raw, formatForBlock(id)).properties.filter(([key]) => key.startsWith("tine.") || key === "query-table");
+  }, [], { equals: sameJson });
+  const parseRequest = createMemo<ReadingRequest | undefined>(
+    () => sourceError() ? undefined : ({ argument: arg(), name: macroName(), properties: hostProperties(), epoch: graphEpoch() }),
+    undefined,
+    { equals: sameJson },
+  );
+  const parsed = createQueryReading(parseRequest);
+  /** The authoring reading. Every display and editing derivation uses it. */
+  const reading = (): ParsedQuery | undefined => (!sourceError() && parsed.error === undefined ? parsed.latest?.reading : undefined);
+  const source = (): Source | undefined => reading()?.query.source;
+  const form = () => { const s = source(); return (s ? sourceOriginal(s) : null) ?? ""; };
+  const opts = () => { const s = source(); return s ? sourceOptions(s) : ""; };
+  // Title and collapse are read from the source options map.
+  const optionValues = createMemo(() => readEdnOptions(opts()));
+  const titleOption = (): string | undefined => optionValues()?.title ?? undefined;
+  const isAdvanced = () => source()?.kind === "advanced";
+  const bothKinds = (): boolean =>
+    hostProperties().some(([key, value]) => key.toLowerCase() === RESULT_KINDS_PROPERTY && value.trim().toLowerCase() === PAGES_AND_BLOCKS);
+  const setBothKinds = (on: boolean) => {
+    const blockId = props.blockId;
+    const node = blockId ? docNode(blockId) : undefined;
+    if (!blockId || !node || bothKinds() === on) return;
+    withUndoUnit(on ? "query:result-kinds:both" : "query:result-kinds:one", [node.page], () => {
+      setBlockProperty(blockId, RESULT_KINDS_PROPERTY, on ? PAGES_AND_BLOCKS : null);
+    });
   };
-  const view = (): ViewSettings => parsed.latest?.view ?? {};
-  const [displayCommit, setDisplayCommit] = createSignal<{ raw: string; epoch: number; envelope: DisplayEnvelope }>();
-  /** The envelope this block is CURRENTLY showing: the optimistic commit while
-   *  it still describes these exact bytes under this exact graph, and the
-   *  engine's own reading otherwise. */
-  const displayEnvelope = (): DisplayEnvelope => {
-    const committed = displayCommit();
-    return committed && committed.epoch === graphEpoch() && committed.raw === doc.byId[props.blockId ?? ""]?.raw
-      ? committed.envelope : parsedEnvelope();
+
+  // GH #301: `<% current page %>` binds the FOCUSED pane's route page and re-runs
+  // on navigation. Substitution is execution-only: the builder keeps the dyvar.
+  const executionArg = createMemo<string | null>(() => {
+    if (!CURRENT_PAGE_RE.test(arg())) return null;
+    const route = focusedRouter().route();
+    const pageName = route.kind === "page" ? route.name : undefined;
+    if (!pageName) return null; // no focused page: leave verbatim, like templates
+    return arg().replace(new RegExp(CURRENT_PAGE_RE.source, "gi"), () => `[[${pageName}]]`);
+  });
+  const executionRequest = createMemo<ReadingRequest | undefined>(() => {
+    const argument = executionArg();
+    const request = parseRequest();
+    return argument === null || !request ? undefined : { ...request, argument };
+  }, undefined, { equals: sameJson });
+  const executionParsed = createQueryReading(executionRequest);
+  /** The reading the EXECUTION runs — for a substituted argument, only the
+   *  reading of THAT argument, never the previous page's (I-20). */
+  const runnable = (): ParsedQuery | undefined => {
+    if (executionArg() === null) return reading();
+    if (executionParsed.error !== undefined) return undefined;
+    const landed = executionParsed.latest;
+    return landed && landed.request.argument === executionArg() ? landed.reading : undefined;
   };
-  const displayView = (): ViewSettings => displayEnvelope().view;
-  /** The block's own presentation property, read straight from its bytes. */
+  // A typed advanced `:current-page` input binds OG's current page (#301).
+  // Master: a typed `:current-page` input binds the focused pane's page; every
+  // other query runs bound to the page the query block is on.
+  const executionContext = (): ExecutionContext | undefined => {
+    const page = isAdvanced() && declaresCurrentPageInput(form())
+      ? queryCurrentPage()
+      : props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
+    return page ? { current_page: page } : undefined;
+  };
+  const friendlySearch = createMemo(() => {
+    const s = runnable()?.query.source;
+    return s?.kind === "og" ? savedDslToFriendlySearch(s.original) : null;
+  });
+
+  const sheet = createMemo(() => {
+    if (!props.blockId || !docNode(props.blockId)) return null;
+    return sheetConfig(facetsOf(docNode(props.blockId).raw, formatForBlock(props.blockId)).properties);
+  });
   const currentView = (): QueryView => {
     if (!props.blockId) return "list";
     const view = blockProperty(props.blockId, "tine.view");
     return view === "search" || view === "table" || view === "board" ? view : "list";
   };
-  /** The two effective section views, through the ONE resolver. Absent scoped
-   *  draft inherits the singular state; a present one replaces it wholesale.
-   *
-   *  The singular presentation handed to the resolver is `currentView()` — the
-   *  block's OWN `tine.view` bytes — rather than the reading's, because the
-   *  reading is asynchronous and the property is not: keying the sections off
-   *  the reading would show both families under the previous presentation for
-   *  one round-trip after a view switch. They are the same fact; this is the
-   *  copy that is already in hand. */
-  const displayResolutionEnvelope = createMemo(() => {
-    const envelope = displayEnvelope();
-    return { ...envelope, view: { ...envelope.view, view: envelope.view.view ?? currentView() } };
-  });
-  const pageResultView = createMemo(() => queryParsedDisplaySettings(displayResolutionEnvelope(), "page"));
-  const blockResultView = createMemo(() => queryParsedDisplaySettings(displayResolutionEnvelope(), "block"));
-  /** The Blocks family's own presentation. Independently overridable, and never
-   *  the Pages family's: "pages as a table, blocks as a list" is one query. The
-   *  Pages family reads its own presentation straight off `pageResultView()`,
-   *  which is the whole settings object its renderer needs. */
-  const blockPresentation = (): QueryView => (blockResultView().view ?? "list") as QueryView;
-  const pageMatchScope = () => displayEnvelope().page_match_scope;
-  const rememberDisplay = (envelope: DisplayEnvelope) => {
-    const raw = doc.byId[props.blockId ?? ""]?.raw;
-    if (raw !== undefined) setDisplayCommit({ raw, epoch: graphEpoch(), envelope });
-  };
-  const form = (): string => {
-    const s = source();
-    return (s ? sourceOriginal(s) : null) ?? "";
-  };
-  const opts = (): string => {
-    const s = source();
-    return s ? sourceOptions(s) : "";
-  };
-  // `:title` / `:collapsed?` / `:table-view?` are read out of the OPAQUE options
-  // map, which the engine carries verbatim and deliberately does not interpret
-  // (§4.3, Y2). There is no Rust answer being duplicated here — reading three
-  // display keys out of the author's own map is this component's own question.
-  const titleOption = (): string | undefined => {
-    const m = /:title\s+"((?:[^"\\]|\\.)*)"/.exec(opts());
-    return m ? unquoteEdnString(m[1]) : undefined;
-  };
-  const collapsedOption = () => /:collapsed\?\s+true/.test(opts());
-  const tableViewOption = () => /:table-view\?\s+true/.test(opts());
-  // GH #301: `<% current page %>` inside a query binds to the FOCUSED pane's
-  // route page and re-runs on navigation. Substitution is execution-only —
-  // authoring text and every editing/display derivation keep the literal dyvar
-  // (the same house rule as template insertion in editor/templateVars.ts).
-  const currentPageMarker = createMemo(() => /<%\s*current page\s*%>/i.test(arg()));
-  const focusedQueryPage = () => {
-    const r = focusedRouter().route();
-    return r.kind === "page" ? r.name : undefined;
-  };
-  // The dyvar is substituted in the TEXT and read by the one engine, exactly as
-  // the authored text is: the execution gets its own parse of the substituted
-  // argument rather than a frontend rewrite of an already-parsed IR. `null` means
-  // "no substitution applies", and then the authoring parse IS the execution's.
-  const executionArg = createMemo<string | null>(() => {
-    if (!currentPageMarker()) return null;
-    const pageName = focusedQueryPage();
-    if (!pageName) return null; // no focused page: leave verbatim, like templates
-    // A function replacer: a page named `A$&B` must be spliced literally, not
-    // read as a `$&` replacement pattern (the native export substitutes the
-    // same text and must produce the same argument).
-    return arg().replace(/<%\s*current page\s*%>/gi, () => `[[${pageName}]]`);
-  });
-  const executionRequest = createMemo(() => {
-    const argument = executionArg();
-    return argument === null
-      ? undefined
-      : { argument, name: macroName(), properties: blockDirectives() };
-  });
-  // The execution-side parse takes the SAME readiness owner the executions
-  // below take: `query_parse` reads the property registry, that read is now
-  // SQL-only and fallible, and an unretried refusal here would leave a
-  // `<% current page %>` macro with no runnable form at all.
-  const [executionParsed] = createReadyQueryResource(executionRequest, async (request) => ({
-    request,
-    reading: await backend().parseQuery(request.argument, macroTextDialect(request.name), request.properties),
-  }));
-  /** The execution reading, paired with the exact substituted argument it
-   *  describes (GH #301). A reading for the PREVIOUS page is not a runnable
-   *  form for this one: dispatching it would run a query the presentation has
-   *  already moved off, and a readiness retry — which can hold the replacement
-   *  for as long as the projection needs — widens exactly that window. The
-   *  displayed rows are unaffected: `groupResource` keeps its own `latest`. */
-  const executionReading = (): ParsedQuery | undefined => {
-    // `latest` throws once the fetcher rejected (a published export refuses a
-    // substituted argument it never baked — the macro shown in another page's
-    // Linked References); with no error boundary above, that throw would blank
-    // the page. A rejected execution parse is "no runnable form", and the
-    // refusal is surfaced through `emptyResultsMessage` instead.
-    const snapshot = readLatestOr(executionParsed, undefined, "query execution reading");
-    return snapshot && snapshot.request.argument === executionArg() ? snapshot.reading : undefined;
-  };
-  /** The reading the EXECUTION runs. Every authoring and display derivation keeps
-   *  the literal dyvar and therefore keeps using `parsed`. */
-  const runnable = (): ParsedQuery | undefined =>
-    executionArg() === null ? parsed.latest : executionReading();
-  const executableForm = createMemo(() => {
-    const source = runnable()?.query.source;
-    return (source ? sourceOriginal(source) : null) ?? "";
-  });
-  // The query LANGUAGE decision rides the same substituted form the execution
-  // uses (never authoring rewrites): presentation and execution can't disagree
-  // about what ran (GH #301).
-  const friendlySearch = createMemo(() => savedDslToFriendlySearch(executableForm()));
-  /** Why "Export query results…" is not offered for this query, or null. A
-   *  Friendly saved search runs through a different execution path and is not
-   *  exportable yet; a query with no runnable reading has nothing to export. */
-  const exportRefusal = (): string | null => {
-    if (friendlySearch() !== null) return "Friendly searches can't be exported yet";
-    if (!runnable()) return "The query has not been read yet";
-    return null;
-  };
-  /** Exactly what this surface executed: the substituted form, the anchor's
-   *  effective view, the bound current page, and the host block — so the
-   *  export resolves the SAME rows the header count shows. */
-  const exportRequest = (): QueryPublicationRequest | null => {
-    const reading = runnable();
-    if (!reading || exportRefusal()) return null;
-    const kind = reading.query.source.kind;
-    const page = executionPage();
-    return {
-      query: executableForm(),
-      advanced: kind === "advanced",
-      simpleDialect: kind === "tql" ? "tql" : "og",
-      currentPage: page ?? null,
-      view: reading.query.anchor === "page" ? pageResultView() : blockResultView(),
-      hostBlockId: props.blockId ?? null,
-      hostProperties: blockDirectives(),
-      name: titleOption() ?? "",
-      folder: null,
-      replace: false,
-      assetBudgetBytes: queryExportBudgetBytes(),
-    };
-  };
-  const sheet = createMemo(() => {
-    if (!props.blockId || !doc.byId[props.blockId]) return null;
-    return sheetConfig(facetsOf(doc.byId[props.blockId].raw, formatForBlock(props.blockId)).properties);
-  });
-  const sheetFace = () => currentView() === "table" || currentView() === "board";
-  const legacyTable = () => currentView() === "list" && tableViewOption();
-  /** The header's view switcher, for the hosts the inline Display panel is not
-   *  offered to. It goes through the SAME writer the panel does — the view is
-   *  one fact, and two surfaces writing it two ways is how they came apart. */
+  const blockFace = (): QueryView => runnable()?.block_presentation ?? currentView();
+  const sheetFace = () => blockFace() === "table" || blockFace() === "board";
+  const legacyTable = () => blockFace() === "list"
+    && (!props.blockId || blockProperty(props.blockId, "tine.view") === null)
+    && (reading()?.legacy_table ?? false);
   const setQueryView = (next: QueryView) => {
-    if (!props.blockId) return;
-    void applyDisplay(viewAfterViewSwitch(displayView(), next === "list" ? undefined : next));
+    const blockId = props.blockId;
+    const node = blockId ? docNode(blockId) : undefined;
+    if (!blockId || !node) return;
+    const storedView = blockProperty(blockId, "tine.view");
+    if ((next === "list" && storedView === null && !legacyTable()) || (next !== "list" && storedView === next)) return;
+    withUndoUnit(`query:view:${next}`, [node.page], () => {
+      if (next === "list") {
+        setBlockProperty(blockId, "tine.view", reading()?.legacy_table ? "list" : null);
+        return;
+      }
+      setBlockProperty(blockId, "tine.view", next);
+      if (next === "board" && blockProperty(blockId, "tine.group-by") === null
+        && blockProperty(blockId, "tine.group-field") === null) {
+        setBlockProperty(blockId, "tine.group-by", "state");
+      }
+    });
   };
 
-  // Rewrite just THIS {{query ...}} macro inside the owning block, preserving the
-  // front-matter options and surrounding property lines (id::/collapsed::). The
-  // extents are found brace/string/page-ref-aware (queryMacroExtents), NOT a lazy
-  // regex. A block can hold more than one query, so target the extent whose
-  // current body matches OURS (props.body) — editing the 2nd query must not
-  // rewrite the 1st. Falls back to the only/first query for the common case.
-  const rewriteMacro = (newMacro: string) => {
+  const currentPage = () => props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
+  const collapseKey = () => JSON.stringify([graphMeta()?.root ?? "", props.blockId ?? currentPage() ?? "global", arg()]);
+  const [collapseOverride, setCollapseOverride] = createSignal(loadCollapsed(collapseKey()));
+  const collapsed = () => collapseOverride() ?? (optionValues()?.collapsed ?? false);
+  const toggleCollapsed = () => {
+    const v = !collapsed();
+    setCollapseOverride(v);
+    saveCollapsed(collapseKey(), v);
+  };
+
+  // A save anywhere in the graph bumps dataRev after 700 ms of quiet. Each
+  // distinct expanded request costs one whole-graph evaluation per revision;
+  // sharedQueryResult coalesces identical open blocks into one IPC (including
+  // the 20-block case), though each host still owns its rendered rows. A
+  // collapsed query fetches once for its count and skips save reruns. The
+  // 10k-graph 3/20-block save measurements are in RECEIPT-14Q4A.md.
+  const runRequest = createMemo(() => {
+    const query = runnable();
+    if (!query) return undefined;
+    const context = executionContext();
+    const search = friendlySearch();
+    const both = search === null && bothKinds();
+    const displayKey = JSON.stringify([graphEpoch(), query.query, query.view, context ?? null, search, collapsed(), both]);
+    const key = `${displayKey}\0${collapsed() ? "collapsed" : dataRev()}`;
+    return { query, context, search, displayKey, key, both };
+  }, undefined, { equals: (a, b) => a?.key === b?.key });
+  const runOwners = {};
+  const [operation] = createResource(runRequest, async (request): Promise<QueryOperation | undefined> => {
+    const owner = latestOwner(runOwners, "run", graphOwner());
+    const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
+    if (request.search !== null) {
+      const searchSource = request.search;
+      const landed = await readOwned(owner, sharedQueryResult(
+        scope,
+        `friendly-search\0${request.key}`,
+        () => request.query.page_match_scope
+          ? backend().runGraphSearch(
+            searchSource, 500, 5_000, `inline-query:${props.blockId ?? currentPage() ?? "global"}`, false,
+            undefined, request.query.page_match_scope,
+          )
+          : backend().runGraphSearch(
+            searchSource, 500, 5_000, `inline-query:${props.blockId ?? currentPage() ?? "global"}`, false,
+          ),
+      ));
+      if (landed.kind === "stale") return undefined;
+      // The Search presentation renders these hits directly, so the host block
+      // comes out here too — the exclusion `withoutHostBlock` makes (GH #469).
+      const hits = landed.value.hits.filter((hit) => !(hit.entity === "block" && hit.block.id === props.blockId));
+      const grouped = new Map<string, RefGroup>();
+      for (const hit of hits) {
+        if (hit.entity !== "block") continue;
+        const key = `${hit.kind}\0${hit.page}\0${hit.path ?? ""}`;
+        const group = grouped.get(key) ?? { page: hit.page, kind: hit.kind, path: hit.path, blocks: [] };
+        group.blocks.push(hit.block);
+        grouped.set(key, group);
+      }
+      return {
+        requestKey: request.displayKey,
+        groups: [...grouped.values()], pages: null, diagnostics: [],
+        report: null, search: hits.length === landed.value.hits.length ? landed.value : { ...landed.value, hits }, matchedTotal: null,
+        both: null,
+      };
+    }
+    const landed = await readOwned(owner, sharedQueryResult(
+      scope,
+      `ir\0${request.key}`,
+      () => backend().queryRun(request.query.query, request.query.view, request.context),
+    ));
+    if (landed.kind === "stale") return undefined;
+    const result = landed.value;
+    let both: BothFamilies | null = null;
+    let twinGroups: RefGroup[] = [];
+    if (request.both) {
+      const twin = await bothFamilies(owner, {
+        scope, key: request.key, query: request.query.query, view: request.query.view,
+        context: request.context, own: result, hostBlockId: props.blockId, hostProperties: hostProperties(),
+      });
+      if (!twin) return undefined;
+      both = twin.both;
+      twinGroups = twin.blockGroups;
+    }
+    return {
+      requestKey: request.displayKey,
+      groups: both ? twinGroups : result.anchor === "block" ? withoutHostBlock(result.groups, props.blockId) : [],
+      pages: both ? null : result.anchor === "page" ? result.pages : null,
+      diagnostics: result.diagnostics ?? [],
+      report: result.report,
+      statistics: result.statistics,
+      search: null,
+      matchedTotal: result.matched_total ?? null,
+      both,
+    };
+  });
+  /** The last coherent answer; an errored run shows its error, not old rows. */
+  const displayed = (): QueryOperation | undefined => {
+    const current = runRequest();
+    const landed = readLatestOr(operation, undefined, "query run");
+    return current && landed?.requestKey === current.displayKey ? landed : undefined;
+  };
+  const groups = () => displayed()?.groups ?? [];
+  const pageRows = () => displayed()?.pages ?? null;
+  // The run's OWN diagnostics (I-9): an invalid query returns zero rows plus
+  // these, so they must render — "No results" alone would report a broken query
+  // as an empty graph.
+  const blockingDiagnostics = () => (displayed()?.diagnostics ?? []).filter((d) => !d.disabled);
+  const advInfo = () => (isAdvanced() ? displayed()?.report ?? null : null);
+  const readError = () => sourceError() ?? parsed.error ?? executionParsed.error;
+  const loadError = () => operation.error ?? readError();
+  // Presentation never changes membership: ordinary DSL results adapt into
+  // evidence-free search rows for the Search presentation.
+  const searchPresentationHits = createMemo<QueryHit[]>(() => {
+    if (currentView() !== "search" && friendlySearch() === null) return [];
+    const search = displayed()?.search;
+    if (search) return search.hits;
+    return groups().flatMap((group) => group.blocks.map((block) => ({
+      entity: "block" as const,
+      page: group.page,
+      kind: group.kind,
+      block,
+      display_text: visibleBody(block.raw).join(" "),
+      evidence: [],
+    })));
+  });
+  const total = () => {
+    const both = displayed()?.both;
+    if (both) return both.pageTotal + groups().reduce((a, g) => a + g.blocks.length, 0);
+    const pages = pageRows();
+    if (pages) return displayed()?.matchedTotal ?? pages.length;
+    if (friendlySearch() !== null || currentView() === "search") return searchPresentationHits().length;
+    return groups().reduce((a, g) => a + g.blocks.length, 0);
+  };
+  const ranEmpty = () =>
+    !!displayed() && !operation.loading && total() === 0 && blockingDiagnostics().length === 0
+    && displayed()?.report?.supported !== false;
+  const emptyMessage = () => (ranEmpty() ? "No results" : "Loading query results…");
+
+  // Why empty? (Q14, N19): which top-level conjunct emptied the query, asked
+  // only once the run actually came back empty.
+  const [explainOpen, setExplainOpen] = createSignal(false);
+  const explainRequest = createMemo(() => {
+    const request = runRequest();
+    return explainOpen() && request && request.search === null && ranEmpty() ? request : undefined;
+  }, undefined, { equals: (a, b) => a?.key === b?.key });
+  const explainOwners = {};
+  const [explained] = createResource(explainRequest, async (request): Promise<ExplainEmptyResult | undefined> => {
+    const landed = await readOwned(
+      latestOwner(explainOwners, "explain", graphOwner()),
+      backend().queryExplainEmpty(request.query.query, request.query.view, request.context),
+    );
+    return landed.kind === "current" ? landed.value : undefined;
+  });
+  const explanation = () => readOr(explained, undefined, "query explain");
+  const explainNotice = (): string | null => {
+    if (explained.error !== undefined) return errorText(explained.error);
+    const answer = explanation();
+    if (!answer) return null;
+    const blocking = (answer.diagnostics ?? []).filter((d) => !d.disabled);
+    if (blocking.length) return blocking.map((d) => d.message).join(" · ");
+    if (!answer.report.supported) return "This query has no clauses Tine can run, so nothing was evaluated.";
+    if (!answer.rows.length) return "Nothing in this graph matches this query.";
+    return null;
+  };
+
+  // -- editing: every edit is printed by the engine and written back as bytes --
+  const [printError, setPrintError] = createSignal<string | null>(null);
+  const refuseChanged = () => {
+    setPrintError(BLOCK_CHANGED);
+    pushToastUnique(BLOCK_CHANGED, "error");
+    return false;
+  };
+  // Rewrite just THIS macro inside the owning block, targeted by the extent's
+  // own recovered name+argument (a block can hold more than one query).
+  const targetMacro = (raw: string): MacroExtent | null => {
+    const source = props.sourceExtent;
+    if (!source) return null;
+    const current = queryMacroExtents(raw).find((extent) => extent.start === source.start && extent.end === source.end);
+    if (!current || raw.slice(current.start, current.end) !== props.sourceRaw
+      || current.name !== source.name || current.argument !== source.argument) return null;
+    return current;
+  };
+  const rewriteMacro = (newMacro: string, target: MacroExtent) => {
     if (!props.blockId) return;
-    const raw = doc.byId[props.blockId]?.raw ?? "";
-    const extents = queryMacroExtents(raw);
-    if (!extents.length) return;
-    // Target by the extent's own recovered name+argument rather than by a
-    // whitespace-normalized slice of the source: that is the same pair the
-    // renderer handed this component as `body`, so the match is exact even when
-    // two macros differ only inside a string literal.
-    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-    const mine = norm(props.body);
-    const target =
-      extents.find((e) => norm(`${e.name} ${e.argument}`) === mine)
-      ?? extents.find((e) => norm(raw.slice(e.start + 2, e.end - 2)) === mine)
-      ?? extents[0];
+    const raw = docNode(props.blockId)?.raw ?? "";
     setRaw(props.blockId, raw.slice(0, target.start) + newMacro + raw.slice(target.end));
   };
-  // **The save path (§4.3 Q3, A5; B5).**
-  //
-  // The frontend no longer prints a query — it hands the engine an IR and a
-  // dialect, and writes back the bytes the engine returned (I-12). Three things
-  // are decided here, and only here:
-  //
-  //  1. **The macro name.** `query_og_expressible` first, so P0 never asks the
-  //     OG printer a question it is going to refuse: an expressible edit keeps
-  //     the block's CURRENT name (a `{{tine-query}}` block is never silently
-  //     converted back to `{{query}}`), a non-expressible edit of a `{{query}}`
-  //     block is written as `{{tine-query <tql_macro>}}`.
-  //  2. **`NotApplicable` is answered, not surfaced.** This is the ONE caller
-  //     entitled to see it (`QueryPrintRefusedError.isNotApplicable`): if the OG
-  //     printer refuses after all, the answer is to switch dialect, not to show
-  //     the user an error about a query Tine can perfectly well store.
-  //  3. **Any OTHER refusal is shown and NOT written** (I-4, I-9, W4): a
-  //     macro-safety refusal carries the printer's own located message, and the
-  //     block's bytes are left exactly as they were.
-  //
-  // On a crossing (`{{query}}` → `{{tine-query}}`) the view directives the OG
-  // text carried have no home in TQL, so they are written to the block's `tine.*`
-  // properties in the SAME undo unit (§4.3 Y2) — otherwise the crossed block
-  // would re-parse without its sort, sample, grouping or aggregate.
-  const applyEdit = async (next: BuilderSession): Promise<boolean> => {
-    if (!props.blockId || !doc.byId[props.blockId]) return false;
-    const rawAtStart = doc.byId[props.blockId].raw;
-    const epochAtStart = graphEpoch();
-    const request = parseRequest();
-    const baseline = readLatestOr(parsedSnapshot, undefined, "query reading");
-    if (baseline && (baseline.request.argument !== request.argument || baseline.request.name !== request.name)) {
-      setPrintError("The query text changed. Wait for it to refresh, then try this edit again.");
-      return false;
-    }
-    if (baseline && JSON.stringify(baseline.request.properties) !== JSON.stringify(request.properties)) {
-      // Rebase only because the reading predates a property edit. The ordinary
-      // save still materializes its full effective view, including text-only
-      // directives that a reprint would otherwise discard.
-      try {
-        const fresh = await runQueryWhenCurrent(
-          lifetime,
-          () => backend().parseQuery(request.argument, macroTextDialect(request.name), request.properties),
-          () => graphEpoch() === epochAtStart && doc.byId[props.blockId!]?.raw === rawAtStart,
-        );
-        const rebased = { ...fresh.view };
-        for (const key of ["view", "sort", "group_by", "columns", "aggregates", "sample"] as const) {
-          const empty = key === "sort" || key === "columns" || key === "aggregates" ? [] : null;
-          if (JSON.stringify(baseline.reading.view[key] ?? empty) !== JSON.stringify(next.view[key] ?? empty)) {
-            Object.assign(rebased, { [key]: next.view[key] });
-          }
-        }
-        next = { ...next, view: rebased };
-      } catch (error) {
-        // The block or graph changed while its reading was fetched: the
-        // reading no longer describes it, so the edit must not be rebased on
-        // it (GH #543, audit R5-04).
-        setPrintError(error instanceof OperationCancelledError
-          ? "The query text changed. Wait for it to refresh, then try this edit again."
-          : errorText(error));
-        return false;
-      }
-    }
+  /** OG text re-emits only `(sort-by …)` and `(sample …)`; TQL text keeps no
+   *  view at all. A save must not drop the view facts its reprint loses, so
+   *  they are written to the block's `tine.*` properties in the same undo unit
+   *  (§4.3 Y2). Only facts the block does not already spell are written. */
+  const materializeView = (blockId: string, view: ViewSettings, dialect: QueryPrintDialect) => {
+    const spelled = new Set(hostProperties().map(([key]) => key.toLowerCase().replace(/^tine\.group-by$/, "tine.group-field")));
+    const textKeeps = dialect === "og";
+    const writes: [string, string | undefined][] = [
+      ["tine.sort", !textKeeps && view.sort?.length ? view.sort.map(([f, d]) => `${f} ${d}`).join("; ") : undefined],
+      ["tine.sample", !textKeeps && view.sample != null ? String(view.sample) : undefined],
+      ["tine.group-field", view.group_by || undefined],
+      ["tine.col-aggregates", view.aggregates?.length
+        ? view.aggregates.map(([f, fn]) => (f ? `${f}=${fn}` : fn)).join(";")
+        : undefined],
+    ];
+    for (const [key, value] of writes) if (value !== undefined && !spelled.has(key)) setBlockProperty(blockId, key, value);
+  };
+  // **The save path (§4.3).** `query_og_expressible` first; an edit OG cannot
+  // express crosses to `{{tine-query}}` (and says so, §7.5). The bytes written
+  // are the engine's; a refused print writes nothing and says why (I-4).
+  const applyEdit = async (next: BuilderSession, displayEdit = false): Promise<boolean> => {
+    const blockId = props.blockId;
+    if (!blockId || !docNode(blockId)) return false;
+    const rawAtStart = docNode(blockId).raw;
+    const previousDisplay = displayEdit ? new Map(displayPropertyPatch(reading()?.view ?? {})) : null;
+    const previousGroup = displayEdit ? reading()?.view.group_by : undefined;
+    const owner = bindingOwner(() => docNode(blockId)?.raw === rawAtStart);
     const current = macroName();
-    let expressible = false;
-    try {
-      expressible = await backend().queryOgExpressible(next.query, next.view);
-    } catch (error) {
-      setPrintError(errorText(error));
-      return false;
-    }
-    const crossing = !expressible && current.toLowerCase() !== "tine-query";
-    let name = expressible ? current : QUERY_MACRO_NAMES[1];
+    let name = current;
     let dialect = macroPrintDialect(name);
-    let argument: string;
+    let printed: Owned<string>;
     try {
-      argument = await backend().printQuery(next.query, next.view, dialect);
-    } catch (error) {
-      if (error instanceof QueryPrintRefusedError && error.isNotApplicable && dialect === "og") {
-        // `og_expressible` said yes and the printer said no. The entitled answer
+      const expressible = await readOwned(owner, backend().queryOgExpressible(next.query, next.view));
+      if (expressible.kind === "stale") {
+        return refuseChanged();
+      }
+      name = expressible.value ? current : QUERY_MACRO_NAMES[1];
+      dialect = macroPrintDialect(name);
+      try {
+        printed = await readOwned(owner, backend().printQuery(next.query, next.view, dialect));
+      } catch (error) {
+        // `og_expressible` said yes and the printer said no: the entitled answer
         // is the other dialect, not a refusal shown to the user.
+        if (!(error instanceof QueryPrintRefusedError && error.isNotApplicable && dialect === "og")) throw error;
         name = QUERY_MACRO_NAMES[1];
         dialect = macroPrintDialect(name);
-        try {
-          argument = await backend().printQuery(next.query, next.view, dialect);
-        } catch (second) {
-          setPrintError(errorText(second));
-          return false;
-        }
-      } else {
-        setPrintError(errorText(error));
-        return false;
+        printed = await readOwned(owner, backend().printQuery(next.query, next.view, dialect));
       }
-    }
-    if (graphEpoch() !== epochAtStart || doc.byId[props.blockId]?.raw !== rawAtStart) {
-      setPrintError("The block changed while saving. Try this edit again.");
+    } catch (error) {
+      setPrintError(errorText(error));
       return false;
     }
+    const node = docNode(blockId);
+    if (printed.kind === "stale" || !node) {
+      return refuseChanged();
+    }
+    // A page that turned read-only while the print was in flight refuses the
+    // write; report "not saved" so the sheet arms no focus (master 93ff682a3).
+    if (!blockWritable(blockId)) {
+      setPrintError("This block is read-only. The query was not changed.");
+      return false;
+    }
+    const target = targetMacro(node.raw);
+    if (!target) {
+      return refuseChanged();
+    }
     setPrintError(null);
-    // **What the notice can show comes from the ENGINE, or from nothing.**
-    //
-    // The crossing itself is `query_og_expressible`'s answer, which is a bare
-    // bool: it says THAT the query left OG, never which part. So the notice
-    // shows the one piece of evidence that exists — a bounded excerpt of the
-    // text the engine just PRINTED and this save is about to write — under its
-    // own wording, and the §7.5 sentence stays exactly as general as the
-    // engine's answer is. It is not called "the unsupported feature": nothing
-    // in the engine answers that question today, and re-deriving it over the
-    // TypeScript IR mirror is the second producer D-14 forbids.
-    //
-    // It costs nothing. `argument` is already in hand; asking the OG printer
-    // for a refusal message would be one more IPC per crossing save to
-    // manufacture evidence the save path did not need.
-    const changed = crossing ? boundedFeature(argument) : null;
-    const node = doc.byId[props.blockId];
-    let wrote = false;
-    const write = () => {
-      rewriteMacro(`{{${name} ${argument}}}`);
-      writeViewProperties(next.view);
-      wrote = true;
-    };
-    // ONE undo unit for the whole save, under both macro names (§4.3 directive
-    // migration). The tag is what the §7.5 notice's [Undo that change] button
+    const argument = printed.value;
+    const crossing = name.toLowerCase() !== current.toLowerCase();
+    // ONE undo unit for the whole save; the tag is what the notice's Undo
     // recognises, so only a CROSSING save carries the crossing tag.
-    if (!node) return false;
-    withUndoUnit(
-      crossing ? `query:cross:${props.blockId}` : `query:save:${props.blockId}`,
-      [node.page],
-      write,
-    );
-    if (!wrote) return false;
-    // The notice is the user half of the crossing (§7.5): the bytes changed
-    // under the user without asking, so say so and offer the way back.
-    if (crossing && node) setCrossed(props.blockId, changed);
-    rememberDisplay({ ...displayEnvelope(), view: next.view });
+    const saved = withUndoUnit(crossing ? `query:cross:${blockId}` : `query:save:${blockId}`, [node.page], () => {
+      rewriteMacro(`{{${name} ${argument}}}`, target);
+      materializeView(blockId, next.view, dialect);
+      if (previousDisplay) for (const [key, value] of displayPropertyPatch(next.view)) {
+        if (previousDisplay.get(key) !== value || key === "tine.group-field"
+          && previousGroup === undefined && next.view.group_by === "") {
+          if (key === "tine.col-aggregates") {
+            const merged = mergeQueryAggregateValue(blockProperty(blockId, key), next.view.aggregates ?? []);
+            if (merged !== undefined) setBlockProperty(blockId, key, merged);
+          } else setBlockProperty(blockId, key, value);
+          if (key === "tine.group-field" && blockProperty(blockId, "tine.group-by")?.trim())
+            setBlockProperty(blockId, "tine.group-by", null);
+          if (key === "tine.columns" && isLegacyBareColumnList(blockProperty(blockId, "tine.fields")))
+            setBlockProperty(blockId, "tine.fields", null);
+        }
+      }
+      return true;
+    });
+    if (saved !== true) {
+      setPrintError("A graph rewrite is in progress. The query was not changed.");
+      return false;
+    }
+    if (crossing) setCrossed(blockId, boundedFeature(argument));
     return true;
   };
-  /** **The view lives in the block's `tine.*` properties (§7.6), for BOTH macro
-   *  names (§4.3 "Directive migration", Q15).**
-   *
-   *  TQL text carries no view directives at all, and OG text carries only two of
-   *  the six — so before this the frontend wrote the properties on a crossing
-   *  only, `og_view` re-emitted `(aggregate …)`/`(group-by …)` back into OG text
-   *  (a second home for the same value, which then outlived its removal in the
-   *  builder), and `tine.columns::`/`tine.view::` were written by nobody and
-   *  lost on every save.
-   *
-   *  **The baseline is what the block's properties currently SPELL, not which
-   *  control the user touched** (P5A). The two readings differ exactly where it
-   *  matters: `og_view` re-emits only `(sort-by …)` and `(sample …)`, so a
-   *  grouping or an aggregate authored in the query TEXT is dropped by the
-   *  reprint of an unrelated filter edit, and only a property write keeps it.
-   *  Comparing against the persisted value materializes precisely those facts —
-   *  and a crossing to TQL, where the text keeps nothing at all, materializes
-   *  the whole effective view for the same reason.
-   *
-   *  Clearing is not cosmetic: `tine.*` has ABSOLUTE precedence over the DSL
-   *  text, so a stale `tine.sort::` line would put a removed sort straight back
-   *  on the next parse. And clearing a property the block never had is the
-   *  identity on its bytes (`markdownRawWithProperty(raw, k, null)`), so an
-   *  ordinary query block gains no property lines it has no view for (I-4).
-   *
-   *  What it must NOT do is rewrite the block's other metadata. `tine.fields::`
-   *  is a TYPED SHEET SCHEMA, not a column list: writing the view's columns into
-   *  it destroyed a declared schema on every filter save. Columns now live in
-   *  `tine.columns::`, and the only time this writer touches `tine.fields` is to
-   *  retire a value PROVEN to be a pre-split bare column list, in the same undo
-   *  unit as the save that replaces it. The mapping itself is pure and shared
-   *  with the query table (`editor/queryViewProperties.ts`); the side effect
-   *  stays here, on the store's one property writer (D-7). */
-  const blockPropertyPairs = () => {
-    const blockId = props.blockId;
-    const node = blockId ? doc.byId[blockId] : undefined;
-    return blockId && node ? facetsOf(node.raw, formatForBlock(blockId)).properties : null;
-  };
-  /** The write set of a DISPLAY edit: only the facts it changed.
-   *
-   *  A save reprints the query text and has to materialize whatever that
-   *  reprint would drop, so it uses the full patch. A display edit reprints
-   *  nothing — and `before` is the ENGINE's last reading, which a second edit
-   *  made inside one parse round-trip still carries, so restating the untouched
-   *  facts from it would undo the first edit. */
-  const displayPropertyWrites = (before: ViewSettings, view: ViewSettings) => {
-    const properties = blockPropertyPairs();
-    return properties ? queryDisplayPropertyWrites({ before, view, properties }) : [];
-  };
-  /** The property half of a SAVE, which reprints — so it keeps the WIDE
-   *  baseline: only the block's own properties can say which facts live solely
-   *  in the query text and are about to be dropped (P5A). */
-  const writeViewProperties = (view: ViewSettings) => {
-    const blockId = props.blockId;
-    const properties = blockPropertyPairs();
-    if (!blockId || !properties) return;
-    for (const [key, value] of queryViewPropertyPatch({ view, properties })) {
-      setBlockProperty(blockId, key, value);
+  /** Display uses the same guarded print and undo unit as a filter edit. */
+  const applyDisplay = (view: ViewSettings): Promise<boolean> => {
+    const current = reading();
+    if (current && view.view !== current.view.view
+      && JSON.stringify({ ...view, view: undefined }) === JSON.stringify({ ...current.view, view: undefined })) {
+      setQueryView(view.view ?? "list");
+      return Promise.resolve(true);
     }
+    return current ? applyEdit({ query: current.query, view }, true) : Promise.resolve(false);
   };
-  /** **Apply a DISPLAY change** — view, grouping, columns, aggregates, sort or
-   *  sample — through the ONE audited write path (D-7).
-   *
-   *  Grouping, columns and aggregates have no home in the query TEXT at all:
-   *  `og_view` re-emits only `(sort-by …)` and `(sample …)`. So stating them is
-   *  a property write and nothing else — no printer round-trip, no macro
-   *  rewrite, and no way for a refused print to swallow a display change the
-   *  user just made.
-   *
-   *  Sort and sample DO print. `tine.*` outranks the text either way, so the
-   *  property write alone would already render correctly — but leaving the text
-   *  spelling a sort the block no longer uses is a second, contradictory home
-   *  for one fact, and it is the spelling an outside editor sees. Those two go
-   *  through the ordinary save, which reprints the macro in the same undo unit.
-   *
-   *  Either way the write set is the shared patch's, so nothing the block
-   *  already spells is rewritten and no key outside the six is touched. The
-   *  property-only path narrows it further, to the facts this edit CHANGED
-   *  (`queryDisplayPropertyWrites`): `before` is the engine's last reading and
-   *  the engine re-reads asynchronously, so a second edit made inside one parse
-   *  round-trip still carries the reading that predates the first — and
-   *  restating that reading's untouched facts would undo it (I-20). A save has
-   *  to keep the wide baseline, because its reprint drops text-only facts. */
-  const applyDisplay = async (next: ViewSettings) => {
-    const blockId = props.blockId;
-    if (!blockId) return;
-    const before = displayView();
-    const reprints =
-      serializeQuerySort(before.sort) !== serializeQuerySort(next.sort) ||
-      (before.sample ?? null) !== (next.sample ?? null);
-    const reading = parsed.latest;
-    if (reprints && reading) {
-      await applyEdit({ query: reading.query, view: next });
-      return;
-    }
-    const node = doc.byId[blockId];
-    if (!node) return;
-    const writes = displayPropertyWrites(before, next);
-    // Nothing to say is not an undo entry: re-picking the view a block already
-    // has must not leave a step the user has to take back.
-    if (writes.length === 0) return;
-    // ONE undo unit for the whole display change, so a grouping switch that also
-    // retires a legacy key is taken back as one step.
-    withUndoUnit(`query:display:${blockId}`, [node.page], () => {
-      for (const [key, value] of writes) setBlockProperty(blockId, key, value);
-    });
-    rememberDisplay({ ...displayEnvelope(), view: next });
-  };
-  /** **Apply a SCOPED display change** — one namespace, nothing else (§7.6, Q3).
-   *
-   *  Three rules make this different from the singular writer above:
-   *
-   *   1. **The first scoped edit clones the effective snapshot.** A scoped draft
-   *      is complete or it is absent, so an edit that stated only the fact it
-   *      changed would silently clear everything this section was already
-   *      showing. `queryScopedDraftFrom` writes the whole effective non-view
-   *      snapshot down, then the requested change goes on top.
-   *   2. **Presentation is independently scoped.** Switching one section's view
-   *      says nothing about the other's, and nothing about the predicate.
-   *   3. **It never touches the other namespace, the singular settings, or an
-   *      authored key it does not own** — that is `queryScopedDisplayPropertyPatch`'s
-   *      contract, and it is why an unknown `tine.*` property survives an edit.
-   *
-   *  Nothing is reprinted: the scoped keys have no spelling in the query TEXT
-   *  at all, so a scoped sort or sample is a property write and only that.
-   */
-  const applyScopedDisplay = (
-    namespace: "page" | "block",
-    change: (current: ViewSettings) => ViewSettings,
-  ) => {
-    const blockId = props.blockId;
-    const node = blockId ? doc.byId[blockId] : undefined;
-    const properties = blockPropertyPairs();
-    if (!blockId || !node || !properties) return;
-    const envelope = displayEnvelope();
-    const before = namespace === "page" ? pageResultView() : blockResultView();
-    const next = change(before);
-    const { view, ...rest } = next;
-    const draft: QueryDisplayDraft = queryScopedDraftFrom(rest as ViewSettings);
-    const writes = [
-      ...queryScopedDisplayPropertyPatch({
-        namespace,
-        ...(view !== undefined && view !== "list" ? { presentation: view } : {}),
-        display: draft,
-        properties,
-      }),
-    ];
-    if (writes.length === 0) return;
-    withUndoUnit(`query:display:${namespace}:${blockId}`, [node.page], () => {
-      for (const [key, value] of writes) setBlockProperty(blockId, key, value);
-    });
-    // Optimistically show exactly what was written, including PRESENCE: the
-    // reparse is asynchronous and an envelope that dropped the new draft would
-    // show the section inheriting for a frame.
-    rememberDisplay({
-      ...envelope,
-      ...(namespace === "page"
-        ? { page_display: draft, ...(view !== undefined ? { page_presentation: view } : {}) }
-        : { block_display: draft, ...(view !== undefined ? { block_presentation: view } : {}) }),
-    });
-  };
-  /** Remove one namespace's scoped draft, so the section INHERITS again. This is
-   *  a different action from clearing, which writes an empty draft — and the two
-   *  have to stay distinct, because "show what the query says" and "show
-   *  nothing extra" are different requests (I-10: both have a way out). */
-  const inheritScopedDisplay = (namespace: "page" | "block") => {
-    const blockId = props.blockId;
-    const node = blockId ? doc.byId[blockId] : undefined;
-    const properties = blockPropertyPairs();
-    if (!blockId || !node || !properties) return;
-    const writes = queryScopedDisplayPropertyPatch({ namespace, properties });
-    if (writes.length === 0) return;
-    withUndoUnit(`query:display:${namespace}:${blockId}`, [node.page], () => {
-      for (const [key, value] of writes) setBlockProperty(blockId, key, value);
-    });
-    const envelope = { ...displayEnvelope() };
-    delete envelope[namespace === "page" ? "page_display" : "block_display"];
-    delete envelope[namespace === "page" ? "page_presentation" : "block_presentation"];
-    rememberDisplay(envelope);
-  };
-  /** Friendly page membership scope. It is neither namespace's: it changes
-   *  which pages are MEMBERS, and the Blocks section still evaluates the
-   *  ordinary block predicate. */
-  const applyPageMatchScope = (scope: FriendlyPageMatchScope | undefined) => {
-    const blockId = props.blockId;
-    const node = blockId ? doc.byId[blockId] : undefined;
-    const properties = blockPropertyPairs();
-    if (!blockId || !node || !properties) return;
-    const writes = queryPageMatchScopePropertyPatch({
-      ...(scope !== undefined ? { scope } : {}),
-      properties,
-    });
-    if (writes.length === 0) return;
-    withUndoUnit(`query:page-match-scope:${blockId}`, [node.page], () => {
-      for (const [key, value] of writes) setBlockProperty(blockId, key, value);
-    });
-    const envelope = { ...displayEnvelope() };
-    if (scope === undefined) delete envelope.page_match_scope;
-    else envelope.page_match_scope = scope;
-    rememberDisplay(envelope);
-  };
-  // Edit the query's display title (:title "…" in the options map). Only offered
-  // for a user-authored standalone query (blockId set, no app-supplied title).
+
+  // **A title edit is not a filter conversion (§4.3.1).** The new options map
+  // goes back through the printer with `preserveForm`, which re-emits the
+  // authored source verbatim, so renaming a partly understood query cannot
+  // rewrite its filter.
   const [editingTitle, setEditingTitle] = createSignal(false);
   const titleText = () => props.title ?? titleOption() ?? "Query";
-  const titleEditable = () => !!props.blockId && props.title === undefined;
-  // **A title edit is not a filter conversion (§4.3.1).** The new options map is
-  // handed back to the printer with `preserveForm`, which re-emits
-  // `source.original` verbatim and never re-lowers the IR — so renaming a query
-  // the engine only partly understands cannot rewrite the author's filter, and a
-  // query that OG could not express is still renameable. The dialect comes off
-  // the SOURCE, not the macro name: a `{{query …}}` holding datalog prints as
-  // `advanced_macro`.
+  const titleEditable = () => !!props.blockId && props.title === undefined && !!reading();
   const setTitle = async (t: string) => {
-    if (!props.blockId) return;
-    const reading = parsed.latest;
-    if (!reading) return;
-    const inner = opts().replace(/^\{|\}$/g, "").trim();
-    // Drop any existing :title (escape-aware), keep the other options.
-    const rest = inner.replace(/:title\s+"(?:[^"\\]|\\.)*"\s*/, "").trim();
-    // Strip chars that would break the {{…}} macro / {…} options map; escape the
-    // rest so quotes/backslashes round-trip faithfully through a re-parse.
-    const title = t.trim().replace(/[\r\n{}]/g, "");
-    const parts = [title ? `:title "${quoteEdnString(title)}"` : "", rest].filter(Boolean);
-    const nextOptions = parts.length ? `{${parts.join(" ")}}` : "";
-    const nextQuery: Query = {
-      ...reading.query,
-      source: { ...reading.query.source, og_options: nextOptions } as Source,
-    };
+    const blockId = props.blockId;
+    const current = reading();
+    if (!blockId || !current) return;
+    const rawAtStart = docNode(blockId)?.raw;
     try {
-      const argument = await backend().printQuery(
-        nextQuery,
-        reading.view,
-        sourcePrintDialect(reading.query.source),
-        true,
+      const title = t.trim().replace(/[\r\n{}]/g, "");
+      const nextOptions = editEdnTitle(opts(), title);
+      if (nextOptions === opts()) return;
+      const nextQuery: Query = { ...current.query, source: { ...current.query.source, og_options: nextOptions } as Source };
+      const printed = await readOwned(
+        bindingOwner(() => docNode(blockId)?.raw === rawAtStart),
+        backend().printQuery(nextQuery, current.view, sourcePrintDialect(current.query.source), true),
       );
-      setPrintError(null);
-      rewriteMacro(`{{${macroName()} ${argument}}}`);
+      if (printed.kind === "stale") {
+        refuseChanged();
+        return;
+      }
+      const node = docNode(blockId);
+      const target = node && targetMacro(node.raw);
+      if (!node || !target || !blockWritable(blockId)) {
+        refuseChanged();
+        return;
+      }
+      const saved = withUndoUnit(`query:title:${blockId}`, [node.page], () => {
+        rewriteMacro(`{{${macroName()} ${printed.value}}}`, target);
+        return true;
+      });
+      setPrintError(saved === true ? null : "A graph rewrite is in progress. The query was not changed.");
     } catch (error) {
-      // I-4 / T7: a refused print is NEVER swallowed. Nothing is written, and the
-      // reason is shown next to the edit that provoked it. A catch-all that
-      // turned this into a silent no-op is how an unsaved rename looks saved.
+      // I-4: a refused print is never swallowed; nothing is written.
       setPrintError(errorText(error));
     }
   };
-  const [printError, setPrintError] = createSignal<string | null>(null);
-  /** The undo tag of the crossing save this block's notice is offering to take
-   *  back, or null when no notice is showing (§7.5). Holding the TAG rather than
-   *  a bare flag is what lets the button know whether Undo would still reverse
-   *  THIS change. */
+
+  // -- the §7.5 crossing notice ----------------------------------------------
   const [crossedTag, setCrossedTag] = createSignal<string | null>(null);
-  /** A bounded excerpt of the ENGINE-PRINTED text the crossing save wrote, or
-   *  `null`. Never a claim about which subexpression is unsupported. */
   const [crossedText, setCrossedText] = createSignal<string | null>(null);
-  /** **The notice's own UI state, lifted out of the component (N3).**
-   *
-   *  The notice moves between two hosts — inline under the block while the sheet
-   *  is closed, inside the query text pane while it is open — and a component
-   *  that is re-parented is a component that is re-created. A tick the user made
-   *  on "Don't show this again" must survive that move, and the focus grab must
-   *  NOT happen again on every move: it belongs to the moment the bytes changed,
-   *  not to opening a sheet. */
+  // The notice moves between two hosts; its UI state lives here so a
+  // re-parented notice keeps its checkbox and does not grab focus again (N3).
   const [noticeDontShow, setNoticeDontShow] = createSignal(false);
   const [noticeFocused, setNoticeFocused] = createSignal(false);
+  const [sheetOpen, setSheetOpen] = createSignal(false);
   const setCrossed = (blockId: string, changed: string | null) => {
-    // One read per graph, shared by every query block (I-13) — never a lookup
-    // per block per render.
-    primeNoticeDismissals();
+    primeCrossingNoticePreference();
     setCrossedText(changed);
     setNoticeDontShow(false);
     setNoticeFocused(false);
     setCrossedTag(`query:cross:${blockId}`);
   };
-  const dismissCrossingNotice = () => {
-    if (noticeDontShow()) dismissNotice(CROSSING_NOTICE);
+  const dismissCrossing = () => {
+    if (noticeDontShow()) dismissCrossingNoticeForever();
     setCrossedTag(null);
   };
-  /** The notice shows only once this device's answer is KNOWN and is "not
-   *  dismissed". `undefined` (still reading) renders nothing rather than a
-   *  banner that appears and then retracts itself. */
-  const showCrossingNotice = () =>
-    !!crossedTag() && noticeDismissed(CROSSING_NOTICE) === false;
-  /** Undo is offered only while the entry `undo()` would take back IS the
-   *  crossing save. Any later edit — including one on another page, in page-only
-   *  history mode — makes this false, and the button says to use Ctrl+Z. */
+  // Shown only once this device's answer is KNOWN to be "not dismissed".
+  const showCrossingNotice = () => !!crossedTag() && crossingNoticePrimed === graphEpoch() && crossingNoticeDismissed() === false;
+  // Undo is offered only while the entry `undo()` would take back IS the crossing save.
   const crossingIsStillUndoable = () => {
     const tag = crossedTag();
-    return !!tag && undoTopTag() === tag;
+    return !!tag && !graphRewriteFrozen() && undoTopTag() === tag;
   };
-  /** Whether the builder's sheet is open, which decides WHERE the one notice is
-   *  drawn. Nothing else reads it. */
-  const [sheetOpen, setSheetOpen] = createSignal(false);
-  /** The one notice, built once and placed by whichever host is current. */
   const crossingNotice = () => (
     <CrossingNotice
       canUndo={crossingIsStillUndoable()}
@@ -1013,822 +669,93 @@ export function QueryMacro(props: {
       autoFocus={!noticeFocused()}
       onFocused={() => setNoticeFocused(true)}
       onUndo={() => {
-        undo();
-        dismissCrossingNotice();
+        if (undo()) {
+          dismissCrossing();
+          return true;
+        }
+        pushToastUnique("Undo is unavailable while the graph is being rewritten.", "error");
+        return false;
       }}
-      onKeep={dismissCrossingNotice}
-      onDontShowAgain={() => dismissNotice(CROSSING_NOTICE)}
+      onKeep={dismissCrossing}
+      onDontShowAgain={dismissCrossingNoticeForever}
     />
   );
-  /** What the builder edits: the AUTHORING reading, never the execution's
-   *  dyvar-substituted one — editing a chip must not bake the page you happen to
-   *  be looking at into the saved query. */
+  /** What the builder edits: the AUTHORING reading, never the substituted one. */
   const builderSession = (): BuilderSession | undefined => {
-    const reading = parsed.latest;
-    return reading ? { query: reading.query, view: reading.view } : undefined;
+    const current = reading();
+    return current ? { query: current.query, view: current.view } : undefined;
   };
+  const showBuilder = () => !!props.blockId && !isAdvanced() && !!builderSession();
+  const [paneStale, setPaneStale] = createSignal(false);
 
-  // Whether this is an advanced (datalog) query is the ENGINE's reading of the
-  // text, not a regex over it (§7.1): a `:find` inside a string literal is text.
-  const isAdvanced = () => source()?.kind === "advanced";
-  const currentPageInput = createMemo(() =>
-    isAdvanced() && declaresCurrentPageInput(form())
-  );
-  // The `⚙ advanced` / `← Simple` pair is gone with the frontend's datalog
-  // converters (§9 P0-ts: "datalog conversion deleted"). Both directions were a
-  // second query translator living in `queryBuilder.ts` — the one that dropped
-  // sort/aggregate/group-by on the way out and could only read back the exact
-  // shape it had written. Converting an authored advanced query into a filter is
-  // explicitly out of scope (§4.3.1, Q13); an advanced block stays editable as
-  // raw text by clicking it, with the ran/ignored note above saying what took.
-  const currentPage = () => props.currentPage ?? (props.blockId ? doc.byId[props.blockId]?.page : undefined);
-  interface QueryOperationResult {
-    statistics?: import("../editor/queryIr").QueryStatistics;
-    statisticsView?: ViewSettings;
-    groups: RefGroup[];
-    advInfo: { ran: string[]; ignored: string[]; supported: boolean } | null;
-    // `@page`-anchored rows (K16) are pages rather than degenerate empty groups.
-    pageRows: PageRow[] | null;
-    // Exact complete count for page rows; null for block/search answers.
-    matchedTotal: number | null;
-    // Search hits carry evidence used only by the Search presentation.
-    searchExecution: QueryExecution | null;
-    // An INVALID query returns zero rows plus the engine's own diagnostics.
-    diagnostics: Diagnostic[];
-  }
-  const collapseKey = () => JSON.stringify([
-    graphMeta()?.root ?? "",
-    props.blockId ?? currentPage() ?? "global",
-    arg(),
-  ]);
-  const storedCollapse = loadCollapsed(collapseKey());
-  const [collapsed, setCollapsed] = createSignal(storedCollapse ?? false);
-  // `{:collapsed? true}` is an authored DEFAULT, not a reader's choice, so it
-  // only applies when this reader has no stored preference for this query. It
-  // can only be honoured once the engine has separated the options map from the
-  // form, which is why it is seeded when the parse lands rather than at setup.
-  if (storedCollapse === undefined || storedCollapse === null) {
-    let seeded = false;
-    createEffect(() => {
-      if (seeded || !parsed.latest) return;
-      seeded = true;
-      if (collapsedOption()) setCollapsed(true);
-    });
-  }
-  const toggleCollapsed = () => {
-    const v = !collapsed();
-    setCollapsed(v);
-    saveCollapsed(collapseKey(), v);
-  };
-  // Re-run when the query text changes OR after any save lands (dataRev), so
-  // results track edits live — e.g. a task flipped to DONE leaves a (task TODO)
-  // query. createResource keeps the previous value during refetch (no flicker).
-  // A COLLAPSED query keys off the form only (no dataRev), so it fetches once for
-  // its count and doesn't re-run a whole-graph scan on every save while hidden;
-  // expanding it (key flips to include dataRev) refreshes it.
-  // Nothing runs before the engine has read the text: the form the executor is
-  // given is `source.original`, and until the parse lands there is no form —
-  // only the raw argument, which still carries the options map. Returning
-  // `undefined` keeps `createResource` from fetching at all, rather than running
-  // a query nobody authored.
-  const queryMembershipIdentity = (): string | undefined => {
-    const reading = runnable();
-    if (!reading) return undefined;
-    // The IR, not the text, is what runs — so it is what identifies the run. Two
-    // blocks whose text differs only in whitespace share a request; two blocks
-    // whose text is identical but whose `tine.*` properties differ do not.
-    // The COMPLETE settings envelope, not the singular view alone: two blocks
-    // whose text and singular view are identical but whose scoped settings or
-    // page membership scope differ are two different questions, and sharing one
-    // answer between them is how a late result lands on the wrong state (I-20).
-    const identity = JSON.stringify([
-      reading.query,
-      reading.view,
-      pageResultView(),
-      blockResultView(),
-      pageMatchScope() ?? null,
-    ]);
-    // Only a query that binds `?current-page` needs the focused page in its key:
-    // for those the text is identical on both pages and only the execution
-    // context differs. A `<% current page %>` query must NOT key off it — the
-    // substitution lives in the TEXT, so its reading changes a beat later, and a
-    // key that moved first would run the OLD query under the NEW page: one extra
-    // execution of a state the user was never in.
-    const binding = currentPageInput() ? `\0cp:${executionPage() ?? ""}` : "";
-    return `${graphEpoch()}\0${collapsed() ? "collapsed\0" : "expanded\0"}${identity}${binding}`;
-  };
-  interface DisplayedQueryOperation extends QueryOperationResult {
-    identity: string;
-  }
-  const [displayedOperation, setDisplayedOperation] = createSignal<DisplayedQueryOperation>();
-  const refreshRevision = createQueryRefreshRevision({
-    revision: dataRev,
-    identity: queryMembershipIdentity,
-    containsDisplayedBlock: (blockId) => displayedOperation()?.groups.some((group) =>
-      group.blocks.some((block) => block.id === blockId)
-    ) ?? false,
-  });
-  const queryRequestKey = (): string | undefined => {
-    const identity = queryMembershipIdentity();
-    if (!identity) return undefined;
-    return collapsed() ? identity : `${identity}\0revision:${refreshRevision()}`;
-  };
-  /** The page an execution binds `?current-page` to (§4.4). `:inputs
-   *  [:current-page]` is a focused-pane binding; an advanced form without it
-   *  retains the owner page for `:query-page` compatibility. */
-  const executionPage = () => (currentPageInput() ? focusedQueryPage() : currentPage());
-  const fetchQueryOperation = async (
-    requestKey: string,
-    signal: AbortSignal,
-  ): Promise<QueryOperationResult> => {
-    {
-      const scope = sharedQueryScope(graphMeta()?.root, graphEpoch(), graphBinding());
-      const searchSource = friendlySearch();
-      if (searchSource !== null) {
-        const execution = await sharedQueryResult(
-          scope,
-          `friendly-search\0${requestKey}`,
-          () => backend().runGraphSearch(
-            searchSource,
-            500,
-            5_000,
-            `inline-query:${props.blockId ?? currentPage() ?? "global"}`,
-            false,
-            // No PHYSICAL page scope: an inline Friendly search is a whole-graph
-            // question. The Display options beside it are a different member.
-            undefined,
-            {
-              ...(pageMatchScope() !== undefined ? { pageMatchScope: pageMatchScope()! } : {}),
-              pageView: pageResultView(),
-              blockView: blockResultView(),
-            },
-          ),
-          signal,
-        );
-        if (queryRequestKey() !== requestKey) {
-          return { groups: [], advInfo: null, pageRows: null, matchedTotal: null, searchExecution: null, diagnostics: [] };
-        }
-        // The Search presentation renders these hits directly rather than the
-        // RefGroups below, so the host block has to come out here too — the same
-        // exclusion `withoutHostBlock` makes, at the other place membership is
-        // decided (GH #469). Diagnostics and the explanation are untouched: the
-        // hit was really found, it is just not shown to itself.
-        const hits = props.blockId
-          ? execution.hits.filter((hit) => !(hit.entity === "block" && hit.block.id === props.blockId))
-          : execution.hits;
-        const visibleExecution = hits.length === execution.hits.length ? execution : { ...execution, hits };
-        // Adjacency, not identity (Q4): with an explicit block sort one page
-        // can legitimately open more than one group, and re-clustering by page
-        // would reorder rows the backend deliberately placed.
-        const grouped: RefGroup[] = [];
-        let groupKey: string | null = null;
-        for (const hit of hits) {
-          if (hit.entity !== "block") continue;
-          const key = `${hit.kind}\0${hit.page}\0${hit.path ?? ""}`;
-          if (key !== groupKey) {
-            grouped.push({ page: hit.page, kind: hit.kind, path: hit.path, blocks: [] });
-            groupKey = key;
-          }
-          grouped[grouped.length - 1].blocks.push(hit.block);
-        }
-        return {
-          groups: grouped,
-          advInfo: null,
-          pageRows: null,
-          matchedTotal: null,
-          searchExecution: visibleExecution,
-          diagnostics: [],
-        };
-      }
-      // **One evaluator (§7.1, B1).** `run_query` re-parsed the OG text and
-      // `run_advanced_query` re-parsed the datalog; both are now the same
-      // `query_run` over an IR the engine already read, which is also the only
-      // reason a `{{tine-query …}}` block can return rows at all — the legacy
-      // entry points cannot read TQL. Which grammar the text was is settled by
-      // then, and the advanced ran/ignored report rides on the result rather than
-      // on a separate command.
-      const reading = runnable();
-      if (!reading) {
-        return { groups: [], advInfo: null, pageRows: null, matchedTotal: null, searchExecution: null, diagnostics: [] };
-      }
-      const page = executionPage();
-      const result = await sharedQueryResult(
-        scope,
-        `ir\0${page ?? ""}\0${requestKey}`,
-        // The effective view of `reading.query.anchor` (§7.6, Q3): a page-anchored
-        // query is a Pages section, so it runs under the Pages settings. Running
-        // it under the Blocks settings would order pages by a block field.
-        () => backend().queryRun(
-          reading.query,
-          reading.query.anchor === "page" ? pageResultView() : blockResultView(),
-          page ? { current_page: page } : undefined,
-        ),
-        signal,
-      );
-      // I-20: the user has edited since this run started; its answer is about a
-      // query that is no longer on screen.
-      if (queryRequestKey() !== requestKey) {
-        return { groups: [], advInfo: null, pageRows: null, matchedTotal: null, searchExecution: null, diagnostics: [] };
-      }
-      if (result.anchor === "page") {
-        return {
-          groups: [],
-          advInfo: isAdvanced() ? reportInfo(result.report) : null,
-          pageRows: result.pages,
-          statistics: result.statistics,
-          statisticsView: pageResultView(),
-          matchedTotal: result.matched_total ?? result.total,
-          searchExecution: null,
-          diagnostics: result.diagnostics ?? [],
-        };
-      }
-      return {
-        groups: result.groups,
-        statistics: isAdvanced() ? undefined : result.statistics,
-        statisticsView: blockResultView(),
-        advInfo: isAdvanced() ? reportInfo(result.report) : null,
-        pageRows: null,
-        matchedTotal: null,
-        searchExecution: null,
-        diagnostics: result.diagnostics ?? [],
-      };
-    }
-  };
-  // A query must not return the block it is written in. `{{query "xyz"}}`
-  // contains `xyz`, so the backend answers honestly and the block matches its
-  // own query — then the result renders the page it lives on, which renders the
-  // query, which lists the page again. OG removes exactly the host block for
-  // this reason and says so where it does it (frontend/components/query/result.cljs
-  // at 6e7afa8e: "exclude the current one, otherwise it'll loop forever"). Its
-  // children are NOT removed; only the block itself. Applied once here, after
-  // every fetch path, rather than in each of the three (GH #469).
-  const [groupResource, groupsPending] = createReadyQueryResource(
-    queryRequestKey,
-    async (requestKey, signal) => {
-      const identity = queryMembershipIdentity() ?? "";
-      const operation = await fetchQueryOperation(requestKey, signal);
-      return {
-        ...operation,
-        identity,
-        groups: withoutHostBlock(operation.groups, props.blockId),
-      };
-    },
-  );
-  // A membership answer that removes the actively edited result would destroy
-  // its mounted textarea and DOM-local selection. Keep the whole previous
-  // operation — groups/page rows, search evidence, diagnostics, report, and
-  // therefore count/order — coherent while that editor is active. Only the
-  // newest completed operation waits here, and it publishes as soon as the
-  // ordinary editor lifecycle ends. A changed query/graph/view identity never
-  // inherits deferred metadata from this hold.
-  let pendingFocusedOperation: DisplayedQueryOperation | undefined;
-  createEffect(() => {
-    if (groupResource.error) {
-      pendingFocusedOperation = undefined;
-      return; // Keep the previous coherent rows/statistics pair with error status.
-    }
-    const candidate = readOr(groupResource, undefined, "query results");
-    if (!candidate) {
-      pendingFocusedOperation = undefined;
-      setDisplayedOperation(undefined);
-      return;
-    }
-    const current = untrack(displayedOperation);
-    const focused = editingId();
-    const focusedWasDisplayed = !!focused && current?.identity === candidate.identity
-      && current.groups.some((group) => group.blocks.some((block) => block.id === focused));
-    const focusedStillPresent = !!focused
-      && candidate.groups.some((group) => group.blocks.some((block) => block.id === focused));
-    if (focusedWasDisplayed && !focusedStillPresent) {
-      pendingFocusedOperation = candidate;
-      return;
-    }
-    pendingFocusedOperation = undefined;
-    setDisplayedOperation(candidate);
-  });
-  createEffect(on(editingId, (focused) => {
-    if (focused !== null || !pendingFocusedOperation) return;
-    const candidate = pendingFocusedOperation;
-    pendingFocusedOperation = undefined;
-    if (candidate.identity === queryMembershipIdentity()) setDisplayedOperation(candidate);
-  }));
-  createEffect(on(queryMembershipIdentity, (identity, previous) => {
-    if (previous !== undefined && identity !== previous) pendingFocusedOperation = undefined;
-  }));
-  const groups = () => displayedOperation()?.groups;
-  const advInfo = () => displayedOperation()?.advInfo ?? null;
-  const pageRows = () => displayedOperation()?.pageRows ?? null;
-  const matchedTotal = () => displayedOperation()?.matchedTotal ?? null;
-  const searchExecution = () => displayedOperation()?.searchExecution ?? null;
-  const diagnostics = () => displayedOperation()?.diagnostics ?? [];
-  /** A run that actually came back and matched nothing. "No results" and its
-   *  "why empty?" affordance describe an ANSWER; before the first operation
-   *  lands (parse pending, engine rebuilding) there is no answer to explain. */
-  const ranEmpty = () => !!displayedOperation() && !groupResource.loading && !groupResource.error && total() === 0;
-  /** The view the execution above actually ran under — the anchored section's
-   *  effective settings (a page-anchored query runs under the Pages settings,
-   *  a block-anchored one under the Blocks settings), NOT the singular
-   *  `displayView()`: a scoped `tine.block-sample::` is invisible there. */
-  const executedView = (): ViewSettings => runnable()?.query.anchor === "page" ? pageResultView() : blockResultView();
-  /** The typed refusal of either parse — authored or execution-side — when no
-   *  operation has landed: a published export answers only the queries it
-   *  was made with, and says so instead of "unavailable". */
-  const parseRefusal = (): QueryUnavailableError | null => {
-    if (displayedOperation()) return null;
-    for (const error of [parsedSnapshot.error, executionParsed.error]) {
-      if (error instanceof QueryUnavailableError) return error;
-    }
-    return null;
-  };
-  const emptyResultsMessage = () => groupsPending()?.message ?? parsePending()?.message
-    ?? (groupResource.error || (!displayedOperation() && (parsedSnapshot.error || executionParsed.error))
-      // A typed refusal explains itself; anything else stays generic.
-      ? (parseRefusal()?.message ?? "Query results unavailable")
-      : groupResource.loading || !displayedOperation() ? "Loading query results…" : "No results");
-  const groupsError = () => {
-    const error = groupResource.error;
-    if (!error) return null;
-    const message = error instanceof Error ? error.message : String(error);
-    const oversized = message.startsWith("result-too-large:");
-    return {
-      lead: oversized ? "Query result is too large to display safely:" : "Query couldn't be loaded:",
-      message: message.replace(/^result-too-large:\s*/, ""),
-    };
-  };
-  // Presentation never changes membership. Canonical `(search "…")` queries
-  // already carry page/block hits and match evidence from QueryPlan. Ordinary
-  // DSL queries return RefGroups, so adapt those same blocks into evidence-free
-  // search rows instead of making the Search presentation appear empty.
-  const searchPresentationHits = createMemo<QueryHit[]>(() => {
-    if (friendlySearch() !== null) return searchExecution()?.hits ?? [];
-    return (groups() ?? []).flatMap((group) => group.blocks.map((block) => ({
-      entity: "block" as const,
-      page: group.page,
-      kind: group.kind,
-      block,
-      display_text: visibleBody(block.raw).join(" "),
-      evidence: [],
-    })));
-  });
-  /** **The returned operation, PARTITIONED — never refetched per family** (Q3).
-   *
-   *  One Friendly read answers both questions at once, so the Pages and Blocks
-   *  sections are two views of ONE operation. Fetching a family on its own
-   *  would let the two halves describe two different graph states, which is the
-   *  shape I-20 forbids. */
-  const pageHits = createMemo(() =>
-    searchPresentationHits().filter((hit): hit is QueryPageHit => hit.entity === "page"));
-  const blockSectionHits = createMemo(() => searchPresentationHits().filter((hit) => hit.entity === "block"));
-  /** An explicit `@page`-anchored result, adapted into the ONE page renderer.
-   *
-   *  A `PageRow` is already everything the Pages section shows — path, kind,
-   *  journal day and the page's own ordered properties — so this is a shape
-   *  change and nothing more. It fabricates no evidence and no block: the row
-   *  matched a predicate, not a text, and claiming a highlighted excerpt it
-   *  never had would be an invented fact. */
-  const pageRowHits = createMemo<QueryPageHit[]>(() => (pageRows() ?? []).map((row) => ({
-    entity: "page" as const,
-    page: { name: row.name, kind: row.kind, date_key: row.journal_day ?? null, path: row.path },
-    display_text: row.name,
-    // No evidence and no score: the row matched a PREDICATE, not a text. A
-    // highlighted excerpt or a rank it never had would be an invented fact.
-    evidence: [],
-    score: 0,
-    row,
-  })));
-  /** **One answer, counted once — whatever face it is wearing** (GH #547).
-   *
-   *  The count is a property of the RESULT, not of the presentation, so the
-   *  row family is chosen by what the run returned and never by `currentView()`.
-   *  A page-anchored answer counts its pages in every view: keying the Search
-   *  face off `searchPresentationHits()` counted blocks a page-anchored run
-   *  never produces, so the header read 0 beside a summary group reading 7. */
-  const total = () => pageRows()
-    ? (matchedTotal() ?? pageRows()!.length)
-    : friendlySearch() !== null || currentView() === "search"
-      ? searchPresentationHits().length
-      : groups()?.reduce((a, g) => a + g.blocks.length, 0) ?? 0;
-  // **Why empty? (Q14, N19; B1).** `query_explain_empty` was decoded and never
-  // rendered, so a query that matched nothing said only "No results" — which is
-  // the one moment a user most needs to know WHICH conjunct emptied it. Asked
-  // only when the run actually came back empty, so an ordinary query costs one
-  // command as before.
-  const [explainOpen, setExplainOpen] = createSignal(false);
-  const explanationRequest = createMemo(
-    () => {
-      const reading = runnable();
-      const key = queryRequestKey();
-      if (!explainOpen() || !reading || !key || !ranEmpty()) return undefined;
-      return { reading, key };
-    },
-    undefined,
-    { equals: (before, after) => before?.key === after?.key },
-  );
-  const [explained, explanationPending] = createReadyQueryResource(
-    explanationRequest,
-    ({ reading }) => {
-      const page = executionPage();
-      return backend().queryExplainEmpty(
-        reading.query,
-        reading.view,
-        page ? { current_page: page } : undefined,
-      );
-    },
-  );
-  /** The engine's answer, or the honest reason there is none: an unbound or
-   *  unsupported query has no counts to report, and an empty row list without
-   *  its diagnostics would read as "every conjunct matches nothing" instead of
-   *  "this query never ran" (I-9). */
-  const explainRows = (): EmptyExplanation[] => readOr(explained, undefined, "query explanation")?.rows ?? [];
-  const explainNotice = (): string | null => {
-    if (explanationPending()) return explanationPending()!.message;
-    if (explained.error) return explained.error instanceof Error ? explained.error.message : String(explained.error);
-    const answer = readOr(explained, undefined, "query explanation");
-    if (!answer) return null;
-    const blocking = (answer.diagnostics ?? []).filter((d) => !d.disabled);
-    if (blocking.length) return blocking.map((d) => d.message).join(" · ");
-    if (!answer.report.supported) return "This query has no clauses Tine can run, so nothing was evaluated.";
-    if (!answer.rows.length) return "Nothing in this graph matches this query.";
-    return null;
-  };
-  // Sorted results retain the engine's global sequence. Page-level sorting can
-  // still return several blocks per group; presentation cannot assume every
-  // group is one row or use its changing membership as a component identity.
-  const globalSort = createMemo(() => (view().sort ?? []).length > 0);
-  const queryGroupKey = (group: RefGroup) =>
-    JSON.stringify([group.kind, group.page, group.path ?? ""]);
-  const groupedQueryByKey = createMemo(() =>
-    new Map((groups() ?? []).map((group) => [queryGroupKey(group), group] as const))
-  );
-  // Retain group ownership through membership edits. Page-level sorts can
-  // return several blocks in a group; block-level sorts can split a page into
-  // many groups. Match by surviving physical block identities in linear work,
-  // rather than putting the whole membership list into a component key. Keep
-  // LiveRefGroup boundaries intact for navigation, disclosure and lazy loading.
-  let nextFlatGroupKey = 0;
-  const flatQueryByKey = createMemo((previous: Map<string, RefGroup> | undefined) => {
-    const previousOwners = new Map<string, Map<string, string>>();
-    for (const [key, group] of previous ?? []) {
-      const pageKey = queryGroupKey(group);
-      let owners = previousOwners.get(pageKey);
-      if (!owners) { owners = new Map(); previousOwners.set(pageKey, owners); }
-      for (const block of group.blocks) {
-        owners.set(block.id, key);
-      }
-    }
-    const next = new Map<string, RefGroup>();
-    for (const group of groups() ?? []) {
-      const overlaps = new Map<string, number>();
-      const owners = previousOwners.get(queryGroupKey(group));
-      for (const block of group.blocks) {
-        const owner = owners?.get(block.id);
-        if (owner !== undefined && !next.has(owner)) overlaps.set(owner, (overlaps.get(owner) ?? 0) + 1);
-      }
-      let retained: string | undefined;
-      let largest = 0;
-      for (const [key, count] of overlaps) {
-        if (count > largest) { retained = key; largest = count; }
-      }
-      next.set(retained ?? `query-group-${nextFlatGroupKey++}`, group);
-    }
-    return next;
-  });
-  const [sortCol, setSortCol] = createSignal<string>("");
-  const [sortDir, setSortDir] = createSignal(1);
-
+  const globalSort = createMemo(() => (runnable()?.view.sort ?? []).length > 0);
+  const queryGroupKey = (group: RefGroup, flat: boolean) =>
+    flat
+      ? `${group.kind}\0${group.page}\0${group.path ?? ""}\0${group.blocks.map((block) => block.id).join("\0")}`
+      : `${group.kind}\0${group.page}\0${group.path ?? ""}`;
+  const groupedQueryByKey = createMemo(() => new Map(groups().map((group) => [queryGroupKey(group, false), group] as const)));
+  const flatQueryByKey = createMemo(() => new Map(groups().map((group) => [queryGroupKey(group, true), group] as const)));
+  // The legacy table's columns and initial sort come from the HOST block's own
+  // properties, like OG's query_table.cljs (audit #9); a header click then
+  // overrides them for this view, as OG's click does (it also persists the
+  // choice on the block; Tine keeps the click local and never rewrites the file).
+  const hostSortState = createMemo(() =>
+    props.blockId
+      ? hostSort(blockProperty(props.blockId, "query-sort-by"), blockProperty(props.blockId, "query-sort-desc"))
+      : null);
+  const [sortOverride, setSortOverride] = createSignal<TableSort | null>(null);
+  const sortState = (): TableSort | null => sortOverride() ?? hostSortState();
   const rows = createMemo<Row[]>(() =>
-    (groups() ?? []).flatMap((g) =>
+    !legacyTable() || collapsed() ? [] : groups().flatMap((g) =>
       g.blocks.map((b) => {
-        // Properties come off the DTO (computed once in Rust off the lsdoc parse);
-        // the row's text is the visible body. No re-derivation here.
         const props: Record<string, string> = {};
-        for (const [k, val] of b.properties ?? []) props[k] = val;
-        return { page: g.page, kind: g.kind, path: g.path, text: visibleBody(b.raw).join(" "), props };
+        const byKey: Record<string, string> = {};
+        for (const [k, val] of b.properties ?? []) {
+          props[k] = val;
+          byKey[columnKey(k)] ??= val;
+        }
+        return { page: g.page, kind: g.kind, path: g.path, text: visibleBody(b.raw).join(" "), props, byKey };
       })
     )
   );
-
+  const hostCols = createMemo(() =>
+    props.blockId ? hostColumns(blockProperty(props.blockId, "query-properties")) : null);
+  /** Column ids in display order: `block`, `page`, then property keys. */
   const cols = createMemo(() => {
+    const named = hostCols();
+    if (named) return named;
     const keys = new Set<string>();
     for (const r of rows()) for (const k of Object.keys(r.props)) keys.add(k);
-    return Array.from(keys);
+    return ["block", "page", ...keys];
   });
-
-  // Result summarization (1a): `aggregate` / `group-by` are VIEW settings, lifted
-  // out of the query text (or the block's `tine.*` properties) by the engine and
-  // returned alongside the IR. The engine returns the full block set and ignores
-  // them, so the math is computed HERE from the returned rows. Only the simple
-  // DSL carries them (datalog aggregation is OG's :result-transform, which we
-  // list as ignored).
-  // The block's own formula definitions — the same map `SheetBoard` builds for a
-  // query face (which is handed no schema page), so a `formula:` grouping reads
-  // identically in the summary and in the board beside it.
-  const queryFormulas = createMemo<ReadonlyMap<string, string>>(() => {
-    const blockId = props.blockId;
-    const owner = blockId ? doc.byId[blockId] : undefined;
-    return owner ? formulasOf(facetsOf(owner.raw, formatForBlock(blockId!)).properties) : new Map();
-  });
-  // The SAME records `SheetTable` and `SheetBoard` flatten out of this result, so
-  // the list summary and the board group ONE row set through ONE reader instead
-  // of a second property lookup that can disagree with the face beside it.
-  const queryRecords = createMemo<FormulaEvalRow[]>(() =>
-    (groups() ?? []).flatMap((g) =>
-      g.blocks.map((b): FormulaEvalRow => ({ id: b.id, page: g.page, kind: g.kind, dto: b }))
-    )
-  );
-  // **The grouping is the ENGINE's answer, not a second reading.** §4.1's merge
-  // already ran `query::view::resolve_query_grouping` over this block's `tine.*`
-  // properties and its query text, so `view().group_by` is the canonical field
-  // id — and the P5B wire spelling distinguishes the two empties that matter:
-  // absent is "nothing said" (a Board may default), `""` is the user's explicit
-  // "no grouping" (a Board may NOT).
-  const grouping = createMemo(() => groupingFromViewValue(viewAfterViewSwitch(view(), view().view).group_by));
-  /** The field this result groups by, or `null` when it is ungrouped — which an
-   *  explicit clear and an absent setting both are, for a LIST. */
-  const groupingField = createMemo<FieldId | null>(() => {
-    const resolved = grouping();
-    return resolved.kind === "field" && isFieldId(resolved.field) ? resolved.field : null;
-  });
-  /** The grouping vocabulary a QUERY board offers: the sheet builtins, the
-   *  properties its OWN result rows carry (a children board reads the owner's
-   *  children, which a query has none of), the source page, and the block's
-   *  formula fields. */
-  const queryFormulaNames = createMemo<string[]>(() => [...queryFormulas().keys()]);
-  const queryGroupOptions = createMemo<FieldId[]>(() => {
-    const formulaFields = [...queryFormulas().keys()].map((name): FieldId => `formula:${name}`);
-    return boardGroupByOptions(fieldIdsForRecords(queryRecords(), false), [
-      "page",
-      ...formulaFields,
-    ]);
-  });
-  /** The ONE writer every inline display change goes through: the Display panel,
-   *  the query table's header sorts, its column order and its aggregate footer,
-   *  and the board's grouping. */
-  const queryDisplayControl = createMemo<QueryDisplayControl>(() => ({
-    statistics: displayedOperation()?.statistics,
-    statisticsView: displayedOperation()?.statisticsView,
-    view: displayView(),
-    apply: (next) => void applyDisplay(next),
-    // The block's OWN bytes, not the engine's reading: what the query reader
-    // does not understand never reaches `ViewSettings` at all, and the save
-    // preserves it (§5). Reporting it is what makes that preservation visible.
-    retainedAggregates: retainedQueryAggregateSegments(blockPropertyPairs() ?? []),
-  }));
-  /** The ONE writer a query board's grouping goes through, handed to both its
-   *  toolbar dropdown and its context menu.
-   *
-   *  `cleared` carries the half of the resolution a bare field cannot: an
-   *  explicit "no grouping" is one ungrouped column, while a grouping nothing
-   *  states is the silence the Board's task-marker default fills (ADR 0030).
-   *  Both arrive here as `field: null`, and a board that could not tell them
-   *  apart would un-group every existing `tine.view:: board` note. */
-  const queryGroupingControl = createMemo<QueryGroupingControl>(() => ({
-    field: groupingField(),
-    cleared: grouping().kind === "cleared",
-    options: queryGroupOptions(),
-    set: (field) => void applyDisplay({ ...displayView(), group_by: field ?? "" }),
-  }));
-  const summary = createMemo<QuerySummary | null>(() => {
-    if (isAdvanced()) return null;
-    const statistics = displayedOperation()?.statistics;
-    const field = statistics?.group_by;
-    return querySummary({ statistics, groupLabel: field && isFieldId(field) ? fieldLabel(field) : field });
-  });
-
+  const cell = cellText;
   const sorted = createMemo(() => {
-    const c = sortCol();
-    if (!c) return rows();
-    const val = (r: Row) => (c === "page" ? r.page : c === "content" ? r.text : r.props[c] ?? "");
-    return [...rows()].sort((a, b) => val(a).localeCompare(val(b)) * sortDir());
+    const s = sortState();
+    if (!s) return rows();
+    const key = (r: Row) => cell(r, s.column);
+    return [...rows()].sort((a, b) => (s.desc ? compareCells(key(b), key(a)) : compareCells(key(a), key(b))));
   });
-
   const sortBy = (c: string) => {
-    if (sortCol() === c) setSortDir(-sortDir());
-    else {
-      setSortCol(c);
-      setSortDir(1);
-    }
+    const cur = sortState();
+    setSortOverride({ column: columnKey(c), desc: !(cur?.desc ?? true) });
   };
-  // Clicks on query controls must not bubble to the block's onClick (which would
-  // start editing the {{query}} block and replace results with raw markdown).
+  // Clicks on query controls must not bubble to the block's onClick.
   const stop = (e: MouseEvent) => e.stopPropagation();
-  const arrow = (c: string) => (sortCol() === c ? (sortDir() > 0 ? " ▲" : " ▼") : "");
+  const arrow = (c: string) => (sortState()?.column === columnKey(c) ? (sortState()!.desc ? " ▼" : " ▲") : "");
 
-  // Hide the whole block when asked and there's nothing to show (advanced
-  // queries still render their "unsupported" notice).
-  const hidden = () => props.hideWhenEmpty && !isAdvanced() && total() === 0;
-  // The query text pane holds text that does not parse: the rows below are the
-  // last reading that RAN, so they are greyed rather than blanked (§4.3.1).
-  const [paneStale, setPaneStale] = createSignal(false);
-  /** A published export (Stage 2) shows each query exactly as it was baked:
-   *  no builder, no view switcher, no re-export — the snapshot cannot answer a
-   *  changed query, so the controls that would change one are not offered. */
-  const published = isPublishedExport();
-  /** Whether the sentence-and-sheet builder is hosted for this block. The
-   *  result count lives beside the sentence when it is, and in the header when
-   *  it is not (§7.2). */
-  const showBuilder = () => !!props.blockId && !isAdvanced() && !!builderSession() && !published;
-  /** **Where the inline Display panel is offered** (P5B).
-   *
-   *  It needs a block to write `tine.*` to and a builder to host it — and it is
-   *  NOT offered for a friendly search, whose execution returns search hits
-   *  rather than the block result the six display facts describe. Offering a
-   *  column order and a grouping for a hit list would be six controls that
-   *  save and change nothing on screen.
-   *
-   *  The same condition removes the header's view switcher: the panel states
-   *  the view, and two controls for one enum is how they drift apart. */
-  const inlineDisplay = () => showBuilder() && friendlySearch() === null;
-  const unsupportedAdvanced = () => isAdvanced() && advInfo() && (
-    !advInfo()!.supported || (props.strictAdvanced === true && advInfo()!.ignored.length > 0)
-  );
-
-  // ---------------------------------------------------------------------------
-  // Result families (§7.6, Q3)
-  // ---------------------------------------------------------------------------
-
-  /** **The Blocks family's SEARCH rows.**
-   *
-   *  Only blocks: a page that matched has its own section now, with its own
-   *  presentation and its own Display control, so a flat list that mixed the
-   *  two under one heading no longer exists. Each row is a listitem CONTAINING
-   *  its control rather than being it — a button that is also the row has no
-   *  row semantics left to announce. */
-  const blockSearchRows = () => (
-    <div class="query-search-results" role="list" aria-label="Block results" onClick={stop}>
-      <For each={blockSectionHits()}>
-        {(hit) => (
-          <Show when={hit.entity === "block" ? hit : null}>
-            {(blockHit) => (
-              <div role="listitem">
-                <button
-                  type="button"
-                  class="query-search-hit switcher-row block-result"
-                  onMouseDown={internalLinkMouseDown}
-                  onClick={(e) => {
-                    const bh = blockHit();
-                    const uuid = blockDtoExternalId(bh.block);
-                    const dest = internalLinkDest(e);
-                    if (dest === "sidebar") {
-                      openBlockInSidebar({ uuid, page: bh.page, pageKind: bh.kind, ...(bh.path ? { path: bh.path } : {}) });
-                    } else if (dest === "background") {
-                      openInNewTab({ kind: "page", name: bh.page, pageKind: bh.kind, block: uuid, ...(bh.path ? { path: bh.path } : {}) });
-                    } else if (dest === "pane") {
-                      openRouteInOtherPane({ kind: "page", name: bh.page, pageKind: bh.kind, block: uuid, ...(bh.path ? { path: bh.path } : {}) });
-                    } else {
-                      openPageAtBlock({
-                        name: bh.page,
-                        pageKind: bh.kind,
-                        block: uuid,
-                        ...(bh.path ? { path: bh.path } : {}),
-                      });
-                    }
-                  }}
-                  onAuxClick={(e) => internalLinkAuxClick(e, () => {
-                    const bh = blockHit();
-                    openInNewTab({ kind: "page", name: bh.page, pageKind: bh.kind, block: blockDtoExternalId(bh.block), ...(bh.path ? { path: bh.path } : {}) });
-                  })}
-                >
-                  <SearchResultRow
-                    page={blockHit().page}
-                    breadcrumb={blockHit().block.breadcrumb ?? []}
-                    text={blockHit().display_text}
-                    spans={blockHit().evidence.flatMap((evidence) => evidence.spans)}
-                  />
-                </button>
-              </div>
-            )}
-          </Show>
-        )}
-      </For>
-    </div>
-  );
-  /** Open the page a Pages-section row names, honouring the application's link
-   *  gestures. The row is the SAME control the rest of the app uses to open a
-   *  page; only its host is new. */
-  const openPageHit = (hit: QueryPageHit, e: MouseEvent) => {
-    const target = {
-      name: hit.page.name,
-      pageKind: hit.page.kind,
-      ...(hit.page.path ? { path: hit.page.path } : {}),
-    };
-    const dest = internalLinkDest(e);
-    if (dest === "sidebar") openPageInSidebar(target);
-    else if (dest === "background") openPageTargetInNewTab(target);
-    else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target });
-    else openPageTarget(target);
+  const hidden = () =>
+    props.hideWhenEmpty && !isAdvanced() && !!displayed() && total() === 0 && blockingDiagnostics().length === 0;
+  const unsupportedAdvanced = () => {
+    const info = advInfo();
+    return isAdvanced() && info && (!info.supported || (props.strictAdvanced === true && (info.ignored ?? []).length > 0));
   };
-  const pageHitLinkAttrs = (hit: QueryPageHit) => ({
-    onMouseDown: internalLinkMouseDown,
-    onAuxClick: (e: MouseEvent) => internalLinkAuxClick(e, () => openPageTargetInNewTab({
-      name: hit.page.name,
-      pageKind: hit.page.kind,
-      ...(hit.page.path ? { path: hit.page.path } : {}),
-    })),
-  });
-  /** **Each section's own Display panel, and only its own** (§7.6, Q3).
-   *
-   *  One registry read serves both, gated on either panel being open: two
-   *  panels asking the graph the same question twice is the second producer
-   *  D-14 forbids, and the answer is the same answer.
-   *
-   *  Every edit lands through `applyScopedDisplay`, which clones the effective
-   *  snapshot on the FIRST edit in a namespace — a scoped draft is complete or
-   *  it is absent, so an edit that stated only what it changed would silently
-   *  clear everything the section was already showing. */
-  const [sectionDisplayOpen, setSectionDisplayOpen] = createSignal(false);
-  const sectionRegistry = createQueryRegistryAccess(() => sectionDisplayOpen());
-  const sectionDisplay = (kind: "page" | "block") => (
-    <QueryDisplay
-      rowKind={kind}
-      registry={sectionRegistry}
-      onOpenChange={setSectionDisplayOpen}
-      {...(kind === "block" ? { formulas: queryFormulaNames } : {})}
-      control={{
-        view: kind === "page" ? pageResultView() : blockResultView(),
-        apply: (next: ViewSettings) => applyScopedDisplay(kind, () => next),
-        ...(displayedOperation()?.statistics ? { statistics: displayedOperation()!.statistics } : {}),
-        statisticsView: kind === "page" ? pageResultView() : blockResultView(),
-      }}
-    />
-  );
-  /** **Inherit and clear are DIFFERENT actions** (§7.6.7, I-10).
-   *
-   *  "Show what the query says" removes the scoped draft; "show nothing extra"
-   *  writes an empty one. A single control could not say both, and a section
-   *  whose settings could only be replaced and never given back would be a
-   *  state with no way out. */
-  const scopedResetControls = (kind: "page" | "block") => {
-    const scoped = () => Object.hasOwn(
-      displayEnvelope(),
-      kind === "page" ? "page_display" : "block_display",
-    ) || (kind === "page" ? displayEnvelope().page_presentation : displayEnvelope().block_presentation) !== undefined;
-    return (
-      <>
-        <button
-          type="button"
-          class="query-scoped-reset"
-          disabled={!scoped()}
-          onClick={(e) => { e.stopPropagation(); inheritScopedDisplay(kind); }}
-        >
-          Use inherited settings
-        </button>
-        <button
-          type="button"
-          class="query-scoped-clear"
-          onClick={(e) => { e.stopPropagation(); applyScopedDisplay(kind, () => ({})); }}
-        >
-          Clear settings
-        </button>
-      </>
-    );
-  };
-  /** **Page matches** — which pages are MEMBERS of this search (§7.6, Q3).
-   *
-   *  It is neither namespace's display setting: it changes membership, and the
-   *  Blocks section still evaluates the ordinary block predicate either way.
-   *  Absence resolves to names-and-aliases at execution, and picking that value
-   *  explicitly states the same query — one question, one answer (I-12). */
-  const PAGE_MATCH_CHOICES: [FriendlyPageMatchScope, string][] = [
-    ["names", "Names and aliases"],
-    ["content", "Page content"],
-    ["both", "Both"],
-  ];
-  const pageMatchControl = () => (
-    <label class="query-page-match" onClick={stop}>
-      <span>Page matches</span>
-      <select
-        value={pageMatchScope() ?? "names"}
-        disabled={!props.blockId}
-        onChange={(event) => applyPageMatchScope(event.currentTarget.value as FriendlyPageMatchScope)}
-      >
-        <For each={PAGE_MATCH_CHOICES}>
-          {([value, label]) => <option value={value}>{label}</option>}
-        </For>
-      </select>
-    </label>
-  );
-  const pageSectionControls = () => (
-    <>
-      {pageMatchControl()}
-      {sectionDisplay("page")}
-      {scopedResetControls("page")}
-    </>
-  );
-  const blockSectionControl = () => (
-    <>
-      {sectionDisplay("block")}
-      {scopedResetControls("block")}
-    </>
-  );
-  /** §7.5: zero results is the one moment a user most needs to know WHICH
-   *  conjunct emptied the query, and the engine can already say. */
-  const whyEmptyAffordance = () => (
-    <Show when={ranEmpty()}>
+  const simpleView = (): QueryView => (legacyTable() ? "table" : currentView());
+
+  const whyEmpty = () => (
+    <Show when={ranEmpty() && friendlySearch() === null}>
       <button
         type="button"
         class="query-why-empty"
-        disabled={groupResource.loading || !!groupResource.error}
         onClick={(e) => { e.stopPropagation(); setExplainOpen(!explainOpen()); }}
       >
         {explainOpen() ? "hide" : "why empty?"}
@@ -1841,17 +768,13 @@ export function QueryMacro(props: {
           <Show when={explainNotice()}>
             {(notice) => <div class="query-why-empty-notice">{notice()}</div>}
           </Show>
-          <Show when={explainRows().length > 0}>
-            <table class="md-table query-why-empty-table">
+          <Show when={(explanation()?.rows.length ?? 0) > 0}>
+            <TableWrap><table class="md-table query-why-empty-table">
               <thead>
-                <tr>
-                  <th>Condition</th>
-                  <th>Alone</th>
-                  <th>Without it</th>
-                </tr>
+                <tr><th>Condition</th><th>Alone</th><th>Without it</th></tr>
               </thead>
               <tbody>
-                <For each={explainRows()}>
+                <For each={explanation()!.rows}>
                   {(row) => (
                     <tr classList={{ "query-why-empty-culprit": row.alone === 0 }}>
                       <td><code>{row.conjunct}</code></td>
@@ -1861,148 +784,37 @@ export function QueryMacro(props: {
                   )}
                 </For>
               </tbody>
-            </table>
+            </table></TableWrap>
           </Show>
         </div>
       </Show>
     </Show>
   );
-  const emptyResultPanel = () => (
-    <div class="query-empty">
-      {emptyResultsMessage()}{" "}
-      {whyEmptyAffordance()}
-    </div>
-  );
-  /** The Blocks family's ORDINARY rows: the same editable renderers an inline
-   *  query has always used. */
-  const blockGroupRows = () => (
-    <>
-    <Show
-      when={legacyTable()}
-      fallback={
-        <Show
-          when={globalSort()}
-          fallback={
-            <For each={[...groupedQueryByKey().keys()]}>
-              {(key) => <QueryGroup group={() => groupedQueryByKey().get(key)} />}
-            </For>
-          }
-        >
-          {/* Sorted: flat global order (each group holds one block). Iterate the
-              groups DIRECTLY and pass the group object — re-`find()`ing the group
-              by page/id for every row was O(groups²) on broad queries (audit #3). */}
-          <For each={[...flatQueryByKey().keys()]}>
-            {(key) => <QueryGroup group={() => flatQueryByKey().get(key)} flat />}
-          </For>
-        </Show>
-      }
-    >
-      <div class="md-table-wrap">
-      <table class="md-table query-table">
-        <thead>
-          <tr onClick={stop}>
-            <th onClick={() => sortBy("content")}>Content{arrow("content")}</th>
-            <th onClick={() => sortBy("page")}>Page{arrow("page")}</th>
-            <For each={cols()}>
-              {(c) => <th onClick={() => sortBy(c)}>{c}{arrow(c)}</th>}
-            </For>
-          </tr>
-        </thead>
-        <tbody>
-          <For each={sorted()}>
-            {(r) => (
-              <tr>
-                <td>
-                  <InlineText text={r.text} format={formatForPage(r.page)} />
-                </td>
-                <td
-                  class="qt-page"
-                  onMouseDown={internalLinkMouseDown}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const target = { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) };
-                    const dest = internalLinkDest(e);
-                    if (dest === "sidebar") openPageInSidebar(target);
-                    else if (dest === "background") openPageTargetInNewTab(target);
-                    else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target });
-                    else openPageTarget(target);
-                  }}
-                  onAuxClick={(e) => {
-                    if (internalLinkAuxClick(e, () =>
-                      openPageTargetInNewTab({ name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) })
-                    )) e.stopPropagation();
-                  }}
-                  onContextMenu={(e) => {
-                    if (!shouldOpenTextContextMenu(e.target)) return;
-                    e.preventDefault();
-                    e.stopPropagation();
-                    openPageContextMenu(e.clientX, e.clientY, { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
-                  }}
-                >
-                  {r.page}
-                </td>
-                <For each={cols()}>{(c) => <td>{r.props[c] ?? ""}</td>}</For>
-              </tr>
-            )}
-          </For>
-        </tbody>
-      </table>
+  const empty = () => (
+    <Show when={!loadError() && blockingDiagnostics().length === 0 && (!displayed() || ranEmpty())}>
+      <div class="query-empty">
+        {emptyMessage()} {whyEmpty()}
       </div>
     </Show>
-    </>
   );
-  /** Whether a presentation can be drawn as the typed SHEET face. It needs a
-   *  block to own the schema, and that is ALL it needs: a scoped presentation
-   *  is its own authority (§15.1), so it must not also have to ask the singular
-   *  `tine.view` for permission. Requiring that made `tine.block-view:: board`
-   *  inert — the panel said Board, the section kept rendering grouped rows, and
-   *  neither the screen nor the file said why. A presentation that is not a
-   *  sheet face still falls through to the ordinary grouped renderers rather
-   *  than rendering nothing at all (I-10). */
-  const sheetFaceFor = (presentation: QueryView) =>
-    (presentation === "table" || presentation === "board") && !!props.blockId;
-  /** The Blocks family under a SHEET face (table/board), which owns its own
-   *  editing surface. The presentation is passed in because a SCOPED block
-   *  presentation is not the block's `tine.view` — the sheet config only knows
-   *  the singular one. */
-  const blockSheetRows = (presentation?: QueryView) => (
-    <Show when={presentation ? !!props.blockId : (sheet()?.view === "table" || sheet()?.view === "board") && props.blockId}>
-      <SheetContainer>
-        <Switch>
-          <Match when={(presentation ?? sheet()?.view) === "table"}>
-            <SheetTable
-              ownerId={props.blockId!}
-              rowSource="query"
-              groups={groups() ?? []}
-              queryDisplay={queryDisplayControl()}
-            />
-          </Match>
-          <Match when={(presentation ?? sheet()?.view) === "board"}>
-            <SheetBoard
-              ownerId={props.blockId!}
-              rowSource="query"
-              groups={groups() ?? []}
-              queryGrouping={queryGroupingControl()}
-            />
-          </Match>
-        </Switch>
-      </SheetContainer>
-    </Show>
-  );
-
 
   return (
     <Show when={!hidden()}>
-      <div
-        class="query-block"
-        classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
-      >
+      <div class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}>
         <Switch>
           <Match when={unsupportedAdvanced()}>
             <div class="query-unsupported" role={props.unsupportedLabel ? "alert" : undefined}>
               <Show
                 when={props.unsupportedLabel}
-                fallback={<>Advanced (datalog) query: no supported clauses. <code>{`{{${props.body}}}`}</code></>}
+                fallback={
+                  <>
+                    Advanced (datalog) query not run: Tine cannot run{" "}
+                    {(advInfo()?.ignored ?? []).length > 0
+                      ? `these clauses (${(advInfo()?.ignored ?? []).join(", ")})`
+                      : "some of its clauses"}
+                    , and a partial answer would be wrong. <code>{`{{${props.body}}}`}</code>
+                  </>
+                }
               >
                 {(label) => <>{label()}: query contains unsupported clauses.</>}
               </Show>
@@ -2011,10 +823,7 @@ export function QueryMacro(props: {
           <Match when={true}>
             <Show when={isAdvanced() && advInfo()?.supported}>
               <div class="query-adv-note">
-                Partial datalog — ran: {advInfo()!.ran.join(", ") || "—"}
-                <Show when={advInfo()!.ignored.length > 0}>
-                  {` · ignored: ${advInfo()!.ignored.join(", ")}`}
-                </Show>
+                Advanced query — ran: {(advInfo()!.ran ?? []).join(", ") || "—"}
               </div>
             </Show>
             <div class="query-header">
@@ -2061,6 +870,7 @@ export function QueryMacro(props: {
                       onKeyDown={(e) => {
                         e.stopPropagation();
                         if (e.key === "Enter") {
+                          canceled = true;
                           void setTitle(e.currentTarget.value);
                           setEditingTitle(false);
                         } else if (e.key === "Escape") {
@@ -2076,38 +886,28 @@ export function QueryMacro(props: {
                   );
                 })()}
               </Show>{" "}
-              {/* §7.2 moves the count beside the resting SENTENCE, where the
-                  builder renders it. It stays here for the queries that have no
-                  builder — an authored advanced query, or a block whose reading
-                  has not landed yet — so the count never disappears. */}
+              {/* The builder sentence carries the count beside it; queries with
+                  no builder keep it here so the count never disappears. */}
               <Show when={!showBuilder()}>
                 <span class="query-count">{total()}</span>
               </Show>
-              {/* A published export has no builder sentence to say the rows
-                  are a sample; the header says it, so a reader knows the
-                  count is not the whole answer. */}
-              <Show when={published && executedView().sample !== undefined}>
-                <span class="query-sample-note" title="The export shows a sample of the matching rows">
-                  {" "}sample of {executedView().sample}
-                </span>
+              <Show when={!isPublishedExport() && runnable() && displayed() && total() > 0}>
+                <button type="button" class="query-export-action" title="Export query results"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openQueryExport({
+                      argument: executionArg() ?? arg(),
+                      dialect: macroTextDialect(macroName()),
+                      properties: hostProperties(),
+                      currentPage: executionContext()?.current_page,
+                      hostBlockId: props.blockId,
+                      name: titleText(),
+                    });
+                  }}>Export…</button>
               </Show>
-              <Show when={props.blockId && !exportRefusal() && !published}>
-                <button
-                  type="button"
-                  class="query-export-button"
-                  title="Export the pages containing these results as a static site"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const request = exportRequest();
-                    if (request) openQueryExport(request);
-                  }}
-                >
-                  Export…
-                </button>
-              </Show>
-              <Show when={props.blockId && !inlineDisplay() && !published}>
+              <Show when={props.blockId && !isPublishedExport()}>
                 <div class="query-view-switcher" role="group" aria-label="Query view" onClick={stop}>
-                  <For each={QUERY_VIEWS}>
+                  <For each={VIEW_KINDS}>
                     {(view) => (
                       <button
                         type="button"
@@ -2124,32 +924,26 @@ export function QueryMacro(props: {
                 </div>
               </Show>
             </div>
-            {/* The builder edits a FILTER. An authored advanced (datalog) query
-                keeps its own editing path — converting one into a filter is out
-                of scope (§4.3.1, Q13) — so the sentence and sheet stay hidden
-                for it and the ran/ignored note above says which clauses took. */}
+            {/* The builder edits a FILTER; an authored advanced query keeps its
+                own editing path (raw text) — converting one is out of scope. */}
             <Show when={showBuilder()}>
               <QueryBuilder
                 session={builderSession}
                 onChange={applyEdit}
+                display={{ view: () => reading()?.view ?? {}, apply: applyDisplay,
+                  formulas: () => [...formulasOf(hostProperties()).keys()] }}
                 paneDialect="tql"
                 blockId={props.blockId}
+                previewContext={executionContext}
+                both={props.blockId ? { on: bothKinds, set: setBothKinds } : undefined}
                 total={<span class="query-count">{total()}</span>}
                 onStale={setPaneStale}
                 onOpenChange={setSheetOpen}
                 notice={showCrossingNotice() && sheetOpen() ? crossingNotice : undefined}
-                inlineDisplay={inlineDisplay()}
-                display={queryDisplayControl}
-                displayFormulas={queryFormulaNames}
               />
             </Show>
-            {/* §7.5, N3: **one** notice with one state, in one of two places.
-                It sits here while the sheet is shut — where P2 put it, under the
-                block whose bytes changed — and inside the query text pane while
-                the sheet is open, where the changed text actually is. The two
-                `Show`s are mutually exclusive, so it is never drawn twice and
-                never silently hidden; its dismissal, its undo gating and its
-                checkbox are this component's, not the pane's. */}
+            {/* §7.5, N3: one notice, inline while the sheet is shut and inside
+                the text pane while it is open — never both. */}
             <Show when={showCrossingNotice() && !sheetOpen()}>{crossingNotice()}</Show>
             <Show when={printError()}>
               {(message) => (
@@ -2158,275 +952,204 @@ export function QueryMacro(props: {
                 </div>
               )}
             </Show>
-            <Show when={groupsError()}>
-              {(message) => (
-                <Show
-                  when={indexFailureOf(groupResource.error)}
-                  fallback={
-                    <div class="query-unsupported" role="alert">
-                      {message().lead} {message().message}
-                    </div>
-                  }
-                >
-                  {(failure) => <IndexFailedNotice subject="Queries" failure={failure()} />}
-                </Show>
+            <Show when={loadError()}>
+              {(error) => (
+                <div class="query-unsupported" role="alert">
+                  Query couldn't be loaded: {errorText(error())}
+                </div>
               )}
             </Show>
-            <Show when={groupsPending() ?? parsePending() ?? explanationPending()}>
-              {(pending) => <span class="query-readiness-status" role="status">{pending().message}</span>}
-            </Show>
-            {/* The run's OWN diagnostics. A query with an enabled diagnostic is
-                invalid and returns zero rows plus these (§3.5) — showing only
-                "No results" would report a broken query as an empty graph.
-                The lead says what actually happened: the part below was not
-                understood, so the query returned nothing. It does NOT say the
-                part was "ignored", which would imply the rest still ran and
-                these are its results — the exact misreading the unknown-head
-                regression (REG-P0-QUERY-UNKNOWN-HEAD-001) exists to prevent. */}
-            <Show when={diagnostics().some((d) => !d.disabled)}>
+            <Show when={blockingDiagnostics().length > 0}>
               <div class="query-unsupported query-diagnostics" role="alert">
                 <span class="query-diagnostics-lead">
                   Tine didn't understand part of this query, so it returned no results:
                 </span>{" "}
-                {diagnostics().filter((d) => !d.disabled).map((d) => d.message).join(" · ")}
+                {blockingDiagnostics().map((d) => d.message).join(" · ")}
               </div>
             </Show>
             <Show when={!collapsed()}>
-              <Show when={currentView() !== "search" || inlineDisplay()}>
-                    {/* Summary panel (1a): the view's aggregates overall, or a
-                        per-group breakdown. ALL requested aggregates render, in
-                        the order the view lists them — a view carries a LIST, and
-                        showing only its first entry dropped every other column
-                        its author asked for. Rendered above the current presentation,
-                        which stays grouped by page. */}
-                    <Show when={summary()?.notice}>
-                      <p class="query-summary-note">{summary()?.notice}</p>
+              <Show when={displayed()?.statistics}>
+                {(statistics) => <QueryStatisticsSummary statistics={statistics()} onClearGrouping={props.blockId && blockWritable(props.blockId) && !isPublishedExport()
+                  ? () => setBoardGroupBy(props.blockId!, "") : undefined} />}
+              </Show>
+              <Switch>
+                <Match when={displayed()?.both}>
+                  {(both) => (
+                    <QueryResultSections
+                      pending={false}
+                      failure={null}
+                      families={[
+                        {
+                          kind: "page",
+                          hits: both().pages.length,
+                          hasMore: both().pageMore,
+                          note: both().pageNote ?? undefined,
+                          body: (
+                            <QueryPageRows
+                              rows={both().pages}
+                              view={simpleView()}
+                              groupBy={runnable()?.view.group_by ?? blockProperty(props.blockId ?? "", "tine.group-by") ?? undefined}
+                              columns={runnable()?.view.columns}
+                            />
+                          ),
+                        },
+                        {
+                          kind: "block",
+                          hits: groups().reduce((a, g) => a + g.blocks.length, 0),
+                          hasMore: both().blockMore,
+                          note: both().blockNote ?? undefined,
+                          // The block presentation (list / table / board) is the one the blocks
+                          // family has on its own; the sheet footer's statistics belong to the
+                          // macro's OWN anchor, so a page-anchored macro's blocks get none.
+                          body: (
+                            <Switch fallback={
+                              <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} />}>
+                                <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} />
+                              </Show>
+                            }>
+                              <Match when={sheetFace() && !!props.blockId && blockFace() === "table"}>
+                                <SheetContainer>
+                                  <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
+                                    queryDisplay={{ view: reading()?.view ?? {},
+                                      ...(both().ownAnchor === "block" ? { statistics: displayed()?.statistics, statisticsView: runnable()?.view } : {}),
+                                      apply: (next) => void applyDisplay(next) }} />
+                                </SheetContainer>
+                              </Match>
+                              <Match when={sheetFace() && !!props.blockId && blockFace() === "board"}>
+                                <SheetContainer>
+                                  <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet()?.groupBy} groups={groups()} />
+                                </SheetContainer>
+                              </Match>
+                            </Switch>
+                          ),
+                        },
+                      ]}
+                    />
+                  )}
+                </Match>
+                <Match when={pageRows()}>
+                  {(pages) => (
+                    <Show when={pages().length > 0} fallback={empty()}>
+                      <QueryPageRows
+                        rows={pages()}
+                        view={simpleView()}
+                        groupBy={runnable()?.view.group_by ?? blockProperty(props.blockId ?? "", "tine.group-by") ?? undefined}
+                        columns={runnable()?.view.columns}
+                      />
                     </Show>
-                    <Show when={summary()}>
-                      {(s) => (
+                  )}
+                </Match>
+                <Match when={sheetFace()}>
+                  <Show when={groups().length > 0} fallback={empty()}>
+                    <Show when={!!props.blockId}>
+                      <SheetContainer>
+                        <Switch>
+                          <Match when={blockFace() === "table"}>
+                            <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
+                              queryDisplay={{ view: reading()?.view ?? {}, statistics: displayed()?.statistics, statisticsView: runnable()?.view, apply: (next) => void applyDisplay(next) }} />
+                          </Match>
+                          <Match when={blockFace() === "board"}>
+                            <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet()?.groupBy} groups={groups()} />
+                          </Match>
+                        </Switch>
+                      </SheetContainer>
+                    </Show>
+                  </Show>
+                </Match>
+                <Match when={currentView() === "search"}>
+                  <div class="query-search-results" role="list" aria-label="Search results" onClick={stop}>
+                    <Show when={searchPresentationHits().length > 0} fallback={empty()}>
+                      <For each={searchPresentationHits()}>
+                        {(hit) => (
+                          <Show
+                            when={hit.entity === "block" ? hit : null}
+                            fallback={hit.entity === "page" ? (
+                              <button
+                                type="button"
+                                class="query-search-page"
+                                onMouseDown={internalLinkMouseDown}
+                                onClick={(e) => {
+                                  const target = {
+                                    name: hit.page.name,
+                                    pageKind: hit.page.kind,
+                                    ...(hit.page.path ? { path: hit.page.path } : {}),
+                                  };
+                                  const dest = internalLinkDest(e);
+                                  if (dest === "sidebar") openPageInSidebar(target);
+                                  else if (dest === "background") openPageTargetInNewTab(target);
+                                  else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target });
+                                  else openPageTarget(target);
+                                }}
+                                onAuxClick={(e) => internalLinkAuxClick(e, () => openPageTargetInNewTab({
+                                  name: hit.page.name,
+                                  pageKind: hit.page.kind,
+                                  ...(hit.page.path ? { path: hit.page.path } : {}),
+                                }))}
+                              >
+                                <span class="switcher-kind">{hit.page.kind}</span>
+                                <span>{hit.display_text}</span>
+                              </button>
+                            ) : null}
+                          >
+                            {(blockHit) => (
+                              <button
+                                type="button"
+                                class="query-search-hit switcher-row block-result"
+                                onMouseDown={internalLinkMouseDown}
+                                onClick={(e) => {
+                                  const bh = blockHit();
+                                  const uuid = blockDtoExternalId(bh.block);
+                                  const route = { kind: "page" as const, name: bh.page, pageKind: bh.kind, block: uuid, ...(bh.path ? { path: bh.path } : {}) };
+                                  const dest = internalLinkDest(e);
+                                  if (dest === "sidebar") openBlockInSidebar({ uuid, page: bh.page, pageKind: bh.kind, ...(bh.path ? { path: bh.path } : {}) });
+                                  else if (dest === "background") openInNewTab(route);
+                                  else if (dest === "pane") openRouteInOtherPane(route);
+                                  else openPageAtBlock({ name: bh.page, pageKind: bh.kind, block: uuid, ...(bh.path ? { path: bh.path } : {}) });
+                                }}
+                                onAuxClick={(e) => internalLinkAuxClick(e, () => {
+                                  const bh = blockHit();
+                                  openInNewTab({ kind: "page", name: bh.page, pageKind: bh.kind, block: blockDtoExternalId(bh.block), ...(bh.path ? { path: bh.path } : {}) });
+                                })}
+                              >
+                                <SearchResultRow
+                                  page={blockHit().page}
+                                  breadcrumb={blockHit().block.breadcrumb ?? []}
+                                  text={blockHit().display_text}
+                                  spans={blockHit().evidence.flatMap((evidence) => evidence.spans)}
+                                />
+                              </button>
+                            )}
+                          </Show>
+                        )}
+                      </For>
+                    </Show>
+                  </div>
+                </Match>
+                <Match when={true}>
+                  <Show when={groups().length > 0} fallback={empty()}>
+                    <Show
+                      when={legacyTable()}
+                      fallback={
                         <Show
-                          when={s().groups}
+                          when={globalSort()}
                           fallback={
-                            <div class="query-summary" onClick={stop}>
-                              <For each={s().columns}>
-                                {(col, i) => (
-                                  <span class="qs-entry">
-                                    <span class="qs-label">{col.label}:</span>{" "}
-                                    <span class="qs-value">{s().overall[i()]?.text ?? ""}</span>
-                                    <Show when={(s().overall[i()]?.skipped ?? 0) > 0}>
-                                      <span class="qs-skip">
-                                        {" "}
-                                        ({s().overall[i()]!.skipped} non-numeric skipped)
-                                      </span>
-                                    </Show>
-                                  </span>
-                                )}
-                              </For>
-                            </div>
+                            <QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} />
                           }
                         >
-                          {(rows) => (
-                            <>
-                              <table class="md-table query-summary-table" onClick={stop}>
-                                <thead>
-                                  <tr>
-                                    <th>{s().groupLabel}</th>
-                                    <For each={s().columns}>{(col) => <th>{col.label}</th>}</For>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  <For each={rows()}>
-                                    {(row) => (
-                                      <tr>
-                                        <td>{row.label}</td>
-                                        <For each={row.cells}>
-                                          {(cell) => (
-                                            <td>
-                                              {cell.text}
-                                              <Show when={cell.skipped > 0}>
-                                                <span class="qs-skip"> ({cell.skipped} skipped)</span>
-                                              </Show>
-                                            </td>
-                                          )}
-                                        </For>
-                                      </tr>
-                                    )}
-                                  </For>
-                                </tbody>
-                              </table>
-                              {/* Say the grouping is not a partition rather than
-                                  let the counts look like they should add up. */}
-                              <Show when={s().multiMembership}>
-                                <p class="query-summary-note" onClick={stop}>
-                                  A row with several tags appears in every matching group, so these
-                                  counts can add up to more than the result.
-                                </p>
-                              </Show>
-                            </>
-                          )}
+                          {/* Sorted: the engine's flat global order, one group per run of rows. */}
+                          <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} />
                         </Show>
-                      )}
+                      }
+                    >
+                      <QueryLegacyTable cols={cols()} rows={sorted()} sortBy={sortBy} arrow={arrow} />
                     </Show>
-              </Show>
-              {/* **One mixed result, two independently controlled families**
-                  (§7.6, Q3). A Friendly search answers two questions at once —
-                  which PAGES match and which BLOCKS match — so it mounts a
-                  Pages section and a Blocks section, each under its own
-                  effective presentation and its own Display control. An
-                  explicit query is not mixed: it renders the one section its
-                  anchor declares, through the renderers it always had. */}
-              <Show
-                when={friendlySearch() !== null}
-                fallback={
-                  <Show
-                    when={pageRows()}
-                    fallback={
-                      <Show
-                        when={sheetFace()}
-                        fallback={
-                          <>
-                            <Show when={currentView() === "search"}>{blockSearchRows()}</Show>
-                            <Show when={currentView() !== "search"}>
-                              <Show
-                                when={groups() && groups()!.length > 0}
-                                fallback={emptyResultPanel()}
-                              >
-                                {blockGroupRows()}
-                              </Show>
-                            </Show>
-                          </>
-                        }
-                      >
-                        <Show
-                          when={groups() && groups()!.length > 0}
-                          fallback={<div class="query-empty">{emptyResultsMessage()}</div>}
-                        >
-                          {blockSheetRows()}
-                        </Show>
-                      </Show>
-                    }
-                  >
-                    {/* `@page`-anchored results are pages, not blocks (K16): they
-                        carry their physical owner and need no document load, so
-                        they render through the Pages renderer — under the PAGE
-                        settings, which is the only reason a page-anchored query's
-                        columns and grouping can show at all.
-
-                        **All four faces, from the one renderer** (GH #547). The
-                        page renderer already draws search, list, table and board;
-                        routing only List to it sent Table and Board to the BLOCK
-                        sheet, which a page-anchored run leaves empty by
-                        construction, so a query with seven matching pages said
-                        "No results" the moment its face changed. Presentation
-                        never changes membership. */}
-                    <QueryPageResults
-                      hits={pageRowHits}
-                      view={pageResultView}
-                      onOpen={openPageHit}
-                      linkAttrs={pageHitLinkAttrs}
-                      linkClass="query-page-row"
-                    />
-                    <Show when={!pageRows()!.length}>{emptyResultPanel()}</Show>
                   </Show>
-                }
-              >
-                <QueryResultSections
-                  pending={() => groupResource.loading}
-                  pendingMessage={() => groupsPending()?.message ?? "Searching…"}
-                  failure={() => {
-                    const error = groupsError();
-                    return error ? `${error.lead} ${error.message}` : null;
-                  }}
-                  families={[
-                    {
-                      kind: "page",
-                      control: pageSectionControls(),
-                      empty: () => pageHits().length === 0,
-                      hasMore: () => !!searchExecution()?.has_more?.pages,
-                      countLabel: () => `${pageHits().length} shown`,
-                      body: () => (
-                        <QueryPageResults
-                          hits={pageHits}
-                          view={pageResultView}
-                          onOpen={openPageHit}
-                          linkAttrs={pageHitLinkAttrs}
-                          linkClass="query-search-page"
-                        />
-                      ),
-                    },
-                    {
-                      kind: "block",
-                      control: blockSectionControl(),
-                      empty: () => blockSectionHits().length === 0,
-                      hasMore: () => !!searchExecution()?.has_more?.blocks,
-                      countLabel: () => `${blockSectionHits().length} shown`,
-                      body: () => (
-                        <Switch>
-                          <Match when={blockPresentation() === "search"}>{blockSearchRows()}</Match>
-                          <Match when={sheetFaceFor(blockPresentation())}>{blockSheetRows(blockPresentation())}</Match>
-                          <Match when={true}>{blockGroupRows()}</Match>
-                        </Switch>
-                      ),
-                    },
-                  ]}
-                />
-                {/* The empty ANSWER still deserves its explanation, and the two
-                    section-local empty states say only that this family has no
-                    rows. */}
-                <Show when={ranEmpty()}>
-                  <div class="query-empty">{whyEmptyAffordance()}</div>
-                </Show>
-              </Show>
+                </Match>
+              </Switch>
             </Show>
           </Match>
         </Switch>
       </div>
-    </Show>
-  );
-}
-
-// One page's query results, rendered as LIVE editable blocks. The result page
-// is loaded into the shared working set on demand; each result is the same
-// <Block> the main view uses (so editing a result edits the real block and
-// saves to its page). Until the page is loaded, a read-only block stands in.
-//
-// Keyed by page name (outer <For>) and block uuid (inner <For>) so a reactive
-// re-query that returns the same membership reuses the existing rows — it never
-// re-mounts a block you're editing in a result and yanks the caret out.
-function QueryGroup(props: { group: () => RefGroup | undefined; flat?: boolean }): JSX.Element {
-  const kind = (): PageKind => props.group()?.kind ?? "page";
-  const page = () => props.group()?.page ?? "";
-  const target = () => ({ name: page(), pageKind: kind(), ...(props.group()?.path ? { path: props.group()!.path } : {}) });
-  return (
-    <Show when={props.group()}>
-      {(g) => (
-        <div class="query-group" classList={{ "query-group-flat": props.flat }}>
-          <div
-            class={props.flat ? "query-crumb" : "query-page"}
-            onMouseDown={internalLinkMouseDown}
-            onClick={(e) => {
-              e.stopPropagation();
-              const dest = internalLinkDest(e);
-              if (dest === "sidebar") openPageInSidebar(target());
-              else if (dest === "background") openPageTargetInNewTab(target());
-              else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target() });
-              else openPageTarget(target());
-            }}
-            onAuxClick={(e) => {
-              if (internalLinkAuxClick(e, () => openPageTargetInNewTab(target()))) e.stopPropagation();
-            }}
-            onContextMenu={(e) => {
-              if (!shouldOpenTextContextMenu(e.target)) return;
-              e.preventDefault();
-              e.stopPropagation();
-              openPageContextMenu(e.clientX, e.clientY, target());
-            }}
-          >
-            {page()}
-          </div>
-          <LiveRefGroup page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb />
-        </div>
-      )}
     </Show>
   );
 }
@@ -2509,6 +1232,16 @@ export function youtubeTimestampMacroFor(target: Node): string | null {
   return `{{youtube-timestamp ${Math.max(0, Math.floor(seconds))}}}`;
 }
 
+function httpUrl(value: string): string | undefined {
+  if (!/^https?:\/\//i.test(value)) return undefined;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && url.hostname ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // A {{video}} / {{youtube}} / {{vimeo}} / {{bilibili}} macro: embeds YouTube,
 // Vimeo or Bilibili as an iframe and direct media files as a <video>. Each of the
 // provider-named macros also accepts a bare id (e.g. `{{vimeo 12345}}`), matching
@@ -2523,26 +1256,27 @@ export function VideoMacro(props: { body: string }): JSX.Element {
     return { name, arg };
   };
   const url = () => parsed().arg;
+  const safeUrl = () => httpUrl(url());
   const embed = () => {
     const { name, arg } = parsed();
-    // `?enablejsapi=1` matches OG (youtube.cljs:58) and, together with the
-    // referrerpolicy below, is what makes the embed play under WebKitGTK — a bare
-    // src with no referrer is rejected by YouTube's player as error 153.
-    const yt = /(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/.exec(arg);
+    // `?enablejsapi=1` matches OG (youtube.cljs:58) and enables timestamps.
+    const yt = safeUrl() && /(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/.exec(arg);
     if (yt) return `https://www.youtube.com/embed/${yt[1]}?enablejsapi=1`;
     if (name === "youtube" && /^[\w-]{11}$/.test(arg)) return `https://www.youtube.com/embed/${arg}?enablejsapi=1`;
-    const vimeo = /vimeo\.com\/(\d+)/.exec(arg);
+    const vimeo = safeUrl() && /vimeo\.com\/(\d+)/.exec(arg);
     if (vimeo) return `https://player.vimeo.com/video/${vimeo[1]}`;
     if (name === "vimeo" && /^\d+$/.test(arg)) return `https://player.vimeo.com/video/${arg}`;
-    const bili = /bilibili\.com\/video\/(BV[0-9A-Za-z]+)/i.exec(arg);
+    const bili = safeUrl() && /bilibili\.com\/video\/(BV[0-9A-Za-z]+)/i.exec(arg);
     const bvid = bili ? bili[1] : name === "bilibili" && /^BV[0-9A-Za-z]+$/.test(arg) ? arg : null;
     if (bvid) return `https://player.bilibili.com/player.html?bvid=${bvid}&high_quality=1`;
     return null;
   };
   // OG parity (og-1.0.0 6e7afa8eb): the embed iframe's `allow`/`referrerpolicy`.
-  // YouTube (youtube.cljs:54-70) sends a `strict-origin-when-cross-origin`
-  // referrer so the app origin reaches YouTube — without a referrer the player
-  // fails with error 153. Vimeo (block.cljs:1290-1305) gets the same `allow` list
+  // YouTube (youtube.cljs:54-70) preserves an HTTP(S) parent's origin referrer.
+  // A custom-protocol desktop parent still needs native WebView identification
+  // (GH #600); this policy cannot manufacture a missing HTTP Referer header.
+  // https://developers.google.com/youtube/terms/required-minimum-functionality
+  // Vimeo (block.cljs:1290-1305) gets the same `allow` list
   // minus picture-in-picture/web-share and NO referrerpolicy; bilibili sets
   // neither (the `.embed-iframe` class already removes the border).
   const embedAttrs = (): Record<string, string> => {
@@ -2586,10 +1320,12 @@ export function VideoMacro(props: { body: string }): JSX.Element {
       when={embed()}
       fallback={
         <Show
-          when={/\.(mp4|webm|ogg)(\?|$)/i.test(url())}
-          fallback={<ExternalLink class="external-link" dest={url()} target="_blank" rel="noreferrer">{url()}</ExternalLink>}
+          when={safeUrl() && /\.(mp4|webm|ogg)(\?|$)/i.test(url())}
+          fallback={safeUrl()
+            ? <ExternalLink dest={safeUrl()!}>{url()}</ExternalLink>
+            : <span>{url()}</span>}
         >
-          <video class="embed-video" src={url()} controls />
+          <video class="embed-video" src={safeUrl()} controls />
         </Show>
       }
     >
@@ -2604,10 +1340,11 @@ export function VideoMacro(props: { body: string }): JSX.Element {
 // rendered as a link (no third-party script embedding).
 export function TweetMacro(props: { body: string }): JSX.Element {
   const url = () => props.body.replace(/^(tweet|twitter)\s*/i, "").trim();
+  const safeUrl = () => httpUrl(url());
   return (
-    <ExternalLink class="external-link tweet-link" dest={url()} target="_blank" rel="noreferrer">
-      🐦 {url()}
-    </ExternalLink>
+    <Show when={safeUrl()} fallback={<span>🐦 {url()}</span>}>
+      <ExternalLink class="external-link tweet-link" dest={safeUrl()!}>🐦 {url()}</ExternalLink>
+    </Show>
   );
 }
 
@@ -2689,7 +1426,7 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
   const target = () => props.body.replace(/^embed\s*/i, "").trim();
   const pageTarget = () => /^\[\[([^\]]+)\]\]$/.exec(target())?.[1];
   const selfPageEmbed = () => {
-    const sourcePage = props.blockId ? doc.byId[props.blockId]?.page : undefined;
+    const sourcePage = props.blockId ? docNode(props.blockId)?.page : undefined;
     const targetPage = pageTarget();
     return !!sourcePage
       && pageByName(sourcePage)?.kind === "page"
@@ -2697,9 +1434,9 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
       && pageIdentityKey(sourcePage) === pageIdentityKey(targetPage);
   };
 
-  const embedLane = readLane();
-  const embedKey = () => selfPageEmbed() ? null : `${target()} ${graphEpoch()} ${dataRev()}`;
-  const [dataResource] = createResource(embedKey, (key) => embedLane(() => embedKey() === key, async () => {
+  const [data] = createResource(
+    () => selfPageEmbed() ? null : `${target()} ${graphEpoch()} ${dataRev()}`,
+    async () => {
     const t = target();
     const blockRef = /^\(\(([^)]+)\)\)$/.exec(t);
     if (blockRef) {
@@ -2712,27 +1449,20 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
     if (pageRef) {
       // Backend miss → the virtual in-app Guide, matched by bare title (the embed
       // carries no source context to remap the name). No-op for real graphs.
-      const p = (await backend().getPage(pageRef[1], "page")) ?? resolveGuidePageDto(pageRef[1]);
+      const result = await readOwned(graphOwner(), backend().getPage(pageRef[1], "page"));
+      if (result.kind === "stale") return null;
+      const p = result.value ?? resolveGuidePageDto(pageRef[1]);
       return p ? { page: p.name, kind: "page" as PageKind, blocks: p.blocks, embedId: undefined } : null;
     }
     return null;
-  }));
-  // An embed whose target could not be resolved shows the embed-missing marker
-  // below — the same thing it shows for a target that does not exist.
-  const data = () => readOr(dataResource, undefined, "embed target");
+  });
 
+  const embedded = () => readOr(data, undefined, "embed");
   return (
     <div class="embed-block">
       <Show when={!selfPageEmbed()}>
-        <Show when={data()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
-          <LiveRefGroup
-            page={data()!.page}
-            kind={data()!.kind}
-            blocks={data()!.blocks}
-            embedId={data()!.embedId}
-            hostBlockId={props.blockId}
-            surface="embed"
-          />
+        <Show when={embedded()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
+          <LiveRefGroup page={embedded()!.page} kind={embedded()!.kind} blocks={embedded()!.blocks} embedId={embedded()!.embedId} hostBlockId={props.blockId} surface="embed" />
         </Show>
       </Show>
     </div>

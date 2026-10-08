@@ -1,0 +1,10803 @@
+//! Disk-backed page parsing, serialization, and graph data used by the store.
+//! A page is read as a [`PageDto`] tree and can be written from one. File-backed
+//! runtime UUIDs are deterministic structural locators; persisted `id::`
+//! values remain separate external reference identities.
+
+mod checkpoint_state;
+mod collapse_only;
+pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
+mod layout_retention;
+pub(crate) mod persistent;
+use persistent::{EntryList, Map as SharedMap, Pages};
+mod line_endings;
+mod page_icons;
+mod page_identity;
+mod page_parse;
+mod parse_depth;
+pub(crate) mod shape_stats;
+mod transaction_publish;
+pub(crate) use page_identity::configured_hidden;
+#[cfg(test)]
+use page_identity::effective_page_name;
+use page_identity::list_graph_pages;
+pub(crate) use page_identity::{
+    graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
+    graph_text_watch_relevant,
+};
+use page_parse::{
+    carry_saved_runtime_ids, isolate_page_parse, page_dto, parse_page_content,
+    parse_page_entry_isolated,
+};
+
+use crate::path_identity::canonical_existing_path;
+use std::collections::HashMap;
+use std::fs;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::RwLock;
+use tine_core::config::{Config, FileNameFormat};
+#[cfg(test)]
+use tine_core::date::JournalDate;
+use tine_core::date::JournalFormat;
+use tine_core::doc::{self, DocBlock, Document};
+#[cfg(test)]
+use tine_core::model::AssetInfo;
+use tine_core::model::{
+    is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, BoundedRefGroups, Format,
+    PageDto, PageEntry, PageKind, ReferenceKind,
+};
+#[cfg(test)]
+use tine_core::model::{
+    sync_conflict_base, BlockDto, GraphMeta, JournalConflict, JournalFile, RefGroup, SyncConflict,
+};
+use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
+use tine_core::reference_evidence::{BlockSignature, ReferenceFilter};
+
+/// Maximum source bytes admitted to a page/config/EDN parser or renderer.
+pub const PARSE_INPUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
+/// Maximum structural depth admitted before recursive projections or rendering.
+pub(crate) const PARSE_INPUT_MAX_DEPTH: usize = 128;
+
+pub(crate) enum SyncFileResult {
+    Reconciled {
+        entry: Option<PageEntry>,
+        rev: crate::store::FileRev,
+    },
+    Excluded,
+    ReadFailed(io::Error),
+    ChangedDuringRead,
+}
+
+#[derive(Debug)]
+pub(crate) struct ParseInputTooLarge {
+    pub(crate) len: u64,
+}
+
+impl std::fmt::Display for ParseInputTooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "input exceeds {} byte parse limit",
+            PARSE_INPUT_MAX_BYTES
+        )
+    }
+}
+impl std::error::Error for ParseInputTooLarge {}
+
+pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
+    let bytes = read_parse_bytes(path)?;
+    validate_parse_bytes_for_path(&bytes, path)?;
+    String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+pub(crate) fn read_parse_bytes(path: &Path) -> io::Result<Vec<u8>> {
+    read_parse_bytes_observed(path).map(|(bytes, _)| bytes)
+}
+
+/// [`read_parse_bytes`] with the open file's metadata, taken before its
+/// bytes are read (GH #623: an own-write stamp without another open).
+pub(crate) fn read_parse_bytes_observed(path: &Path) -> io::Result<(Vec<u8>, fs::Metadata)> {
+    let mut input = fs::File::open(path)?;
+    let metadata = input.metadata()?;
+    let len = metadata.len();
+    if len > PARSE_INPUT_MAX_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            ParseInputTooLarge { len },
+        ));
+    }
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut input)
+        .take(PARSE_INPUT_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > PARSE_INPUT_MAX_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            ParseInputTooLarge {
+                len: bytes.len() as u64,
+            },
+        ));
+    }
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::full_read();
+    Ok((bytes, metadata))
+}
+
+pub(crate) fn validate_parse_bytes_for_path(bytes: &[u8], path: &Path) -> io::Result<()> {
+    validate_parse_bytes_format(bytes, Format::from_path(path) == Format::Org)
+}
+
+fn validate_parse_bytes_format(bytes: &[u8], org: bool) -> io::Result<()> {
+    if bytes.len() as u64 > PARSE_INPUT_MAX_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            ParseInputTooLarge {
+                len: bytes.len() as u64,
+            },
+        ));
+    }
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if !parse_input_depth_within_limit(text) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "outline nesting exceeds 128 levels",
+        ));
+    }
+    if org && !tine_core::org::headline_levels_within_limit(text, PARSE_INPUT_MAX_DEPTH) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Org headline nesting exceeds 128 levels",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn dto_depth_within_limit(page: &PageDto) -> bool {
+    let mut todo: Vec<_> = page.blocks.iter().map(|block| (block, 1usize)).collect();
+    while let Some((block, depth)) = todo.pop() {
+        if depth > PARSE_INPUT_MAX_DEPTH {
+            return false;
+        }
+        todo.extend(block.children.iter().map(|child| (child, depth + 1)));
+    }
+    true
+}
+
+/// Whether source text stays within the 128-level parser and renderer depth
+/// ceiling. Literal regions and paired inline delimiters are handled before
+/// counting outline levels. Pure O(source length), with no failure mode.
+pub fn parse_input_depth_within_limit(input: &str) -> bool {
+    parse_depth::parse_input_depth_within_limit(input)
+}
+
+#[cfg(test)]
+mod depth_contract_tests {
+    use super::*;
+
+    #[test]
+    fn outline_columns_count_levels_instead_of_half_the_indent() {
+        let outline = |levels: usize, step: usize| {
+            let mut text = String::new();
+            for depth in 0..levels {
+                text.push_str(&" ".repeat(depth * step));
+                text.push_str("- item\n");
+            }
+            text
+        };
+        assert!(parse_input_depth_within_limit(&outline(128, 4)));
+        assert!(parse_input_depth_within_limit(&outline(128, 1)));
+        assert!(!parse_input_depth_within_limit(&outline(129, 1)));
+    }
+
+    #[test]
+    fn unclosed_fence_does_not_hide_deep_outline_from_admission() {
+        let mut source = String::from("- start\n  ```js\n");
+        for depth in 1..129 {
+            source.push_str(&" ".repeat(depth));
+            source.push_str("- item\n");
+        }
+        assert!(!parse_input_depth_within_limit(&source));
+    }
+
+    /// OG-C5-Q L05: the guard's own fence grammar (same character, at least as
+    /// long) disagreed with lsdoc's (the next fence-marker line of EITHER
+    /// character closes it), so an outline after a shorter closer was hidden
+    /// from admission while the parser built the 129-deep tree.
+    #[test]
+    fn a_fence_the_parser_closes_early_does_not_hide_a_deep_outline() {
+        let deep = |closer: &str, tail: &str| {
+            let mut source = format!("````\ncode\n{closer}\n");
+            for depth in 0..129 {
+                source.push_str(&" ".repeat(depth));
+                source.push_str("- item\n");
+            }
+            source.push_str(tail);
+            source
+        };
+        for source in [deep("```", "````\n"), deep("~~~", "````\n")] {
+            // Ask the parser: the outline really is 129 deep after the closer.
+            let parsed = tine_core::doc::parse(&source);
+            let mut deepest = 0usize;
+            let mut todo: Vec<_> = parsed.roots.iter().map(|b| (b, 1usize)).collect();
+            while let Some((block, depth)) = todo.pop() {
+                deepest = deepest.max(depth);
+                todo.extend(block.children.iter().map(|c| (c, depth + 1)));
+            }
+            assert!(deepest > PARSE_INPUT_MAX_DEPTH, "parser depth {deepest}");
+            assert!(
+                !parse_input_depth_within_limit(&source),
+                "admission must see what the parser builds"
+            );
+        }
+        // A fence the parser really keeps open still hides its body.
+        let mut hidden = String::from("- a\n  ```\n");
+        for depth in 0..140 {
+            hidden.push_str(&" ".repeat(depth));
+            hidden.push_str("- not structure\n");
+        }
+        hidden.push_str("  ```\n");
+        assert!(parse_input_depth_within_limit(&hidden));
+    }
+
+    #[test]
+    fn org_headline_forms_and_markdown_stars_are_format_specific() {
+        let org = Path::new("page.org");
+        let markdown = Path::new("page.md");
+        assert!(
+            validate_parse_bytes_for_path(format!("{}\n", "*".repeat(128)).as_bytes(), org).is_ok()
+        );
+        for suffix in ["", "\tTitle", "\r"] {
+            let source = format!("{}{}\n", "*".repeat(129), suffix);
+            assert!(validate_parse_bytes_for_path(source.as_bytes(), org).is_err());
+            assert!(validate_parse_bytes_for_path(source.as_bytes(), markdown).is_ok());
+        }
+    }
+
+    #[test]
+    fn cold_page_reads_preserve_lookup_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-cold-page-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/A.md"), "- first\n").unwrap();
+        let graph = Graph::open(&root);
+        let entry = graph.find_entry("A", PageKind::Page).unwrap();
+        assert!(graph.find_entry_cache.read().unwrap().is_some());
+        assert!(graph.load_page(&entry).unwrap().blocks[0]
+            .raw
+            .contains("first"));
+        assert!(graph.find_entry_cache.read().unwrap().is_some());
+        assert!(graph.load_page(&entry).unwrap().blocks[0]
+            .raw
+            .contains("first"));
+        assert!(graph.find_entry_cache.read().unwrap().is_some());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+/// Whether `path` is a page file Tine reads (markdown or org).
+fn is_page_file(path: &Path) -> bool {
+    crate::file_kind::is_graph_text_path(path)
+}
+
+fn slash_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+#[cfg(test)]
+fn rel_under_dir(rel_dir: &str, dir: &Path, path: &Path) -> String {
+    let tail = path.strip_prefix(dir).unwrap_or(path);
+    if tail.as_os_str().is_empty() {
+        rel_dir.to_string()
+    } else {
+        format!("{rel_dir}/{}", slash_path(tail))
+    }
+}
+
+/// Parse a page file's bytes into a [`Document`] using the parser for its
+/// format (org headlines vs markdown bullets), chosen by the path's extension.
+fn parse_doc(path: &Path, content: &str) -> Document {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::parse();
+    match Format::from_path(path) {
+        Format::Md => doc::parse(content),
+        Format::Org => tine_core::org::parse_org(content),
+    }
+}
+
+fn parse_doc_with_opts(path: &Path, source: &str) -> (Document, doc::SerializeOpts) {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::parse();
+    match Format::from_path(path) {
+        Format::Md => doc::parse_with_opts(source),
+        Format::Org => (
+            tine_core::org::parse_org(source),
+            doc::SerializeOpts::default(),
+        ),
+    }
+}
+pub(crate) struct Graph {
+    pub(crate) root: PathBuf,
+    /// The canonical filesystem capability used for every asset operation. For
+    /// ordinary graphs this is `<root>/assets`; when the runtime has explicitly
+    /// approved an external assets symlink/junction it is that exact resolved
+    /// directory. No other managed graph path may use this capability.
+    assets_root: PathBuf,
+    pub(crate) config: Config,
+    pub(crate) config_read_problem: Option<crate::IoError>,
+    live_config: RwLock<Option<Arc<Config>>>,
+    /// Journal date formats (filename + title) resolved from `config.edn`, used to
+    /// recognize journal files in the user's format and render new ones. The
+    /// store installs a live override after open and refreshes it on config edits.
+    pub(crate) journal_format: Arc<JournalFormat>,
+    live_journal_format: RwLock<Option<Arc<JournalFormat>>>,
+    /// In-memory cache of every parsed page, keyed implicitly by position.
+    /// Built once on first whole-graph query and kept in sync by edits, so
+    /// search / backlinks / `{{query}}` scan memory instead of re-reading and
+    /// re-parsing the entire tree on every keystroke. `None` = not yet built.
+    // `Arc<Document>` so a cache snapshot or a save's scoped-invalidation copy is
+    // an O(1) refcount bump, not a deep clone of the whole page (see cache_upsert).
+    cache: RwLock<Option<Arc<Pages>>>,
+    /// Launch/diff/save timings and load-pass accounting behind `Store::diagnostics`.
+    pub(crate) diag: crate::launch_diag::DiagRecorder,
+    #[cfg(test)]
+    pub(crate) cache_publish_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    #[cfg(test)]
+    pub(crate) warm_after_first_page_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    #[cfg(test)]
+    pub(crate) warm_after_install_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    #[cfg(test)]
+    pub(crate) cold_cache_reconcile_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    #[cfg(test)]
+    pub(crate) warm_passes: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    pub(crate) fail_sync_read_once: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    pub(crate) fail_sync_parse_once: std::sync::atomic::AtomicBool,
+    /// File times observed while publishing the parsed page cache. Readers
+    /// clone the table with their graph view, so later disk edits cannot alter it.
+    observed_mtimes: RwLock<Arc<SharedMap<String, std::time::SystemTime>>>,
+    /// Graph-relative paths of pages skipped by the latest whole-graph cache
+    /// build because their parse/projection panicked. Kept retrievable so an
+    /// lsdoc ownership gap can never degrade search completeness invisibly.
+    page_index_failures: RwLock<Vec<String>>,
+    unreadable_pages: RwLock<Arc<Vec<(crate::store::FileId, String)>>>,
+    pub(super) discovery_errors: RwLock<Vec<(crate::FileId, crate::IoError)>>,
+    /// Exact-path index into stable cache slots. Whole-graph iteration retains
+    /// the initial page order, with new pages appended and removed slots omitted.
+    /// `None` rebuilds this live index from the snapshot on next lookup.
+    cache_index: RwLock<Option<PageCacheIndex>>,
+    /// Bumped on every cache mutation (upsert/remove). The lock-free cache build
+    /// captures this before reading disk and rebuilds if a mutation raced it
+    /// (which would otherwise install stale content over a concurrent save).
+    cache_gen: std::sync::atomic::AtomicU64,
+    /// Serializes whole-graph cache builds so a racing warmup/search/query parses
+    /// the graph ONCE, not once per caller. Held only during the build (not the
+    /// cache lock), so it never blocks readers of an already-built cache.
+    build_lock: std::sync::Mutex<()>,
+    /// Memoized `list_pages()` (the journals//pages/ directory scan), keyed by
+    /// cache_gen — which bumps on every page create/delete/rename (Tine or watcher)
+    /// — so quick-switch / [[ ]] autocomplete don't re-read both dirs on every
+    /// keystroke. An externally-created page not yet seen by the watcher is at most
+    /// one watcher tick (≤3s) stale here.
+    page_list_cache: RwLock<Option<(u64, Arc<Vec<PageEntry>>)>>,
+    /// Memoized exact `find_entry(name, kind)` resolution, keyed by `cache_gen`.
+    /// Unlike `list_pages()`, this index is built from raw `list_md` output so it
+    /// preserves `find_entry`'s duplicate selection: date-stem file first, else
+    /// first directory-walk match.
+    find_entry_cache: RwLock<Option<(u64, FindEntryIndex)>>,
+    /// GH #623 / storage spec §5.1 step 1: what the launch load pass observed
+    /// (each file's stamp, taken before its one read, the revision of the bytes
+    /// it parsed, and whether the stamp was racy), for the watcher baseline.
+    /// Taken once by the load worker; `None` when the cache was built by
+    /// another path (an on-demand build), which falls back to a baseline walk.
+    launch_observations: std::sync::Mutex<Option<LaunchObservations>>,
+    /// The launch pass's complete, effective-name page listing (duplicate
+    /// journal days included), keyed by `cache_gen`: the first publication's
+    /// name index is built from it instead of re-walking the graph and
+    /// re-opening every page preamble.
+    launch_listing: RwLock<Option<(u64, Arc<Vec<PageEntry>>)>>,
+    /// When this graph was opened. A file the launch pass finds written since
+    /// then may already have been read by a client (`Store::page` works while
+    /// loading), so the Ready publication announces it (`LaunchObservations`).
+    opened_at: std::time::SystemTime,
+    /// `path → content_rev` of the bytes Tine last wrote to each page file,
+    /// recorded *before* the write lands on disk. The file watcher reads files
+    /// outside the cache lock, so during the window between a save's atomic rename
+    /// and its `cache_upsert` it can read disk-ahead-of-cache and mistake Tine's
+    /// own write for an external change. This lets the watcher recognize the exact
+    /// bytes we wrote and suppress that false positive (the parse-cache comparison
+    /// alone races that window). See `write_page` / `sync_file_content`.
+    recent_writes: std::sync::Mutex<std::collections::HashMap<PathBuf, String>>,
+    /// `path → content_rev` of the on-disk bytes the cached page's
+    /// `Document` was parsed from. Invariant: an entry exists IFF the page is in
+    /// the cache, and `disk_revs[path] == content_rev(current disk bytes)` ⟹ the
+    /// cached doc reflects disk (is fresh). Lets `sync_file_content` skip the
+    /// parse→serialize→parse freshness comparison when a file is unchanged — the
+    /// common case on every page navigation and most watcher polls. A missing or
+    /// mismatched entry always falls through to the correct parse-compare path, so
+    /// the worst a desync can cause is redundant work, never a stale serve.
+    disk_revs: RwLock<std::collections::HashMap<PathBuf, String>>,
+    /// The cached pages whose bytes carry a column-0 VCS anchor line
+    /// (`tine_core::concord_queue::has_vcs_anchor`), observed from the SAME
+    /// bytes as `disk_revs[path]`. Invariant: a cached page (an entry in
+    /// `disk_revs`) with no entry here has no anchor line, so "which pages
+    /// might carry merge markers" is answered with no file read
+    /// ([`Graph::vcs_anchor_state`]); a page not in `disk_revs` is unknown.
+    /// Written only beside `disk_revs`, under the same locks (page_lock →
+    /// cache → disk_revs → vcs_anchored); a superset is harmless, a subset
+    /// would hide a conflicted page. Checkpointed (FORMAT 6).
+    vcs_anchored: RwLock<std::collections::HashSet<PathBuf>>,
+    /// Per-resolved-path write locks. The same page file has TWO in-process
+    /// writers — the editor (`save_page`/`write_page`) and the PDF highlight path
+    /// (`write_highlights`, for an `hls__` page) — and a rename rewrites many
+    /// files at once. Holding the per-path lock across the whole
+    /// read→conflict-check→write→`cache_upsert` makes same-page writes serialize,
+    /// so they can't clobber each other or leave a stale self-write marker.
+    /// Lock order is ALWAYS page_lock → cache → disk_revs; never the reverse.
+    page_locks:
+        std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
+}
+
+/// The immutable page and index input for one published generation. Evaluators
+/// borrow this value; write helpers and filesystem capabilities are absent.
+pub(crate) struct ReadSnapshot {
+    pub(crate) pages: Arc<Pages>,
+    config: Config,
+    list: Arc<EntryList>,
+    observed_mtimes: Arc<SharedMap<String, std::time::SystemTime>>,
+    explicit_index: SnapshotExplicitIndex,
+    reference_candidate_index: RwLock<SnapshotReferenceCandidateIndex>,
+    cache_generation: u64,
+    // Built on first use, as before snapshots. Racing readers of one
+    // generation share one build; generations published after it inherit it
+    // by per-file deltas. A view published before the first build and read
+    // later builds its own copy (an old-view edge, not the save path).
+    block_index: std::sync::OnceLock<SnapshotBlockIndex>,
+    alias_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
+    referenced_name_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
+    real_page_names: Arc<crate::query::RealPageNames>,
+    /// Shared so a save that moved no alias carries it by refcount (I-25).
+    aliases: std::sync::OnceLock<Arc<Vec<(String, String, String)>>>,
+    /// The alias relation indexed for component walks; derived from `aliases`.
+    alias_edges: std::sync::OnceLock<Arc<crate::query::AliasEdges>>,
+    /// Alias owner paths keyed by `page_key(alias)`, in `aliases` order.
+    alias_owner_paths_by_key: std::sync::OnceLock<Arc<HashMap<String, Vec<String>>>>,
+    referenced_names: std::sync::OnceLock<Vec<String>>,
+    block_ref_counts: std::sync::OnceLock<Arc<SharedMap<String, usize>>>,
+    public_block_ref_counts: std::sync::OnceLock<Arc<HashMap<String, usize>>>,
+    icon_index: std::sync::OnceLock<Arc<page_icons::IconIndex>>,
+    memos: SnapshotMemos,
+    query_index: crate::query::index::QueryIndexSlot,
+    #[cfg(test)]
+    block_full_builds: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    referenced_name_full_builds: std::sync::atomic::AtomicUsize,
+}
+
+impl ReadSnapshot {
+    /// Owner paths of the aliases whose page key is `key`, in
+    /// `page_aliases_with_owners` order. Built once per snapshot so a
+    /// resolve costs O(1) instead of cloning and re-keying every alias.
+    pub(crate) fn alias_owner_paths(&self, key: &str) -> Option<&Vec<String>> {
+        self.alias_owner_paths_by_key
+            .get_or_init(|| {
+                let mut map: HashMap<String, Vec<String>> = HashMap::new();
+                for (alias, _, path) in self.page_aliases_with_owners() {
+                    map.entry(tine_core::refs::page_key(&alias))
+                        .or_default()
+                        .push(path);
+                }
+                Arc::new(map)
+            })
+            .get(key)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_page_snapshot(pages: Vec<(PageEntry, Arc<Document>)>) -> Self {
+        let graph = Graph::from_page_snapshot("", pages);
+        graph.with_pages(|_| ());
+        Self::capture(
+            &graph,
+            graph.config.clone(),
+            Arc::new(EntryList::from(graph.list_pages_shared().as_slice())),
+            None,
+            &[],
+        )
+    }
+
+    /// Capture a read snapshot from an already loaded graph cache; panics if it
+    /// is absent. The initial capture builds page, alias, block and reference
+    /// indexes over the graph. Incremental capture patches the changed paths,
+    /// their page blocks, and affected names through O(log P) persistent-tree
+    /// updates; no filesystem I/O. May spawn scoped workers for initial capture.
+    pub(crate) fn capture(
+        graph: &Graph,
+        config: Config,
+        list: Arc<EntryList>,
+        old: Option<&Self>,
+        changed_paths: &[String],
+    ) -> Self {
+        #[cfg(feature = "test-faults")]
+        let capture_started = std::time::Instant::now();
+        let pages = graph
+            .cache
+            .read()
+            .unwrap()
+            .as_ref()
+            .cloned()
+            .expect("loaded graph");
+        let cache_generation = graph.cache_generation();
+        // Build the indexes PRE warmed before ready. Block hints and referenced
+        // names were first-use work there, so their OnceLocks remain cold.
+        let initial = old.is_none().then(|| {
+            std::thread::scope(|scope| {
+                let explicit =
+                    scope.spawn(|| SnapshotExplicitIndex::capture(None, &pages, &[], None));
+                let signatures = scope.spawn(|| {
+                    SnapshotReferenceCandidateIndex::capture(None, &pages, &[], cache_generation)
+                });
+                let counts = scope.spawn(|| {
+                    let mut counts = SharedMap::new();
+                    for (_, doc) in pages.iter() {
+                        for (id, count) in document_block_ref_counts(doc) {
+                            let total = counts.get(&id).copied().unwrap_or(0) + count;
+                            counts.insert(id, total);
+                        }
+                    }
+                    Arc::new(counts)
+                });
+                let aliases = scope.spawn(|| {
+                    SnapshotPageDerivedIndex::capture(
+                        None,
+                        &pages,
+                        &[],
+                        crate::query::document_aliases,
+                        None,
+                    )
+                });
+                (
+                    explicit.join().expect("explicit index worker"),
+                    signatures.join().expect("signature index worker"),
+                    counts.join().expect("block count worker"),
+                    aliases.join().expect("alias index worker"),
+                )
+            })
+        });
+        let reference_candidate_index = if let Some((_, index, ..)) = &initial {
+            index.clone()
+        } else if let Some(old) = old {
+            let previous = old.reference_candidate_index.read().unwrap();
+            SnapshotReferenceCandidateIndex::capture(
+                Some((&previous, &old.pages)),
+                &pages,
+                changed_paths,
+                cache_generation,
+            )
+        } else {
+            SnapshotReferenceCandidateIndex::capture(None, &pages, changed_paths, cache_generation)
+        };
+        let old_positions =
+            old.map(|old| Arc::clone(&old.reference_candidate_index.read().unwrap().positions));
+        let positions = Arc::clone(&reference_candidate_index.positions);
+        let position_pair = old_positions
+            .as_ref()
+            .map(|before| (before.as_ref(), positions.as_ref()));
+        let explicit_index = if let Some((index, ..)) = &initial {
+            index.clone()
+        } else {
+            SnapshotExplicitIndex::capture(
+                old.map(|old| (&old.explicit_index, &old.pages)),
+                &pages,
+                changed_paths,
+                position_pair,
+            )
+        };
+        let block_index = std::sync::OnceLock::new();
+        let previous_block =
+            old.and_then(|old| old.block_index.get().map(|index| (index, &old.pages)));
+        if previous_block.is_some() {
+            let _ = block_index.set(SnapshotBlockIndex::capture(
+                previous_block,
+                &pages,
+                changed_paths,
+                position_pair,
+            ));
+        }
+        let carry_projection =
+            |previous: Option<(&SnapshotPageDerivedIndex, &Arc<Pages>)>,
+             project: fn(&Document) -> Vec<String>| {
+                let cell = std::sync::OnceLock::new();
+                if let Some(previous) = previous {
+                    let _ = cell.set(SnapshotPageDerivedIndex::capture(
+                        Some(previous),
+                        &pages,
+                        changed_paths,
+                        project,
+                        position_pair,
+                    ));
+                }
+                cell
+            };
+        let alias_index = if let Some((_, _, _, index)) = &initial {
+            let cell = std::sync::OnceLock::new();
+            let _ = cell.set(index.clone());
+            cell
+        } else {
+            carry_projection(
+                old.and_then(|old| old.alias_index.get().map(|index| (index, &old.pages))),
+                crate::query::document_aliases,
+            )
+        };
+        let referenced_name_index = carry_projection(
+            old.and_then(|old| {
+                old.referenced_name_index
+                    .get()
+                    .map(|index| (index, &old.pages))
+            }),
+            collect_document_referenced_names,
+        );
+        let real_page_names = Arc::new(crate::query::RealPageNames::capture(
+            old.map(|old| (old.real_page_names.as_ref(), old.pages.as_ref())),
+            &pages,
+            changed_paths,
+        ));
+        let query_index = crate::query::index::QueryIndexSlot::succeeding(
+            old.map(|old| (&old.query_index, Arc::ptr_eq(&old.pages, &pages))),
+            changed_paths,
+        );
+        let snapshot = Self {
+            pages,
+            config,
+            list,
+            observed_mtimes: graph.observed_page_mtimes(),
+            explicit_index,
+            reference_candidate_index: RwLock::new(reference_candidate_index),
+            cache_generation,
+            block_index,
+            alias_index,
+            referenced_name_index,
+            real_page_names,
+            aliases: std::sync::OnceLock::new(),
+            alias_edges: std::sync::OnceLock::new(),
+            alias_owner_paths_by_key: std::sync::OnceLock::new(),
+            referenced_names: std::sync::OnceLock::new(),
+            block_ref_counts: std::sync::OnceLock::new(),
+            public_block_ref_counts: std::sync::OnceLock::new(),
+            icon_index: std::sync::OnceLock::new(),
+            memos: SnapshotMemos::default(),
+            query_index,
+            #[cfg(test)]
+            block_full_builds: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let icons = page_icons::IconIndex::capture(
+            old.and_then(|old| {
+                old.icon_index
+                    .get()
+                    .map(|index| (index.as_ref(), old.pages.as_ref()))
+            }),
+            &snapshot.pages,
+            changed_paths,
+        );
+        let _ = snapshot.icon_index.set(Arc::new(icons));
+        {
+            let previous =
+                old.and_then(|old| old.block_ref_counts.get().map(|counts| (old, counts)));
+            if let Some((old, counts)) = previous.filter(|(old, _)| {
+                !changed_paths.is_empty() || Arc::ptr_eq(&old.pages, &snapshot.pages)
+            }) {
+                let mut next = Arc::clone(counts);
+                for path in changed_paths {
+                    let before = snapshot_page_by_rel(&old.pages, old_positions.as_deref(), path);
+                    let after =
+                        snapshot_page_by_rel(&snapshot.pages, Some(positions.as_ref()), path);
+                    let before_counts = before
+                        .map(|(_, doc)| document_block_ref_counts(doc))
+                        .unwrap_or_default();
+                    let after_counts = after
+                        .map(|(_, doc)| document_block_ref_counts(doc))
+                        .unwrap_or_default();
+                    if before_counts == after_counts {
+                        continue;
+                    }
+                    let next = Arc::make_mut(&mut next);
+                    for (id, count) in before_counts {
+                        if let Some(total) = next.get_mut(&id) {
+                            *total -= count;
+                            if *total == 0 {
+                                next.remove(&id);
+                            }
+                        }
+                    }
+                    for (id, count) in after_counts {
+                        let total = next.get(&id).copied().unwrap_or(0) + count;
+                        next.insert(id, total);
+                    }
+                }
+                let _ = snapshot.block_ref_counts.set(next);
+            } else if let Some((_, _, counts, ..)) = &initial {
+                let _ = snapshot.block_ref_counts.set(Arc::clone(counts));
+            } else {
+                let mut counts = SharedMap::new();
+                for (_, doc) in snapshot.pages.iter() {
+                    for (id, count) in document_block_ref_counts(doc) {
+                        let total = counts.get(&id).copied().unwrap_or(0) + count;
+                        counts.insert(id, total);
+                    }
+                }
+                let _ = snapshot.block_ref_counts.set(Arc::new(counts));
+            }
+        }
+        if let Some(old) = old {
+            if Arc::ptr_eq(&old.block_ref_counts(), &snapshot.block_ref_counts()) {
+                if let Some(projected) = old.public_block_ref_counts.get() {
+                    let _ = snapshot.public_block_ref_counts.set(Arc::clone(projected));
+                }
+            }
+        }
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::snapshot_elapsed(capture_started.elapsed());
+        snapshot
+    }
+
+    /// Carry what `old` derived into this generation for an edit of
+    /// `changed_paths` that moved no page name (the caller checks): the alias
+    /// list and the memos. Returns whether the edit only folded or unfolded
+    /// blocks ([`collapse_only::collapse_only`]). The edited pages are looked
+    /// up once (I-13: only the edited page is inspected).
+    pub(crate) fn carry_from(&self, old: &Self, changed_paths: &[String]) -> bool {
+        if changed_paths.is_empty() {
+            return false;
+        }
+        let Some(edits) = self.edited_pages(old, changed_paths) else {
+            return false;
+        };
+        let aliases_unchanged = edits.iter().all(|(_, previous, current)| {
+            crate::query::document_aliases(previous) == crate::query::document_aliases(current)
+        });
+        if !aliases_unchanged {
+            return false;
+        }
+        self.carry_alias_list_from(old);
+        let folds_only = edits
+            .iter()
+            .all(|(_, previous, current)| collapse_only::collapse_only(previous, current));
+        self.carry_memos_from(old, edits);
+        folds_only
+    }
+
+    fn carry_memos_from(
+        &self,
+        old: &Self,
+        edits: Vec<(tine_core::model::PageEntry, Arc<Document>, Arc<Document>)>,
+    ) {
+        if old.memos.derived_cache.read().unwrap().is_none() && old.memos.query.is_empty() {
+            return;
+        }
+        *self.memos.derived_cache.write().unwrap() =
+            old.memos.derived_cache.read().unwrap().clone();
+        let parse_config = tine_core::query::atom::ParseConfig::from_config(&self.config);
+        self.memos
+            .query
+            .carry_from(&old.memos.query, &parse_config, &edits);
+        for (entry, previous, current) in edits {
+            // GH #623 item 3: a fold changes no predicate (collapse_only.rs),
+            // so only answers holding this page's blocks are dropped and the
+            // graph-wide alias and page-name sets are not rebuilt.
+            let scope = if collapse_only::collapse_only(&previous, &current) {
+                Scope::FoldOnly
+            } else {
+                Scope::Predicates
+            };
+            self.memos.scope_derived_invalidation(
+                self,
+                &entry,
+                Some(&previous),
+                &current,
+                0,
+                scope,
+            );
+        }
+    }
+
+    /// Whether this generation's alias list is built (or inherited).
+    #[cfg(test)]
+    pub(crate) fn alias_list_built(&self) -> bool {
+        self.aliases.get().is_some()
+    }
+
+    /// Inherit `old`'s alias list; the caller has checked that no page name
+    /// and no changed page's aliases moved. Otherwise the first alias read of
+    /// every generation — any backlinks answer — rebuilds it by walking every
+    /// page, O(P) per save (GH #623 item 3). The list is a function of page
+    /// names, paths and per-page aliases, so it is unchanged.
+    fn carry_alias_list_from(&self, old: &Self) {
+        if let Some(aliases) = old.aliases.get() {
+            let _ = self.aliases.set(Arc::clone(aliases));
+        }
+        if let Some(edges) = old.alias_edges.get() {
+            let _ = self.alias_edges.set(Arc::clone(edges));
+        }
+        if let Some(by_key) = old.alias_owner_paths_by_key.get() {
+            let _ = self.alias_owner_paths_by_key.set(Arc::clone(by_key));
+        }
+    }
+
+    /// `{{query}}` through the legacy block-group bridge, memoized.
+    pub(crate) fn run_query_bounded(
+        &self,
+        source: &str,
+        max_rows: usize,
+        max_bytes: usize,
+    ) -> BoundedRefGroups {
+        if tine_core::query::admit_source(source).is_err() {
+            let groups = Arc::new(Vec::new());
+            return BoundedRefGroups {
+                groups,
+                total: 0,
+                exceeded: false,
+            };
+        }
+        let key = format!("S\0{max_rows}\0{max_bytes}\0{source}");
+        let today = tine_core::date::JournalDate::today();
+        let answer = self.query_answer(key, today, || {
+            let (groups, plan) =
+                crate::query::exec::run_query_at(self, source, max_rows, max_bytes, today);
+            (answer_groups(groups), Some(plan))
+        });
+        match answer {
+            crate::query::memo::Answer::Groups(groups) => groups,
+            _ => unreachable!("S keys hold block groups"),
+        }
+    }
+
+    pub(crate) fn run_advanced_query_bounded_cached(
+        &self,
+        source: &str,
+        max_rows: usize,
+        max_bytes: usize,
+    ) -> (tine_core::query::AdvancedResult, bool, usize) {
+        if let Err(reason) = tine_core::query::admit_source(source) {
+            let reason = match reason {
+                tine_core::query::SourceRefusal::TooLarge => "query-too-large",
+                tine_core::query::SourceRefusal::TooDeep => "query-nesting-too-deep",
+            };
+            return (crate::query::rejected_advanced_query(reason), false, 0);
+        }
+        let key = format!("A\0{max_rows}\0{max_bytes}\0{source}");
+        let today = tine_core::date::JournalDate::today();
+        let answer = self.query_answer(key, today, || {
+            let ((result, exceeded, total), plan) =
+                crate::query::exec::run_advanced_query_at(self, source, max_rows, max_bytes, today);
+            let result = Arc::new(result);
+            (
+                crate::query::memo::Answer::Advanced {
+                    result,
+                    total,
+                    exceeded,
+                },
+                plan,
+            )
+        });
+        match answer {
+            crate::query::memo::Answer::Advanced {
+                result,
+                total,
+                exceeded,
+            } => (result.as_ref().clone(), exceeded, total),
+            _ => unreachable!("A keys hold advanced results"),
+        }
+    }
+
+    pub(crate) fn query_answer(
+        &self,
+        key: String,
+        today: tine_core::date::JournalDate,
+        compute: impl FnOnce() -> (
+            crate::query::memo::Answer,
+            Option<Arc<crate::query::exec::Plan>>,
+        ),
+    ) -> crate::query::memo::Answer {
+        let parse_config = tine_core::query::atom::ParseConfig::from_config(&self.config);
+        self.memos.query.answer(key, today, &parse_config, compute)
+    }
+
+    pub(crate) fn backlinks_bounded(
+        &self,
+        target: &str,
+        max_rows: usize,
+        max_bytes: usize,
+    ) -> BoundedRefGroups {
+        let normalized = tine_core::refs::normalize(target);
+        self.memos.derived_memo_bounded(
+            0,
+            format!("B\0{max_rows}\0{max_bytes}\0{normalized}"),
+            || crate::query::backlinks_bounded(self, target, max_rows, max_bytes),
+        )
+    }
+
+    pub(crate) fn unlinked_refs_bounded(
+        &self,
+        target: &str,
+        max_rows: usize,
+        max_bytes: usize,
+    ) -> BoundedRefGroups {
+        let normalized = tine_core::refs::normalize(target);
+        self.memos.derived_memo_bounded(
+            0,
+            format!("U\0{max_rows}\0{max_bytes}\0{normalized}"),
+            || crate::query::unlinked_refs_bounded(self, target, max_rows, max_bytes),
+        )
+    }
+
+    pub(crate) fn block_referrers_bounded(
+        &self,
+        uuid: &str,
+        max_rows: usize,
+        max_bytes: usize,
+    ) -> BoundedRefGroups {
+        let uuid = uuid.trim();
+        self.memos
+            .derived_memo_bounded(0, format!("R\0{max_rows}\0{max_bytes}\0{uuid}"), || {
+                crate::query::block_referrers_bounded(self, uuid, max_rows, max_bytes)
+            })
+    }
+
+    pub(crate) fn public_block_ref_counts(&self) -> Arc<HashMap<String, usize>> {
+        Arc::clone(self.public_block_ref_counts.get_or_init(|| {
+            Arc::new(
+                self.block_ref_counts()
+                    .iter()
+                    .map(|(id, count)| (id.clone(), *count))
+                    .collect(),
+            )
+        }))
+    }
+
+    pub(crate) fn block_ref_counts(&self) -> Arc<SharedMap<String, usize>> {
+        Arc::clone(
+            self.block_ref_counts
+                .get()
+                .expect("block counts built at publication"),
+        )
+    }
+
+    pub(crate) fn journal_content_days(&self) -> Vec<i64> {
+        self.pages
+            .iter()
+            .filter(|(entry, _)| entry.kind == PageKind::Journal)
+            .filter_map(|(entry, doc)| entry.date_key.filter(|_| doc_has_content(&doc.roots)))
+            .collect()
+    }
+
+    pub(crate) fn run_graph_search_latest_scoped(
+        &self,
+        cancel: &crate::store::Cancel,
+        source: &str,
+        page_limit: usize,
+        block_limit: usize,
+        scope: Option<crate::query_plan::QueryPageScope>,
+        explain: bool,
+        page_match_scope: tine_core::query::ir::FriendlyPageMatchScope,
+        page_view: Option<tine_core::query::ir::ViewSettings>,
+        block_view: Option<tine_core::query::ir::ViewSettings>,
+    ) -> tine_core::query_plan::QueryExecution {
+        match scope {
+            Some(scope) => crate::query_plan::QueryPlan::friendly_for_page_with_policy(
+                source,
+                block_limit,
+                scope,
+                self.config.enable_search_remove_accents,
+            ),
+            None => crate::query_plan::QueryPlan::friendly_with_scope(
+                source,
+                page_limit,
+                block_limit,
+                self.config.enable_search_remove_accents,
+                page_match_scope,
+            ),
+        }
+        .with_display(page_view, block_view)
+        .execute_with_explain(
+            self,
+            || cancel.0.load(std::sync::atomic::Ordering::Acquire),
+            explain,
+        )
+    }
+}
+
+/// Read-only inputs consumed by graph evaluators. Disk and mutation helpers
+/// remain on `Graph`; a published generation supplies these answers directly.
+impl ReadSnapshot {
+    pub(crate) fn page_aliases(&self) -> Vec<(String, String)> {
+        self.page_aliases_with_owners()
+            .into_iter()
+            .map(|(alias, owner, _)| (alias, owner))
+            .collect()
+    }
+    pub(crate) fn with_pages<T>(&self, f: impl FnOnce(&Pages) -> T) -> T {
+        f(&self.pages)
+    }
+    pub(crate) fn config(&self) -> &Config {
+        &self.config
+    }
+    pub(crate) fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>> {
+        Some(Arc::clone(&self.real_page_names))
+    }
+    pub(crate) fn reference_candidate_pages(
+        &self,
+        names: &[String],
+        kind: ReferenceKind,
+    ) -> ReferenceCandidatePages {
+        let full_page_count = self.pages.len();
+        let full = || {
+            ReferenceCandidatePages::unfiltered(
+                self.pages.iter().cloned().collect(),
+                false,
+                full_page_count,
+            )
+        };
+        let index = self.reference_candidate_index.read().unwrap();
+        if !index.complete
+            || index.generation != self.cache_generation
+            || index.page_count != full_page_count
+        {
+            return full();
+        }
+        if kind == ReferenceKind::Explicit {
+            let candidates = self.explicit_index.candidates(names);
+            ReferenceCandidatePages::unfiltered(
+                self.pages
+                    .iter()
+                    .filter(|(entry, _)| candidates.contains(&entry.path))
+                    .cloned()
+                    .collect(),
+                true,
+                full_page_count,
+            )
+        } else {
+            let filter = ReferenceFilter::new(names);
+            let mut selected = Vec::new();
+            let mut signatures = Vec::new();
+            for (position, (entry, doc)) in self.pages.slots() {
+                let Some(blocks) = index.get(position) else {
+                    return full();
+                };
+                if filter
+                    .as_ref()
+                    .is_some_and(|filter| !blocks.iter().any(|block| filter.admits(block)))
+                {
+                    continue;
+                }
+                selected.push((entry.clone(), Arc::clone(doc)));
+                signatures.push(Arc::clone(blocks));
+            }
+            ReferenceCandidatePages {
+                pages: selected,
+                indexed: true,
+                full_page_count,
+                filter,
+                signatures,
+            }
+        }
+    }
+    pub(crate) fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
+        Arc::clone(
+            self.alias_edges
+                .get_or_init(|| Arc::new(crate::query::AliasEdges::new(&self.page_aliases()))),
+        )
+    }
+    pub(crate) fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
+        self.aliases
+            .get_or_init(|| {
+                let index = self.alias_index.get_or_init(|| {
+                    SnapshotPageDerivedIndex::capture(
+                        None,
+                        &self.pages,
+                        &[],
+                        crate::query::document_aliases,
+                        None,
+                    )
+                });
+                let mut owned = Vec::new();
+                for (entry, _) in self.pages.iter() {
+                    if let Some(projection) = index.get(&entry.path) {
+                        for alias in projection {
+                            owned.push((
+                                entry.path.clone(),
+                                alias.clone(),
+                                entry.name.clone(),
+                                entry.rel_path_str().to_owned(),
+                            ));
+                        }
+                    }
+                }
+                owned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+                Arc::new(
+                    owned
+                        .into_iter()
+                        .map(|(_, alias, owner, path)| (alias, owner, path))
+                        .collect(),
+                )
+            })
+            .as_ref()
+            .clone()
+    }
+    pub(crate) fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
+        Arc::clone(&self.observed_mtimes)
+    }
+    pub(crate) fn block_page_hint(&self, uuid: &str) -> Option<String> {
+        self.block_index
+            .get_or_init(|| {
+                #[cfg(test)]
+                self.block_full_builds
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                SnapshotBlockIndex::capture(None, &self.pages, &[], None)
+            })
+            .hint(uuid)
+    }
+    pub(crate) fn page_list_arc(&self) -> Arc<Vec<PageEntry>> {
+        self.list.materialize()
+    }
+    pub(crate) fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
+        let positions = Arc::clone(&self.reference_candidate_index.read().unwrap().positions);
+        (self.query_index).get(&self.pages, &positions, &self.config, self.cache_generation)
+    }
+    pub(crate) fn referenced_page_names(&self) -> Vec<String> {
+        self.referenced_names
+            .get_or_init(|| {
+                let index = self.referenced_name_index.get_or_init(|| {
+                    #[cfg(test)]
+                    self.referenced_name_full_builds
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    SnapshotPageDerivedIndex::capture(
+                        None,
+                        &self.pages,
+                        &[],
+                        collect_document_referenced_names,
+                        None,
+                    )
+                });
+                let mut seen = HashMap::new();
+                for (entry, _) in self.pages.iter() {
+                    if let Some(projection) = index.get(&entry.path) {
+                        for name in projection {
+                            seen.entry(tine_core::refs::page_key(name))
+                                .or_insert_with(|| name.clone());
+                        }
+                    }
+                }
+                seen.into_values().collect()
+            })
+            .clone()
+    }
+}
+
+pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
+    fn add(seen: &mut HashMap<String, String>, name: String) {
+        if !name.is_empty() {
+            seen.entry(tine_core::refs::page_key(&name)).or_insert(name);
+        }
+    }
+    fn property_refs(seen: &mut HashMap<String, String>, block: &DocBlock) {
+        let projection = block.projection();
+        for name in tine_core::reference_evidence::linkable_property_names(
+            projection.reference_source(),
+            &projection.regions,
+        ) {
+            add(seen, name.to_owned());
+        }
+    }
+    fn visit(block: &DocBlock, seen: &mut HashMap<String, String>) {
+        for name in block.projection().refs_page() {
+            add(seen, name.clone());
+        }
+        property_refs(seen, block);
+        for child in &block.children {
+            visit(child, seen);
+        }
+    }
+    let mut seen = HashMap::new();
+    if let Some(pre) = &doc.pre_block {
+        let mut block = DocBlock::new(pre);
+        block.set_org(crate::query::page_properties::page_document_is_org(doc));
+        property_refs(&mut seen, &block);
+    }
+    for block in &doc.roots {
+        visit(block, &mut seen);
+    }
+    seen.into_values().collect()
+}
+
+pub(crate) enum Withdrawal {
+    Exact(PathBuf),
+    ExternalLive,
+    ExternalRecovery(PathBuf),
+    Missing,
+}
+
+struct PageCacheIndex {
+    by_path: std::collections::HashMap<PathBuf, usize>,
+}
+
+fn snapshot_page_by_rel<'a>(
+    pages: &'a Arc<Pages>,
+    positions: Option<&SharedMap<String, usize>>,
+    rel: &str,
+) -> Option<&'a (PageEntry, Arc<Document>)> {
+    positions
+        .unwrap_or(pages.positions.as_ref())
+        .get(rel)
+        .and_then(|position| pages.get(*position))
+        .filter(|(entry, _)| entry.rel_path_str() == rel)
+}
+
+const SNAPSHOT_INDEX_SHARDS: usize = 64;
+
+fn snapshot_index_shard(bytes: &[u8]) -> usize {
+    bytes.iter().fold(0xcbf29ce484222325u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    }) as usize
+        % SNAPSHOT_INDEX_SHARDS
+}
+
+/// One signature per block, in the order the reference walk visits them: slot 0
+/// is the page-property pseudo-block (as `query::page_property_block` projects
+/// it), then the blocks in pre-order.
+fn reference_signatures(entry: &PageEntry, doc: &Document) -> Arc<Vec<BlockSignature>> {
+    fn add_blocks(out: &mut Vec<BlockSignature>, blocks: &[DocBlock]) {
+        for block in blocks {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::signature_block_probe();
+            out.push(BlockSignature::of_text(block.raw()));
+            add_blocks(out, &block.children);
+        }
+    }
+    let is_org = Format::from_path(&entry.path) == Format::Org;
+    let mut out = vec![doc
+        .pre_block
+        .as_deref()
+        .map(|pre| BlockSignature::of_text(&crate::query::page_property_raw(pre, is_org)))
+        .unwrap_or_default()];
+    add_blocks(&mut out, &doc.roots);
+    out.shrink_to_fit();
+    Arc::new(out)
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct SnapshotReferenceCandidateIndex {
+    signatures: SharedMap<usize, Arc<Vec<BlockSignature>>>,
+    // The cache's own `Pages::positions`; a loaded checkpoint re-shares it.
+    #[serde(skip)]
+    positions: Arc<SharedMap<String, usize>>,
+    page_count: usize,
+    complete: bool,
+    generation: u64,
+}
+
+impl SnapshotReferenceCandidateIndex {
+    fn empty() -> Self {
+        Self {
+            signatures: SharedMap::new(),
+            positions: Arc::new(SharedMap::new()),
+            page_count: 0,
+            complete: true,
+            generation: 0,
+        }
+    }
+
+    fn shard(path: &Path) -> usize {
+        snapshot_index_shard(path.to_string_lossy().as_bytes())
+    }
+
+    fn get(&self, position: usize) -> Option<&Arc<Vec<BlockSignature>>> {
+        self.signatures.get(&position)
+    }
+
+    fn capture(
+        old: Option<(&Self, &Arc<Pages>)>,
+        pages: &Arc<Pages>,
+        changed_paths: &[String],
+        generation: u64,
+    ) -> Self {
+        if let Some((previous, _previous_pages)) = old.filter(|(_, previous_pages)| {
+            !changed_paths.is_empty() || Arc::ptr_eq(previous_pages, pages)
+        }) {
+            let mut index = previous.clone();
+            index.page_count = pages.len();
+            index.generation = generation;
+            index.positions = Arc::clone(&pages.positions);
+            for path in changed_paths {
+                if let Some(&slot) = previous.positions.get(path) {
+                    index.signatures.remove(&slot);
+                }
+                if let Some(&slot) = pages.positions.get(path) {
+                    let (entry, doc) = &pages[slot];
+                    index
+                        .signatures
+                        .insert(slot, reference_signatures(entry, doc));
+                }
+            }
+            index.complete = index.signatures.len() == pages.len();
+            index
+        } else {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::snapshot_rebuild();
+            let mut index = Self::empty();
+            index.page_count = pages.len();
+            index.generation = generation;
+            index.signatures = pages
+                .slots()
+                .map(|(slot, (entry, doc))| (slot, reference_signatures(entry, doc)))
+                .collect();
+            index.positions = Arc::clone(&pages.positions);
+            index
+        }
+    }
+}
+
+/// The page a block UUID was last seen on. One allocation per page, shared by
+/// every UUID on it, so the cold build costs one key clone per UUID.
+type BlockOwner = Arc<(PathBuf, String)>;
+
+#[derive(Clone)]
+struct SnapshotBlockIndex {
+    base: Arc<SharedMap<String, Option<BlockOwner>>>,
+    overlay: Arc<SharedMap<String, Option<BlockOwner>>>,
+}
+
+impl SnapshotBlockIndex {
+    // Persistent roots share untouched UUIDs; folding N/8 changed hints into
+    // the base updates those tree paths without copying all N base entries.
+
+    fn for_each_block_id(doc: &Document, mut visit: impl FnMut(&str)) {
+        fn walk(blocks: &[DocBlock], visit: &mut dyn FnMut(&str)) {
+            for block in blocks {
+                if !block.uuid.is_empty() {
+                    visit(&block.uuid);
+                }
+                if let Some(id) = block.property("id") {
+                    if !id.is_empty() {
+                        visit(&id);
+                    }
+                }
+                walk(&block.children, visit);
+            }
+        }
+        walk(&doc.roots, &mut visit);
+    }
+
+    #[cfg(test)]
+    fn block_ids(doc: &Document) -> std::collections::HashSet<String> {
+        let mut ids = std::collections::HashSet::new();
+        Self::for_each_block_id(doc, |id| {
+            ids.insert(id.to_string());
+        });
+        ids
+    }
+
+    fn fold_limit(&self) -> usize {
+        (self.base.len() / 8).max(1)
+    }
+
+    fn owner(entry: &PageEntry) -> BlockOwner {
+        Arc::new((entry.path.clone(), entry.name.clone()))
+    }
+
+    fn capture(
+        old: Option<(&Self, &Arc<Pages>)>,
+        pages: &Arc<Pages>,
+        changed_paths: &[String],
+        positions: Option<(&SharedMap<String, usize>, &SharedMap<String, usize>)>,
+    ) -> Self {
+        if let Some((previous, _previous_pages)) = old.filter(|(_, previous_pages)| {
+            !changed_paths.is_empty() || Arc::ptr_eq(previous_pages, pages)
+        }) {
+            let mut index = previous.clone();
+            // A deleted ID may retain an old hint. All consumers verify the
+            // hinted page and scan on a miss. Record new owners, including
+            // ambiguity, without copying the shared base.
+            let overlay = Arc::make_mut(&mut index.overlay);
+            for rel_path in changed_paths {
+                if let Some((entry, doc)) =
+                    snapshot_page_by_rel(pages, positions.map(|(_, after)| after), rel_path)
+                {
+                    let owner = Self::owner(entry);
+                    Self::for_each_block_id(doc, |id| {
+                        let prior = overlay.get(id).or_else(|| index.base.get(id));
+                        let hint = match prior {
+                            Some(None) => None,
+                            Some(Some(existing)) if existing.0 != owner.0 => None,
+                            _ => Some(owner.clone()),
+                        };
+                        overlay.insert(id.to_string(), hint);
+                    });
+                }
+            }
+            if index.overlay.len() >= index.fold_limit() {
+                let base = Arc::make_mut(&mut index.base);
+                for (id, hint) in index.overlay.iter() {
+                    base.insert(id.clone(), hint.clone());
+                }
+                index.overlay = Arc::new(SharedMap::new());
+            }
+            index
+        } else {
+            let mut base: HashMap<String, Option<BlockOwner>> = HashMap::new();
+            for (entry, doc) in pages.iter() {
+                let owner = Self::owner(entry);
+                Self::for_each_block_id(doc, |id| {
+                    if let Some(slot) = base.get_mut(id) {
+                        if slot.as_ref().is_some_and(|existing| existing.0 != owner.0) {
+                            *slot = None;
+                        }
+                        return;
+                    }
+                    base.insert(id.to_string(), Some(owner.clone()));
+                });
+            }
+            Self {
+                base: Arc::new(base.into_iter().collect()),
+                overlay: Arc::new(SharedMap::new()),
+            }
+        }
+    }
+
+    fn hint(&self, uuid: &str) -> Option<String> {
+        self.overlay
+            .get(uuid)
+            .or_else(|| self.base.get(uuid))
+            .and_then(|owner| owner.as_ref().map(|owner| owner.1.clone()))
+    }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct SnapshotPageDerivedIndex {
+    shards: Vec<Arc<SharedMap<PathBuf, Vec<String>>>>,
+}
+
+impl SnapshotPageDerivedIndex {
+    fn empty() -> Self {
+        Self {
+            shards: (0..SNAPSHOT_INDEX_SHARDS)
+                .map(|_| Arc::new(SharedMap::new()))
+                .collect(),
+        }
+    }
+
+    fn get(&self, path: &Path) -> Option<&Vec<String>> {
+        self.shards[SnapshotReferenceCandidateIndex::shard(path)].get(path)
+    }
+
+    fn insert(&mut self, entry: &PageEntry, doc: &Document, project: fn(&Document) -> Vec<String>) {
+        let projection = project(doc);
+        Arc::make_mut(&mut self.shards[SnapshotReferenceCandidateIndex::shard(&entry.path)])
+            .insert(entry.path.clone(), projection);
+    }
+
+    fn capture(
+        old: Option<(&Self, &Arc<Pages>)>,
+        pages: &Arc<Pages>,
+        changed_paths: &[String],
+        project: fn(&Document) -> Vec<String>,
+        positions: Option<(&SharedMap<String, usize>, &SharedMap<String, usize>)>,
+    ) -> Self {
+        if let Some((previous, previous_pages)) = old.filter(|(_, previous_pages)| {
+            !changed_paths.is_empty() || Arc::ptr_eq(previous_pages, pages)
+        }) {
+            let mut index = previous.clone();
+            for rel_path in changed_paths {
+                if let Some((entry, _)) = snapshot_page_by_rel(
+                    previous_pages,
+                    positions.map(|(before, _)| before),
+                    rel_path,
+                ) {
+                    Arc::make_mut(
+                        &mut index.shards[SnapshotReferenceCandidateIndex::shard(&entry.path)],
+                    )
+                    .remove(&entry.path);
+                }
+                if let Some((entry, doc)) =
+                    snapshot_page_by_rel(pages, positions.map(|(_, after)| after), rel_path)
+                {
+                    index.insert(entry, doc, project);
+                }
+            }
+            index
+        } else {
+            let mut index = Self::empty();
+            for (entry, doc) in pages.iter() {
+                index.insert(entry, doc, project);
+            }
+            index
+        }
+    }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct SnapshotExplicitIndex {
+    shards: Vec<Arc<SharedMap<String, Arc<SharedMap<PathBuf, ()>>>>>,
+}
+
+impl SnapshotExplicitIndex {
+    const SHARDS: usize = 64;
+
+    fn empty() -> Self {
+        Self {
+            shards: (0..Self::SHARDS)
+                .map(|_| Arc::new(SharedMap::new()))
+                .collect(),
+        }
+    }
+
+    fn shard(name: &str) -> usize {
+        snapshot_index_shard(name.as_bytes())
+    }
+
+    fn update(&mut self, path: &Path, old: &[String], new: &[String]) {
+        for name in old.iter().filter(|name| !new.contains(name)) {
+            let shard = Arc::make_mut(&mut self.shards[Self::shard(name)]);
+            if let Some(paths) = shard.get_mut(name) {
+                Arc::make_mut(paths).remove(path);
+                if paths.is_empty() {
+                    shard.remove(name);
+                }
+            }
+        }
+        for name in new.iter().filter(|name| !old.contains(name)) {
+            let shard = Arc::make_mut(&mut self.shards[Self::shard(name)]);
+            if !shard.contains_key(name) {
+                shard.insert(name.clone(), Arc::new(SharedMap::new()));
+            }
+            Arc::make_mut(shard.get_mut(name).unwrap()).insert(path.to_path_buf(), ());
+        }
+    }
+
+    fn candidates(&self, names: &[String]) -> std::collections::BTreeSet<PathBuf> {
+        let mut paths = std::collections::BTreeSet::new();
+        for name in names {
+            if let Some(postings) = self.shards[Self::shard(name)].get(name) {
+                paths.extend(postings.iter().map(|(path, _)| path.clone()));
+            }
+        }
+        paths
+    }
+
+    fn capture(
+        old: Option<(&Self, &Arc<Pages>)>,
+        pages: &Arc<Pages>,
+        changed_paths: &[String],
+        positions: Option<(&SharedMap<String, usize>, &SharedMap<String, usize>)>,
+    ) -> Self {
+        if let Some((previous, previous_pages)) = old.filter(|(_, previous_pages)| {
+            !changed_paths.is_empty() || Arc::ptr_eq(previous_pages, pages)
+        }) {
+            let mut index = previous.clone();
+            for rel_path in changed_paths {
+                let before = snapshot_page_by_rel(
+                    previous_pages,
+                    positions.map(|(before, _)| before),
+                    rel_path,
+                );
+                let after =
+                    snapshot_page_by_rel(pages, positions.map(|(_, after)| after), rel_path);
+                let old_names = before
+                    .map(|(entry, doc)| crate::query::document_explicit_reference_names(entry, doc))
+                    .unwrap_or_default();
+                let new_names = after
+                    .map(|(entry, doc)| crate::query::document_explicit_reference_names(entry, doc))
+                    .unwrap_or_default();
+                if let Some(path) = after.or(before).map(|(entry, _)| entry.path.as_path()) {
+                    index.update(path, &old_names, &new_names);
+                }
+            }
+            index
+        } else {
+            let mut index = Self::empty();
+            for (entry, doc) in pages.iter() {
+                let names = crate::query::document_explicit_reference_names(entry, doc);
+                index.update(&entry.path, &[], &names);
+            }
+            index
+        }
+    }
+}
+
+pub(crate) struct ReferenceCandidatePages {
+    pub pages: Vec<(PageEntry, Arc<Document>)>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub indexed: bool,
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub full_page_count: usize,
+    /// Plain-text queries only: the per-block prefilter, and (parallel to
+    /// `pages`) each page's block signatures. `None` means every block is a
+    /// candidate.
+    pub filter: Option<ReferenceFilter>,
+    pub signatures: Vec<Arc<Vec<BlockSignature>>>,
+}
+
+impl ReferenceCandidatePages {
+    fn unfiltered(
+        pages: Vec<(PageEntry, Arc<Document>)>,
+        indexed: bool,
+        full_page_count: usize,
+    ) -> Self {
+        Self {
+            pages,
+            indexed,
+            full_page_count,
+            filter: None,
+            signatures: Vec::new(),
+        }
+    }
+
+    /// Whether the block at `ordinal` of page `page` (0 = page properties,
+    /// then pre-order) may contain a match. Unknown slots are admitted.
+    pub(crate) fn admits(&self, page: usize, ordinal: usize) -> bool {
+        match (&self.filter, self.signatures.get(page)) {
+            (Some(filter), Some(blocks)) => blocks
+                .get(ordinal)
+                .map_or(true, |signature| filter.admits(signature)),
+            _ => true,
+        }
+    }
+}
+
+#[derive(Default)]
+/// The launch load pass's observations (storage spec §5.1 step 1, §5.4).
+pub(crate) struct LaunchObservations {
+    /// Stamp of every graph-text file the pass found, taken before its read;
+    /// files it did not read (a duplicate journal day, a sync conflict copy)
+    /// carry a stamp without a revision.
+    pub(crate) stamps: HashMap<PathBuf, crate::watch::Stamp>,
+    /// Paths whose stamp was racy when observed (§5.4).
+    pub(crate) racy: std::collections::HashSet<PathBuf>,
+    /// Files written since the graph was opened, which a client may have
+    /// read before the pass did: announced in the Ready publication as
+    /// `(path, created since open, page kind, effective name)`.
+    pub(crate) announce: Vec<(PathBuf, bool, PageKind, String)>,
+}
+
+struct PageCacheBuild {
+    pages: Vec<ParsedPage>,
+    failures: Vec<String>,
+    unreadable: Vec<(String, String)>,
+}
+
+type ParsedPage = (PageEntry, Document, DiskObs);
+
+/// What the store observed in one page's bytes when it parsed them: the
+/// revision (the freshness key, see `disk_revs`) and whether the bytes carry a
+/// VCS anchor line (see `vcs_anchored`). Both come from the same bytes.
+pub(crate) struct DiskObs {
+    pub(crate) rev: String,
+    pub(crate) anchored: bool,
+}
+
+impl DiskObs {
+    /// Cost O(bytes): one hash and one vectorized substring pass.
+    pub(crate) fn of(content: &str) -> Self {
+        Self {
+            rev: content_rev(content),
+            anchored: tine_core::concord_queue::has_vcs_anchor(content.as_bytes()),
+        }
+    }
+}
+enum PageParseFailure {
+    Panic(String, String),
+    Unreadable(String, String),
+}
+type PageParseResult = Result<Option<ParsedPage>, PageParseFailure>;
+
+impl PageCacheBuild {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            pages: Vec::with_capacity(capacity),
+            failures: Vec::new(),
+            unreadable: Vec::new(),
+        }
+    }
+
+    fn collect(&mut self, parsed: PageParseResult) -> bool {
+        match parsed {
+            Ok(Some(page)) => {
+                self.pages.push(page);
+                true
+            }
+            Ok(None) => false,
+            Err(PageParseFailure::Panic(path, reason)) => {
+                self.unreadable.push((path.clone(), reason));
+                self.failures.push(path);
+                false
+            }
+            Err(PageParseFailure::Unreadable(path, reason)) => {
+                self.unreadable.push((path, reason));
+                false
+            }
+        }
+    }
+}
+
+/// Count each projected block reference once per referring block.
+pub(crate) fn document_block_ref_counts(doc: &Document) -> HashMap<String, usize> {
+    fn walk(blocks: &[DocBlock], counts: &mut std::collections::HashMap<String, usize>) {
+        for block in blocks {
+            // projection().block_refs() is already de-duplicated per referrer block,
+            // matching the badge's OG-compatible counting semantics.
+            for id in block.projection().block_refs() {
+                *counts.entry(id.clone()).or_insert(0) += 1;
+            }
+            walk(&block.children, counts);
+        }
+    }
+    let mut counts = std::collections::HashMap::new();
+    // OG parity (#7): the header pre-block is a block with `:block/refs`, so a
+    // `((uuid))` in a page property is one referrer of that block.
+    if let Some(pre) = crate::query::document_page_property_block(doc) {
+        for id in pre.projection().block_refs() {
+            *counts.entry(id.clone()).or_insert(0) += 1;
+        }
+    }
+    walk(&doc.roots, &mut counts);
+    counts
+}
+
+impl PageCacheIndex {
+    fn insert(&mut self, entry: &PageEntry, slot: usize) {
+        self.by_path.insert(entry.path.clone(), slot);
+    }
+    fn remove(&mut self, entry: &PageEntry, _slot: usize) {
+        self.by_path.remove(&entry.path);
+    }
+}
+fn build_page_cache_index(pages: &Pages) -> PageCacheIndex {
+    let mut index = PageCacheIndex {
+        by_path: HashMap::with_capacity(pages.len()),
+    };
+    for (slot, (entry, _)) in pages.slots() {
+        index.insert(entry, slot);
+    }
+    index
+}
+
+fn is_date_stem_entry(entry: &PageEntry, fmt: &JournalFormat) -> bool {
+    entry
+        .path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|stem| {
+            entry.date_key.is_some_and(|day| {
+                fmt.file_stem(tine_core::date::JournalDate::from_ordinal(day)) == stem
+            })
+        })
+}
+
+/// One ordering for every name/day claimant in the legacy cache and store view.
+pub(crate) fn compare_page_claimants(
+    a: &PageEntry,
+    b: &PageEntry,
+    fmt: &JournalFormat,
+    name_fmt: FileNameFormat,
+) -> std::cmp::Ordering {
+    let date_rank =
+        |entry: &PageEntry| entry.kind == PageKind::Journal && is_date_stem_entry(entry, fmt);
+    let filename_rank = |entry: &PageEntry| {
+        entry.kind == PageKind::Page
+            && entry
+                .path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| {
+                    tine_core::refs::same_page(&decode_page_name(stem, name_fmt), &entry.name)
+                })
+    };
+    date_rank(b)
+        .cmp(&date_rank(a))
+        .then_with(|| filename_rank(b).cmp(&filename_rank(a)))
+        .then_with(|| {
+            let md = |entry: &PageEntry| entry.path.extension().is_some_and(|ext| ext == "md");
+            md(b).cmp(&md(a))
+        })
+        .then_with(|| a.path.file_name().cmp(&b.path.file_name()))
+        .then_with(|| a.path.cmp(&b.path))
+}
+
+/// Gen+today-tagged cache of derived scan results. Reset wholesale whenever the
+/// tag no longer matches — so every entry is always consistent with the current
+/// graph state (no per-entry invalidation to get wrong).
+#[derive(Clone)]
+struct DerivedCache {
+    gen: u64,
+    today: i64,
+    // `Arc<Vec<RefGroup>>` so serving a memoized result (every dataRev re-render)
+    // is a refcount bump, not a deep clone of every matched block (see derived_memo).
+    results: std::collections::HashMap<String, (BoundedRefGroups, usize)>,
+    lru: std::collections::VecDeque<String>,
+    bytes: usize,
+}
+
+/// What one page edit can change in the derived answers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    /// Membership may change: evict answers the page is in or matches.
+    Predicates,
+    /// A fold (`collapse_only`): membership cannot change; evict only the
+    /// answers that hold the page's blocks, whose text moved.
+    FoldOnly,
+}
+
+#[derive(Default)]
+struct SnapshotMemos {
+    derived_cache: RwLock<Option<DerivedCache>>,
+    query: crate::query::memo::QueryMemo,
+}
+
+fn answer_groups(groups: crate::query::BoundedGroups) -> crate::query::memo::Answer {
+    crate::query::memo::Answer::Groups(BoundedRefGroups {
+        groups: Arc::new(groups.groups),
+        total: groups.total,
+        exceeded: groups.exceeded,
+    })
+}
+
+// Query results contain owned DTO subtrees and can be close to graph-sized. A
+// graph-lifetime, key-unbounded memo turns ordinary navigation through many
+// pages' Linked References into unbounded retained memory. Oversized results are
+// returned to their caller but deliberately not retained here.
+const DERIVED_CACHE_MAX_ENTRIES: usize = 64;
+const DERIVED_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
+const DERIVED_CACHE_MAX_ENTRY_BYTES: usize = 16 * 1024 * 1024;
+
+fn result_cache_key_estimated_bytes(key: &str) -> usize {
+    // The HashMap owns one key and the LRU owns another. Account both copies so
+    // a result with an enormous query source cannot bypass the payload budget.
+    key.len().saturating_mul(2).saturating_add(128)
+}
+
+fn touch_lru(lru: &mut std::collections::VecDeque<String>, key: &str) {
+    if let Some(pos) = lru.iter().position(|candidate| candidate == key) {
+        lru.remove(pos);
+    }
+    lru.push_back(key.to_owned());
+}
+
+fn prune_result_cache<T>(
+    results: &mut std::collections::HashMap<String, (T, usize)>,
+    lru: &mut std::collections::VecDeque<String>,
+    bytes: &mut usize,
+) {
+    while results.len() > DERIVED_CACHE_MAX_ENTRIES || *bytes > DERIVED_CACHE_MAX_BYTES {
+        let Some(oldest) = lru.pop_front() else { break };
+        if let Some((_, removed_bytes)) = results.remove(&oldest) {
+            *bytes = bytes.saturating_sub(removed_bytes);
+        }
+    }
+}
+
+struct FindEntryIndex {
+    entries: std::collections::HashMap<(PageKind, String), Vec<PageEntry>>,
+    pages_loaded: bool,
+    journals_loaded: bool,
+}
+
+impl FindEntryIndex {
+    fn new() -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+            pages_loaded: false,
+            journals_loaded: false,
+        }
+    }
+
+    fn has_kind(&self, kind: PageKind) -> bool {
+        match kind {
+            PageKind::Journal => self.journals_loaded,
+            PageKind::Page => self.pages_loaded,
+        }
+    }
+
+    fn mark_kind_loaded(&mut self, kind: PageKind) {
+        match kind {
+            PageKind::Journal => self.journals_loaded = true,
+            PageKind::Page => self.pages_loaded = true,
+        }
+    }
+}
+
+/// Validate one config-controlled graph directory. Logseq permits nested relative
+/// directories, but an absolute path, traversal component, or symlinked existing
+/// ancestor outside the graph would turn ordinary save/delete/restore operations
+/// into writes against unrelated files.
+fn validate_managed_dir(root: &Path, raw: &str, label: &str) -> io::Result<()> {
+    if raw.is_empty() || raw.contains('\\') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid {label} directory: {raw:?}"),
+        ));
+    }
+    let rel = Path::new(raw);
+    if rel.is_absolute()
+        || rel
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} directory must be a safe relative path: {raw:?}"),
+        ));
+    }
+    let candidate = root.join(rel);
+    if !path_stays_within_root(root, &candidate) || path_uses_managed_alias(root, &candidate) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} directory escapes graph root: {raw:?}"),
+        ));
+    }
+    Ok(())
+}
+
+/// Containment check for existing and not-yet-created targets: resolve the deepest
+/// existing ancestor so a symlink cannot smuggle a later filename outside the graph.
+/// The root is canonical, or an absolute link-free spelling where volumes cannot say.
+fn path_stays_within_root(root: &Path, target: &Path) -> bool {
+    let canonical_root = canonical_existing_path(root).unwrap_or_else(|_| root.to_path_buf());
+    canonical_existing_ancestor(target)
+        .map(|(_, resolved)| resolved.starts_with(&canonical_root))
+        .unwrap_or(false)
+}
+
+/// Resolve the deepest existing ancestor without following a missing suffix.
+pub(crate) fn canonical_existing_ancestor(target: &Path) -> io::Result<(&Path, PathBuf)> {
+    let mut existing = target;
+    loop {
+        match fs::symlink_metadata(existing) {
+            Ok(_) => return Ok((existing, canonical_existing_path(existing)?)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                existing = existing.parent().ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "target has no existing ancestor",
+                    )
+                })?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Managed graph directories must retain their own identity, not merely land
+/// somewhere under the graph after canonicalization. An in-graph symlink such as
+/// `publish -> assets` passes a plain containment check but redirects generated
+/// output onto user assets. Compare the deepest existing ancestor with its
+/// expected canonical lexical location to reject any such alias.
+fn path_uses_managed_alias(root: &Path, target: &Path) -> bool {
+    let canonical_root = canonical_existing_path(root).unwrap_or_else(|_| root.to_path_buf());
+    let mut existing = target;
+    while fs::symlink_metadata(existing).is_err() {
+        let Some(parent) = existing.parent() else {
+            return true;
+        };
+        existing = parent;
+    }
+    let Ok(relative) = existing.strip_prefix(root) else {
+        return true;
+    };
+    canonical_existing_path(existing)
+        .map(|actual| actual != canonical_root.join(relative))
+        .unwrap_or(true)
+}
+
+#[cfg(test)]
+thread_local! {
+    static WITHDRAW_RACE_REPLACEMENT: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn withdrawal_race_hook(path: &Path) -> io::Result<()> {
+    WITHDRAW_RACE_REPLACEMENT.with(|replacement| {
+        if let Some(bytes) = replacement.borrow_mut().take() {
+            fs::write(path, bytes)?;
+        }
+        Ok(())
+    })
+}
+
+#[cfg(not(test))]
+fn withdrawal_race_hook(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+pub(crate) enum CheckedOpenError {
+    ExternalAssetsUnapproved(PathBuf),
+    Io(io::Error),
+}
+
+impl CheckedOpenError {
+    #[cfg(test)]
+    fn into_io(self) -> io::Error {
+        match self {
+            Self::ExternalAssetsUnapproved(current) => io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "external assets directory requires approval: {}",
+                    current.display()
+                ),
+            ),
+            Self::Io(error) => error,
+        }
+    }
+}
+
+impl From<io::Error> for CheckedOpenError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl Graph {
+    pub(crate) fn validate_config_layout(&self, config: &Config) -> io::Result<()> {
+        validate_managed_dir(&self.root, &config.journals_dir, "journals")?;
+        validate_managed_dir(&self.root, &config.pages_dir, "pages")
+    }
+
+    #[cfg(test)]
+    fn test_read_snapshot(&self) -> ReadSnapshot {
+        self.with_pages(|_| ());
+        ReadSnapshot::capture(
+            self,
+            self.config.clone(),
+            Arc::new(EntryList::from(self.list_pages_shared().as_slice())),
+            None,
+            &[],
+        )
+    }
+
+    pub(crate) fn current_config(&self) -> Arc<Config> {
+        self.live_config
+            .read()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| Arc::new(self.config.clone()))
+    }
+
+    pub(crate) fn current_journal_format(&self) -> Arc<JournalFormat> {
+        self.live_journal_format
+            .read()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| self.journal_format.clone())
+    }
+
+    pub(crate) fn reload_config(&self, config: Config) -> io::Result<()> {
+        self.validate_config_layout(&config)?;
+        let format = JournalFormat::new(
+            config.journal_file_name_format.as_deref(),
+            config.journal_page_title_format.as_deref(),
+        );
+        *self.live_config.write().unwrap() = Some(Arc::new(config));
+        *self.live_journal_format.write().unwrap() = Some(Arc::new(format));
+        self.invalidate_cache();
+        Ok(())
+    }
+
+    pub(crate) fn install_live_config(&self) {
+        *self.live_config.write().unwrap() = Some(Arc::new(self.config.clone()));
+        *self.live_journal_format.write().unwrap() = Some(self.journal_format.clone());
+    }
+
+    /// Open a graph for use by the application, rejecting any configured page or
+    /// journal directory that can escape the selected graph. `Graph::open` stays
+    /// available for the many in-crate disposable fixtures, but runtime graph
+    /// binding must use this checked entry point.
+    #[cfg(test)]
+    pub(crate) fn open_checked(root: impl AsRef<Path>) -> io::Result<Graph> {
+        Self::open_checked_with_assets_inner(root, None).map_err(CheckedOpenError::into_io)
+    }
+
+    /// Resolve an `assets` link/junction that lands outside the graph. The
+    /// returned path is canonical and therefore suitable for showing to the user
+    /// and binding a device-local approval. An in-graph directory (or a missing
+    /// directory that Tine may create normally) returns `None`.
+    pub(crate) fn external_assets_target(root: impl AsRef<Path>) -> io::Result<Option<PathBuf>> {
+        let root = canonical_existing_path(root.as_ref())?;
+        let assets = root.join("assets");
+        match fs::symlink_metadata(&assets) {
+            Ok(_) => {
+                let resolved = canonical_existing_path(&assets)?;
+                if !resolved.is_dir() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("assets path is not a directory: {}", assets.display()),
+                    ));
+                }
+                Ok((!resolved.starts_with(&root)).then_some(resolved))
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Checked runtime open with one narrowly-scoped exception to the graph-root
+    /// boundary: an external `assets` link/junction is accepted only when its
+    /// current canonical target exactly matches the caller's approved target.
+    /// This makes a retargeted link fail closed instead of inheriting old trust.
+    pub(crate) fn open_checked_with_assets_inner(
+        root: impl AsRef<Path>,
+        approved_assets: Option<&Path>,
+    ) -> Result<Graph, CheckedOpenError> {
+        let mut graph = Self::open_inner(root);
+        validate_managed_dir(&graph.root, &graph.config.journals_dir, "journals")?;
+        validate_managed_dir(&graph.root, &graph.config.pages_dir, "pages")?;
+        validate_managed_dir(&graph.root, "logseq", "logseq")?;
+        validate_managed_dir(&graph.root, "publish", "publish")?;
+        if let Some(resolved) = Self::external_assets_target(&graph.root)? {
+            let approved = approved_assets
+                .ok_or_else(|| CheckedOpenError::ExternalAssetsUnapproved(resolved.clone()))?;
+            let approved = canonical_existing_path(approved).map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("approved assets directory is unavailable: {error}"),
+                )
+            })?;
+            if approved != resolved {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "external assets directory changed; approved {} but graph now resolves to {}",
+                        approved.display(),
+                        resolved.display()
+                    ),
+                )
+                .into());
+            }
+            graph.assets_root = resolved;
+        } else {
+            validate_managed_dir(&graph.root, "assets", "assets")?;
+            graph.assets_root = graph.root.join("assets");
+        }
+        Ok(graph)
+    }
+
+    pub(crate) fn ensure_write_target(&self, target: &Path) -> io::Result<()> {
+        if path_stays_within_root(&self.root, target)
+            && !path_uses_managed_alias(&self.root, target)
+        {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("write target escapes graph root: {}", target.display()),
+            ))
+        }
+    }
+
+    /// Asset writes have their own capability boundary. Keeping this separate
+    /// from `ensure_write_target` means approving external assets cannot widen a
+    /// page/config/publish write into the same directory.
+    pub(crate) fn ensure_asset_write_target(&self, target: &Path) -> io::Result<()> {
+        if self.assets_root == self.root.join("assets") {
+            return self.ensure_write_target(target);
+        }
+        if path_stays_within_root(&self.assets_root, target)
+            && !path_uses_managed_alias(&self.assets_root, target)
+        {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "write target escapes approved assets root: {}",
+                    target.display()
+                ),
+            ))
+        }
+    }
+
+    /// Open a graph directory, reading `logseq/config.edn` if present.
+    #[cfg(test)]
+    pub fn open(root: impl AsRef<Path>) -> Graph {
+        Self::open_inner(root)
+    }
+
+    pub(crate) fn open_inner(root: impl AsRef<Path>) -> Graph {
+        let root = root.as_ref().to_path_buf();
+        let (config, problem) = match read_parse_input(&root.join("logseq/config.edn")) {
+            Ok(text) => (Config::parse(&text), None),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (Config::default(), None),
+            Err(error) => (Config::default(), Some(error.into())),
+        };
+        let journal_format = JournalFormat::new(
+            config.journal_file_name_format.as_deref(),
+            config.journal_page_title_format.as_deref(),
+        );
+        let mut graph = Self::empty_with_config(root, config, journal_format);
+        graph.config_read_problem = problem;
+        graph
+    }
+
+    fn empty_with_config(root: PathBuf, config: Config, journal_format: JournalFormat) -> Graph {
+        Graph {
+            assets_root: root.join("assets"),
+            root,
+            config,
+            config_read_problem: None,
+            journal_format: Arc::new(journal_format),
+            live_config: RwLock::new(None),
+            live_journal_format: RwLock::new(None),
+            cache: RwLock::new(None),
+            diag: crate::launch_diag::DiagRecorder::new(),
+            #[cfg(test)]
+            cache_publish_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            warm_after_first_page_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            warm_after_install_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            cold_cache_reconcile_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            warm_passes: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            fail_sync_read_once: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            fail_sync_parse_once: std::sync::atomic::AtomicBool::new(false),
+            observed_mtimes: RwLock::new(Arc::new(SharedMap::new())),
+            page_index_failures: RwLock::new(Vec::new()),
+            unreadable_pages: RwLock::new(Arc::new(Vec::new())),
+            discovery_errors: RwLock::new(Vec::new()),
+            cache_index: RwLock::new(None),
+            cache_gen: std::sync::atomic::AtomicU64::new(0),
+            build_lock: std::sync::Mutex::new(()),
+            page_list_cache: RwLock::new(None),
+            find_entry_cache: RwLock::new(None),
+            launch_observations: std::sync::Mutex::new(None),
+            launch_listing: RwLock::new(None),
+            opened_at: std::time::SystemTime::now(),
+            recent_writes: std::sync::Mutex::new(std::collections::HashMap::new()),
+            disk_revs: RwLock::new(std::collections::HashMap::new()),
+            vcs_anchored: RwLock::new(std::collections::HashSet::new()),
+            page_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Construct a read-only graph projection from one caller-owned document
+    /// snapshot. The empty `root` is only a fail-closed fallback: whole-graph
+    /// consumers use the preinstalled cache and page list, so they can never
+    /// mix these documents with a later revision from the live graph.
+    #[cfg(test)]
+    pub(crate) fn from_page_snapshot(
+        root: impl AsRef<Path>,
+        mut pages: Vec<(PageEntry, Arc<Document>)>,
+    ) -> Graph {
+        for (entry, document) in &mut pages {
+            assign_doc_runtime_ids(&mut Arc::make_mut(document).roots, entry.rel_path_str());
+        }
+        let graph = Graph::open_inner(root);
+        let entries = pages.iter().map(|(entry, _)| entry.clone()).collect();
+        let pages = Pages::from(pages);
+        let index = build_page_cache_index(&pages);
+        *graph.cache.write().unwrap() = Some(Arc::new(pages));
+        *graph.cache_index.write().unwrap() = Some(index);
+        *graph.page_list_cache.write().unwrap() = Some((0, Arc::new(entries)));
+        graph
+    }
+
+    /// The write lock for a resolved page path (see `page_locks`). Returns an
+    /// `Arc` the caller holds (`let _g = lock.lock().unwrap();`) for the critical
+    /// section. The `page_locks` map mutex is released before the per-page lock is
+    /// taken, so callers never serialize on the map. Opportunistically prunes
+    /// entries no caller still holds (strong_count == 1) to bound growth.
+    pub(crate) fn page_lock(&self, path: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
+        let mut map = self.page_locks.lock().unwrap();
+        if map.len() >= 64 {
+            map.retain(|_, v| std::sync::Arc::strong_count(v) > 1);
+        }
+        map.entry(path.to_path_buf())
+            .or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(())))
+            .clone()
+    }
+
+    #[cfg(test)]
+    pub fn meta(&self) -> GraphMeta {
+        GraphMeta::from_config(
+            self.root.display().to_string(),
+            &self.current_config(),
+            &self.current_journal_format(),
+        )
+    }
+
+    /// Current cache generation — bumped on every cache-mutating page change, and
+    /// the key that memoized queries/backlinks/derived results invalidate against.
+    /// Exposed for observability and tests (e.g. asserting a no-op save doesn't
+    /// needlessly invalidate everything).
+    pub(crate) fn cache_generation(&self) -> u64 {
+        self.cache_gen.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub(crate) fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
+        Arc::clone(&self.observed_mtimes.read().unwrap())
+    }
+
+    pub(crate) fn unreadable_pages(&self) -> Arc<Vec<(crate::store::FileId, String)>> {
+        let mut rows = Arc::clone(&self.unreadable_pages.read().unwrap());
+        Arc::make_mut(&mut rows).extend(
+            self.discovery_errors
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(id, error)| (id.clone(), error.to_string())),
+        );
+        Arc::make_mut(&mut rows).sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        Arc::make_mut(&mut rows).dedup_by(|a, b| a.0 == b.0);
+        rows
+    }
+
+    pub(crate) fn replace_unreadable_walk_errors(
+        &self,
+        previous: &std::collections::HashMap<PathBuf, String>,
+        current: &std::collections::HashMap<PathBuf, String>,
+    ) {
+        let affected: std::collections::HashSet<_> = previous
+            .keys()
+            .chain(current.keys())
+            .map(|path| crate::store::FileId::from(self.rel_path(path)))
+            .collect();
+        let mut guard = self.unreadable_pages.write().unwrap();
+        let rows = Arc::make_mut(&mut *guard);
+        rows.retain(|(id, _)| !affected.contains(id));
+        rows.extend(current.iter().map(|(path, reason)| {
+            (
+                crate::store::FileId::from(self.rel_path(path)),
+                reason.clone(),
+            )
+        }));
+        rows.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+    }
+
+    pub(crate) fn observe_page_mtime(&self, path: &Path, mtime: Option<std::time::SystemTime>) {
+        let key = self.rel_path(path);
+        let mut observed = self.observed_mtimes.write().unwrap();
+        if observed.contains_key(&key) {
+            match mtime {
+                Some(value) => {
+                    Arc::make_mut(&mut observed).insert(key, value);
+                }
+                None => {
+                    Arc::make_mut(&mut observed).remove(&key);
+                }
+            }
+        }
+    }
+
+    /// Pages skipped by the latest whole-graph search-cache build because their
+    /// parse/projection panicked. Paths are graph-relative and safe to surface.
+    #[cfg(test)]
+    pub fn page_index_failures(&self) -> Vec<String> {
+        self.page_index_failures.read().unwrap().clone()
+    }
+
+    pub(crate) fn journals_path(&self) -> PathBuf {
+        self.root.join(&self.current_config().journals_dir)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pages_path(&self) -> PathBuf {
+        self.root.join(&self.current_config().pages_dir)
+    }
+
+    /// Graph-root-relative, forward-slashed path for an absolute file path inside
+    /// the graph (`…/journals/2026_06_26.org` → `journals/2026_06_26.org`). The
+    /// stable, machine-portable id Tine hands the frontend so a page can be pinned
+    /// to a SPECIFIC file (#21). Falls back to the input lossily if it's somehow
+    /// outside the root (shouldn't happen for graph files).
+    pub(crate) fn rel_path(&self, abs: &Path) -> String {
+        slash_path(abs.strip_prefix(&self.root).unwrap_or(abs))
+    }
+
+    /// Resolve a graph-root-relative path (as produced by [`rel_path`]) back to an
+    /// absolute file path, validating it points at a real graph text file. This is
+    /// the security gate for every path-addressed command (#21): it accepts
+    /// eligible graph text throughout the graph, with no path traversal.
+    /// Anything else returns `None`, so a path-addressed read/save can never
+    /// escape the graph.
+    #[cfg(test)]
+    pub(crate) fn resolve_rel(&self, rel: &str) -> Option<PathBuf> {
+        let rel = rel.trim();
+        if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
+            return None;
+        }
+        let mut tail = PathBuf::new();
+        for seg in rel.split('/') {
+            if seg.is_empty() || seg == "." || seg == ".." {
+                return None;
+            }
+            tail.push(seg);
+        }
+        if tail.as_os_str().is_empty() {
+            return None;
+        }
+        let abs = self.root.join(tail);
+        if !path_stays_within_root(&self.root, &abs) || path_uses_managed_alias(&self.root, &abs) {
+            return None;
+        }
+        graph_text_eligible(&self.root, &abs, &self.current_config()).then_some(abs)
+    }
+
+    /// Whether a journal file is a "shadow": a non-date-stem file (e.g. a leftover
+    /// title-named `Friday, 26-06-2026.org`) that coexists with a canonical
+    /// date-stem file (`2026_06_26.{md,org}`) for the SAME day. The `(kind,name)`
+    /// cache slot belongs to the canonical file, so a shadow must never be folded
+    /// into it (that would make name-resolution serve the shadow's content). A
+    /// shadow is loaded fresh by path on demand instead (#21). Twins (two date-stem
+    /// files of the same day in different extensions) are deliberately NOT shadows —
+    /// that case keeps its existing `has_twin`/dedup handling.
+    /// A configured-format file (`24-06-2026.md` under `dd-MM-yyyy`) is canonical,
+    /// never its own shadow (else no reconcile, stale reload, clobbering save; C3 L05).
+    fn is_shadow_journal(&self, path: &Path, date: tine_core::date::JournalDate) -> bool {
+        let format = self.current_journal_format();
+        let stem = path.file_stem().and_then(|s| s.to_str());
+        if stem.is_none_or(|s| format.is_canonical_stem(s)) {
+            return false;
+        }
+        let canon = format.file_stem(date);
+        let dir = self.journals_path();
+        dir.join(format!("{canon}.md")).is_file() || dir.join(format!("{canon}.org")).is_file()
+    }
+
+    /// The format (`Md`/`Org`) new pages and journals are created in, from
+    /// `config.edn`'s `:preferred-format`. Existing files keep their own format.
+    #[cfg(test)]
+    pub(crate) fn preferred_format(&self) -> Format {
+        self.current_config().preferred_format
+    }
+
+    /// List all pages and journals in the graph.
+    pub(crate) fn list_pages(&self) -> Vec<PageEntry> {
+        self.list_pages_shared().as_ref().clone()
+    }
+
+    pub(crate) fn list_pages_shared(&self) -> Arc<Vec<PageEntry>> {
+        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
+        if let Some((g, entries)) = self.page_list_cache.read().unwrap().as_ref() {
+            if *g == gen {
+                return Arc::clone(entries);
+            }
+        }
+        let entries = list_graph_pages(self);
+        // A duplicate-day journal (canonical + leftover title-named file) must show
+        // once in quick-switch / All-Pages, not twice (both resolve to one page).
+        let entries = dedup_journal_days(
+            entries,
+            &self.current_journal_format(),
+            self.current_config().file_name_format,
+        );
+        let entries = Arc::new(entries);
+        *self.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&entries)));
+        entries
+    }
+
+    /// Journals sorted newest-first.
+    #[cfg(test)]
+    pub fn journals_desc(&self) -> Vec<PageEntry> {
+        // Prefer the warmed whole-graph cache — its PageEntry list is kept current
+        // by cache_upsert/cache_remove, so we avoid a directory read + parse on
+        // every infinite-scroll feed append. Fall back to scanning the dir while
+        // the cache isn't built yet.
+        let raw: Vec<PageEntry> = match self.cache.read().unwrap().as_ref() {
+            Some(pages) => pages
+                .iter()
+                .filter(|(e, _)| e.kind == PageKind::Journal && e.date_key.is_some())
+                .map(|(e, _)| e.clone())
+                .collect(),
+            None => list_md(
+                &self.journals_path(),
+                PageKind::Journal,
+                &self.current_journal_format(),
+                self.current_config().file_name_format,
+                &self.current_config().journals_dir,
+            )
+            .into_iter()
+            .filter(|e| e.date_key.is_some())
+            .collect(),
+        };
+        // A day with more than one file (e.g. a leftover title-named duplicate of
+        // a `yyyy_MM_dd` file) must appear ONCE — both files resolve to the same
+        // page name, so otherwise the day renders twice. The stray stays visible
+        // via journal_conflicts() for reconciliation.
+        let mut js = dedup_journal_days(
+            raw,
+            &self.current_journal_format(),
+            self.current_config().file_name_format,
+        );
+        js.sort_by_key(|e| std::cmp::Reverse(e.date_key.unwrap_or(0)));
+        js
+    }
+
+    /// Feed membership is narrower than the raw journal inventory: future
+    /// journals remain directly reachable graph pages, but are not in Journals.
+    #[cfg(test)]
+    pub fn feed_journals_desc_through(&self, cutoff: JournalDate) -> Vec<PageEntry> {
+        let cutoff = cutoff.ordinal_key();
+        self.journals_desc()
+            .into_iter()
+            .filter(|entry| entry.date_key.is_some_and(|day| day <= cutoff))
+            .collect()
+    }
+
+    /// Journal days that resolve to more than one file — the migration leaves these
+    /// alone (it never clobbers), so they're reported for the user to reconcile.
+    /// Each file gets a one-line preview and a `canonical` flag (date-stem name).
+    #[cfg(test)]
+    pub fn journal_conflicts(&self) -> Vec<JournalConflict> {
+        let dir = self.journals_path();
+        let mut by_date: std::collections::BTreeMap<i64, Vec<(String, PathBuf, bool)>> =
+            std::collections::BTreeMap::new();
+        walk_page_files(&dir, |p| {
+            let ext = match p.extension().and_then(|x| x.to_str()) {
+                Some(x @ ("md" | "org")) => x.to_string(),
+                _ => return,
+            };
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+                return;
+            };
+            // A date-stem file is canonical; otherwise try to parse its title.
+            let canonical = self.current_journal_format().is_canonical_stem(stem);
+            let date = JournalDate::from_file_stem(stem)
+                .or_else(|| self.current_journal_format().parse(stem));
+            if let Some(d) = date {
+                by_date.entry(d.ordinal_key()).or_default().push((
+                    format!("{stem}.{ext}"),
+                    p,
+                    canonical,
+                ));
+            }
+        });
+        let mut out = Vec::new();
+        for (key, files) in by_date {
+            if files.len() < 2 {
+                continue;
+            }
+            let date = JournalDate::from_ordinal(key);
+            let mut jfiles: Vec<JournalFile> = files
+                .into_iter()
+                .map(|(name, path, canonical)| {
+                    let preview = read_parse_input(&path)
+                        .ok()
+                        .and_then(|c| {
+                            c.lines()
+                                .map(|l| {
+                                    l.trim_start_matches(|ch| {
+                                        ch == '*' || ch == '-' || ch == ' ' || ch == '\t'
+                                    })
+                                    .trim()
+                                    .to_string()
+                                })
+                                .find(|l| !l.is_empty())
+                        })
+                        .map(|l| l.chars().take(80).collect::<String>())
+                        .unwrap_or_default();
+                    let rel = self.rel_path(&path);
+                    JournalFile {
+                        name,
+                        path: rel,
+                        preview,
+                        canonical,
+                        preview_error: None,
+                    }
+                })
+                .collect();
+            // Canonical first (the keeper), then alphabetical.
+            jfiles.sort_by(|a, b| {
+                b.canonical
+                    .cmp(&a.canonical)
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+            out.push(JournalConflict {
+                title: self.current_journal_format().title(date),
+                files: jfiles,
+            });
+        }
+        out
+    }
+
+    /// Sync-tool conflict copies (`*.sync-conflict-*`, Dropbox `(conflicted copy)`)
+    /// sitting in `journals/` or `pages/`. Each carries the winning page it shadows,
+    /// that winner's path (if it still exists), a device/timestamp tag, and a
+    /// one-line preview — everything the conflicts panel needs to offer a merge.
+    /// These files are deliberately excluded from `list_pages`/the cache
+    /// (see [`is_sync_conflict`]); this is the ONLY place they're surfaced.
+    #[cfg(test)]
+    pub fn list_sync_conflicts(&self) -> Vec<SyncConflict> {
+        let mut out = Vec::new();
+        for (dir, kind) in [
+            (self.journals_path(), PageKind::Journal),
+            (self.pages_path(), PageKind::Page),
+        ] {
+            walk_page_files(&dir, |p| {
+                let ext = match p.extension().and_then(|x| x.to_str()) {
+                    Some(x @ ("md" | "org")) => x,
+                    _ => return,
+                };
+                let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+                    return;
+                };
+                let Some(base_stem) = sync_conflict_base(stem) else {
+                    return;
+                };
+                // The winner it shadows: same dir, same extension, base stem.
+                let base_file = p
+                    .parent()
+                    .unwrap_or(&dir)
+                    .join(format!("{base_stem}.{ext}"));
+                let base_path = base_file.is_file().then(|| self.rel_path(&base_file));
+                let base_name = match kind {
+                    PageKind::Journal => self
+                        .current_journal_format()
+                        .parse(base_stem)
+                        .map(|d| self.current_journal_format().title(d))
+                        .unwrap_or_else(|| base_stem.to_string()),
+                    PageKind::Page => {
+                        decode_page_name(base_stem, self.current_config().file_name_format)
+                    }
+                };
+                let tag = stem[base_stem.len()..]
+                    .trim_matches(|c: char| c == '.' || c == ' ' || c == '(' || c == ')')
+                    .to_string();
+                let preview = read_parse_input(&p)
+                    .ok()
+                    .and_then(|c| {
+                        c.lines()
+                            .map(|l| {
+                                l.trim_start_matches(|ch| {
+                                    ch == '*' || ch == '-' || ch == ' ' || ch == '\t'
+                                })
+                                .trim()
+                                .to_string()
+                            })
+                            .find(|l| !l.is_empty())
+                    })
+                    .map(|l| l.chars().take(80).collect::<String>())
+                    .unwrap_or_default();
+                out.push(SyncConflict {
+                    path: self.rel_path(&p),
+                    base_name,
+                    base_path,
+                    kind,
+                    tag,
+                    preview,
+                });
+            });
+        }
+        out.sort_by(|a, b| {
+            a.base_name
+                .cmp(&b.base_name)
+                .then_with(|| a.path.cmp(&b.path))
+        });
+        out
+    }
+
+    /// Resolve a page name to a file path. Journals match by date title;
+    /// pages match by filename stem.
+    #[cfg(test)]
+    pub(crate) fn path_for(&self, name: &str, kind: PageKind) -> PathBuf {
+        let pref = self.preferred_format();
+        match kind {
+            PageKind::Journal => self
+                .find_entry(name, PageKind::Journal)
+                .map(|e| e.path)
+                .unwrap_or_else(|| {
+                    // New journal: name it by its date stem in the graph's filename
+                    // format ("2026_06_18.org"), not the display title — a
+                    // title-named file can't be parsed back to a date, so
+                    // journals_desc would drop it and the day would look empty. The
+                    // extension follows the graph's :preferred-format.
+                    let stem = self
+                        .current_journal_format()
+                        .parse(name)
+                        .map(|d| self.current_journal_format().file_stem(d))
+                        .unwrap_or_else(|| name.to_string());
+                    self.journals_path().join(format!("{stem}.{}", pref.ext()))
+                }),
+            PageKind::Page => {
+                // Use the same winner as named reads and WholeGraph::resolve.
+                // A brand-new page uses the preferred format.
+                if let Some(entry) = self.find_entry(name, PageKind::Page) {
+                    return entry.path;
+                }
+                let enc = encode_page_name(name, self.current_config().file_name_format);
+                let dir = self.pages_path();
+                dir.join(format!("{enc}.{}", pref.ext()))
+            }
+        }
+    }
+
+    pub(crate) fn find_entry(&self, name: &str, kind: PageKind) -> Option<PageEntry> {
+        self.find_claimants(name, kind).into_iter().next()
+    }
+
+    #[cfg(test)]
+    fn page_aliases(&self) -> Vec<(String, String)> {
+        self.test_read_snapshot().page_aliases()
+    }
+
+    /// Load a page by name; returns `None` if it doesn't exist on disk. Falls
+    /// back to alias resolution (`alias::`) for named pages.
+    #[cfg(test)]
+    pub fn load_named(&self, name: &str, kind: PageKind) -> io::Result<Option<PageDto>> {
+        // A file that vanished between listing and load (external delete) reports
+        // NotFound from load_page — map it to "no page" rather than an error, so
+        // the page is treated as absent (never resurrected) and the get_page
+        // contract (Ok(None) = doesn't exist) holds.
+        let load = |entry: &PageEntry| -> io::Result<Option<PageDto>> {
+            match self.load_page(entry) {
+                Ok(dto) => Ok(Some(dto)),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e),
+            }
+        };
+        if let Some(entry) = self.find_entry(name, kind) {
+            return load(&entry);
+        }
+        if kind == PageKind::Page {
+            let tnorm = tine_core::refs::page_key(name);
+            if let Some((_, canon)) = self
+                .page_aliases()
+                .into_iter()
+                .find(|(alias, _)| tine_core::refs::page_key(alias) == tnorm)
+            {
+                if let Some(entry) = self.find_entry(&canon, kind) {
+                    return load(&entry);
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Locate a page in the parsed-doc cache by its resolved physical path.
+    /// Callers must already hold either `cache.read()` or `cache.write()`; this
+    /// function only touches the companion index, preserving the lock order
+    /// cache -> cache_index.
+    fn cached_page_index_for_path(&self, pages: &Pages, path: &Path) -> Option<usize> {
+        if let Some(index) = self.cache_index.read().unwrap().as_ref() {
+            return index.by_path.get(path).copied();
+        }
+        let mut guard = self.cache_index.write().unwrap();
+        if guard.is_none() {
+            #[cfg(test)]
+            count_cache_linear_scan(pages.len());
+            *guard = Some(build_page_cache_index(pages));
+        }
+        guard
+            .as_ref()
+            .and_then(|index| index.by_path.get(path).copied())
+    }
+
+    /// A page DTO from the cache ONLY if the cache is already built — never
+    /// triggers a (synchronous, whole-graph) build. `None` on a cold cache or a
+    /// page not yet cached, so latency-path callers can parse just one file.
+    fn peek_cached_page(&self, entry: &PageEntry) -> Option<PageDto> {
+        let guard = self.cache.read().unwrap();
+        let pages = guard.as_ref()?;
+        let i = self.cached_page_index_for_path(pages, &entry.path)?;
+        pages.get(i).map(|(e, d)| page_dto(e, d))
+    }
+
+    /// Read and validate the current page file on every call, then reconcile a
+    /// warm cache before returning its DTO. A cold cache or miss parses only this
+    /// page and does not warm the whole cache. Missing files are evicted;
+    /// missing, unreadable, oversized or invalid-UTF-8 files return I/O errors.
+    /// Reconciliation may mutate cache state and report a parser error. Cost at
+    /// least O(page bytes), plus cache reconciliation on a warm cache.
+    pub(crate) fn load_page(&self, entry: &PageEntry) -> io::Result<PageDto> {
+        // Reconcile any external change into the cache FIRST. Otherwise a stale
+        // cache (an edit the 3s watcher hasn't folded in yet) would be served as
+        // the editor's content while the rev below reflects the NEW disk bytes —
+        // and the editor's save would then clobber the external edit with the rev
+        // matching. sync_file is a no-op when the cache already matches disk.
+        // Read the file ONCE: reconcile the cache against it, derive the save
+        // baseline (rev) from the SAME bytes (so rev and the served content can't
+        // disagree via a write landing between two reads), and — on a cache miss —
+        // parse it below.
+        let read = read_parse_input(&entry.path);
+        let cache_ready = self.cache.read().unwrap().is_some();
+        if let Ok(content) = &read {
+            if cache_ready {
+                self.sync_file_content(&entry.path, content, false)?;
+            }
+        } else if read
+            .as_ref()
+            .err()
+            .is_some_and(|e| e.kind() == io::ErrorKind::NotFound)
+        {
+            // The file is gone (external delete) but may still sit in the warm
+            // cache. Serving that cached copy below — with rev = None — would make
+            // it a null-baseline page, so a later edit + save would treat it as
+            // brand-new and silently RESURRECT the externally-deleted file. Evict
+            // the stale entry and report NotFound; callers treat the page as
+            // absent (the feed skips it, get_page returns None).
+            self.forget_file_internal(&entry.path);
+            return Err(read.unwrap_err());
+        }
+        // A failed read must not fall through to a stale cached DTO.
+        let content = read?;
+        let rev = Some(content_rev(&content));
+        // Serve from the cache if it's ALREADY built, but never trigger a build
+        // here: a cold-cache `with_pages` would synchronously parse the entire
+        // graph just to return one page, making first paint scale with graph size
+        // (and defeating the background warm). On a cold cache, parse only this
+        // file; `warm_cache_async` builds the rest. (Non-ref blocks then get fresh
+        // uuids that may differ from the warm cache until the page is reloaded —
+        // benign: id:: ref targets are stable, and live-ref views fall back to a
+        // read-only render for an unmatched uuid, never losing edits.)
+        if cache_ready {
+            if let Some(mut dto) = self.peek_cached_page(entry) {
+                dto.read_only = read_only_org(&entry.path, &content);
+                dto.rev = rev;
+                return Ok(dto);
+            }
+        }
+        // Cache miss: parse the bytes we already read (propagate the original read
+        // error if it failed).
+        let mut doc = parse_doc(&entry.path, &content);
+        assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
+        let mut dto = page_dto(entry, &doc);
+        dto.read_only = read_only_org(&entry.path, &content);
+        dto.rev = rev;
+        Ok(dto)
+    }
+
+    /// Directly read the caller-selected file, including a duplicate-day stray;
+    /// missing/invalid paths return None and read failures propagate.
+    /// Parse a path whose graph-relative identity was validated by the caller.
+    /// Store page reads use this for lexical page symlinks as well as strays.
+    pub(crate) fn load_by_validated_path(&self, abs: &Path) -> io::Result<Option<PageDto>> {
+        let Some(entry) = self.entry_for_path(&abs) else {
+            return Ok(None);
+        };
+        let content = match read_parse_input(&abs) {
+            Ok(c) => c,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let mut doc = parse_doc(&abs, &content);
+        assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
+        let mut dto = page_dto(&entry, &doc);
+        dto.read_only = read_only_org(&abs, &content);
+        dto.rev = Some(content_rev(&content));
+        Ok(Some(dto))
+    }
+
+    /// Read+parse every page from disk (skipping unreadable files). Used to build
+    /// the in-memory cache on first use — the on-demand `with_pages` build a user
+    /// ACTIVELY WAITS ON when they navigate before the background warm finishes
+    /// (the background warm shares its parallel parse, `parse_pages_parallel`).
+    ///
+    fn load_all_pages(&self) -> PageCacheBuild {
+        let entries = self.list_pages();
+        let mut built = PageCacheBuild::with_capacity(entries.len());
+        let shards = parse_pages_parallel(entries, &|| true, &parse_page_entry_isolated)
+            .expect("an unstoppable parse always finishes");
+        for parsed in shards.into_iter().flatten() {
+            built.collect(parsed);
+        }
+        built
+    }
+
+    /// Install a freshly-built whole-graph snapshot atomically: the parsed pages
+    /// into the cache, their on-disk revs into `disk_revs`. Cache set BEFORE
+    /// disk_revs so a reader never observes a fresh rev paired with a stale cache.
+    fn install_built(
+        &self,
+        built: PageCacheBuild,
+        expected_gen: u64,
+        replace: bool,
+        observed: Option<&HashMap<PathBuf, crate::watch::Stamp>>,
+    ) -> bool {
+        let PageCacheBuild {
+            pages: built,
+            failures,
+            mut unreadable,
+        } = built;
+        unreadable.extend(
+            self.discovery_errors
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(id, error)| (id.as_str().to_owned(), error.to_string())),
+        );
+        // One row per path: a discovery and a parse failure of the same file
+        // are one unreadable file (the stable sort keeps the parse reason).
+        unreadable.sort_by(|a, b| a.0.cmp(&b.0));
+        unreadable.dedup_by(|a, b| a.0 == b.0);
+        let revs: std::collections::HashMap<PathBuf, String> = built
+            .iter()
+            .map(|(e, _, obs)| (e.path.clone(), obs.rev.clone()))
+            .collect();
+        let anchored: std::collections::HashSet<PathBuf> = built
+            .iter()
+            .filter(|(_, _, obs)| obs.anchored)
+            .map(|(e, _, _)| e.path.clone())
+            .collect();
+        let pages: Vec<(PageEntry, Arc<Document>)> = built
+            .into_iter()
+            .map(|(e, d, _)| (e, Arc::new(d)))
+            .collect();
+        // The launch pass observed every file's stamp before reading it; an
+        // on-demand build did not, and stats each page here.
+        let mtimes = pages
+            .iter()
+            .filter_map(|(entry, _)| {
+                match observed {
+                    Some(observed) => observed.get(&entry.path).and_then(|stamp| stamp.modified()),
+                    None => fs::metadata(&entry.path)
+                        .and_then(|meta| meta.modified())
+                        .ok(),
+                }
+                .map(|mtime| (entry.rel_path_str().to_owned(), mtime))
+            })
+            .collect();
+        let pages = Pages::from(pages);
+        let index = build_page_cache_index(&pages);
+        // Publish cache + revs atomically under the cache lock (cache → disk_revs
+        // order), so no reader observes a fresh rev paired with a stale cache.
+        let mut guard = self.cache.write().unwrap();
+        if (guard.is_some() && !replace)
+            || self.cache_gen.load(std::sync::atomic::Ordering::Acquire) != expected_gen
+        {
+            return false;
+        }
+        *guard = Some(Arc::new(pages));
+        *self.observed_mtimes.write().unwrap() = Arc::new(mtimes);
+        *self.page_index_failures.write().unwrap() = failures;
+        *self.unreadable_pages.write().unwrap() = Arc::new(
+            unreadable
+                .into_iter()
+                .map(|(path, reason)| (crate::store::FileId::from(path), reason))
+                .collect(),
+        );
+        *self.cache_index.write().unwrap() = Some(index);
+        *self.disk_revs.write().unwrap() = revs;
+        *self.vcs_anchored.write().unwrap() = anchored;
+        if replace {
+            // A replaced cache is new content under the old generation: the
+            // generation-keyed page list, name index and block index must
+            // rebuild against it. Bumped after the content, as everywhere.
+            self.cache_gen
+                .fetch_add(1, std::sync::atomic::Ordering::Release);
+        }
+        drop(guard);
+        true
+    }
+
+    /// Run `f` over every parsed page, building the cache on first use.
+    ///
+    /// `f` scans a consistent snapshot: a concurrent save/delete may or may not be
+    /// visible depending on whether it published before this method cloned the
+    /// snapshot Arc, but the scan never sees torn or partially-mutated cache
+    /// contents. The cache read lock is held only while cloning the Arc; mutations
+    /// use copy-on-write under `cache.write()` when a scan still holds an older
+    /// snapshot.
+    pub(crate) fn with_pages<T>(&self, f: impl FnOnce(&Pages) -> T) -> T {
+        let snapshot = {
+            let guard = self.cache.read().unwrap();
+            guard.as_ref().map(Arc::clone)
+        };
+        if let Some(snapshot) = snapshot {
+            return f(&snapshot);
+        }
+        // Single-flight build: serialize builders on `build_lock` (NOT the cache
+        // lock) so the whole-graph parse happens once, not once per racing caller,
+        // and so we never hold the cache write lock during the slow parse.
+        use std::sync::atomic::Ordering;
+        let _bl = self.build_lock.lock().unwrap();
+        if self.cache.read().unwrap().is_none() {
+            let build_began = std::time::Instant::now();
+            loop {
+                let gen0 = self.cache_gen.load(Ordering::Acquire);
+                let built = self.load_all_pages();
+                // If a save/remove raced our read (its cache mutation no-op'd
+                // because the cache was still None), its disk write is already
+                // done — rebuild so we don't install a stale snapshot. We hold
+                // build_lock, so no other builder competes.
+                if self.install_built(built, gen0, false, None) {
+                    break;
+                }
+            }
+            self.diag.on_demand_build(build_began.elapsed());
+        }
+        drop(_bl);
+        let snapshot = {
+            let guard = self.cache.read().unwrap();
+            guard.as_ref().map(Arc::clone).unwrap()
+        };
+        f(&snapshot)
+    }
+
+    /// Build graph-open caches while allowing a revoked window binding to stop
+    /// between files and derived-map phases. Returns false when cancelled.
+    pub(crate) fn warm_cache_cancellable(&self, cancelled: impl Fn() -> bool + Sync) -> bool {
+        if !self.warm_page_cache_cancellable(&cancelled) || cancelled() {
+            return false;
+        }
+        !cancelled()
+    }
+
+    fn warm_page_cache_cancellable(&self, cancelled: &(impl Fn() -> bool + Sync)) -> bool {
+        self.warm_page_cache_inner(cancelled, false)
+    }
+
+    /// The Settings "Rescan graph" build: the cold-launch build over every
+    /// file, replacing a cache that already exists. Returns true only when
+    /// the fresh snapshot was installed; false means cancelled, a file moved
+    /// during the parse, or a save raced it, and the caller retries.
+    pub(crate) fn rebuild_cache_cancellable(&self, cancelled: impl Fn() -> bool + Sync) -> bool {
+        self.warm_page_cache_inner(&cancelled, true)
+    }
+
+    /// One whole-graph build pass. `replace` is the forced rebuild: the page
+    /// listing is re-read from disk, an existing cache does not end the pass,
+    /// and the install replaces it. Without it this is the launch warm-up.
+    fn warm_page_cache_inner(&self, cancelled: &(impl Fn() -> bool + Sync), replace: bool) -> bool {
+        use std::sync::atomic::Ordering;
+        if cancelled() {
+            return false;
+        }
+        if replace {
+            *self.page_list_cache.write().unwrap() = None;
+            *self.find_entry_cache.write().unwrap() = None;
+        } else if self.cache.read().unwrap().is_some() {
+            return true; // already built (e.g. by a query) — nothing to warm
+        }
+        // Build WITHOUT holding build_lock during the parse, so an on-demand
+        // `with_pages` (a user query) can still take build_lock and build
+        // itself; if it wins, we discard our work. The parse is the on-demand
+        // build's parallel parse (`parse_pages_parallel`). GH #623: it used to be paced
+        // (one thread, 2 ms sleep every 24 files), which on a 13k-page graph
+        // spent ~1.2 s of a 2.65 s parse asleep, on every launch.
+        let gen0 = self.cache_gen.load(Ordering::Acquire);
+        #[cfg(test)]
+        self.warm_passes.fetch_add(1, Ordering::Relaxed);
+        // Phase timings for `Store::diagnostics`: local accumulators, one
+        // recorder call per pass (see `launch_diag`).
+        use crate::launch_diag as diag;
+        let began = std::time::Instant::now();
+        let mut pass = diag::PassStats::default();
+        // GH #623 / storage spec §5.1 step 1: one read per file. The listing
+        // opens no file (an ordinary page's name comes from the bytes read
+        // below), each file's stamp is taken before its read, and the
+        // revision comes from the same bytes that are parsed. The watcher
+        // baseline is then installed from these observations
+        // (`LaunchObservations`) instead of a second hash pass.
+        let (listed, tracked_only, walk_errors, listing_stamps) =
+            page_identity::launch_listing_walk(self);
+        let journal_format = self.current_journal_format();
+        let name_format = self.current_config().file_name_format;
+        // Journal identity is the filename date, so the duplicate-day collapse
+        // needs no content; non-journal entries pass through it unchanged.
+        let entries = dedup_journal_days(listed.clone(), &journal_format, name_format);
+        pass.listing_us = diag::micros(began.elapsed());
+        pass.entries = entries.len() as u64;
+        let mut built = PageCacheBuild::with_capacity(entries.len());
+        let mut stamps: HashMap<PathBuf, crate::watch::Stamp> =
+            HashMap::with_capacity(listed.len() + tracked_only.len());
+        let mut racy = std::collections::HashSet::new();
+        // Ordinary-page names and discovery failures, taken from the reads.
+        let mut names: HashMap<PathBuf, String> = HashMap::new();
+        let mut discovery: Vec<(crate::FileId, crate::IoError)> = Vec::new();
+        // Per-file phase time accumulates across the worker threads (atomics, no
+        // allocation): read/parse/stat are summed THREAD time, so with N workers
+        // they can exceed the parallel wall time reported next to them.
+        let clock = diag::PassClock::default();
+        let announce_after = self
+            .opened_at
+            .checked_sub(crate::watch::RACY_WINDOW)
+            .unwrap_or(self.opened_at);
+        let mut announce = Vec::new();
+        // Each file's stamp comes from its directory entry in the listing
+        // above (no per-file open on Windows), taken before its read.
+        let listing_stamp = |path: &Path| listing_stamps.get(path).cloned();
+        let parse_one = |mut e: PageEntry| {
+            let phase = std::time::Instant::now();
+            let (stamp, observed) = match listing_stamp(&e.path) {
+                Some((stamp, observed)) => (Some(stamp), observed),
+                None => (None, std::time::SystemTime::now()),
+            };
+            clock.stat(phase.elapsed());
+            let path = e.path.clone();
+            let phase = std::time::Instant::now();
+            let read = read_parse_input(&e.path);
+            let read_len = match &read {
+                Ok(content) => Some(content.len()),
+                Err(_) => None,
+            };
+            clock.read(phase.elapsed(), read_len);
+            let mut name_failure = None;
+            let parsed = match read {
+                Ok(content) => {
+                    if e.kind == PageKind::Page {
+                        match page_identity::effective_page_name_from_text(
+                            &e.path, &e.name, &content,
+                        ) {
+                            Ok(name) => e.name = name,
+                            Err(error) => name_failure = Some(error),
+                        }
+                    }
+                    clock.crlf(line_endings::convention(Some(&content)) == "\r\n");
+                    let phase = std::time::Instant::now();
+                    let parsed =
+                        isolate_page_parse(e, |entry| Some(parse_page_content(entry, &content)));
+                    clock.parse(phase.elapsed());
+                    parsed
+                }
+                // Removed between the listing and the read (a sync delivery
+                // or external editor): not part of this graph state. The
+                // launch diff reconciles whatever is there now.
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(error) => {
+                    if e.kind == PageKind::Page {
+                        name_failure = Some(io::Error::new(error.kind(), error.to_string()));
+                    }
+                    Err(PageParseFailure::Unreadable(
+                        e.rel_path_str().to_owned(),
+                        error.to_string(),
+                    ))
+                }
+            };
+            let racy = stamp.as_ref().is_some_and(|stamp| stamp.racy_at(observed));
+            // Written since open (with the racy window's slack for coarse
+            // timestamps): a client may have read the earlier bytes.
+            let since_open = stamp
+                .as_ref()
+                .and_then(|stamp| stamp.modified())
+                .is_some_and(|modified| modified >= announce_after)
+                .then(|| {
+                    fs::symlink_metadata(&path)
+                        .and_then(|meta| meta.created())
+                        .is_ok_and(|created| created >= self.opened_at)
+                });
+            (path, stamp, racy, (name_failure, since_open), parsed)
+        };
+        let mut take = |built: &mut PageCacheBuild,
+                        (path, stamp, is_racy, (name_failure, since_open), parsed): (
+            PathBuf,
+            Option<crate::watch::Stamp>,
+            bool,
+            (Option<io::Error>, Option<bool>),
+            PageParseResult,
+        )| {
+            if let Ok(Some((entry, _, rev))) = &parsed {
+                if entry.kind == PageKind::Page {
+                    names.insert(path.clone(), entry.name.clone());
+                }
+                if let Some(created) = since_open {
+                    announce.push((path.clone(), created, entry.kind, entry.name.clone()));
+                }
+                if let Some(stamp) = stamp {
+                    stamps.insert(
+                        path.clone(),
+                        stamp.with_rev(Some(crate::store::FileRev::from(rev.rev.clone()))),
+                    );
+                    if is_racy {
+                        racy.insert(path.clone());
+                    }
+                }
+            } else if let Some(stamp) = stamp {
+                // Read failed or panicked: the watcher tracks the stamp
+                // without a revision, so its next look rereads the file.
+                stamps.insert(path.clone(), stamp);
+                racy.insert(path.clone());
+            }
+            if let Some(error) = name_failure {
+                discovery.push((crate::FileId::from(self.rel_path(&path)), error.into()));
+            }
+            built.collect(parsed);
+        };
+        let mut entries = entries.into_iter();
+        if let Some(first) = entries.next() {
+            if cancelled() {
+                return pass.finish(&self.diag, began, diag::OUTCOME_CANCELLED, false);
+            }
+            take(&mut built, parse_one(first));
+            #[cfg(test)]
+            crate::store::pause_at_hook(&self.warm_after_first_page_pause);
+        }
+        let still_wanted = || !cancelled() && (replace || self.cache.read().unwrap().is_none());
+        let parallel_began = std::time::Instant::now();
+        let Some(parsed_chunks) =
+            parse_pages_parallel(entries.collect(), &still_wanted, &parse_one)
+        else {
+            // Either a query built the cache while we parsed, or we were cancelled.
+            clock.fold(&mut pass, parallel_began.elapsed(), 0);
+            let built_meanwhile = !replace && self.cache.read().unwrap().is_some();
+            let outcome = if built_meanwhile {
+                diag::OUTCOME_CACHE_ALREADY_BUILT
+            } else {
+                diag::OUTCOME_CANCELLED
+            };
+            return pass.finish(&self.diag, began, outcome, built_meanwhile && !cancelled());
+        };
+        clock.fold(&mut pass, parallel_began.elapsed(), parsed_chunks.len());
+        for parsed in parsed_chunks.into_iter().flatten() {
+            take(&mut built, parsed);
+        }
+        drop(take);
+        // Files the build does not read: duplicate-day journals the collapse
+        // set aside and sync conflict copies. The watcher tracks their stamps
+        // without a revision (§5.1); nothing parses them.
+        let phase = std::time::Instant::now();
+        for path in listed
+            .iter()
+            .map(|entry| &entry.path)
+            .chain(tracked_only.iter())
+        {
+            if !stamps.contains_key(path) && !names.contains_key(path) {
+                if let Some((stamp, observed)) = listing_stamp(path) {
+                    if stamp.racy_at(observed) {
+                        racy.insert(path.clone());
+                    }
+                    stamps.insert(path.clone(), stamp);
+                }
+            }
+        }
+        // The forced rebuild has no launch diff behind it: a file that changed
+        // during its parse discards the pass (a false positive just rebuilds).
+        // The launch pass instead hands its pre-read stamps to the watcher,
+        // whose launch diff reconciles any such file before Ready.
+        if replace {
+            // A second listing, not a stamp per file: no file open on Windows.
+            let (_, _, _, now) = page_identity::launch_listing_walk(self);
+            let changed = built.pages.iter().any(|(entry, _, _)| {
+                now.get(&entry.path)
+                    .map(|(now, _)| (now.modified(), now.len()))
+                    != stamps
+                        .get(&entry.path)
+                        .map(|then| (then.modified(), then.len()))
+            });
+            if changed {
+                pass.recheck_us = diag::micros(phase.elapsed());
+                return pass.finish(&self.diag, began, diag::OUTCOME_FILE_CHANGED, false);
+            }
+        }
+        pass.recheck_us = diag::micros(phase.elapsed());
+        if cancelled() {
+            return pass.finish(&self.diag, began, diag::OUTCOME_CANCELLED, false);
+        }
+        // The named listing: what `list_graph_pages` answers, from the reads.
+        let named: Vec<PageEntry> = listed
+            .into_iter()
+            .map(|mut entry| {
+                if let Some(name) = names.get(&entry.path) {
+                    entry.name = name.clone();
+                }
+                entry
+            })
+            .collect();
+        {
+            let mut known = self.discovery_errors.write().unwrap();
+            known.clear();
+            known.extend(discovery);
+            known.extend(
+                walk_errors
+                    .into_iter()
+                    .map(|(path, error)| (crate::FileId::from(self.rel_path(&path)), error.into())),
+            );
+        }
+        // Install only if nobody else built it and no Tine save/remove raced our
+        // reads (its cache mutation would have no-op'd against the None cache, so
+        // its disk write must be folded in by a rebuild — defer to the next
+        // on-demand build rather than install a stale snapshot).
+        let phase = std::time::Instant::now();
+        let _bl = self.build_lock.lock().unwrap();
+        let installed = self.install_built(built, gen0, replace, Some(&stamps));
+        if installed {
+            let gen = self.cache_gen.load(Ordering::Acquire);
+            let deduped = dedup_journal_days(named.clone(), &journal_format, name_format);
+            *self.page_list_cache.write().unwrap() = Some((gen, Arc::new(deduped)));
+            *self.launch_listing.write().unwrap() = Some((gen, Arc::new(named)));
+            if !replace {
+                *self.launch_observations.lock().unwrap() = Some(LaunchObservations {
+                    stamps,
+                    racy,
+                    announce,
+                });
+            }
+        }
+        pass.install_us = diag::micros(phase.elapsed());
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.warm_after_install_pause);
+        let outcome = if installed {
+            diag::OUTCOME_INSTALLED
+        } else {
+            diag::OUTCOME_INSTALL_DECLINED
+        };
+        pass.finish(
+            &self.diag,
+            began,
+            outcome,
+            if replace { installed } else { !cancelled() },
+        )
+    }
+
+    /// The launch pass's observations, once: the watcher installs its
+    /// baseline from them (storage spec §5.1 step 1). None when the cache was
+    /// built some other way (an on-demand build won the race).
+    pub(crate) fn take_launch_observations(&self) -> Option<LaunchObservations> {
+        self.launch_observations.lock().unwrap().take()
+    }
+
+    /// Discard the cache; it rebuilds on the next whole-graph query. Use when an
+    /// external change may have touched many files.
+    pub(crate) fn invalidate_cache(&self) {
+        let mut guard = self.cache.write().unwrap();
+        *guard = None;
+        *self.observed_mtimes.write().unwrap() = Arc::new(SharedMap::new());
+        self.page_index_failures.write().unwrap().clear();
+        *self.unreadable_pages.write().unwrap() = Arc::new(Vec::new());
+        self.discovery_errors.write().unwrap().clear();
+        *self.cache_index.write().unwrap() = None;
+        self.disk_revs.write().unwrap().clear(); // under the cache lock (cache → disk_revs)
+        self.vcs_anchored.write().unwrap().clear();
+        // Bump the generation AFTER discarding the cache (under the cache lock), so
+        // a reader that loads the new gen then reads the cache sees None (and
+        // rebuilds from disk) rather than the stale pre-invalidation content — same
+        // gen-after-content ordering as cache_upsert. The gen-keyed block index
+        // then rebuilds against fresh content too.
+        self.cache_gen
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+        drop(guard);
+    }
+
+    /// Update one page in the cache after we write it (no full rebuild). A no-op
+    /// if the cache hasn't been built yet. `disk_rev` is `content_rev` of the
+    /// exact on-disk bytes `doc` was produced from (the freshness key — see
+    /// `disk_revs`).
+    fn cache_upsert(&self, entry: PageEntry, mut doc: Document, disk: DiskObs) {
+        // Fill runtime ids for any block that lacks one (e.g. PDF-highlight writes)
+        // from this physical owner. Blocks saved from the frontend already carry
+        // live ids, which are deliberately kept through the in-memory save path.
+        assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
+        let path_key = entry.path.clone();
+        let doc = Arc::new(doc);
+        let evict_entry = entry.clone();
+        let mut guard = self.cache.write().unwrap();
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.cache_publish_pause);
+        if let Some(pages) = guard.as_mut() {
+            let pages = Arc::make_mut(pages);
+            match self.cached_page_index_for_path(pages, &entry.path) {
+                Some(i) => {
+                    let slot = pages.get_mut(i).unwrap();
+                    if slot.0.kind != entry.kind
+                        || tine_core::refs::page_key(&slot.0.name)
+                            != tine_core::refs::page_key(&entry.name)
+                    {
+                        if let Some(index) = self.cache_index.write().unwrap().as_mut() {
+                            index.remove(&slot.0, i);
+                            index.insert(&entry, i);
+                        }
+                    }
+                    *slot = (entry, doc);
+                }
+                None => {
+                    let slot = pages.push((entry, doc));
+                    if let Some(index) = self.cache_index.write().unwrap().as_mut() {
+                        index.insert(&pages[slot].0, slot);
+                    }
+                }
+            }
+            // Update disk_revs WHILE STILL HOLDING the cache write lock, so the
+            // cached doc and its freshness rev are published atomically and can
+            // never diverge across concurrent same-page writers (e.g. an editor
+            // save racing a PDF write_highlights on an hls__ page). If they could
+            // diverge, the sync_file_content fast-path could match disk against a
+            // rev that isn't the cached doc's and serve a stale doc. Lock order is
+            // always cache → disk_revs; readers never hold disk_revs while taking
+            // the cache lock, so this nesting can't deadlock. Sets only when the
+            // page is actually cached (preserves "entry exists IFF cached").
+            // The anchor observation moves with the rev, from the same bytes.
+            {
+                let mut anchored = self.vcs_anchored.write().unwrap();
+                if disk.anchored {
+                    anchored.insert(path_key.clone());
+                } else {
+                    anchored.remove(&path_key);
+                }
+            }
+            self.disk_revs.write().unwrap().insert(path_key, disk.rev);
+            if let Ok(mtime) = fs::metadata(&evict_entry.path).and_then(|meta| meta.modified()) {
+                Arc::make_mut(&mut self.observed_mtimes.write().unwrap())
+                    .insert(evict_entry.rel_path_str().to_owned(), mtime);
+            }
+            Arc::make_mut(&mut self.unreadable_pages.write().unwrap())
+                .retain(|(id, _)| id.as_str() != evict_entry.rel_path_str());
+        }
+        // Bump cache_gen AFTER publishing the new content (and disk_revs), still
+        // under the cache write lock. A reader loads cache_gen (Acquire) then takes
+        // the cache read lock; because the bump (Release) happens-after the slot
+        // write and before the lock is dropped, observing the new gen guarantees
+        // the new doc is visible. So any derived result computed at gen G reflects
+        // every edit whose gen is <= G — it can never be a stale whole-graph scan
+        // that reads the OLD doc yet gets tagged (and served) at the fresh gen.
+        // (Bumping FIRST left a window where the gen was new but the doc still old.)
+        // The bump is unconditional — even on a cold cache (no slot to update) — so
+        // a concurrent lock-free with_pages build still detects the race and retries.
+        self.cache_gen
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+        drop(guard);
+    }
+}
+
+impl SnapshotMemos {
+    /// See `cache_upsert`. Evict only derived entries the edited page
+    /// (`entry`, `doc`) participates in and re-tag the survivors to `newgen`
+    /// (all of them on a day rollover).
+    fn scope_derived_invalidation(
+        &self,
+        graph: &ReadSnapshot,
+        entry: &PageEntry,
+        previous_doc: Option<&Document>,
+        doc: &Document,
+        newgen: u64,
+        scope: Scope,
+    ) {
+        // A generation with no memo entries has nothing to prune. In particular,
+        // avoid rebuilding its alias and real-page sets for a routine save.
+        if self.derived_cache.read().unwrap().is_none() {
+            return;
+        }
+        // Resolve aliases BEFORE taking the derived lock (page_aliases may take the
+        // cache lock); never hold derived while taking cache.
+        let (aliases, real_pages) = if scope == Scope::Predicates {
+            (graph.alias_edges(), crate::query::real_page_names(graph))
+        } else {
+            (
+                Arc::new(crate::query::AliasEdges::default()),
+                Arc::new(crate::query::RealPageNames::new()),
+            )
+        };
+        let journal = crate::query::journal_format(graph.config());
+        let today = tine_core::date::JournalDate::today().ordinal_key();
+        // Hold the derived write lock across the WHOLE prune+re-tag. This is
+        // deliberately atomic: the keep/evict test (page_affects_*) is re-evaluated
+        // against whatever entry is CURRENTLY in the map, so a result a concurrent
+        // query inserted (possibly from an older page-doc) is re-judged and evicted
+        // if this edit affects it — never kept on pointer identity. Combined with
+        // the gen-after-content bump (cache_upsert), an entry that survives the
+        // prune is provably unaffected by this edit and consistent at `newgen`.
+        // (An earlier version evaluated off the lock and kept entries by Arc
+        // ptr_eq; that could bless a stale concurrent recompute — reverted.)
+        let pname = &entry.name;
+        {
+            let mut g = self.derived_cache.write().unwrap();
+            let Some(dc) = g.as_mut() else {
+                return;
+            };
+            if dc.today != today {
+                *g = None; // full invalidate on a day rollover
+                return;
+            }
+            let mut removed_bytes = 0usize;
+            dc.results.retain(|key, (result, result_bytes)| {
+                // Evict iff this page is already in the result OR matches the key's
+                // predicate in either the old or new page; keep (still correct)
+                // otherwise. Comparing both parsed documents makes omitted overflow
+                // matches visible without retaining a graph-sized membership set.
+                if result
+                    .groups
+                    .iter()
+                    .any(|grp| tine_core::refs::same_page(&grp.page, pname))
+                {
+                    removed_bytes = removed_bytes.saturating_add(*result_bytes);
+                    return false;
+                }
+                if scope == Scope::FoldOnly {
+                    return true;
+                }
+                let page_affects = |candidate: &Document| match key.split_once('\0') {
+                    Some(("b", target)) => crate::query::page_affects_backlinks(
+                        &real_pages,
+                        &aliases,
+                        &journal,
+                        target,
+                        entry,
+                        candidate,
+                    ),
+                    Some(("u", target)) => crate::query::page_affects_unlinked(
+                        &real_pages,
+                        &aliases,
+                        &journal,
+                        target,
+                        entry,
+                        candidate,
+                    ),
+                    Some(("br", uuid)) => {
+                        crate::query::page_affects_block_referrers(uuid, candidate)
+                    }
+                    Some(("B", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|target| {
+                        crate::query::page_affects_backlinks(
+                            &real_pages,
+                            &aliases,
+                            &journal,
+                            target,
+                            entry,
+                            candidate,
+                        )
+                    }),
+                    Some(("U", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|target| {
+                        crate::query::page_affects_unlinked(
+                            &real_pages,
+                            &aliases,
+                            &journal,
+                            target,
+                            entry,
+                            candidate,
+                        )
+                    }),
+                    Some(("R", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|uuid| {
+                        crate::query::page_affects_block_referrers(uuid, candidate)
+                    }),
+                    _ => true, // unknown key shape → evict to stay safe
+                };
+                let affects = page_affects(doc) || previous_doc.is_some_and(&page_affects);
+                if affects {
+                    removed_bytes = removed_bytes.saturating_add(*result_bytes);
+                }
+                !affects
+            });
+            dc.bytes = dc.bytes.saturating_sub(removed_bytes);
+            dc.lru.retain(|key| dc.results.contains_key(key));
+            dc.gen = newgen; // survivors are valid for the post-bump generation
+        }
+    }
+}
+
+impl Graph {
+    /// Whether the cached page at `path` has a VCS anchor line in the bytes
+    /// the store last observed for it: `Some(false)` means no read of the file
+    /// can find one, `Some(true)` that one may exist (the caller scans), `None`
+    /// that the page is not cached (not loaded yet, or never cached:
+    /// shadow journals, sync copies, unreadable or oversized files), so only
+    /// reading the file can tell. Cost O(1).
+    pub(crate) fn vcs_anchor_state(&self, path: &Path) -> Option<bool> {
+        let _cache = self.cache.read().unwrap();
+        if !self.disk_revs.read().unwrap().contains_key(path) {
+            return None;
+        }
+        Some(self.vcs_anchored.read().unwrap().contains(path))
+    }
+
+    /// Drop one physical page from the cache after its file disappears. Unlike
+    /// `cache_remove`, this preserves same-name siblings and rebuilds the logical
+    /// first-wins index from the surviving entries.
+    fn cache_remove_path(&self, entry: &PageEntry) {
+        let mut guard = self.cache.write().unwrap();
+        if let Some(pages) = guard.as_mut() {
+            let pages = Arc::make_mut(pages);
+            if let Some(i) = self.cached_page_index_for_path(pages, &entry.path) {
+                if let Some(index) = self.cache_index.write().unwrap().as_mut() {
+                    index.remove(&pages[i].0, i);
+                }
+                pages.remove(i);
+                // Drop the rev under the cache lock (same cache → disk_revs order
+                // as cache_upsert) so the two never diverge.
+                self.disk_revs.write().unwrap().remove(&entry.path);
+                self.vcs_anchored.write().unwrap().remove(&entry.path);
+                Arc::make_mut(&mut self.observed_mtimes.write().unwrap())
+                    .remove(entry.rel_path_str());
+            }
+        }
+        // Bump AFTER the removal is published (under the cache lock), so a reader
+        // that loads the new gen is guaranteed to see the page gone — see the
+        // gen-after-content note in cache_upsert.
+        self.cache_gen
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+        drop(guard);
+    }
+}
+
+impl SnapshotMemos {
+    /// Memoize a derived whole-graph scan result, keyed by `(cache_gen, today)` +
+    /// `key`. On a tag mismatch the whole cache is dropped, so a hit is always
+    /// consistent with the current graph. `compute` runs with NO lock held (it
+    /// takes the cache read lock itself), so it can't deadlock against `with_pages`.
+    fn derived_memo_bounded(
+        &self,
+        gen: u64,
+        key: String,
+        compute: impl FnOnce() -> crate::query::BoundedGroups,
+    ) -> BoundedRefGroups {
+        let today = tine_core::date::JournalDate::today().ordinal_key();
+        {
+            let mut g = self.derived_cache.write().unwrap();
+            if let Some(dc) = g.as_mut() {
+                if dc.gen == gen && dc.today == today {
+                    if let Some((r, _)) = dc.results.get(&key) {
+                        let result = r.clone();
+                        touch_lru(&mut dc.lru, &key);
+                        return result;
+                    }
+                }
+            }
+        }
+        let computed = compute();
+        let result = BoundedRefGroups {
+            groups: Arc::new(computed.groups),
+            total: computed.total,
+            exceeded: computed.exceeded,
+        };
+        let result_bytes = ref_groups_estimated_bytes(result.groups.as_slice())
+            .saturating_add(result_cache_key_estimated_bytes(&key));
+        if result_bytes > DERIVED_CACHE_MAX_ENTRY_BYTES {
+            return result;
+        }
+        let mut g = self.derived_cache.write().unwrap();
+        match g.as_mut() {
+            Some(dc) if dc.gen == gen && dc.today == today => {
+                if let Some((_, old_bytes)) = dc
+                    .results
+                    .insert(key.clone(), (result.clone(), result_bytes))
+                {
+                    dc.bytes = dc.bytes.saturating_sub(old_bytes);
+                }
+                dc.bytes = dc.bytes.saturating_add(result_bytes);
+                touch_lru(&mut dc.lru, &key);
+                prune_result_cache(&mut dc.results, &mut dc.lru, &mut dc.bytes);
+            }
+            _ => {
+                let mut results = std::collections::HashMap::new();
+                results.insert(key.clone(), (result.clone(), result_bytes));
+                *g = Some(DerivedCache {
+                    gen,
+                    today,
+                    results,
+                    lru: std::collections::VecDeque::from([key]),
+                    bytes: result_bytes,
+                });
+            }
+        }
+        result
+    }
+}
+
+impl Graph {
+    /// Full-text search across all blocks.
+    #[cfg(test)]
+    pub fn search(&self, query: &str, limit: usize) -> Vec<RefGroup> {
+        crate::query::search(&self.test_read_snapshot(), query, limit)
+    }
+
+    /// Execute the typed, combined graph-search plan (page names + block text).
+    /// Commands and page creation remain frontend providers and are deliberately
+    /// outside this graph query result.
+    #[cfg(test)]
+    pub(crate) fn run_graph_search(
+        &self,
+        source: &str,
+        page_limit: usize,
+        block_limit: usize,
+        explain: bool,
+    ) -> tine_core::query_plan::QueryExecution {
+        self.run_graph_search_scoped(source, page_limit, block_limit, None, explain)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn run_graph_search_scoped(
+        &self,
+        source: &str,
+        page_limit: usize,
+        block_limit: usize,
+        scope: Option<crate::query_plan::QueryPageScope>,
+        explain: bool,
+    ) -> tine_core::query_plan::QueryExecution {
+        match scope {
+            Some(scope) => crate::query_plan::QueryPlan::friendly_for_page_with_policy(
+                source,
+                block_limit,
+                scope,
+                self.current_config().enable_search_remove_accents,
+            ),
+            None => crate::query_plan::QueryPlan::friendly_with_policy(
+                source,
+                page_limit,
+                block_limit,
+                self.current_config().enable_search_remove_accents,
+            ),
+        }
+        .execute_with_explain(&self.test_read_snapshot(), || false, explain)
+    }
+
+    // ---- Assets & PDF highlights ----
+
+    pub(crate) fn assets_path(&self) -> PathBuf {
+        self.assets_root.clone()
+    }
+
+    /// Top-level `assets/` files that NO block references — orphans the user may
+    /// want to trash. Tine never auto-deletes assets (a deleted block keeps its
+    /// media as a safety net), so this is the discovery half of "find unused
+    /// media". Conservative: scans every block's `raw` + page `pre_block` for any
+    /// `assets/<name>` mention; skips subdirectories (PDF area-image stores) and
+    /// `.edn`/dotfiles (sidecars, not media) so nothing in use is ever flagged.
+    #[cfg(test)]
+    pub fn orphan_assets(&self) -> Vec<AssetInfo> {
+        let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
+        self.with_pages(|pages| {
+            for (_e, doc) in pages {
+                if let Some(pre) = &doc.pre_block {
+                    collect_asset_refs(pre, &mut referenced);
+                }
+                for b in &doc.roots {
+                    collect_block_asset_refs(b, &mut referenced);
+                }
+            }
+        });
+        let mut out = Vec::new();
+        let Ok(rd) = fs::read_dir(self.assets_path()) else {
+            return out;
+        };
+        for entry in rd.flatten() {
+            let Ok(ft) = entry.file_type() else { continue };
+            if !ft.is_file() {
+                continue; // skip subdirs (PDF area-image stores, tied to a PDF)
+            }
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            // Sidecars/hidden files aren't user media; never flag them as orphans.
+            if name.starts_with('.') || name.ends_with(".edn") {
+                continue;
+            }
+            if referenced.contains(name) {
+                continue;
+            }
+            let meta = entry.metadata().ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let modified = meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs());
+            out.push(AssetInfo {
+                name: name.to_string(),
+                size,
+                modified,
+            });
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
+    }
+
+    pub(crate) fn entry_for_path(&self, path: &Path) -> Option<PageEntry> {
+        self.entry_for_path_in(path, None)
+    }
+
+    /// [`Self::entry_for_path`] whose page preamble comes from `text`, the
+    /// file's bytes already in hand, instead of a fresh open (GH #623).
+    pub(crate) fn entry_for_path_in(&self, path: &Path, text: Option<&str>) -> Option<PageEntry> {
+        if !graph_text_eligible(&self.root, path, &self.current_config()) {
+            return None;
+        }
+        let stem = path.file_stem().and_then(|s| s.to_str())?;
+        let entry = if path.starts_with(self.journals_path()) {
+            let (name, date_key) = match self.current_journal_format().parse(stem) {
+                Some(d) => (
+                    self.current_journal_format().title(d),
+                    Some(d.ordinal_key()),
+                ),
+                None => (stem.to_string(), None),
+            };
+            PageEntry {
+                name,
+                kind: PageKind::Journal,
+                date_key,
+                rel_path: Some(self.rel_path(path).into()),
+                path: path.to_path_buf(),
+            }
+        } else {
+            PageEntry {
+                name: self.discover_page_name(
+                    path,
+                    stem,
+                    self.current_config().file_name_format,
+                    text,
+                )?,
+                kind: PageKind::Page,
+                date_key: None,
+                rel_path: Some(self.rel_path(path).into()),
+                path: path.to_path_buf(),
+            }
+        };
+        self.observe_name_entry(&entry);
+        Some(entry)
+    }
+
+    /// Record that Tine just wrote content with rev `rev` to `path`, so the file
+    /// watcher recognizes the write as ours (see `sync_file_content`). The map is
+    /// consumed on first match; this hard cap is a backstop so a write that the
+    /// watcher never observes (file deleted before the next poll, watcher idle)
+    /// can't leak across a long session. Clearing only reopens the tiny
+    /// rename→cache_upsert race for genuinely in-flight writes — harmless.
+    fn note_self_write(&self, path: &Path, rev: String) {
+        let mut recent = self.recent_writes.lock().unwrap();
+        if recent.len() >= 1024 {
+            recent.clear();
+        }
+        recent.insert(path.to_path_buf(), rev);
+    }
+
+    /// Race-safe withdrawal preserves external bytes and names disk/read/restore recovery.
+    pub(crate) fn transaction_withdraw_exact(
+        &self,
+        path: &Path,
+        expected: &[u8],
+        reason: &str,
+    ) -> io::Result<Withdrawal> {
+        self.withdraw_file_to_conflict_if(path, reason, |staged| {
+            fs::read(staged).map(|bytes| bytes == expected)
+        })
+    }
+
+    pub(crate) fn withdraw_file_to_conflict_if_matching_file(
+        &self,
+        path: &Path,
+        expected: &Path,
+        reason: &str,
+    ) -> io::Result<Withdrawal> {
+        self.withdraw_file_to_conflict_if(path, reason, |staged| {
+            let mut left = fs::File::open(staged)?;
+            let mut right = fs::File::open(expected)?;
+            let mut l = [0u8; 64 * 1024];
+            let mut r = [0u8; 64 * 1024];
+            loop {
+                let ln = left.read(&mut l)?;
+                let rn = right.read(&mut r)?;
+                if ln != rn || l[..ln] != r[..rn] {
+                    return Ok(false);
+                }
+                if ln == 0 {
+                    return Ok(true);
+                }
+            }
+        })
+    }
+
+    fn withdraw_file_to_conflict_if(
+        &self,
+        path: &Path,
+        reason: &str,
+        matches: impl FnOnce(&Path) -> io::Result<bool>,
+    ) -> io::Result<Withdrawal> {
+        withdrawal_race_hook(path)?;
+        if fs::symlink_metadata(path).is_err_and(|error| error.kind() == io::ErrorKind::NotFound) {
+            return Ok(Withdrawal::Missing);
+        }
+        if path.starts_with(&self.assets_root) {
+            self.ensure_asset_write_target(path)?;
+        } else {
+            self.ensure_write_target(path)?;
+        }
+        let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
+        self.ensure_write_target(&trash)?;
+        fs::create_dir_all(&trash)?;
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("file");
+        let staged = trash.join(crate::atomic_file::prefixed_name(
+            &format!("{}__{reason}__", trash_stamp()),
+            name,
+        ));
+        match move_file_noreplace(path, &staged) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(Withdrawal::Missing)
+            }
+            Err(error) => return Err(error),
+        }
+        let equal = matches(&staged).map_err(|error| match move_file_noreplace(&staged, path) {
+            Ok(()) => error,
+            Err(restore) => io::Error::new(
+                error.kind(),
+                format!(
+                    "comparison failed: {error}; restore failed: {restore}; recovery: {}",
+                    staged.display()
+                ),
+            ),
+        })?;
+        if equal {
+            return Ok(Withdrawal::Exact(staged));
+        }
+        match move_file_noreplace(&staged, path) {
+            Ok(()) => Ok(Withdrawal::ExternalLive),
+            Err(_) if path.exists() => Ok(Withdrawal::ExternalRecovery(staged)),
+            Err(error) => Err(io::Error::new(
+                error.kind(),
+                format!("restore failed: {error}; recovery: {}", staged.display()),
+            )),
+        }
+    }
+
+    /// Read a regular, contained page path and reconcile its bytes into the
+    /// in-memory cache. Symlinks, nonfiles and escaping paths return Excluded;
+    /// read/parse errors return ReadFailed; an expected revision mismatch
+    /// returns ChangedDuringRead. None skips that comparison. Success returns
+    /// Reconciled and consumes a self-write marker. Does not write the file or
+    /// publish a Store view; cost includes page bytes and cache reconciliation.
+    pub(crate) fn sync_file_internal(
+        &self,
+        path: &Path,
+        expected_rev: Option<&crate::store::FileRev>,
+    ) -> SyncFileResult {
+        // Watch events are untrusted path inputs. Never follow a page symlink
+        // (which could expose an arbitrary file outside the graph), and recheck
+        // canonical containment immediately before the read to close rename /
+        // symlink-swap races between directory scanning and reconciliation.
+        let md = match fs::symlink_metadata(path) {
+            Ok(md) => md,
+            Err(error) => return SyncFileResult::ReadFailed(error),
+        };
+        if md.file_type().is_symlink() || !md.is_file() || !path_stays_within_root(&self.root, path)
+        {
+            return SyncFileResult::Excluded;
+        }
+        #[cfg(test)]
+        if self
+            .fail_sync_read_once
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            return SyncFileResult::ReadFailed(io::Error::other("injected watcher read failure"));
+        }
+        let content = match read_parse_input(path) {
+            Ok(content) => content,
+            Err(error) => return SyncFileResult::ReadFailed(error),
+        };
+        let rev = crate::store::FileRev::from_bytes(content.as_bytes());
+        if expected_rev.is_some_and(|expected| expected != &rev) {
+            return SyncFileResult::ChangedDuringRead;
+        }
+        // The watcher consumes the self-write marker (one-shot) so the map stays
+        // bounded to in-flight writes.
+        match self.sync_file_content(path, &content, true) {
+            Ok(entry) => SyncFileResult::Reconciled { entry, rev },
+            Err(error) => SyncFileResult::ReadFailed(error),
+        }
+    }
+
+    /// Reconcile the cache for `path` given its already-read `content` — so a
+    /// caller that has just read the file (e.g. load_page) doesn't read it twice.
+    /// `consume_self_write`: whether a match on the self-write marker REMOVES it.
+    /// The watcher passes true (bounding); load_page passes false — load_page can
+    /// run in the rename→cache_upsert window and must not steal the marker out
+    /// from under the watcher, which would turn the watcher's later poll into a
+    /// false "changed on disk".
+    fn sync_file_content(
+        &self,
+        path: &Path,
+        content: &str,
+        consume_self_write: bool,
+    ) -> io::Result<Option<PageEntry>> {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.reconcile_page_content(path, content, consume_self_write)
+        })) {
+            Ok(entry) => Ok(entry),
+            Err(_) => {
+                self.invalidate_cache();
+                self.page_index_failures
+                    .write()
+                    .unwrap()
+                    .push(self.rel_path(path));
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "page parser panicked during sync",
+                ))
+            }
+        }
+    }
+
+    fn reconcile_page_content(
+        &self,
+        path: &Path,
+        content: &str,
+        consume_self_write: bool,
+    ) -> Option<PageEntry> {
+        let entry = self.cacheable_page_entry(path)?;
+        // Our own write: if the bytes on disk are exactly what Tine last wrote
+        // here, this is not an external change — suppress it even if the parse
+        // cache hasn't folded in the write yet (the rename→cache_upsert gap the
+        // watcher can read into). The cache comparison below alone races that gap.
+        let disk_rev = content_rev(content);
+        // The self-write marker exists ONLY to stop the WATCHER raising a false
+        // "changed on disk" during the rename→cache_upsert window, so only the
+        // watcher (consume_self_write) consults it. load_page must NOT short-
+        // circuit here: in that window the cache is still pre-write, so returning
+        // early would serve a STALE cached doc with the fresh disk rev (a later
+        // save could then clobber disk). load_page instead falls through to the
+        // disk_revs fast path / parse-reconcile below and serves content matching
+        // the exact bytes it just read.
+        if consume_self_write {
+            let mut recent = self.recent_writes.lock().unwrap();
+            if recent.get(path).is_some_and(|r| *r == disk_rev) {
+                recent.remove(path);
+                return None;
+            }
+        }
+        // Fast freshness check (B1): if the cache for this page already reflects
+        // these exact disk bytes, there's nothing to reconcile — skip the parse +
+        // serialize→parse normalization comparison below. Read disk_revs WHILE
+        // HOLDING cache.read(): cache_upsert publishes the cache slot and its rev
+        // together under cache.write(), so taking the cache read lock here makes
+        // the reader mutually exclusive with that writer and guarantees a
+        // consistent (cache, rev) pair — without it, the reader could observe a
+        // slot already updated to a new doc while its rev hadn't been inserted yet
+        // (separate lock), match the stale rev against disk, and serve the wrong
+        // doc. Lock order cache → disk_revs matches every writer, so no deadlock;
+        // the guard is dropped before the reconcile path below re-locks the cache.
+        // A missing/mismatched entry falls through to the exact comparison, so this
+        // can only ever save work, never serve stale content.
+        {
+            let _cache_guard = self.cache.read().unwrap();
+            if self
+                .disk_revs
+                .read()
+                .unwrap()
+                .get(path)
+                .is_some_and(|r| *r == disk_rev)
+            {
+                return None;
+            }
+        }
+        #[cfg(test)]
+        if self
+            .fail_sync_parse_once
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            panic!("injected external sync parser panic");
+        }
+        let (mut newdoc, opts) = parse_doc_with_opts(path, content);
+        {
+            let guard = self.cache.read().unwrap();
+            if guard.is_none() {
+                drop(guard);
+                #[cfg(test)]
+                crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
+                // A builder can install between the read above and this lock.
+                // If it did, continue to cache_upsert below; otherwise bump the
+                // generation under the same lock used by install_built so its
+                // pre-write candidate cannot be installed afterward.
+                let cache = self.cache.write().unwrap();
+                if cache.is_none() {
+                    *self.page_list_cache.write().unwrap() = None;
+                    *self.find_entry_cache.write().unwrap() = None;
+                    *self.cache_index.write().unwrap() = None;
+                    self.cache_gen
+                        .fetch_add(1, std::sync::atomic::Ordering::Release);
+                    return None;
+                }
+                drop(cache);
+            } else if let Some(i) = self.cached_page_index_for_path(guard.as_ref().unwrap(), path) {
+                let cache = guard.as_ref().unwrap();
+                let cached = &cache[i].1;
+                // Compare CONTENT, not the in-memory uuids: cached blocks carry
+                // generated uuids (assigned at cache build / upsert), while a
+                // fresh `parse` leaves them empty for non-ref-target blocks, so a
+                // direct `cached == newdoc` would never match and would flag every
+                // one of Tine's own writes as an external change. Normalize the
+                // cached doc through the same serialize→parse round-trip the file
+                // went through (both sides then have empty uuids) and compare.
+                let cached_norm =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                        || match Format::from_path(path) {
+                            Format::Md => parse_doc(path, &doc::serialize_with(cached, &opts)),
+                            Format::Org => parse_doc(
+                                path,
+                                &tine_core::org::serialize_org_detect(cached, Some(content)),
+                            ),
+                        },
+                    ));
+                let cached_norm = match cached_norm {
+                    Ok(doc) => doc,
+                    Err(_) => {
+                        drop(guard);
+                        panic!("page parser panicked during cached comparison");
+                    }
+                };
+                if cached_norm == newdoc {
+                    // Unchanged document, but not necessarily unchanged bytes:
+                    // parsing normalizes some lines (a column-0 continuation
+                    // line parses like an indented one), so these bytes may
+                    // carry an anchor line the cached bytes did not. The flag
+                    // may only err toward true, so raise it (still under the
+                    // cache lock: cache → vcs_anchored).
+                    if tine_core::concord_queue::has_vcs_anchor(content.as_bytes()) {
+                        self.vcs_anchored
+                            .write()
+                            .unwrap()
+                            .insert(path.to_path_buf());
+                    }
+                    return None; // unchanged / our own write
+                }
+            }
+        }
+        newdoc.roots.shrink_to_fit();
+        let anchored = tine_core::concord_queue::has_vcs_anchor(content.as_bytes());
+        self.cache_upsert(
+            entry.clone(),
+            newdoc,
+            DiskObs {
+                rev: disk_rev,
+                anchored,
+            },
+        );
+        Some(entry)
+    }
+
+    /// Drop a deleted file from the cache; return its last effective-name entry
+    /// if cached so the UI can react even though its `title::` is now unreadable.
+    pub(crate) fn forget_file_internal(&self, path: &Path) -> Option<PageEntry> {
+        let own_delete = self
+            .recent_writes
+            .lock()
+            .unwrap()
+            .remove(path)
+            .is_some_and(|rev| rev == "<tx-deleted>");
+        let entry = self.entry_for_path(path)?;
+        let cached_entry = self.cache.read().unwrap().as_ref().and_then(|pages| {
+            self.cached_page_index_for_path(pages, path)
+                .map(|index| pages[index].0.clone())
+        });
+        self.cache_remove_path(&entry);
+        cached_entry.filter(|_| !own_delete)
+    }
+
+    pub(crate) fn prepare_page_bytes(
+        &self,
+        page: &PageDto,
+        path: &Path,
+        existing: Option<&str>,
+    ) -> io::Result<(Vec<u8>, Document)> {
+        self.prepare_page_content(page, path, existing)
+            .map(|(content, doc)| (content.into_bytes(), doc))
+    }
+
+    pub(crate) fn transaction_note_page(&self, path: &Path, bytes: &[u8]) {
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            self.note_self_write(path, content_rev(text));
+        }
+    }
+
+    pub(crate) fn transaction_note_delete(&self, path: &Path) {
+        self.note_self_write(path, "<tx-deleted>".into());
+    }
+
+    pub(crate) fn transaction_clear_page_marker(&self, path: &Path) {
+        self.recent_writes.lock().unwrap().remove(path);
+    }
+
+    pub(crate) fn transaction_bump_generation(&self) {
+        let before = self
+            .cache_gen
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+        if let Some((gen, _)) = self.page_list_cache.write().unwrap().as_mut() {
+            if *gen == before {
+                *gen = before + 1;
+            }
+        }
+        if let Some((gen, _)) = self.find_entry_cache.write().unwrap().as_mut() {
+            if *gen == before {
+                *gen = before + 1;
+            }
+        }
+    }
+
+    /// Bytes a save writes for `page`. Markdown reuses every unchanged block's
+    /// lines (`layout_retention`), else re-serializes in the file's detected
+    /// style (no Syncthing churn); equal parses keep the disk bytes and revision
+    /// (A5); CRLF and lone-CR files keep their terminators (`line_endings`). The
+    /// bytes re-parse to `page`, except a DTO that cannot round-trip (blocks
+    /// after an unterminated fence): it gets the whole-page serializer's meaning.
+    fn prepare_page_content(
+        &self,
+        page: &PageDto,
+        path: &Path,
+        existing: Option<&str>,
+    ) -> io::Result<(String, Document)> {
+        // (A new journal's `path` was named by `path_for` using the graph's
+        // `:journal/file-name-format` — so custom-format graphs create the correct
+        // file for the day instead of a misplaced default-named duplicate.)
+        let dto_is_org = matches!(Format::from_path(path), Format::Org);
+        let mut doc = tine_core::projection::page_dto_document(page, dto_is_org);
+        let (old, opts) = existing.map_or_else(
+            || (None, doc::SerializeOpts::default()),
+            |source| {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::old_source_parse();
+                let (old, opts) = parse_doc_with_opts(path, source);
+                (Some(old), opts)
+            },
+        );
+        // Data-preservation firewall for page-header properties (GH #163).
+        // A frontend/store bug once reclassified a suffix of the page pre-block
+        // as the first outline block (`A::` stayed in the header while `B::` and
+        // `C::` were serialized as `- B::` / indented continuation text).  The
+        // string helper used by the gear panel was correct, so helper tests could
+        // not protect the actual DTO -> disk boundary.  No Tine editing command
+        // intentionally moves an existing page-header property line into the
+        // outline; promotion keeps property lines in the pre-block.  Refuse both
+        // normal and force writes that do so, leaving the original bytes intact.
+        if let Some(existing_doc) = old.as_ref() {
+            // A nonempty disk preamble is authoritative. If a contradictory DTO
+            // drops it while presenting a first-root header candidate, refusing
+            // the save is safer than either overwriting the preamble or silently
+            // keeping the candidate as a bullet. The same validator protects
+            // the Store-backed keep-mine path.
+            if existing_doc
+                .pre_block
+                .as_deref()
+                .is_some_and(|pre| !pre.is_empty())
+                && doc.pre_block.as_deref().unwrap_or("").is_empty()
+                && first_root_is_promotable_page_header(&doc)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "refusing to drop an existing page preamble while authoring page-header properties",
+                ));
+            }
+            if let Some(line) =
+                newly_reclassified_page_property_line(existing_doc, &doc, dto_is_org)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("refusing to move page-header property into outline content: {line}"),
+                ));
+            }
+        }
+        // Match OG's pre-block serialization decision at one native boundary:
+        // a genuinely headerless Markdown page may author a qualifying first
+        // root through the ordinary editor, but the persisted/cache shape is an
+        // unbulleted page header. Existing nonempty preambles were rejected above.
+        if !dto_is_org
+            && page.pre_block.as_deref().unwrap_or("").is_empty()
+            && old
+                .as_ref()
+                .and_then(|parsed| parsed.pre_block.as_deref())
+                .as_deref()
+                .unwrap_or("")
+                .is_empty()
+        {
+            promote_first_root_page_header(&mut doc);
+        }
+        // Own the caller's resolved+locked path (M2: never re-resolve path_for here).
+        let path = path.to_path_buf();
+        let (content, mut parsed) = match Format::from_path(&path) {
+            Format::Md => {
+                let retained = existing.zip(old.as_ref()).and_then(|(source, old)| {
+                    layout_retention::serialize(&doc, source, old, &opts)
+                });
+                let (mut content, reparsed) = retained.unwrap_or_else(|| {
+                    let content = doc::serialize_with(&doc, &opts);
+                    let parsed = parse_doc(&path, &content);
+                    (content, parsed)
+                });
+                if let Some(e) = existing {
+                    if e != content && old.as_ref() == Some(&reparsed) {
+                        content = e.to_string(); // A5
+                    }
+                }
+                (line_endings::restore(content, existing), reparsed)
+            }
+            Format::Org => {
+                // Corruption firewall: never write a .org file Tine cannot
+                // reproduce byte-for-byte. Such a page is served read-only (the
+                // editor blocks edits), but defend the write path too — a stale
+                // editor or a direct save must not rewrite it. The org serializer
+                // is itself byte-exact (no trivia dance / CRLF rewrite needed):
+                // the block bodies carry their verbatim text, including a CRLF's
+                // `\r`; a lone `\r` line break is put back by `restore_org`.
+                if let Some(e) = existing {
+                    if tine_core::org::serialize_org_detect(old.as_ref().unwrap(), Some(e))
+                        != tine_core::org::lone_cr_to_lf(e)
+                    {
+                        return Err(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            "org file is read-only (does not round-trip)",
+                        ));
+                    }
+                }
+                let content = tine_core::org::serialize_org_detect(&doc, existing);
+                let content = line_endings::restore_org(content, existing);
+                let parsed = parse_doc(&path, &content);
+                (content, parsed)
+            }
+        };
+        carry_saved_runtime_ids(&mut parsed.roots, &doc.roots);
+        Ok((content, parsed))
+    }
+}
+
+/// Properties that describe the block they sit on, never a page. A first
+/// bullet carrying one is an outline block even when it has no text yet: an
+/// empty numbered-list item is `logseq.order-list-type:: number` and nothing
+/// else. OG keeps such a bullet a bullet because the property sits below an
+/// empty title line, and its serializer promotes only a first block whose FIRST
+/// line holds `:: ` (`file/core.cljs` `transform-content`); Tine's raw has no
+/// empty title line, so the key itself must decide (GH #540). `id` marks a
+/// referenced outline block. Mirrored by `BLOCK_SCOPED_PROPERTY_KEYS` in
+/// `src/document/convert.ts`; `src/i12PageHeader.test.ts` keeps them equal.
+pub(crate) const BLOCK_SCOPED_PROPERTY_KEYS: &[&str] = &[
+    "id",
+    "heading",
+    "collapsed",
+    "background-color",
+    "logseq.order-list-type",
+];
+
+fn first_root_is_promotable_page_header(doc: &Document) -> bool {
+    let Some(first) = doc.roots.first() else {
+        return false;
+    };
+    first.children.is_empty()
+        && tine_core::block_regions::page_header_only(first.raw()).is_some_and(|header| {
+            !header.entries.iter().any(|entry| {
+                BLOCK_SCOPED_PROPERTY_KEYS
+                    .iter()
+                    .any(|scoped| entry.key.eq_ignore_ascii_case(scoped))
+            })
+        })
+}
+
+fn promote_first_root_page_header(doc: &mut Document) {
+    if !first_root_is_promotable_page_header(doc) {
+        return;
+    }
+    let first = doc.roots.remove(0);
+    doc.pre_block = Some(first.raw().to_owned());
+}
+
+/// Return the first property-shaped outline line that has no outline provenance
+/// on disk while the proposal also loses page-header property slots.
+///
+/// The firewall is deliberately structural rather than an exact-string test:
+/// a broken DTO must not evade it by editing the moved line's key/value. At the
+/// same time, a property-shaped outline block that genuinely existed on disk is
+/// allowed to stay, move, or be edited. We therefore treat existing outline
+/// property lines as provenance slots: exact multiset matches consume their
+/// original slots first, and remaining slots cover ordinary edits. Only an
+/// excess proposed outline line is newly unproven. There is no implicit repair;
+/// contradictory structure is rejected before bytes or cache can change.
+fn newly_reclassified_page_property_line(
+    existing_doc: &Document,
+    proposed: &Document,
+    is_org: bool,
+) -> Option<String> {
+    // The parser owns what a property line is (I-12): `block_regions` reports
+    // the lines lsdoc accepted as properties and leaves out literal regions, so
+    // a fenced or inline-code example containing `key:: value` is prose, not a
+    // slot. Logseq graphs can carry Unicode or plugin-defined keys that Tine's
+    // settings panel does not expose; the parser accepts those too.
+    fn property_lines(raw: &str, is_org: bool, document: bool) -> Vec<String> {
+        if !raw.contains(':') && !raw.contains("#+") {
+            return Vec::new();
+        }
+        let regions = if document {
+            tine_core::block_regions::parse_document(raw, is_org)
+        } else {
+            tine_core::block_regions::parse(raw, is_org)
+        };
+        regions
+            .page_properties()
+            .map(|p| p.line.slice(raw).trim_end_matches('\n').to_owned())
+            .collect()
+    }
+
+    fn pre_property_lines(raw: Option<&str>, is_org: bool) -> Vec<String> {
+        property_lines(raw.unwrap_or(""), is_org, true)
+    }
+
+    fn outline_property_lines(blocks: &[DocBlock], is_org: bool, out: &mut Vec<String>) {
+        for block in blocks {
+            out.extend(property_lines(block.raw(), is_org, false));
+            outline_property_lines(&block.children, is_org, out);
+        }
+    }
+
+    let existing_pre = pre_property_lines(existing_doc.pre_block.as_deref(), is_org);
+    let proposed_pre = pre_property_lines(proposed.pre_block.as_deref(), is_org);
+    if proposed_pre.len() >= existing_pre.len() {
+        return None;
+    }
+
+    let mut existing_outline = Vec::new();
+    outline_property_lines(&existing_doc.roots, is_org, &mut existing_outline);
+    let mut proposed_outline = Vec::new();
+    outline_property_lines(&proposed.roots, is_org, &mut proposed_outline);
+    if proposed_outline.len() <= existing_outline.len() {
+        return None;
+    }
+
+    // Cancel exact matches as a multiset so the diagnostic identifies a truly
+    // excess proposal line even in the presence of duplicates. Any remaining
+    // existing slots then cover changed/reordered pre-existing outline lines.
+    let mut exact_slots: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for line in &existing_outline {
+        *exact_slots.entry(line.as_str()).or_default() += 1;
+    }
+    let mut unmatched = Vec::new();
+    let mut exact_matches = 0usize;
+    for line in &proposed_outline {
+        match exact_slots.get_mut(line.as_str()) {
+            Some(count) if *count > 0 => {
+                *count -= 1;
+                exact_matches += 1;
+            }
+            _ => unmatched.push(line),
+        }
+    }
+    let edited_provenance_slots = existing_outline.len() - exact_matches;
+    unmatched
+        .get(edited_provenance_slots)
+        .map(|line| (*line).clone())
+}
+
+/// Parse `entries` on up to `page_cache_worker_count()` scoped threads (serial
+/// for small graphs), returning per-shard results in entry order. Each shard
+/// checks `keep_going` every 24 entries; `None` means one of them saw it false.
+/// A shard whose thread panicked despite per-page isolation is omitted with a
+/// diagnostic line. The one parallel page parse: the on-demand build and the
+/// background warm both use it.
+fn parse_pages_parallel<T: Send>(
+    entries: Vec<PageEntry>,
+    keep_going: &(impl Fn() -> bool + Sync),
+    parse: &(impl Fn(PageEntry) -> T + Sync),
+) -> Option<Vec<Vec<T>>> {
+    let workers = page_cache_worker_count();
+    let per = if workers <= 1 || entries.len() < 64 {
+        entries.len().max(1)
+    } else {
+        entries.len().div_ceil(workers)
+    };
+    // Drain into owned contiguous chunks (no clone of PageEntry).
+    let mut chunks: Vec<Vec<PageEntry>> = Vec::with_capacity(workers);
+    let mut it = entries.into_iter().peekable();
+    while it.peek().is_some() {
+        chunks.push(it.by_ref().take(per).collect());
+    }
+    let stopped = std::sync::atomic::AtomicBool::new(false);
+    let run = |chunk: Vec<PageEntry>| {
+        let mut out = Vec::with_capacity(chunk.len());
+        for (i, entry) in chunk.into_iter().enumerate() {
+            if i % 24 == 0 && (stopped.load(std::sync::atomic::Ordering::Relaxed) || !keep_going())
+            {
+                stopped.store(true, std::sync::atomic::Ordering::Relaxed);
+                break;
+            }
+            out.push(parse(entry));
+        }
+        out
+    };
+    let shards: Vec<Vec<T>> = if chunks.len() <= 1 {
+        chunks.into_iter().map(run).collect()
+    } else {
+        std::thread::scope(|s| {
+            let handles: Vec<_> = chunks
+                .into_iter()
+                .map(|chunk| {
+                    let run = &run;
+                    s.spawn(move || run(chunk))
+                })
+                .collect();
+            handles
+                .into_iter()
+                .filter_map(|handle| match handle.join() {
+                    Ok(shard) => Some(shard),
+                    Err(_) => {
+                        tine_core::diag_line::diagnostic_line(
+                            "Tine search index worker panicked after per-page isolation; its shard was not indexed",
+                        );
+                        None
+                    }
+                })
+                .collect()
+        })
+    };
+    (!stopped.load(std::sync::atomic::Ordering::Relaxed)).then_some(shards)
+}
+
+fn page_cache_worker_count() -> usize {
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(8);
+    #[cfg(test)]
+    let workers = workers.max(2);
+    workers
+}
+
+#[cfg(test)]
+const TEST_PAGE_PARSE_PANIC_SENTINEL: &str = "__TINE_TEST_PAGE_PARSE_PANIC__";
+
+/// Collapse journal entries that resolve to the SAME date down to one (the
+/// canonical `yyyy_MM_dd` file) — a leftover title-named duplicate must not show
+/// the day twice in the feed, quick-switch, or All-Pages. Non-journal entries and
+/// the input order are preserved.
+fn dedup_journal_days(
+    entries: Vec<PageEntry>,
+    fmt: &JournalFormat,
+    name_fmt: FileNameFormat,
+) -> Vec<PageEntry> {
+    let mut idx_of: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+    let mut out: Vec<PageEntry> = Vec::new();
+    for e in entries {
+        match e.date_key {
+            Some(k) if e.kind == PageKind::Journal => {
+                if let Some(&i) = idx_of.get(&k) {
+                    if compare_page_claimants(&e, &out[i], fmt, name_fmt).is_lt() {
+                        out[i] = e;
+                    }
+                } else {
+                    idx_of.insert(k, out.len());
+                    out.push(e);
+                }
+            }
+            _ => out.push(e),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+thread_local! {
+pub(crate) static GRAPH_LIST_CALLS: std::cell::Cell<usize> = std::cell::Cell::new(0);
+#[cfg(test)]
+pub(crate) static GRAPH_PREAMBLE_READS: std::cell::Cell<usize> = std::cell::Cell::new(0);
+    static CACHE_LINEAR_SCAN_STEPS: std::cell::Cell<usize> = std::cell::Cell::new(0);
+}
+
+#[cfg(test)]
+fn count_cache_linear_scan(n: usize) {
+    CACHE_LINEAR_SCAN_STEPS.with(|steps| steps.set(steps.get() + n));
+}
+
+#[cfg(test)]
+fn list_md(
+    dir: &Path,
+    kind: PageKind,
+    fmt: &JournalFormat,
+    name_fmt: FileNameFormat,
+    rel_dir: &str,
+) -> Vec<PageEntry> {
+    let mut out = Vec::new();
+    walk_page_files(dir, |path| {
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            return;
+        };
+        if is_sync_conflict(stem) {
+            return; // sync-tool conflict copy — not a page (see list_sync_conflicts)
+        }
+        let (name, date_key) = match kind {
+            PageKind::Journal => match fmt.parse(stem) {
+                Some(d) => (fmt.title(d), Some(d.ordinal_key())),
+                None => (stem.to_string(), None),
+            },
+            PageKind::Page => (effective_page_name(&path, stem, name_fmt).unwrap(), None),
+        };
+        out.push(PageEntry {
+            name,
+            kind,
+            date_key,
+            rel_path: Some(rel_under_dir(rel_dir, dir, &path).into()),
+            path,
+        });
+    });
+    out
+}
+
+#[cfg(test)]
+fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
+    // Descend into sub-directories (#21). Logseq scans the whole graph root
+    // recursively, so a page archived under `pages/client-a/foo.md` is a real
+    // page — keyed by its BASENAME (`foo`); the sub-path is discarded, matching
+    // OG's `path->file-name` (the file's own `path` stays its load/save identity).
+    // One stack-based walk, O(files), no re-scan.
+    //
+    // `file_type()` does not follow symlinks. Check it for page-looking entries
+    // too: otherwise `pages/secret.md -> /outside/secret.md` would be indexed and
+    // exposed. Hidden dirs (`.git` &c.) are skipped — never a page store.
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::readdir();
+        let Ok(rd) = fs::read_dir(&d) else { continue };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if is_page_file(&path) && file_type.is_file() {
+                visit(path);
+                continue;
+            }
+            // Non-page entry: recurse if it's a real (non-symlink, non-hidden)
+            // sub-directory. This is the only stat we pay, and never on the hot
+            // page-file path above.
+            let hidden = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.starts_with('.'))
+                .unwrap_or(true);
+            if !hidden && file_type.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+}
+
+/// Journal text beyond properties (calendar days, carry); the parser's visible text
+/// decides, so Org `memo:: x` prose counts (OG-C5 L12-S1). Not the template guard.
+fn doc_has_content(blocks: &[DocBlock]) -> bool {
+    blocks
+        .iter()
+        .any(|b| !b.visible_text().trim().is_empty() || doc_has_content(&b.children))
+}
+
+/// Whether a page should load read-only: an org file whose on-disk bytes don't
+/// round-trip through Tine's org parser/serializer, so Tine must never rewrite
+/// it (lest it corrupt the user's graph). Markdown pages are always editable.
+fn read_only_org(path: &Path, content: &str) -> bool {
+    if Format::from_path(path) != Format::Org {
+        return false;
+    }
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::parse();
+    !tine_core::org::org_editable(content)
+}
+
+/// Stable (deterministic, seed-free) content hash — FNV-1a/64 as hex. Used as a
+/// per-load baseline so a save can detect that the file changed underneath the
+/// editor. Deterministic so a rev returned from one save matches the next read.
+pub(crate) fn content_rev(s: &str) -> String {
+    crate::store::FileRev::from_bytes(s.as_bytes()).into()
+}
+
+/// Encode a page name to its on-disk filename stem, honoring the graph's
+/// `:file/name-format` (so Tine round-trips namespaces with OG on BOTH legacy
+/// `%2F` graphs and modern `___` graphs). Mirrors OG's `legacy-url-file-name-sanity`
+/// (legacy) and `tri-lb-file-name-sanity`/`escape-namespace-slashes-and-multilowbars`
+/// (triple-lowbar) for the high-frequency case: the namespace `/` separator and
+/// the `_`-adjacency / literal-`___` disambiguation. Exotic reserved-char and
+/// Windows-reserved-name rules are not yet mirrored (rare).
+#[cfg(test)]
+fn encode_page_name(name: &str, fmt: FileNameFormat) -> String {
+    tine_core::model::encode_page_name(name, fmt)
+}
+
+/// Inverse of [`encode_page_name`]. Legacy: percent-decode (`%2F`→`/`).
+/// Triple-lowbar: `___`→`/` FIRST, then percent-decode — the OG order
+/// (`util.cljs:153-160`), so an encoded literal `___` (stored `%5F%5F%5F`)
+/// survives instead of being turned into a separator.
+fn decode_page_name(stem: &str, fmt: FileNameFormat) -> String {
+    tine_core::model::decode_page_name(stem, fmt)
+}
+
+/// Decode `%XX` percent-escapes (UTF-8 aware, like JS `decodeURIComponent`). An
+/// invalid or truncated escape is left literal rather than dropped.
+pub(crate) fn percent_decode(s: &str) -> String {
+    if !s.contains('%') {
+        return s.to_string();
+    }
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex_nibble(b[i + 1]), hex_nibble(b[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_nibble(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// A unique-ish label (epoch millis + process-local sequence) for trashed files,
+/// so deleting two pages with the same name doesn't collide in the trash.
+/// Asset liveness combines parser-accepted targets with conservative plaintext
+/// mentions. The latter may retain extra files (including literal code), but
+/// cannot shorten or replace an accepted target. Parsing is skipped entirely
+/// when there is no asset mention; whole-graph results are memoized by the store.
+pub(crate) fn collect_asset_refs(text: &str, into: &mut std::collections::HashSet<String>) {
+    use tine_core::lsdoc::ast::{Inline, Url};
+    fn links(nodes: &[Inline], into: &mut std::collections::HashSet<String>) {
+        for node in nodes {
+            match node {
+                Inline::Link { url, label, .. } => {
+                    let target = match url {
+                        Url::Search { v } | Url::File { v } => Some(v.as_str()),
+                        Url::Complex { link, .. } => link.as_deref(),
+                        _ => None,
+                    };
+                    if let Some((_, name)) = target.and_then(|t| t.split_once("assets/")) {
+                        insert_asset_path(into, name);
+                    }
+                    links(label, into);
+                }
+                Inline::Emphasis { children, .. }
+                | Inline::Subscript { children, .. }
+                | Inline::Superscript { children, .. }
+                | Inline::Tag { children, .. } => links(children, into),
+                Inline::Fnref { definition, .. } => links(definition, into),
+                _ => (),
+            }
+        }
+    }
+    if !text.contains("assets/") {
+        return;
+    }
+    // Preambles carry no format argument. Both parsers may conservatively add
+    // accepted targets; neither removes a target recognized by the other.
+    for format in ["md", "org"] {
+        if let Some(nodes) = tine_core::render::parse_inline_bounded(text, format) {
+            links(&nodes, into);
+        }
+    }
+    conservative_asset_mentions(text, into);
+}
+
+fn insert_asset_path(into: &mut std::collections::HashSet<String>, name: &str) {
+    if name.is_empty() {
+        return;
+    }
+    insert_asset_ref(into, name);
+    if let Some((segment, _)) = name.split_once('/') {
+        insert_asset_ref(into, segment);
+    }
+}
+
+/// Legacy plaintext safety policy, NOT link recognition: any assets/ mention
+/// can keep a file alive even outside accepted links. Delimiters bound an extra
+/// conservative candidate only; link targets above always come from lsdoc.
+fn conservative_asset_mentions(text: &str, into: &mut std::collections::HashSet<String>) {
+    let mut rest = text;
+    while let Some(i) = rest.find("assets/") {
+        let after = &rest[i + "assets/".len()..];
+        let end = after
+            .find(|c: char| {
+                matches!(
+                    c,
+                    ')' | ']' | '"' | '\'' | '<' | '>' | '|' | '\n' | '\r' | '\t'
+                )
+            })
+            .unwrap_or(after.len());
+        let name = &after[..end];
+        insert_asset_path(into, name);
+        rest = &after[end..];
+    }
+}
+
+/// Record an asset reference under BOTH its raw form AND its percent-decoded form.
+/// A link like `../assets/my%20file.png` names the on-disk file `my file.png`, so
+/// comparing the raw URL substring against directory entries would miss the real
+/// file and let `orphan_assets` offer an IN-USE asset for trashing (DS Codex#7).
+/// Keeping the raw form too covers a file literally named with a `%` escape.
+fn insert_asset_ref(into: &mut std::collections::HashSet<String>, raw: &str) {
+    let decoded = percent_decode(raw);
+    if decoded != raw {
+        into.insert(decoded);
+    }
+    into.insert(raw.to_string());
+}
+
+pub(crate) fn collect_block_asset_refs(b: &DocBlock, into: &mut std::collections::HashSet<String>) {
+    collect_asset_refs(b.raw(), into);
+    for c in &b.children {
+        collect_block_asset_refs(c, into);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrashEntryKind {
+    Asset,
+    Page,
+    Journal,
+    Conflict,
+    Other,
+}
+
+impl TrashEntryKind {
+    fn dir_name(self) -> Option<&'static str> {
+        match self {
+            TrashEntryKind::Asset => Some("assets"),
+            TrashEntryKind::Page => Some("pages"),
+            TrashEntryKind::Journal => Some("journals"),
+            TrashEntryKind::Conflict => Some("conflicts"),
+            TrashEntryKind::Other => None,
+        }
+    }
+}
+
+pub(crate) fn trash_root(root: &Path) -> PathBuf {
+    root.join("logseq").join(".tine-trash")
+}
+
+fn typed_trash_dir(root: &Path, kind: TrashEntryKind) -> PathBuf {
+    trash_root(root).join(kind.dir_name().unwrap_or("other"))
+}
+
+pub(crate) fn trash_dir_kind(path: &Path) -> Option<TrashEntryKind> {
+    match path.file_name().and_then(|s| s.to_str()) {
+        Some("assets") => Some(TrashEntryKind::Asset),
+        Some("pages") => Some(TrashEntryKind::Page),
+        Some("journals") => Some(TrashEntryKind::Journal),
+        Some("conflicts") => Some(TrashEntryKind::Conflict),
+        _ => None,
+    }
+}
+
+pub(crate) fn classify_legacy_trash_entry(path: &Path, ft: fs::FileType) -> TrashEntryKind {
+    if !ft.is_file() {
+        return TrashEntryKind::Other;
+    }
+    let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+        return TrashEntryKind::Other;
+    };
+    let original = legacy_trash_original_name(name);
+    let original_path = Path::new(original);
+    if path_is_sync_conflict(original_path) {
+        return TrashEntryKind::Conflict;
+    }
+    let ext = original_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase());
+    if matches!(ext.as_deref(), Some("md" | "markdown" | "org")) {
+        return original_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|stem| tine_core::date::JournalDate::from_file_stem(stem).is_some())
+            .map(|_| TrashEntryKind::Journal)
+            .unwrap_or(TrashEntryKind::Page);
+    }
+    if legacy_name_is_asset(original) {
+        TrashEntryKind::Asset
+    } else {
+        TrashEntryKind::Other
+    }
+}
+
+fn legacy_trash_original_name(name: &str) -> &str {
+    name.split_once("__")
+        .map(|(_, original)| original)
+        .unwrap_or(name)
+}
+
+fn legacy_name_is_asset(name: &str) -> bool {
+    if name.starts_with('.') || name.contains('/') || name.contains('\\') || name.ends_with(".edn")
+    {
+        return false;
+    }
+    let Some(ext) = Path::new(name)
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+    else {
+        return false;
+    };
+    matches!(
+        ext.as_str(),
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "avif"
+            | "svg"
+            | "bmp"
+            | "tif"
+            | "tiff"
+            | "heic"
+            | "heif"
+            | "pdf"
+            | "mp4"
+            | "mov"
+            | "m4v"
+            | "webm"
+            | "mkv"
+            | "avi"
+            | "mp3"
+            | "wav"
+            | "m4a"
+            | "ogg"
+            | "flac"
+            | "aac"
+            | "opus"
+            | "txt"
+            | "csv"
+            | "tsv"
+            | "json"
+            | "yaml"
+            | "yml"
+            | "zip"
+            | "tar"
+            | "gz"
+            | "tgz"
+            | "7z"
+            | "rar"
+            | "doc"
+            | "docx"
+            | "xls"
+            | "xlsx"
+            | "ppt"
+            | "pptx"
+            | "odt"
+            | "ods"
+            | "odp"
+            | "rtf"
+    )
+}
+
+pub(crate) fn trash_stamp() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{ms}-{}", SEQ.fetch_add(1, Ordering::Relaxed))
+}
+
+/// Atomically move one file without ever replacing an existing destination.
+/// Platform-native no-replace rename semantics ensure the source name and inode
+/// cannot be swapped between a check and an unlink.
+pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
+    crate::no_replace::move_file_noreplace(src, dest)
+}
+
+/// Atomically publish a newly-created file without clobbering a destination that
+/// appeared after the caller's collision check. The payload is fsynced in a
+/// same-directory temp, then atomically renamed into the final name only if absent.
+pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    crate::atomic_file::atomic_write_new(path, bytes)
+}
+
+/// Atomic write: write to a temp file in the same directory, then rename. The
+/// temp name is unique per write (pid + sequence) so two concurrent writers to
+/// the same path (e.g. an autosave and a highlight/rename rewrite) can't truncate
+/// each other's temp; the rename is still atomic. The temp is removed if the
+/// write fails, so a unique name never leaks an orphan behind.
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    atomic_write_with_check(path, bytes, || Ok(()))
+}
+
+/// Sync the replacement before the caller's final disk guard and rename.
+pub(crate) fn atomic_write_with_check(
+    path: &Path,
+    bytes: &[u8],
+    check: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
+    crate::atomic_file::atomic_write_with_check(
+        path,
+        bytes,
+        check,
+        || {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::wrote(bytes.len());
+        },
+        || {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::fsync();
+        },
+        || {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::fsync();
+        },
+    )
+}
+
+/// Copy into a newly-created destination without replacing a path that appeared
+/// concurrently. Used by restore after the previous live inode has been moved to
+/// recovery: a sync writer that recreates the live name wins and the restore
+/// aborts instead of clobbering it.
+pub(crate) fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+    let dir = dst.parent().unwrap_or_else(|| Path::new("."));
+    // A temp that fits whenever `dst` does (C3Y Y1: a 231–255-byte asset name).
+    let tmp =
+        crate::atomic_file::temp_path(dst, TMP_SEQ.fetch_add(1, Ordering::Relaxed), ".restore");
+    let res = (|| {
+        let mut input = fs::File::open(src)?;
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        std::io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+        drop(output);
+        move_file_noreplace(&tmp, dst)?;
+        crate::directory_durability::sync_directory_entry(dir)?;
+        Ok(())
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    res
+}
+
+/// Copy from an already-open source capability into a new destination while
+/// enforcing a byte ceiling during the stream. This is the native-capture path:
+/// it avoids reopening an attacker-replaceable pathname and avoids whole-value
+/// Android/IPC/base64 amplification.
+pub(crate) fn atomic_copy_file_new(
+    input: &mut fs::File,
+    dst: &Path,
+    max_bytes: u64,
+) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+    let dir = dst.parent().unwrap_or_else(|| Path::new("."));
+    let tmp =
+        crate::atomic_file::temp_path(dst, TMP_SEQ.fetch_add(1, Ordering::Relaxed), ".capture");
+    let res = (|| {
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        let mut limited = input.take(max_bytes.saturating_add(1));
+        let copied = io::copy(&mut limited, &mut output)?;
+        if copied > max_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("capture exceeds {max_bytes} byte limit"),
+            ));
+        }
+        output.sync_all()?;
+        drop(output);
+        move_file_noreplace(&tmp, dst)?;
+        crate::directory_durability::sync_directory_entry(dir)?;
+        Ok(())
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    res
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn journal_content_asks_the_parser_which_bytes_are_properties() {
+        // OG-C5 L12-S1/S1-14: Org stores properties in drawers, so heading prose
+        // shaped like a Markdown property is a written day for calendar and carry.
+        let org = tine_core::org::parse_org("* memo:: keep this sentence\n");
+        assert!(doc_has_content(&org.roots), "Org prose is content");
+        let drawer = tine_core::org::parse_org("* \n:PROPERTIES:\n:id: 6679-abc\n:END:\n");
+        assert!(
+            !doc_has_content(&drawer.roots),
+            "an Org head drawer alone is not"
+        );
+        let md = tine_core::doc::parse("- memo:: only a property\n");
+        assert!(
+            !doc_has_content(&md.roots),
+            "a Markdown property block is not"
+        );
+        let fenced = tine_core::doc::parse("- ```\n  key:: literal\n  ```\n");
+        assert!(
+            doc_has_content(&fenced.roots),
+            "a fenced property-shaped line is code"
+        );
+    }
+
+    #[test]
+    fn journal_content_days_fixture() {
+        // Rust-only since OG-C5 L12-S1: the template guard asks a different question.
+        let cases: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/fixtures/journal-content.json"))
+                .unwrap();
+        fn blocks(values: &serde_json::Value) -> Vec<DocBlock> {
+            values
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| {
+                    let mut block = DocBlock::new(value["raw"].as_str().unwrap());
+                    block.children = blocks(&value["children"]);
+                    block
+                })
+                .collect()
+        }
+        for case in cases.as_array().unwrap() {
+            assert_eq!(
+                doc_has_content(&blocks(&case["blocks"])),
+                case["hasContent"].as_bool().unwrap(),
+                "{}",
+                case["name"]
+            );
+        }
+    }
+
+    #[test]
+    fn page_name_encoding_round_trips_both_formats() {
+        // Legacy: `/` ↔ `%2F`; a literal `___` is NOT a separator (stays put).
+        let leg = FileNameFormat::Legacy;
+        assert_eq!(encode_page_name("a/b/c", leg), "a%2Fb%2Fc");
+        assert_eq!(decode_page_name("a%2Fb%2Fc", leg), "a/b/c");
+        assert_eq!(encode_page_name("a___b", leg), "a___b");
+        assert_eq!(decode_page_name("a___b", leg), "a___b");
+
+        // Triple-lowbar: `/` ↔ `___`; a literal `___` is disambiguated via `%5F`
+        // so it survives the round-trip (and isn't read back as a separator).
+        let tlb = FileNameFormat::TripleLowbar;
+        assert_eq!(encode_page_name("a/b/c", tlb), "a___b___c");
+        assert_eq!(decode_page_name("a___b___c", tlb), "a/b/c");
+        assert_eq!(encode_page_name("a___b", tlb), "a%5F%5F%5Fb");
+        assert_eq!(decode_page_name("a%5F%5F%5Fb", tlb), "a___b");
+        // `_` adjacent to the separator round-trips too.
+        assert_eq!(
+            decode_page_name(&encode_page_name("a_/b", tlb), tlb),
+            "a_/b"
+        );
+        assert_eq!(
+            decode_page_name(&encode_page_name("x/_y", tlb), tlb),
+            "x/_y"
+        );
+
+        // The cross-format hazard the fix addresses: a legacy `%2F` file is read
+        // as a namespace ONLY under legacy; a triple-lowbar `___` file ONLY under
+        // triple-lowbar — each matching its OG counterpart.
+        assert_eq!(decode_page_name("math%2Falgebra", leg), "math/algebra");
+        assert_eq!(decode_page_name("math___algebra", tlb), "math/algebra");
+        // A unicode percent-escape decodes (UTF-8 aware), like OG.
+        assert_eq!(decode_page_name("caf%C3%A9", leg), "café");
+    }
+
+    #[test]
+    fn runtime_ids_are_owner_structural_and_separate_from_explicit_ids() {
+        // Equal-text siblings, including duplicate persisted ids, are distinct
+        // runtime nodes. Persisted ids remain content used by external resolution.
+        let mut roots = vec![
+            DocBlock::new("first\nid:: dup-1234"),
+            DocBlock::new("first\nid:: dup-1234"),
+        ];
+        assign_doc_runtime_ids(&mut roots, "pages/client-a/Foo.md");
+        assert_ne!(roots[0].uuid, roots[1].uuid);
+        assert_ne!(roots[0].uuid, "dup-1234");
+        assert_ne!(roots[1].uuid, "dup-1234");
+
+        let first_ids = roots.iter().map(|b| b.uuid.clone()).collect::<Vec<_>>();
+        let mut same = vec![
+            DocBlock::new("first\nid:: dup-1234"),
+            DocBlock::new("first\nid:: dup-1234"),
+        ];
+        assign_doc_runtime_ids(&mut same, "pages/client-a/Foo.md");
+        assert_eq!(
+            first_ids,
+            same.iter().map(|b| b.uuid.clone()).collect::<Vec<_>>()
+        );
+
+        let mut other_owner = vec![DocBlock::new("first\nid:: dup-1234")];
+        assign_doc_runtime_ids(&mut other_owner, "pages/client-b/Foo.md");
+        assert_ne!(roots[0].uuid, other_owner[0].uuid);
+
+        // A nested duplicate derives from its structural child path.
+        let mut parent = DocBlock::new("p\nid:: x");
+        parent.children.push(DocBlock::new("c\nid:: x"));
+        assign_doc_runtime_ids(std::slice::from_mut(&mut parent), "pages/tree.md");
+        assert_ne!(parent.uuid, parent.children[0].uuid);
+        assert_ne!(parent.uuid, "x");
+        assert_ne!(parent.children[0].uuid, "x");
+    }
+
+    #[test]
+    fn native_capture_import_streams_with_limit_and_collision_rewind() {
+        let dir = scratch("native-capture-import");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let source_path = dir.join("tine_memo_source.m4a");
+        fs::write(&source_path, b"bounded voice memo").unwrap();
+        let mut source = fs::File::open(&source_path).unwrap();
+
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        fs::write(dir.join("assets/voice.m4a"), b"existing memo").unwrap();
+        let stored = tine_graph_features::assets::import_asset_file(
+            &store,
+            "voice.m4a",
+            tine_store::Content::Stream {
+                source,
+                max_bytes: 32 * 1024 * 1024,
+            },
+        )
+        .unwrap();
+        assert_eq!(stored, "voice_1.m4a");
+        assert_eq!(
+            fs::read(dir.join("assets/voice_1.m4a")).unwrap(),
+            b"bounded voice memo"
+        );
+        assert_eq!(
+            fs::read(dir.join("assets/voice.m4a")).unwrap(),
+            b"existing memo",
+            "collision retry must not overwrite an existing graph asset"
+        );
+
+        source = fs::File::open(&source_path).unwrap();
+        assert!(tine_graph_features::assets::import_asset_file(
+            &store,
+            "too-large.m4a",
+            tine_store::Content::Stream {
+                source,
+                max_bytes: 4,
+            },
+        )
+        .is_err());
+        assert!(
+            !dir.join("assets/too-large.m4a").exists(),
+            "an over-limit stream must not leave a visible partial asset"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merge_pages_preserves_src_page_properties() {
+        // F2: reconciling a duplicate page must not silently drop src's page
+        // properties (alias/tags/icon). dst wins on a key clash (no duplicate line).
+        let dir = std::env::temp_dir().join(format!("tine-merge-props-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages").join("dst.md"),
+            "tags:: Keep\n- dst body\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("src.md"),
+            "alias:: Foo\ntags:: Other\n- src body\n",
+        )
+        .unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let _ = store.whole_graph().unwrap();
+        tine_graph_features::pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+        let merged = fs::read_to_string(dir.join("pages").join("dst.md")).unwrap();
+        assert!(
+            merged.contains("alias:: Foo"),
+            "src alias:: preserved: {merged:?}"
+        );
+        assert!(
+            merged.contains("tags:: Keep"),
+            "dst tags:: kept: {merged:?}"
+        );
+        let parsed = doc::parse(&merged);
+        assert!(
+            !parsed
+                .pre_block
+                .as_deref()
+                .unwrap_or("")
+                .contains("tags:: Other"),
+            "src tags:: must not duplicate dst's page key: {merged:?}"
+        );
+        assert!(
+            parsed.roots.iter().any(|block| block.raw().contains("tags:: Other")),
+            "I-4: conflicting source property survives as block text; exemplar pages::merge_pages: {merged:?}"
+        );
+        assert!(
+            merged.contains("dst body") && merged.contains("src body"),
+            "both bodies merged: {merged:?}"
+        );
+        assert!(
+            !dir.join("pages").join("src.md").exists(),
+            "src moved to trash"
+        );
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gh62_alias_from_first_bullet_merges_backlinks() {
+        // GH #62: a user types `alias:: book` as the FIRST bullet on the "books"
+        // page (the natural outliner action). OG treats a properties-only first
+        // block as page properties, so `#book` references must resolve to "books"
+        // and appear in its backlinks. Before the fix this only worked when the
+        // alias lived in the page pre-block (dedicated properties panel / Logseq
+        // file convention); the bulleted form silently did nothing.
+        let build = |books_body: &str| {
+            let dir = std::env::temp_dir().join(format!(
+                "tine-gh62-{}-{}",
+                books_body.len(),
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(dir.join("journals")).unwrap();
+            fs::create_dir_all(dir.join("pages")).unwrap();
+            fs::write(dir.join("pages").join("books.md"), books_body).unwrap();
+            fs::write(
+                dir.join("pages").join("note.md"),
+                "- I read a #book today\n",
+            )
+            .unwrap();
+            let store = model_store(&dir);
+            let snapshot = published_snapshot(&store);
+            let aliases = snapshot.page_aliases();
+            let n: usize = snapshot
+                .backlinks_bounded("books", 20_000, 32 * 1024 * 1024)
+                .groups
+                .iter()
+                .map(|grp| grp.blocks.len())
+                .sum();
+            let _ = fs::remove_dir_all(&dir);
+            (aliases, n)
+        };
+
+        // Alias as the first bullet — now recognized.
+        let (a, n) = build("- alias:: book\n- I like reading\n");
+        assert_eq!(
+            a,
+            vec![("book".to_string(), "books".to_string())],
+            "first-bullet alias registered"
+        );
+        assert_eq!(n, 1, "#book backlink merges onto the books page");
+
+        // Pre-block alias keeps working (Logseq file convention / properties panel).
+        let (a, n) = build("alias:: book\n\n- I like reading\n");
+        assert_eq!(
+            a,
+            vec![("book".to_string(), "books".to_string())],
+            "pre-block alias still registered"
+        );
+        assert_eq!(n, 1, "pre-block alias backlink still merges");
+
+        // Both Logseq spellings and both common comma glyphs are accepted.
+        let (a, n) = build("- aliases:: book，volume\n- I like reading\n");
+        assert_eq!(
+            a,
+            vec![
+                ("book".to_string(), "books".to_string()),
+                ("volume".to_string(), "books".to_string()),
+            ],
+            "plural aliases and full-width comma registered"
+        );
+        assert_eq!(n, 1, "plural alias backlink merges");
+
+        // A whole quoted value is literal text, not a list of page aliases.
+        let (a, n) = build("- alias:: \"book\"\n- I like reading\n");
+        assert!(a.is_empty(), "quoted alias stays literal: {a:?}");
+        assert_eq!(n, 0, "quoted alias does not merge backlinks");
+
+        // A NON-first bullet with `alias::` is a block property, NOT a page alias
+        // (OG parity — only the first properties block counts).
+        let (a, n) = build("- I like reading\n- alias:: book\n");
+        assert!(
+            a.is_empty(),
+            "alias in a non-first block is not a page alias: {a:?}"
+        );
+        assert_eq!(n, 0, "no backlink merge for a mid-page block alias");
+
+        // A first block that mixes content with the property is a regular block,
+        // not a page-properties block.
+        let (a, _) = build("- reading list\nalias:: book\n");
+        assert!(
+            a.is_empty(),
+            "content+property first block is not page properties: {a:?}"
+        );
+    }
+
+    #[test]
+    fn gh62_alias_typed_into_first_block_survives_save_and_reload() {
+        let dir = scratch("gh62-save-reload");
+        fs::write(
+            dir.join("pages").join("books.md"),
+            "- placeholder\n- I like reading\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("note.md"),
+            "- I read a #book today\n",
+        )
+        .unwrap();
+        let store = model_store(&dir);
+        save_model_page(&store, "books", |page| {
+            page.blocks[0].raw = "alias:: book".into()
+        });
+
+        let disk = fs::read_to_string(dir.join("pages").join("books.md")).unwrap();
+        assert_eq!(disk, "alias:: book\n\n- I like reading\n");
+        assert_eq!(
+            match store.whole_graph().unwrap().resolve("book", false) {
+                crate::store::Resolved::Alias { owners } =>
+                    store.page(&owners[0]).unwrap().doc.name,
+                _ => panic!("book alias missing"),
+            },
+            "books"
+        );
+        assert_eq!(
+            store
+                .whole_graph()
+                .unwrap()
+                .backlinks("books")
+                .unwrap()
+                .iter()
+                .map(|group| group.blocks.len())
+                .sum::<usize>(),
+            1
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quick_switch_includes_referenced_pages() {
+        // A page referenced by `#tag` / `[[link]]` but with no file of its own
+        // still "exists" (OG semantics) and must show up in quick-switch — that's
+        // what lets `#`/`[[ ]]` autocomplete say "#thistag" rather than a
+        // misleading "Create #thistag" when the tag is already used elsewhere.
+        let dir = std::env::temp_dir().join(format!("tine-refpages-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages").join("notes.md"),
+            "- uses #thistag and [[Some Page]]\n",
+        )
+        .unwrap();
+        // A page whose page-properties carry tags::/alias:: (OG autolinks these as
+        // page references, bare or bracketed).
+        fs::write(
+            dir.join("pages").join("paper.md"),
+            "tags:: ProjectX， [[Linear IP]]\naliases:: LP Survey，Paper Notes\nstatus:: \"Private, Draft\"\n- body\n",
+        )
+        .unwrap();
+        let store = model_store(&dir);
+        let snapshot = published_snapshot(&store);
+
+        let has = |q: &str, name: &str| {
+            crate::query::quick_switch(&snapshot, q, 8)
+                .iter()
+                .any(|e| tine_core::refs::same_page(&e.name, name))
+        };
+        assert!(
+            has("thistag", "thistag"),
+            "referenced #thistag should appear"
+        );
+        assert!(
+            has("some page", "Some Page"),
+            "referenced [[Some Page]] should appear"
+        );
+        // tags:: values (bare and bracketed) and alias:: values count too.
+        assert!(
+            has("projectx", "ProjectX"),
+            "bare tags:: value should appear"
+        );
+        assert!(
+            has("linear ip", "Linear IP"),
+            "bracketed tags:: value should appear"
+        );
+        for alias in ["LP Survey", "Paper Notes"] {
+            let hit = crate::query::quick_switch(&snapshot, alias, 8)
+                .into_iter()
+                .find(|entry| tine_core::refs::same_page(&entry.name, alias));
+            assert_eq!(
+                hit.as_ref().map(|entry| entry.rel_path_str()),
+                Some("pages/paper.md"),
+                "an authored alias should be inserted while retaining its owning page identity"
+            );
+        }
+        assert!(
+            !has("private", "Private"),
+            "quoted custom value stays literal"
+        );
+        // Neither filed nor referenced → not offered (so autocomplete still says
+        // "Create" for a genuinely new name).
+        assert!(!has("nonexistent", "nonexistent"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tine-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        dir
+    }
+
+    fn candidate_paths(candidates: &ReferenceCandidatePages) -> Vec<String> {
+        let mut paths = candidates
+            .pages
+            .iter()
+            .map(|(entry, _)| entry.rel_path.clone())
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths.into_iter().map(|path| path.unwrap().into()).collect()
+    }
+
+    fn assert_reference_candidates_equal_full_scan(
+        graph: &ReadSnapshot,
+        target: &str,
+        names: &[String],
+        kind: ReferenceKind,
+    ) {
+        let aliases = graph.alias_edges();
+        let real_pages = crate::query::real_page_names(graph);
+        let journal = crate::query::journal_format(graph.config());
+        let exact_paths = |pages: &[(PageEntry, Arc<Document>)]| {
+            let mut paths = pages
+                .iter()
+                .filter(|(entry, doc)| match kind {
+                    ReferenceKind::Explicit => crate::query::page_affects_backlinks(
+                        &real_pages,
+                        &aliases,
+                        &journal,
+                        target,
+                        entry,
+                        doc,
+                    ),
+                    ReferenceKind::Plain => crate::query::page_affects_unlinked(
+                        &real_pages,
+                        &aliases,
+                        &journal,
+                        target,
+                        entry,
+                        doc,
+                    ),
+                })
+                .map(|(entry, _)| entry.rel_path.clone())
+                .collect::<Vec<_>>();
+            paths.sort();
+            paths
+        };
+        let full =
+            graph.with_pages(|pages| exact_paths(&pages.iter().cloned().collect::<Vec<_>>()));
+        let candidates = graph.reference_candidate_pages(names, kind);
+        assert_eq!(exact_paths(&candidates.pages), full);
+    }
+
+    fn assert_indexed_reference_results_equal_full_scan(graph: &ReadSnapshot, target: &str) {
+        {
+            let mut guard = graph.reference_candidate_index.write().unwrap();
+            let index = &mut *guard;
+            index.complete = true;
+            index.generation = graph.cache_generation;
+        }
+        let indexed_backlinks = crate::query::backlinks(graph, target);
+        let indexed_unlinked = crate::query::unlinked_refs(graph, target);
+        graph.reference_candidate_index.write().unwrap().complete = false;
+        let full_backlinks = crate::query::backlinks(graph, target);
+        let full_unlinked = crate::query::unlinked_refs(graph, target);
+        assert_eq!(
+            serde_json::to_value(indexed_backlinks).unwrap(),
+            serde_json::to_value(full_backlinks).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(indexed_unlinked).unwrap(),
+            serde_json::to_value(full_unlinked).unwrap()
+        );
+        graph.reference_candidate_index.write().unwrap().complete = true;
+    }
+
+    fn published_snapshot(store: &crate::store::Store) -> Arc<ReadSnapshot> {
+        store.whole_graph().unwrap().test_read_snapshot()
+    }
+
+    fn model_store(dir: &Path) -> crate::store::Store {
+        crate::store::Store::open(dir, crate::store::OpenOptions::default())
+            .unwrap()
+            .0
+    }
+
+    fn save_on_store(
+        store: &tine_store::Store,
+        page: &PageDto,
+        base: Option<&str>,
+    ) -> tine_store::SaveOutcome {
+        let target = store
+            .whole_graph()
+            .unwrap()
+            .resolve(&page.name, page.kind == PageKind::Journal);
+        let id = match target {
+            tine_store::Resolved::Existing { id, .. } | tine_store::Resolved::Absent { id } => id,
+            _ => panic!("ambiguous page target"),
+        };
+        let base = base
+            .map(|rev| tine_store::SaveBase::Existing(rev.to_owned().into()))
+            .unwrap_or(tine_store::SaveBase::CreateNew);
+        store.save(tine_store::EditKind::ReplacePage, &id, base, page)
+    }
+
+    fn saved_rev(outcome: tine_store::SaveOutcome) -> String {
+        match outcome {
+            tine_store::SaveOutcome::Saved(rev) | tine_store::SaveOutcome::Unchanged(rev) => {
+                rev.into()
+            }
+            other => panic!("page was not saved: {other:?}"),
+        }
+    }
+
+    fn save_model_page(store: &crate::store::Store, name: &str, edit: impl FnOnce(&mut PageDto)) {
+        let id = match store.whole_graph().unwrap().resolve(name, false) {
+            crate::store::Resolved::Existing { id, .. } => id,
+            _ => panic!("missing page {name}"),
+        };
+        let mut read = store.page(&id).unwrap();
+        edit(&mut read.doc);
+        assert!(matches!(
+            store.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                crate::store::SaveBase::Existing(read.rev),
+                &read.doc
+            ),
+            crate::store::SaveOutcome::Saved(_)
+        ));
+    }
+
+    fn advanced_result(snapshot: &ReadSnapshot, source: &str) -> tine_core::query::AdvancedResult {
+        snapshot
+            .run_advanced_query_bounded_cached(source, 20_000, 32 * 1024 * 1024)
+            .0
+    }
+
+    fn advanced_cached_arc(
+        snapshot: &ReadSnapshot,
+        source: &str,
+        max_rows: usize,
+    ) -> Arc<tine_core::query::AdvancedResult> {
+        let max_bytes = 32 * 1024 * 1024;
+        let _ = snapshot.run_advanced_query_bounded_cached(source, max_rows, max_bytes);
+        let key = format!("A\0{max_rows}\0{max_bytes}\0{source}");
+        match snapshot.memos.query.cached(&key) {
+            Some(crate::query::memo::Answer::Advanced { result, .. }) => result,
+            _ => panic!("advanced answer is memoized"),
+        }
+    }
+
+    #[test]
+    fn block_signature_pruning_changes_no_unlinked_or_backlink_result() {
+        // GH #623: nested, multi-script blocks whose pre-order ordinals the
+        // signature slots must line up with; the filtered answer must equal
+        // the answer of the full scan for ASCII, accented and CJK names.
+        let dir = scratch("reference-signature-results");
+        fs::write(dir.join("pages/Café.md"), "alias:: 咖啡\n\n- body\n").unwrap();
+        fs::write(dir.join("pages/Target.md"), "alias:: Alias\n\n- body\n").unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            "- plain target here\n  - nested CAFÉ and cafe\u{301} with 咖啡\n    - deeper [[Café]] link, Alias too\n  - unrelated\n- last: target\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Other.md"),
+            "title:: Other\n\n- 咖啡館 no match, 咖啡 match\n- Targets and retarget\n",
+        )
+        .unwrap();
+        let (store, _, _) =
+            crate::store::Store::open(&dir, crate::store::OpenOptions::default()).unwrap();
+        let snapshot = published_snapshot(&store);
+        for target in ["Target", "Café", "Alias", "咖啡"] {
+            assert_indexed_reference_results_equal_full_scan(&snapshot, target);
+        }
+        let unlinked = crate::query::unlinked_refs(snapshot.as_ref(), "Café");
+        assert!(
+            unlinked.iter().any(|group| group.page == "Source"),
+            "CAFÉ and the NFD spelling are unlinked mentions: {unlinked:?}"
+        );
+    }
+
+    #[test]
+    fn reference_candidate_index_tracks_every_cache_seam_and_falls_back_safely() {
+        let dir = scratch("reference-candidate-index");
+        fs::write(
+            dir.join("pages/Target.md"),
+            "alias:: Alias\n\n- target body\n",
+        )
+        .unwrap();
+        let source_path = dir.join("pages/Source.md");
+        fs::write(&source_path, "- [[Alias]] and plain Target\n").unwrap();
+        fs::write(dir.join("pages/Irrelevant.md"), "- unrelated\n").unwrap();
+        let (store, _, _) =
+            crate::store::Store::open(&dir, crate::store::OpenOptions::default()).unwrap();
+        let mut snapshot = published_snapshot(&store);
+
+        let names = vec![
+            tine_core::refs::page_key("Target"),
+            tine_core::refs::page_key("Alias"),
+        ];
+        let explicit = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
+        assert!(explicit.indexed);
+        assert!(candidate_paths(&explicit).contains(&"pages/Source.md".to_string()));
+        assert!(explicit.pages.len() < explicit.full_page_count);
+        let plain = snapshot.reference_candidate_pages(&names, ReferenceKind::Plain);
+        assert!(plain.indexed);
+        assert!(candidate_paths(&plain).contains(&"pages/Source.md".to_string()));
+        // Non-ASCII names are filtered too (GH #623): the block signatures key
+        // on the matcher's own folding, so "Café" prunes the unrelated pages.
+        let unicode = snapshot
+            .reference_candidate_pages(&[tine_core::refs::page_key("Café")], ReferenceKind::Plain);
+        assert!(unicode.indexed);
+        assert!(unicode.pages.len() < unicode.full_page_count);
+        // A name with no key at all (a lone combining mark) cannot be
+        // filtered: every page stays a candidate.
+        let unfilterable =
+            snapshot.reference_candidate_pages(&["\u{301}".to_string()], ReferenceKind::Plain);
+        assert!(unfilterable.indexed);
+        assert_eq!(unfilterable.pages.len(), unfilterable.full_page_count);
+        assert_reference_candidates_equal_full_scan(
+            snapshot.as_ref(),
+            "Target",
+            &names,
+            ReferenceKind::Explicit,
+        );
+        assert_reference_candidates_equal_full_scan(
+            snapshot.as_ref(),
+            "Target",
+            &names,
+            ReferenceKind::Plain,
+        );
+        assert_indexed_reference_results_equal_full_scan(&snapshot, "Target");
+
+        // Normal save/cache-upsert removes both projections without rebuilding
+        // the graph cache.
+        let source_id = match store.whole_graph().unwrap().resolve("Source", false) {
+            crate::store::Resolved::Existing { id, .. } => id,
+            _ => panic!("source page missing"),
+        };
+        let mut source = store.page(&source_id).unwrap();
+        source.doc.blocks[0].raw = "nothing here".into();
+        assert!(matches!(
+            store.save(
+                crate::EditKind::ReplacePage,
+                &source_id,
+                crate::store::SaveBase::Existing(source.rev),
+                &source.doc,
+            ),
+            crate::store::SaveOutcome::Saved(_)
+        ));
+        snapshot = published_snapshot(&store);
+        assert!(!candidate_paths(
+            &snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit)
+        )
+        .contains(&"pages/Source.md".to_string()));
+        assert!(!candidate_paths(
+            &snapshot.reference_candidate_pages(&names, ReferenceKind::Plain)
+        )
+        .contains(&"pages/Source.md".to_string()));
+        assert_reference_candidates_equal_full_scan(
+            snapshot.as_ref(),
+            "Target",
+            &names,
+            ReferenceKind::Explicit,
+        );
+        assert_reference_candidates_equal_full_scan(
+            snapshot.as_ref(),
+            "Target",
+            &names,
+            ReferenceKind::Plain,
+        );
+        assert_indexed_reference_results_equal_full_scan(&snapshot, "Target");
+
+        // Watcher-equivalent physical replace is an upsert at the same seam.
+        fs::write(&source_path, "- [[Target]] plus Target\n").unwrap();
+        store.scan_refresh().unwrap();
+        snapshot = published_snapshot(&store);
+        assert!(candidate_paths(
+            &snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit)
+        )
+        .contains(&"pages/Source.md".to_string()));
+        assert_reference_candidates_equal_full_scan(
+            snapshot.as_ref(),
+            "Target",
+            &names,
+            ReferenceKind::Explicit,
+        );
+        assert_reference_candidates_equal_full_scan(
+            snapshot.as_ref(),
+            "Target",
+            &names,
+            ReferenceKind::Plain,
+        );
+        assert_indexed_reference_results_equal_full_scan(&snapshot, "Target");
+
+        fs::remove_file(&source_path).unwrap();
+        store.scan_refresh().unwrap();
+        snapshot = published_snapshot(&store);
+        let after_delete = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
+        assert!(after_delete.indexed);
+        assert!(!candidate_paths(&after_delete).contains(&"pages/Source.md".to_string()));
+        assert_reference_candidates_equal_full_scan(
+            snapshot.as_ref(),
+            "Target",
+            &names,
+            ReferenceKind::Explicit,
+        );
+        assert_reference_candidates_equal_full_scan(
+            snapshot.as_ref(),
+            "Target",
+            &names,
+            ReferenceKind::Plain,
+        );
+        assert_indexed_reference_results_equal_full_scan(&snapshot, "Target");
+
+        // A broad invalidation reconstructs from the new physical page set.
+        fs::write(&source_path, "- [[Alias]] and Target again\n").unwrap();
+        store.scan_refresh().unwrap();
+        snapshot = published_snapshot(&store);
+        assert!(candidate_paths(
+            &snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit)
+        )
+        .contains(&"pages/Source.md".to_string()));
+        assert_reference_candidates_equal_full_scan(
+            snapshot.as_ref(),
+            "Target",
+            &names,
+            ReferenceKind::Explicit,
+        );
+        assert_reference_candidates_equal_full_scan(
+            snapshot.as_ref(),
+            "Target",
+            &names,
+            ReferenceKind::Plain,
+        );
+        assert_indexed_reference_results_equal_full_scan(&snapshot, "Target");
+
+        fs::write(dir.join("pages/Created.md"), "- [[Target]] and Target\n").unwrap();
+        store.scan_refresh().unwrap();
+        snapshot = published_snapshot(&store);
+        let after_create = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
+        assert!(after_create.indexed);
+        assert!(candidate_paths(&after_create).contains(&"pages/Created.md".to_string()));
+        assert_indexed_reference_results_equal_full_scan(&snapshot, "Target");
+
+        // Deliberate incompleteness can never narrow the authority set.
+        snapshot.reference_candidate_index.write().unwrap().complete = false;
+        let fallback = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
+        assert!(!fallback.indexed);
+        assert_eq!(fallback.pages.len(), fallback.full_page_count);
+        assert_eq!(fallback.full_page_count, 4);
+        assert_reference_candidates_equal_full_scan(
+            snapshot.as_ref(),
+            "Target",
+            &names,
+            ReferenceKind::Explicit,
+        );
+        assert_reference_candidates_equal_full_scan(
+            snapshot.as_ref(),
+            "Target",
+            &names,
+            ReferenceKind::Plain,
+        );
+
+        let current_generation = snapshot.cache_generation;
+        {
+            let mut guard = snapshot.reference_candidate_index.write().unwrap();
+            let index = &mut *guard;
+            index.complete = true;
+            index.generation = current_generation.saturating_sub(1);
+        }
+        let stale_fallback = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
+        assert!(!stale_fallback.indexed);
+        assert_eq!(stale_fallback.pages.len(), stale_fallback.full_page_count);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn plain_reference_signature_folds_unicode_before_ascii_tokenizing() {
+        let dir = scratch("reference-candidate-unicode-fold");
+        fs::write(dir.join("pages/K.md"), "- target body\n").unwrap();
+        fs::write(dir.join("pages/Source.md"), "- plain K mention\n").unwrap();
+        fs::write(dir.join("pages/Irrelevant.md"), "- unrelated\n").unwrap();
+        let (store, _, _) =
+            crate::store::Store::open(&dir, crate::store::OpenOptions::default()).unwrap();
+        let snapshot = published_snapshot(&store);
+
+        let names = vec![tine_core::refs::page_key("K")];
+        let candidates = snapshot.reference_candidate_pages(&names, ReferenceKind::Plain);
+        assert!(candidates.indexed);
+        assert!(candidate_paths(&candidates).contains(&"pages/Source.md".to_string()));
+        assert!(candidates.pages.len() < candidates.full_page_count);
+        assert_reference_candidates_equal_full_scan(
+            snapshot.as_ref(),
+            "K",
+            &names,
+            ReferenceKind::Plain,
+        );
+        assert_indexed_reference_results_equal_full_scan(&snapshot, "K");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[ignore = "10k synthetic performance receipt"]
+    fn reference_candidate_index_10k_receipt() {
+        let dir = scratch("reference-candidate-10k");
+        for index in 0..10_000 {
+            let body = if index % 1_000 == 0 {
+                format!("- [[Needle]] explicit Needle {index}\n")
+            } else if index % 500 == 0 {
+                format!("- plain Needle {index}\n")
+            } else {
+                format!("- ordinary synthetic page {index}\n")
+            };
+            fs::write(dir.join("pages").join(format!("Page {index:05}.md")), body).unwrap();
+        }
+        let started = std::time::Instant::now();
+        let store = model_store(&dir);
+        let snapshot = published_snapshot(&store);
+        let build_ms = started.elapsed().as_millis();
+        let names = vec![tine_core::refs::page_key("Needle")];
+        let explicit = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
+        let plain = snapshot.reference_candidate_pages(&names, ReferenceKind::Plain);
+        let estimated_bytes = {
+            let index = snapshot.reference_candidate_index.read().unwrap();
+            index.signatures.len() * std::mem::size_of::<Arc<Vec<BlockSignature>>>()
+                + index
+                    .signatures
+                    .iter()
+                    .map(|(_, blocks)| blocks.len() * std::mem::size_of::<BlockSignature>())
+                    .sum::<usize>()
+        };
+        let indexed_backlinks = crate::query::backlinks(snapshot.as_ref(), "Needle");
+        let indexed_unlinked = crate::query::unlinked_refs(snapshot.as_ref(), "Needle");
+        snapshot.reference_candidate_index.write().unwrap().complete = false;
+        let full_backlinks = crate::query::backlinks(snapshot.as_ref(), "Needle");
+        let full_unlinked = crate::query::unlinked_refs(snapshot.as_ref(), "Needle");
+        assert!(explicit.indexed && plain.indexed);
+        assert_eq!(explicit.pages.len(), 10);
+        assert!(plain.pages.len() >= 20);
+        assert_eq!(
+            serde_json::to_value(&indexed_backlinks).unwrap(),
+            serde_json::to_value(&full_backlinks).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&indexed_unlinked).unwrap(),
+            serde_json::to_value(&full_unlinked).unwrap()
+        );
+        eprintln!(
+            "reference-index-10k build_ms={build_ms} estimated_bytes={estimated_bytes} explicit_candidates={} plain_candidates={} full_pages={} linked_exact_equal=true unlinked_exact_equal=true",
+            explicit.pages.len(),
+            plain.pages.len(),
+            explicit.full_page_count,
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn search_cache_isolates_one_page_projection_panic() {
+        let dir = scratch("search-page-panic-isolation");
+        for i in 0..64 {
+            fs::write(
+                dir.join("pages").join(format!("Page {i:02}.md")),
+                format!("- ordinary page {i}\n"),
+            )
+            .unwrap();
+        }
+
+        let g = Graph::open(&dir);
+        let entries = g.list_pages();
+        let workers = page_cache_worker_count();
+        assert!(workers > 1, "test must exercise the parallel cache build");
+        assert!(
+            entries.len() >= 64,
+            "test must cross the parallel threshold"
+        );
+        let per = (entries.len() + workers - 1) / workers;
+        assert!(per >= 2, "a worker shard must contain a sibling page");
+
+        // Pick adjacent entries after observing the actual directory-walk order,
+        // guaranteeing both are in the first worker shard on every filesystem.
+        let bad = &entries[0];
+        let sibling = &entries[1];
+        fs::write(&bad.path, format!("- {TEST_PAGE_PARSE_PANIC_SENTINEL}\n")).unwrap();
+        let needle = "uniquesameshardsibling";
+        fs::write(&sibling.path, format!("- {needle}\n")).unwrap();
+        let sibling_path = sibling.rel_path.clone().unwrap();
+        let bad_path = bad.rel_path.clone().unwrap();
+
+        let execution = g.run_graph_search(needle, 0, 8, false);
+        assert!(
+            execution.hits.iter().any(|hit| matches!(
+                hit,
+                tine_core::query_plan::QueryHit::Block { path, .. } if path == &sibling_path
+            )),
+            "a normal same-shard sibling must remain searchable"
+        );
+        assert_eq!(g.page_index_failures(), vec![bad_path]);
+
+        // Invalidation clears the old diagnostic, and the paced warm-cache path
+        // applies the same page-sized isolation when it rebuilds.
+        g.invalidate_cache();
+        assert!(g.page_index_failures().is_empty());
+        assert!(g.warm_cache_cancellable(|| false));
+        assert!(g
+            .run_graph_search(needle, 0, 8, false)
+            .hits
+            .iter()
+            .any(|hit| matches!(
+                hit,
+                tine_core::query_plan::QueryHit::Block { path, .. } if path == &sibling_path
+            )));
+        assert_eq!(
+            g.page_index_failures(),
+            vec![bad.rel_path.clone().unwrap().to_string()]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn reset_graph_list_calls() {
+        GRAPH_LIST_CALLS.with(|calls| calls.set(0));
+    }
+
+    fn graph_list_calls() -> usize {
+        GRAPH_LIST_CALLS.with(|calls| calls.get())
+    }
+
+    fn reset_cache_linear_scan_steps() {
+        CACHE_LINEAR_SCAN_STEPS.with(|steps| steps.set(0));
+    }
+
+    fn cache_linear_scan_steps() -> usize {
+        CACHE_LINEAR_SCAN_STEPS.with(|steps| steps.get())
+    }
+
+    fn reference_find_entry(g: &Graph, name: &str, kind: PageKind) -> Option<PageEntry> {
+        let dir = match kind {
+            PageKind::Journal => g.journals_path(),
+            PageKind::Page => g.pages_path(),
+        };
+        let rel_dir = match kind {
+            PageKind::Journal => &g.config.journals_dir,
+            PageKind::Page => &g.config.pages_dir,
+        };
+        let matches: Vec<PageEntry> = list_md(
+            &dir,
+            kind,
+            &g.journal_format,
+            g.config.file_name_format,
+            rel_dir,
+        )
+        .into_iter()
+        .filter(|e| tine_core::refs::same_page(&e.name, name))
+        .collect();
+        matches
+            .iter()
+            .find(|e| is_date_stem_entry(e, &g.journal_format))
+            .or_else(|| matches.first())
+            .cloned()
+    }
+
+    #[test]
+    fn find_entry_cache_avoids_per_lookup_list_md_fanout() {
+        let dir = scratch("find-entry-cache-fanout");
+        for i in 0..16 {
+            fs::write(dir.join("pages").join(format!("Page {i}.md")), "- body\n").unwrap();
+        }
+        let g = Graph::open(&dir);
+        assert!(g.warm_cache_cancellable(|| false));
+
+        reset_graph_list_calls();
+        for i in 0..16 {
+            let entry = g
+                .find_entry(&format!("Page {i}"), PageKind::Page)
+                .expect("page exists");
+            assert_eq!(entry.name, format!("Page {i}"));
+        }
+        assert_eq!(
+            graph_list_calls(),
+            1,
+            "all page lookups in one generation should share one raw page scan"
+        );
+
+        for i in 0..16 {
+            assert!(g.find_entry(&format!("Page {i}"), PageKind::Page).is_some());
+        }
+        assert_eq!(
+            graph_list_calls(),
+            1,
+            "warm find_entry index should serve repeated lookups without rescanning"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_entry_cache_matches_old_list_md_selection() {
+        let dir = scratch("find-entry-cache-equivalence");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        fs::write(dir.join("pages").join("Foo.md"), "- normal\n").unwrap();
+        fs::create_dir_all(dir.join("pages").join("sub")).unwrap();
+        fs::write(
+            dir.join("pages").join("sub").join("Nested.md"),
+            "- nested\n",
+        )
+        .unwrap();
+        fs::write(dir.join("journals").join("2026_06_26.org"), "* canonical\n").unwrap();
+        fs::write(
+            dir.join("journals").join("Friday, 26-06-2026.org"),
+            "* stray\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+
+        for (name, kind) in [
+            ("foo", PageKind::Page),
+            ("Nested", PageKind::Page),
+            ("Friday, 26-06-2026", PageKind::Journal),
+        ] {
+            let expected = reference_find_entry(&g, name, kind)
+                .unwrap_or_else(|| panic!("reference missing {kind:?} {name:?}"));
+            let actual = g
+                .find_entry(name, kind)
+                .unwrap_or_else(|| panic!("cached lookup missing {kind:?} {name:?}"));
+            assert_eq!(
+                actual.path, expected.path,
+                "cached lookup must match old selection for {kind:?} {name:?}"
+            );
+        }
+
+        let journal = g
+            .find_entry("Friday, 26-06-2026", PageKind::Journal)
+            .unwrap();
+        assert_eq!(journal.rel_path_str(), "journals/2026_06_26.org");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parsed_doc_cache_index_avoids_warm_open_linear_scans() {
+        let dir = scratch("doc-cache-index-fanout");
+        for i in 0..24 {
+            fs::write(dir.join("pages").join(format!("Page {i}.md")), "- body\n").unwrap();
+        }
+        let g = Graph::open(&dir);
+        assert!(g.warm_cache_cancellable(|| false));
+        assert!(
+            g.cache_index.read().unwrap().is_some(),
+            "warm cache should install the by-name parsed-doc index"
+        );
+
+        reset_cache_linear_scan_steps();
+        for i in 0..24 {
+            let page = g
+                .load_named(&format!("Page {i}"), PageKind::Page)
+                .unwrap()
+                .expect("page exists");
+            assert_eq!(page.name, format!("Page {i}"));
+        }
+        assert_eq!(
+            cache_linear_scan_steps(),
+            0,
+            "warm page opens must not fall back to Vec scans"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parsed_doc_cache_index_does_not_serve_deleted_page() {
+        let dir = scratch("doc-cache-index-delete");
+        fs::write(dir.join("pages").join("Gone.md"), "- old\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/Gone.md");
+        assert!(store.page(&id).is_ok());
+        tine_graph_features::pages::delete_page_expected(
+            &store,
+            "Gone",
+            PageKind::Page,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(
+            store.page(&id).is_err(),
+            "stale cache/index must not serve the deleted entry"
+        );
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("Gone", false),
+            tine_store::Resolved::Absent { .. }
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parsed_doc_cache_index_rebuilds_after_rename() {
+        let dir = scratch("doc-cache-index-rename");
+        fs::write(
+            dir.join("pages").join("Old.md"),
+            "- links [[Old]] and #Old\n",
+        )
+        .unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let old_id = tine_store::PageId::from("pages/Old.md");
+        assert!(store.page(&old_id).is_ok());
+        tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None).unwrap();
+        assert!(
+            store.page(&old_id).is_err(),
+            "old entry must not be served after rename"
+        );
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("Old", false),
+            tine_store::Resolved::Absent { .. }
+        ));
+        let new_page = store
+            .page(&tine_store::PageId::from("pages/New.md"))
+            .unwrap()
+            .doc;
+        assert_eq!(new_page.name, "New");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_entry_cache_rebuilds_after_file_rescue_generation_bump() {
+        let dir = scratch("find-entry-cache-rescue");
+        fs::write(dir.join("journals").join("Loose.md"), "- loose\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+
+        let before = store.whole_graph().unwrap();
+        assert!(matches!(
+            before.resolve("Rescued", false),
+            tine_store::Resolved::Absent { .. }
+        ));
+        assert!(matches!(
+            before.resolve("Loose", true),
+            tine_store::Resolved::Existing { .. }
+        ));
+
+        tine_graph_features::pages::rename_file_to_page(&store, "journals/Loose.md", "Rescued")
+            .unwrap();
+        let after = store.whole_graph().unwrap();
+        assert!(matches!(
+            after.resolve("Loose", true),
+            tine_store::Resolved::Absent { .. }
+        ));
+        assert!(matches!(
+            after.resolve("Rescued", false),
+            tine_store::Resolved::Existing { .. }
+        ));
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_entry_cache_invalidated_by_cold_sync_file() {
+        // Regression: the gen-keyed find_entry index must not go stale on
+        // sync_file's cold-cache branch (the parsed-doc cache not yet built), which
+        // drops the page-list memo WITHOUT bumping cache_gen. Before the fix,
+        // find_entry kept serving the pre-create index here (missing the new file)
+        // until some other op happened to bump the generation.
+        let dir = scratch("find-entry-cache-cold-sync");
+        fs::write(dir.join("pages").join("Existing.md"), "- body\n").unwrap();
+        let g = Graph::open(&dir);
+
+        // Do NOT warm the doc cache: find_entry builds only its own index, so
+        // self.cache stays cold and sync_file below takes the else-branch.
+        assert!(g.find_entry("New", PageKind::Page).is_none());
+
+        // A brand-new external file appears (as Logseq/Syncthing would create it),
+        // reconciled while the doc cache is still cold.
+        fs::write(dir.join("pages").join("New.md"), "- new body\n").unwrap();
+        g.sync_file_internal(&dir.join("pages").join("New.md"), None);
+
+        assert!(
+            g.find_entry("New", PageKind::Page).is_some(),
+            "find_entry index must reflect a file added via the cold sync_file branch"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_pages_snapshot_does_not_block_cache_upsert() {
+        let dir = scratch("with-pages-snapshot-nonblocking");
+        fs::write(dir.join("pages").join("A.md"), "- old\n").unwrap();
+        let g = Arc::new(Graph::open(&dir));
+        assert!(g.warm_cache_cancellable(|| false));
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let scan_graph = Arc::clone(&g);
+        let scan = std::thread::spawn(move || {
+            scan_graph.with_pages(|pages| {
+                assert!(!pages.is_empty());
+                entered_tx.send(()).unwrap();
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .expect("test should release the blocked snapshot scan");
+            });
+        });
+
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("snapshot scan should enter its closure");
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let write_graph = Arc::clone(&g);
+        let path = dir.join("pages").join("B.md");
+        fs::write(&path, "- new\n").unwrap();
+        let writer = std::thread::spawn(move || {
+            write_graph.transaction_publish_page(&path, Some(b"- new\n"), None, false);
+            done_tx.send(()).unwrap();
+        });
+
+        let writer_finished_while_scan_blocked = done_rx
+            .recv_timeout(std::time::Duration::from_millis(300))
+            .is_ok();
+        release_tx.send(()).unwrap();
+        scan.join().unwrap();
+        writer.join().unwrap();
+
+        assert!(
+            writer_finished_while_scan_blocked,
+            "cache_upsert must not wait for a with_pages closure to finish"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_pages_snapshot_survives_concurrent_upsert() {
+        let dir = scratch("with-pages-snapshot-consistent");
+        let path = dir.join("pages").join("A.md");
+        fs::write(&path, "- old body\n").unwrap();
+        let g = Arc::new(Graph::open(&dir));
+        assert!(g.warm_cache_cancellable(|| false));
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (observed_tx, observed_rx) = std::sync::mpsc::channel();
+        let scan_graph = Arc::clone(&g);
+        let scan = std::thread::spawn(move || {
+            scan_graph.with_pages(|pages| {
+                let (_, doc) = pages
+                    .iter()
+                    .find(|(entry, _)| entry.kind == PageKind::Page && entry.name == "A")
+                    .expect("cached page exists");
+                let before = doc.roots[0].raw().to_owned();
+                entered_tx.send(()).unwrap();
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .expect("test should release the blocked snapshot scan");
+                let after = doc.roots[0].raw().to_owned();
+                observed_tx.send((before, after)).unwrap();
+            });
+        });
+
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("snapshot scan should enter its closure");
+
+        let new_content = "- new body\n";
+        fs::write(&path, new_content).unwrap();
+        g.transaction_publish_page(&path, Some(new_content.as_bytes()), None, false);
+
+        release_tx.send(()).unwrap();
+        let (before, after) = observed_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("snapshot scan should report observed values");
+        scan.join().unwrap();
+
+        assert_eq!(before, "old body");
+        assert_eq!(
+            after, "old body",
+            "a with_pages scan must keep iterating its original snapshot"
+        );
+        let loaded = g
+            .load_named("A", PageKind::Page)
+            .unwrap()
+            .expect("page remains loadable");
+        assert_eq!(loaded.blocks[0].raw, "new body");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn warm_cache_primes_alias_and_block_ref_count_caches() {
+        let dir = scratch("warm-derived");
+        fs::write(
+            dir.join("pages").join("Target.md"),
+            "alias:: Alias One\n\n- target\n  id:: aaaaaaaa-0000-0000-0000-000000000001\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Refs.md"),
+            "- see ((aaaaaaaa-0000-0000-0000-000000000001))\n",
+        )
+        .unwrap();
+
+        let store = model_store(&dir);
+        let snapshot = published_snapshot(&store);
+        assert!(snapshot.aliases.get().is_none(), "alias cache starts cold");
+        assert!(
+            snapshot.block_ref_counts.get().is_some(),
+            "block-ref count cache is primed at publication"
+        );
+
+        let _ = snapshot.page_aliases_with_owners();
+        let _ = snapshot.block_ref_counts();
+
+        let aliases = snapshot.aliases.get().cloned().unwrap();
+        assert!(
+            aliases
+                .iter()
+                .any(|(alias, canon, _)| alias == "alias one" && canon == "Target"),
+            "alias cache warmed: {aliases:?}"
+        );
+        let gen = snapshot.cache_generation;
+        let counts = snapshot.block_ref_counts.get();
+        let count_map = counts.expect("block-ref count cache warmed");
+        assert_eq!(
+            snapshot.cache_generation, gen,
+            "count cache is keyed to the current cache generation"
+        );
+        assert_eq!(
+            count_map
+                .get("aaaaaaaa-0000-0000-0000-000000000001")
+                .copied(),
+            Some(1)
+        );
+
+        let first = snapshot.block_ref_counts();
+        let second = snapshot.block_ref_counts();
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "re-entering block_ref_counts should reuse the warmed Arc"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lazy_indexes_build_once_then_carry_across_a_save() {
+        let dir = scratch("lazy-snapshot-index-carry");
+        fs::write(
+            dir.join("pages").join("Target.md"),
+            "- target\n  id:: aaaaaaaa-0000-0000-0000-000000000001\n",
+        )
+        .unwrap();
+        fs::write(dir.join("pages").join("Refs.md"), "- see [[Target]]\n").unwrap();
+        let store = model_store(&dir);
+        let before = published_snapshot(&store);
+        assert!(before.block_index.get().is_none());
+        assert!(before.referenced_name_index.get().is_none());
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                let snapshot = Arc::clone(&before);
+                scope.spawn(move || {
+                    assert_eq!(
+                        snapshot
+                            .block_page_hint("aaaaaaaa-0000-0000-0000-000000000001")
+                            .as_deref(),
+                        Some("Target")
+                    );
+                    assert!(snapshot
+                        .referenced_page_names()
+                        .contains(&"Target".to_owned()));
+                });
+            }
+        });
+        assert_eq!(
+            before
+                .block_full_builds
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "racing readers must share one block-index build"
+        );
+        assert_eq!(
+            before
+                .referenced_name_full_builds
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "racing readers must share one referenced-name build"
+        );
+
+        save_model_page(&store, "Target", |target| {
+            target.blocks[0].raw = "target changed".into();
+        });
+        let after = published_snapshot(&store);
+        assert!(after.block_index.get().is_some());
+        assert!(after.referenced_name_index.get().is_some());
+        assert_eq!(
+            after
+                .block_page_hint("aaaaaaaa-0000-0000-0000-000000000001")
+                .as_deref(),
+            Some("Target")
+        );
+        assert!(after.referenced_page_names().contains(&"Target".to_owned()));
+        assert_eq!(
+            after
+                .block_full_builds
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a read after save must use the carried block index"
+        );
+        assert_eq!(
+            after
+                .referenced_name_full_builds
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a read after save must use the carried referenced-name index"
+        );
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn block_hint_overlay_stays_safe_after_a_block_moves() {
+        let dir = scratch("block-hint-overlay-move");
+        let entry = |name: &str| PageEntry {
+            name: name.into(),
+            kind: PageKind::Page,
+            date_key: None,
+            rel_path: Some(format!("pages/{name}.md").into()),
+            path: dir.join("pages").join(format!("{name}.md")),
+        };
+        let doc = |name: &str, content: &str| {
+            Arc::new(parse_doc(
+                &dir.join("pages").join(format!("{name}.md")),
+                content,
+            ))
+        };
+        let ballast = (0..16)
+            .map(|i| format!("- ballast {i}\n  id:: ballast-{i}\n"))
+            .collect::<String>();
+        let base_pages = Arc::new(Pages::from(vec![
+            (entry("Ballast"), doc("Ballast", &ballast)),
+            (entry("A"), doc("A", "- empty\n")),
+            (entry("B"), doc("B", "- empty\n")),
+        ]));
+        let base = SnapshotBlockIndex::capture(None, &base_pages, &[], None);
+        let added_pages = Arc::new(Pages::from(vec![
+            base_pages[0].clone(),
+            (entry("A"), doc("A", "- source\n  id:: moved-id\n")),
+            base_pages[2].clone(),
+        ]));
+        let added = SnapshotBlockIndex::capture(
+            Some((&base, &base_pages)),
+            &added_pages,
+            &["pages/A.md".into()],
+            None,
+        );
+        assert_eq!(added.overlay.len(), 1);
+        assert_eq!(added.hint("moved-id").as_deref(), Some("A"));
+        let removed_pages = Arc::new(Pages::from(vec![
+            added_pages[0].clone(),
+            (entry("A"), doc("A", "- empty again\n")),
+            added_pages[2].clone(),
+        ]));
+        let stale = SnapshotBlockIndex::capture(
+            Some((&added, &added_pages)),
+            &removed_pages,
+            &["pages/A.md".into()],
+            None,
+        );
+        assert_eq!(stale.hint("moved-id").as_deref(), Some("A"));
+        let moved_pages = Arc::new(Pages::from(vec![
+            removed_pages[0].clone(),
+            removed_pages[1].clone(),
+            (entry("B"), doc("B", "- destination\n  id:: moved-id\n")),
+        ]));
+        let moved = SnapshotBlockIndex::capture(
+            Some((&stale, &removed_pages)),
+            &moved_pages,
+            &["pages/B.md".into()],
+            None,
+        );
+        assert_eq!(moved.hint("moved-id"), None);
+        assert!(moved_pages.iter().any(|(entry, doc)| {
+            entry.name == "B" && SnapshotBlockIndex::block_ids(doc).contains("moved-id")
+        }));
+        assert_eq!(added.hint("moved-id").as_deref(), Some("A"));
+        fs::write(dir.join("pages/A.md"), "- source\n  id:: moved-id\n").unwrap();
+        fs::write(dir.join("pages/B.md"), "- empty\n").unwrap();
+        let store = model_store(&dir);
+        assert_eq!(
+            crate::query::preview_block_with_budget(
+                &published_snapshot(&store),
+                "moved-id",
+                10,
+                4096
+            )
+            .unwrap()
+            .group
+            .page,
+            "A"
+        );
+        fs::write(dir.join("pages/A.md"), "- empty again\n").unwrap();
+        store.scan_refresh().unwrap();
+        fs::write(dir.join("pages/B.md"), "- destination\n  id:: moved-id\n").unwrap();
+        store.scan_refresh().unwrap();
+        assert_eq!(
+            crate::query::preview_block_with_budget(
+                &published_snapshot(&store),
+                "moved-id",
+                10,
+                4096
+            )
+            .unwrap()
+            .group
+            .page,
+            "B",
+            "a stale hint must fall back to the new owning page"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn block_hint_overlay_fold_keeps_answers() {
+        let dir = scratch("block-hint-overlay-fold");
+        let entry = |name: &str| PageEntry {
+            name: name.into(),
+            kind: PageKind::Page,
+            date_key: None,
+            rel_path: Some(format!("pages/{name}.md").into()),
+            path: dir.join("pages").join(format!("{name}.md")),
+        };
+        let doc = |name: &str, content: &str| {
+            Arc::new(parse_doc(
+                &dir.join("pages").join(format!("{name}.md")),
+                content,
+            ))
+        };
+        let ballast = (0..16)
+            .map(|i| format!("- ballast {i}\n  id:: ballast-{i}\n"))
+            .collect::<String>();
+        let base_pages = Arc::new(Pages::from(vec![
+            (entry("Ballast"), doc("Ballast", &ballast)),
+            (entry("A"), doc("A", "- empty\n")),
+            (entry("B"), doc("B", "- empty\n")),
+        ]));
+        let base = SnapshotBlockIndex::capture(None, &base_pages, &[], None);
+        assert_eq!(base.fold_limit(), 2);
+        let before_pages = Arc::new(Pages::from(vec![
+            base_pages[0].clone(),
+            (entry("A"), doc("A", "- first\n  id:: first-new\n")),
+            base_pages[2].clone(),
+        ]));
+        let before = SnapshotBlockIndex::capture(
+            Some((&base, &base_pages)),
+            &before_pages,
+            &["pages/A.md".into()],
+            None,
+        );
+        assert_eq!(before.overlay.len(), 1);
+        assert_eq!(before.hint("first-new").as_deref(), Some("A"));
+        let after_pages = Arc::new(Pages::from(vec![
+            before_pages[0].clone(),
+            before_pages[1].clone(),
+            (entry("B"), doc("B", "- second\n  id:: second-new\n")),
+        ]));
+        let after = SnapshotBlockIndex::capture(
+            Some((&before, &before_pages)),
+            &after_pages,
+            &["pages/B.md".into()],
+            None,
+        );
+        assert!(after.overlay.is_empty());
+        assert_eq!(after.hint("first-new"), before.hint("first-new"));
+        assert_eq!(after.hint("ballast-0"), before.hint("ballast-0"));
+        assert_eq!(after.hint("second-new").as_deref(), Some("B"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn non_reference_edit_reuses_block_ref_count_index() {
+        let dir = scratch("block-ref-count-scoped");
+        fs::write(
+            dir.join("pages").join("Target.md"),
+            "- target\n  id:: aaaaaaaa-0000-0000-0000-000000000001\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Refs.md"),
+            "- see ((aaaaaaaa-0000-0000-0000-000000000001))\n",
+        )
+        .unwrap();
+
+        let store = model_store(&dir);
+        let before = published_snapshot(&store).block_ref_counts();
+        save_model_page(&store, "Target", |target| {
+            target.blocks[0].raw = "target edited without changing references".into();
+        });
+        let after = published_snapshot(&store).block_ref_counts();
+
+        assert!(
+            Arc::ptr_eq(&before, &after),
+            "a non-reference edit must retain the already-built whole-graph count map"
+        );
+        assert_eq!(
+            after.get("aaaaaaaa-0000-0000-0000-000000000001").copied(),
+            Some(1)
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn migrate_recovers_title_named_org_journals() {
+        // Regression: changing :journal/page-title-format while a stale in-memory
+        // format was still active saved new journals under their title
+        // ("Thursday, 25-06-2026.org") instead of the date stem, so they dropped
+        // out of the feed. A reopen + migrate (now .org-aware) must recover them.
+        let dir = scratch("journal-migrate-org");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("journals").join("Thursday, 25-06-2026.org"),
+            "* bla\n",
+        )
+        .unwrap();
+        // A canonical file for another day must be left untouched.
+        fs::write(dir.join("journals").join("2026_06_24.org"), "* prior\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let listed = tine_graph_features::journals::journal_filename_migrations(&store).unwrap();
+        assert_eq!(
+            tine_graph_features::journals::migrate_journal_filenames(&store, &listed)
+                .unwrap()
+                .migrated,
+            1,
+            "exactly the title-named file renamed"
+        );
+        assert!(
+            dir.join("journals").join("2026_06_25.org").exists(),
+            "renamed to date stem"
+        );
+        assert!(
+            !dir.join("journals")
+                .join("Thursday, 25-06-2026.org")
+                .exists(),
+            "old name gone"
+        );
+        assert!(
+            dir.join("journals").join("2026_06_24.org").exists(),
+            "canonical file untouched"
+        );
+
+        // It's now recognized in the feed listing (name via the title format).
+        let names: Vec<String> = store
+            .whole_graph()
+            .unwrap()
+            .inventory()
+            .0
+            .iter()
+            .filter(|e| e.is_journal)
+            .map(|e| e.name.clone())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "Thursday, 25-06-2026"),
+            "listed: {names:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn journal_conflicts_reports_duplicate_days() {
+        let dir = scratch("journal-conflicts");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        // Same day, two files (canonical stem + title-named) — a conflict.
+        fs::write(
+            dir.join("journals").join("2026_06_26.org"),
+            "* canonical content\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("journals").join("Friday, 26-06-2026.org"),
+            "* stray content\n",
+        )
+        .unwrap();
+        // A clean day with one file — not a conflict.
+        fs::write(dir.join("journals").join("2026_06_24.org"), "* fine\n").unwrap();
+
+        let conflicts = Graph::open(&dir).journal_conflicts();
+        assert_eq!(
+            conflicts.len(),
+            1,
+            "exactly one conflicted day: {conflicts:?}"
+        );
+        let c = &conflicts[0];
+        assert_eq!(c.title, "Friday, 26-06-2026");
+        assert_eq!(c.files.len(), 2);
+        // Canonical (date-stem) file sorts first and is flagged; preview is the body line.
+        assert_eq!(c.files[0].name, "2026_06_26.org");
+        assert!(c.files[0].canonical);
+        assert_eq!(c.files[0].preview, "canonical content");
+        assert!(!c.files[1].canonical);
+        assert_eq!(c.files[1].name, "Friday, 26-06-2026.org");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn journal_conflicts_reports_nested_duplicate_days() {
+        let dir = scratch("journal-conflicts-nested");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("journals").join("archive")).unwrap();
+        fs::write(
+            dir.join("journals").join("archive").join("2026_06_26.org"),
+            "* canonical nested\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("journals")
+                .join("archive")
+                .join("Friday, 26-06-2026.org"),
+            "* stray nested\n",
+        )
+        .unwrap();
+
+        let conflicts = Graph::open(&dir).journal_conflicts();
+        assert_eq!(
+            conflicts.len(),
+            1,
+            "nested duplicate day is surfaced: {conflicts:?}"
+        );
+        let files = &conflicts[0].files;
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, "journals/archive/2026_06_26.org");
+        assert_eq!(files[1].path, "journals/archive/Friday, 26-06-2026.org");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_sync_conflicts_reports_nested_conflict_copy() {
+        let dir = scratch("sync-conflicts-nested");
+        fs::create_dir_all(dir.join("pages").join("client-a")).unwrap();
+        fs::write(
+            dir.join("pages").join("client-a").join("Foo.md"),
+            "- base\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages")
+                .join("client-a")
+                .join("Foo.sync-conflict-20260705-141233-A2B2C3D.md"),
+            "- conflict copy\n",
+        )
+        .unwrap();
+
+        let conflicts = Graph::open(&dir).list_sync_conflicts();
+        assert_eq!(
+            conflicts.len(),
+            1,
+            "nested sync-conflict copy is surfaced: {conflicts:?}"
+        );
+        let c = &conflicts[0];
+        assert_eq!(
+            c.path,
+            "pages/client-a/Foo.sync-conflict-20260705-141233-A2B2C3D.md"
+        );
+        assert_eq!(c.base_path.as_deref(), Some("pages/client-a/Foo.md"));
+        assert_eq!(c.base_name, "Foo");
+        assert_eq!(c.kind, PageKind::Page);
+        assert_eq!(c.preview, "conflict copy");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn journals_desc_dedups_duplicate_day_to_canonical() {
+        // The feed must show a day ONCE even when two files resolve to it — else
+        // the same day renders twice (loaded from whichever file path_for picks).
+        let dir = scratch("journal-dedup");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        fs::write(dir.join("journals").join("2026_06_26.org"), "* real day\n").unwrap();
+        fs::write(
+            dir.join("journals").join("Friday, 26-06-2026.org"),
+            "* stray\n",
+        )
+        .unwrap();
+        fs::write(dir.join("journals").join("2026_06_24.org"), "* other day\n").unwrap();
+
+        let js = Graph::open(&dir).journals_desc();
+        assert_eq!(
+            js.len(),
+            2,
+            "one entry per day: {:?}",
+            js.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+        // The deduped 26th keeps the canonical date-stem file (what saves resolve to).
+        let day26 = js
+            .iter()
+            .find(|e| e.name == "Friday, 26-06-2026")
+            .expect("26th present");
+        assert_eq!(
+            day26.path.file_name().unwrap().to_str().unwrap(),
+            "2026_06_26.org"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn future_journals_are_feed_only_excluded_but_keep_raw_identity() {
+        let dir = scratch("future-feed-raw-identity");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:journal/file-name-format \"dd-MM-yyyy\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        let future = dir.join("journals/17-07-2030.md");
+        let future_bytes = b"- future-search-sentinel\n";
+        fs::write(&future, future_bytes).unwrap();
+        fs::write(dir.join("journals/15-07-2030.md"), "- today sentinel\n").unwrap();
+        fs::write(dir.join("journals/14-07-2030.md"), "- past sentinel\n").unwrap();
+        let g = Graph::open(&dir);
+        let future_title = "Wednesday, 17-07-2030";
+        assert_eq!(
+            g.journals_desc().len(),
+            3,
+            "raw inventory retains future journals"
+        );
+        let feed = g.feed_journals_desc_through(JournalDate {
+            year: 2030,
+            month: 7,
+            day: 15,
+        });
+        assert_eq!(
+            feed.iter().map(|e| e.date_key).collect::<Vec<_>>(),
+            vec![Some(20300715), Some(20300714)]
+        );
+        let future_entry = g
+            .journals_desc()
+            .into_iter()
+            .find(|e| e.date_key == Some(20300717))
+            .unwrap();
+        assert_eq!(future_entry.path, future);
+        assert_eq!(
+            g.load_page(&future_entry).unwrap().blocks[0].raw,
+            "future-search-sentinel"
+        );
+        assert!(g.list_pages().iter().any(|e| e.path == future));
+        assert_eq!(
+            g.find_entry(future_title, PageKind::Journal).unwrap().path,
+            future
+        );
+        assert_eq!(
+            g.load_named(future_title, PageKind::Journal)
+                .unwrap()
+                .unwrap()
+                .blocks[0]
+                .raw,
+            "future-search-sentinel"
+        );
+        // Ctrl-K uses the current combined latest-wins graph-search path, not
+        // the legacy quick_switch adapter. Its whole-graph inventory remains
+        // deliberately separate from the filtered Journals feed.
+        assert!(g
+            .run_graph_search(future_title, 8, 8, false)
+            .hits
+            .iter()
+            .any(|hit| matches!(hit,
+                tine_core::query_plan::QueryHit::Page { page, .. } if page.path == future
+            )));
+        assert!(!g.search("future-search-sentinel", 8).is_empty());
+        assert_eq!(g.path_for(future_title, PageKind::Journal), future);
+        assert_eq!(
+            crate::store::Store::open(&dir, Default::default())
+                .unwrap()
+                .0
+                .path_for_os_handoff(
+                    &crate::store::PageId::from(g.rel_path(&future)).file(),
+                    false
+                )
+                .unwrap(),
+            future.canonicalize().unwrap()
+        );
+        assert_eq!(
+            fs::read(&future).unwrap(),
+            future_bytes,
+            "feed/list/search performed no write"
+        );
+
+        // The warmed cache retains exactly the cold membership/order and later
+        // whole-graph lookups still see the excluded future page.
+        assert!(g.warm_cache_cancellable(|| false));
+        assert_eq!(
+            g.feed_journals_desc_through(JournalDate {
+                year: 2030,
+                month: 7,
+                day: 15
+            })
+            .iter()
+            .map(|e| e.date_key)
+            .collect::<Vec<_>>(),
+            vec![Some(20300715), Some(20300714)]
+        );
+        assert!(g
+            .run_graph_search(future_title, 8, 8, false)
+            .hits
+            .iter()
+            .any(|hit| matches!(hit,
+                tine_core::query_plan::QueryHit::Page { page, .. } if page.path == future
+            )));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn warmed_save_cache_upsert_keeps_future_and_duplicate_days_out_of_feed() {
+        let dir = scratch("future-feed-warm-save");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let _ = store.whole_graph().unwrap();
+
+        let mut past = jdto("Jul 14th, 2030");
+        past.blocks[0].raw = "past after warm cache".into();
+        saved_rev(save_on_store(&store, &past, None));
+        let mut today = jdto("Jul 15th, 2030");
+        today.blocks[0].raw = "today after warm cache".into();
+        saved_rev(save_on_store(&store, &today, None));
+        let mut future = jdto("Jul 17th, 2030");
+        future.blocks[0].raw = "future after warm cache".into();
+        saved_rev(save_on_store(&store, &future, None));
+
+        let cutoff = tine_store::Day(20300715);
+        assert_eq!(
+            tine_graph_features::journals::feed_journals_desc_through(&store, cutoff)
+                .unwrap()
+                .iter()
+                .map(|(day, _)| Some(day.0))
+                .collect::<Vec<_>>(),
+            vec![Some(20300715), Some(20300714)],
+            "guarded save/cache-upsert must not leak a future day into warm feed membership"
+        );
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("Jul 17th, 2030", true),
+            tine_store::Resolved::Existing { .. }
+        ));
+        assert!(store
+            .whole_graph()
+            .unwrap()
+            .inventory()
+            .0
+            .iter()
+            .any(|e| e.name == "Jul 17th, 2030"));
+
+        // The raw inventory retains duplicate future files for conflict discovery,
+        // while date deduplication still leaves no future feed row at all.
+        fs::write(dir.join("journals/2030_07_17.org"), "* future twin\n").unwrap();
+        let duplicate = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        assert_eq!(
+            duplicate
+                .whole_graph()
+                .unwrap()
+                .inventory()
+                .0
+                .iter()
+                .filter(|e| e.day == Some(tine_store::Day(20300717)))
+                .count(),
+            1
+        );
+        assert!(
+            tine_graph_features::journals::feed_journals_desc_through(&duplicate, cutoff)
+                .unwrap()
+                .iter()
+                .all(|(day, _)| day.0 != 20300717)
+        );
+        assert!(
+            matches!(duplicate.whole_graph().unwrap().resolve("Jul 17th, 2030", true), tine_store::Resolved::Existing { others, .. } if !others.is_empty()),
+            "future duplicate remains discoverable outside feed"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_transaction_moves_file_and_rewrites_refs() {
+        let dir = scratch("rename");
+        fs::write(dir.join("pages").join("Alpha.md"), "- alpha body\n").unwrap();
+        fs::write(dir.join("pages").join("Other.md"), "- see [[Alpha]] here\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        tine_graph_features::pages::rename_page_expected(&store, "Alpha", "Beta", None).unwrap();
+        // The page file moved (content preserved) and the old file is gone.
+        assert!(!dir.join("pages").join("Alpha.md").exists());
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Beta.md")).unwrap(),
+            "- alpha body\n"
+        );
+        // Every reference was rewritten across the graph.
+        let other = fs::read_to_string(dir.join("pages").join("Other.md")).unwrap();
+        assert!(other.contains("[[Beta]]"), "ref rewritten to [[Beta]]");
+        assert!(!other.contains("[[Alpha]]"), "no stale [[Alpha]] left");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_falls_back_when_a_non_candidate_changed_on_disk() {
+        let dir = scratch("rename-stale-non-candidate");
+        fs::write(dir.join("pages/Old.md"), "- old body\n").unwrap();
+        let referrer = dir.join("pages/Referrer.md");
+        fs::write(&referrer, "- unrelated\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let old_view = store.whole_graph().unwrap();
+        let names = vec!["Old".to_owned()];
+        let initial_candidates = old_view.explicit_referrers(&names);
+        assert!(!initial_candidates
+            .iter()
+            .any(|id| id.as_str() == "pages/Referrer.md"));
+
+        fs::write(&referrer, "- newly landed [[Old]] reference\n").unwrap();
+        assert!(
+            !old_view
+                .explicit_referrers(&names)
+                .iter()
+                .any(|id| id.as_str() == "pages/Referrer.md"),
+            "the held production view must remain unchanged after a disk edit"
+        );
+
+        tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None).unwrap();
+        let rewritten = fs::read_to_string(&referrer).unwrap();
+        assert!(rewritten.contains("[[New]]"));
+        assert!(!rewritten.contains("[[Old]]"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_rolls_back_destination_when_source_remove_fails() {
+        let dir = scratch("rename-remove-failure");
+        let original = "- alpha body\n";
+        let ref_original = "- see [[Alpha]] here\n";
+        fs::write(dir.join("pages/Alpha.md"), original).unwrap();
+        fs::write(dir.join("pages/Other.md"), ref_original).unwrap();
+        let store = loaded_store(&dir);
+        let from = crate::FileId::from("pages/Alpha.md".to_owned());
+        let to = crate::FileId::from("pages/Beta.md".to_owned());
+        let rev = store.read(&from, None).unwrap().1;
+        store.inject_fault(crate::FaultPoint::MidStepIo);
+        store.inject_fault(crate::FaultPoint::UndoLiveWrite);
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        tx.move_file(&from, rev, &to, None);
+        assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
+        assert_eq!(
+            fs::read_to_string(dir.join("pages/Alpha.md")).unwrap(),
+            original
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages/Beta.md")).unwrap(),
+            "external during undo",
+            "rollback must not unlink a destination replaced after its check"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages/Other.md")).unwrap(),
+            ref_original
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rename_namespace_rewrites_all_descendant_refs_in_one_pass() {
+        // A namespace rename (`Project` -> `Archive`) moves the primary page AND
+        // every file-backed descendant, and rewrites every reference to ANY of
+        // them across the graph in a SINGLE multi-target pass per file (perf
+        // Codex#2). Default file-name format is Legacy, so `Project/Alpha` lives
+        // on disk as `Project%2FAlpha.md`.
+        let dir = scratch("rename-ns");
+        fs::write(dir.join("pages").join("Project.md"), "- project body\n").unwrap();
+        fs::write(
+            dir.join("pages").join("Project%2FAlpha.md"),
+            "- alpha body\n",
+        )
+        .unwrap();
+        fs::write(dir.join("pages").join("Project%2FBeta.md"), "- beta body\n").unwrap();
+        // One file references the primary AND both descendants (inline) plus two
+        // bare `tags::` values — all rewritten in the single multi-target pass.
+        fs::write(
+            dir.join("pages").join("Refs.md"),
+            "tags:: Project, Project/Beta\n- see [[Project]], [[Project/Alpha]] and #[[Project/Beta]]\n",
+        )
+        .unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        tine_graph_features::pages::rename_page_expected(&store, "Project", "Archive", None)
+            .unwrap();
+
+        // Primary + every descendant file moved (content preserved), old names gone.
+        assert!(!dir.join("pages").join("Project.md").exists());
+        assert!(!dir.join("pages").join("Project%2FAlpha.md").exists());
+        assert!(!dir.join("pages").join("Project%2FBeta.md").exists());
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Archive.md")).unwrap(),
+            "- project body\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Archive%2FAlpha.md")).unwrap(),
+            "- alpha body\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Archive%2FBeta.md")).unwrap(),
+            "- beta body\n"
+        );
+
+        // Every inline ref AND both bare tag values rewritten; no stale `Project`.
+        let refs = fs::read_to_string(dir.join("pages").join("Refs.md")).unwrap();
+        assert!(refs.contains("[[Archive]]"), "primary inline ref: {refs:?}");
+        assert!(
+            refs.contains("[[Archive/Alpha]]"),
+            "descendant inline ref: {refs:?}"
+        );
+        // `Archive/Beta` is bare-tag-safe (`/` is a tag char), so `#[[..]]`
+        // collapses to the bare `#Archive/Beta` form, matching Logseq.
+        assert!(
+            refs.contains("#Archive/Beta"),
+            "descendant tag ref: {refs:?}"
+        );
+        assert!(
+            refs.contains("tags:: Archive, Archive/Beta"),
+            "bare tags rewritten: {refs:?}"
+        );
+        assert!(
+            !refs.contains("Project"),
+            "no stale Project anywhere: {refs:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn org_page_lists_loads_edits_and_round_trips() {
+        let dir = scratch("org-page");
+        let src = "* TODO Buy milk\nSCHEDULED: <2026-06-25 Thu>\n* second block\n";
+        fs::write(dir.join("pages").join("Org Notes.org"), src).unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/Org Notes.org");
+
+        // Listed, recognized as an org page.
+        let entry = store.whole_graph().unwrap().resolve("Org Notes", false);
+        assert!(
+            matches!(entry, tine_store::Resolved::Existing { id: ref found, .. } if found == &id)
+        );
+        assert_eq!(Format::from_path(&dir.join(id.as_str())), Format::Org);
+
+        // Loaded: format=org, editable, headlines decomposed into blocks.
+        let read = store.page(&id).unwrap();
+        let dto = read.doc;
+        assert_eq!(dto.format, Format::Org);
+        assert!(!dto.read_only);
+        assert_eq!(dto.blocks.len(), 2);
+        assert_eq!(
+            dto.blocks[0].raw,
+            "TODO Buy milk\nSCHEDULED: <2026-06-25 Thu>"
+        );
+        assert_eq!(dto.blocks[1].raw, "second block");
+
+        // No-op save leaves the file byte-identical (no churn).
+        let rev = saved_rev(save_on_store(&store, &dto, dto.rev.as_deref()));
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Org Notes.org")).unwrap(),
+            src
+        );
+
+        // Edit a block and save → file updated, still org, byte-faithful.
+        let mut edited = dto.clone();
+        edited.blocks[1].raw = "second block edited".into();
+        saved_rev(save_on_store(&store, &edited, Some(&rev)));
+        let on_disk = fs::read_to_string(dir.join("pages").join("Org Notes.org")).unwrap();
+        assert_eq!(
+            on_disk,
+            "* TODO Buy milk\nSCHEDULED: <2026-06-25 Thu>\n* second block edited\n"
+        );
+        // No stray .md twin was created.
+        assert!(!dir.join("pages").join("Org Notes.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn guide_flagged_pages_are_never_written_to_graph_files() {
+        let dir = scratch("guide-no-save");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let page = PageDto {
+            name: "Tine-guide/Features/Sheets".into(),
+            kind: PageKind::Page,
+            title: "Features/Sheets".into(),
+            pre_block: None,
+            blocks: vec![BlockDto {
+                id: "guide-block".into(),
+                raw: "This is an ephemeral guide block".into(),
+                collapsed: false,
+                ..Default::default()
+            }],
+            rev: None,
+            format: Format::Md,
+            read_only: true,
+
+            guide: true,
+        };
+
+        assert!(matches!(
+            store.save(
+                tine_store::EditKind::ReplacePage,
+                &tine_store::PageId::from("pages/Guide.md"),
+                tine_store::SaveBase::CreateNew,
+                &page,
+            ),
+            tine_store::SaveOutcome::GuideEphemeral
+        ));
+        let files: Vec<_> = fs::read_dir(dir.join("pages"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            files.is_empty(),
+            "guide save guard must be load-bearing; wrote files: {files:?}"
+        );
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn org_journal_recognized_and_listed() {
+        let dir = scratch("org-journal");
+        fs::write(
+            dir.join("journals").join("2026_06_24.org"),
+            "* woke up\n* TODO ship\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        let j = g
+            .journals_desc()
+            .into_iter()
+            .find(|e| e.kind == PageKind::Journal)
+            .expect("org journal listed");
+        assert_eq!(Format::from_path(&j.path), Format::Org);
+        assert!(j.date_key.is_some(), "journal date parsed from .org stem");
+        let dto = g.load_page(&j).unwrap();
+        assert_eq!(dto.blocks.len(), 2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn non_round_trip_org_is_read_only_and_save_refused() {
+        let dir = scratch("org-ro");
+        // Skipped heading level (`*` then `***`) cannot be reproduced from tree
+        // depth → not round-trip safe → must load read-only and refuse writes.
+        let src = "* a\n*** c\n";
+        fs::write(dir.join("pages").join("Weird.org"), src).unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/Weird.org");
+        let dto = store.page(&id).unwrap().doc;
+        assert_eq!(dto.format, Format::Org);
+        assert!(dto.read_only, "non-round-tripping org loads read-only");
+        assert!(matches!(
+            tine_graph_features::pages::save_page(
+                &store,
+                tine_store::EditKind::ReplacePage,
+                &id,
+                &dto,
+                None,
+                true
+            ),
+            Ok(tine_store::SaveOutcome::ReadOnly(_))
+        ));
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Weird.org")).unwrap(),
+            src
+        );
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn twin_md_org_refuses_writes() {
+        // The unpinned save has no production input. Creation refusal and
+        // pinned keep-mine behavior are tested in pages_snapshot_tests.
+        let dir = scratch("org-twin");
+        fs::write(dir.join("pages").join("Foo.md"), "- md body\n").unwrap();
+        fs::write(dir.join("pages").join("Foo.org"), "* org body\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        assert!(
+            tine_graph_features::pages::rename_page_expected(&store, "Foo", "Bar", None).is_err(),
+            "rename refused on twin"
+        );
+        assert!(
+            tine_graph_features::pages::delete_page_expected(
+                &store,
+                "Foo",
+                PageKind::Page,
+                None,
+                None
+            )
+            .is_err(),
+            "delete refused on twin"
+        );
+        // Both files are byte-intact (nothing was written/moved/trashed).
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Foo.md")).unwrap(),
+            "- md body\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Foo.org")).unwrap(),
+            "* org body\n"
+        );
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn readonly_org_unchanged_does_not_reconcile() {
+        // L2 check: an UNCHANGED read-only (non-round-tripping) .org file must not
+        // spuriously reconcile (bump cache_gen) on a watcher tick — the disk_revs
+        // fast path + structural normalize-compare should both treat it as "ours".
+        let dir = scratch("org-ro-l2");
+        let src = "* a\n*** c\n"; // skipped heading level → read-only
+        let path = dir.join("pages").join("RO.org");
+        fs::write(&path, src).unwrap();
+        let g = Graph::open(&dir);
+        assert!(g.warm_cache_cancellable(|| false));
+        // Confirm it loaded read-only.
+        let dto = g.load_named("RO", PageKind::Page).unwrap().unwrap();
+        assert!(dto.read_only);
+        let gen0 = g.cache_generation();
+        // Two watcher reconciles of the unchanged file must be no-ops.
+        g.sync_file_internal(&path, None);
+        g.sync_file_internal(&path, None);
+        assert_eq!(
+            g.cache_generation(),
+            gen0,
+            "unchanged read-only org reconciled spuriously"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn orphan_assets_lists_only_unreferenced_media() {
+        let dir = scratch("orphans");
+        let assets = dir.join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        // Referenced by blocks (kept): an image, a pdf, a spaced-name clip.
+        fs::write(assets.join("used.png"), b"x").unwrap();
+        fs::write(assets.join("paper.pdf"), b"x").unwrap();
+        fs::write(assets.join("my clip.mp4"), b"x").unwrap();
+        // Not referenced (orphans).
+        fs::write(assets.join("stray.png"), b"x").unwrap();
+        fs::write(assets.join("old_video.webm"), b"x").unwrap();
+        // Sidecars / non-media — never flagged.
+        fs::write(assets.join("paper.edn"), b"{}").unwrap();
+        fs::create_dir_all(assets.join("paper")).unwrap(); // PDF area-image dir
+        fs::write(assets.join("paper").join("1_a_2.png"), b"x").unwrap();
+        fs::write(
+            dir.join("pages").join("P.md"),
+            "- ![](../assets/used.png)\n- [paper](../assets/paper.pdf)\n- ![](../assets/my clip.mp4)\n",
+        )
+        .unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let orphans: Vec<String> = tine_graph_features::assets::orphan_assets(&store)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        assert_eq!(
+            orphans,
+            vec!["old_video.webm".to_string(), "stray.png".to_string()]
+        );
+        // Trash one → it moves out of assets/ into the recoverable trash.
+        tine_graph_features::assets::trash_asset(&store, "stray.png").unwrap();
+        assert!(!assets.join("stray.png").exists());
+        assert!(dir.join("logseq").join(".tine-trash").exists());
+        // A name with a separator is refused (can't escape assets/).
+        assert!(tine_graph_features::assets::trash_asset(&store, "../pages/P.md").is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn orphan_workflow_preserves_parser_link_targets() {
+        let dir = scratch("orphan-parser-targets");
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        for name in ["foo(bar).pdf", "my (clip).mp4", "paper", "stray.png"] {
+            fs::write(dir.join("assets").join(name), b"asset").unwrap();
+        }
+        fs::write(dir.join("pages/P.md"),
+            "- [f](../assets/foo(bar).pdf)\n- [clip](../assets/my%20(clip).mp4)\n- ![](../assets/paper/area.png)\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let orphans = tine_graph_features::assets::orphan_assets(&store).unwrap();
+        assert_eq!(
+            orphans.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            vec!["stray.png"]
+        );
+        assert_eq!(
+            tine_graph_features::assets::trash_asset(&store, "foo(bar).pdf").unwrap(),
+            tine_graph_features::assets::TrashOutcome::Referenced
+        );
+        assert!(dir.join("assets/foo(bar).pdf").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    #[ignore = "manual cold orphan-scan benchmark; OG_P11_CORPUS names a fixture"]
+    fn p11_cold_orphan_scan_benchmark() {
+        let root = std::env::var("OG_P11_CORPUS").expect("fixture path");
+        let store = tine_store::Store::open(Path::new(&root), Default::default())
+            .unwrap()
+            .0;
+        let start = std::time::Instant::now();
+        let orphans = tine_graph_features::assets::orphan_assets(&store).unwrap();
+        eprintln!(
+            "P11 cold orphan scan: {:?}; {} orphans",
+            start.elapsed(),
+            orphans.len()
+        );
+    }
+
+    #[test]
+    fn orphan_assets_does_not_flag_percent_encoded_in_use_asset() {
+        // A block links `../assets/my%20file.png` but the file on disk is named
+        // `my file.png` (the space percent-encoded in the URL, valid Markdown).
+        // The scanner must percent-decode the reference before comparing, so the
+        // in-use file is NOT offered for trashing (DS Codex#7).
+        let dir = scratch("orphan-pct");
+        let assets = dir.join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(assets.join("my file.png"), b"x").unwrap(); // referenced via %20
+        fs::write(assets.join("real orphan.png"), b"x").unwrap(); // genuinely unused
+        fs::write(
+            dir.join("pages").join("P.md"),
+            "- ![pic](../assets/my%20file.png)\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        let orphans: Vec<String> = g.orphan_assets().into_iter().map(|a| a.name).collect();
+        assert_eq!(
+            orphans,
+            vec!["real orphan.png".to_string()],
+            "the percent-encoded in-use asset must not be flagged orphan"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn purge_asset_trash_clears_trashed_files() {
+        let dir = scratch("empty-trash");
+        let assets = dir.join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(assets.join("junk1.png"), b"xx").unwrap(); // 2 bytes
+        fs::write(assets.join("junk2.png"), b"yyy").unwrap(); // 3 bytes
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        tine_graph_features::assets::trash_asset(&store, "junk1.png").unwrap();
+        tine_graph_features::assets::trash_asset(&store, "junk2.png").unwrap();
+        let local_store = model_store(&dir);
+        let stats = local_store.trash_stats().unwrap();
+        assert_eq!(stats[0], (crate::store::TrashKind::Asset, 2, 5));
+        assert_eq!(local_store.purge_asset_trash().unwrap(), (2, 5));
+        assert_eq!(local_store.trash_stats().unwrap()[0].1, 0);
+        // Emptying a never-created trash is a no-op, not an error.
+        let dir2 = scratch("empty-trash-missing");
+        let empty = crate::store::Store::open(&dir2, Default::default())
+            .unwrap()
+            .0;
+        assert_eq!(empty.purge_asset_trash().unwrap(), (0, 0));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir2);
+    }
+
+    #[test]
+    fn purge_asset_trash_keeps_legacy_trashed_pages() {
+        let dir = scratch("empty-trash-keeps-pages");
+        let trash = dir.join("logseq").join(".tine-trash");
+        fs::create_dir_all(&trash).unwrap();
+        let asset = trash.join("123-0__unused.png");
+        let page = trash.join("123-1__Recovered Page.md");
+        fs::write(&asset, b"img").unwrap();
+        fs::write(&page, b"- recovered page\n").unwrap();
+
+        let store = crate::store::Store::open(&dir, Default::default())
+            .unwrap()
+            .0;
+        let stats = store.trash_stats().unwrap();
+        assert_eq!(stats[0], (crate::store::TrashKind::Asset, 1, 3));
+        assert_eq!(stats[1].1, 1, "legacy page trash is protected-counted");
+        assert_eq!(store.purge_asset_trash().unwrap(), (1, 3));
+        assert!(
+            !asset.exists(),
+            "legacy asset trash entry should be deleted"
+        );
+        assert!(page.exists(), "legacy page trash entry must survive");
+        let stats = store.trash_stats().unwrap();
+        assert_eq!(stats[0].1, 0, "asset trash should be empty");
+        assert_eq!(stats[1].1, 1, "page trash should still be counted");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn trash_stats_counts_asset_sidecar_recovery_roots() {
+        let dir = scratch("asset-recovery-stats");
+        let recovery = dir.join("assets/.tine-restore-recovery/restore-1");
+        fs::create_dir_all(&recovery).unwrap();
+        fs::write(recovery.join("note.edn"), b"12345").unwrap();
+        let store = crate::store::Store::open(&dir, Default::default())
+            .unwrap()
+            .0;
+        let legacy = store
+            .trash_stats()
+            .unwrap()
+            .into_iter()
+            .find(|(kind, _, _)| *kind == crate::store::TrashKind::Legacy)
+            .unwrap();
+        assert_eq!(legacy.1, 1);
+        assert_eq!(legacy.2, 5);
+        store.close();
+        drop(store);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn purge_asset_trash_keeps_all_protected_kinds() {
+        let dir = scratch("purge-trash-kinds");
+        let trash = dir.join("logseq/.tine-trash");
+        let entries = [
+            ("pages/1__Page.md", b"page".as_slice()),
+            ("journals/2__2026_09_25.md", b"journal".as_slice()),
+            (
+                "conflicts/3__Page.sync-conflict-1.md",
+                b"conflict".as_slice(),
+            ),
+            ("assets/4__image.png", b"asset".as_slice()),
+            ("5__old-image.png", b"legacy".as_slice()),
+        ];
+        for (name, bytes) in entries {
+            let path = trash.join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+        let folder = trash.join("assets/6__folder");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("inside.png"), b"nested").unwrap();
+        let store = crate::store::Store::open(&dir, Default::default())
+            .unwrap()
+            .0;
+        assert_eq!(
+            store.trash_stats().unwrap()[0],
+            (crate::store::TrashKind::Asset, 3, 17)
+        );
+        assert_eq!(store.purge_asset_trash().unwrap(), (3, 17));
+        for name in [
+            "pages/1__Page.md",
+            "journals/2__2026_09_25.md",
+            "conflicts/3__Page.sync-conflict-1.md",
+        ] {
+            assert!(trash.join(name).exists(), "{name} remains recoverable");
+        }
+        for name in [
+            "assets/4__image.png",
+            "5__old-image.png",
+            "assets/6__folder",
+        ] {
+            assert!(!trash.join(name).exists(), "{name} was purged");
+        }
+        let stats = store.trash_stats().unwrap();
+        assert_eq!(stats[0].1, 0);
+        assert_eq!(stats[1].1, 1);
+        assert_eq!(stats[2].1, 1);
+        assert_eq!(stats[3].1, 1);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn import_asset_uses_given_name() {
+        let dir = scratch("import-name");
+        let src = dir.join("source.png");
+        fs::write(&src, b"img").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let saved = tine_graph_features::assets::import_asset(
+            &store,
+            "source_20260626_120000.png",
+            tine_store::Content::Stream {
+                source: fs::File::open(&src).unwrap(),
+                max_bytes: u64::MAX,
+            },
+        )
+        .unwrap();
+        assert_eq!(saved, "source_20260626_120000.png");
+        assert!(dir.join("assets").join(&saved).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_aborts_on_readonly_org_referrer() {
+        // H1: a rename must NOT rewrite a read-only (non-round-tripping) .org file.
+        let dir = scratch("org-rename-ro");
+        fs::write(dir.join("pages").join("Alpha.md"), "- alpha\n").unwrap();
+        // `* a\n*** c` skips a heading level → not round-trip-safe → read-only.
+        let ro = "* a\n*** c referencing [[Alpha]]\n";
+        fs::write(dir.join("pages").join("Weird.org"), ro).unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let err = tine_graph_features::pages::rename_page_expected(&store, "Alpha", "Beta", None)
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        // All-or-nothing: neither file moved/changed.
+        assert!(
+            dir.join("pages").join("Alpha.md").exists(),
+            "rename rolled back"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Weird.org")).unwrap(),
+            ro
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_org_skips_refs_in_src_block() {
+        // H2 end-to-end: renaming a page leaves a `[[Old]]` literal inside an org
+        // src block untouched while rewriting a real ref outside it.
+        let dir = scratch("org-rename-src");
+        fs::write(dir.join("pages").join("Old.md"), "- old body\n").unwrap();
+        let org = "* note\nsee [[Old]]\n#+BEGIN_SRC clojure\n\"[[Old]]\"\n#+END_SRC\n";
+        fs::write(dir.join("pages").join("Ref.org"), org).unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None).unwrap();
+        let got = fs::read_to_string(dir.join("pages").join("Ref.org")).unwrap();
+        assert_eq!(
+            got,
+            "* note\nsee [[New]]\n#+BEGIN_SRC clojure\n\"[[Old]]\"\n#+END_SRC\n"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn org_save_with_typed_headline_caches_disk_tree() {
+        // H4: typing a column-0 `* ` line into a block body makes the saved bytes
+        // re-parse to a DIFFERENT tree; the cache must reflect what's on disk, not
+        // the (now-stale) frontend doc — so reads after the save see the real shape.
+        let dir = scratch("org-h4");
+        fs::write(dir.join("pages").join("P.org"), "* one\n* two\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/P.org");
+        let dto = store.page(&id).unwrap().doc;
+        assert_eq!(dto.blocks.len(), 2);
+        // Edit block 0's body to contain a column-0 headline marker.
+        let mut edited = dto.clone();
+        edited.blocks[0].raw = "one\n* injected".into();
+        let rev = saved_rev(save_on_store(&store, &edited, dto.rev.as_deref()));
+        // Disk now has THREE headlines.
+        let disk = fs::read_to_string(dir.join("pages").join("P.org")).unwrap();
+        assert_eq!(disk, "* one\n* injected\n* two\n");
+        // A fresh load (served from cache) must reflect the 3-block disk structure,
+        // not the 2-block frontend doc that produced it.
+        let again = store.page(&id).unwrap().doc;
+        assert_eq!(
+            again.blocks.len(),
+            3,
+            "cache reflects disk structure after H4 reparse"
+        );
+        assert_eq!(again.rev.as_deref(), Some(rev.as_str()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn new_page_uses_preferred_format_org() {
+        let dir = scratch("org-pref");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"}\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        assert_eq!(g.preferred_format(), Format::Org);
+        // Create a brand-new page via save (no baseline) — it must land as .org.
+        let page = PageDto {
+            name: "Fresh".into(),
+            kind: PageKind::Page,
+            title: "Fresh".into(),
+            pre_block: None,
+            blocks: vec![BlockDto {
+                id: "x".into(),
+                raw: "hello org".into(),
+                ..Default::default()
+            }],
+            rev: None,
+            format: Format::Org,
+            read_only: false,
+
+            guide: false,
+        };
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        saved_rev(save_on_store(&store, &page, None));
+        assert!(
+            dir.join("pages").join("Fresh.org").exists(),
+            "new page created as .org"
+        );
+        assert!(!dir.join("pages").join("Fresh.md").exists());
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Fresh.org")).unwrap(),
+            "* hello org\n"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_skips_rewrite_when_only_whitespace_trivia_differs() {
+        // The file has an empty bullet written `- ` (trailing space); the
+        // serializer would re-emit it as `-`. A5: a load→save with no real edit
+        // must NOT rewrite the file (no Syncthing churn) and must not bump the
+        // cache generation — the parsed structure is identical.
+        let dir = scratch("noop");
+        let path = dir.join("pages").join("A.md");
+        let original = "- a\n- \n"; // second bullet: dash + trailing space
+        fs::write(&path, original).unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let dto = store
+            .page(&tine_store::PageId::from("pages/A.md"))
+            .unwrap()
+            .doc;
+        let gen_before = store.whole_graph().unwrap().rev();
+        let rev = saved_rev(save_on_store(&store, &dto, dto.rev.as_deref()));
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            original,
+            "bytes left untouched"
+        );
+        assert_eq!(
+            rev,
+            content_rev(original),
+            "returned rev is the on-disk rev"
+        );
+        assert_eq!(
+            store.whole_graph().unwrap().rev(),
+            gen_before,
+            "no cache_gen bump on a trivia-only no-op"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_refuses_page_header_properties_reclassified_as_outline() {
+        // GH #163's v0.5.9 Windows follow-up.  The pure property-line helper was
+        // innocent; the damaging shape arrived at the native save boundary.
+        // Prove that even a contradictory frontend DTO cannot turn B/C into a
+        // bullet and continuation line, for either common line-ending family.
+        for (label, original) in [
+            ("lf", "A:: XX\nB:: XX\nC:: XX\n"),
+            ("crlf", "A:: XX\r\nB:: XX\r\nC:: XX\r\n"),
+            ("unicode", "A:: XX\nklíč:: hodnota\nC:: XX\n"),
+        ] {
+            let dir = scratch(&format!("page-property-firewall-{label}"));
+            let path = dir.join("pages").join("Property.md");
+            fs::write(&path, original).unwrap();
+            let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+            let id = tine_store::PageId::from("pages/Property.md");
+            let read = store.page(&id).unwrap();
+            let mut dto = read.doc;
+            let normalized = original.replace("\r\n", "\n");
+            let normalized = normalized.trim_end_matches('\n');
+            assert_eq!(dto.pre_block.as_deref(), Some(normalized));
+            assert!(dto.blocks.is_empty());
+
+            let (kept, moved) = normalized.split_once('\n').unwrap();
+            dto.pre_block = Some(kept.into());
+            dto.blocks = vec![BlockDto {
+                id: "corrupt-shape".into(),
+                raw: moved.into(),
+                ..Default::default()
+            }];
+
+            let err = match store.save(
+                tine_store::EditKind::ReplacePage,
+                &id,
+                tine_store::SaveBase::Existing(read.rev),
+                &dto,
+            ) {
+                tine_store::SaveOutcome::Io(error) => error,
+                outcome => panic!("header rewrite was accepted: {outcome:?}"),
+            };
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            assert!(err.to_string().contains("page-header property"));
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+
+            store.close();
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn save_refuses_changed_page_header_properties_reclassified_as_outline() {
+        // H7: the preservation firewall is structural, not an exact-text check.
+        // A stale/buggy DTO must not evade it by changing the moved property's
+        // value or key while reclassifying it as outline content. Exercise both
+        // ordinary save and keep-mine through the production feature boundary.
+        for (shape, original, kept, moved, childful) in [
+            (
+                "partial-value",
+                "A:: old\nB:: old\n",
+                Some("A:: old"),
+                "B:: changed",
+                false,
+            ),
+            (
+                "partial-key",
+                "A:: old\nB:: old\n",
+                Some("A:: old"),
+                "Renamed:: old",
+                false,
+            ),
+            (
+                "whole-key-value",
+                "A:: old\nB:: old\n",
+                None,
+                "Renamed:: changed\nC:: newer",
+                true,
+            ),
+            (
+                "crlf",
+                "A:: old\r\nB:: old\r\n",
+                Some("A:: old"),
+                "B:: changed",
+                false,
+            ),
+            (
+                "unicode-plugin",
+                "A:: old\n插件/键:: old\n",
+                Some("A:: old"),
+                "插件/新:: changed",
+                false,
+            ),
+        ] {
+            for forced in [false, true] {
+                let dir = scratch(&format!("page-property-firewall-changed-{shape}-{forced}"));
+                let path = dir.join("pages").join("Property.md");
+                fs::write(&path, original).unwrap();
+                let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+                let id = tine_store::PageId::from("pages/Property.md");
+                let cached_before = store.page(&id).unwrap();
+                let mut dto = cached_before.doc.clone();
+                let generation_before = store.whole_graph().unwrap().rev();
+                dto.pre_block = kept.map(str::to_string);
+                dto.blocks = vec![BlockDto {
+                    id: "reclassified-header".into(),
+                    raw: moved.into(),
+                    children: childful
+                        .then(|| BlockDto {
+                            id: "body".into(),
+                            raw: "Body".into(),
+                            ..Default::default()
+                        })
+                        .into_iter()
+                        .collect(),
+                    ..Default::default()
+                }];
+
+                let outcome = tine_graph_features::pages::save_page(
+                    &store,
+                    tine_store::EditKind::ReplacePage,
+                    &id,
+                    &dto,
+                    Some(cached_before.rev.clone().into()),
+                    forced,
+                )
+                .unwrap();
+                let err = match outcome {
+                    tine_store::SaveOutcome::Io(error) => error,
+                    other => panic!("header rewrite was accepted: {other:?}"),
+                };
+                assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+                assert_eq!(fs::read_to_string(&path).unwrap(), original);
+                assert_eq!(store.whole_graph().unwrap().rev(), generation_before);
+                let cached_after = store.page(&id).unwrap();
+                assert_eq!(cached_after.doc.pre_block, cached_before.doc.pre_block);
+                assert_eq!(
+                    cached_after.doc.blocks.len(),
+                    cached_before.doc.blocks.len()
+                );
+                assert_eq!(cached_after.rev, cached_before.rev);
+                store.close();
+                let _ = fs::remove_dir_all(&dir);
+            }
+        }
+    }
+
+    #[test]
+    fn existing_outline_property_root_remains_editable_beside_page_header() {
+        // An outline block that already had page-property-shaped syntax is not a
+        // reclassified header. Its structural provenance permits a duplicate
+        // header line to be deleted without blaming the already-existing root,
+        // and the root remains ordinarily editable afterwards.
+        let dir = scratch("page-property-existing-outline-provenance");
+        let path = dir.join("pages").join("Property.md");
+        fs::write(&path, "A:: header\nB:: shared\n\n- B:: shared\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/Property.md");
+        let mut dto = store.page(&id).unwrap().doc;
+        dto.pre_block = Some("A:: edited header".into());
+        saved_rev(save_on_store(&store, &dto, dto.rev.as_deref()));
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "A:: edited header\n\n- B:: shared\n"
+        );
+        let mut warm = store.page(&id).unwrap().doc;
+        assert_eq!(warm.pre_block.as_deref(), Some("A:: edited header"));
+        assert_eq!(warm.blocks[0].raw, "B:: shared");
+        warm.blocks[0].raw = "Renamed:: edited outline".into();
+        saved_rev(save_on_store(&store, &warm, warm.rev.as_deref()));
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "A:: edited header\n\n- Renamed:: edited outline\n"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn page_header_property_save_reopens_as_metadata_with_original_line_endings() {
+        // Complements the real gear-panel E2E: drive the native save and a fresh
+        // Graph/parser instance so success cannot come from the just-written
+        // frontend store or Graph cache.
+        for (label, original, expected) in [
+            (
+                "lf",
+                "A:: XX\nB:: XX\nC:: XX\n",
+                "icon:: ★\nA:: XX\nB:: XX\nC:: XX\n",
+            ),
+            (
+                "crlf",
+                "A:: XX\r\nB:: XX\r\nC:: XX\r\n",
+                "icon:: ★\r\nA:: XX\r\nB:: XX\r\nC:: XX\r\n",
+            ),
+        ] {
+            let dir = scratch(&format!("page-property-positive-{label}"));
+            let path = dir.join("pages").join("Property.md");
+            fs::write(&path, original).unwrap();
+            let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+            let id = tine_store::PageId::from("pages/Property.md");
+            let mut dto = store.page(&id).unwrap().doc;
+            dto.pre_block = Some("icon:: ★\nA:: XX\nB:: XX\nC:: XX".into());
+            saved_rev(save_on_store(&store, &dto, dto.rev.as_deref()));
+            assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+            store.close();
+
+            let reopened_store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+            let reopened = reopened_store.page(&id).unwrap().doc;
+            assert_eq!(
+                reopened.pre_block.as_deref(),
+                Some("icon:: ★\nA:: XX\nB:: XX\nC:: XX")
+            );
+            assert!(reopened.blocks.is_empty());
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn new_property_only_first_root_becomes_canonical_page_header() {
+        let dir = scratch("page-property-authoring");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let _ = store.whole_graph().unwrap();
+        let page = PageDto {
+            name: "Property Authoring".into(),
+            kind: PageKind::Page,
+            title: "Property Authoring".into(),
+            pre_block: None,
+            blocks: vec![
+                BlockDto {
+                    id: "transient-header".into(),
+                    raw: "alias:: book\n\nklíč:: hodnota".into(),
+                    ..Default::default()
+                },
+                BlockDto {
+                    id: "body".into(),
+                    raw: "Reading list".into(),
+                    ..Default::default()
+                },
+            ],
+            rev: None,
+            format: Format::Md,
+            read_only: false,
+
+            guide: false,
+        };
+        saved_rev(save_on_store(&store, &page, None));
+        let path = dir.join("pages").join("Property Authoring.md");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "alias:: book\n\nklíč:: hodnota\n\n- Reading list\n"
+        );
+
+        let id = tine_store::PageId::from("pages/Property Authoring.md");
+        let warm = store.page(&id).unwrap().doc;
+        assert_eq!(
+            warm.pre_block.as_deref(),
+            Some("alias:: book\n\nklíč:: hodnota")
+        );
+        assert_eq!(warm.blocks.len(), 1);
+        assert_eq!(warm.blocks[0].raw, "Reading list");
+        assert_eq!(
+            warm.blocks[0].id, "body",
+            "normalization changed the body root identity"
+        );
+        store.close();
+        let reopened_store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let cold = reopened_store.page(&id).unwrap().doc;
+        assert_eq!(cold.pre_block, warm.pre_block);
+        assert_eq!(cold.blocks.len(), warm.blocks.len());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dto_save_retains_runtime_ids_until_external_reparse() {
+        let dir = scratch("dto-save-runtime-ids");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let _ = store.whole_graph().unwrap();
+        let id = tine_store::PageId::from("pages/Runtime.md");
+        let mut dto = PageDto {
+            name: "Runtime".into(),
+            kind: PageKind::Page,
+            title: "Runtime".into(),
+            pre_block: None,
+            blocks: vec![BlockDto {
+                id: "live-parent".into(),
+                raw: "Parent".into(),
+                children: vec![BlockDto {
+                    id: "live-child".into(),
+                    raw: "Child".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            rev: None,
+            format: Format::Md,
+            read_only: false,
+            guide: false,
+        };
+        saved_rev(save_on_store(&store, &dto, None));
+        let first = store.page(&id).unwrap().doc;
+        assert_eq!(first.blocks[0].id, "live-parent");
+        assert_eq!(first.blocks[0].children[0].id, "live-child");
+
+        dto.blocks[0].raw = "Parent edited".into();
+        saved_rev(save_on_store(&store, &dto, first.rev.as_deref()));
+        let second = store.page(&id).unwrap().doc;
+        assert_eq!(second.blocks[0].id, "live-parent");
+        assert_eq!(second.blocks[0].children[0].id, "live-child");
+
+        let path = dir.join("pages/Runtime.md");
+        fs::write(&path, "- External edit\n  - Child\n").unwrap();
+        let external = store.page(&id).unwrap().doc;
+        assert_ne!(external.blocks[0].id, "live-parent");
+        assert_ne!(external.blocks[0].children[0].id, "live-child");
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gh198_canonical_preamble_dto_resaves_cleanly_over_existing_preamble() {
+        // GH #198 persistence-boundary complement. The store fix (pageToDto folds
+        // a flagless properties-only first bullet into pre_block) makes the frontend
+        // emit pre_block=properties + no bullet. Prove that this corrected DTO
+        // shape resaves without tripping the GH #163 preservation firewall even
+        // when disk already carries the identical unbulleted preamble — the exact
+        // second-save that previously jammed the queue with "will retry".
+        let dir = scratch("gh198-canonical-resave");
+        let path = dir.join("pages").join("The Nazi Mind.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "title:: The Nazi Mind\ntags:: books\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let loaded = store
+            .page(&tine_store::PageId::from("pages/The Nazi Mind.md"))
+            .unwrap()
+            .doc;
+        assert_eq!(
+            loaded.pre_block.as_deref(),
+            Some("title:: The Nazi Mind\ntags:: books")
+        );
+        assert!(loaded.blocks.is_empty());
+
+        let dto = PageDto {
+            name: "The Nazi Mind".into(),
+            kind: PageKind::Page,
+            title: "The Nazi Mind".into(),
+            pre_block: Some("title:: The Nazi Mind\ntags:: books".into()),
+            blocks: vec![],
+            rev: None,
+            format: Format::Md,
+            read_only: false,
+
+            guide: false,
+        };
+        saved_rev(save_on_store(&store, &dto, loaded.rev.as_deref()));
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "title:: The Nazi Mind\ntags:: books\n"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn page_header_authoring_is_bounded_and_preserves_existing_preambles() {
+        assert!(tine_core::block_regions::page_header_only(
+            "alias:: book\n\ne\u{301}/plugin.key:: value"
+        )
+        .is_some());
+        for invalid in [
+            " alias:: x",
+            "#alias:: x",
+            "alias key:: x",
+            "alias:: x\nprose",
+            "```\nalias:: x\n```",
+            "alias:: x\n",
+            // I-12 (Martin 2026-10-01): no-space `key::value` is prose to the parser.
+            "alias:: book\n\ne\u{301}/plugin.key::value",
+            "klic::value",
+        ] {
+            assert!(
+                tine_core::block_regions::page_header_only(invalid).is_none(),
+                "accepted {invalid:?}"
+            );
+        }
+
+        // A headerless CRLF page can add a canonical header; both the warm cache
+        // and a fresh parser expose exactly the normalized document shape.
+        let dir = scratch("page-property-existing-headerless");
+        let path = dir.join("pages").join("Existing.md");
+        fs::write(&path, "- Body\r\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/Existing.md");
+        let mut dto = store.page(&id).unwrap().doc;
+        dto.blocks.insert(
+            0,
+            BlockDto {
+                id: "transient-header".into(),
+                raw: "custom/key:: exact value".into(),
+                ..Default::default()
+            },
+        );
+        saved_rev(save_on_store(&store, &dto, dto.rev.as_deref()));
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "custom/key:: exact value\r\n\r\n- Body\r\n"
+        );
+        let warm = store.page(&id).unwrap().doc;
+        assert_eq!(warm.pre_block.as_deref(), Some("custom/key:: exact value"));
+        assert_eq!(warm.blocks.len(), 1);
+        store.close();
+        let cold_store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let cold = cold_store.page(&id).unwrap().doc;
+        assert_eq!(cold.pre_block, warm.pre_block);
+        assert_eq!(cold.blocks.len(), warm.blocks.len());
+        let _ = fs::remove_dir_all(&dir);
+
+        // A non-property preamble may only move through GH #85's explicit prose
+        // promotion. A property candidate cannot make that preamble disappear,
+        // and the warm cache stays on the disk version. Store-backed keep-mine
+        // is covered in pages_snapshot_tests.
+        let dir = scratch("page-property-preamble-loss");
+        let path = dir.join("pages").join("Imported.md");
+        let original = "Intro before outline\n\n- Body\n";
+        fs::write(&path, original).unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/Imported.md");
+        let mut dto = store.page(&id).unwrap().doc;
+        dto.pre_block = None;
+        dto.blocks.insert(
+            0,
+            BlockDto {
+                id: "candidate".into(),
+                raw: "alias:: book".into(),
+                ..Default::default()
+            },
+        );
+        let outcome = save_on_store(&store, &dto, dto.rev.as_deref());
+        assert!(
+            matches!(outcome, tine_store::SaveOutcome::Io(ref err) if err.kind() == io::ErrorKind::InvalidData && err.to_string().contains("existing page preamble"))
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        let cached = store.page(&id).unwrap().doc;
+        assert_eq!(cached.pre_block.as_deref(), Some("Intro before outline"));
+        assert_eq!(cached.blocks.len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn page_header_authoring_never_promotes_unsafe_or_nonfirst_roots() {
+        let cases: Vec<(&str, Format, Vec<BlockDto>)> = vec![
+            (
+                "later",
+                Format::Md,
+                vec![
+                    BlockDto {
+                        id: "body".into(),
+                        raw: "Body".into(),
+                        ..Default::default()
+                    },
+                    BlockDto {
+                        id: "prop".into(),
+                        raw: "alias:: book".into(),
+                        ..Default::default()
+                    },
+                ],
+            ),
+            (
+                "mixed",
+                Format::Md,
+                vec![BlockDto {
+                    id: "mixed".into(),
+                    raw: "alias:: book\nprose".into(),
+                    ..Default::default()
+                }],
+            ),
+            (
+                "fenced",
+                Format::Md,
+                vec![BlockDto {
+                    id: "fenced".into(),
+                    raw: "```\nalias:: book\n```".into(),
+                    ..Default::default()
+                }],
+            ),
+            (
+                "empty",
+                Format::Md,
+                vec![BlockDto {
+                    id: "empty".into(),
+                    raw: "".into(),
+                    ..Default::default()
+                }],
+            ),
+            (
+                "childful",
+                Format::Md,
+                vec![BlockDto {
+                    id: "parent".into(),
+                    raw: "alias:: book".into(),
+                    children: vec![BlockDto {
+                        id: "child".into(),
+                        raw: "Child".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+            ),
+            (
+                "id-bearing",
+                Format::Md,
+                vec![BlockDto {
+                    id: "durable".into(),
+                    raw: "id:: 11111111-1111-4111-8111-111111111111".into(),
+                    ..Default::default()
+                }],
+            ),
+            (
+                "org",
+                Format::Org,
+                vec![BlockDto {
+                    id: "org".into(),
+                    raw: "alias:: book".into(),
+                    ..Default::default()
+                }],
+            ),
+        ];
+        for (label, format, blocks) in cases {
+            let dir = scratch(&format!("page-property-negative-{label}"));
+            if format == Format::Org {
+                fs::create_dir_all(dir.join("logseq")).unwrap();
+                fs::write(
+                    dir.join("logseq").join("config.edn"),
+                    "{:preferred-format \"Org\"}\n",
+                )
+                .unwrap();
+            }
+            let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+            let page = PageDto {
+                name: format!("Negative {label}"),
+                kind: PageKind::Page,
+                title: format!("Negative {label}"),
+                pre_block: None,
+                blocks: blocks.clone(),
+                rev: None,
+                format,
+                read_only: false,
+
+                guide: false,
+            };
+            saved_rev(save_on_store(&store, &page, None));
+            let id = match store.whole_graph().unwrap().resolve(&page.name, false) {
+                tine_store::Resolved::Existing { id, .. } => id,
+                _ => panic!("saved page missing"),
+            };
+            let reopened = store.page(&id).unwrap().doc;
+            assert!(reopened.pre_block.is_none(), "promoted unsafe case {label}");
+            assert_eq!(
+                reopened.blocks.len(),
+                blocks.len(),
+                "changed root count for {label}"
+            );
+            if label == "id-bearing" {
+                assert!(
+                    store
+                        .whole_graph()
+                        .unwrap()
+                        .blocks(&["11111111-1111-4111-8111-111111111111".into()])
+                        .unwrap()[0]
+                        .is_some(),
+                    "ID-bearing root lost addressability"
+                );
+            }
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+
+    fn mkhl(id: &str, page: i64, text: Option<&str>) -> tine_core::pdf::Highlight {
+        let r = tine_core::pdf::Rect {
+            top: 1.0,
+            left: 2.0,
+            width: 3.0,
+            height: 4.0,
+            source_width: None,
+            source_height: None,
+        };
+        tine_core::pdf::Highlight {
+            id: id.into(),
+            page,
+            position: tine_core::pdf::Position {
+                page,
+                bounding: r.clone(),
+                rects: vec![r],
+            },
+            color: "yellow".into(),
+            text: text.map(String::from),
+            image: None,
+        }
+    }
+
+    #[test]
+    fn write_highlights_refuses_unreadable_artifacts_without_partial_commit() {
+        let dir = scratch("highlights-invalid-utf8");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let key = tine_core::pdf::asset_key("paper.pdf");
+        let edn_path = dir.join("assets").join(format!("{key}.edn"));
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let unknown = b"\xff\xfeunknown sidecar bytes";
+        fs::write(&edn_path, unknown).unwrap();
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+
+        let err =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+                .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&edn_path).unwrap(), unknown);
+        assert!(!dir.join("pages").join(format!("hls__{key}.md")).exists());
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn first_annotation_creates_og_artifacts_in_preferred_org_format() {
+        let dir = scratch("pdf-open-org");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"}\n",
+        )
+        .unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let state = tine_graph_features::pdf::open_pdf(&store, "paper.pdf", "Paper").unwrap();
+        assert!(state.highlights.is_empty());
+        assert_eq!(state.page, None);
+        assert_eq!(state.scale, None);
+        // AP5 (2026-10-04): opening reads only; the first annotation creates
+        // the sidecar and the hls page in the preferred format.
+        assert!(!dir.join("assets").join("paper.edn").exists());
+        assert!(!dir.join("pages").join("hls__paper.org").exists());
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+        tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+            .unwrap();
+
+        let sidecar = fs::read_to_string(dir.join("assets").join("paper.edn")).unwrap();
+        assert_eq!(
+            tine_core::pdf::parse_pdf_state(&sidecar).highlights.len(),
+            1
+        );
+        let org_path = dir.join("pages").join("hls__paper.org");
+        assert!(org_path.exists());
+        assert!(!dir.join("pages").join("hls__paper.md").exists());
+        let org = fs::read_to_string(org_path).unwrap();
+        assert!(
+            org.contains("#+FILE: [[../assets/paper.pdf][Paper]]"),
+            "{org}"
+        );
+        assert!(org.contains("#+FILE-PATH: ../assets/paper.pdf"), "{org}");
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn highlight_write_preserves_view_state_and_foreign_edn() {
+        let dir = scratch("pdf-view-state");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let key = tine_core::pdf::asset_key("paper.pdf");
+        let sidecar_path = dir.join("assets").join(format!("{key}.edn"));
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("text"));
+        let original = tine_core::pdf::write_highlights(
+            &[h.clone()],
+            "{:extra {:page 8 :scale 1.9 :plugin \"keep\"}}",
+        );
+        fs::write(&sidecar_path, original).unwrap();
+        let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("more"));
+
+        tine_graph_features::pdf::write_highlights(
+            &store,
+            "paper.pdf",
+            "Paper",
+            &[h.clone(), h2.clone()],
+            &[h.clone()],
+        )
+        .unwrap();
+
+        let written = fs::read_to_string(&sidecar_path).unwrap();
+        let state = tine_core::pdf::parse_pdf_state(&written);
+        assert_eq!(state.highlights, vec![h, h2]);
+        assert_eq!(state.page, Some(8));
+        assert_eq!(state.scale, Some(1.9));
+        let root = tine_core::edn::parse_strict(&written).unwrap();
+        assert_eq!(
+            root.get("extra")
+                .unwrap()
+                .get("plugin")
+                .and_then(tine_core::edn::Edn::as_str),
+            Some("keep")
+        );
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn highlight_write_keeps_existing_hls_format_and_uses_org_drawers() {
+        let dir = scratch("pdf-highlight-org");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"}\n",
+        )
+        .unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("text"));
+        tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+            .unwrap();
+        let org_path = dir.join("pages").join("hls__paper.org");
+        let org = fs::read_to_string(&org_path).unwrap();
+        assert!(org.contains("* text"), "{org}");
+        assert!(org.contains(":PROPERTIES:"), "{org}");
+        assert!(org.contains(":hl-page: 3"), "{org}");
+        assert!(tine_core::org::org_round_trips(&org));
+
+        // Preferred format changes later must not fork the existing annotation
+        // page into a second extension.
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Markdown\"}\n",
+        )
+        .unwrap();
+        store.close();
+        let reopened = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("more"));
+        tine_graph_features::pdf::write_highlights(&reopened, "paper.pdf", "Paper", &[h2], &[])
+            .unwrap();
+        assert!(org_path.exists());
+        assert!(!dir.join("pages").join("hls__paper.md").exists());
+        reopened.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_highlights_checks_notes_page_before_sidecar_commit() {
+        let dir = scratch("highlights-invalid-page");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let key = tine_core::pdf::asset_key("paper.pdf");
+        let page_path = dir.join("pages").join(format!("hls__{key}.md"));
+        let unknown = b"\xff\xfeunknown notes bytes";
+        fs::write(&page_path, unknown).unwrap();
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+
+        let err =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+                .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&page_path).unwrap(), unknown);
+        assert!(!dir.join("assets").join(format!("{key}.edn")).exists());
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_highlights_checks_read_only_org_page_before_sidecar_commit() {
+        let dir = scratch("highlights-readonly-org-page");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"}\n",
+        )
+        .unwrap();
+        let key = tine_core::pdf::asset_key("paper.pdf");
+        let page_path = dir.join("pages").join(format!("hls__{key}.org"));
+        fs::write(&page_path, "* a\n*** c\n").unwrap();
+        let sidecar_path = dir.join("assets").join(format!("{key}.edn"));
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let original = "{:highlights [] :extra {:plugin \"keep\"}}\n";
+        fs::write(&sidecar_path, original).unwrap();
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let err =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+                .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_to_string(&sidecar_path).unwrap(), original);
+        assert_eq!(fs::read_to_string(&page_path).unwrap(), "* a\n*** c\n");
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_highlights_rolls_back_sidecar_when_notes_page_commit_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = scratch("highlights-page-commit-rollback");
+        let key = tine_core::pdf::asset_key("paper.pdf");
+        let page_path = dir.join("pages").join(format!("hls__{key}.md"));
+        let page_before = "- Existing annotation note\n";
+        fs::write(&page_path, page_before).unwrap();
+        let sidecar_path = dir.join("assets").join(format!("{key}.edn"));
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let sidecar_before = "{:highlights [] :extra {:plugin \"keep\"}}\n";
+        fs::write(&sidecar_path, sidecar_before).unwrap();
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let before_rev = store.whole_graph().unwrap().rev();
+
+        let pages = dir.join("pages");
+        let original_permissions = fs::metadata(&pages).unwrap().permissions();
+        let mut read_only = original_permissions.clone();
+        read_only.set_mode(0o555);
+        fs::set_permissions(&pages, read_only).unwrap();
+        let result =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[]);
+        fs::set_permissions(&pages, original_permissions).unwrap();
+
+        assert!(
+            result.is_err(),
+            "the notes-page commit must fail in a read-only directory"
+        );
+        assert_eq!(fs::read_to_string(&sidecar_path).unwrap(), sidecar_before);
+        assert_eq!(fs::read_to_string(&page_path).unwrap(), page_before);
+        store.scan_refresh().unwrap();
+        assert_eq!(
+            store.whole_graph().unwrap().rev(),
+            before_rev,
+            "a failed page commit must not publish a watcher change"
+        );
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_highlights_quarantines_new_sidecar_when_notes_page_commit_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = scratch("highlights-new-sidecar-page-failure");
+        let key = tine_core::pdf::asset_key("paper.pdf");
+        let page_path = dir.join("pages").join(format!("hls__{key}.md"));
+        let page_before = "- Existing annotation note\n";
+        fs::write(&page_path, page_before).unwrap();
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let sidecar_path = dir.join("assets").join(format!("{key}.edn"));
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+
+        let pages = dir.join("pages");
+        let original_permissions = fs::metadata(&pages).unwrap().permissions();
+        let mut read_only = original_permissions.clone();
+        read_only.set_mode(0o555);
+        fs::set_permissions(&pages, read_only).unwrap();
+        let result =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[]);
+        fs::set_permissions(&pages, original_permissions).unwrap();
+
+        assert!(result.is_err());
+        assert!(
+            !sidecar_path.exists(),
+            "the failed pair must leave the primary target absent"
+        );
+        assert_eq!(fs::read_to_string(&page_path).unwrap(), page_before);
+        // The production transaction rolls back both files. The failed new
+        // highlight never becomes live, so there is no sidecar to recover.
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_highlights_preserves_malformed_utf8_sidecar() {
+        let dir = scratch("highlights-malformed-edn");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let key = tine_core::pdf::asset_key("paper.pdf");
+        let edn_path = dir.join("assets").join(format!("{key}.edn"));
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let malformed = "{:highlights [BROKEN :sentinel \"keep me\"";
+        fs::write(&edn_path, malformed).unwrap();
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+
+        let err =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+                .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read_to_string(&edn_path).unwrap(), malformed);
+        assert!(!dir.join("pages").join(format!("hls__{key}.md")).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_highlights_rejects_valid_map_with_trailing_sync_data() {
+        let dir = scratch("highlights-trailing-edn");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let key = tine_core::pdf::asset_key("paper.pdf");
+        let edn_path = dir.join("assets").join(format!("{key}.edn"));
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let malformed = "{:highlights [] :extra {}} TRAILING-SYNC-DATA";
+        fs::write(&edn_path, malformed).unwrap();
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+
+        let err =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+                .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read_to_string(&edn_path).unwrap(), malformed);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_highlights_migrates_legacy_key_forward() {
+        // Old Tine wrote highlight files under a lowercase+underscore key
+        // (`my_paper`); the OG-compatible key for "My Paper.pdf" is "My Paper". A
+        // read must find the legacy file, and the next write must migrate the
+        // artifacts to the new key (removing the stale legacy ones).
+        let dir = scratch("hlmig");
+        let pdf = "My Paper.pdf";
+        let legacy_key = tine_core::pdf::legacy_asset_key(pdf); // "my_paper"
+        let new_key = tine_core::pdf::asset_key(pdf); // "My Paper"
+        assert_ne!(legacy_key, new_key);
+        let assets = dir.join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        let h1 = mkhl(
+            "11111111-1111-1111-1111-111111111111",
+            3,
+            Some("legacy text"),
+        );
+        fs::write(
+            assets.join(format!("{legacy_key}.edn")),
+            tine_core::pdf::write_highlights(&[h1.clone()], ""),
+        )
+        .unwrap();
+        let legacy_page = tine_core::pdf::hls_page_document_for_format(
+            pdf,
+            "My Paper",
+            &[h1.clone()],
+            Format::Md,
+        );
+        fs::write(
+            dir.join("pages").join(format!("hls__{legacy_key}.md")),
+            doc::serialize(&legacy_page),
+        )
+        .unwrap();
+
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        // Read-fallback: the legacy file is found under the new-key lookup.
+        let read = tine_graph_features::pdf::read_highlights(&store, pdf);
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].id, h1.id);
+
+        // Write H1 + a newly-added H2 (editor baseline = [H1]).
+        let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("new text"));
+        tine_graph_features::pdf::write_highlights(
+            &store,
+            pdf,
+            "My Paper",
+            &[h1.clone(), h2.clone()],
+            &[h1.clone()],
+        )
+        .unwrap();
+
+        // New-key artifacts exist with both highlights; the legacy ones are gone.
+        let new_edn = assets.join(format!("{new_key}.edn"));
+        assert!(new_edn.exists(), "new-key edn written");
+        let migrated = tine_core::pdf::parse_highlights(&fs::read_to_string(&new_edn).unwrap());
+        assert_eq!(migrated.len(), 2, "both highlights carried forward");
+        assert!(
+            dir.join("pages")
+                .join(format!("hls__{new_key}.md"))
+                .exists(),
+            "new hls page"
+        );
+        assert!(
+            !assets.join(format!("{legacy_key}.edn")).exists(),
+            "legacy edn removed"
+        );
+        assert!(
+            !dir.join("pages")
+                .join(format!("hls__{legacy_key}.md"))
+                .exists(),
+            "legacy hls page removed"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_hls_migration_preserves_page_format_when_preference_changed() {
+        let dir = scratch("hlmig-format");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"}\n",
+        )
+        .unwrap();
+        let pdf = "My Paper.pdf";
+        let legacy_key = tine_core::pdf::legacy_asset_key(pdf);
+        let new_key = tine_core::pdf::asset_key(pdf);
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("legacy"));
+        fs::write(
+            dir.join("assets").join(format!("{legacy_key}.edn")),
+            tine_core::pdf::write_highlights(&[h.clone()], ""),
+        )
+        .unwrap();
+        let mut legacy_page =
+            tine_core::pdf::hls_page_document_for_format(pdf, "Paper", &[h.clone()], Format::Md);
+        legacy_page.roots[0]
+            .children
+            .push(DocBlock::new("private note"));
+        fs::write(
+            dir.join("pages").join(format!("hls__{legacy_key}.md")),
+            doc::serialize(&legacy_page),
+        )
+        .unwrap();
+
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        tine_graph_features::pdf::write_highlights(
+            &store,
+            pdf,
+            "Paper",
+            &[h.clone()],
+            &[h.clone()],
+        )
+        .unwrap();
+
+        let migrated = dir.join("pages").join(format!("hls__{new_key}.md"));
+        assert!(migrated.exists(), "legacy .md format should be retained");
+        assert!(!dir
+            .join("pages")
+            .join(format!("hls__{new_key}.org"))
+            .exists());
+        assert!(fs::read_to_string(migrated)
+            .unwrap()
+            .contains("private note"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_highlights_does_not_migrate_legacy_key_used_by_another_pdf() {
+        let dir = scratch("hl-legacy-collision");
+        let assets = dir.join("assets");
+        fs::create_dir_all(&assets).unwrap();
+
+        let lower_pdf = "my_paper.pdf";
+        let spaced_pdf = "My Paper.pdf";
+        fs::write(assets.join(lower_pdf), b"lower pdf").unwrap();
+        fs::write(assets.join(spaced_pdf), b"spaced pdf").unwrap();
+
+        let lower_key = tine_core::pdf::asset_key(lower_pdf);
+        let spaced_key = tine_core::pdf::asset_key(spaced_pdf);
+        let spaced_legacy_key = tine_core::pdf::legacy_asset_key(spaced_pdf);
+        assert_eq!(lower_key, spaced_legacy_key);
+        assert_ne!(spaced_key, spaced_legacy_key);
+
+        let lower_highlight = mkhl(
+            "33333333-3333-3333-3333-333333333333",
+            3,
+            Some("lower pdf highlight"),
+        );
+        let lower_edn = tine_core::pdf::write_highlights(&[lower_highlight.clone()], "");
+        let lower_edn_path = assets.join(format!("{lower_key}.edn"));
+        fs::write(&lower_edn_path, &lower_edn).unwrap();
+
+        let mut lower_page = tine_core::pdf::hls_page_document_for_format(
+            lower_pdf,
+            "Lower Paper",
+            &[lower_highlight.clone()],
+            Format::Md,
+        );
+        lower_page.roots[0]
+            .children
+            .push(DocBlock::new("lower pdf private note"));
+        let lower_page_bytes = doc::serialize(&lower_page);
+        let lower_page_path = dir
+            .join("pages")
+            .join(format!("{}.md", tine_core::pdf::hls_page_name(&lower_key)));
+        fs::write(&lower_page_path, &lower_page_bytes).unwrap();
+
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let spaced_highlight = mkhl(
+            "44444444-4444-4444-4444-444444444444",
+            4,
+            Some("spaced pdf highlight"),
+        );
+        tine_graph_features::pdf::write_highlights(
+            &store,
+            spaced_pdf,
+            "My Paper",
+            &[spaced_highlight],
+            &[],
+        )
+        .unwrap();
+
+        assert!(
+            lower_edn_path.exists(),
+            "live colliding pdf edn must not be deleted"
+        );
+        assert_eq!(
+            fs::read_to_string(&lower_edn_path).unwrap(),
+            lower_edn,
+            "live colliding pdf edn must remain byte-for-byte intact"
+        );
+        assert!(
+            lower_page_path.exists(),
+            "live colliding pdf hls page must not be deleted"
+        );
+        assert_eq!(
+            fs::read_to_string(&lower_page_path).unwrap(),
+            lower_page_bytes,
+            "live colliding pdf hls page must remain byte-for-byte intact"
+        );
+
+        let spaced_edn_path = assets.join(format!("{spaced_key}.edn"));
+        let spaced_edn = fs::read_to_string(&spaced_edn_path).unwrap();
+        let spaced_highlights = tine_core::pdf::parse_highlights(&spaced_edn);
+        assert_eq!(spaced_highlights.len(), 1);
+        assert_eq!(
+            spaced_highlights[0].id,
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        let spaced_page_path = dir
+            .join("pages")
+            .join(format!("{}.md", tine_core::pdf::hls_page_name(&spaced_key)));
+        let spaced_page = fs::read_to_string(&spaced_page_path).unwrap();
+        assert!(
+            !spaced_page.contains("lower pdf private note"),
+            "colliding pdf note must not be merged into the spaced pdf hls page"
+        );
+        assert!(
+            !spaced_page.contains(&lower_highlight.id),
+            "colliding pdf highlight must not be merged into the spaced pdf hls page"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deleting_highlight_write_is_not_seen_as_external() {
+        // Repro for the "someone else edited the note" warning when deleting a
+        // highlight while its hls__ page is open: the hls page write (and the
+        // delete-rewrite) must be recognized as Tine's OWN write by the watcher,
+        // not flagged as an external change.
+        let dir = scratch("hldel");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let changes = store.subscribe();
+        let h1 = mkhl("aaaaaaaa-0000-0000-0000-000000000001", 1, Some("one"));
+        let h2 = mkhl("bbbbbbbb-0000-0000-0000-000000000002", 2, Some("two"));
+        let page_path = dir.join("pages").join("hls__paper.md");
+        tine_graph_features::pdf::write_highlights(
+            &store,
+            "paper.pdf",
+            "Paper",
+            &[h1.clone(), h2.clone()],
+            &[],
+        )
+        .unwrap();
+        assert!(page_path.exists());
+        store.scan_refresh().unwrap();
+        while let Some(change) = changes.try_recv().unwrap() {
+            assert!(
+                change.origin != tine_store::Origin::External
+                    || !change
+                        .files
+                        .iter()
+                        .any(|(file, _, _)| file.as_str() == "pages/hls__paper.md"),
+                "initial highlight write looked external: {change:?}"
+            );
+        }
+        // Delete h2 (write just h1; baseline = both) — the rewrite must also be ours.
+        tine_graph_features::pdf::write_highlights(
+            &store,
+            "paper.pdf",
+            "Paper",
+            &[h1.clone()],
+            &[h1.clone(), h2.clone()],
+        )
+        .unwrap();
+        store.scan_refresh().unwrap();
+        while let Some(change) = changes.try_recv().unwrap() {
+            assert!(
+                change.origin != tine_store::Origin::External
+                    || !change
+                        .files
+                        .iter()
+                        .any(|(file, _, _)| file.as_str() == "pages/hls__paper.md"),
+                "delete-rewrite looked external (false conflict): {change:?}"
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_pdf_area_image_uses_og_layout() {
+        let dir = scratch("areaimg");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let rel = tine_graph_features::pdf::write_pdf_area_image(
+            &store,
+            "My Paper.pdf",
+            7,
+            "abc-id",
+            1659920114630,
+            &[1, 2, 3, 4],
+        )
+        .unwrap();
+        // OG layout: assets/<key>/<page>_<id>_<stamp>.png with the OG-compatible key.
+        assert_eq!(rel, "My Paper/7_abc-id_1659920114630.png");
+        let p = dir
+            .join("assets")
+            .join("My Paper")
+            .join("7_abc-id_1659920114630.png");
+        assert_eq!(fs::read(&p).unwrap(), vec![1, 2, 3, 4]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_pdf_area_image_rejects_nested_asset_symlink_escape() {
+        use std::os::unix::fs::symlink;
+        let dir = scratch("areaimg-nested-symlink");
+        let outside =
+            std::env::temp_dir().join(format!("tine-areaimg-outside-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&outside).unwrap();
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        symlink(&outside, dir.join("assets").join("My Paper")).unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        assert!(tine_graph_features::pdf::write_pdf_area_image(
+            &store,
+            "My Paper.pdf",
+            7,
+            "abc-id",
+            1659920114630,
+            &[1, 2, 3],
+        )
+        .is_err());
+        assert!(!outside.join("7_abc-id_1659920114630.png").exists());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    fn jdto(name: &str) -> PageDto {
+        PageDto {
+            name: name.into(),
+            kind: PageKind::Journal,
+            title: name.into(),
+            pre_block: None,
+            blocks: vec![BlockDto {
+                id: String::new(),
+                raw: "hi".into(),
+                collapsed: false,
+                children: vec![],
+                breadcrumb: vec![],
+                ..Default::default()
+            }],
+            rev: None,
+            format: Format::Md,
+            read_only: false,
+
+            guide: false,
+        }
+    }
+
+    #[test]
+    fn custom_journal_format_creates_in_user_format() {
+        let dir = scratch("jfmt");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:journal/file-name-format \"yyyy-MM-dd\"}\n",
+        )
+        .unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        // A custom filename format now creates today's journal at the CORRECT path
+        // (the user's format) — not a misplaced default `yyyy_MM_dd` duplicate.
+        saved_rev(save_on_store(&store, &jdto("Jun 24th, 2026"), None));
+        assert!(dir.join("journals").join("2026-06-24.md").exists());
+        assert!(!dir.join("journals").join("2026_06_24.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn custom_format_journal_files_load_and_display() {
+        // THE reported bug: a graph whose journal files use a non-default format
+        // must still load — the files are recognized and titled in the user's
+        // page-title-format.
+        let dir = scratch("jfmt-load");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:journal/file-name-format \"dd-MM-yyyy\" :journal/page-title-format \"yyyy-MM-dd\"}\n",
+        )
+        .unwrap();
+        // A real journal file in the user's dd-MM-yyyy filename format.
+        fs::write(dir.join("journals").join("24-06-2026.md"), "- hi\n").unwrap();
+        let g = Graph::open(&dir);
+        let js = g.journals_desc();
+        assert_eq!(
+            js.len(),
+            1,
+            "custom-format journal must be recognized (was dropped before)"
+        );
+        assert_eq!(js[0].date_key, Some(20260624));
+        assert_eq!(
+            js[0].name, "2026-06-24",
+            "title rendered in :journal/page-title-format"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn default_journal_format_creates_journal() {
+        let dir = scratch("jfmt-default");
+        // No config.edn → defaults → creation proceeds as before.
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        saved_rev(save_on_store(&store, &jdto("Jun 24th, 2026"), None));
+        assert!(dir.join("journals").join("2026_06_24.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn advanced_query_runs_supported_subset_flags_rest() {
+        let dir = scratch("adv");
+        fs::write(
+            dir.join("journals").join("2026_06_20.md"),
+            "- TODO ship it\n- DONE done\n",
+        )
+        .unwrap();
+        fs::write(dir.join("pages").join("Note.md"), "- TODO not a journal\n").unwrap();
+        let store = model_store(&dir);
+        let snapshot = published_snapshot(&store);
+        // (task ?b #{"TODO"}) maps to the existing Task predicate.
+        let r = advanced_result(
+            &snapshot,
+            r#"[:find (pull ?b [*]) :where (task ?b #{"TODO"})]"#,
+        );
+        assert!(r.supported);
+        assert!(r.ran.contains(&"task".to_string()));
+        let total: usize = r.groups.iter().map(|grp| grp.blocks.len()).sum();
+        assert_eq!(total, 2, "both TODO blocks match");
+        // A clause outside the subset (a raw [?e :a ?v] join) → nothing supported.
+        let u = advanced_result(&snapshot, "[:find ?b :where [?b :block/foo ?v]]");
+        assert!(!u.supported);
+        assert!(u.groups.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn advanced_query_covers_widened_clause_subset() {
+        // 1c: the advanced (datalog) parser maps the same heads the simple DSL
+        // supports — page / namespace / page-tags / scheduled / deadline / journal
+        // — not just the original task/priority/page-ref/property/between set.
+        let dir = scratch("adv-wide");
+        fs::write(
+            dir.join("journals").join("2026_06_20.md"),
+            "- TODO ship it\n  SCHEDULED: <2026-06-25 Thu>\n- pay rent\n  DEADLINE: <2026-06-30 Tue>\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Proj.md"),
+            "tags:: work, urgent\n\n- a task on a named page\n",
+        )
+        .unwrap();
+        // Default file-name format is Legacy (`%2F`), so encode the namespace slash.
+        fs::write(dir.join("pages").join("Proj%2FSub.md"), "- nested note\n").unwrap();
+        let store = model_store(&dir);
+        let snapshot = published_snapshot(&store);
+
+        let count = |src: &str| -> usize {
+            let r = advanced_result(&snapshot, src);
+            assert!(r.supported, "expected supported: {src} (ran={:?})", r.ran);
+            r.groups.iter().map(|grp| grp.blocks.len()).sum()
+        };
+
+        // (scheduled) / (deadline) map to the planning predicates.
+        assert_eq!(count("[:find (pull ?b [*]) :where (scheduled ?b)]"), 1);
+        assert_eq!(count("[:find (pull ?b [*]) :where (deadline ?b)]"), 1);
+        // (journal) restricts to blocks on journal pages.
+        assert_eq!(count("[:find (pull ?b [*]) :where (journal ?b)]"), 2);
+        // (page "Name") pins to one page: its header property block (OG's
+        // `:block/pre-block?` block, GH #617) and the one bullet, so 2 blocks.
+        assert_eq!(count(r#"[:find (pull ?b [*]) :where (page ?b "Proj")]"#), 2);
+        // (namespace "Proj") matches pages under the namespace.
+        assert_eq!(
+            count(r#"[:find (pull ?b [*]) :where (namespace ?b "Proj")]"#),
+            1
+        );
+        // (page-tags "work") matches the tags:: page-property: every block of
+        // the tagged page, header property block included (GH #617).
+        assert_eq!(
+            count(r#"[:find (pull ?b [*]) :where (page-tags ?b "work")]"#),
+            2
+        );
+        // (between scheduled …) is now field-aware, not hardwired to journal-day.
+        assert_eq!(
+            count(
+                r#"[:find (pull ?b [*]) :where (between scheduled ?b "2026-06-24" "2026-06-26")]"#
+            ),
+            1
+        );
+
+        // Unknown heads still land in `ignored`, never guessed.
+        let r = advanced_result(&snapshot, "[:find ?b :where (bogus ?b)]");
+        assert!(r.ignored.contains(&"bogus".to_string()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn advanced_query_skeleton_ignores_comment_hints() {
+        // 1b: the "switch to advanced" skeleton lists supported heads as `;;` EDN
+        // comments. Those example clauses must NOT be parsed as real filters — only
+        // the single active clause runs. (Regression: scan_groups now skips `; …`.)
+        let dir = scratch("adv-skel");
+        fs::write(
+            dir.join("journals").join("2026_06_20.md"),
+            "- TODO ship it\n- DOING wire it\n- DONE done\n",
+        )
+        .unwrap();
+        let store = model_store(&dir);
+        let snapshot = published_snapshot(&store);
+        let skeleton = "[:find (pull ?b [*])\n \
+             :where\n \
+             ;; supported: (priority ?b \"A\") (page-ref ?b \"Nope\") (property ?b :k \"v\")\n \
+             ;; (scheduled ?b) (deadline ?b) (page ?b \"Nowhere\")\n \
+             (task ?b #{\"TODO\" \"DOING\"})]";
+        let r = advanced_result(&snapshot, skeleton);
+        assert!(r.supported, "ran: {:?} ignored: {:?}", r.ran, r.ignored);
+        // Only the task clause ran — the commented priority/page-ref/etc. did not.
+        assert_eq!(r.ran, vec!["task".to_string()]);
+        assert!(
+            r.ignored.is_empty(),
+            "no clause should be ignored: {:?}",
+            r.ignored
+        );
+        let total: usize = r.groups.iter().map(|grp| grp.blocks.len()).sum();
+        assert_eq!(
+            total, 2,
+            "TODO + DOING match; the commented (page-ref \"Nope\") is inert"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persisted_query_sources_cannot_reach_unbounded_cache_keys_or_parser_recursion() {
+        let dir = scratch("query-source-recursion-bound");
+        fs::write(dir.join("pages").join("P.md"), "- TODO ship\n").unwrap();
+        let store = model_store(&dir);
+        let snapshot = published_snapshot(&store);
+
+        // This is the graph-authored shape that previously overflowed the Rust
+        // stack when a persisted query macro rendered. Keep it below the byte
+        // ceiling so the independent nesting guard is the reason it fails shut.
+        let nested = format!("{}(task TODO){}", "(and ".repeat(1_000), ")".repeat(1_000));
+        assert!(tine_core::query::query_source_within_limit(&nested));
+        assert!(!tine_core::query::query_nesting_within_limit(&nested));
+        let simple = snapshot.run_query_bounded(&nested, 20_000, 32 * 1024 * 1024);
+        assert!(simple.groups.is_empty());
+        assert!(snapshot.memos.derived_cache.read().unwrap().is_none());
+        assert!(snapshot.memos.query.is_empty());
+
+        let advanced = format!("[:find (pull ?b [*]) :where {nested}]");
+        let result = advanced_result(&snapshot, &advanced);
+        assert!(!result.supported);
+        assert_eq!(result.ignored, vec!["query-nesting-too-deep"]);
+        assert!(snapshot.memos.query.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn advanced_query_reuses_cached_result_until_graph_changes() {
+        let dir = scratch("adv-memo");
+        fs::write(dir.join("pages").join("P.md"), "- TODO ship\n").unwrap();
+        fs::write(
+            dir.join("pages").join("Notes.md"),
+            "alias:: Scratch\n- ordinary note\n",
+        )
+        .unwrap();
+        let store = model_store(&dir);
+        let mut snapshot = published_snapshot(&store);
+        let q = r#"[:find (pull ?b [*]) :where (task ?b #{"TODO"})]"#;
+
+        let first = advanced_cached_arc(&snapshot, q, 20_000);
+        let second = advanced_cached_arc(&snapshot, q, 20_000);
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "identical advanced query should be served from the memo cache"
+        );
+        assert_eq!(first.groups.len(), 1);
+        let bounded_first = advanced_cached_arc(&snapshot, q, 19_999);
+
+        save_model_page(&store, "Notes", |page| {
+            page.blocks[0].raw = "still unrelated".into()
+        });
+        snapshot = published_snapshot(&store);
+        let after_unrelated = advanced_cached_arc(&snapshot, q, 20_000);
+        let bounded_after_unrelated = advanced_cached_arc(&snapshot, q, 19_999);
+        assert!(
+            Arc::ptr_eq(&first, &after_unrelated),
+            "an unrelated edit must retain the advanced-query memo"
+        );
+        assert!(Arc::ptr_eq(&bounded_first, &bounded_after_unrelated));
+
+        save_model_page(&store, "Notes", |page| {
+            page.pre_block = Some("alias:: Renamed Scratch\n".into())
+        });
+        snapshot = published_snapshot(&store);
+        let after_alias_change = advanced_cached_arc(&snapshot, q, 20_000);
+        assert!(
+            !Arc::ptr_eq(&first, &after_alias_change),
+            "a semantic alias change must invalidate graph-wide derived results"
+        );
+
+        save_model_page(&store, "P", |page| {
+            page.blocks[0].raw = page.blocks[0].raw.replace("TODO", "DONE")
+        });
+        snapshot = published_snapshot(&store);
+
+        let third = advanced_cached_arc(&snapshot, q, 20_000);
+        let bounded_after_affected = advanced_cached_arc(&snapshot, q, 19_999);
+        assert!(
+            !Arc::ptr_eq(&first, &third),
+            "graph mutation must invalidate the advanced-query memo"
+        );
+        assert!(!Arc::ptr_eq(&bounded_first, &bounded_after_affected));
+        assert!(third.groups.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bounded_query_memo_survives_unrelated_edits_and_recomputes_affected_pages() {
+        let dir = scratch("bounded-query-scoped-memo");
+        fs::write(dir.join("pages").join("Tasks.md"), "- TODO ship\n").unwrap();
+        fs::write(
+            dir.join("pages").join("Notes.md"),
+            "alias:: Scratch\n- ordinary note\n",
+        )
+        .unwrap();
+        let store = model_store(&dir);
+        let mut snapshot = published_snapshot(&store);
+
+        let first = snapshot.run_query_bounded("(task TODO)", 20_000, 32 * 1024 * 1024);
+        let second = snapshot.run_query_bounded("(task TODO)", 20_000, 32 * 1024 * 1024);
+        assert!(Arc::ptr_eq(&first.groups, &second.groups));
+
+        save_model_page(&store, "Notes", |page| {
+            page.blocks[0].raw = "still an ordinary note".into()
+        });
+        snapshot = published_snapshot(&store);
+        let after_unrelated = snapshot.run_query_bounded("(task TODO)", 20_000, 32 * 1024 * 1024);
+        assert!(
+            Arc::ptr_eq(&first.groups, &after_unrelated.groups),
+            "an unrelated edit must retain the scoped bounded-query memo"
+        );
+
+        save_model_page(&store, "Tasks", |page| {
+            page.blocks[0].raw = "DONE ship".into()
+        });
+        snapshot = published_snapshot(&store);
+        let after_affected = snapshot.run_query_bounded("(task TODO)", 20_000, 32 * 1024 * 1024);
+        assert!(!Arc::ptr_eq(&first.groups, &after_affected.groups));
+        assert!(after_affected.groups.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bounded_reference_memos_survive_unrelated_edits_and_recompute_all_families() {
+        const TARGET: &str = "12345678-1234-1234-1234-123456789abc";
+        let dir = scratch("bounded-reference-scoped-memos");
+        fs::write(
+            dir.join("pages").join("Referrer.md"),
+            format!("- See [[Target]], plain Target, and (({TARGET}))\n"),
+        )
+        .unwrap();
+        fs::write(dir.join("pages").join("Target.md"), "- target page\n").unwrap();
+        fs::write(
+            dir.join("pages").join("Notes.md"),
+            "alias:: Scratch\n- ordinary note\n",
+        )
+        .unwrap();
+        let store = model_store(&dir);
+        let mut snapshot = published_snapshot(&store);
+
+        let first_block = snapshot.block_referrers_bounded(TARGET, 20_000, 32 * 1024 * 1024);
+        let first_backlink = snapshot.backlinks_bounded("Target", 20_000, 32 * 1024 * 1024);
+        let first_unlinked = snapshot.unlinked_refs_bounded("Target", 20_000, 32 * 1024 * 1024);
+        assert_eq!(first_block.total, 1);
+        assert_eq!(first_backlink.total, 1);
+        assert_eq!(first_unlinked.total, 1);
+
+        save_model_page(&store, "Notes", |page| {
+            page.blocks[0].raw = "still unrelated".into()
+        });
+        snapshot = published_snapshot(&store);
+        let after_block = snapshot.block_referrers_bounded(TARGET, 20_000, 32 * 1024 * 1024);
+        let after_backlink = snapshot.backlinks_bounded("Target", 20_000, 32 * 1024 * 1024);
+        let after_unlinked = snapshot.unlinked_refs_bounded("Target", 20_000, 32 * 1024 * 1024);
+        assert!(Arc::ptr_eq(&first_block.groups, &after_block.groups));
+        assert!(Arc::ptr_eq(&first_backlink.groups, &after_backlink.groups));
+        assert!(Arc::ptr_eq(&first_unlinked.groups, &after_unlinked.groups));
+
+        save_model_page(&store, "Referrer", |page| {
+            page.blocks[0].raw = "No longer a referrer".into()
+        });
+        snapshot = published_snapshot(&store);
+        let affected_block = snapshot.block_referrers_bounded(TARGET, 20_000, 32 * 1024 * 1024);
+        let affected_backlink = snapshot.backlinks_bounded("Target", 20_000, 32 * 1024 * 1024);
+        let affected_unlinked = snapshot.unlinked_refs_bounded("Target", 20_000, 32 * 1024 * 1024);
+        assert!(!Arc::ptr_eq(&first_block.groups, &affected_block.groups));
+        assert!(!Arc::ptr_eq(
+            &first_backlink.groups,
+            &affected_backlink.groups
+        ));
+        assert!(!Arc::ptr_eq(
+            &first_unlinked.groups,
+            &affected_unlinked.groups
+        ));
+        assert_eq!(affected_block.total, 0);
+        assert_eq!(affected_backlink.total, 0);
+        assert_eq!(affected_unlinked.total, 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scoped_reference_invalidation_uses_real_page_before_colliding_alias() {
+        let dir = scratch("reference-invalidation-real-page-first");
+        fs::write(dir.join("pages").join("X.md"), "alias:: Q\n\n- real X\n").unwrap();
+        fs::write(
+            dir.join("pages").join("Y.md"),
+            "alias:: X\n\n- alias owner\n",
+        )
+        .unwrap();
+        fs::write(dir.join("pages").join("Source.md"), "- unrelated\n").unwrap();
+        let store = model_store(&dir);
+        let mut snapshot = published_snapshot(&store);
+
+        let first_linked = snapshot
+            .backlinks_bounded("X", 20_000, 32 * 1024 * 1024)
+            .groups;
+        let first_unlinked = snapshot
+            .unlinked_refs_bounded("X", 20_000, 32 * 1024 * 1024)
+            .groups;
+        assert!(!first_linked.iter().any(|group| group.page == "Source"));
+        assert!(!first_unlinked.iter().any(|group| group.page == "Source"));
+
+        save_model_page(&store, "Source", |page| {
+            page.blocks[0].raw = "Q and [[Q]]".into()
+        });
+        snapshot = published_snapshot(&store);
+
+        let linked = snapshot
+            .backlinks_bounded("X", 20_000, 32 * 1024 * 1024)
+            .groups;
+        let unlinked = snapshot
+            .unlinked_refs_bounded("X", 20_000, 32 * 1024 * 1024)
+            .groups;
+        assert!(!Arc::ptr_eq(&first_linked, &linked));
+        assert!(!Arc::ptr_eq(&first_unlinked, &unlinked));
+        assert!(linked.iter().any(|group| group.page == "Source"));
+        assert!(unlinked.iter().any(|group| group.page == "Source"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nfd_alias_resolves_and_canonical_equivalent_alias_cannot_shadow_real_page() {
+        let dir = scratch("nfd-alias-resolution");
+        fs::write(
+            dir.join("pages").join("Owner.md"),
+            "alias:: Re\u{301}sume\u{301}\n\n- owner\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Shadow.md"),
+            "alias:: Cafe\u{301}\n\n- shadow\n",
+        )
+        .unwrap();
+        fs::write(dir.join("pages").join("Café.md"), "- real page\n").unwrap();
+        let g = Graph::open(&dir);
+        assert!(g.warm_cache_cancellable(|| false));
+
+        assert_eq!(
+            g.load_named("Re\u{301}sume\u{301}", PageKind::Page)
+                .unwrap()
+                .unwrap()
+                .name,
+            "Owner"
+        );
+        assert_eq!(
+            g.load_named("Cafe\u{301}", PageKind::Page)
+                .unwrap()
+                .unwrap()
+                .name,
+            "Café",
+            "the canonically equivalent real title must win before alias fallback"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn overflowed_bounded_memo_recomputes_when_an_omitted_match_stops_matching() {
+        let dir = scratch("bounded-overflow-negative-transition");
+        fs::write(dir.join("pages").join("A.md"), "- TODO first\n").unwrap();
+        fs::write(dir.join("pages").join("B.md"), "- TODO second\n").unwrap();
+        fs::write(dir.join("pages").join("Notes.md"), "- unrelated\n").unwrap();
+        let store = model_store(&dir);
+        let mut snapshot = published_snapshot(&store);
+
+        let first = snapshot.run_query_bounded("(task TODO)", 1, 32 * 1024 * 1024);
+        assert!(first.exceeded);
+        assert_eq!(first.total, 2);
+        save_model_page(&store, "Notes", |page| {
+            page.blocks[0].raw = "still unrelated".into()
+        });
+        snapshot = published_snapshot(&store);
+        let after_unrelated = snapshot.run_query_bounded("(task TODO)", 1, 32 * 1024 * 1024);
+        assert!(Arc::ptr_eq(&first.groups, &after_unrelated.groups));
+        assert!(after_unrelated.exceeded);
+        assert_eq!(after_unrelated.total, 2);
+
+        let admitted = first.groups[0].page.clone();
+        let omitted = if admitted == "A" { "B" } else { "A" };
+        save_model_page(&store, omitted, |page| {
+            page.blocks[0].raw = "DONE no longer matches".into()
+        });
+        snapshot = published_snapshot(&store);
+
+        let after = snapshot.run_query_bounded("(task TODO)", 1, 32 * 1024 * 1024);
+        assert!(!Arc::ptr_eq(&first.groups, &after.groups));
+        assert!(!after.exceeded);
+        assert_eq!(after.total, 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn advanced_cache_invalidation_preserves_nul_inside_opaque_query_source() {
+        let dir = scratch("advanced-cache-nul-query");
+        fs::write(dir.join("pages").join("P.md"), "- DONE ship\n").unwrap();
+        let store = model_store(&dir);
+        let original = published_snapshot(&store);
+        let query = "[:find (pull ?b [*]) :where \0 (task ?b #{\"TODO\"})]";
+        let first = advanced_result(&original, query);
+        assert!(first.groups.is_empty());
+
+        save_model_page(&store, "P", |page| page.blocks[0].raw = "TODO ship".into());
+        let warm = advanced_result(&published_snapshot(&store), query);
+        let fresh_store = model_store(&dir);
+        let fresh = advanced_result(&published_snapshot(&fresh_store), query);
+        assert_eq!(warm.groups.len(), 1);
+        assert_eq!(warm.groups.len(), fresh.groups.len());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn derived_and_query_memos_are_lru_bounded() {
+        let dir = scratch("memo-lru-bound");
+        let store = model_store(&dir);
+        let snapshot = published_snapshot(&store);
+        let generation = snapshot.cache_generation;
+        let empty_advanced = || {
+            let result = Arc::new(tine_core::query::AdvancedResult {
+                groups: Vec::new(),
+                ran: Vec::new(),
+                ignored: Vec::new(),
+                supported: true,
+            });
+            let answer = crate::query::memo::Answer::Advanced {
+                result,
+                total: 0,
+                exceeded: false,
+            };
+            (answer, None)
+        };
+        let empty_groups = || crate::query::BoundedGroups {
+            groups: Vec::new(),
+            total: 0,
+            exceeded: false,
+        };
+        for i in 0..(DERIVED_CACHE_MAX_ENTRIES + 20) {
+            let _ =
+                snapshot
+                    .memos
+                    .derived_memo_bounded(generation, format!("test\0{i}"), empty_groups);
+            let _ = snapshot.query_answer(
+                format!("test\0{i}"),
+                tine_core::date::JournalDate::today(),
+                empty_advanced,
+            );
+        }
+        let oversized_key = "x".repeat(DERIVED_CACHE_MAX_ENTRY_BYTES / 2 + 1);
+        let _ =
+            snapshot
+                .memos
+                .derived_memo_bounded(generation, oversized_key.clone(), empty_groups);
+        let _ = snapshot.query_answer(
+            oversized_key.clone(),
+            tine_core::date::JournalDate::today(),
+            empty_advanced,
+        );
+        let derived = snapshot.memos.derived_cache.read().unwrap();
+        assert_eq!(
+            derived.as_ref().unwrap().results.len(),
+            DERIVED_CACHE_MAX_ENTRIES
+        );
+        assert!(!derived
+            .as_ref()
+            .unwrap()
+            .results
+            .contains_key(&oversized_key));
+        assert_eq!(snapshot.memos.query.len(), DERIVED_CACHE_MAX_ENTRIES);
+        assert!(snapshot.memos.query.cached(&oversized_key).is_none());
+        let oldest = format!("test\0{}", 0);
+        assert!(!derived.as_ref().unwrap().results.contains_key(&oldest));
+        assert!(snapshot.memos.query.cached(&oldest).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ---- #21: path-pinned pages + duplicate-day reconcile ----
+
+    /// A graph with a canonical day file AND a title-named stray for the same day,
+    /// in the user's `EEEE, dd-MM-yyyy` title format. Both resolve to the journal
+    /// name "Friday, 26-06-2026" — the collision #21 makes addressable by path.
+    fn dup_day_graph(tag: &str) -> PathBuf {
+        let dir = scratch(tag);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("journals").join("2026_06_26.org"),
+            "* canonical body\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("journals").join("Friday, 26-06-2026.org"),
+            "* stray body\n",
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn resolve_rel_accepts_graph_files_and_rejects_escapes() {
+        let dir = scratch("resolve-rel");
+        let g = Graph::open(&dir);
+        // Valid: one segment under journals/ or pages/, md/org extension.
+        assert_eq!(
+            g.resolve_rel("journals/2026_06_26.org"),
+            Some(dir.join("journals").join("2026_06_26.org"))
+        );
+        assert_eq!(
+            g.resolve_rel("pages/Note.md"),
+            Some(dir.join("pages").join("Note.md"))
+        );
+        // Valid: nested sub-directories under pages/ (#21) — any depth.
+        assert_eq!(
+            g.resolve_rel("pages/client-a/foo.md"),
+            Some(dir.join("pages").join("client-a").join("foo.md"))
+        );
+        assert_eq!(
+            g.resolve_rel("pages/a/b/c/deep.org"),
+            Some(
+                dir.join("pages")
+                    .join("a")
+                    .join("b")
+                    .join("c")
+                    .join("deep.org")
+            )
+        );
+        assert_eq!(g.resolve_rel("Note.md"), Some(dir.join("Note.md")));
+        // Rejections: traversal (incl. FROM a subdir), absolute, empty/`.` segment,
+        // wrong dir, wrong/no extension, a bare dir. Nesting itself is NOT rejected.
+        for bad in [
+            "../secrets.md",
+            "journals/../../etc/passwd.md",
+            "pages/../../etc/passwd.md",
+            "pages/sub/../../../etc/passwd.md",
+            "pages/client-a/../../escape.md",
+            "pages/./foo.md",
+            "pages/a//b.md",
+            "pages/sub/.md",
+            "/etc/passwd.md",
+            "assets/pic.png",
+            "journals/note.txt",
+            "journals/",
+            "pages/sub/",
+            "",
+        ] {
+            assert_eq!(g.resolve_rel(bad), None, "should reject {bad:?}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn page_source_file_prefers_the_recorded_nested_identity() {
+        let dir = scratch("page-source-file");
+        fs::create_dir_all(dir.join("pages/client-a")).unwrap();
+        let canonical = dir.join("pages/Note.md");
+        let nested = dir.join("pages/client-a/Note.md");
+        fs::write(&canonical, "- canonical\n").unwrap();
+        fs::write(&nested, "- nested\n").unwrap();
+        let g = Graph::open(&dir);
+        let store = crate::store::Store::open(&dir, Default::default())
+            .unwrap()
+            .0;
+
+        assert_eq!(
+            store
+                .path_for_os_handoff(
+                    &crate::store::PageId::from("pages/client-a/Note.md").file(),
+                    false
+                )
+                .unwrap(),
+            nested.canonicalize().unwrap()
+        );
+        assert_eq!(
+            store
+                .path_for_os_handoff(
+                    &crate::store::PageId::from(g.rel_path(&g.path_for("Note", PageKind::Page)))
+                        .file(),
+                    false,
+                )
+                .unwrap(),
+            canonical.canonicalize().unwrap()
+        );
+        assert!(store
+            .as_page(&crate::store::PageId::from("assets/Note.md").file())
+            .is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn checked_open_rejects_configured_directories_outside_graph() {
+        let dir = scratch("checked-open-layout");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        for config in [
+            "{:pages-directory \"../outside\"}\n",
+            "{:journals-directory \"/tmp/tine-outside\"}\n",
+            "{:pages-directory \"pages\\\\escape\"}\n",
+        ] {
+            fs::write(dir.join("logseq/config.edn"), config).unwrap();
+            assert!(Graph::open_checked(&dir).is_err(), "accepted {config:?}");
+        }
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:pages-directory \"archive/pages\" :journals-directory \"diary\"}\n",
+        )
+        .unwrap();
+        assert!(Graph::open_checked(&dir).is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn guide_twin_withdrawal_preserves_a_concurrent_markdown_replacement() {
+        let dir = scratch("guide-twin-withdrawal-race");
+        let store = loaded_store(&dir);
+        store.inject_fault(crate::FaultPoint::TwinAfterPublish);
+        store.inject_fault(crate::FaultPoint::UndoLiveWrite);
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        tx.create(
+            &crate::FileId::from("pages/Guide.md".to_owned()),
+            crate::Content::Bytes(b"- bundled guide\n".to_vec()),
+        );
+        assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
+        assert_eq!(
+            fs::read_to_string(dir.join("pages/Guide.md")).unwrap(),
+            "external during undo"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages/Guide.org")).unwrap(),
+            "external twin"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_open_and_resolve_reject_symlink_escape() {
+        use std::os::unix::fs::symlink;
+        let dir = scratch("checked-open-symlink");
+        let outside =
+            std::env::temp_dir().join(format!("tine-checked-open-outside-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&outside).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        symlink(&outside, dir.join("pages-link")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:pages-directory \"pages-link\"}\n",
+        )
+        .unwrap();
+        assert!(Graph::open_checked(&dir).is_err());
+
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        symlink(&outside, dir.join("pages/escape")).unwrap();
+        let g = Graph::open(&dir);
+        assert!(g.resolve_rel("pages/escape/foreign.md").is_none());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_open_rejects_managed_output_symlink_escapes() {
+        use std::os::unix::fs::symlink;
+        for managed in ["assets", "logseq", "publish"] {
+            let dir = scratch(&format!("checked-open-{managed}-symlink"));
+            let outside = std::env::temp_dir().join(format!(
+                "tine-checked-open-{managed}-outside-{}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&outside);
+            fs::create_dir_all(&outside).unwrap();
+            let managed_path = dir.join(managed);
+            let _ = fs::remove_dir_all(&managed_path);
+            symlink(&outside, &managed_path).unwrap();
+
+            assert!(
+                Graph::open_checked(&dir).is_err(),
+                "accepted escaped {managed} directory"
+            );
+
+            let _ = fs::remove_dir_all(&dir);
+            let _ = fs::remove_dir_all(&outside);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_open_accepts_only_the_approved_external_assets_target() {
+        use std::os::unix::fs::symlink;
+        let dir = scratch("checked-open-approved-assets");
+        let outside = std::env::temp_dir().join(format!(
+            "tine-checked-open-approved-assets-outside-{}",
+            std::process::id()
+        ));
+        let other = std::env::temp_dir().join(format!(
+            "tine-checked-open-approved-assets-other-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&outside);
+        let _ = fs::remove_dir_all(&other);
+        fs::create_dir_all(&outside).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let _ = fs::remove_dir_all(dir.join("assets"));
+        symlink(&outside, dir.join("assets")).unwrap();
+
+        assert!(tine_store::Store::open(&dir, Default::default()).is_err());
+        assert!(tine_store::Store::open(
+            &dir,
+            tine_store::OpenOptions {
+                approved_external_assets: Some(other.clone()),
+                ..Default::default()
+            }
+        )
+        .is_err());
+        let store = tine_store::Store::open(
+            &dir,
+            tine_store::OpenOptions {
+                approved_external_assets: Some(outside.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
+        assert_eq!(
+            tine_graph_features::assets::save_asset(&store, "approved.txt", b"safe").unwrap(),
+            "approved.txt"
+        );
+        assert_eq!(fs::read(outside.join("approved.txt")).unwrap(), b"safe");
+
+        // A retargeted link no longer resolves to the approved directory.
+        // Neither writes nor reads through that link may silently follow it.
+        fs::remove_file(dir.join("assets")).unwrap();
+        symlink(&other, dir.join("assets")).unwrap();
+        assert!(tine_graph_features::assets::save_asset(
+            &store,
+            "after-retarget.txt",
+            b"still safe"
+        )
+        .is_err());
+        assert!(!outside.join("after-retarget.txt").exists());
+        assert!(!other.join("after-retarget.txt").exists());
+        assert!(store
+            .read(
+                &tine_store::FileId::from("assets/approved.txt".to_owned()),
+                None
+            )
+            .is_err());
+        assert!(tine_store::Store::open(
+            &dir,
+            tine_store::OpenOptions {
+                approved_external_assets: Some(outside.clone()),
+                ..Default::default()
+            }
+        )
+        .is_err());
+
+        // A nested link inside the approved root remains confined: neither read
+        // nor write may follow it into another directory.
+        fs::remove_file(dir.join("assets")).unwrap();
+        symlink(&outside, dir.join("assets")).unwrap();
+        symlink(other.join("secret.txt"), outside.join("escape.txt")).unwrap();
+        fs::write(other.join("secret.txt"), b"private").unwrap();
+        assert!(store
+            .read(
+                &tine_store::FileId::from("assets/escape.txt".to_owned()),
+                None
+            )
+            .is_err());
+        let area_key = tine_core::pdf::asset_key("Escaping area.pdf");
+        symlink(&other, outside.join(&area_key)).unwrap();
+        assert!(tine_graph_features::pdf::write_pdf_area_image(
+            &store,
+            "Escaping area.pdf",
+            1,
+            "id",
+            1,
+            b"png"
+        )
+        .is_err());
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+        let _ = fs::remove_dir_all(&other);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn checked_open_accepts_an_approved_windows_assets_junction() {
+        let dir = scratch("checked-open-approved-assets-junction");
+        let outside = std::env::temp_dir().join(format!(
+            "tine-approved-assets-junction-outside-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&outside).unwrap();
+        let _ = fs::remove_dir_all(dir.join("assets"));
+        let status = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                &dir.join("assets").display().to_string(),
+                &outside.display().to_string(),
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /J must create the test junction");
+
+        assert!(tine_store::Store::open(&dir, Default::default()).is_err());
+        let store = tine_store::Store::open(
+            &dir,
+            tine_store::OpenOptions {
+                approved_external_assets: Some(outside.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
+        assert_eq!(
+            tine_graph_features::assets::save_asset(&store, "approved.txt", b"safe").unwrap(),
+            "approved.txt"
+        );
+        assert_eq!(fs::read(outside.join("approved.txt")).unwrap(), b"safe");
+        drop(store);
+
+        let _ = fs::remove_dir(dir.join("assets"));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_open_rejects_managed_directories_aliased_inside_graph() {
+        use std::os::unix::fs::symlink;
+        let dir = scratch("checked-open-managed-alias");
+        symlink(dir.join("assets"), dir.join("publish")).unwrap();
+        assert!(Graph::open_checked(&dir).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn journal_filename_format_cannot_escape_graph_on_save() {
+        let dir = scratch("journal-format-escape");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:journal/file-name-format \"../../yyyy_MM_dd\"}\n",
+        )
+        .unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let page = PageDto {
+            name: "Jul 10th, 2026".into(),
+            kind: PageKind::Journal,
+            title: "Jul 10th, 2026".into(),
+            pre_block: None,
+            blocks: vec![],
+            format: Format::Md,
+            rev: None,
+            read_only: false,
+
+            guide: false,
+        };
+        let id = store.journal_id(tine_store::Day(20260710));
+        assert!(matches!(
+            store.save(
+                tine_store::EditKind::ReplacePage,
+                &id,
+                tine_store::SaveBase::CreateNew,
+                &page
+            ),
+            tine_store::SaveOutcome::InvalidTarget(_)
+        ));
+        assert!(!dir.parent().unwrap().join("2026_07_10.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Open a store over `dir` and wait for its initial load, so tests can
+    /// drive `Store::page`/`Store::save` by `PageId` and inspect the graph.
+    fn loaded_store(dir: &Path) -> crate::Store {
+        let store = crate::Store::open(dir, Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        store
+    }
+
+    #[test]
+    fn load_by_path_serves_the_stray_not_the_canonical() {
+        let dir = dup_day_graph("loadbypath");
+        let store = loaded_store(&dir);
+        let g = &store.graph;
+
+        // By name → canonical.
+        let by_name = g
+            .load_named("Friday, 26-06-2026", PageKind::Journal)
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_name.blocks[0].raw, "canonical body");
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("Friday, 26-06-2026", true),
+            crate::Resolved::Existing { id, .. } if id.as_str() == "journals/2026_06_26.org"
+        ));
+
+        // By id → the STRAY's own content, even though it shares the (kind,name).
+        let stray = store
+            .page(&crate::PageId::from("journals/Friday, 26-06-2026.org"))
+            .unwrap();
+        assert_eq!(stray.doc.blocks[0].raw, "stray body");
+        assert_eq!(stray.id.as_str(), "journals/Friday, 26-06-2026.org");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_with_path_writes_the_pinned_file_and_leaves_canonical_intact() {
+        // The core regression for #21: editing a stray saved by its own id must
+        // write the stray file, NOT be re-resolved by name onto the canonical one.
+        let dir = dup_day_graph("savepinned");
+        let store = loaded_store(&dir);
+        let id = crate::PageId::from("journals/Friday, 26-06-2026.org");
+        let read = store.page(&id).unwrap();
+        let mut stray = read.doc;
+        stray.blocks[0].raw = "stray body edited".into();
+        let rev = match store.save(
+            crate::EditKind::ReplacePage,
+            &id,
+            crate::SaveBase::Existing(read.rev),
+            &stray,
+        ) {
+            crate::SaveOutcome::Saved(rev) => rev,
+            other => panic!("stray save must succeed, got {other:?}"),
+        };
+        assert_eq!(
+            rev,
+            crate::FileRev::from_bytes(
+                &fs::read(dir.join("journals").join("Friday, 26-06-2026.org")).unwrap()
+            )
+        );
+
+        // The stray file got the edit; the canonical file is byte-for-byte untouched.
+        assert_eq!(
+            fs::read_to_string(dir.join("journals").join("Friday, 26-06-2026.org")).unwrap(),
+            "* stray body edited\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("journals").join("2026_06_26.org")).unwrap(),
+            "* canonical body\n"
+        );
+        // And name-resolution still serves the canonical (the stray didn't poison
+        // the (kind,name) cache slot).
+        let by_name = store
+            .graph
+            .load_named("Friday, 26-06-2026", PageKind::Journal)
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_name.blocks[0].raw, "canonical body");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_rejects_pinned_path_that_escapes_the_graph() {
+        let dir = dup_day_graph("savebadpath");
+        let store = loaded_store(&dir);
+        let read = store
+            .page(&crate::PageId::from("journals/Friday, 26-06-2026.org"))
+            .unwrap();
+        let bad = crate::PageId::from("../escape.md");
+        assert!(
+            matches!(
+                store.save(
+                    crate::EditKind::ReplacePage,
+                    &bad,
+                    crate::SaveBase::Existing(read.rev),
+                    &read.doc
+                ),
+                crate::SaveOutcome::InvalidTarget(_)
+            ),
+            "save must refuse an out-of-graph path"
+        );
+        assert!(!dir.parent().unwrap().join("escape.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ---- #21: recursive sub-directory scanning under pages/ ----
+
+    #[test]
+    fn nested_page_is_listed_openable_by_name_and_searchable() {
+        // A page archived in a real sub-folder (`pages/client-a/foo.md`) must show
+        // up as a page — by its BASENAME `foo` (the directory is discarded, OG
+        // parity) — and be openable by name and findable by search.
+        let dir = scratch("nested-visible");
+        fs::create_dir_all(dir.join("pages").join("client-a")).unwrap();
+        fs::write(
+            dir.join("pages").join("client-a").join("foo.md"),
+            "- nestedsentinel body\n",
+        )
+        .unwrap();
+        let store = loaded_store(&dir);
+        let g = &store.graph;
+
+        // Listed by basename, carrying its nested path.
+        let entry = g
+            .list_pages()
+            .into_iter()
+            .find(|e| e.kind == PageKind::Page && e.name == "foo")
+            .expect("nested page listed by basename");
+        assert_eq!(g.rel_path(&entry.path), "pages/client-a/foo.md");
+        assert_eq!(entry.rel_path_str(), "pages/client-a/foo.md");
+
+        // Openable by name (find_entry resolves via the recursive scan), and the
+        // name resolves to the nested id so a later save round-trips in place.
+        let dto = g
+            .load_named("foo", PageKind::Page)
+            .unwrap()
+            .expect("open nested page by name");
+        assert_eq!(dto.blocks[0].raw, "nestedsentinel body");
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("foo", false),
+            crate::Resolved::Existing { id, .. } if id.as_str() == "pages/client-a/foo.md"
+        ));
+
+        // Indexed for full-text search (the cache folded it in via list_pages).
+        assert!(
+            !g.search("nestedsentinel", 10).is_empty(),
+            "nested page is searchable"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nested_page_edit_saves_in_place_with_no_flat_twin() {
+        // The data-safety invariant: editing a nested page must write back to its
+        // own file — never re-resolve by name and create a flat `pages/foo.md` twin.
+        let dir = scratch("nested-roundtrip");
+        fs::create_dir_all(dir.join("pages").join("client-a")).unwrap();
+        fs::write(
+            dir.join("pages").join("client-a").join("foo.md"),
+            "- before\n",
+        )
+        .unwrap();
+        let store = loaded_store(&dir);
+        let id = match store.whole_graph().unwrap().resolve("foo", false) {
+            crate::Resolved::Existing { id, .. } => id,
+            _ => panic!("nested page must resolve by name to an existing page"),
+        };
+        assert_eq!(id.as_str(), "pages/client-a/foo.md");
+        let read = store.page(&id).unwrap();
+        let mut dto = read.doc;
+        dto.blocks[0].raw = "after".into();
+        assert!(matches!(
+            store.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                crate::SaveBase::Existing(read.rev),
+                &dto
+            ),
+            crate::SaveOutcome::Saved(_)
+        ));
+
+        // The nested file got the edit…
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("client-a").join("foo.md")).unwrap(),
+            "- after\n"
+        );
+        // …and NO flat twin was created.
+        assert!(
+            !dir.join("pages").join("foo.md").exists(),
+            "save must not create a flat pages/foo.md twin"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn colliding_nested_pages_round_trip_by_path_without_flat_twin() {
+        let dir = scratch("nested-collision-roundtrip");
+        fs::create_dir_all(dir.join("pages").join("client-a")).unwrap();
+        fs::create_dir_all(dir.join("pages").join("client-b")).unwrap();
+        fs::write(
+            dir.join("pages").join("client-a").join("foo.md"),
+            "- before a\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("client-b").join("foo.md"),
+            "- before b\n",
+        )
+        .unwrap();
+        let store = loaded_store(&dir);
+
+        let a_id = crate::PageId::from("pages/client-a/foo.md");
+        let b_id = crate::PageId::from("pages/client-b/foo.md");
+        let a = store.page(&a_id).unwrap();
+        let b = store.page(&b_id).unwrap();
+        assert_eq!(a.doc.name, "foo");
+        assert_eq!(b.doc.name, "foo");
+        assert_eq!(a.id, a_id);
+        assert_eq!(b.id, b_id);
+
+        let (mut a_doc, mut b_doc) = (a.doc, b.doc);
+        a_doc.blocks[0].raw = "after a".into();
+        b_doc.blocks[0].raw = "after b".into();
+        assert!(matches!(
+            store.save(
+                crate::EditKind::ReplacePage,
+                &a_id,
+                crate::SaveBase::Existing(a.rev),
+                &a_doc
+            ),
+            crate::SaveOutcome::Saved(_)
+        ));
+        assert!(matches!(
+            store.save(
+                crate::EditKind::ReplacePage,
+                &b_id,
+                crate::SaveBase::Existing(b.rev),
+                &b_doc
+            ),
+            crate::SaveOutcome::Saved(_)
+        ));
+
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("client-a").join("foo.md")).unwrap(),
+            "- after a\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("client-b").join("foo.md")).unwrap(),
+            "- after b\n"
+        );
+        assert!(
+            !dir.join("pages").join("foo.md").exists(),
+            "id-addressed saves must not create a flat pages/foo.md twin"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn warmed_duplicate_name_cache_keeps_physical_owners_distinct() {
+        // Store::open canonicalizes the root (on Windows: `\\?\` and long
+        // names), so compare paths under the canonical root.
+        let dir = fs::canonicalize(scratch("warmed-duplicate-name-owners")).unwrap();
+        fs::create_dir_all(dir.join("pages").join("duplicates")).unwrap();
+        let flat = dir.join("pages").join("Exact Storage Twin.md");
+        let nested = dir
+            .join("pages")
+            .join("duplicates")
+            .join("Exact Storage Twin.md");
+        fs::write(&flat, "- flat original sentinel\n").unwrap();
+        fs::write(&nested, "- nested original sentinel\n").unwrap();
+
+        let store = loaded_store(&dir);
+        let g = &store.graph;
+        assert!(g.warm_cache_cancellable(|| false));
+        let logical_winner = g
+            .find_entry("Exact Storage Twin", PageKind::Page)
+            .expect("one duplicate is the stable name winner");
+        let non_winner_path = if logical_winner.path == flat {
+            &nested
+        } else {
+            &flat
+        };
+        let non_winner_entry = g
+            .entry_for_path(non_winner_path)
+            .expect("non-winning duplicate is addressable by path");
+        let winner_original = fs::read_to_string(&logical_winner.path).unwrap();
+
+        // Save through the duplicate's own id after both entries have been
+        // warmed. The name winner must remain stable while the other physical
+        // owner receives its own cached document and revision.
+        let non_winner_id = crate::PageId::from(non_winner_entry.rel_path_str());
+        let read = store.page(&non_winner_id).unwrap();
+        let mut non_winner = read.doc;
+        non_winner.blocks[0].raw = "nested saved sentinel".into();
+        assert!(matches!(
+            store.save(
+                crate::EditKind::ReplacePage,
+                &non_winner_id,
+                crate::SaveBase::Existing(read.rev),
+                &non_winner
+            ),
+            crate::SaveOutcome::Saved(_)
+        ));
+
+        assert_eq!(
+            g.find_entry("Exact Storage Twin", PageKind::Page)
+                .expect("name winner remains present")
+                .path,
+            logical_winner.path,
+            "id-addressed save must not repoint the logical first winner"
+        );
+
+        let winner_loaded = g.load_page(&logical_winner).unwrap();
+        assert_eq!(
+            winner_loaded.blocks[0].raw,
+            winner_original.trim_start_matches("- ").trim_end(),
+            "the name winner retains its own warmed bytes"
+        );
+        let non_winner_loaded = g.load_page(&non_winner_entry).unwrap();
+        assert_eq!(non_winner_loaded.blocks[0].raw, "nested saved sentinel");
+        assert_eq!(
+            store.page(&non_winner_id).unwrap().id,
+            non_winner_entry.rel_path.clone().unwrap()
+        );
+
+        let cached = g.with_pages(|pages| {
+            pages
+                .iter()
+                .filter(|(entry, _)| entry.name == "Exact Storage Twin")
+                .map(|(entry, doc)| (entry.path.clone(), doc.roots[0].raw().to_owned()))
+                .collect::<Vec<_>>()
+        });
+        assert!(cached.iter().any(|(path, raw)| {
+            *path == logical_winner.path
+                && raw == winner_original.trim_start_matches("- ").trim_end()
+        }));
+        assert!(cached
+            .iter()
+            .any(|(path, raw)| *path == *non_winner_path && raw == "nested saved sentinel"));
+
+        for (needle, path) in [
+            (
+                winner_original.trim_start_matches("- ").trim_end(),
+                logical_winner.rel_path_str(),
+            ),
+            ("nested saved sentinel", non_winner_entry.rel_path_str()),
+        ] {
+            assert!(
+                g.run_graph_search(needle, 0, 8, false).hits.iter().any(|hit| matches!(
+                    hit,
+                    tine_core::query_plan::QueryHit::Block { path: hit_path, .. } if hit_path == path
+                )),
+                "search hit for {needle:?} must retain its physical owner {path:?}"
+            );
+        }
+
+        // Give the winner the non-winner's current bytes. A name-keyed revision
+        // map incorrectly treats that as already fresh and suppresses its reload.
+        //
+        // This step drives the reconcile directly, so stop the store's live
+        // file watcher first: otherwise its 200 ms-debounced reconcile can
+        // consume this external write before the call below (any stall of
+        // this thread longer than the debounce), leaving the direct call a
+        // correct `Reconciled { entry: None }` no-op and failing the assertion
+        // for a reason unrelated to the revision map. `stop` joins the watcher
+        // thread, so no reconcile is in flight past this line.
+        store.watch.stop();
+        fs::write(&logical_winner.path, "- nested saved sentinel\n").unwrap();
+        assert!(
+            matches!(g.sync_file_internal(&logical_winner.path, None), SyncFileResult::Reconciled { entry: Some(entry), .. } if entry.path == logical_winner.path),
+            "one duplicate's revision must not mark the other duplicate fresh"
+        );
+        assert!(
+            g.with_pages(|pages| pages
+                .iter()
+                .any(|(entry, doc)| entry.path == logical_winner.path
+                    && doc.roots[0].raw() == "nested saved sentinel")),
+            "the reconciled winner must serve its new bytes from its own cache slot"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn external_sync_parser_panic_is_a_per_page_read_failure() {
+        let dir = scratch("external-sync-parser-panic");
+        let path = dir.join("pages/External.md");
+        fs::write(&path, "- old\n").unwrap();
+        let store = crate::Store::open(&dir, Default::default()).unwrap().0;
+        let _view = store.whole_graph().unwrap();
+        fs::write(&path, "- changed outside\n").unwrap();
+        store
+            .graph
+            .fail_sync_parse_once
+            .store(true, std::sync::atomic::Ordering::Release);
+        let outcome = store.scan_refresh();
+        assert!(outcome.is_ok(),
+            "I-22: an external page parser panic must be isolated to that page; exemplar sync_file_content_with_saved");
+        assert!(
+            !store
+                .graph
+                .fail_sync_parse_once
+                .load(std::sync::atomic::Ordering::Acquire),
+            "the external sync path must consume the injected parser panic"
+        );
+        store.scan_refresh().unwrap();
+        assert_eq!(
+            store
+                .page(&crate::PageId::from("pages/External.md"))
+                .unwrap()
+                .doc
+                .blocks[0]
+                .raw,
+            "changed outside"
+        );
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn forget_file_evicts_only_the_deleted_duplicate_path() {
+        let dir = scratch("forget-duplicate-path");
+        fs::create_dir_all(dir.join("pages/duplicates")).unwrap();
+        let flat = dir.join("pages/Exact Storage Twin.md");
+        let nested = dir.join("pages/duplicates/Exact Storage Twin.md");
+        fs::write(&flat, "- flat survives if not removed\n").unwrap();
+        fs::write(&nested, "- nested survives if not removed\n").unwrap();
+
+        let g = Graph::open(&dir);
+        assert!(g.warm_cache_cancellable(|| false));
+        let removed = g
+            .find_entry("Exact Storage Twin", PageKind::Page)
+            .expect("one duplicate is the initial logical winner");
+        let survivor_path = if removed.path == flat { &nested } else { &flat };
+        let survivor = g
+            .entry_for_path(survivor_path)
+            .expect("the other duplicate is a physical cache owner");
+
+        fs::remove_file(&removed.path).unwrap();
+        assert_eq!(
+            g.forget_file_internal(&removed.path)
+                .expect("the deleted path had a cache entry")
+                .path,
+            removed.path
+        );
+        assert_eq!(
+            g.find_entry("Exact Storage Twin", PageKind::Page)
+                .expect("surviving duplicate is the new name winner")
+                .path,
+            survivor.path
+        );
+        assert_eq!(
+            g.with_pages(|pages| {
+                pages
+                    .iter()
+                    .filter(|(entry, _)| entry.name == "Exact Storage Twin")
+                    .map(|(entry, _)| entry.path.clone())
+                    .collect::<Vec<_>>()
+            }),
+            vec![survivor.path.clone()],
+            "forgetting one physical duplicate leaves the other cached"
+        );
+        assert_eq!(
+            g.load_page(&survivor).unwrap().blocks[0].raw,
+            fs::read_to_string(&survivor.path)
+                .unwrap()
+                .trim_start_matches("- ")
+                .trim_end()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_refuses_colliding_nested_page_identities_without_losing_either() {
+        let dir = scratch("nested-collision-rename");
+        fs::create_dir_all(dir.join("pages/client-a")).unwrap();
+        fs::create_dir_all(dir.join("pages/client-b")).unwrap();
+        let a = dir.join("pages/client-a/foo.md");
+        let b = dir.join("pages/client-b/foo.md");
+        fs::write(&a, "- body a\n").unwrap();
+        fs::write(&b, "- body b\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+
+        let err = tine_graph_features::pages::rename_page_expected(&store, "foo", "bar", None)
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&a).unwrap(), "- body a\n");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "- body b\n");
+        assert!(!dir.join("pages/bar.md").exists());
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delete_refuses_ambiguous_nested_page_identity() {
+        let dir = scratch("nested-collision-delete");
+        fs::create_dir_all(dir.join("pages/client-a")).unwrap();
+        fs::create_dir_all(dir.join("pages/client-b")).unwrap();
+        let a = dir.join("pages/client-a/foo.md");
+        let b = dir.join("pages/client-b/foo.md");
+        fs::write(&a, "- body a\n").unwrap();
+        fs::write(&b, "- body b\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+
+        let err = tine_graph_features::pages::delete_page_expected(
+            &store,
+            "foo",
+            PageKind::Page,
+            None,
+            None,
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&a).unwrap(), "- body a\n");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "- body b\n");
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn page_mutations_require_the_captured_exact_owner_and_still_refuse_duplicates() {
+        let dir = scratch("expected-page-owner");
+        fs::create_dir_all(dir.join("pages/client-a")).unwrap();
+        fs::create_dir_all(dir.join("pages/client-b")).unwrap();
+        let a = dir.join("pages/client-a/Twin.md");
+        let b = dir.join("pages/client-b/Twin.md");
+        fs::write(&a, "- client a\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+
+        let stale = tine_graph_features::pages::delete_page_expected(
+            &store,
+            "Twin",
+            PageKind::Page,
+            Some("pages/client-b/Twin.md"),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(stale.kind(), io::ErrorKind::NotFound);
+        assert_eq!(fs::read_to_string(&a).unwrap(), "- client a\n");
+
+        fs::write(&b, "- client b\n").unwrap();
+        let ambiguous = tine_graph_features::pages::rename_page_expected(
+            &store,
+            "Twin",
+            "Renamed",
+            Some("pages/client-b/Twin.md"),
+        )
+        .unwrap_err();
+        assert_eq!(ambiguous.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&a).unwrap(), "- client a\n");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "- client b\n");
+        assert!(!dir.join("pages/Renamed.md").exists());
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_refuses_target_that_exists_in_other_format() {
+        let dir = scratch("rename-cross-format-target");
+        let old = dir.join("pages/Old.org");
+        let target = dir.join("pages/New.md");
+        fs::write(&old, "* old body\n").unwrap();
+        fs::write(&target, "- existing target\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+
+        let err = tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None)
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&old).unwrap(), "* old body\n");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "- existing target\n");
+        assert!(!dir.join("pages/New.org").exists());
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_refuses_logical_target_in_nested_directory() {
+        let dir = scratch("rename-nested-target");
+        fs::create_dir_all(dir.join("pages/client")).unwrap();
+        let old = dir.join("pages/Old.org");
+        let target = dir.join("pages/client/New.md");
+        fs::write(&old, "* old body\n").unwrap();
+        fs::write(&target, "- nested target\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+
+        let err = tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None)
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&old).unwrap(), "* old body\n");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "- nested target\n");
+        assert!(!dir.join("pages/New.org").exists());
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merge_pages_appends_stray_into_canonical_and_trashes_stray() {
+        let dir = dup_day_graph("merge");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let _ = store.whole_graph().unwrap();
+        tine_graph_features::pages::merge_pages(
+            &store,
+            "journals/Friday, 26-06-2026.org",
+            "journals/2026_06_26.org",
+        )
+        .unwrap();
+
+        // Canonical now holds both bodies; the stray is gone (moved to trash).
+        let merged = fs::read_to_string(dir.join("journals").join("2026_06_26.org")).unwrap();
+        assert!(
+            merged.contains("canonical body"),
+            "canonical kept: {merged:?}"
+        );
+        assert!(merged.contains("stray body"), "stray appended: {merged:?}");
+        assert!(
+            !dir.join("journals").join("Friday, 26-06-2026.org").exists(),
+            "stray trashed"
+        );
+        // Recoverable, not hard-deleted.
+        let trash = dir.join("logseq").join(".tine-trash");
+        let kept = fs::read_dir(&trash).unwrap().flatten().count();
+        assert_eq!(kept, 1, "stray sits in the recoverable trash");
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_file_to_page_rescues_stray_and_refuses_collision() {
+        let dir = dup_day_graph("renamefile");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let _ = store.whole_graph().unwrap();
+        tine_graph_features::pages::rename_file_to_page(
+            &store,
+            "journals/Friday, 26-06-2026.org",
+            "Old Friday",
+        )
+        .unwrap();
+
+        // The stray became a normal page, reachable by its new unique name.
+        assert!(!dir.join("journals").join("Friday, 26-06-2026.org").exists());
+        let id = match store.whole_graph().unwrap().resolve("Old Friday", false) {
+            tine_store::Resolved::Existing { id, .. } => id,
+            _ => panic!("rescue did not publish page"),
+        };
+        let page = store.page(&id).unwrap().doc;
+        assert_eq!(page.blocks[0].raw, "stray body");
+        assert_eq!(page.kind, PageKind::Page);
+
+        // A second rescue onto an existing page name is refused (never clobbers).
+        fs::write(
+            dir.join("journals").join("Saturday, 27-06-2026.org"),
+            "* s\n",
+        )
+        .unwrap();
+        assert!(
+            tine_graph_features::pages::rename_file_to_page(
+                &store,
+                "journals/Saturday, 27-06-2026.org",
+                "Old Friday",
+            )
+            .is_err(),
+            "collision refused"
+        );
+        assert!(
+            dir.join("journals")
+                .join("Saturday, 27-06-2026.org")
+                .exists(),
+            "source left intact on refusal"
+        );
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn journal_conflicts_expose_a_routable_path_per_file() {
+        let dir = dup_day_graph("conflictpath");
+        let g = Graph::open(&dir);
+        let conflicts = g.journal_conflicts();
+        assert_eq!(conflicts.len(), 1, "one duplicated day");
+        let files = &conflicts[0].files;
+        assert_eq!(files.len(), 2);
+        // Canonical first; both carry a graph-root-relative, resolvable path.
+        assert!(files[0].canonical);
+        assert_eq!(files[0].path, "journals/2026_06_26.org");
+        assert_eq!(files[1].path, "journals/Friday, 26-06-2026.org");
+        for f in files {
+            assert!(
+                g.resolve_rel(&f.path).is_some(),
+                "conflict path resolves: {}",
+                f.path
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+#[cfg(test)]
+mod fail_read_rollback_tests {
+    use super::*;
+    #[test]
+    fn fail_read_rollback_retains_displaced_file_location_when_restore_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join("pages")).unwrap();
+        let path = temp.path().join("pages/A.md");
+        fs::write(&path, "- retained bytes\n").unwrap();
+        let graph = Graph::open(temp.path());
+        let error = graph
+            .withdraw_file_to_conflict_if(&path, "read-failure", |_| {
+                fs::create_dir(&path).unwrap();
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "comparison failed",
+                ))
+            })
+            .err()
+            .expect("comparison must fail");
+        assert!(
+            error.to_string().contains(".tine-trash"),
+            "I-2/I-9: failed restore must preserve recovery evidence: {error}"
+        );
+        assert!(error.to_string().contains("comparison failed"));
+    }
+}

@@ -10,6 +10,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+serde_json = { workspace = true }
 
 # `custom-protocol` switches the app from dev mode (load the frontend from the
 # Vite dev server at devUrl) to prod mode (serve the embedded `dist/` over the
@@ -30,10 +31,6 @@ tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
-uuid = { workspace = true }
-clap = { version = "4.5", features = ["derive"] }
-tempfile = "3"
-notify = "6"
 # Asset write commands receive bytes as base64 (a single compact string) instead
 # of a JSON number[] (~4-5x payload + a giant per-element parse on the UI thread).
 base64 = "0.22"
@@ -47,12 +44,18 @@ libc = "0.2"
 # the identifier-rename migration can run BEFORE the webview creates its store.
 # `dirs::data_dir()` is the exact base Tauri v2's `app_data_dir()` joins the id onto.
 dirs = "6"
-fs2 = "0.4"
+# One schema owns parsing, --help, man pages and the forwarded-launch request
+# (ADR 0068 on master; the hand-rolled parser split those across three places).
+clap = { version = "4.5", features = ["derive"] }
 tine-core = { path = "../crates/tine-core" }
-tine-storage = { git = "https://github.com/martinkoutecky/tine-storage", tag = "v0.28.2" }
+tine-store = { path = "../crates/tine-store" }
+tine-graph-features = { path = "../crates/tine-graph-features" }
+# data_home: probe the app-data home with an unnamed temporary file (og I1a).
+tempfile = "3"
 
 [dev-dependencies]
 clap_mangen = "0.2"
+tine-store = { path = "../crates/tine-store", features = ["test-faults"] }
 
 # Mobile + Windows: open http/mailto URLs via the OS — an ACTION_VIEW Intent on
 # Android (GH #49), ShellExecute on Windows (GH #215; `explorer <url>` opens a
@@ -61,8 +64,16 @@ clap_mangen = "0.2"
 [target.'cfg(any(target_os = "android", target_os = "ios", target_os = "windows"))'.dependencies]
 tauri-plugin-opener = "2"
 
-[target.'cfg(target_os = "ios")'.dependencies]
-tine-ios-folder-picker-native = { path = "ios-folder-picker-native" }
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console"] }
+# Windows uses Schannel through native-tls: the default rustls transport does
+# not inherit every Windows network/certificate policy and failed before
+# fetching latest.json on an otherwise-online Windows 11 system (GH #241).
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip"] }
+# The updater disables Reqwest defaults; opt back into Reqwest's Windows
+# system-proxy reader so it follows the same route as WebView2 and the browser
+# instead of consulting only proxy environment variables (GH #241).
+reqwest = { version = "0.13", default-features = false, features = ["system-proxy"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-window-state = "2"
@@ -73,21 +84,11 @@ clipboard-rs = { version = "0.3.5", default-features = false }
 # In-app self-update (Win/Linux; macOS stays manual — unsigned). The updater
 # verifies each artifact against `plugins.updater.pubkey` (minisign); process lets
 # the frontend relaunch after `downloadAndInstall()`. See docs/adr + release.yml.
+# The updater itself is declared per transport below; the guard test
+# `updater_transport_is_declared_for_every_desktop_target` (src/lib.rs) pins it.
 
-# Windows uses Schannel through native-tls. The default rustls transport does not
-# inherit every Windows network/certificate policy and failed before fetching
-# latest.json on a reporter's otherwise-online Windows 11 system (GH #241).
-[target.'cfg(target_os = "windows")'.dependencies]
-tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip"] }
-windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
-# `tauri-plugin-updater` disables Reqwest defaults and selects only its TLS
-# feature above. Opt back into Reqwest's separate Windows system-proxy reader so
-# the native updater follows the same configured network route as WebView2 and
-# the user's browser instead of consulting only proxy environment variables.
-reqwest = { version = "0.13", default-features = false, features = ["system-proxy"] }
-
-# Keep the established rustls transport on Linux/macOS, where it is proven in
-# shipped packages. Mobile does not compile or expose the updater.
+# Linux/macOS keep the established rustls transport. Mobile does not compile
+# or expose the updater.
 [target.'cfg(all(not(target_os = "android"), not(target_os = "ios"), not(target_os = "windows")))'.dependencies]
 tauri-plugin-updater = "2"
 

@@ -1,3 +1,4 @@
+import { browserPlatform } from "./browserPlatform";
 // Window-chrome preferences (device-local, persisted in tine-settings.json via the
 // generic app_bool backend so native startup can read them before a WebView exists).
 //
@@ -20,6 +21,7 @@
 
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { advanceRevision, currentRevision, ownedWhen, readOwned, revisionOwner, serializeDurable } from "./owned";
 
 export const KEY_NATIVE_FRAME = "native_window_frame";
 
@@ -30,54 +32,53 @@ declare global {
   // Set by Tauri before frontend code runs (src-tauri/src/lib.rs), from the
   // build's own `app_platform()`. See platformKind below.
   var __TINE_PLATFORM__: "android" | "ios" | "desktop" | undefined;
+  // E2E-only (src-tauri/src/lib.rs, TINE_E2E_TOUCH_GESTURES): makes the touch
+  // gesture layer (edge swipe, block swipe, image viewer) behave as on that
+  // OS in a desktop WebKitGTK process. It changes nothing else: layout,
+  // keyboard chrome and platform branches still see a desktop.
+  var __TINE_E2E_TOUCH_GESTURES__: "android" | "ios" | undefined;
 }
 
 export type PlatformKind = "android" | "ios" | "desktop";
 
 // The user agent cannot answer "what am I running on". iPadOS 13+ serves a
-// desktop-class `Macintosh; Intel Mac OS X` UA from a stock WKWebView — wry
-// sets no `preferredContentMode` override, and adding one would only relocate
-// the lie — so an iPad both FAILED the mobile test and PASSED the Mac test, and
-// rendered as a Mac desktop throughout (GH #446: no editing toolbar on iPad).
+// desktop-class `Macintosh; Intel Mac OS X` UA from a stock WKWebView, so an
+// iPad both FAILED the mobile test and PASSED the Mac test and rendered as a
+// Mac desktop throughout (GH #446: no editing toolbar on iPad).
 //
-// So the build tells us instead. Rust injects `__TINE_PLATFORM__` before any
-// frontend code runs, which keeps this synchronous: the backend `app_platform`
-// command says the same thing (see platform.ts) but a one-frame async
+// So the build tells us instead. Rust injects `__TINE_PLATFORM__` from the same
+// `app_platform()` that answers the async backend command (platform.ts), before
+// any frontend code runs, which keeps this synchronous: a one-frame async
 // round-trip would flash desktop-only chrome.
 //
-// The UA branch below is the fallback for contexts Tauri never initializes —
-// `npm run dev` in a plain browser, the mock backend, and unit tests.
+// The UA branch is the fallback for contexts Tauri never initializes: the
+// browser dev server, the mock backend and unit tests.
 function detectPlatformKind(): PlatformKind {
   const injected = typeof globalThis !== "undefined" ? globalThis.__TINE_PLATFORM__ : undefined;
   if (injected === "android" || injected === "ios" || injected === "desktop") return injected;
   const ua = typeof navigator !== "undefined" ? (navigator.userAgent ?? "") : "";
-  if (/Android/i.test(ua)) return "android";
-  if (/iPhone|iPad|iPod/i.test(ua)) return "ios";
+  const hints = browserPlatform(ua);
+  if (hints.android) return "android";
+  if (hints.ios) return "ios";
   return "desktop";
 }
 
-/** What the app is actually running on, decided by the build, not the UA. */
+/** What the app runs on, decided by the build (UA only outside Tauri).
+ *  Evaluated once at module load; O(1). */
 export const platformKind: PlatformKind = detectPlatformKind();
 
-/** Android or iOS — a mobile OS that owns the window and drives touch input. */
+/** Android or iOS: a mobile OS that owns the window and drives touch input.
+ *  True on iPad too; ask `isSinglePaneShell()` for phone-shaped layout. */
 export const isMobilePlatform: boolean = platformKind !== "desktop";
 
-// macOS detection: WKWebView's UA contains "Macintosh"/"Mac OS X". navigator.platform
-// is deprecated but a reliable fallback. Evaluated once — and only ever consulted
-// on desktop, because iPadOS reports both of those strings too.
-export const isMac: boolean =
-  platformKind === "desktop" &&
-  typeof navigator !== "undefined" &&
-  (/Mac/i.test(navigator.platform ?? "") || /Mac OS X|Macintosh/i.test(navigator.userAgent ?? ""));
-
-/** Tablet-or-larger: the shorter viewport edge has room for two documents
- *  side by side. iPad mini portrait is 744pt across, every iPhone in either
- *  orientation is at most 430pt. */
-export function isTabletViewport(
-  width = typeof window === "undefined" ? 0 : window.innerWidth,
-  height = typeof window === "undefined" ? 0 : window.innerHeight,
-): boolean {
-  return Math.min(width, height) >= 700;
+/** Which touch OS the gesture layer (edge swipe, block swipe, image viewer)
+ *  should behave as: the real mobile platform, or - only in the native E2E
+ *  harness - the platform named by TINE_E2E_TOUCH_GESTURES. Null on desktop.
+ *  Read at call time so a test can set the global. O(1). */
+export function touchGesturePlatform(): "android" | "ios" | null {
+  if (platformKind !== "desktop") return platformKind;
+  const forced = typeof globalThis !== "undefined" ? globalThis.__TINE_E2E_TOUCH_GESTURES__ : undefined;
+  return forced === "android" || forced === "ios" ? forced : null;
 }
 
 /** Stamp the resolved platform on <html> so CSS can ask the same question the
@@ -87,14 +88,34 @@ export function isTabletViewport(
 export function installPlatformAttribute(): void {
   if (typeof document === "undefined") return;
   document.documentElement.setAttribute("data-platform", platformKind);
+  const touch = touchGesturePlatform();
+  // CSS for the gesture layer (touch-action on block rows) keys on this, which
+  // also covers the E2E override that data-platform deliberately ignores.
+  if (touch) document.documentElement.setAttribute("data-touch-gestures", touch);
 }
 
-/** Does this device present the single-pane mobile shell?
- *
- *  Split panes are not a desktop-OS privilege — they need screen room and a
- *  precise pointer, both of which a tablet has. Gating them on `isMobilePlatform`
- *  alone would have taken panes away from iPad the moment #446 made that flag
- *  tell the truth. Phones keep the single-pane shell in either orientation. */
+// macOS detection: WKWebView's UA contains "Macintosh"/"Mac OS X". navigator.platform
+// is deprecated but a reliable fallback. Evaluated once, and only on desktop,
+// because iPadOS reports both of those strings too.
+export const isMac: boolean =
+  platformKind === "desktop" &&
+  typeof navigator !== "undefined" &&
+  browserPlatform(navigator.userAgent ?? "", navigator.platform ?? "").macDesktop;
+
+/** Tablet-or-larger: the shorter viewport edge has room for two documents
+ *  side by side. iPad mini portrait is 744pt across; every iPhone in either
+ *  orientation is at most 430pt. Reads the current viewport; O(1). */
+export function isTabletViewport(
+  width = typeof window === "undefined" ? 0 : window.innerWidth,
+  height = typeof window === "undefined" ? 0 : window.innerHeight,
+): boolean {
+  return Math.min(width, height) >= 700;
+}
+
+/** Does this device present the single-pane mobile shell (no split panes,
+ *  PDFs open in place, no restored multi-pane layout)? A mobile OS on a
+ *  phone-shaped viewport. Split panes need screen room and a precise pointer,
+ *  which a tablet has, so an iPad keeps them (GH #446). O(1). */
 export function isSinglePaneShell(): boolean {
   return isMobilePlatform && !isTabletViewport();
 }
@@ -116,23 +137,37 @@ export const osDrawsWindowControls = (): boolean =>
  *  Meaningless on macOS (where the native frame is always on). */
 export const nativeFrameEnabled = nativeFramePreference;
 
+// One revision/queue key for the device-local preference: writes run in call
+// order, and a startup read that lands after a newer choice never overwrites it
+// (I-20/I-21).
+const nativeFramePref = {};
+
 /** Persist the Linux/Windows native-frame preference. It takes effect at the next
- *  normal app start, when Rust can construct all graph windows consistently. */
+ *  normal app start, when Rust can construct all graph windows consistently.
+ *  Writes are ordered; the switch shows the newest choice only once it is on
+ *  disk, and a write failure rejects (Settings reports it). O(1). */
 export async function setNativeFrame(on: boolean): Promise<void> {
   if (isMac) return;
-  await backend().setAppBool(KEY_NATIVE_FRAME, on);
-  setNativeFramePreferenceSig(on);
+  const revision = advanceRevision(nativeFramePref);
+  await serializeDurable(nativeFramePref, ownedWhen(), () => backend().setAppBool(KEY_NATIVE_FRAME, on));
+  if (currentRevision(nativeFramePref) === revision) setNativeFramePreferenceSig(on);
 }
 
 /** Read the saved preference for the Settings switch. Rust already applied the
- *  startup value before constructing this window. */
+ *  startup value before constructing this window. A choice made while the read
+ *  was pending wins over the read. */
 export async function initNativeChrome(): Promise<void> {
   if (isMac) return; // Overlay frame is fixed in tauri.macos.conf.json
+  const owner = revisionOwner(nativeFramePref, currentRevision(nativeFramePref));
   let on = startupNativeFrame;
   try {
-    on = await backend().getAppBool(KEY_NATIVE_FRAME, startupNativeFrame);
+    const read = await readOwned(owner, backend().getAppBool(KEY_NATIVE_FRAME, startupNativeFrame));
+    if (read.kind === "stale") return;
+    on = read.value;
   } catch {
+    // The applied frame is the truth for this window; an unreadable saved
+    // preference only affects the restart toggle, which shows the applied state.
     on = startupNativeFrame;
   }
-  setNativeFramePreferenceSig(on);
+  if (owner()) setNativeFramePreferenceSig(on);
 }

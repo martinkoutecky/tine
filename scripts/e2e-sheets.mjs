@@ -9,14 +9,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-
-await ensureDisplay();
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const G = process.env.TINE_SHEETS_TEST_ROOT || "/tmp/sheets-e2e";
-const XDG = `${G}-xdg`;
+const G = "/tmp/sheets-e2e";
 const APP = process.env.TINE_APP || `${repo}/target/release/tine`;
 const TD =
   process.env.TAURI_DRIVER ||
@@ -78,24 +73,24 @@ fs.mkdirSync(`${G}/pages`, { recursive: true });
 fs.mkdirSync(`${G}/journals`, { recursive: true });
 fs.writeFileSync(JFILE, GRID_MD);
 
-fs.rmSync(XDG, { recursive: true, force: true });
-for (const d of ["data", "config", "cache"]) fs.mkdirSync(`${XDG}/${d}`, { recursive: true });
+fs.rmSync("/tmp/sheets-e2e-xdg", { recursive: true, force: true });
+for (const d of ["data", "config", "cache"]) fs.mkdirSync(`/tmp/sheets-e2e-xdg/${d}`, { recursive: true });
 const env = {
   ...process.env,
   TINE_GRAPH: G,
-  XDG_DATA_HOME: `${XDG}/data`,
-  XDG_CONFIG_HOME: `${XDG}/config`,
-  XDG_CACHE_HOME: `${XDG}/cache`,
+  XDG_DATA_HOME: "/tmp/sheets-e2e-xdg/data",
+  XDG_CONFIG_HOME: "/tmp/sheets-e2e-xdg/config",
+  XDG_CACHE_HOME: "/tmp/sheets-e2e-xdg/cache",
   WEBKIT_DISABLE_DMABUF_RENDERER: "1",
   LIBGL_ALWAYS_SOFTWARE: "1",
   WEBKIT_DISABLE_COMPOSITING_MODE: "1",
   GDK_BACKEND: "x11",
 };
 
-const tdLog = fs.openSync(`${G}-td.log`, "w");
+const tdLog = fs.openSync("/tmp/sheets-e2e-td.log", "w");
 const td = spawn(
   TD,
-  webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"),
+  ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"],
   { env, stdio: ["ignore", tdLog, tdLog], detached: true }
 );
 await sleep(3000);
@@ -114,7 +109,11 @@ try {
     hostname: "127.0.0.1",
     port: DRIVER_PORT,
     path: "/",
-    capabilities: tauriCapabilities(APP, "sheets"),
+    capabilities: {
+      browserName: "wry",
+      "wdio:enforceWebDriverClassic": true,
+      "tauri:options": { application: APP },
+    },
     logLevel: "error",
     connectionRetryCount: 1,
     connectionRetryTimeout: 60000,
@@ -278,69 +277,6 @@ try {
   const disk5 = fs.readFileSync(JFILE, "utf8");
   const betaCount = (disk5.match(/- beta/g) || []).length;
   check("Ctrl+D filled beta into the row below", betaCount === 2, JSON.stringify(disk5));
-
-  // GH #316: drag a real table field edge, observe a materially wider column
-  // inside the horizontal scroller, then prove the stable field-keyed setting
-  // survives a real app reload and double-click reset removes it. Exact pixels
-  // are deliberately not contractual: the journey compares the semantic size
-  // change and scrollability on this runtime.
-  const resizedTable = await browser.execute(() => {
-    const header = [...document.querySelectorAll(".sheet-table .sheet-field-header")]
-      .find((el) => (el.textContent ?? "").trim() === "topic");
-    const handle = header?.querySelector('[data-sheet-resize-handle="prop:topic"]');
-    const scroll = header?.closest(".block-sheet-container")?.querySelector(".sheet-scroll");
-    if (!(header instanceof HTMLElement) || !(handle instanceof HTMLElement) || !(scroll instanceof HTMLElement)) {
-      return { ok: false, reason: "missing topic header, resize edge, or horizontal scroller" };
-    }
-    const before = header.getBoundingClientRect().width;
-    const edge = header.getBoundingClientRect().right;
-    handle.dispatchEvent(new PointerEvent("pointerdown", {
-      bubbles: true, cancelable: true, button: 0, pointerId: 316, clientX: edge, clientY: 10,
-    }));
-    window.dispatchEvent(new PointerEvent("pointermove", {
-      bubbles: true, cancelable: true, button: 0, pointerId: 316, clientX: edge + 360, clientY: 10,
-    }));
-    const live = header.getBoundingClientRect().width;
-    window.dispatchEvent(new PointerEvent("pointerup", {
-      bubbles: true, cancelable: true, button: 0, pointerId: 316, clientX: edge + 360, clientY: 10,
-    }));
-    scroll.scrollLeft = scroll.scrollWidth;
-    return {
-      ok: live > before + 200 && scroll.scrollWidth > scroll.clientWidth && scroll.scrollLeft > 0,
-      before,
-      live,
-      scrollWidth: scroll.scrollWidth,
-      clientWidth: scroll.clientWidth,
-      scrollLeft: scroll.scrollLeft,
-    };
-  });
-  check("table field edge widens live inside a usable horizontal scroller", resizedTable.ok, JSON.stringify(resizedTable));
-  await browser.saveScreenshot("/tmp/sheets-e2e-table-resize.png");
-  await sleep(2400);
-  const resizedDisk = fs.readFileSync(JFILE, "utf8");
-  check("table width persists by encoded field identity on the owner block",
-    /tine\.table-widths:: prop%3Atopic=\d+/.test(resizedDisk), JSON.stringify(resizedDisk));
-
-  await browser.refresh();
-  await browser.$('.sheet-table [data-sheet-resize-handle="prop:topic"]').waitForExist({ timeout: 15_000 });
-  const reloadedTableWidth = await browser.execute(() => {
-    const header = [...document.querySelectorAll(".sheet-table .sheet-field-header")]
-      .find((el) => (el.textContent ?? "").trim() === "topic");
-    return header?.getBoundingClientRect().width ?? 0;
-  });
-  check("stable table width survives a real app reload",
-    reloadedTableWidth > (resizedTable.before ?? 0) + 200,
-    JSON.stringify({ before: resizedTable.before, reloaded: reloadedTableWidth }));
-
-  const resetTableWidth = await browser.execute(() => {
-    const handle = document.querySelector('.sheet-table [data-sheet-resize-handle="prop:topic"]');
-    if (!(handle instanceof HTMLElement)) return false;
-    handle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
-    return true;
-  });
-  await sleep(2400);
-  const resetDisk = fs.readFileSync(JFILE, "utf8");
-  check("double-click reset removes the durable table width", resetTableWidth && !resetDisk.includes("tine.table-widths::"), JSON.stringify(resetDisk));
 
   // --- Typed cells (phase 6b): checkbox toggle + enum popup write ------------
   // Seed has a schema'd table: columns title=0, state=1, topic(enum)=2, shipped(checkbox)=3.
@@ -655,10 +591,9 @@ try {
       const heading = block.querySelector(".heading-text");
       if (!container || boards.length === 0) return { found: true, boards: boards.length, reason: "missing container or board" };
       // WebDriver scrolls the selected card into view before clicking it. Since
-      // block-owned sheets now overflow through their internal scroller rather
-      // than a negative-margin breakout (GH #473), that expected scroll moves
-      // the board's raw DOM rect left of the clipping viewport. Normalize the
-      // viewport before measuring the layout contract itself.
+      // block-owned sheets overflow through their internal scroller (GH #473),
+      // that expected scroll moves the board's raw rect left of its viewport.
+      // Measure containment at the viewport's origin, as master does.
       const scroller = container.querySelector(":scope > .sheet-scroll");
       const priorScrollLeft = scroller?.scrollLeft ?? 0;
       if (scroller) scroller.scrollLeft = 0;
@@ -828,29 +763,6 @@ try {
   // proof: the backend must materialize both coarse rows, the formula editor
   // must persist tine.filter, and the same filtered identity must survive the
   // actual Table -> Board view switch without rewriting the coarse query.
-  // Builder-backed queries own their view in Display. The old header switcher
-  // remains only for queries without the builder, so selecting it here never
-  // changes this fixture's presentation.
-  const openQueryFilterDisplay = async () => {
-    const found = await browser.execute(() => {
-      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
-        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
-      );
-      const gear = block?.querySelector(".qs-gear");
-      if (!(gear instanceof HTMLButtonElement)) return false;
-      if (!document.querySelector(".qs-sheet")) gear.click();
-      return true;
-    });
-    if (!found) throw new Error("query filter proof has no builder sheet control");
-    await browser.waitUntil(async () => browser.execute(() => !!document.querySelector(".qs-sheet .qd-trigger")),
-      { timeout: 10_000, timeoutMsg: "query filter Display trigger did not appear" });
-    await browser.execute(() => {
-      if (!document.querySelector(".qd-panel")) document.querySelector(".qs-sheet .qd-trigger").click();
-    });
-    await browser.waitUntil(async () => browser.execute(() => !!document.querySelector(".qd-panel .qd-view.active")),
-      { timeout: 10_000, timeoutMsg: "query filter Display panel did not appear" });
-  };
-  await openQueryFilterDisplay();
   const queryFilterInitial = await browser.execute(() => {
     const block = [...document.querySelectorAll(".ls-block")].find((el) =>
       (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
@@ -860,7 +772,7 @@ try {
       .map((el) => (el.textContent ?? "").trim());
     return {
       found: true,
-      active: document.querySelector(".qd-panel .qd-view.active")?.textContent?.trim() ?? null,
+      active: block.querySelector(".query-view-switcher button.active")?.textContent?.trim() ?? null,
       count: block.querySelector(".query-count")?.textContent?.trim() ?? null,
       titles,
     };
@@ -872,9 +784,6 @@ try {
       queryFilterInitial.titles.includes("Low score") && queryFilterInitial.titles.includes("High score"),
     JSON.stringify(queryFilterInitial)
   );
-
-  await browser.keys("Escape");
-  await browser.keys("Escape");
 
   const filterMenuOpened = await browser.execute(() => {
     const block = [...document.querySelectorAll(".ls-block")].find((el) =>
@@ -945,9 +854,11 @@ try {
       JSON.stringify(tableDisk)
     );
 
-    await openQueryFilterDisplay();
     const boardClicked = await browser.execute(() => {
-      const button = [...document.querySelectorAll(".qd-panel .qd-view")]
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+      );
+      const button = [...(block?.querySelectorAll(".query-view-switcher button") ?? [])]
         .find((el) => (el.textContent ?? "").trim() === "Board");
       if (!(button instanceof HTMLButtonElement)) return false;
       button.click();
@@ -962,15 +873,12 @@ try {
         .map((el) => (el.textContent ?? "").trim());
       return titles.length === 1 && titles[0] === "High score";
     }), { timeout: 10_000, timeoutMsg: "query Board did not retain points > 2" });
-    // Saving the new view can remount the builder and close its popover.
-    // Reopen Display to read the persisted active presentation.
-    await openQueryFilterDisplay();
     const filteredBoard = await browser.execute(() => {
       const block = [...document.querySelectorAll(".ls-block")].find((el) =>
         (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
       );
       return {
-        active: document.querySelector(".qd-panel .qd-view.active")?.textContent?.trim() ?? null,
+        active: block?.querySelector(".query-view-switcher button.active")?.textContent?.trim() ?? null,
         count: block?.querySelector(".query-count")?.textContent?.trim() ?? null,
         titles: [...(block?.querySelectorAll(".sheet-board-card-title") ?? [])]
           .map((el) => (el.textContent ?? "").trim()),

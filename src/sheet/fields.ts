@@ -1,26 +1,20 @@
-import {
-  doc,
-  formatForBlock,
-  setRaw,
-  setBlockProperty,
-  setSchedule,
-  blockPageReadOnly,
-  withUndoUnit,
-  type PageMutationDraft,
-} from "../store";
+import { formatForBlock, setRaw, setBlockProperty, setSchedule, blockPageReadOnly, withUndoUnit, node as docNode } from "../document";
 import { facetsFromDto, facetsOf, inlineText, parseBody, tagIdentityKey, type Facets } from "../render/facets";
-import { isRenderHiddenProp, visibleBody } from "../render/block";
+import { isRenderHiddenProp } from "../render/block";
 import { leadingMarker, nextMarker, setMarker } from "../editor/marker";
 import { cycleMarkerSmart, toggleMarkerLabel } from "../editor/repeat";
-import { MARKERS, matchLeadingMarker } from "../markers";
+import { MARKERS } from "../markers";
+import { setPriority } from "../editor/format";
 import { workflow, timetrackingEnabled, logbookWithSecondSupport } from "../ui";
 import type { Inline } from "../render/ast";
 import { rebulletedSourceByteToRawByte, utf8ByteLength, utf8ByteToUtf16Offset } from "../render/spans";
 import { tagRef } from "../tags";
+import { literalBlockOfLine } from "../editor/literalLines";
 import { parseIsoDateLike } from "./typed";
 import { evaluateFormulaForRow, formulaValueText, liveFormulaRowNode, type FormulaEvalRow } from "./formulaEval";
-import { appNow } from "../journal";
 
+import { appNow } from "../journal";
+import { pushToast } from "../toasts";
 export type FieldId =
   | "state"
   | "priority"
@@ -34,6 +28,10 @@ export type FieldId =
 export interface FieldValue {
   text: string;
   raw?: string;
+  /** The members of a list-valued field (tags), exactly as the parser split
+   *  them; `raw` is their space-joined spelling and cannot be split back when a
+   *  member holds a space. */
+  items?: string[];
 }
 
 export function isFieldId(value: string): value is FieldId {
@@ -53,112 +51,8 @@ export function isFormulaField(field: FieldId): field is `formula:${string}` {
   return field.startsWith("formula:");
 }
 
-/** One `tine.columns` token as a field identity (P5A).
- *
- *  The six builtins keep their own identity; every other string is an ordinary
- *  property name and becomes `prop:<name>` HERE, at the renderer — the property
- *  bytes stay the bare name the author wrote, in both formats and in both
- *  languages. The Rust mirror is `publish.rs::sheet_field_for_column`, and the
- *  shared corpus `crates/tine-core/tests/fixtures/query-columns/resolution.json`
- *  pins the RESOLUTION the two of them then map. */
-export function queryColumnFieldId(name: string): FieldId {
-  switch (name) {
-    case "state":
-    case "priority":
-    case "scheduled":
-    case "deadline":
-    case "tags":
-    case "page":
-      return name;
-    default:
-      return `prop:${name}`;
-  }
-}
-
-/** The `tine.columns` token that names this field, or `null` when the columns
- *  grammar has no spelling for it (P5B).
- *
- *  The grammar is P5A's and is not widened here: tokens are bare names, the six
- *  builtins are reserved, and `queryColumnFieldId` maps everything else to
- *  `prop:<name>`. Three field identities therefore have no token —
- *
- *   * a FORMULA column (`formula:effort`): a bare `effort` token would read
- *     back as the ordinary property `effort`;
- *   * a property literally NAMED like a builtin (`prop:state`): a bare `state`
- *     token would read back as the task marker;
- *   * a name carrying the serializer's own punctuation.
- *
- *  Those choices are shown with an explanation rather than coerced into a
- *  different field (a coercion is a silent data change; a missing option is
- *  visible). A property named `prop:x` IS representable — its token is `prop:x`,
- *  which `queryColumnFieldId` reads back as `prop:prop:x`. */
-export function queryColumnName(field: FieldId): string | null {
-  if (isFormulaField(field)) return null;
-  if (!field.startsWith("prop:")) return field;
-  const name = field.slice(5);
-  if (!name || /[=;\0\r\n]/.test(name)) return null;
-  return queryColumnFieldId(name) === field ? name : null;
-}
-
-/** The `tine.col-aggregates` KEY that names this field, or `null` when that
- *  grammar has no spelling for it (P5B, contract §5/§6).
- *
- *  This is deliberately NOT `queryColumnName`. The two grammars share a shape
- *  and nothing else:
- *
- *   * an aggregate key is a LITERAL property name. `prop:` and `formula:` carry
- *     no meaning there, so a property named `prop:cost` keeps exactly those
- *     bytes, and a property named `state` or `page` is an ordinary thing to
- *     count or sum. The columns grammar RESERVES those six names because a bare
- *     `state` token selects the task marker — but no builtin has an aggregate
- *     key at all, so nothing is there to collide with;
- *   * only an ordinary property has a key. A builtin's bare name and an
- *     aggregate key are the same bytes but not the same thing, and a formula has
- *     no key, so those columns simply carry no aggregate rather than a segment
- *     whose meaning depends on who reads it.
- *
- *  What the grammar genuinely cannot carry is its own punctuation: `;` separates
- *  segments and `=` splits key from function (`view.rs::parse_col_aggregates`),
- *  CR/LF/NUL end a property line, and an empty key already means the keyless
- *  whole-result count. A padded key is refused for the same reason: the reader
- *  trims each segment, so it would come back naming a different property. */
-export function queryAggregateFieldName(field: FieldId): string | null {
-  if (!field.startsWith("prop:")) return null;
-  const name = field.slice(5);
-  if (!name || name !== name.trim() || /[=;\0\r\n]/.test(name)) return null;
-  return name;
-}
-
-/** The sort field names the CURRENT backend sorter understands
- *  (`crates/tine-core/src/query.rs::sort_key`): four builtins with their own
- *  semantics, plus any property key, which falls back to the block's visible
- *  first line when the property is absent.
- *
- *  `state` and `tags` are deliberately NOT here — `sort_key` would read them as
- *  properties of those names, which is not what the columns mean — and neither
- *  is the title column or a formula. Those keep the table's own transient sort
- *  and say so; no new sort syntax and no frontend replacement sorter (P5B). */
-const BACKEND_SORT_BUILTINS: ReadonlySet<string> = new Set([
-  "priority",
-  "page",
-  "scheduled",
-  "deadline",
-]);
-
-/** The `tine.sort` field name for this column, or `null` when the saved sort
- *  cannot express it. */
-export function querySortFieldName(field: FieldId): string | null {
-  if (isFormulaField(field)) return null;
-  if (!field.startsWith("prop:")) return BACKEND_SORT_BUILTINS.has(field) ? field : null;
-  const name = field.slice(5);
-  if (!name || /[=;\0\r\n]/.test(name)) return null;
-  // A property named like one of the sortable builtins is unreachable: the
-  // backend would sort by the builtin's own meaning instead.
-  return BACKEND_SORT_BUILTINS.has(name) ? null : name;
-}
-
 function facetsForBlock(id: string): Facets | null {
-  const n = doc.byId[id];
+  const n = docNode(id);
   return n ? facetsOf(n.raw, formatForBlock(id)) : null;
 }
 
@@ -168,77 +62,11 @@ interface GroupKeysOptions {
   now?: Date;
 }
 
-export function facetsForInput(input: GroupKeyInput): Facets | null {
+function facetsForInput(input: GroupKeyInput): Facets | null {
   const id = typeof input === "string" ? input : input.id;
-  const n = typeof input === "string" ? doc.byId[id] : liveFormulaRowNode(input);
+  const n = typeof input === "string" ? docNode(id) : liveFormulaRowNode(input);
   if (n) return facetsOf(n.raw, formatForBlock(id));
   return typeof input === "string" || !input.dto ? null : facetsFromDto(input.dto);
-}
-
-export function recordFacets(row: FormulaEvalRow): Facets | null {
-  return facetsForInput(row);
-}
-
-export function fieldIdsForRecords(
-  rows: readonly FormulaEvalRow[],
-  includePage: boolean,
-  facetAccessor: (row: FormulaEvalRow) => Facets | null = recordFacets,
-): FieldId[] {
-  const out: FieldId[] = [];
-  const props: FieldId[] = [];
-  const seenProps = new Set<string>();
-  let hasState = false;
-  let hasPriority = false;
-  let hasScheduled = false;
-  let hasDeadline = false;
-  let hasTags = false;
-  for (const row of rows) {
-    const facets = facetAccessor(row);
-    if (!facets) continue;
-    hasState ||= !!facets.marker;
-    hasPriority ||= !!facets.priority;
-    hasScheduled ||= !!facets.scheduled;
-    hasDeadline ||= !!facets.deadline;
-    hasTags ||= facets.tags.length > 0;
-    for (const [key] of facets.properties) {
-      if (isRenderHiddenProp(key)) continue;
-      const field: FieldId = `prop:${key}`;
-      if (!seenProps.has(field)) {
-        seenProps.add(field);
-        props.push(field);
-      }
-    }
-  }
-  if (hasState) out.push("state");
-  if (hasPriority) out.push("priority");
-  if (hasScheduled) out.push("scheduled");
-  if (hasDeadline) out.push("deadline");
-  if (hasTags) out.push("tags");
-  out.push(...props);
-  if (includePage) out.push("page");
-  return out;
-}
-
-export function formulaReferenceName(field: FieldId): string | null {
-  if (isFormulaField(field)) return null;
-  if (field.startsWith("prop:")) return field.slice(5);
-  return field;
-}
-
-export function rowRaw(row: FormulaEvalRow): string {
-  return liveFormulaRowNode(row)?.raw ?? row.dto?.raw ?? "";
-}
-
-export function rowTitle(
-  row: FormulaEvalRow,
-  mode: "joined-with-placeholder" | "first-line",
-): string {
-  const lines = visibleBody(rowRaw(row));
-  if (mode === "first-line") return lines[0] ?? "";
-  const title = lines.join(" ");
-  return title.trim() === "" && (liveFormulaRowNode(row)?.children.length ?? row.dto?.children.length ?? 0) > 0
-    ? "—"
-    : title;
 }
 
 function tagSetHas(f: Facets, tag: string): boolean {
@@ -361,65 +189,15 @@ export function fieldIdsForBlocks(ids: readonly string[], opts: { includePage?: 
   return out;
 }
 
-/** The board's Group-by choices, for BOTH row sources (P5B, N4).
- *
- *  It used to read `doc.byId[ownerId].children` unconditionally, which on a
- *  query block are the block's OWN children — not its results — so a query
- *  board could only ever offer `state`/`priority`/`tags`. One implementation,
- *  two inputs: a children-backed board still passes its owner id and gets
- *  exactly the list it got before, and a query board passes the fields its
- *  result rows actually carry.
- *
- *  `extra` is appended verbatim after the observed properties, for the
- *  identities a query board has and a children board does not (the source
- *  `page`, and formula columns). Passing nothing keeps the old list byte for
- *  byte. */
-export function boardGroupByOptions(
-  source: string | readonly FieldId[],
-  extra: readonly FieldId[] = [],
-): FieldId[] {
+export function boardGroupByOptions(ownerId: string): FieldId[] {
   const out: FieldId[] = ["state", "priority", "tags"];
   const seen = new Set<FieldId>(out);
-  const observed =
-    typeof source === "string" ? fieldIdsForBlocks(doc.byId[source]?.children ?? []) : source;
-  for (const field of observed) {
+  for (const field of fieldIdsForBlocks(docNode(ownerId)?.children ?? [])) {
     if (!field.startsWith("prop:") || seen.has(field)) continue;
     seen.add(field);
     out.push(field);
   }
-  for (const field of extra) {
-    if (seen.has(field)) continue;
-    seen.add(field);
-    out.push(field);
-  }
   return out;
-}
-
-/** How a QUERY face changes its own grouping.
- *
- *  A query board does not own `tine.group-by`: the grouping is the QUERY's
- *  `tine.group-field`, resolved once and written through the query's own save
- *  path. So the toolbar dropdown and the context menu both route through this
- *  ONE callback rather than each reaching for a property writer of its own —
- *  which is how the two used to disagree.
- *
- *  **`field: null` is not one answer but two**, and a board treats them
- *  differently (ADR 0030, P5B):
- *
- *   * `cleared: true` — the user said "no grouping" out loud. One ungrouped
- *     column, and the task-marker default may NOT speak over it.
- *   * `cleared: false` — nothing anywhere states a grouping. That is the
- *     silence the Board's default has always filled, and a note authored as
- *     `tine.view:: board` with no grouping key has always shown a task-marker
- *     board. Collapsing the two would un-group every one of them.
- *
- *  A children board has no spelling for the first and is unaffected. */
-export interface QueryGroupingControl {
-  field: FieldId | null;
-  /** Whether `field: null` is an EXPLICIT clear rather than an absent setting. */
-  cleared: boolean;
-  options: readonly FieldId[];
-  set: (field: FieldId | null) => void;
 }
 
 export function fieldLabel(field: FieldId): string {
@@ -433,30 +211,25 @@ export function fieldLabel(field: FieldId): string {
   return "Page";
 }
 
-export function fieldValueFromFacets(
-  facets: Facets,
-  field: FieldId,
-  page: string,
-): FieldValue | null {
-  if (isFormulaField(field)) return null;
+/** One field's value from a block's facets: the single reader behind both the
+ *  live-document and the DTO row paths (formulas, tables, static export). */
+export function fieldValueFromFacets(f: Facets, field: FieldId, page: string): FieldValue | null {
   switch (field) {
     case "state":
-      return facets.marker ? { text: facets.marker, raw: facets.marker } : null;
+      return f.marker ? { text: f.marker, raw: f.marker } : null;
     case "priority":
-      return facets.priority ? { text: `[#${facets.priority}]`, raw: facets.priority } : null;
+      return f.priority ? { text: `[#${f.priority}]`, raw: f.priority } : null;
     case "scheduled":
-      return facets.scheduled ? { text: facets.scheduled, raw: facets.scheduled } : null;
+      return f.scheduled ? { text: f.scheduled, raw: f.scheduled } : null;
     case "deadline":
-      return facets.deadline ? { text: facets.deadline, raw: facets.deadline } : null;
+      return f.deadline ? { text: f.deadline, raw: f.deadline } : null;
     case "tags":
-      return facets.tags.length
-        ? { text: facets.tags.map((tag) => `#${tag}`).join(" "), raw: facets.tags.join(" ") }
-        : null;
+      return f.tags.length ? { text: f.tags.map((t) => `#${t}`).join(" "), raw: f.tags.join(" "), items: [...f.tags] } : null;
     case "page":
       return { text: page, raw: page };
     default: {
       const key = field.slice(5);
-      const found = facets.properties.find(([candidate]) => candidate === key);
+      const found = f.properties.find(([k]) => k === key);
       return found ? { text: found[1], raw: found[1] } : null;
     }
   }
@@ -464,7 +237,7 @@ export function fieldValueFromFacets(
 
 export function readField(id: string, field: FieldId): FieldValue | null {
   if (isFormulaField(field)) return null;
-  const n = doc.byId[id];
+  const n = docNode(id);
   const f = facetsForBlock(id);
   if (!n || !f) return null;
   return fieldValueFromFacets(f, field, n.page);
@@ -473,7 +246,7 @@ export function readField(id: string, field: FieldId): FieldValue | null {
 
 export function writeField(id: string, field: FieldId, value: string): boolean {
   if (isFormulaField(field)) return false;
-  const n = doc.byId[id];
+  const n = docNode(id);
   if (!n) return false;
   if (blockPageReadOnly(id)) return false; // org round-trip gate (review finding)
   const trimmed = value.trim();
@@ -483,7 +256,7 @@ export function writeField(id: string, field: FieldId, value: string): boolean {
     const cur = leadingMarker(n.raw);
     let raw: string;
     if (target && target === nextMarker(cur, workflow())) {
-      raw = cycleMarkerSmart(n.raw, workflow(), {
+      raw = cycleMarkerSmart(n.raw, workflow(), formatForBlock(id), {
         format: formatForBlock(id),
         enabled: timetrackingEnabled(),
         withSeconds: logbookWithSecondSupport(),
@@ -523,8 +296,20 @@ export function writeField(id: string, field: FieldId, value: string): boolean {
   return false;
 }
 
+/** The user-facing door for a cell edit: `writeField`, and a refusal (read-only
+ * page, vanished row, a value this column cannot take) is SHOWN with the
+ * rejected text, never a silently closed input (I-9). Same cost as writeField. */
+export function writeFieldVisibly(id: string, field: FieldId, value: string): boolean {
+  const written = writeField(id, field, value);
+  if (!written) {
+    const shown = value.trim().slice(0, 60);
+    pushToast(`Couldn't change that cell${shown ? ` to “${shown}”` : ""}: the page is read-only, the row is gone, or the value doesn't fit the column.`, "error");
+  }
+  return written;
+}
+
 export function writeTagDelta(id: string, delta: { add?: string; remove?: string }): boolean {
-  const n = doc.byId[id];
+  const n = docNode(id);
   if (!n) return false;
   if (blockPageReadOnly(id)) return false;
   if (formatForBlock(id) !== "md") return false;
@@ -556,12 +341,27 @@ export function writeTagDelta(id: string, delta: { add?: string; remove?: string
   return true;
 }
 
+/** A state-cell label click: OG's two-state toggle, never the keyboard cycle. */
+export function toggleStateMarkerLabel(id: string): boolean {
+  if (blockPageReadOnly(id)) return false;
+  const n = docNode(id);
+  if (!n) return false;
+  const raw = toggleMarkerLabel(n.raw, {
+    format: formatForBlock(id),
+    enabled: timetrackingEnabled(),
+    withSeconds: logbookWithSecondSupport(),
+  });
+  if (raw === null) return false;
+  setRaw(id, raw, { timetracking: false });
+  return true;
+}
+
 export function cycleField(id: string, field: "state" | "priority"): boolean {
   if (blockPageReadOnly(id)) return false; // org round-trip gate
-  const n = doc.byId[id];
+  const n = docNode(id);
   if (!n) return false;
   if (field === "state") {
-    const raw = cycleMarkerSmart(n.raw, workflow(), {
+    const raw = cycleMarkerSmart(n.raw, workflow(), formatForBlock(id), {
       format: formatForBlock(id),
       enabled: timetrackingEnabled(),
       withSeconds: logbookWithSecondSupport(),
@@ -572,20 +372,6 @@ export function cycleField(id: string, field: "state" | "priority"): boolean {
   const cur = facetsForBlock(id)?.priority ?? null;
   const next = cur === "A" ? "B" : cur === "B" ? "C" : cur === "C" ? null : "A";
   return writeField(id, "priority", next ?? "");
-}
-
-export function toggleStateMarkerLabel(id: string): boolean {
-  if (blockPageReadOnly(id)) return false;
-  const node = doc.byId[id];
-  if (!node) return false;
-  const raw = toggleMarkerLabel(node.raw, {
-    format: formatForBlock(id),
-    enabled: timetrackingEnabled(),
-    withSeconds: logbookWithSecondSupport(),
-  });
-  if (raw === null) return false;
-  setRaw(id, raw, { timetracking: false });
-  return true;
 }
 
 export function groupKeyForBlock(id: string, field: FieldId): string | null {
@@ -602,7 +388,7 @@ export function groupKeysForBlock(input: GroupKeyInput, field: FieldId, opts: Gr
     const formulas = opts.formulas;
     if (!formulas) return [null];
     const id = typeof input === "string" ? input : input.id;
-    const page = typeof input === "string" ? doc.byId[id]?.page ?? "" : input.page;
+    const page = typeof input === "string" ? docNode(id)?.page ?? "" : input.page;
     const value = evaluateFormulaForRow(
       { id, page, kind: typeof input === "string" ? undefined : input.kind, dto: typeof input === "string" ? undefined : input.dto },
       field.slice("formula:".length),
@@ -619,7 +405,7 @@ export function groupKeysForBlock(input: GroupKeyInput, field: FieldId, opts: Gr
   }
 
   const id = typeof input === "string" ? input : input.id;
-  if (typeof input === "string" ? doc.byId[id] : liveFormulaRowNode(input)) return [groupKeyForBlock(id, field)];
+  if (typeof input === "string" ? docNode(id) : liveFormulaRowNode(input)) return [groupKeyForBlock(id, field)];
 
   const f = facetsForInput(input);
   if (!f) return [null];
@@ -633,40 +419,7 @@ export function groupKeysForBlock(input: GroupKeyInput, field: FieldId, opts: Gr
 }
 
 function setPriorityRaw(raw: string, level: "A" | "B" | "C" | null): string {
-  const lines = raw.split("\n");
-  const first = lines[0] ?? "";
-  // The shared recognizer decides whether the marker is on this first line at
-  // all (a bare marker with continuation lines is NOT a marker to lsdoc).
-  const m = matchLeadingMarker(raw);
-  const onFirstLine = m && m.end <= first.length;
-  const head = onFirstLine ? first.slice(0, m.end) : "";
-  let rest = first.slice(onFirstLine ? m.end : 0).replace(/^\s+/, "");
-  rest = rest.replace(/^\[#[ABC]\]\s*/, "");
-  const prefix = head ? `${head} ` : "";
-  lines[0] = level ? (rest ? `${prefix}[#${level}] ${rest}` : `${prefix}[#${level}]`) : `${prefix}${rest}`;
-  return lines.join("\n");
-}
-
-/** Pure/detached counterpart used when a structural Sheet command is being
- * assembled as one atomic page-mutation plan. Restructure only writes fields
- * that are currently absent, so marker insertion has no clock transition to
- * preserve. */
-export function writeGroupingFieldToDraft(
-  draft: PageMutationDraft,
-  id: string,
-  field: "state" | "priority" | `prop:${string}`,
-  value: string,
-): boolean {
-  const node = draft.node(id);
-  if (!node) return false;
-  const trimmed = value.trim();
-  if (field === "state") {
-    const target = MARKERS.includes(trimmed as (typeof MARKERS)[number]) ? trimmed : null;
-    return target !== null && draft.setRaw(id, setMarker(node.raw, target));
-  }
-  if (field === "priority") {
-    const target = trimmed === "A" || trimmed === "B" || trimmed === "C" ? trimmed : null;
-    return target !== null && draft.setRaw(id, setPriorityRaw(node.raw, target));
-  }
-  return draft.setProperty(id, field.slice(5), trimmed || null);
+  // A block whose first line opens a code/src block has no title to carry a
+  // priority; prefixing it would stop the fence opening (C3 L16).
+  return literalBlockOfLine(raw)[0] !== -1 ? raw : setPriority(raw, level);
 }

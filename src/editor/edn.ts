@@ -1,34 +1,35 @@
-// Tiny, dependency-free helpers for the bits of EDN we read/write inside a
-// `{{query … {:opts}}}` macro. String- and brace-aware so values containing `"`,
-// `\`, `{`, or `}` don't confuse the (otherwise regex-based) query handling.
+// I-4/I-12: authored EDN structure belongs to query_edn.rs, shared with native.
+// These clients never discover delimiters or edit spans in JavaScript.
+import { query_edn_json } from "../render/wasm/lsdoc_wasm.js";
+import { QueryPrintRefusedError } from "../backend";
 
-/** Escape a string for an EDN double-quoted literal. */
-export function quoteEdnString(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+function call<T>(source: string, operation: string, value = ""): T {
+  return JSON.parse(query_edn_json(source, operation, value)) as T;
 }
-/** Inverse of quoteEdnString for the captured inner text of an EDN string. */
+export interface EdnOptions { title: string | null; collapsed: boolean; table: boolean }
+export interface EdnForm { span: { start: number; end: number }; kind: string; children: EdnForm[] }
+export function readEdn(source: string): EdnForm | null { return call(source, "read"); }
+/** Slice a Rust byte span; pass pre-encoded bytes when reading several forms. */
+export function ednSlice(source: string | Uint8Array, form: EdnForm): string {
+  const bytes = typeof source === "string" ? new TextEncoder().encode(source) : source;
+  return new TextDecoder().decode(bytes.subarray(form.span.start, form.span.end));
+}
+export function readEdnOptions(source: string): EdnOptions | null { return call(source, "options"); }
+export function editEdnTitle(source: string, title: string): string {
+  const edited = call<string | null>(source, "title", title);
+  if (edited === null) throw new QueryPrintRefusedError("syntax", {
+    kind: "syntax", message: "Unreadable EDN options; the query was not changed.",
+  });
+  return edited;
+}
+/** Escaped inner text, preserving the existing helper's public convention. */
+export function quoteEdnString(source: string): string { return call<string>(source, "quote").slice(1, -1); }
 export function unquoteEdnString(inner: string): string {
-  return inner.replace(/\\(.)/g, "$1");
+  const text = call<string | null>(`"${inner}"`, "unquote");
+  if (text === null) throw new QueryPrintRefusedError("syntax", { kind: "syntax", message: "Unreadable EDN string." });
+  return text;
 }
-
-// The `{{query …}}` EXTENT readers that used to live here moved to
-// `src/editor/queryMacro.ts` (P0-ts, SPEC §4.3.1/§7.9). They belong with the
-// macro-name constant and with the raw-source transport, and they had to grow a
-// `{name, argument}` result and TQL string awareness that has nothing to do with
-// EDN.
-//
-// `splitTrailingMap` — which answered "where does the trailing `{…}` options map
-// begin" — is GONE, not moved. That is a query-language question, and the query
-// engine answers it in Rust (`query::og::split_trailing_map`, reached through
-// `query_parse`): `source.original` is the form and `source.og_options` is the
-// map, verbatim. Two readers of the same bytes is exactly the second answer I-12
-// forbids, and the two did disagree. Measured, on the advanced whole-map form
-// `{:query [:find (pull ?b [*]) :where [?b :block/content "x"]]}`: this reader
-// returned `form: ""` with the entire map as OPTIONS, so the query executed as an
-// empty form, while Rust returns the map as the FORM — `split_trailing_map` splits
-// only a map that FOLLOWS a nonempty form (§4.3.1). It also had no notion of
-// `FormFamily`, so it could not protect a TQL `'…'` literal the way the EDN `"…"`
-// case it did know about is protected.
-//
-// What remains in this file is only what its name claims: EDN string quoting for
-// that opaque options map, which the engine deliberately does NOT interpret.
+export function splitTrailingMap(source: string): { form: string; opts: string } {
+  const [form, opts] = call<[string, string]>(source, "split");
+  return { form, opts };
+}

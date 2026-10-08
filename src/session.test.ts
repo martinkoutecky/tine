@@ -1,21 +1,12 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { buildPersistedSession, parsePersistedSession, type PersistedSession } from "./session";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { buildPersistedSession, flushSession, parsePersistedSession, restoreSession, scheduleSessionSave, type PersistedSession } from "./session";
+import { setToasts, toasts } from "./toasts";
+import { backend } from "./backend";
+import { resetStore } from "./document";
 import { resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "./panes";
-import { makePdfRoute, type PaneSnapshot } from "./router";
-import {
-  applySidebarSession,
-  favoritesSectionExpanded,
-  recentSectionExpanded,
-  rightSidebar,
-  parseStoredSidebarItems,
-  openBlockInSidebar,
-  openPageInSidebar,
-  recentPages,
-  setRecentPages,
-  setRightSidebar,
-  setFavoritesSectionExpanded,
-  setRecentSectionExpanded,
-} from "./ui";
+import { mainRouter } from "./panes";
+import type { PaneSnapshot } from "./router";
+import { applySidebarSession, favoritesSectionExpanded, recentSectionExpanded, rightSidebar, parseStoredSidebarItems, openBlockInSidebar, openPageInSidebar, recentPages, setRecentPages, setRightSidebar, setFavoritesSectionExpanded, setRecentSectionExpanded } from "./ui";
 
 const journals = (): PaneSnapshot => ({
   tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
@@ -35,95 +26,71 @@ beforeEach(() => {
 });
 
 describe("persisted split session", () => {
-  it("round-trips only explicit PDF route fields and preserves view state", () => {
-    const pdf = makePdfRoute("assets/paper.pdf", "Paper", {
-      viewId: "pdf-view-stable", page: 7, scale: 1.75,
-    });
-    resetPaneLayoutToSingle({
-      tabs: [{ history: [{ ...pdf, injected: { unsafe: true } } as typeof pdf], pos: 0, pinned: false }],
-      activeIndex: 0,
-    });
-
-    const persisted = buildPersistedSession();
-    expect(Object.hasOwn(persisted, "pdfTarget")).toBe(false);
-    expect(persisted.tabs[0].history[0]).toEqual(pdf);
-    const parsed = parsePersistedSession(JSON.stringify(persisted))!;
-    expect(parsed.snapshots.get("main")?.tabs[0].history[0]).toEqual(pdf);
+  it("coalesces repeated session write failures and offers retry", async () => {
+    setToasts([]);
+    const save = vi.spyOn(backend(), "saveSession").mockRejectedValue(new Error("permission denied"));
+    try {
+      await expect(flushSession()).rejects.toThrow("permission denied");
+      await expect(flushSession()).rejects.toThrow("permission denied");
+      expect(toasts().filter((toast) => toast.message.includes("Could not save session"))).toHaveLength(1);
+      expect(toasts()[0].action?.label).toBe("Retry");
+      expect(toasts()[0].message).toContain("permission denied");
+      save.mockResolvedValue();
+      toasts()[0].action?.run();
+      await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(3));
+    } finally { setToasts([]); vi.restoreAllMocks(); }
+  });
+  it("a window with no graph bound yet writes no session and raises no error toast (OG-TOAST)", async () => {
+    setToasts([]);
+    vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(0);
+    const save = vi.spyOn(backend(), "saveSession").mockRejectedValue(new Error("no graph loaded for window main"));
+    try {
+      scheduleSessionSave();
+      await flushSession();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(save).not.toHaveBeenCalled();
+      expect(toasts()).toEqual([]);
+    } finally { setToasts([]); vi.restoreAllMocks(); }
+  });
+  it("does not apply a session read from an old graph after rebinding", async () => {
+    let finish!: (raw: string) => void;
+    const old = { ...buildPersistedSession(), recentPages: [{ name: "Old graph", kind: "page" as const }] };
+    vi.spyOn(backend(), "loadSession").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = restoreSession();
+    resetStore();
+    setRecentPages([{ name: "New graph", kind: "page" }]);
+    finish(JSON.stringify(old));
+    await pending;
+    expect(recentPages()).toEqual([{ name: "New graph", kind: "page" }]);
+    vi.restoreAllMocks();
   });
 
-  it("restores a conflict overview tab instead of dropping it (GH #536)", () => {
-    resetPaneLayoutToSingle({
-      tabs: [{ history: [{ kind: "journals" }, { kind: "conflicts" }], pos: 1, pinned: false }],
-      activeIndex: 0,
-    });
-    const parsed = parsePersistedSession(JSON.stringify(buildPersistedSession()))!;
-    expect(parsed.snapshots.get("main")?.tabs[0].history).toEqual([{ kind: "journals" }, { kind: "conflicts" }]);
+  it("does not overwrite live sidebar or recent changes when startup restore finishes late", async () => {
+    let finish!: (raw: string) => void;
+    const old = { ...buildPersistedSession(), recentPages: [{ name: "Saved", kind: "page" as const }], rightSidebar: true };
+    vi.spyOn(backend(), "loadSession").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = restoreSession();
+    setRecentPages([{ name: "Live", kind: "page" }]);
+    finish(JSON.stringify(old));
+    await pending;
+    expect(recentPages()).toEqual([{ name: "Live", kind: "page" }]);
+    vi.restoreAllMocks();
   });
 
-  it("migrates a legacy dedicated PDF beside the intact desktop layout", () => {
-    const raw = JSON.stringify({
-      ...buildPersistedSession(),
-      pdfTarget: { filename: "assets/paper.pdf", label: "Paper" },
-    });
-
-    const parsed = parsePersistedSession(raw, {
-      mobile: false, legacyPdfWidth: 560, viewportWidth: 1_400,
-    })!;
-    expect(parsed.layout).toMatchObject({
-      kind: "split", dir: "row", ratio: 0.6,
-      children: [{ kind: "pane", paneId: "main" }, { kind: "pane", paneId: "pdf-migrated" }],
-    });
-    expect(parsed.snapshots.get("main")?.tabs).toHaveLength(1);
-    expect(parsed.snapshots.get("pdf-migrated")?.tabs[0].history[0]).toMatchObject({
-      kind: "pdf", filename: "assets/paper.pdf", label: "Paper",
-    });
-  });
-
-  it("migrates a legacy dedicated PDF into mobile history so Back returns to its source", () => {
-    const raw = JSON.stringify({
-      ...buildPersistedSession(),
-      pdfTarget: { filename: "assets/paper.pdf", label: "Paper" },
-    });
-    const parsed = parsePersistedSession(raw, { mobile: true })!;
-    const tab = parsed.snapshots.get("main")!.tabs[0];
-    expect(tab.history.map((route) => route.kind)).toEqual(["journals", "pdf"]);
-    expect(tab.pos).toBe(1);
-  });
-
-  it("keeps a malformed PDF route as a closable error tab without discarding its pane", () => {
-    const raw = JSON.stringify({
-      tabs: [{
-        history: [{ kind: "pdf", viewId: "bad", filename: 42, label: "Broken" }],
-        pos: 0,
-        pinned: false,
-      }],
-      activeIndex: 0,
-    });
-    const parsed = parsePersistedSession(raw)!;
-    expect(parsed.layout).toEqual({ kind: "pane", paneId: "main" });
-    expect(parsed.snapshots.get("main")?.tabs[0].history[0]).toMatchObject({
-      kind: "invalid", title: "Unavailable PDF",
-    });
-  });
-
-  it("remints duplicate PDF view ids across the complete pane tree", () => {
-    const route = { kind: "pdf", viewId: "duplicate", filename: "assets/paper.pdf", label: "Paper" };
-    const snapshot = (paneId: string) => ({
-      kind: "pane", paneId,
-      tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0,
-    });
-    const parsed = parsePersistedSession(JSON.stringify({
-      layout: {
-        kind: "split", dir: "row", ratio: 0.5,
-        children: [snapshot("main"), snapshot("pane-2")],
-      },
-      tabs: journals().tabs,
-      activeIndex: 0,
-    }), { mobile: false })!;
-    const first = parsed.snapshots.get("main")!.tabs[0].history[0];
-    const second = parsed.snapshots.get("pane-2")!.tabs[0].history[0];
-    expect(first.kind === "pdf" ? first.viewId : null).toBe("duplicate");
-    expect(second.kind === "pdf" ? second.viewId : null).not.toBe("duplicate");
+  it("refuses a late restore after a route changes away and back to identical state", async () => {
+    let finish!: (raw: string) => void;
+    const saved = { ...buildPersistedSession(), recentPages: [{ name: "Saved", kind: "page" as const }] };
+    vi.spyOn(backend(), "loadSession").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const initial = JSON.stringify(buildPersistedSession());
+    const pending = restoreSession();
+    mainRouter().openPage("Temporary", "page");
+    resetPaneLayoutToSingle(journals());
+    setRecentPages(JSON.parse(initial).recentPages);
+    expect(JSON.stringify(buildPersistedSession())).toBe(initial);
+    finish(JSON.stringify(saved));
+    await pending;
+    expect(recentPages()).not.toEqual(saved.recentPages);
+    vi.restoreAllMocks();
   });
 
   it("copies only bounded route fields while retaining exact page ownership", () => {
@@ -198,6 +165,11 @@ describe("persisted split session", () => {
           sourceKind: "search",
           source: "alpha -draft",
           presentation: "search",
+          pageMatchScope: "content",
+          pagePresentation: "table",
+          blockPresentation: "list",
+          pageDisplay: { columns: ["prop:owner"] },
+          blockDisplay: {},
         }],
         pos: 0,
         pinned: true,
@@ -214,9 +186,72 @@ describe("persisted split session", () => {
         sourceKind: "search",
         source: "alpha -draft",
         presentation: "search",
+        pageMatchScope: "content",
+        pagePresentation: "table",
+        blockPresentation: "list",
+        pageDisplay: { columns: ["prop:owner"] },
+        blockDisplay: {},
       }],
     });
     expect(JSON.stringify(parsed)).not.toContain("results");
+  });
+
+  it("restores the shallow panes of a hostile deep or wide layout instead of discarding the session (og C, I-22)", () => {
+    const pane = (paneId: string) => JSON.stringify({ kind: "pane", paneId, ...page(paneId) });
+    // A 10,000-level children[0] split chain, built as text so the fixture itself never recurses.
+    const levels = 10_000;
+    const deep = '{"kind":"split","dir":"row","children":['.repeat(levels) + pane("bottom")
+      + Array.from({ length: levels }, (_, i) => `,${pane(`p${levels - 1 - i}`)}]}`).join("");
+    const parsed = parsePersistedSession(JSON.stringify({ tabs: [] }).replace("}", `,"layout":${deep}}`));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.snapshots.has("p0")).toBe(true);
+    expect(parsed!.snapshots.has("bottom")).toBe(false);
+    expect(parsed!.snapshots.size).toBeLessThanOrEqual(64);
+
+    // A balanced layout with 256 panes is cut to the node budget (a full 64-pane tree)
+    // before parsing more snapshots.
+    let next = 0;
+    const wide = (depth: number): string => depth === 0 ? pane(`w${next++}`)
+      : `{"kind":"split","dir":"col","children":[${wide(depth - 1)},${wide(depth - 1)}]}`;
+    const many = parsePersistedSession(`{"layout":${wide(8)}}`)!;
+    expect(many.snapshots.size).toBeLessThanOrEqual(64);
+    expect(many.snapshots.has("w0")).toBe(true);
+    // A full 64-pane layout is within the budget and restores whole.
+    next = 0;
+    expect(parsePersistedSession(`{"layout":${wide(6)}}`)!.snapshots.size).toBe(64);
+  });
+
+  it("drops only a malformed optional field and keeps the query tab (og E, master P5C)", () => {
+    const restore = (fields: Record<string, unknown>) => parsePersistedSession(JSON.stringify({
+      tabs: [{
+        history: [{ kind: "query", id: "query-1", sourceKind: "search", source: "alpha", presentation: "table", ...fields }],
+        pos: 0, pinned: true,
+      }],
+      activeIndex: 0,
+    }))!.snapshots.get("main")!.tabs[0];
+    const bare = { kind: "query", id: "query-1", sourceKind: "search", source: "alpha", presentation: "table" };
+    for (const bad of [
+      { columns: ["bad;name"] }, { sort: [["priority", "sideways"]] }, { sample: -1 },
+      { group_by: "status" }, { aggregates: [["", "avg"]] }, "not-an-object", 3, null, [],
+    ]) {
+      for (const key of ["pageDisplay", "blockDisplay"]) {
+        const tab = restore({ [key]: bad });
+        expect(tab.pinned).toBe(true);
+        expect(tab.history[0], JSON.stringify(bad)).toEqual(bare);
+      }
+    }
+    // A bad membership mode is dropped, never widened to another mode, and the good
+    // siblings around it are kept.
+    const tab = restore({
+      pagePresentation: "gallery", pageDisplay: { columns: ["bad;field"] }, blockPresentation: "list",
+      blockDisplay: { columns: ["prop:owner"] }, pageMatchScope: "both-and-more",
+    });
+    expect(tab.history[0]).toEqual({ ...bare, blockPresentation: "list", blockDisplay: { columns: ["prop:owner"] } });
+    expect(tab.pinned).toBe(true);
+    // A malformed REQUIRED field still refuses the route.
+    expect(parsePersistedSession(JSON.stringify({
+      tabs: [{ history: [{ ...bare, presentation: "gallery" }], pos: 0, pinned: false }], activeIndex: 0,
+    }))).toBeNull();
   });
 
   it("round-trips independent empty query routes in split panes with the chosen focused owner", () => {
@@ -234,234 +269,6 @@ describe("persisted split session", () => {
     expect(parsed.snapshots.get("main")?.tabs[0].history[0]).toEqual({ kind: "query", id: "query-empty", sourceKind: "search", source: "", presentation: "search" });
     expect(parsed.snapshots.get("pane-2")?.tabs[0].history[0]).toEqual({ kind: "query", id: "query-alpha", sourceKind: "search", source: "alpha", presentation: "table" });
     expect(JSON.stringify(parsed)).not.toContain("results");
-  });
-
-  it("round-trips a query workspace display draft through restore and serialization", () => {
-    const display = {
-      sort: [["priority", "asc"]],
-      group_by: "prop:state",
-      columns: ["state", "prop:owner"],
-      aggregates: [["", "count"]],
-      sample: 25,
-    };
-    const route = {
-      kind: "query", id: "query-display", sourceKind: "search",
-      source: "alpha", presentation: "table", display,
-    };
-    const raw = JSON.stringify({
-      tabs: [{ history: [route], pos: 0, pinned: false }],
-      activeIndex: 0,
-    });
-
-    const restored = parsePersistedSession(raw)!;
-    expect(restored.snapshots.get("main")?.tabs[0].history[0]).toEqual(route);
-
-    resetPaneLayoutToSingle(restored.snapshots.get("main")!);
-    const again = parsePersistedSession(JSON.stringify(buildPersistedSession()))!;
-    expect(again.snapshots.get("main")?.tabs[0].history[0]).toEqual(route);
-  });
-
-  it("keeps a cleared display draft distinct from no draft at all", () => {
-    const withRoute = (display?: unknown) => JSON.stringify({
-      tabs: [{
-        history: [{
-          kind: "query", id: "query-1", sourceKind: "search",
-          source: "alpha", presentation: "table",
-          ...(display === undefined ? {} : { display }),
-        }],
-        pos: 0, pinned: false,
-      }],
-      activeIndex: 0,
-    });
-
-    const cleared = parsePersistedSession(withRoute({}))!
-      .snapshots.get("main")!.tabs[0].history[0];
-    expect(cleared).toMatchObject({ display: {} });
-
-    const absent = parsePersistedSession(withRoute())!
-      .snapshots.get("main")!.tabs[0].history[0];
-    expect(Object.hasOwn(absent, "display")).toBe(false);
-  });
-
-  it("drops only a malformed display and keeps the rest of the query route", () => {
-    const restore = (display: unknown) => parsePersistedSession(JSON.stringify({
-      tabs: [{
-        history: [{
-          kind: "query", id: "query-1", sourceKind: "search",
-          source: "alpha", presentation: "table", display,
-        }],
-        pos: 0, pinned: true,
-      }],
-      activeIndex: 0,
-    }))!.snapshots.get("main")!.tabs[0];
-
-    for (const bad of [
-      { columns: ["bad;name"] }, { sort: [["priority", "sideways"]] },
-      { sample: -1 }, { group_by: "status" }, { aggregates: [["", "avg"]] },
-      "not-an-object", 3, null, [],
-    ]) {
-      const tab = restore(bad);
-      expect(tab.pinned).toBe(true);
-      expect(tab.history[0]).toEqual({
-        kind: "query", id: "query-1", sourceKind: "search",
-        source: "alpha", presentation: "table",
-      });
-    }
-  });
-
-  it("strips unsupported keys out of a persisted draft rather than restoring them", () => {
-    const parsed = parsePersistedSession(JSON.stringify({
-      tabs: [{
-        history: [{
-          kind: "query", id: "query-1", sourceKind: "search",
-          source: "alpha", presentation: "table",
-          display: { columns: ["state"], view: "board", results: [{ id: "b1" }] },
-        }],
-        pos: 0, pinned: false,
-      }],
-      activeIndex: 0,
-    }))!;
-    expect(parsed.snapshots.get("main")?.tabs[0].history[0]).toEqual({
-      kind: "query", id: "query-1", sourceKind: "search",
-      source: "alpha", presentation: "table", display: { columns: ["state"] },
-    });
-    expect(JSON.stringify(parsed)).not.toContain("results");
-  });
-
-  it("persists a copy of the draft, not the live route's own lists", () => {
-    const display = {
-      columns: ["prop:a"],
-      sort: [["priority", "asc"]] as [string, "asc" | "desc"][],
-    };
-    resetPaneLayoutToSingle({
-      tabs: [{
-        history: [{
-          kind: "query", id: "query-1", sourceKind: "search",
-          source: "alpha", presentation: "table", display,
-        }],
-        pos: 0, pinned: false,
-      }],
-      activeIndex: 0,
-    });
-
-    const persisted = buildPersistedSession();
-    const written = persisted.tabs[0].history[0] as { display: typeof display };
-    expect(written.display).toEqual(display);
-    expect(written.display.columns).not.toBe(display.columns);
-    expect(written.display.sort[0]).not.toBe(display.sort[0]);
-
-    display.columns.push("prop:b");
-    display.sort[0][1] = "desc";
-    expect(written.display).toEqual({ columns: ["prop:a"], sort: [["priority", "asc"]] });
-  });
-
-  it("round-trips independent page and block display state with explicit names membership", () => {
-    const route = {
-      kind: "query",
-      id: "query-mixed",
-      sourceKind: "search",
-      source: "launch",
-      presentation: "search",
-      display: { columns: ["prop:legacy"] },
-      pagePresentation: "table",
-      pageDisplay: {},
-      blockPresentation: "list",
-      blockDisplay: { sort: [["priority", "desc"]], sample: 12 },
-      pageMatchScope: "names",
-    };
-    const parsed = parsePersistedSession(JSON.stringify({
-      tabs: [{ history: [route], pos: 0, pinned: false }],
-      activeIndex: 0,
-    }))!;
-
-    expect(parsed.snapshots.get("main")?.tabs[0].history[0]).toEqual(route);
-    resetPaneLayoutToSingle(parsed.snapshots.get("main")!);
-    const again = parsePersistedSession(JSON.stringify(buildPersistedSession()))!;
-    expect(again.snapshots.get("main")?.tabs[0].history[0]).toEqual(route);
-    expect(JSON.stringify(again)).not.toContain("results");
-    expect(JSON.stringify(again)).not.toContain("metadata");
-  });
-
-  it("drops only malformed optional scoped fields and never broadens bad membership", () => {
-    const restored = parsePersistedSession(JSON.stringify({
-      tabs: [{
-        history: [{
-          kind: "query",
-          id: "query-partial-scope",
-          sourceKind: "search",
-          source: "alpha",
-          presentation: "table",
-          display: { columns: ["prop:legacy"] },
-          pagePresentation: "gallery",
-          pageDisplay: { columns: ["bad;field"] },
-          blockPresentation: "list",
-          blockDisplay: { columns: ["prop:owner"] },
-          pageMatchScope: "both-and-more",
-        }],
-        pos: 0,
-        pinned: true,
-      }],
-      activeIndex: 0,
-    }))!;
-    const route = restored.snapshots.get("main")!.tabs[0].history[0];
-
-    expect(route).toEqual({
-      kind: "query",
-      id: "query-partial-scope",
-      sourceKind: "search",
-      source: "alpha",
-      presentation: "table",
-      display: { columns: ["prop:legacy"] },
-      blockPresentation: "list",
-      blockDisplay: { columns: ["prop:owner"] },
-    });
-    expect(restored.snapshots.get("main")!.tabs[0].pinned).toBe(true);
-    expect(Object.hasOwn(route, "pageMatchScope")).toBe(false);
-  });
-
-  it("serializes fresh copies of every singular and scoped display list", () => {
-    const display = { columns: ["prop:legacy"] };
-    const pageDisplay = {
-      columns: ["name"],
-      sort: [["name", "asc"]] as [string, "asc" | "desc"][],
-    };
-    const blockDisplay = {
-      aggregates: [["prop:cost", "sum"]] as [string, "count" | "sum" | "avg"][],
-    };
-    resetPaneLayoutToSingle({
-      tabs: [{
-        history: [{
-          kind: "query",
-          id: "query-copy-scopes",
-          sourceKind: "search",
-          source: "alpha",
-          presentation: "table",
-          display,
-          pageDisplay,
-          blockDisplay,
-        }],
-        pos: 0,
-        pinned: false,
-      }],
-      activeIndex: 0,
-    });
-
-    const written = buildPersistedSession().tabs[0].history[0];
-    if (written.kind !== "query") throw new Error("expected persisted query route");
-    expect(written.display).toEqual(display);
-    expect(written.pageDisplay).toEqual(pageDisplay);
-    expect(written.blockDisplay).toEqual(blockDisplay);
-    expect(written.display!.columns).not.toBe(display.columns);
-    expect(written.pageDisplay!.columns).not.toBe(pageDisplay.columns);
-    expect(written.pageDisplay!.sort![0]).not.toBe(pageDisplay.sort[0]);
-    expect(written.blockDisplay!.aggregates![0]).not.toBe(blockDisplay.aggregates[0]);
-
-    display.columns.push("prop:changed");
-    pageDisplay.sort[0][1] = "desc";
-    blockDisplay.aggregates[0][1] = "avg";
-    expect(written.display).toEqual({ columns: ["prop:legacy"] });
-    expect(written.pageDisplay).toEqual({ columns: ["name"], sort: [["name", "asc"]] });
-    expect(written.blockDisplay).toEqual({ aggregates: [["prop:cost", "sum"]] });
   });
 
   it("round-trips graph-scoped Favorites and Recent disclosure state and defaults legacy sessions open", () => {
@@ -616,4 +423,16 @@ describe("persisted split session", () => {
       pageKind: "page",
     });
   });
+});
+
+
+it("reports current session read failure without replacing live session state", async () => {
+  setToasts([]);
+  const before = buildPersistedSession();
+  const read = vi.spyOn(backend(), "loadSession").mockRejectedValue(new Error("io:PermissionDenied"));
+  await restoreSession();
+  expect(buildPersistedSession()).toEqual(before);
+  expect(toasts().some((t) => t.kind === "error" && t.message.includes("saved session"))).toBe(true);
+  read.mockRestore();
+  setToasts([]);
 });

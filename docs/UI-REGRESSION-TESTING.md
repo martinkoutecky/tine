@@ -54,9 +54,3 @@ WebDriver click, while local runs retain the stricter external-focus assertion.
 Do not erase a failure with a retry. Keep the first evidence, diagnose the
 failure as product, harness, or infrastructure, and restart the clean-run count
 after any change that can affect the result.
-
-A scenario marked `quarantined` remains in the suite and retains its failure
-capsule, but is nonblocking in both ordinary and release modes. Its contract
-must name the exact observed harness limitation and the proof required to
-restore blocking status; quarantine does not change the user outcome being
-tested.

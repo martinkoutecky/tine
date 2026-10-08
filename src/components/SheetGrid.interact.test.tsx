@@ -1,25 +1,14 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
-import { readAppStylesheet } from "../testSource";
+import { readFileSync } from "node:fs";
 import { Block, SurfaceContext } from "./Block";
 import { SheetGrid } from "./SheetGrid";
 import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
-import {
-  doc,
-  blockProperty,
-  blockIsGridView,
-  hasSelection,
-  isSelected,
-  resetStore,
-  selectBlock,
-  setDoc,
-  undo,
-  __setStoreMutationObserverForTest,
-  type FeedPage,
-  type Node as StoreNode,
-} from "../store";
+import { blockProperty, blockIsGridView, hasSelection, isSelected, resetStore, selectBlock, undo } from "../document";
+import { type FeedPage, type Node as StoreNode } from "../document/model";
+import { doc, setDoc } from "../document/model";
 import { editingId, endEdit } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { setFocusedPaneId } from "../panes";
@@ -31,8 +20,6 @@ import {
   rowSeamSel,
   setCellSel,
 } from "../sheet/selection";
-import { graphBindingRuntime } from "../graphBindingRuntime";
-import { __setBackendForTest } from "../backend";
 
 beforeAll(async () => {
   await initParser();
@@ -50,9 +37,6 @@ afterEach(() => {
   restoreClipboard?.();
   restoreClipboard = null;
   resetCellSelectionForTests();
-  __setBackendForTest(null);
-  __setStoreMutationObserverForTest(null);
-  graphBindingRuntime.bind(1, { binding_generation: 1 });
   setFocusedPaneId("main");
   resetStore();
   document.body.innerHTML = "";
@@ -247,7 +231,7 @@ function activeEditor(root: HTMLElement): HTMLTextAreaElement {
 
 function installAppStyles(): HTMLStyleElement {
   const style = document.createElement("style");
-  style.textContent = readAppStylesheet();
+  style.textContent = readFileSync("src/styles/app.css", "utf8");
   document.head.appendChild(style);
   return style;
 }
@@ -319,7 +303,7 @@ describe("SheetGrid interaction", () => {
     const byId: Record<string, StoreNode> = {};
     const rowIds: string[] = [];
     let rowLengthReads = 0;
-    for (let row = 0; row < 20_001; row++) {
+    for (let row = 0; row < 100_001; row++) {
       const rowId = `perf-row-${row}`;
       const children = new Proxy([] as string[], {
         get(target, property, receiver) {
@@ -339,12 +323,7 @@ describe("SheetGrid interaction", () => {
       <SurfaceContext.Provider value="pane:right"><SheetGrid id="perf-grid" /></SurfaceContext.Provider>
     </>);
     // 200 shared discovery reads + one 200-row active-window pass per surface.
-    // A per-pane dimension scan would push this to at least 800 — and to 40,000+
-    // on this fixture, so the bound still fails loudly if windowing regresses.
-    // The row count is the smallest that keeps that gap unmistakable: building
-    // one Proxy per row dominates this test, and a 100k fixture timed out
-    // whenever the box was loaded (the house rule is cut the fixture, never
-    // widen the timeout).
+    // A per-pane dimension scan would push this to at least 800.
     expect(rowLengthReads - readsBeforeMount).toBeLessThanOrEqual(650);
     expect(root.querySelectorAll(":scope .sheet-grid > .sheet-cell")).toHaveLength(400);
     const surfaceId = "pane:left";

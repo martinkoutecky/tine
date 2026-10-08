@@ -8,7 +8,8 @@ import { installKeybindings } from "../keybindings";
 import { closeInPageFind, inPageFindActiveIndex, inPageFindOpen, inPageFindQuery, openInPageFind } from "../inpageFind";
 import { closeHelpPopup, closePageProps, helpPopupOpen, openPageProps, pagePropsPanel, toggleHelpPopup } from "../ui";
 import { clearTransientLayersForTest, registerTransientLayer, topTransientLayer } from "../transientLayers";
-import { loadSingle, readPageProperty, resetStore } from "../store";
+import { readPageProperty, resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
 import { focusPane, resetPaneLayoutToSingle } from "../panes";
 import type { PaneSnapshot } from "../router";
 import { PAGE_PROP_SPECS } from "../editor/properties";
@@ -75,6 +76,8 @@ async function openFindAboveHelp(host: HTMLElement) {
 }
 
 async function openPagePropsAboveHelp(host: HTMLElement) {
+  // The panel offers edit rows only for a loaded, writable page (og 14 Q5 follow-up).
+  loadSingle({ name: "P1D2 fallback page", kind: "page", title: "P1D2 fallback page", pre_block: null, blocks: [] });
   openPageProps("P1D2 fallback page", 20, 20);
   await tick();
   const input = host.querySelector<HTMLInputElement>(".pp-input");

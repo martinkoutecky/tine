@@ -1,97 +1,106 @@
-//! Module map: debug startup logging; state graph slots; watcher external changes;
+//! Module map: debug startup logging; state graph lock; watcher external changes;
 //! graph open/create/warm cache; backup snapshots; settings/session prefs;
 //! spellcheck WebKit integration; platform OS bridges; commands thin IPC.
 
+#[cfg(target_os = "android")]
+mod android_clipboard;
 mod android_folder_picker;
 mod android_media;
 mod android_safe_back;
 mod android_system_bars;
-/// Test-only: `src/backend.ts` and `tauri::generate_handler!` must name the
-/// same set of commands.
-#[cfg(test)]
-mod backend_command_parity;
+mod app_identity;
 mod backup;
+mod capture_target;
 #[cfg(desktop)]
 mod cli;
-mod command_error;
 mod command_surface;
 mod commands;
-mod conflict_capsule;
+#[path = "commands/concord.rs"]
+mod concord;
+mod concord_ledger;
 mod data_home;
 mod debug;
+mod deep_links;
+mod defender;
+mod device_io;
+mod drafts;
+#[cfg(test)]
+mod edit_kind_guard_tests;
+mod flight;
+mod flight_store;
 mod graph;
 mod graph_verification;
-#[cfg(target_os = "ios")]
-mod ios_folder_picker;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
+#[cfg(test)]
+mod load_wait_guard_tests;
 mod media_protocol;
 mod migrate_identifier;
 mod native_mouse_history;
+mod pdf_crop_rollback;
 mod platform;
 mod plugins;
+#[path = "commands/query_export.rs"]
+mod query_export;
+#[path = "commands/query_ir.rs"]
+mod query_ir;
+mod search_workspace;
 mod settings;
 mod spellcheck;
 mod state;
-mod storage_transition_supervisor;
-#[cfg(test)]
-mod test_support;
 mod watcher;
+mod youtube_identity;
 
 use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
-    activate_absent_editor, activate_editor, apply_journal_filename_migrations, asset_trash_stats,
-    block_ref_counts, block_referrers, capture_live_save_conflict, capture_quick_switch,
-    close_graph_window, conflict_capsule_diff, conflict_inventory, copy_guide_into_graph,
-    delete_page, detect_media_editor, duplicate_journal_diff, durable_live_save_conflict_diff,
-    edit_asset_external, empty_asset_trash, existing_page_names, export_query_subtrees,
+    apply_journal_filename_migrations, asset_trash_stats, block_ref_counts, block_referrers,
+    capture_quick_switch, close_graph_window, copy_guide_into_graph, delete_page,
+    detect_media_editor, edit_asset_external, empty_asset_trash, export_query_subtrees,
     get_backlink_filter_context, get_backlinks, get_page, get_page_by_path, get_unlinked_refs,
     graph_source_files, guide_pages, import_asset, import_native_capture, journal_content_days,
     journal_feed_page, list_journal_conflicts, list_journal_filename_migrations,
-    list_orphan_assets, list_pages, list_templates, live_save_conflict_diff, load_workspaces,
-    merge_pages, open_asset, open_page_file, open_pdf, page_aliases, page_icons, page_print_html,
-    present_conflict_override, preview_block, publish_html, publish_query, publish_query_plan,
-    query_explain_empty, query_facets, query_og_expressible, query_parse, query_print,
-    query_registry, query_run, quick_switch, read_asset, read_custom_css, read_highlights,
-    read_journal_file, read_local_image, read_text_file, referenced_page_names,
-    rename_file_to_page, rename_page, rescan_graph_now, resolve_block, resolve_blocks,
-    resolve_conflict_capsule, resolve_duplicate_journal_day, resolve_durable_live_save_conflict,
-    resolve_live_save_conflict, resolve_sync_conflict, resolve_vcs_marker_conflict,
-    retire_editor_activation, rollback_pdf_area_image, run_advanced_query, run_graph_search,
-    run_query, save_asset, save_page, save_pdf_area_image, save_workspaces, search,
-    set_default_home, set_default_journal_template, set_doc_mode_enter_for_new_block,
-    set_favorites, set_favorites_page, set_guide_announced, set_journal_title_format,
-    set_logical_outdenting, set_preferred_format, set_preferred_workflow, set_show_brackets,
-    set_start_of_week, set_timetracking_enabled, stream_asset_path, sync_conflict_diff,
-    text_block_diff, text_block_diff3, tine_open_devtools, tine_quit, trash_asset,
-    trash_journal_file, trash_sync_conflict, vcs_marker_conflict_diff, write_highlights,
-    write_pdf_view_state,
+    list_orphan_assets, list_templates, load_workspaces, merge_pages, open_asset, open_page_file,
+    open_pdf, page_icons, page_inventory, page_print_html, preview_block, publish_html,
+    query_facets, quick_switch, read_asset, read_custom_css, read_highlights, read_journal_file,
+    read_local_image, read_text_file, rename_file_to_page, rename_page, resolve_block,
+    resolve_blocks, resolve_page, run_graph_search, save_asset, save_pages, save_pdf_area_image,
+    save_workspaces, search, set_default_journal_template, set_doc_mode_enter_for_new_block,
+    set_guide_announced, set_journal_title_format, set_logical_outdenting, set_preferred_format,
+    set_preferred_workflow, set_show_brackets, set_start_of_week, set_timetracking_enabled,
+    stream_asset_path, tine_open_devtools, tine_quit, trash_asset, trash_journal_file,
+    write_highlights,
 };
-use conflict_capsule::{load_conflict_capsules, retire_conflict_capsule, store_conflict_capsule};
+use concord::{
+    conflict_inventory, duplicate_journal_diff, list_sync_conflicts, live_conflict_diff,
+    resolve_duplicate_journal_day, resolve_live_conflict, resolve_sync_conflict,
+    resolve_vcs_marker_conflict, sync_conflict_diff, trash_sync_conflict, vcs_marker_conflict_diff,
+};
 use debug::{
-    app_architecture, clear_diagnostics, debug_header, debug_info, debug_init, debug_log, diag,
-    diagnostic_frontend_event, diagnostic_ipc_event, diagnostic_report, diagnostic_session_active,
-    flight_init, install_panic_logger, mark_clean_shutdown, save_diagnostic_report,
+    debug_header, debug_info, debug_init, debug_log, diag, diag_private, install_panic_logger,
 };
 use graph::{
-    app_platform, approve_external_assets, begin_direct_cross_page_move, capture_graph_binding,
-    capture_target, create_graph, default_graph_parent, finish_direct_cross_page_move,
-    indexing_progress, inspect_graph_access, load_graph, local_clock, open_graph_window,
-    retry_index, startup_graph_path, warm_done,
+    app_platform, approve_external_assets, capture_graph_binding, capture_target, create_graph,
+    default_graph_parent, inspect_graph_access, load_graph, local_clock, open_graph_window,
+    startup_graph_path, warm_done,
 };
 use graph_verification::{
     cancel_graph_verification, create_graph_verification, save_graph_verification_report,
 };
+use pdf_crop_rollback::rollback_pdf_area_image;
 use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external};
 use plugins::{
     install_plugin, list_installed_plugins, load_plugin_registry_cache, read_plugin_entry,
     set_plugin_enabled, store_plugin_registry_cache, uninstall_plugin, verify_plugin_registry,
 };
+use query_export::{publish_live, publish_query, publish_query_plan, sheet_export_inputs};
+use query_ir::{
+    query_explain_empty, query_og_expressible, query_parse, query_print, query_registry, query_run,
+};
 use settings::{
     forget_known_graph, get_app_bool, get_app_string, get_capture_enter_files,
-    get_link_first_match, get_smooth_scroll, list_known_graphs, load_notices, load_session,
-    reveal_known_graph, save_notices, save_session, set_app_bool, set_app_string,
-    set_capture_enter_files, set_link_first_match, set_smooth_scroll,
+    get_link_first_match, get_smooth_scroll, list_known_graphs, load_session, reveal_known_graph,
+    save_session, set_app_bool, set_app_string, set_capture_enter_files, set_default_home,
+    set_favorites, set_smooth_scroll,
 };
 use spellcheck::{
     apply_spellcheck, apply_spellcheck_all, list_spellcheck_dictionaries, parse_spellcheck_langs,
@@ -103,7 +112,7 @@ use std::sync::{Mutex, RwLock};
 #[cfg(desktop)]
 use tauri::Emitter;
 use tauri::Manager;
-use watcher::{get_watch_mode, set_watch_mode, start_watcher, watcher_latency_recent};
+use watcher::{get_watch_mode, rescan_graph_now, set_watch_mode, watcher_latency_recent};
 
 #[cfg(desktop)]
 const MAIN_WINDOW_REVEAL_FALLBACK_MS: u64 = 3_000;
@@ -113,6 +122,20 @@ const MAIN_WINDOW_REVEAL_FALLBACK_MS: u64 = 3_000;
 /// or later graph windows.
 fn force_mobile_drawers_e2e() -> bool {
     std::env::var("TINE_E2E_FORCE_MOBILE_DRAWERS").as_deref() == Ok("1")
+}
+
+/// Test-only: `TINE_E2E_TOUCH_GESTURES=ios|android` makes the frontend's touch
+/// gesture layer (left-edge swipe, block swipe, image viewer) behave as on that
+/// OS inside a desktop WebKitGTK process, so the native E2E can drive real
+/// synthetic touch sequences through the app (GH #501, #492). Anything else,
+/// including unset, is `None`. The frontend reads it through
+/// `touchGesturePlatform()` and nothing else changes platform identity.
+fn e2e_touch_gestures_platform() -> Option<&'static str> {
+    match std::env::var("TINE_E2E_TOUCH_GESTURES").as_deref() {
+        Ok("ios") => Some("ios"),
+        Ok("android") => Some("android"),
+        _ => None,
+    }
 }
 
 fn apply_mobile_drawer_e2e_window_policy(
@@ -384,34 +407,27 @@ fn activate_capture_window(app: &tauri::AppHandle, show_generation: u64) {
 fn capture_frontend_ready(
     window: tauri::WebviewWindow,
     app: tauri::AppHandle,
-) -> Result<(), crate::command_error::CommandError> {
+) -> Result<(), String> {
     #[cfg(desktop)]
     {
         if window.label() != "capture" {
-            return Err(crate::command_error::CommandError::prose(
-                "capture activation is only available to the capture window",
-            ));
+            return Err("capture activation is only available to the capture window".into());
         }
-        if !window
-            .is_visible()
-            .map_err(crate::command_error::CommandError::from)?
-        {
-            return Err(crate::command_error::CommandError::prose(
-                "capture window is hidden",
-            ));
+        if !window.is_visible().map_err(|error| error.to_string())? {
+            return Err("capture window is hidden".into());
         }
-        if let Some(show_generation) = app.state::<AppState>().bound_capture_show() {
-            activate_capture_window(&app, show_generation);
-        }
+        let generation = app
+            .state::<AppState>()
+            .bound_capture_show()
+            .ok_or("capture graph is not ready")?;
+        activate_capture_window(&app, generation);
         Ok(())
     }
 
     #[cfg(not(desktop))]
     {
         let _ = (window, app);
-        Err(crate::command_error::CommandError::prose(
-            "quick capture is only available on desktop",
-        ))
+        Err("quick capture is only available on desktop".into())
     }
 }
 
@@ -453,12 +469,23 @@ mod multi_window_tests {
     }
 
     #[test]
-    fn capture_only_launch_has_no_graph_path() {
-        let argv = vec!["tine".to_string(), "--capture".to_string()];
+    fn forwarded_open_command_opens_the_named_graph_not_a_page_called_open() {
+        let argv = vec!["tine".to_string(), "open".to_string(), "second".to_string()];
         assert_eq!(
-            cli::launch_request(&argv, std::path::Path::new("/tmp")),
-            cli::LaunchRequest::Capture
+            cli::launch_request(&argv, std::path::Path::new("/home/user")),
+            cli::LaunchRequest::Open(std::path::PathBuf::from("/home/user/second"))
         );
+    }
+
+    #[test]
+    fn capture_only_launch_has_no_graph_path() {
+        for spelling in ["--capture", "capture"] {
+            let argv = vec!["tine".to_string(), spelling.to_string()];
+            assert_eq!(
+                cli::launch_request(&argv, std::path::Path::new("/tmp")),
+                cli::LaunchRequest::Capture
+            );
+        }
     }
 
     #[test]
@@ -483,22 +510,24 @@ mod multi_window_tests {
     }
 }
 
+/// Dispatch a desktop command before GUI initialization. A returned exit code
+/// means the command already printed its outcome and no app should start.
+#[cfg(desktop)]
+pub fn cli_dispatch() -> Option<i32> {
+    cli::dispatch()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "linux")]
     init_xlib_threads();
-    // First, before the CLI too: XInitThreads opens no display, so a headless
-    // CLI run pays nothing, and no later path can reach Xlib uninitialized.
-
-    #[cfg(desktop)]
-    if let cli::Startup::Exit(code) = cli::dispatch_env() {
-        std::process::exit(code);
-    }
 
     // Bring up debug logging FIRST (TINE_DEBUG=1 / --debug), so every later
     // milestone — and any panic — is captured to the log file from the very start.
     debug_init();
+    flight::flight_init();
     install_panic_logger();
+    debug_header();
     diag("main() entered");
 
     // AppImages bundle their own libwayland-client.so; on a Wayland session it can
@@ -536,19 +565,27 @@ pub fn run() {
             };
             // `exec` only returns on failure; on success it replaces this process
             // (same PID, env + bundled LD_LIBRARY_PATH inherited, host lib preloaded).
-            diag(format!(
-                "Wayland AppImage: re-exec with LD_PRELOAD={preload}"
-            ));
+            diag_private(
+                "wayland-preload",
+                format!("Wayland AppImage: re-exec with LD_PRELOAD={preload}"),
+            );
             let err = std::process::Command::new(exe)
                 .args(std::env::args_os().skip(1))
                 .env("LD_PRELOAD", preload)
                 .env("TINE_WL_PRELOADED", "1")
                 .exec();
-            diag(format!(
-                "Wayland libwayland-client preload re-exec failed ({err}); continuing"
-            ));
+            diag_private(
+                "wayland-preload-failed",
+                format!("Wayland libwayland-client preload re-exec failed ({err}); continuing"),
+            );
         }
     }
+
+    // Tauri creates the WebView data dir inside its own setup() and panics if it
+    // cannot; an unwritable app-data home was a crash loop. Probe it (and
+    // relocate for this launch) before anything resolves that path.
+    data_home::ensure_usable(app_identity::APP_IDENTIFIER);
+    migrate_identifier::run_early();
 
     // GPU/DMABUF rendering is ON by default (smoother scrolling — that's the point
     // of Tine). On the rare GPU/compositor combo where WebKitGTK's DMABUF renderer
@@ -558,29 +595,9 @@ pub fn run() {
     if std::env::var("TINE_GPU").as_deref() == Ok("0")
         && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
     {
-        // SAFETY: `run` calls this before Tauri, GTK or any Tine thread starts,
-        // so no other thread can be reading the environment.
-        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         diag("TINE_GPU=0 → set WEBKIT_DISABLE_DMABUF_RENDERER=1 (software compositing)");
     }
-
-    // Migrate the desktop app-data dir left behind by the app-identifier renames
-    // (dev.logseqclaude.app / dev.tine.app / page.tine.app -> page.tine.Tine)
-    // BEFORE building the webview. WebKitGTK's WebsiteDataManager creates the
-    // new-id data dir (and its empty localStorage store) as the Builder is
-    // assembled, so this has to happen first — otherwise the migration finds the
-    // new dir already populated and backs off, orphaning the user's graph/session
-    // (localStorage) + settings + backups. Records a one-shot flag; the frontend
-    // toasts about the (possible) prefs reset. Android intentionally keeps
-    // page.tine.app and run_early() is a no-op there.
-    // Tauri creates the WebView user-data dir inside its own setup() and panics
-    // if it cannot; a user whose app-data home is unwritable got a hard crash at
-    // launch. Probe it first — and relocate for this launch if needed — before
-    // anything else resolves that path, the migration below included.
-    data_home::ensure_usable(migrate_identifier::CURRENT_IDENTIFIER);
-
-    migrate_identifier::run_early();
-    debug_header();
 
     // Wayland resolves the shell/titlebar icon by matching a window app ID to a
     // desktop-entry basename. Packages ship that identity themselves; the raw
@@ -623,6 +640,8 @@ pub fn run() {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    let youtube_windows = youtube_identity::prepare(&mut context);
     let builder = tauri::Builder::default()
         .register_uri_scheme_protocol("tine-media", |ctx, request| {
             media_protocol::respond(ctx, request)
@@ -632,13 +651,26 @@ pub fn run() {
     // user agent: iPadOS 13+ serves a desktop-class `Macintosh; Intel Mac OS X`
     // UA from a stock WKWebView, so UA sniffing reported an iPad as a Mac
     // desktop and every mobile affordance stayed hidden (GH #446). The build
-    // knows the truth, so hand it over before frontend code runs — the same
+    // knows the truth, so hand it over before frontend code runs -- the same
     // idiom as `__TINE_NATIVE_FRAME__`, and synchronous for the same reason:
     // an async `app_platform` round-trip would flash desktop-only chrome.
     let builder = builder.append_invoke_initialization_script(format!(
         "globalThis.__TINE_PLATFORM__ = {:?};",
         crate::graph::app_platform()
     ));
+
+    #[cfg(desktop)]
+    let builder = builder.append_invoke_initialization_script(format!(
+        "globalThis.__TINE_LINK_LAUNCH__ = {};",
+        matches!(cli::launch_request_env(), cli::LaunchRequest::Link(_))
+    ));
+
+    let builder = match e2e_touch_gestures_platform() {
+        Some(kind) => builder.append_invoke_initialization_script(format!(
+            "globalThis.__TINE_E2E_TOUCH_GESTURES__ = {kind:?};"
+        )),
+        None => builder,
+    };
 
     // The backend's zone offset at launch, so the frontend's first "today" is
     // already the backend's (GH #607); `local_clock` keeps it current.
@@ -665,17 +697,14 @@ pub fn run() {
                     // WebView2 deadlocks if a WebviewWindow is built directly from
                     // a synchronous event handler. Use the async command path so
                     // Windows' event loop remains available while Tauri creates it.
+                    let path = path.display().to_string();
                     let command_app = app.clone();
                     tauri::async_runtime::spawn(async move {
                         let state = command_app.state::<AppState>();
-                        let _ = open_graph_window(
-                            path.display().to_string(),
-                            command_app.clone(),
-                            state,
-                        )
-                        .await;
+                        let _ = open_graph_window(path, command_app.clone(), state).await;
                     });
                 }
+                cli::LaunchRequest::Link(url) => deep_links::receive_url(app, url),
                 cli::LaunchRequest::Focus => focus_last_graph_window(app),
             }
         }))
@@ -709,11 +738,15 @@ pub fn run() {
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_media::init());
     #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_clipboard::init());
+    #[cfg(target_os = "android")]
     let builder = builder.plugin(android_system_bars::init());
+    // Android's permanent Back owner (see android_safe_back.rs). The other four
+    // shipped targets (Linux, Windows, macOS, iOS) have no native Back owner by design:
+    // desktop has no Back gesture and iOS Back is the JS edge swipe
+    // (src/edgeSwipe.ts). src/androidBack.test.ts pins this set.
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_safe_back::init());
-    #[cfg(target_os = "ios")]
-    let builder = builder.plugin(ios_folder_picker::init());
     // Mobile has no xdg-open/open/explorer, so `open_external` routes URL opens
     // through this plugin's platform Intent instead (GH #49). Windows uses it
     // for ShellExecute, because `explorer <url>` opens a File Explorer window
@@ -723,7 +756,7 @@ pub fn run() {
     #[cfg(any(mobile, target_os = "windows"))]
     let builder = builder.plugin(tauri_plugin_opener::init());
 
-    let app = builder
+    builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -742,17 +775,18 @@ pub fn run() {
                     // it to the wrong graph in a multi-window session.
                     if let Ok(slot) = state::slot_for_window(&state, label) {
                         if state.note_focused(label) {
-                            let _ =
-                                settings::remember_graph(app, &slot.root_key.display().to_string());
+                            if settings::remember_graph(app, &slot.root_key.display().to_string())
+                                .is_err()
+                            {
+                                // Refused (unparseable settings file) or I/O failure:
+                                // the known-graph list is stale until it is repaired.
+                                diag("remember-graph-refused");
+                            }
                         }
                     }
                 }
                 tauri::WindowEvent::Destroyed => {
-                    let removed = state.graphs.write().unwrap().remove(label);
-                    state::poke_watcher(&state);
-                    if state.graphs.read().unwrap().len() == 0 {
-                        // Unregistered above, so `RunEvent::Exit` cannot reach it.
-                        drain_concord_ledgers_for_exit(removed.as_deref());
+                    if state::release_window_graph(&state.graphs, label) {
                         #[cfg(target_os = "linux")]
                         platform::kill_webkit_children();
                         app.exit(0);
@@ -761,24 +795,31 @@ pub fn run() {
                 _ => {}
             }
         })
+        .manage(graph::StartupGraph::default())
+        .manage(deep_links::PendingLinks::default())
         .manage(AppState {
             graphs: RwLock::new(state::GraphRegistry::default()),
-            storage_supervisor:
-                crate::storage_transition_supervisor::StorageTransitionSupervisor::default(),
-            watch_ctl: Mutex::new(None),
+            graph_load: Mutex::new(()),
             last_focused: Mutex::new(None),
             capture_graph: Mutex::new(Default::default()),
             #[cfg(desktop)]
             next_window: AtomicU64::new(1),
         })
-        .setup(|app| {
-            // Resolve through Tauri rather than desktop path conventions: this
-            // is the exact sandbox-private app-data home on Android and iOS too.
-            match app.path().app_data_dir() {
-                Ok(path) => flight_init(path.join("diagnostics")),
-                Err(error) => diag(format!("diagnostic app-data path unavailable: {error}")),
+        .setup(move |app| {
+            // After the single-instance plugin: a forwarded second launch has
+            // already exited and cannot rotate the primary's diagnostics.
+            // Tauri's app-data path is the sandbox-private home on mobile too.
+            if let Ok(dir) = app.path().app_data_dir() {
+                flight::persist_init(dir.join("diagnostics"));
             }
             diag("setup() begin");
+            #[cfg(target_os = "linux")]
+            youtube_identity::create_windows(app, &youtube_windows);
+            #[cfg(desktop)]
+            if let cli::LaunchRequest::Link(url) = cli::launch_request_env() {
+                deep_links::receive_url(app.handle(), url);
+            }
+            graph::prepare_startup_graph(app.handle());
             #[cfg(target_os = "linux")]
             {
                 if let Some(window) = app.get_webview_window("main") {
@@ -794,20 +835,18 @@ pub fn run() {
             }
             #[cfg(desktop)]
             schedule_main_window_reveal_fallback(app.handle());
-            // The themed WebView owns startup graph loading through the normal
-            // `load_graph` command; running it here would block the native
-            // event loop before either the stable-frame reveal or the fallback
-            // can show a window.
+            // The webview owns activation and Welcome error presentation.
+            // The launch-owned background open never returns errors from setup
+            // (I-22); its result is consumed by the ordinary load command.
             diag("setup() defers graph open to the visible webview");
             // Watch for external changes (reads whichever graph is current).
-            start_watcher(app.handle().clone());
             diag("setup() done — watcher started, handing off to webview");
             // Spell checking (WebKitGTK): apply the persisted prefs to every window.
             // Default ON (matches Logseq); languages empty ⇒ OS locale; listing
             // several ⇒ bilingual. The frontend re-applies after its own init too.
             {
                 let h = app.handle();
-                let enabled = get_app_bool("spellcheck_enabled".to_string(), true, h.clone());
+                let enabled = settings::device_bool(h, "spellcheck_enabled", true);
                 let langs = parse_spellcheck_langs(&get_app_string(
                     "spellcheck_languages".to_string(),
                     String::new(),
@@ -825,11 +864,15 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            data_home::take_data_home_fallback_notice,
+            migrate_identifier::take_identifier_migration_notice,
             load_graph,
             inspect_graph_access,
             approve_external_assets,
-            begin_direct_cross_page_move,
-            finish_direct_cross_page_move,
+            deep_links::graph_link_identity,
+            deep_links::scan_known_graphs_for_link,
+            deep_links::take_tine_links,
+            deep_links::handoff_tine_link,
             open_graph_window,
             startup_graph_path,
             capture_target,
@@ -839,33 +882,27 @@ pub fn run() {
             app_platform,
             local_clock,
             default_graph_parent,
-            #[cfg(not(target_os = "ios"))]
             android_folder_picker::pick_graph_folder,
-            #[cfg(target_os = "ios")]
-            ios_folder_picker::pick_graph_folder,
-            #[cfg(target_os = "ios")]
-            ios_folder_picker::prepare_graph_folder,
             android_media::capture_photo,
             android_media::start_recording,
             android_media::stop_recording,
             android_media::cancel_recording,
             android_system_bars::set_system_bar_appearance,
-            list_pages,
-            referenced_page_names,
+            page_inventory,
             journal_feed_page,
             get_page,
             graph_source_files,
             create_graph_verification,
             cancel_graph_verification,
             save_graph_verification_report,
-            save_page,
+            save_pages,
+            resolve_page,
             guide_pages,
             copy_guide_into_graph,
             get_backlink_filter_context,
             get_backlinks,
             get_unlinked_refs,
             warm_done,
-            indexing_progress,
             block_ref_counts,
             block_referrers,
             delete_page,
@@ -873,24 +910,21 @@ pub fn run() {
             publish_html,
             publish_query_plan,
             publish_query,
+            publish_live,
+            sheet_export_inputs,
             page_print_html,
-            run_query,
             export_query_subtrees,
             run_graph_search,
-            run_advanced_query,
+            search_workspace::close_search_workspace,
             query_facets,
-            // SPEC §7.1: the six commands of the one query engine.
             query_parse,
             query_print,
             query_og_expressible,
             query_registry,
             query_run,
             query_explain_empty,
-            page_aliases,
             page_icons,
-            existing_page_names,
             set_favorites,
-            set_favorites_page,
             set_default_home,
             set_preferred_workflow,
             set_timetracking_enabled,
@@ -914,37 +948,23 @@ pub fn run() {
             trash_asset,
             asset_trash_stats,
             empty_asset_trash,
-            apply_journal_filename_migrations,
             list_journal_conflicts,
+            list_journal_filename_migrations,
+            apply_journal_filename_migrations,
+            list_sync_conflicts,
+            sync_conflict_diff,
+            resolve_sync_conflict,
             duplicate_journal_diff,
             resolve_duplicate_journal_day,
-            list_journal_filename_migrations,
-            sync_conflict_diff,
-            vcs_marker_conflict_diff,
-            conflict_inventory,
-            text_block_diff,
-            text_block_diff3,
-            live_save_conflict_diff,
-            capture_live_save_conflict,
-            conflict_capsule_diff,
-            load_conflict_capsules,
-            store_conflict_capsule,
-            retire_conflict_capsule,
-            durable_live_save_conflict_diff,
-            resolve_durable_live_save_conflict,
-            resolve_live_save_conflict,
-            resolve_conflict_capsule,
-            resolve_sync_conflict,
-            rescan_graph_now,
-            resolve_vcs_marker_conflict,
             trash_sync_conflict,
+            conflict_inventory,
+            vcs_marker_conflict_diff,
+            resolve_vcs_marker_conflict,
+            live_conflict_diff,
+            resolve_live_conflict,
             trash_journal_file,
             read_journal_file,
             get_page_by_path,
-            activate_editor,
-            activate_absent_editor,
-            retire_editor_activation,
-            present_conflict_override,
             merge_pages,
             rename_file_to_page,
             search,
@@ -965,7 +985,6 @@ pub fn run() {
             read_highlights,
             open_pdf,
             write_highlights,
-            write_pdf_view_state,
             save_pdf_area_image,
             rollback_pdf_area_image,
             get_backup_keep,
@@ -973,19 +992,19 @@ pub fn run() {
             get_capture_enter_files,
             set_capture_enter_files,
             get_link_first_match,
-            set_link_first_match,
             get_watch_mode,
             set_watch_mode,
+            rescan_graph_now,
             watcher_latency_recent,
             list_backups,
             restore_backup,
-            retry_index,
             load_session,
+            drafts::load_drafts,
+            drafts::store_draft,
+            drafts::retire_draft,
             save_session,
             load_workspaces,
             save_workspaces,
-            load_notices,
-            save_notices,
             list_known_graphs,
             forget_known_graph,
             reveal_known_graph,
@@ -997,8 +1016,6 @@ pub fn run() {
             verify_plugin_registry,
             load_plugin_registry_cache,
             store_plugin_registry_cache,
-            migrate_identifier::take_identifier_migration_notice,
-            data_home::take_data_home_fallback_notice,
             gpu_env,
             get_smooth_scroll,
             set_smooth_scroll,
@@ -1009,96 +1026,50 @@ pub fn run() {
             apply_spellcheck,
             list_spellcheck_dictionaries,
             debug_info,
-            app_architecture,
             debug_log,
-            diagnostic_ipc_event,
-            diagnostic_frontend_event,
-            diagnostic_session_active,
-            diagnostic_report,
-            save_diagnostic_report,
-            clear_diagnostics,
+            flight::app_architecture,
+            flight::clear_diagnostics,
+            flight::diagnostic_frontend_event,
+            flight::diagnostic_ipc_event,
+            flight::diagnostic_report,
+            flight::diagnostic_session_active,
+            flight::diagnostic_timing_event,
+            flight::save_diagnostic_report,
+            defender::defender_hint,
+            defender::dismiss_defender_hint,
+            defender::add_defender_exclusion,
             tine_quit,
             close_graph_window,
             tine_open_devtools
         ])
         .build(context)
-        .expect("error while running tauri application");
-    // `App::run` never returns: Tauri exits the process from inside the event
-    // loop (`std::process::exit`), so code placed after it is unreachable.
-    // The clean-shutdown marker must therefore be cleared from the loop's own
-    // `RunEvent::Exit`, which Tauri delivers to this callback before exiting;
-    // clearing it anywhere later never runs and every quit is falsely reported
-    // as unclean on the next launch (the flight recorder's `session-active`
-    // marker survives).
-    app.run(|app_handle, event| {
-        if matches!(event, tauri::RunEvent::Exit) {
-            let slots: Vec<_> = app_handle
-                .state::<AppState>()
-                .graphs
-                .read()
-                .unwrap()
-                .entries()
-                .into_iter()
-                .map(|(_, slot)| slot)
-                .collect();
-            drain_concord_ledgers_for_exit(slots.iter().map(|slot| slot.as_ref()));
-            mark_clean_shutdown();
-            // tao delivers this callback for WM_ENDSESSION, but on that path its
-            // Windows message loop neither receives WM_QUIT nor switches to an
-            // exiting ControlFlow. Returning would therefore leave Tine alive
-            // until Windows force-terminates it (GH #455). The durability work
-            // above is deliberately bounded, so terminate once it is complete.
-            #[cfg(target_os = "windows")]
-            std::process::exit(0);
-        }
-    });
-}
-
-/// Quitting waits at most `tine_core::concord_ledger::EXIT_DRAIN_BUDGET`, in
-/// total, for the queued Concord ledger updates of `slots`, so a save made just
-/// before quitting keeps its merge base. `concord_exit_drain_tests` pins that
-/// every exit path reaches this.
-fn drain_concord_ledgers_for_exit<'a>(slots: impl IntoIterator<Item = &'a state::GraphSlot>) {
-    let deadline = std::time::Instant::now() + tine_core::concord_ledger::EXIT_DRAIN_BUDGET;
-    for slot in slots {
-        let _ =
-            slot.with_filesystem_graph(|graph| Ok(graph.drain_concord_ledger_for_exit(deadline)));
-    }
-}
-
-#[cfg(test)]
-mod concord_exit_drain_tests {
-    /// Quitting waits, bounded by `tine_core::concord_ledger::EXIT_DRAIN_BUDGET`,
-    /// for every open graph's queued Concord ledger updates, so a save made just
-    /// before quitting keeps its merge base (Martin, 2026-09-15). `tine_quit` and
-    /// `close_graph_window` exit with their graphs still registered, so the
-    /// `RunEvent::Exit` arm drains them. The last window's `Destroyed` handler
-    /// unregisters its graph before exiting, so it drains that slot first.
-    #[test]
-    fn every_exit_path_drains_the_concord_ledgers() {
-        let source = include_str!("lib.rs");
-        let run = &source[source.find("app.run(|").expect("the event loop")..];
-        let run = &run[..run.find("});").expect("the end of the event loop")];
-        assert!(
-            run.contains("RunEvent::Exit")
-                && run.contains("drain_concord_ledgers_for_exit(")
-                && run.contains("std::process::exit(0)"),
-            "I-24: the RunEvent::Exit arm must drain every registered graph's Concord \
-             ledger before Tine exits, beside mark_clean_shutdown(); Windows must then \
-             terminate because WM_ENDSESSION does not break tao's message loop"
-        );
-        let destroyed = &source[source
-            .find("tauri::WindowEvent::Destroyed =>")
-            .expect("the Destroyed handler")..];
-        let destroyed = &destroyed[..destroyed
-            .find("app.exit(0);")
-            .expect("the last-window exit")];
-        assert!(
-            destroyed.contains("drain_concord_ledgers_for_exit("),
-            "I-24: the last window's Destroyed handler unregisters its graph before \
-             app.exit(0), so it must drain that slot's Concord ledger first"
-        );
-    }
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+            if let tauri::RunEvent::Opened { ref urls } = event {
+                for url in urls {
+                    deep_links::receive_url(app, url.to_string());
+                }
+            }
+            if matches!(event, tauri::RunEvent::Exit) {
+                youtube_identity::cleanup(app);
+                // Queued Concord base-ledger updates get one bounded drain
+                // (`EXIT_DRAIN_BUDGET`); the ledger is never a save authority.
+                concord_ledger::drain_all_for_exit(&app.state::<AppState>());
+                // `App::run` never returns, so the orderly end of a run is
+                // here: clear the unclean-exit marker (master d9763603).
+                flight::mark_clean_shutdown();
+                // tao delivers this callback for WM_ENDSESSION (Windows sign-out,
+                // restart, shutdown), but on that path its message loop neither
+                // receives WM_QUIT nor switches to an exiting ControlFlow.
+                // Returning would leave Tine alive until Windows names it on the
+                // "app is preventing shutdown" screen and force-terminates it
+                // (GH #455). Nothing else remains to flush: page saves are
+                // already durable when they report success, so terminate.
+                #[cfg(target_os = "windows")]
+                std::process::exit(0);
+            }
+        });
 }
 
 #[cfg(test)]
@@ -1203,5 +1174,164 @@ mod mobile_drawer_policy_tests {
             .additional_browser_args
             .as_deref()
             .is_some_and(|args| args.contains("--remote-debugging-port=9222"))));
+    }
+}
+
+#[cfg(test)]
+mod platform_lifecycle_guard_tests {
+    fn lib_source() -> String {
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
+            .expect("read src-tauri/src/lib.rs")
+    }
+
+    /// GH #455: on Windows sign-out/shutdown tao runs the `RunEvent::Exit`
+    /// callback for WM_ENDSESSION but never leaves its message loop, so the
+    /// event loop must terminate the process itself on Windows.
+    #[test]
+    fn windows_session_end_exit_terminates_the_process() {
+        let source = lib_source();
+        let run = &source[source.find(".run(|app, event|").expect("the event loop")..];
+        let run = &run[..run.find("});").expect("the end of the event loop")];
+        assert!(
+            run.contains("tauri::RunEvent::Exit")
+                && run.contains(
+                    "#[cfg(target_os = \"windows\")]\n                std::process::exit(0);"
+                ),
+            "GH #455: the RunEvent::Exit arm must call std::process::exit(0) on Windows, \
+             because WM_ENDSESSION does not break tao's message loop"
+        );
+    }
+
+    /// Master d9763603: `App::run` never returns, so a clean-shutdown call
+    /// placed after it never runs and every relaunch reports an unclean exit.
+    /// The orderly end is the `RunEvent::Exit` arm, before Windows' exit(0).
+    #[test]
+    fn the_exit_arm_clears_the_unclean_exit_marker_before_terminating() {
+        let source = lib_source();
+        let run = &source[source.find(".run(|app, event|").expect("the event loop")..];
+        let run = &run[..run.find("});").expect("the end of the event loop")];
+        let clean = run
+            .find("flight::mark_clean_shutdown();")
+            .expect("RunEvent::Exit must call flight::mark_clean_shutdown()");
+        assert!(clean < run.find("std::process::exit(0)").unwrap());
+        assert!(source.contains("flight::persist_init(dir.join(\"diagnostics\"))"));
+    }
+
+    /// GH #446: the frontend's platform identity comes from the build
+    /// (`graph::app_platform`), injected before any frontend code runs, never
+    /// from the WebView user agent (iPadOS reports a Mac UA).
+    #[test]
+    fn frontend_platform_identity_is_injected_from_the_build() {
+        let source = lib_source();
+        assert!(
+            source.contains(
+                "\"globalThis.__TINE_PLATFORM__ = {:?};\",\n        crate::graph::app_platform()"
+            ),
+            "GH #446: lib.rs must inject __TINE_PLATFORM__ from crate::graph::app_platform()"
+        );
+    }
+
+    /// GH #501/#492: the native touch-gesture E2E asks for a platform through
+    /// `TINE_E2E_TOUCH_GESTURES`; it reaches the frontend ONLY as
+    /// `__TINE_E2E_TOUCH_GESTURES__`, never as `__TINE_PLATFORM__`, so desktop
+    /// chrome keeps its real identity.
+    #[test]
+    fn e2e_touch_gesture_override_never_rewrites_platform_identity() {
+        let source = lib_source();
+        assert!(
+            source.contains("globalThis.__TINE_E2E_TOUCH_GESTURES__ = {kind:?};")
+                && source.contains("std::env::var(\"TINE_E2E_TOUCH_GESTURES\")"),
+            "lib.rs must inject the touch-gesture E2E override as __TINE_E2E_TOUCH_GESTURES__"
+        );
+        let start = source
+            .find("match e2e_touch_gestures_platform() {")
+            .expect("override injection block");
+        let block = &source[start..];
+        let block = &block[..block.find("None => builder,").expect("block end")];
+        assert!(
+            !block.contains("__TINE_PLATFORM__"),
+            "the E2E override must not set __TINE_PLATFORM__ (GH #446)"
+        );
+    }
+
+    /// GH #607: the frontend's calendar is the backend's. The launch offset is
+    /// injected before frontend code runs, from the same zone source as
+    /// `JournalDate::today`; `local_clock` keeps it current.
+    #[test]
+    fn frontend_clock_correction_is_injected_from_the_backend_zone() {
+        let source = lib_source();
+        assert!(
+            source.contains("JournalDate::local_utc_offset_now();")
+                && source.contains("globalThis.__TINE_LOCAL_CLOCK__ = "),
+            "GH #607: lib.rs must inject __TINE_LOCAL_CLOCK__ from JournalDate::local_utc_offset_now()"
+        );
+    }
+
+    /// GH #572: apps get the WebKit that shipped with macOS (a Safari update
+    /// does not change it), and Tine needs the Safari 15.4 engine, which first
+    /// shipped in macOS 12.3. The bundle declares that floor so an older Mac is
+    /// refused at install/launch instead of running a half-working app.
+    #[test]
+    fn macos_bundle_declares_the_webkit_floor() {
+        let config: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tauri.macos.conf.json"
+            ))
+            .expect("read src-tauri/tauri.macos.conf.json"),
+        )
+        .expect("tauri.macos.conf.json is JSON");
+        assert_eq!(
+            config["bundle"]["macOS"]["minimumSystemVersion"], "12.3",
+            "GH #572: macOS bundles must require 12.3 (the Safari 15.4 engine)"
+        );
+    }
+
+    /// GH #241: the updater ships on every desktop target (Windows, Linux,
+    /// macOS) and on no mobile target (Android, iOS). Windows uses native-tls
+    /// (Schannel) plus Reqwest's system-proxy reader; Linux/macOS keep rustls.
+    /// This pins the exact target sections so a cfg edit cannot silently drop
+    /// a platform's updater or its transport.
+    #[test]
+    fn updater_transport_is_declared_for_every_desktop_target() {
+        let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+            .expect("read src-tauri/Cargo.toml");
+        let mut section = "";
+        let mut updater_sections = Vec::new();
+        let mut windows_lines = Vec::new();
+        for line in manifest.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                section = line;
+                continue;
+            }
+            if line.starts_with("tauri-plugin-updater") {
+                updater_sections.push((section, line));
+            }
+            if section == "[target.'cfg(windows)'.dependencies]" && !line.starts_with('#') {
+                windows_lines.push(line);
+            }
+        }
+        assert_eq!(
+            updater_sections,
+            vec![
+                (
+                    "[target.'cfg(windows)'.dependencies]",
+                    "tauri-plugin-updater = { version = \"2\", default-features = false, features = [\"native-tls\", \"zip\"] }",
+                ),
+                (
+                    "[target.'cfg(all(not(target_os = \"android\"), not(target_os = \"ios\"), not(target_os = \"windows\")))'.dependencies]",
+                    "tauri-plugin-updater = \"2\"",
+                ),
+            ],
+            "GH #241: the updater must be declared once for Windows (native-tls) and once for \
+             Linux/macOS (rustls), and never for Android/iOS"
+        );
+        assert!(
+            windows_lines.contains(
+                &"reqwest = { version = \"0.13\", default-features = false, features = [\"system-proxy\"] }"
+            ),
+            "GH #241: the Windows updater must follow the system proxy via reqwest's system-proxy feature"
+        );
     }
 }

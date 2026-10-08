@@ -3,8 +3,9 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { editingId, editingSurface } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, pageByName, resetStore } from "../store";
-import type { PageDto } from "../types";
+import { pageByName, resetStore } from "../document";
+import { doc } from "../document/model";
+import type { PageRead } from "../types";
 import { LiveRefGroup } from "./LiveRefGroup";
 
 // GH #341: arrow navigation out of an edited block inside a linked-reference /
@@ -16,14 +17,13 @@ import { LiveRefGroup } from "./LiveRefGroup";
 
 const leaf = (id: string, raw: string) => ({ id, raw, collapsed: false, children: [] });
 
-function pageDto(): PageDto {
+function pageDto(): PageRead {
   return {
     name: "Source",
     kind: "page",
     title: "Source",
     pre_block: null,
-    path: "pages/Source.md",
-    rev: "rev-nav",
+    id: "pages/Source.md",
     blocks: [
       { id: "rootB", raw: "Root B", collapsed: false, children: [leaf("b1", "Thing B")] },
       { id: "rootA", raw: "Root A", collapsed: false, children: [leaf("a1", "Thing 1"), leaf("a2", "Thing 2")] },
@@ -67,16 +67,13 @@ function editorOf(root: HTMLElement, id: string): HTMLTextAreaElement | null {
 async function mountAndEdit(id: string, surface: "ref" | "embed" = "ref") {
   const dto = pageDto();
   const [rootB, rootA] = dto.blocks;
-  vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
-  vi.spyOn(backend(), "activateEditor").mockResolvedValue({ activation: 42, target: dto.path!, prospective: false });
-  vi.spyOn(backend(), "retireEditorActivation").mockResolvedValue(true);
+  vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
   const root = document.createElement("div");
   document.body.append(root);
   const dispose = render(() => (
     <LiveRefGroup
       page={dto.name}
       kind={dto.kind}
-      path={dto.path}
       blocks={[rootA, rootB]}
       surface={surface}
     />

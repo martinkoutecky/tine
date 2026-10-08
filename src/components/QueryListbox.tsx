@@ -1,49 +1,29 @@
 import { For, Show, createEffect, createMemo, createSignal, type JSX } from "solid-js";
 
-// **The ONE listbox keyboard/ARIA controller the query sheet uses (§7.7, D-14).**
-//
-// It was a private `Listbox` inside `QuerySheet.tsx`, shared by the anchor menu,
-// the operator menu, the row menus and the field chooser. P4 needs the same
-// controller for a list that is VIRTUALIZED and SECTIONED — hundreds of registry
-// rows, drawn a viewport at a time — and writing a second arrow-key/
-// `aria-activedescendant` implementation for it is exactly the twin D-14 forbids.
-//
-// So the controller moved here and grew two seams, and nothing else changed:
-//
-//  - `body` replaces the LIST BODY only. The filter input, the roving active
-//    option, Arrow/Enter/Backspace and the `role="listbox"` wiring stay here, so
-//    the virtualized case cannot drift from the plain one.
-//  - `query`/`onQuery` put the needle under the CALLER's control, for a list
-//    whose filtering is not "does the label contain this" (the vocabulary picker
-//    matches on the property key as spelled AND offers an unmatched-key row).
-//
-// **Option ids are the option's own key, never its index in the filtered or
-// virtual list.** An index-derived id changes meaning as the list is filtered or
-// scrolled, which is how `aria-activedescendant` ends up naming a row the reader
-// is not on — and in a virtual list it can name a row that is not mounted at all.
+// **The ONE listbox keyboard/ARIA controller the query sheet uses (§7.7, D-14).** It was a private `Listbox` …
 
 /** Stops a click inside the builder from bubbling to the block's `onClick`,
- *  which would drop the block into raw-text edit mode and replace the builder. */
+*  which would drop the block into raw-text edit mode and replace the builder. */
 export const stop = (e: MouseEvent) => e.stopPropagation();
 
 /**
- * **A row's key → the tail of its DOM id (§7.5, I-22).**
- *
- * The keys are the user's own vocabulary: a property key can be `due date`, it
- * can carry `"`, `#` or `.`, it can be `ünïcode ключ`, and nothing stops a
- * malformed file from producing a LONE surrogate. `aria-activedescendant` takes
- * an IDREF — exactly ONE id — so a key with a space produced an attribute the
- * platform reads as two references and resolves as neither: the reader is told
- * about a row that does not exist.
- *
- * So the key is not interpolated, it is ENCODED: four hex digits per UTF-16
- * code unit. That is total (every code unit has a code, lone surrogates
- * included, because `charCodeAt` is defined on them), injective (fixed width,
- * so no two distinct keys share an encoding), and produces `[0-9a-f]*` — no
- * whitespace, nothing a selector or an IDREF can misread. Stable identity is
- * still the KEY: the same row keeps the same id however the list is filtered,
- * scrolled or windowed, which an index-derived id cannot promise.
- */
+* **A row's key → the tail of its DOM id (§7.5, I-22).**
+*
+* The keys are the user's own vocabulary: a property key can be `due date`, it
+* can carry `"`, `#` or `.`, it can be `ünïcode ключ`, and nothing stops a
+* malformed file from producing a LONE surrogate. `aria-activedescendant` takes
+* an IDREF — exactly ONE id — so a key with a space produced an attribute the
+* platform reads as two references and resolves as neither: the reader is told
+* about a row that does not exist.
+*
+* So the key is not interpolated, it is ENCODED: four hex digits per UTF-16
+* code unit. That is total (every code unit has a code, lone surrogates
+* included, because `charCodeAt` is defined on them), injective (fixed width,
+* so no two distinct keys share an encoding), and produces `[0-9a-f]*` — no
+* whitespace, nothing a selector or an IDREF can misread. Stable identity is
+* still the KEY: the same row keeps the same id however the list is filtered,
+* scrolled or windowed, which an index-derived id cannot promise.
+*/
 export function encodeOptionKey(key: string): string {
   let out = "";
   for (let i = 0; i < key.length; i += 1) {
@@ -64,8 +44,7 @@ export interface ListboxOption {
   detail?: JSX.Element;
 }
 
-/** What a replacement list body is handed. Everything it needs to draw rows and
- *  nothing that would let it own the keyboard. */
+/** What a replacement list body is handed. */
 export interface ListboxBody {
   /** The options to draw, headers included, in order. */
   shown: () => ListboxOption[];
@@ -82,28 +61,26 @@ export interface ListboxBody {
 const selectable = (options: ListboxOption[]) => options.filter((option) => !option.header);
 
 /** One `role="listbox"` with `aria-activedescendant`, arrow keys and
- *  scroll-follow — the pattern `QuickSwitcher.tsx` already implements, reused
- *  rather than re-rolled (D-14). The trigger passes its own `id` so
- *  `aria-controls`/`aria-activedescendant` point at real elements. */
+*  scroll-follow — the pattern `QuickSwitcher.tsx` already implements, reused
+*  rather than re-rolled (D-14). The trigger passes its own `id` so
+*  `aria-controls`/`aria-activedescendant` point at real elements. */
 export function Listbox(props: {
   id: string;
   label: string;
   options: ListboxOption[];
   filterable?: boolean;
   placeholder?: string;
-  /** Controlled needle. When supplied the caller has ALREADY filtered
-   *  `options`; this component only shows the text and reports edits. */
+  /** Controlled needle. */
   query?: string;
   onQuery?: (query: string) => void;
   onPick: (key: string) => void;
   onEmptyBackspace?: () => void;
   rootRef?: (element: HTMLDivElement) => void;
-  /** An extra class on the popover root, for a caller whose list needs a
-   *  different width. The keyboard and ARIA wiring are unaffected. */
+  /** An extra class on the popover root, for a caller whose list needs a different width. */
   class?: string;
   /** Drawn between the filter and the list: a compact line about the LIST
-   *  itself (the vocabulary picker's "the registry has not landed yet"). Not a
-   *  row, so it is never focusable and never picked. */
+  *  itself (the vocabulary picker's "the registry has not landed yet"). Not a
+  *  row, so it is never focusable and never picked. */
   status?: JSX.Element;
   /** Draw the rows some other way (virtualized). The keyboard stays here. */
   body?: (context: ListboxBody) => JSX.Element;
@@ -123,9 +100,7 @@ export function Listbox(props: {
     );
   });
   const [activeKey, setActiveKey] = createSignal<string | null>(null);
-  // A filter that shrinks the list, or empties it, must not leave the keyboard
-  // pointing at a row that is no longer there — `aria-activedescendant` would
-  // name a missing element and Enter would pick nothing.
+  // A filter that shrinks the list, or empties it, must not leave the keyboard pointing at a row that is no …
   createEffect(() => {
     const rows = selectable(shown());
     const current = activeKey();

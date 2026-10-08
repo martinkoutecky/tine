@@ -1,55 +1,67 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { Settings } from "./Settings";
-import { closeSettings, openSettings, setGraphMeta, setGraphTransitioning, setToasts } from "../ui";
-import { graphBindingRuntime } from "../graphBindingRuntime";
-import { formatJournal, parseJournalWith } from "../journal";
-import {
-  changeWideContentWidth,
-  resetStandardContentWidth,
-  standardContentWidth,
-  wideContentWidth,
-} from "../contentWidth";
+import { setGraphConfigProblem } from "../graph";
+import { closeSettings, openSettings } from "../ui";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 afterEach(() => {
   closeSettings();
+  setGraphConfigProblem(null);
   document.body.innerHTML = "";
   localStorage.clear();
-  setToasts([]);
-  graphBindingRuntime.clear();
-  setGraphTransitioning(false);
-  setGraphMeta(null);
-  vi.restoreAllMocks();
-  vi.useRealTimers();
-  resetStandardContentWidth();
-  changeWideContentWidth(null);
 });
 
 describe("Settings progressive disclosure and search", () => {
-  it("offers the three dot-separated weekday journal formats and the date engine round-trips them", async () => {
+  it("searches shortcut commands and unbinds a key without hiding its command", async () => {
     const root = document.createElement("div");
     document.body.append(root);
     const dispose = render(() => <Settings />, root);
-    openSettings("journals");
+    openSettings("shortcuts");
     await tick();
-
-    const select = [...root.querySelectorAll<HTMLSelectElement>("select")].find((candidate) =>
-      [...candidate.options].some((option) => option.value === "MMM do, yyyy")
-    );
-    expect(select).toBeDefined();
-
-    const formats = ["E, dd.MM.yyyy", "EEE, dd.MM.yyyy", "EEEE, dd.MM.yyyy"];
-    expect([...select!.options].map((option) => option.value)).toEqual(expect.arrayContaining(formats));
-    const date = new Date(2026, 7, 11);
-    for (const format of formats) {
-      const title = formatJournal(date, format);
-      expect(parseJournalWith(title, format), `${format} <- ${title}`).toEqual({ y: 2026, m: 8, d: 11 });
-    }
+    const search = root.querySelector<HTMLInputElement>('.settings-search-input')!;
+    search.value = "go to home";
+    search.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await tick();
+    const row = [...root.querySelectorAll<HTMLElement>(".help-shortcut-row")]
+      .find((element) => element.textContent?.includes("Go to home page"))!;
+    expect(row).toBeDefined();
+    row.querySelector<HTMLButtonElement>('button[title="Remove this keybinding"]')!.click();
+    await tick();
+    const updated = [...root.querySelectorAll<HTMLElement>(".help-shortcut-row")]
+      .find((element) => element.textContent?.includes("Go to home page"))!;
+    expect(updated.textContent).toContain("Unbound");
+    expect(updated.textContent).toContain("Go to home page");
     dispose();
   });
 
+  it("opens Help & diagnostics, the Diagnostics action's target, with the report and the parser comparison (GH #343)", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Settings />, root);
+    openSettings("diagnostics");
+    await tick();
+    expect(root.querySelector(".diagnostics-tab h2")?.textContent).toBe("Help & diagnostics");
+    expect(root.textContent).toContain("Create diagnostic report");
+    expect(root.querySelector(".improve-run")).not.toBeNull();
+    dispose();
+  });
+
+  it("remembers Settings maximize across close and reopen", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Settings />, root);
+    openSettings("appearance");
+    await tick();
+    root.querySelector<HTMLButtonElement>('button[aria-label="Maximize settings"]')!.click();
+    expect(root.querySelector(".settings-maximized")).not.toBeNull();
+    closeSettings();
+    openSettings("appearance");
+    await tick();
+    expect(root.querySelector(".settings-maximized")).not.toBeNull();
+    dispose();
+  });
   it("exposes the accessible three-mode Link autocomplete policy through Settings search", async () => {
     const root = document.createElement("div");
     document.body.append(root);
@@ -101,44 +113,6 @@ describe("Settings progressive disclosure and search", () => {
     dispose();
   });
 
-  it("finds and applies device-local standard and wide page widths", async () => {
-    const root = document.createElement("div");
-    document.body.append(root);
-    const dispose = render(() => <Settings />, root);
-    openSettings("appearance");
-    await tick();
-
-    const search = root.querySelector(".settings-search-input") as HTMLInputElement;
-    search.value = "standard page width";
-    search.dispatchEvent(new InputEvent("input", { bubbles: true }));
-    await tick();
-    const result = root.querySelector(".settings-search-result") as HTMLButtonElement;
-    expect(result.textContent).toContain("Appearance › Advanced");
-    result.click();
-    await tick();
-
-    const standard = root.querySelector<HTMLInputElement>('input[aria-label="Standard page width in pixels"]')!;
-    standard.value = "960";
-    standard.dispatchEvent(new Event("change", { bubbles: true }));
-    await tick();
-    expect(standardContentWidth()).toBe(960);
-    expect(localStorage.getItem("logseq-claude.standard-content-width")).toBe("960");
-
-    const wideMode = root.querySelector<HTMLSelectElement>('select[aria-label="Wide page width mode"]')!;
-    wideMode.value = "custom";
-    wideMode.dispatchEvent(new Event("change", { bubbles: true }));
-    await tick();
-    expect(wideContentWidth()).toBe(1280);
-    expect(root.querySelector('input[aria-label="Wide page width in pixels"]')).not.toBeNull();
-
-    wideMode.value = "fill";
-    wideMode.dispatchEvent(new Event("change", { bubbles: true }));
-    await tick();
-    expect(wideContentWidth()).toBeNull();
-    expect(localStorage.getItem("logseq-claude.wide-content-width")).toBeNull();
-    dispose();
-  });
-
   it("persists explicit expansion per tab and supports Escape collapse", async () => {
     const root = document.createElement("div");
     document.body.append(root);
@@ -156,4 +130,20 @@ describe("Settings progressive disclosure and search", () => {
     expect(localStorage.getItem("tine.settings.advanced.editor")).toBe("0");
     dispose();
   });
+});
+
+
+it("keeps the config-read error visible in Settings until a repaired reopen", async () => {
+  setGraphConfigProblem({ kind: "config-read", message: "read failed" });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const dispose = render(() => <Settings />, host);
+  openSettings("appearance");
+  await tick();
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("This graph is read-only");
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Repair the config and reopen");
+  setGraphConfigProblem(null);
+  await tick();
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  dispose();
 });

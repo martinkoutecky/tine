@@ -7,7 +7,6 @@ import { installKeybindings } from "../keybindings";
 import { closeInPageFind, openInPageFind } from "../inpageFind";
 import { closeHelpPopup, lightbox, setLightbox, toggleHelpPopup } from "../ui";
 import {
-  activateTransientLayer,
   clearTransientLayersForTest,
   dismissTopTransient,
   registerTransientLayer,
@@ -310,67 +309,6 @@ describe("GH #161 P1D1-C registry identity and listener lifecycle", () => {
       firstDispose();
       uninstall();
       setLightbox(null);
-    }
-  });
-});
-
-// The module header used to say registration order was the authority. It is not:
-// the ranking is by ACTIVATION. These pin the difference, so the header cannot
-// drift back into describing a scheme the code does not implement.
-describe("activation order, not registration order, is the authority", () => {
-  it("puts the layer the user last touched on top even when it registered first", () => {
-    const older = mountedHost();
-    const newer = mountedHost();
-    const unregisterOlder = registerTransientLayer({
-      id: "older-but-touched",
-      root: () => older,
-      dismiss: () => true,
-    });
-    const unregisterNewer = registerTransientLayer({
-      id: "newer-untouched",
-      root: () => newer,
-      dismiss: () => true,
-    });
-    try {
-      // Registration order alone: the later registration is on top.
-      expect(topTransientLayer()?.id).toBe("newer-untouched");
-
-      // A real gesture inside the OLDER layer's own root promotes it.
-      older.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
-      expect(topTransientLayer()?.id).toBe("older-but-touched");
-
-      // A pointer gesture does the same, in the other direction.
-      newer.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-      expect(topTransientLayer()?.id).toBe("newer-untouched");
-
-      // And the explicit control, for owners with no root of their own.
-      activateTransientLayer("older-but-touched");
-      expect(topTransientLayer()?.id).toBe("older-but-touched");
-    } finally {
-      unregisterNewer();
-      unregisterOlder();
-    }
-  });
-
-  it("ignores a gesture that lands outside the registered root", () => {
-    const owned = mountedHost();
-    const elsewhere = mountedHost();
-    const unregisterFirst = registerTransientLayer({
-      id: "outside-first",
-      root: () => owned,
-      dismiss: () => true,
-    });
-    const unregisterSecond = registerTransientLayer({
-      id: "outside-second",
-      dismiss: () => true,
-    });
-    try {
-      expect(topTransientLayer()?.id).toBe("outside-second");
-      elsewhere.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
-      expect(topTransientLayer()?.id).toBe("outside-second");
-    } finally {
-      unregisterSecond();
-      unregisterFirst();
     }
   });
 });

@@ -1,8 +1,7 @@
 //! OG Logseq-compatible `:LOGBOOK:` clock drawer handling.
 //!
-//! This module owns the CLOCK line scan/write format used by both tine-core and
-//! the frontend wasm wrapper. It deliberately scans only the `:LOGBOOK:` drawer
-//! lines in one pass; lsdoc's drawer body is opaque today.
+//! The block-region door owns drawer/planning boundaries. This module interprets
+//! clock values only inside parser-accepted LOGBOOK rows, shared with wasm.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogbookFormat {
@@ -33,21 +32,6 @@ pub struct ClockRow {
 const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 impl TimestampParts {
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn local_now() -> TimestampParts {
-        use chrono::{Datelike, Timelike};
-        let now = chrono::Local::now();
-        TimestampParts {
-            year: now.year(),
-            month: now.month(),
-            day: now.day(),
-            weekday: now.weekday().num_days_from_sunday(),
-            hour: now.hour(),
-            minute: now.minute(),
-            second: now.second(),
-        }
-    }
-
     pub fn format(self, with_seconds: bool) -> String {
         let wd = WEEKDAYS
             .get(self.weekday as usize)
@@ -67,11 +51,6 @@ impl TimestampParts {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub fn clock_in(raw: &str, format: LogbookFormat, with_seconds: bool) -> String {
-    clock_in_at(raw, format, with_seconds, TimestampParts::local_now())
-}
-
 pub fn clock_in_at(
     raw: &str,
     format: LogbookFormat,
@@ -85,22 +64,40 @@ pub fn clock_in_at(
     )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub fn clock_out(raw: &str, _format: LogbookFormat, with_seconds: bool) -> String {
-    clock_out_at(raw, with_seconds, TimestampParts::local_now())
+pub fn clock_out_at(
+    raw: &str,
+    format: LogbookFormat,
+    with_seconds: bool,
+    now: TimestampParts,
+) -> String {
+    let regions = crate::block_regions::parse(raw, format == LogbookFormat::Org);
+    clock_out_with_regions(
+        raw,
+        format == LogbookFormat::Org,
+        with_seconds,
+        now,
+        &regions,
+    )
 }
-
-pub fn clock_out_at(raw: &str, with_seconds: bool, now: TimestampParts) -> String {
-    let mut lines: Vec<String> = raw.split('\n').map(str::to_string).collect();
-    let Some((start, end)) = logbook_bounds(&lines) else {
+fn clock_out_with_regions(
+    raw: &str,
+    is_org: bool,
+    with_seconds: bool,
+    now: TimestampParts,
+    regions: &crate::block_regions::BlockRegions,
+) -> String {
+    let Some(drawer) = regions
+        .drawers
+        .iter()
+        .find(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+    else {
         return raw.to_string();
     };
-    if end <= start + 1 {
+    let Some(row) = drawer.clocks.last().filter(|r| r.1 == drawer.close) else {
         return raw.to_string();
-    }
-    let idx = end - 1;
-    let clock_in_log = lines[idx].trim();
-    if !clock_in_log.starts_with("CLOCK:") || clock_in_log.contains("--") {
+    };
+    let clock_in_log = row.slice(raw).trim();
+    if clock_in_log.contains("--") {
         return raw.to_string();
     }
     let Some(clock_start) = open_clock_start(clock_in_log) else {
@@ -117,8 +114,15 @@ pub fn clock_out_at(raw: &str, with_seconds: bool, now: TimestampParts) -> Strin
         return raw.to_string();
     }
     let span = format_span(end_sec - start_sec, with_seconds);
-    lines[idx] = format!("CLOCK: [{}]--[{}] =>  {}", clock_start, clock_end, span);
-    lines.join("\n")
+    regions
+        .apply(
+            raw,
+            is_org,
+            crate::block_regions::Edit::ClockOut {
+                value: format!("CLOCK: [{}]--[{}] =>  {}", clock_start, clock_end, span),
+            },
+        )
+        .expect("CLOCK edit on parsed block")
 }
 
 pub fn apply_marker_transition_at(
@@ -137,16 +141,38 @@ pub fn apply_marker_transition_at(
         return raw.to_string();
     };
     let old_marker = marker_name(old_marker);
+    let regions = crate::block_regions::parse(raw, format == LogbookFormat::Org);
     let should_clock_in = match old_marker {
         None => new_marker == "doing" || new_marker == "now",
         Some("todo") => new_marker == "doing",
         Some("later") => new_marker == "now",
-        Some("now") => new_marker == "now" && !has_logbook_drawer(raw),
-        Some("doing") => new_marker == "doing" && !has_logbook_drawer(raw),
+        Some("now") => {
+            new_marker == "now"
+                && !regions
+                    .drawers
+                    .iter()
+                    .any(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+        }
+        Some("doing") => {
+            new_marker == "doing"
+                && !regions
+                    .drawers
+                    .iter()
+                    .any(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+        }
         _ => false,
     };
     if should_clock_in {
-        return clock_in_at(raw, format, with_seconds, now);
+        return regions
+            .apply(
+                raw,
+                format == LogbookFormat::Org,
+                crate::block_regions::Edit::DrawerRow {
+                    name: "LOGBOOK".into(),
+                    value: format!("CLOCK: [{}]", now.format(with_seconds)),
+                },
+            )
+            .expect("parsed clock transition");
     }
 
     let should_clock_out = matches!(
@@ -155,38 +181,26 @@ pub fn apply_marker_transition_at(
     ) || (matches!(old_marker, Some("now") | Some("doing"))
         && new_marker == "done");
     if should_clock_out {
-        return clock_out_at(raw, with_seconds, now);
+        return clock_out_with_regions(
+            raw,
+            format == LogbookFormat::Org,
+            with_seconds,
+            now,
+            &regions,
+        );
     }
     raw.to_string()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub fn apply_marker_transition(
-    raw: &str,
-    format: LogbookFormat,
-    old_marker: Option<&str>,
-    new_marker: Option<&str>,
-    enabled: bool,
-    with_seconds: bool,
-) -> String {
-    apply_marker_transition_at(
-        raw,
-        format,
-        old_marker,
-        new_marker,
-        enabled,
-        with_seconds,
-        TimestampParts::local_now(),
-    )
+pub fn has_logbook_drawer(raw: &str, is_org: bool) -> bool {
+    crate::block_regions::parse(raw, is_org)
+        .drawers
+        .iter()
+        .any(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
 }
 
-pub fn has_logbook_drawer(raw: &str) -> bool {
-    let lines: Vec<&str> = raw.split('\n').collect();
-    logbook_bounds(&lines).is_some()
-}
-
-pub fn clock_summary_seconds(raw: &str) -> u64 {
-    clock_lines(raw)
+pub fn clock_summary_seconds(raw: &str, is_org: bool) -> u64 {
+    clock_lines(raw, is_org)
         .into_iter()
         .filter_map(|line| {
             let span = line.split_once("=>")?.1.trim();
@@ -195,15 +209,26 @@ pub fn clock_summary_seconds(raw: &str) -> u64 {
         .sum()
 }
 
-pub fn clock_summary_compact(raw: &str) -> String {
-    format_compact_duration(clock_summary_seconds(raw))
+pub fn clock_summary_compact(raw: &str, is_org: bool) -> String {
+    format_compact_duration(clock_summary_seconds(raw, is_org))
 }
 
-pub fn clock_rows(raw: &str) -> Vec<ClockRow> {
-    clock_lines(raw)
+pub fn clock_rows(raw: &str, is_org: bool) -> Vec<ClockRow> {
+    clock_lines(raw, is_org)
         .into_iter()
         .filter_map(parse_clock_row)
         .collect()
+}
+
+/// Clock rows and total duration from one parser-owned LOGBOOK projection.
+/// O(bytes in one block); one parse, no graph work.
+pub fn clock_info(raw: &str, is_org: bool) -> (Vec<ClockRow>, u64) {
+    let rows = clock_rows(raw, is_org);
+    let seconds = rows
+        .iter()
+        .filter_map(|r| r.span.as_deref().and_then(parse_span_seconds))
+        .sum();
+    (rows, seconds)
 }
 
 pub fn format_compact_duration(seconds: u64) -> String {
@@ -233,147 +258,33 @@ pub fn format_compact_duration(seconds: u64) -> String {
 }
 
 fn insert_logbook_line(raw: &str, format: LogbookFormat, value: &str) -> String {
-    let lines: Vec<&str> = raw.split('\n').collect();
-    let title = lines.first().copied().unwrap_or("");
-    let body = if lines.len() > 1 {
-        &lines[1..]
-    } else {
-        &[][..]
-    };
-    let scheduled: Vec<&str> = lines
-        .iter()
-        .copied()
-        .filter(|line| line.starts_with("SCHEDULED"))
-        .collect();
-    let deadline: Vec<&str> = lines
-        .iter()
-        .copied()
-        .filter(|line| line.starts_with("DEADLINE"))
-        .collect();
-    let body_without_timestamps: Vec<&str> = body
-        .iter()
-        .copied()
-        .filter(|line| !(line.starts_with("SCHEDULED") || line.starts_with("DEADLINE")))
-        .collect();
-
-    let mut out: Vec<String> = Vec::new();
-    out.push(title.to_string());
-    out.extend(scheduled.into_iter().map(str::to_string));
-    out.extend(deadline.into_iter().map(str::to_string));
-
-    if let Some((start, end)) = logbook_bounds(&body_without_timestamps) {
-        out.extend(
-            body_without_timestamps[..start]
-                .iter()
-                .map(|s| (*s).to_string()),
-        );
-        out.push(body_without_timestamps[start].to_string());
-        out.extend(
-            body_without_timestamps[start + 1..end]
-                .iter()
-                .map(|s| (*s).to_string()),
-        );
-        out.push(value.to_string());
-        out.push(body_without_timestamps[end].to_string());
-        out.extend(
-            body_without_timestamps[end + 1..]
-                .iter()
-                .map(|s| (*s).to_string()),
-        );
-        return out.join("\n").trim_end().to_string();
-    }
-
-    let prop_end = leading_properties_end(&body_without_timestamps, format);
-    out.extend(
-        body_without_timestamps[..prop_end]
-            .iter()
-            .map(|s| (*s).to_string()),
-    );
-    out.push(":LOGBOOK:".to_string());
-    out.push(value.to_string());
-    out.push(":END:".to_string());
-    out.extend(
-        body_without_timestamps[prop_end..]
-            .iter()
-            .map(|s| (*s).to_string()),
-    );
-    out.join("\n").trim_end().to_string()
+    crate::block_regions::edit(
+        raw,
+        format == LogbookFormat::Org,
+        crate::block_regions::Edit::DrawerRow {
+            name: "LOGBOOK".into(),
+            value: value.into(),
+        },
+    )
+    .expect("LOGBOOK edit on parsed block")
 }
 
-fn leading_properties_end(lines: &[&str], format: LogbookFormat) -> usize {
-    match format {
-        LogbookFormat::Org => {
-            if !lines
-                .first()
-                .is_some_and(|line| is_drawer_start(line, "PROPERTIES"))
-            {
-                return 0;
-            }
-            for (i, line) in lines.iter().enumerate().skip(1) {
-                if is_drawer_end(line) {
-                    return i + 1;
-                }
-            }
-            0
-        }
-        LogbookFormat::Markdown => {
-            let mut i = 0;
-            while i < lines.len() && is_md_property_line(lines[i]) {
-                i += 1;
-            }
-            i
-        }
-    }
-}
-
-/// Whether a line is a Markdown block property — routed through the one shared
-/// recognizer (`property_line::parse_property_line`, transcribed from lsdoc).
-/// The local copy had drifted: it rejected dotted keys
-/// (`logseq.order-list-type::`), so a logbook entry could be inserted ABOVE a
-/// property the read path treats as a block property (DUP-7).
+#[cfg(test)]
 fn is_md_property_line(line: &str) -> bool {
     crate::property_line::parse_property_line(line).is_some()
 }
 
-fn logbook_bounds<T: AsRef<str>>(lines: &[T]) -> Option<(usize, usize)> {
-    let mut i = 0;
-    while i < lines.len() {
-        if is_drawer_start(lines[i].as_ref(), "LOGBOOK") {
-            let mut j = i + 1;
-            while j < lines.len() {
-                if is_drawer_end(lines[j].as_ref()) {
-                    return Some((i, j));
-                }
-                j += 1;
-            }
-            return None;
-        }
-        i += 1;
-    }
-    None
-}
-
-fn is_drawer_start(line: &str, name: &str) -> bool {
-    let t = line.trim();
-    t.len() == name.len() + 2
-        && t.starts_with(':')
-        && t.ends_with(':')
-        && t[1..t.len() - 1].eq_ignore_ascii_case(name)
-}
-
-fn is_drawer_end(line: &str) -> bool {
-    line.trim().eq_ignore_ascii_case(":END:")
-}
-
-fn clock_lines(raw: &str) -> Vec<&str> {
-    let lines: Vec<&str> = raw.split('\n').collect();
-    let Some((start, end)) = logbook_bounds(&lines) else {
-        return Vec::new();
-    };
-    lines[start + 1..end]
+fn clock_lines(raw: &str, is_org: bool) -> Vec<&str> {
+    let regions = crate::block_regions::parse(raw, is_org);
+    regions
+        .drawers
         .iter()
-        .copied()
-        .filter(|line| line.trim().starts_with("CLOCK:"))
+        .filter(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+        .flat_map(|d| {
+            d.clocks
+                .iter()
+                .map(|r| r.slice(raw).trim_end_matches(['\r', '\n']))
+        })
         .collect()
 }
 
@@ -499,6 +410,49 @@ fn parse_span_seconds(span: &str) -> Option<u64> {
 mod tests {
     use super::*;
 
+    /// og 14 Q5 follow-up: the TypeScript properties panel writes only keys in
+    /// this shared fixture's accepted list (`src/editor/editablePropertyKeys.test.ts`
+    /// pins the TS side). Both Rust property readers must find every one again,
+    /// and must accept the whole class the TS validator allows (Unicode letters,
+    /// marks, numbers, `_`, `.`, `/`, `-`). Widening the panel means widening these readers first.
+    #[test]
+    fn editable_property_keys_fixture() {
+        let fixture = include_str!("../tests/fixtures/editable-property-keys.txt");
+        let accepted: Vec<&str> = fixture
+            .lines()
+            .filter_map(|line| line.strip_prefix('+'))
+            .collect();
+        assert!(accepted.len() > 5);
+        let class = ('a'..='z')
+            .chain('A'..='Z')
+            .chain('0'..='9')
+            .chain(['-', '_', '.', '/', 'é', '本'])
+            .map(|c| format!("a{c}b"));
+        for key in accepted.iter().map(|k| k.to_string()).chain(class) {
+            let line = format!("{key}:: v");
+            assert_eq!(
+                crate::doc::parse_property_line(&line),
+                Some((key.as_str(), "v")),
+                "{key}"
+            );
+            assert!(is_md_property_line(&line), "{key}");
+        }
+    }
+
+    #[test]
+    fn markdown_logbook_properties_use_the_core_recognizer() {
+        for line in ["klíč:: v", "a.b:: v", "\tkey:: v", "empty::"] {
+            assert_eq!(
+                is_md_property_line(line),
+                crate::property_line::parse_property_line(line).is_some(),
+                "{line:?}"
+            );
+        }
+        for line in ["key::value", "a b:: value"] {
+            assert!(!is_md_property_line(line), "{line:?}");
+        }
+    }
+
     fn ts(
         year: i32,
         month: u32,
@@ -529,7 +483,7 @@ mod tests {
             running,
             "TODO Ship logbook\nSCHEDULED: <2026-06-25 Thu>\nDEADLINE: <2026-06-26 Fri>\nowner:: martin\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00:00]\n:END:\nBody stays below"
         );
-        let closed = clock_out_at(&running, true, end);
+        let closed = clock_out_at(&running, LogbookFormat::Markdown, true, end);
         assert_eq!(
             closed,
             "TODO Ship logbook\nSCHEDULED: <2026-06-25 Thu>\nDEADLINE: <2026-06-26 Fri>\nowner:: martin\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00:00]--[2026-06-25 Thu 10:02:03] =>  01:02:03\n:END:\nBody stays below"
@@ -547,7 +501,7 @@ mod tests {
             "TODO Ship\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00]\n:END:"
         );
         assert_eq!(
-            clock_out_at(&running, false, end),
+            clock_out_at(&running, LogbookFormat::Markdown, false, end),
             "TODO Ship\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00]--[2026-06-25 Thu 09:31] =>  00:31\n:END:"
         );
     }
@@ -677,9 +631,9 @@ mod tests {
     #[test]
     fn clock_summary_trusts_stored_spans_and_formats_compactly() {
         let raw = "DONE Ship\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00:00]--[2026-06-25 Thu 10:00:00] =>  00:05:00\nCLOCK: [2026-06-25 Thu 10:00:00]--[2026-06-25 Thu 11:00:00] =>  1:20\nCLOCK: [2026-06-25 Thu 12:00:00]--[2026-06-25 Thu 12:00:45] =>  00:00:45\n:END:";
-        assert_eq!(clock_summary_seconds(raw), 5 * 60 + 80 * 60 + 45);
-        assert_eq!(clock_summary_compact(raw), "1h25m45s");
-        let rows = clock_rows(raw);
+        assert_eq!(clock_summary_seconds(raw, false), 5 * 60 + 80 * 60 + 45);
+        assert_eq!(clock_summary_compact(raw, false), "1h25m45s");
+        let rows = clock_rows(raw, false);
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].kind, "CLOCK");
         assert_eq!(rows[0].span.as_deref(), Some("00:05:00"));

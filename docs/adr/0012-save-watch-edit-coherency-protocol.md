@@ -48,13 +48,3 @@ The protocol, and who owns each piece:
   reload-clobbers-edit).
 - The protocol is testable piecemeal (round-trip, conflict, self-write tests
   exist); a cross-layer state-transition test matrix is the desired next gate.
-
-## Addendum (2026-08-17) — ADR 0057
-
-The protocol gains exactly one scoped exemption. `serialize_page_document`
-refuses every write to a file carrying unresolved VCS merge markers (Concord
-invariant 3); ADR 0057 permits that one write when it *is* the user's confirmed
-resolution, authorized per exact path under that page's lock and released by an
-RAII guard. Everything else about the write is unchanged: same lock, same
-`base_rev` guard, same commit protocol. See
-`0057-concord-conflict-objects-and-in-page-resolution.md` §6.

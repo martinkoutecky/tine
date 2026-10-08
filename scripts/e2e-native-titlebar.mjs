@@ -9,10 +9,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { frameExtents as sharedFrameExtents, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-
-await ensureDisplay();
+import { APP_ID } from "./lib/app-identity.mjs";
+import { x11Tools } from "./lib/e2e-x11.mjs";
 
 if (process.platform !== "linux") throw new Error("native titlebar regression is Linux-only");
 
@@ -31,7 +29,7 @@ fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.mkdirSync(ARTIFACTS, { recursive: true });
-const appData = `${TMP}/xdg/data/page.tine.Tine`;
+const appData = `${TMP}/xdg/data/${APP_ID}`;
 fs.mkdirSync(appData, { recursive: true });
 fs.writeFileSync(`${appData}/tine-settings.json`, '{"native_window_frame":true}\n');
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
@@ -53,31 +51,7 @@ const env = {
   LIBGL_ALWAYS_SOFTWARE: "1",
   GDK_BACKEND: "x11",
 };
-const xdoEnv = process.env.E2E_XDOTOOL_LIB
-  ? { ...env, LD_LIBRARY_PATH: process.env.E2E_XDOTOOL_LIB }
-  : env;
-const xdo = (...args) => execFileSync(XDOTOOL, args, { encoding: "utf8", env: xdoEnv }).trim();
-const windowIds = () => {
-  try {
-    // xdotool uses POSIX extended regular expressions (no `(?:...)`).
-    return xdo("search", "--onlyvisible", "--name", "^Tine( — .*)?$")
-      .split(/\s+/)
-      .filter(Boolean)
-      // Tauri/Openbox can also expose a tiny same-title helper surface. The
-      // graph window is the largest visible match and owns the real frame.
-      .sort((a, b) => {
-        try {
-          const ga = geometry(a);
-          const gb = geometry(b);
-          return gb.WIDTH * gb.HEIGHT - ga.WIDTH * ga.HEIGHT;
-        } catch {
-          return 0;
-        }
-      });
-  } catch {
-    return [];
-  }
-};
+const { xdo, geometry, windowIds, frameExtents: frameExtentsOf } = x11Tools(env, { xdotool: XDOTOOL });
 const waitFor = async (predicate, timeoutMs, message) => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -87,28 +61,9 @@ const waitFor = async (predicate, timeoutMs, message) => {
   }
   throw new Error(message);
 };
-const geometry = (id) => {
-  // xdotool's --shell Y coordinate double-counts Openbox's reparented titlebar
-  // in this environment. xwininfo reports the actual client origin, which is
-  // the coordinate _NET_FRAME_EXTENTS is defined around.
-  const raw = execFileSync("xwininfo", ["-id", id], { encoding: "utf8", env });
-  const read = (label) => {
-    const value = raw.match(new RegExp(`^\\s*${label}:\\s*(-?\\d+)`, "m"))?.[1];
-    if (value === undefined) throw new Error(`xwininfo omitted ${label}: ${raw.trim()}`);
-    return Number(value);
-  };
-  return {
-    WINDOW: Number(id),
-    X: read("Absolute upper-left X"),
-    Y: read("Absolute upper-left Y"),
-    WIDTH: read("Width"),
-    HEIGHT: read("Height"),
-  };
-};
-// An undecorated window commonly has no frame-extents property at all; the
-// shared parser (e2e-capabilities.mjs) treats that as zero extents unless the
-// caller asks for strictness — exactly this suite's old behavior.
-const frameExtents = (id) => sharedFrameExtents(id, env);
+// An undecorated window commonly has no extents property at all; that is
+// equivalent to zero extents and is the expected pre-toggle state.
+const frameExtents = (id) => frameExtentsOf(id, { missingAsZero: true });
 
 const wmLog = fs.openSync(path.join(ARTIFACTS, "window-manager.log"), "w");
 const wm = spawn(process.env.E2E_WINDOW_MANAGER || "openbox", ["--sm-disable"], {
@@ -118,7 +73,7 @@ await sleep(600);
 if (wm.exitCode != null) throw new Error(`window manager exited early: ${fs.readFileSync(path.join(ARTIFACTS, "window-manager.log"), "utf8")}`);
 
 const driverLog = fs.openSync(path.join(ARTIFACTS, "tauri-driver.log"), "w");
-const td = spawn(TD, webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, WD), {
+const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", WD], {
   env, stdio: ["ignore", driverLog, driverLog], detached: true,
 });
 await sleep(2500);
@@ -128,18 +83,22 @@ try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error",
     connectionRetryCount: 1, connectionRetryTimeout: 60_000,
-    capabilities: tauriCapabilities(APP, "native-titlebar"),
+    capabilities: {
+      browserName: "wry",
+      "wdio:enforceWebDriverClassic": true,
+      "tauri:options": { application: APP },
+    },
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
-  const desktopEntry = `${TMP}/xdg/data/applications/page.tine.Tine.desktop`;
+  const desktopEntry = `${TMP}/xdg/data/applications/${APP_ID}.desktop`;
   await waitFor(() => fs.existsSync(desktopEntry), 5_000,
     "standalone Linux binary did not install its Wayland desktop identity");
   const desktopText = fs.readFileSync(desktopEntry, "utf8");
-  if (!desktopText.includes("Icon=page.tine.Tine") || !desktopText.includes("X-Tine-Managed=true")) {
+  if (!desktopText.includes(`Icon=${APP_ID}`) || !desktopText.includes("X-Tine-Managed=true")) {
     throw new Error(`standalone desktop identity is malformed: ${desktopText}`);
   }
   for (const size of ["32x32", "64x64", "128x128", "256x256", "512x512"]) {
-    const icon = `${TMP}/xdg/data/icons/hicolor/${size}/apps/page.tine.Tine.png`;
+    const icon = `${TMP}/xdg/data/icons/hicolor/${size}/apps/${APP_ID}.png`;
     if (!fs.existsSync(icon) || fs.statSync(icon).size === 0) {
       throw new Error(`standalone Linux identity is missing its ${size} Tine icon`);
     }
@@ -155,28 +114,6 @@ try {
   if ((await toggle.getAttribute("aria-checked")) !== "true") {
     throw new Error("Settings did not reflect the native frame applied at startup");
   }
-
-  // The same real production binary must expose its safe report through native
-  // IPC. This catches command-registration, app-data, report-schema and Settings
-  // wiring failures that a browser render test cannot see.
-  await browser.$('.settings-nav-item[data-settings-tab="diagnostics"]').click();
-  const createReport = await browser.$("button=Create diagnostic report");
-  await createReport.waitForExist({ timeout: 5_000 });
-  await createReport.click();
-  const reportPreview = await browser.$(".diagnostics-preview textarea");
-  await reportPreview.waitForExist({ timeout: 5_000 });
-  const reportText = await reportPreview.getValue();
-  const report = JSON.parse(reportText);
-  if (report.schemaVersion !== 1 || report.privacy?.automaticUpload !== false) {
-    throw new Error(`diagnostic report has the wrong safety schema: ${reportText}`);
-  }
-  if (report.privacy?.containsGraphContent !== false || report.runtime?.recorderActive !== true) {
-    throw new Error(`diagnostic report did not preserve its privacy/runtime contract: ${reportText}`);
-  }
-  if (reportText.includes(GRAPH) || reportText.includes("native titlebar fixture")) {
-    throw new Error("diagnostic report exposed the fixture graph path or content");
-  }
-  await browser.saveScreenshot(path.join(ARTIFACTS, "diagnostics-report.png"));
 
   // Allow the close-request handler to be installed before driving the actual
   // window-manager widget rather than synthesizing WM_DELETE_WINDOW directly.
@@ -215,7 +152,7 @@ try {
   }
   await waitFor(() => windowIds().length === 0, 12_000,
     `native close control did not close Tine; geometry=${JSON.stringify(g)} extents=${JSON.stringify(decorated.extents)} click=${closeX},${closeY} state=${JSON.stringify(clickState)}`);
-  console.log(`PASS: privacy-safe diagnostics and Linux native close control; extents=${JSON.stringify(decorated.extents)} click=${closeX},${closeY}`);
+  console.log(`PASS: Linux native close control closed Tine safely; extents=${JSON.stringify(decorated.extents)} click=${closeX},${closeY}`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

@@ -1,4 +1,3 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Repro/verify: clicking a {{query}} collapse arrow must TOGGLE collapse, not
 // enter edit mode of the owning block. Headless Chromium over the mock backend.
 //
@@ -8,16 +7,23 @@ import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Both put a .query-collapse arrow inside a .ls-block; both were regressed by the
 // click→caret rewrite (edit entry moved to mousedown, past the arrow's click-phase
 // stopPropagation). This drives a real click and checks the arrow toggles.
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = 5209;
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 
+async function waitForServer(url, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try { const r = await fetch(url); if (r.ok) return; } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 40, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 1 });
   page.on("pageerror", (e) => console.log("pageerror:", String(e).split("\n")[0]));

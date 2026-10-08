@@ -1,4 +1,3 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Landing-site screenshots (website/img/). Headless Chromium over the mock
 // backend, same as the README shots. Produces three images the site needs that
 // the README set doesn't cover well:
@@ -13,7 +12,7 @@ import { waitForHttpServer } from "./e2e-capabilities.mjs";
 //
 // Usage:  source scripts/env.sh && npm run build && node scripts/shot-website.mjs
 //         then copy the chosen files into website/img/ (see docs/SCREENSHOTS.md).
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -24,9 +23,16 @@ mkdirSync(OUT, { recursive: true });
 
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 
+async function waitForServer(url, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try { const r = await fetch(url); if (r.ok) return; } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 40, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
 
   // --- 1. Dark mode (full chrome journals feed) --------------------------

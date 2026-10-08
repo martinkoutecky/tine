@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { render } from "solid-js/web";
 import { renderInlines } from "./inline";
 import { initParser } from "./parse";
-import { setGraphMeta } from "../ui";
+import { setGraphMeta } from "../graphSession";
 import type { JSX } from "solid-js";
 import type { Inline } from "./ast";
 
@@ -50,10 +50,7 @@ describe("show-brackets setting gates page-reference brackets", () => {
     setGraphMeta({ show_brackets: false } as never);
     const h = inl(pageRef("My Page"));
     expect(h).not.toContain('class="bracket"');
-    // Match the CLASS, not the whole attribute: an unresolved reference also
-    // carries `page-ref-missing`, and this test is about brackets, not
-    // existence. "My Page" has no file in this fixture, so it is unresolved.
-    expect(h).toMatch(/class="page-ref(?:[ "])/);
+    expect(h).toContain('class="page-ref"');
     expect(h).toContain("My Page");
   });
 

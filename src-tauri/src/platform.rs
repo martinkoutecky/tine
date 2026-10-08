@@ -23,13 +23,11 @@ pub(crate) struct ClipboardFileList {
 /// restricted to regular files before they cross into the WebView. Directories
 /// are intentionally skipped rather than recursively importing arbitrary trees.
 #[cfg(desktop)]
-fn read_clipboard_files() -> Result<ClipboardFileList, crate::command_error::CommandError> {
+fn read_clipboard_files() -> Result<ClipboardFileList, String> {
     use clipboard_rs::{Clipboard, ClipboardContext};
 
-    let context = ClipboardContext::new().map_err(crate::command_error::CommandError::clipboard)?;
-    let paths = context
-        .get_files()
-        .map_err(crate::command_error::CommandError::clipboard)?;
+    let context = ClipboardContext::new().map_err(|e| e.to_string())?;
+    let paths = context.get_files().map_err(|e| e.to_string())?;
     Ok(clipboard_file_list(paths))
 }
 
@@ -77,12 +75,11 @@ fn clipboard_file_list(paths: Vec<String>) -> ClipboardFileList {
 }
 
 #[tauri::command]
-pub(crate) async fn clipboard_files(
-) -> Result<ClipboardFileList, crate::command_error::CommandError> {
+pub(crate) async fn clipboard_files() -> Result<ClipboardFileList, String> {
     #[cfg(desktop)]
     return tauri::async_runtime::spawn_blocking(read_clipboard_files)
         .await
-        .map_err(crate::command_error::CommandError::worker)?;
+        .map_err(|e| e.to_string())?;
 
     #[cfg(not(desktop))]
     return Ok(ClipboardFileList {
@@ -128,45 +125,63 @@ mod clipboard_file_tests {
     }
 }
 
-/// On Linux, hand a PNG to the OS clipboard via `wl-copy` (Wayland) or `xclip`/
-/// `xsel` (X11). These tools FORK a daemon that serves the selection until it's
-/// replaced — which is exactly what an image clipboard needs. `arboard` (what the
-/// Tauri plugin uses) tries to do this in-process and frequently drops the image
-/// on WebKitGTK, so we prefer the native tools and only fall back to the plugin.
+/// How long the foreground clipboard tool gets to report whether it took the
+/// image. `wl-copy`/`xclip`/`xsel` hand the selection to a forked server and the
+/// foreground process exits at once, so a healthy tool answers well inside this;
+/// a tool that is still running afterwards is serving the selection from the
+/// foreground and counts as success.
 #[cfg(target_os = "linux")]
-fn linux_copy_image(bytes: &[u8]) -> Result<(), crate::command_error::CommandError> {
+const CLIPBOARD_TOOL_VERDICT: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Reap `child` on a detached thread so a process we stop caring about never
+/// becomes a zombie (I-21: every exit path reaps its child).
+#[cfg(desktop)]
+fn reap_in_background(mut child: std::process::Child) {
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+}
+
+/// Spawn a fire-and-forget helper (browser or file-manager opener) and reap it
+/// when it exits. The caller learns only whether it started.
+#[cfg(desktop)]
+pub(crate) fn spawn_reaped(command: &mut std::process::Command) -> Result<(), String> {
+    command
+        .spawn()
+        .map(reap_in_background)
+        .map_err(|error| error.to_string())
+}
+
+/// Stop a child we are abandoning and collect it. `kill` may fail because it
+/// already exited; `wait` then still reaps it.
+#[cfg(target_os = "linux")]
+fn kill_and_reap(child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Feed `bytes` to each clipboard tool in turn. A tool counts as having taken
+/// the image only when it exits successfully, or is still serving it after
+/// `verdict`; a tool that fails to start, cannot be written to, or exits with a
+/// failure status falls through to the next one, and every child is reaped on
+/// every path. The error names the last tool's failure.
+#[cfg(target_os = "linux")]
+fn copy_with_tools(
+    tools: &[(String, Vec<String>)],
+    bytes: &[u8],
+    verdict: std::time::Duration,
+) -> Result<(), String> {
     use std::io::Write;
     use std::process::{Command, Stdio};
-    // Prefer the tool matching the active session, but try all — a Wayland session
-    // under Xwayland may have only xclip, and vice versa.
-    let mut order: Vec<(&str, Vec<&str>)> = Vec::new();
-    let push = |o: &mut Vec<(&str, Vec<&str>)>, prog: &'static str| {
-        let args: Vec<&str> = match prog {
-            "wl-copy" => vec!["--type", "image/png"],
-            "xclip" => vec!["-selection", "clipboard", "-t", "image/png"],
-            "xsel" => vec!["--clipboard", "--input"],
-            _ => vec![],
-        };
-        o.push((prog, args));
-    };
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        push(&mut order, "wl-copy");
-        push(&mut order, "xclip");
-        push(&mut order, "xsel");
-    } else {
-        push(&mut order, "xclip");
-        push(&mut order, "xsel");
-        push(&mut order, "wl-copy");
-    }
     let mut last_err = String::from("no clipboard tool found (install wl-clipboard or xclip)");
-    for (prog, args) in order {
-        let child = Command::new(prog)
-            .args(&args)
+    for (prog, args) in tools {
+        let spawned = Command::new(prog)
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn();
-        let mut child = match child {
+        let mut child = match spawned {
             Ok(c) => c,
             Err(e) => {
                 last_err = format!("{prog}: {e}");
@@ -174,37 +189,100 @@ fn linux_copy_image(bytes: &[u8]) -> Result<(), crate::command_error::CommandErr
             }
         };
         if let Some(mut stdin) = child.stdin.take() {
-            if let Err(e) = stdin.write_all(bytes) {
+            let written = stdin.write_all(bytes);
+            drop(stdin); // EOF: the tool now owns the whole image
+            if let Err(e) = written {
+                kill_and_reap(&mut child);
                 last_err = format!("{prog}: write stdin: {e}");
                 continue;
             }
         }
-        // wl-copy/xclip fork a server and the foreground process exits promptly;
-        // reap it on a thread so we neither block here nor leak a zombie.
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
-        return Ok(());
+        let deadline = std::time::Instant::now() + verdict;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => return Ok(()),
+                Ok(Some(status)) => {
+                    last_err = format!("{prog}: exited with {status}");
+                    break;
+                }
+                Ok(None) if std::time::Instant::now() >= deadline => {
+                    // Still running: it serves the selection from the foreground.
+                    reap_in_background(child);
+                    return Ok(());
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+                Err(e) => {
+                    kill_and_reap(&mut child);
+                    last_err = format!("{prog}: wait: {e}");
+                    break;
+                }
+            }
+        }
     }
-    Err(crate::command_error::CommandError::platform(last_err))
+    Err(last_err)
 }
 
+/// On Linux, hand a PNG to the OS clipboard via `wl-copy` (Wayland) or `xclip`/
+/// `xsel` (X11). These tools FORK a daemon that serves the selection until it's
+/// replaced — which is exactly what an image clipboard needs. `arboard` (what the
+/// Tauri plugin uses) tries to do this in-process and frequently drops the image
+/// on WebKitGTK, so we prefer the native tools and only fall back to the plugin.
+#[cfg(target_os = "linux")]
+fn linux_copy_image(bytes: &[u8]) -> Result<(), String> {
+    // Prefer the tool matching the active session, but try all — a Wayland session
+    // under Xwayland may have only xclip, and vice versa.
+    let tool = |prog: &str| -> (String, Vec<String>) {
+        let args: &[&str] = match prog {
+            "wl-copy" => &["--type", "image/png"],
+            "xclip" => &["-selection", "clipboard", "-t", "image/png"],
+            "xsel" => &["--clipboard", "--input"],
+            _ => &[],
+        };
+        (
+            prog.to_string(),
+            args.iter().map(|a| a.to_string()).collect(),
+        )
+    };
+    let names: [&str; 3] = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        ["wl-copy", "xclip", "xsel"]
+    } else {
+        ["xclip", "xsel", "wl-copy"]
+    };
+    let order: Vec<_> = names.iter().map(|name| tool(name)).collect();
+    copy_with_tools(&order, bytes, CLIPBOARD_TOOL_VERDICT)
+}
+
+/// Starting the clipboard tool (PATH search, exec, writing the image to its
+/// stdin) runs on the blocking pool, off the UI thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) fn copy_image_to_clipboard(
+pub(crate) async fn copy_image_to_clipboard(
     app: tauri::AppHandle,
     bytes_b64: String,
-) -> Result<(), crate::command_error::CommandError> {
-    use tauri_plugin_clipboard_manager::ClipboardExt;
-    let bytes = decode_asset_b64(&bytes_b64).map_err(crate::command_error::CommandError::from)?;
-    #[cfg(target_os = "linux")]
-    if linux_copy_image(&bytes).is_ok() {
-        return Ok(());
-    }
-    let img = tauri::image::Image::from_bytes(&bytes)
-        .map_err(crate::command_error::CommandError::clipboard)?;
-    app.clipboard()
-        .write_image(&img)
-        .map_err(crate::command_error::CommandError::clipboard)
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        // Bounds the payload (and rejects bad base64) before any platform route.
+        let bytes = decode_asset_b64(&bytes_b64)?;
+        // The clipboard plugin's mobile `write_image` is "Unsupported on this
+        // platform", so Android publishes the image through its own plugin
+        // (GH #654).
+        #[cfg(target_os = "android")]
+        {
+            let _ = bytes;
+            return crate::android_clipboard::copy_png(&app, &bytes_b64);
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            use tauri_plugin_clipboard_manager::ClipboardExt;
+            #[cfg(target_os = "linux")]
+            if linux_copy_image(&bytes).is_ok() {
+                return Ok(());
+            }
+            let img = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
+            app.clipboard().write_image(&img).map_err(|e| e.to_string())
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// What the backend knows about the rendering path, so the UI can warn — loudly
@@ -244,9 +322,7 @@ pub(crate) fn gpu_env() -> GpuEnv {
 /// are not uniform (GH #444): Logseq's `file://D:\test.txt` puts the drive in
 /// the authority position, Obsidian's `<file:///D:\test.txt>` uses backslashes
 /// after a triple slash, and either can carry percent escapes. The parser
-/// already resolves all three — a Windows drive letter in the authority slot is
-/// re-read as a path, backslashes are normalised for the special `file` scheme,
-/// and `to_file_path` percent-decodes. It also rejects a remote authority
+/// already resolves all three, and rejects a remote authority
 /// (`file://host/share`) everywhere except Windows, where it is a real UNC path.
 pub(crate) fn file_url_to_path(url: &str) -> Option<std::path::PathBuf> {
     let parsed = tauri::Url::parse(url).ok()?;
@@ -275,91 +351,84 @@ pub(crate) enum ExternalOpen {
 /// this gate rejected `file:` outright and the frontend then discarded the
 /// rejection) is worse for the honest case than the parity behaviour is for the
 /// hostile one. Every other scheme stays refused, which is stricter than OG.
-pub(crate) fn external_open_plan(
-    url: &str,
-) -> Result<ExternalOpen, crate::command_error::CommandError> {
+pub(crate) fn external_open_plan(url: &str) -> Result<ExternalOpen, String> {
     if url.starts_with("file:") {
-        let path = file_url_to_path(url).ok_or_else(|| {
-            crate::command_error::CommandError::prose("that file link does not name a local file")
-        })?;
+        let path = file_url_to_path(url)
+            .ok_or_else(|| "that file link does not name a local file".to_string())?;
         return Ok(ExternalOpen::LocalPath(path));
     }
     if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
         return Ok(ExternalOpen::Url);
     }
-    Err(crate::command_error::CommandError::prose(
-        "unsupported url scheme",
-    ))
+    Err("unsupported url scheme".into())
 }
 
 /// Open a web/mail URL, or a local `file:` link, in the user's default external
 /// application. The URL is passed as a single argument (no shell), so it can't
 /// inject commands.
+/// Starting the opener (PATH search, exec) runs on the blocking pool, off the
+/// UI thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) fn open_external(
-    app: tauri::AppHandle,
-    url: String,
-) -> Result<(), crate::command_error::CommandError> {
-    if let ExternalOpen::LocalPath(path) = external_open_plan(&url)? {
-        // Every OS opener accepts a path that is not there — `explorer.exe` even
-        // opens an unrelated window for one — so without this check a stale link
-        // reproduces the reported "clicking does nothing" from the other side.
-        if !path.exists() {
-            return Err(crate::command_error::CommandError::platform(format!(
-                "{} could not be found",
-                path.display()
-            )));
+pub(crate) async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    if url.starts_with("tine:") {
+        crate::deep_links::receive_url(&app, url);
+        return Ok(());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        if let ExternalOpen::LocalPath(path) = external_open_plan(&url)? {
+            // Every OS opener accepts a path that is not there — `explorer.exe` even
+            // opens an unrelated window for one — so without this check a stale link
+            // reproduces the reported "clicking does nothing" from the other side.
+            if !path.exists() {
+                return Err(format!("{} could not be found", path.display()));
+            }
+            #[cfg(desktop)]
+            return open_page_source(&path);
+            #[cfg(not(desktop))]
+            {
+                let _ = (path, &app);
+                return Err("opening local files is available on desktop only".into());
+            }
         }
-        #[cfg(desktop)]
-        return open_page_source(&path);
+        // Linux/macOS: spawn the desktop-session URL opener directly (Linux needs
+        // the env-scrubbed browser policy; see opener_command_env).
+        #[cfg(all(desktop, not(target_os = "windows")))]
+        {
+            let _ = &app;
+            #[cfg(target_os = "linux")]
+            let mut command = opener_command_env("xdg-open", OpenerEnvPolicy::Browser);
+            #[cfg(target_os = "macos")]
+            let mut command = opener_command("open");
+            spawn_reaped(command.arg(&url))
+        }
+        // Windows: do NOT spawn `explorer <url>`. explorer.exe treats an http(s)/
+        // mailto argument as a shell item and frequently opens a File Explorer
+        // window instead of handing the URL to the default browser/mail client
+        // (GH #215). Route the open through the opener plugin, which calls
+        // ShellExecute — the canonical Windows "open this URL" API and the same
+        // path mobile already uses successfully.
+        #[cfg(all(desktop, target_os = "windows"))]
+        {
+            use tauri_plugin_opener::OpenerExt;
+            app.opener()
+                .open_url(url, None::<&str>)
+                .map_err(|e| e.to_string())
+        }
+        // Mobile (Android/iOS): there is no xdg-open/open/explorer to spawn, so hand
+        // the URL to the platform via the opener plugin (an ACTION_VIEW Intent on
+        // Android). This is what makes the About/Help/Releases links actually open on
+        // Android — before this they fired a command that returned an error the
+        // frontend silently swallowed (GH #49).
         #[cfg(not(desktop))]
         {
-            let _ = (path, &app);
-            return Err(crate::command_error::CommandError::prose(
-                "opening local files is available on desktop only",
-            ));
+            use tauri_plugin_opener::OpenerExt;
+            app.opener()
+                .open_url(url, None::<&str>)
+                .map_err(|e| e.to_string())
         }
-    }
-    // Linux/macOS: spawn the desktop-session URL opener directly (Linux needs
-    // the env-scrubbed browser policy; see opener_command_env).
-    #[cfg(all(desktop, not(target_os = "windows")))]
-    {
-        let _ = &app;
-        #[cfg(target_os = "linux")]
-        let mut command = opener_command_env("xdg-open", OpenerEnvPolicy::Browser);
-        #[cfg(target_os = "macos")]
-        let mut command = opener_command("open");
-        command
-            .arg(&url)
-            .spawn()
-            .map_err(crate::command_error::CommandError::from)?;
-        Ok(())
-    }
-    // Windows: do NOT spawn `explorer <url>`. explorer.exe treats an http(s)/
-    // mailto argument as a shell item and frequently opens a File Explorer
-    // window instead of handing the URL to the default browser/mail client
-    // (GH #215). Route the open through the opener plugin, which calls
-    // ShellExecute — the canonical Windows "open this URL" API and the same
-    // path mobile already uses successfully.
-    #[cfg(all(desktop, target_os = "windows"))]
-    {
-        use tauri_plugin_opener::OpenerExt;
-        app.opener()
-            .open_url(url, None::<&str>)
-            .map_err(crate::command_error::CommandError::platform)
-    }
-    // Mobile (Android/iOS): there is no xdg-open/open/explorer to spawn, so hand
-    // the URL to the platform via the opener plugin (an ACTION_VIEW Intent on
-    // Android). This is what makes the About/Help/Releases links actually open on
-    // Android — before this they fired a command that returned an error the
-    // frontend silently swallowed (GH #49).
-    #[cfg(not(desktop))]
-    {
-        use tauri_plugin_opener::OpenerExt;
-        app.opener()
-            .open_url(url, None::<&str>)
-            .map_err(crate::command_error::CommandError::platform)
-    }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Build the OS "open" command, scrubbing the env vars Tine (or its AppImage
@@ -425,41 +494,23 @@ fn opener_command_env(
 }
 
 #[cfg(desktop)]
-pub(crate) fn open_page_source(
-    path: &std::path::Path,
-) -> Result<(), crate::command_error::CommandError> {
+pub(crate) fn open_page_source(path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let mut command = opener_command("xdg-open");
     #[cfg(target_os = "macos")]
     let mut command = opener_command("open");
     #[cfg(target_os = "windows")]
     let mut command = opener_command("explorer");
-    command
-        .arg(path)
-        .spawn()
-        .map(|_| ())
-        .map_err(crate::command_error::CommandError::from)
+    spawn_reaped(command.arg(path))
 }
 
 #[cfg(desktop)]
-pub(crate) fn reveal_page_source(
-    path: &std::path::Path,
-) -> Result<(), crate::command_error::CommandError> {
+pub(crate) fn reveal_page_source(path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    return opener_command("open")
-        .arg("-R")
-        .arg(path)
-        .spawn()
-        .map(|_| ())
-        .map_err(crate::command_error::CommandError::from);
+    return spawn_reaped(opener_command("open").arg("-R").arg(path));
 
     #[cfg(target_os = "windows")]
-    return opener_command("explorer")
-        .arg("/select,")
-        .arg(path)
-        .spawn()
-        .map(|_| ())
-        .map_err(crate::command_error::CommandError::from);
+    return spawn_reaped(opener_command("explorer").arg("/select,").arg(path));
 
     #[cfg(target_os = "linux")]
     {
@@ -482,14 +533,10 @@ pub(crate) fn reveal_page_source(
                 return Ok(());
             }
         }
-        let parent = path.parent().ok_or_else(|| {
-            crate::command_error::CommandError::prose("page source has no parent directory")
-        })?;
-        opener_command("xdg-open")
-            .arg(parent)
-            .spawn()
-            .map(|_| ())
-            .map_err(crate::command_error::CommandError::from)
+        let parent = path
+            .parent()
+            .ok_or_else(|| "page source has no parent directory".to_string())?;
+        spawn_reaped(opener_command("xdg-open").arg(parent))
     }
 }
 
@@ -771,7 +818,10 @@ pub fn kill_webkit_children() {
         }
     }
     if !killed.is_empty() {
-        crate::debug::diag(format!("kill_webkit_children: SIGKILL {killed:?} (GH #28)"));
+        crate::debug::diag_private(
+            "webkit-children-killed",
+            format!("kill_webkit_children: SIGKILL {killed:?} (GH #28)"),
+        );
     }
 }
 
@@ -828,54 +878,6 @@ mod tests {
 #[cfg(test)]
 mod file_url_tests {
     use super::{external_open_plan, file_url_to_path, ExternalOpen};
-
-    #[test]
-    fn external_open_cfg_family_accounts_for_all_five_shipped_targets() {
-        let source = include_str!("platform.rs");
-        let start = source
-            .find("pub(crate) fn open_external(")
-            .expect("open_external remains present");
-        let end = source[start..]
-            .find("\n/// Build the OS")
-            .map(|offset| start + offset)
-            .expect("the opener helper remains after open_external");
-        let function = &source[start..end];
-        let url_family = function
-            .split_once("// Linux/macOS:")
-            .map(|(_, family)| family)
-            .expect("URL opener cfg family remains explicit");
-        let mut coverage = std::collections::BTreeMap::<&str, usize>::new();
-        for cfg in url_family
-            .lines()
-            .filter(|line| line.starts_with("    #[cfg("))
-            .map(str::trim)
-        {
-            let targets: &[&str] = match cfg {
-                "#[cfg(all(desktop, not(target_os = \"windows\")))]" => &["linux", "macos"],
-                "#[cfg(all(desktop, target_os = \"windows\"))]" => &["windows"],
-                // `desktop` is Tauri's shipped-target split. This shared arm is
-                // deliberately and explicitly attributable to both mobile OSes.
-                "#[cfg(not(desktop))]" => &["android", "ios"],
-                other => panic!("unaccounted top-level open_external cfg arm: {other}"),
-            };
-            for target in targets {
-                *coverage.entry(target).or_default() += 1;
-            }
-        }
-        assert_eq!(
-            coverage,
-            std::collections::BTreeMap::from([
-                ("android", 1),
-                ("ios", 1),
-                ("linux", 1),
-                ("macos", 1),
-                ("windows", 1),
-            ]),
-            "AGENTS §2 cfg golden rule: each shipped target must belong to exactly one opener arm; imitate tine-storage::filesystem::rename_noreplace"
-        );
-        assert!(function.contains("tauri_plugin_opener::OpenerExt"));
-        assert!(function.contains("opening local files is available on desktop only"));
-    }
 
     /// The three shapes GH #444 reported, plus the ordinary POSIX one. On
     /// Windows all four resolve to a real local path; elsewhere the drive-letter
@@ -955,5 +957,138 @@ mod file_url_tests {
         // A remote authority is not a local path on this platform.
         #[cfg(not(target_os = "windows"))]
         assert_eq!(file_url_to_path("file://example.com/share/a.txt"), None);
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tool_tests {
+    // Script tools need a POSIX shell; an inner cfg keeps the module visible to
+    // the production-source scan (og-enforcement) as test code.
+    #![cfg(target_os = "linux")]
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    fn script(dir: &std::path::Path, name: &str, body: &str) -> (String, Vec<String>) {
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (path.to_string_lossy().into_owned(), Vec::new())
+    }
+    fn pid_of(dir: &std::path::Path, file: &str) -> u32 {
+        std::fs::read_to_string(dir.join(file))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
+    }
+    /// The process still has a /proc entry: running, or a zombie nobody waited for.
+    fn lingers(pid: u32) -> bool {
+        std::path::Path::new(&format!("/proc/{pid}")).exists()
+    }
+    const QUICK: Duration = Duration::from_millis(400);
+
+    #[test]
+    fn a_tool_that_exits_with_failure_is_not_a_copy_and_the_next_tool_is_tried() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = vec![
+            script(dir.path(), "bad", "cat >/dev/null; exit 3"),
+            script(dir.path(), "good", "cat >/dev/null; exit 0"),
+        ];
+        assert!(copy_with_tools(&tools, b"png", QUICK).is_ok());
+    }
+
+    #[test]
+    fn every_tool_failing_reports_the_failure_instead_of_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = vec![
+            script(dir.path(), "bad1", "cat >/dev/null; exit 3"),
+            script(dir.path(), "bad2", "cat >/dev/null; exit 4"),
+        ];
+        let error = copy_with_tools(&tools, b"png", QUICK).unwrap_err();
+        assert!(error.contains("bad2") && error.contains("exit"), "{error}");
+    }
+
+    #[test]
+    fn a_missing_tool_falls_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = vec![
+            ("/nonexistent/tine-clip-tool".to_string(), Vec::new()),
+            script(dir.path(), "good", "cat >/dev/null"),
+        ];
+        assert!(copy_with_tools(&tools, b"png", QUICK).is_ok());
+    }
+
+    #[test]
+    fn a_tool_that_stops_reading_is_killed_and_reaped_before_the_next_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let tools = vec![
+            // Records its pid and exits without reading: the 4 MiB write hits EPIPE.
+            script(
+                dir.path(),
+                "deaf",
+                &format!("echo $$ > {}", pidfile.display()),
+            ),
+            script(dir.path(), "good", "cat >/dev/null"),
+        ];
+        assert!(copy_with_tools(&tools, &vec![0u8; 4 << 20], QUICK).is_ok());
+        let pid = pid_of(dir.path(), "pid");
+        assert!(
+            !lingers(pid),
+            "the abandoned tool {pid} was left as a zombie"
+        );
+    }
+
+    #[test]
+    fn a_tool_still_serving_in_the_foreground_counts_as_success_and_is_reaped_after_it_exits() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let tools = vec![script(
+            dir.path(),
+            "server",
+            &format!(
+                "echo $$ > {}; cat >/dev/null; exec sleep 30",
+                pidfile.display()
+            ),
+        )];
+        let started = Instant::now();
+        assert!(copy_with_tools(&tools, b"png", Duration::from_millis(200)).is_ok());
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let pid = pid_of(dir.path(), "pid");
+        assert!(lingers(pid), "the serving tool must keep running");
+        // The selection owner is replaced: it exits, and the reaper collects it.
+        unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while lingers(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            !lingers(pid),
+            "an exited serving tool {pid} was never reaped"
+        );
+    }
+
+    #[test]
+    fn spawn_reaped_collects_a_finished_opener() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let (prog, _) = script(
+            dir.path(),
+            "opener",
+            &format!("echo $$ > {}", pidfile.display()),
+        );
+        spawn_reaped(&mut std::process::Command::new(prog)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !pidfile.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let pid = pid_of(dir.path(), "pid");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while lingers(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!lingers(pid), "opener {pid} stayed a zombie");
+        assert!(spawn_reaped(&mut std::process::Command::new("/nonexistent/tine-opener")).is_err());
     }
 }

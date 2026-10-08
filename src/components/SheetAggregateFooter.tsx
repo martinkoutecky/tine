@@ -1,8 +1,10 @@
-import { Show, type JSX } from "solid-js";
+import { Show, createEffect, createMemo, onCleanup, type Accessor, type JSX } from "solid-js";
 import { aggregate, AGGREGATE_FNS, AGGREGATE_LABELS, type AggregateFn } from "../sheet/aggregate";
 import type { FieldValue } from "../sheet/fields";
 import type { QueryAggFn } from "../editor/queryAggregate";
 import { setColumnAggregate } from "../sheet/mutations";
+import { aggregateFooterPinned, setAggregateFooterPinned, toggleAggregateFooterPinned } from "../sheet/selection";
+import type { SheetContainerOverlay } from "./SheetContainerOverlay";
 import { openActionContextMenu, type ContextMenuAction } from "../ui";
 
 export function SheetAggregateCornerToggle(props: {
@@ -23,6 +25,45 @@ export function SheetAggregateCornerToggle(props: {
       Σ
     </button>
   );
+}
+
+/** The footer pin state and corner toggle every sheet face shares (the grid and
+ *  the table both own one). A pinned footer is cleared the moment real
+ *  aggregates make it redundant; a depth-0 sheet hands its toggle to the
+ *  container overlay's corner and withdraws it on unmount, any other sheet
+ *  renders the returned `footerToggle()` itself. */
+export function useSheetFooterCorner(opts: {
+  ownerId: Accessor<string>;
+  hasAggregates: Accessor<boolean>;
+  overlay: SheetContainerOverlay | null | undefined;
+  hovering: Accessor<boolean>;
+}) {
+  const footerPinned = createMemo(() => aggregateFooterPinned(opts.ownerId()));
+  const showFooter = createMemo(() => opts.hasAggregates() || footerPinned());
+  const showFooterToggle = createMemo(() => !opts.hasAggregates() && (opts.hovering() || footerPinned()));
+  const footerToggle = () => (
+    <SheetAggregateCornerToggle
+      active={footerPinned()}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleAggregateFooterPinned(opts.ownerId());
+      }}
+    />
+  );
+
+  createEffect(() => {
+    if (opts.hasAggregates() && footerPinned()) setAggregateFooterPinned(opts.ownerId(), false);
+  });
+
+  createEffect(() => {
+    if (!opts.overlay) return;
+    opts.overlay.setCorner(showFooterToggle() ? footerToggle() : null);
+  });
+
+  onCleanup(() => opts.overlay?.setCorner(null));
+
+  return { footerPinned, showFooter, showFooterToggle, footerToggle };
 }
 
 /** The QUERY face's footer, which is a different property vocabulary living in
@@ -47,6 +88,10 @@ const QUERY_AGGREGATE_LABELS: readonly (readonly [QueryAggFn, string])[] = [
   ["avg", "Average"],
 ];
 
+function aggregateMenuItem<T>(label: string, value: T, current: T, set: (value: T) => void): ContextMenuAction {
+  return { label: current === value ? `✓ ${label}` : label, run: () => set(value) };
+}
+
 export function SheetAggregateFooterCell(props: {
   ownerId: string;
   columnKey: string;
@@ -65,20 +110,15 @@ export function SheetAggregateFooterCell(props: {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const query = props.query;
     if (query) {
-      const item = (label: string, value: QueryAggFn | null): ContextMenuAction => ({
-        label: (query.fn ?? null) === value ? `✓ ${label}` : label,
-        run: () => query.set(value),
-      });
+      const item = (label: string, value: QueryAggFn | null) => aggregateMenuItem(label, value, query.fn ?? null, (value) => query.set(value));
       openActionContextMenu(rect.left, rect.bottom + 4, [
         item("None", null),
         ...QUERY_AGGREGATE_LABELS.map(([fn, label]) => item(label, fn)),
       ]);
       return;
     }
-    const item = (label: string, value: AggregateFn | null): ContextMenuAction => ({
-      label: (props.fn ?? null) === value ? `✓ ${label}` : label,
-      run: () => setColumnAggregate(props.ownerId, props.columnKey, value),
-    });
+    const set = (value: AggregateFn | null) => setColumnAggregate(props.ownerId, props.columnKey, value);
+    const item = (label: string, value: AggregateFn | null) => aggregateMenuItem(label, value, props.fn ?? null, set);
     openActionContextMenu(rect.left, rect.bottom + 4, [
       item("None", null),
       ...AGGREGATE_FNS.map((fn) => item(AGGREGATE_LABELS[fn], fn)),

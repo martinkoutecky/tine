@@ -1,10 +1,8 @@
 # Android plugin smoke test
 
-Use the APK produced from the exact `plugins` branch commit and delivered through
-the stable Syncthing path `~/research/tine.apk`. Verify its SHA-256 against the
-versioned source artifact before installation. Record the phone model, Android
-version, APK SHA-256, and pass/fail notes. Do not tag 0.6.0 until every step passes
-or a failure is explicitly accepted.
+Use the APK produced from the exact `plugins` branch commit. Record the phone model,
+Android version, APK SHA-256, and pass/fail notes. Do not tag 0.6.0 until every step
+passes or a failure is explicitly accepted.
 
 1. Install the APK. If an older Tine build uses a different certificate, uninstall
    that build first; export or back up any phone-only graph before doing so.

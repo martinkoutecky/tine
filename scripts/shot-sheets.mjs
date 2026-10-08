@@ -1,7 +1,6 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Render the Sheets phase-1 mock page and screenshot it.
 // Usage: npm run build && node scripts/shot-sheets.mjs
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -17,9 +16,20 @@ const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--stric
   stdio: "ignore",
 });
 
+async function waitForServer(url, tries = 60) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      if ((await fetch(url)).ok) return;
+    } catch {
+      // not up yet
+    }
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 60, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({
     args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
   });

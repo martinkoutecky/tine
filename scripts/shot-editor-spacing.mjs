@@ -1,15 +1,21 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Visual regression harness for raw editor punctuation/number spacing.
 // Runs the real frontend against the mock backend and writes four block crops to
 // screenshots/ for human inspection. This specifically covers the WebKitGTK
 // screenshots that exposed Noto Emoji keycap-base metrics in ordinary source.
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = 5199;
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 
+async function waitForServer(url) {
+  for (let i = 0; i < 60; i++) {
+    try { if ((await fetch(url)).ok) return; } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 async function setEditor(page, value) {
   if (!(await page.locator("textarea.block-editor").count())) {
@@ -25,7 +31,7 @@ async function setEditor(page, value) {
 }
 
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 60, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
   await page.goto(`http://localhost:${PORT}/`);

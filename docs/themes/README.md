@@ -4,9 +4,7 @@ Tine community themes are inert JSON packages. They do not contain WebAssembly,
 JavaScript, CSS selectors, imports, font files, images, or network resources. A
 package sets a bounded allowlist of Logseq-compatible semantic color variables for
 light, dark, or both modes. API 0.2 may also select a few host-owned presentation
-presets. Users select package presentation and colors independently, so a package's
-style can be combined with a built-in palette. Tine generates the selector-bounded
-CSS and inserts it before the graph
+presets. Tine generates the selector-bounded CSS and inserts it before the graph
 owner's `logseq/custom.css`, which remains the final override.
 
 ## Package shape
@@ -55,7 +53,7 @@ registry licenses.
 
 | Field | Values | Host behavior |
 | --- | --- | --- |
-| `contentTypography` | `default`, `editorial-serif` | Reading/editor typography from a bundled system-font stack and matched line geometry |
+| `contentTypography` | `default`, `editorial-serif` | Reading/editor typography from a bundled system-font stack; the block line box is unchanged |
 | `journalHeader` | `default`, `editorial` | Larger journal dates; Today is centered and omits the calendar glyph |
 | `todayTaskSummary` | `hidden`, `compact` | A host-rendered count below Today, computed from that loaded journal page's canonical task facets |
 

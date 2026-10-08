@@ -17,6 +17,7 @@ import { DONE_MARKERS } from "../markers";
 import type { Block, Format, Inline } from "./ast";
 
 export interface Facets {
+  hasId?: boolean;
   marker: string | null;
   done: boolean;
   priority: "A" | "B" | "C" | null;
@@ -51,10 +52,12 @@ export function parseBody(raw: string, format: Format): Block[] {
 
 // Two tiers so a page bigger than any cap can't thrash the cache into parse-all-on-
 // load (audit P2 — a 4097-block page evicted its own seeds before they were read):
-//  - `seeded`: backend-shipped facets for the CURRENTLY-LOADED blocks. NEVER LRU-
-//    evicted (so an arbitrarily large page is still all hits); cleared wholesale on
-//    graph switch / store reset (`clearSeededFacets`). Bounded by the loaded graph,
-//    which is already in memory.
+//  - `seeded`: backend-shipped facets for the loaded blocks. NEVER LRU-evicted (so
+//    an arbitrarily large page is still all hits); cleared wholesale ONLY on graph
+//    switch / store reset (`clearSeededFacets`). Not bounded by the CURRENT working
+//    set: a raw that was edited away, removed or reloaded keeps its entry until that
+//    reset, so the map holds every distinct raw seeded since (O(distinct raws seen
+//    this graph session), each a small facet record).
 //  - `derived`: facets computed locally for a raw the backend hasn't shipped (the
 //    block being edited). Small LRU — transient.
 const seeded = new Map<string, Facets>();
@@ -62,7 +65,9 @@ const derived = new Map<string, Facets>();
 const DERIVED_MAX = 1024;
 const keyOf = (raw: string, format: Format) => format + "\0" + raw;
 
-type DtoFacetSource = {
+/** Build a `Facets` from a backend BlockDto's shipped fields (no parse). */
+export function facetsFromDto(d: {
+  has_id?: boolean;
   marker?: string;
   priority?: string;
   heading_level?: number;
@@ -70,33 +75,12 @@ type DtoFacetSource = {
   deadline?: string;
   tags?: string[];
   properties?: [string, string][];
-};
-
-const dtoDerived = new Map<DtoFacetSource, Facets>();
-const DTO_DERIVED_MAX = 1024;
-
-function lruGet<K, V>(cache: Map<K, V>, key: K): V | undefined {
-  const value = cache.get(key);
-  if (value !== undefined) {
-    cache.delete(key);
-    cache.set(key, value);
-  }
-  return value;
-}
-
-function lruSet<K, V>(cache: Map<K, V>, key: K, value: V, max: number): void {
-  if (cache.size >= max) cache.delete(cache.keys().next().value!);
-  cache.set(key, value);
-}
-
-/** Build a `Facets` from a backend BlockDto's shipped fields (no parse). */
-export function facetsFromDto(d: DtoFacetSource): Facets {
-  const cached = lruGet(dtoDerived, d);
-  if (cached) return cached;
+}): Facets {
   const marker = d.marker ?? null;
   const p = d.priority;
   const headingProperty = headingPropertyState(d.properties ?? []);
-  const facets: Facets = {
+  return {
+    hasId: d.has_id,
     marker,
     done: marker != null && DONE_MARKERS.has(marker),
     priority: p === "A" || p === "B" || p === "C" ? p : null,
@@ -107,8 +91,6 @@ export function facetsFromDto(d: DtoFacetSource): Facets {
     tags: d.tags ?? [],
     properties: d.properties ?? [],
   };
-  lruSet(dtoDerived, d, facets, DTO_DERIVED_MAX);
-  return facets;
 }
 
 function headingPropertyState(properties: readonly [string, string][]): {
@@ -134,9 +116,18 @@ export function effectiveHeadingLevel(facets: Pick<Facets, "headingLevel" | "hea
   return facets.headingAuto ? Math.min(Math.max(0, depth) + 1, 6) : null;
 }
 
-/** Seed the never-evicted tier from the backend-computed facets — no parse. */
+/** Seed the never-evicted tier from the backend-computed facets — no parse. An entry
+ *  stays until `clearSeededFacets` (graph switch / store reset), even after its block
+ *  is gone. */
 export function seedFacets(raw: string, format: Format, f: Facets): void {
   seeded.set(keyOf(raw, format), f);
+}
+
+/** A parser-owned negative identity fact for this exact loaded raw and format.
+ * O(raw bytes) key lookup, no parse. Unknown/possible identities use blockRegions.
+ * Unprojected drafts stay unknown; graph resets clear these facts with facets. */
+export function knownIdentityAbsent(raw: string, format: Format): boolean {
+  return seeded.get(keyOf(raw, format))?.hasId === false;
 }
 
 /** Drop all backend-seeded facets — call on graph switch / full store reset so the
@@ -151,10 +142,15 @@ export function facetsOf(raw: string, format: Format): Facets {
   const k = keyOf(raw, format);
   const s = seeded.get(k);
   if (s) return s;
-  const d = lruGet(derived, k);
-  if (d) return d;
+  const d = derived.get(k);
+  if (d) {
+    derived.delete(k); // LRU bump
+    derived.set(k, d);
+    return d;
+  }
   const f = deriveFacets(raw, format);
-  lruSet(derived, k, f, DERIVED_MAX);
+  if (derived.size >= DERIVED_MAX) derived.delete(derived.keys().next().value!);
+  derived.set(k, f);
   return f;
 }
 
@@ -238,22 +234,6 @@ export function inlineText(inlines: readonly Inline[]): string {
       case "hiccup":
         out += i.v;
         break;
-      // The kinds below contribute NOTHING to facet text. They were silently
-      // skipped before DUP-8; they are now explicit so that adding a new
-      // `Inline` variant fails `tsc` in the `default` arm instead of
-      // disappearing here unnoticed. Behavior is unchanged.
-      case "break": break; // facet text intentionally excludes break (DUP-8: explicit, was silent)
-      case "hardbreak": break; // facet text intentionally excludes hardbreak (DUP-8: explicit, was silent)
-      case "macro": break; // facet text intentionally excludes macro (DUP-8: explicit, was silent)
-      case "timestamp": break; // facet text intentionally excludes timestamp (DUP-8: explicit, was silent)
-      case "fnref": break; // facet text intentionally excludes fnref (DUP-8: explicit, was silent)
-      case "inline_html": break; // facet text intentionally excludes inline_html (DUP-8: explicit, was silent)
-      case "email": break; // facet text intentionally excludes email (DUP-8: explicit, was silent)
-      default: {
-        const _exhaustive: never = i;
-        out += _exhaustive;
-        break;
-      }
     }
   }
   return out;
@@ -382,3 +362,22 @@ function planningDates(blocks: Block[], raw: string): { scheduled: string | null
 }
 
 export { EMPTY as EMPTY_FACETS };
+
+/** OG graph_parser/block.cljs extract-blocks keeps the earliest parsed property
+ * group. PropertyRows folds duplicates to their last value (extract-properties).
+ * Presentation only: raw text and query/edit facets retain every property. Cost
+ * O(raw bytes) for a native empty-facet lookup; otherwise O(block text) for raw
+ * input (cached lsdoc parse), O(AST nodes) for parsed input. No writes. */
+export function renderedProperties(raw: string | readonly Block[], format: Format): [string, string][] {
+  if (typeof raw === "string") {
+    const native = seeded.get(keyOf(raw, format));
+    // hasId is present on complete native projections, absent on unprojected
+    // drafts. An empty native property set proves there is no display group;
+    // positive sets still use the AST's earliest-group presentation policy.
+    // Reuse the raw-keyed fact so edits cannot inherit a stale negative (I-12).
+    if (native?.hasId !== undefined && native.properties.length === 0) return [];
+  }
+  const blocks = typeof raw === "string" ? parseBody(raw, format) : raw;
+  const group = blocks.find((block) => block.kind === "properties");
+  return group?.kind === "properties" ? group.props : [];
+}

@@ -1,4 +1,6 @@
 import type { SafeCloseCoordinator, SafeClosePrepareResult } from "./safeClose";
+import { dispatchAppBack, type AppBackDeps, type AppBackDisposition } from "./appBack";
+import { ownedWhen, readOwned, readOwnedResource } from "./owned";
 
 export interface AndroidBackPayload {
   canGoBack: boolean;
@@ -11,8 +13,9 @@ export interface AndroidBackListener {
 type AndroidProcessApi = { exit(code?: number): Promise<void> };
 
 /** Exit only after the safe-close coordinator has made graph state durable.
- * Tauri exposes Activity/process exit through plugin-process; plugin:app has no
- * exit command and leaves the transition shield active on Android. */
+ * Tauri exposes Activity/process exit through plugin-process (capability
+ * `process:allow-exit`); plugin:app has no exit command on the Rust side, so
+ * `invoke("plugin:app|exit")` never closed the app (master cb7a10fd3). */
 export async function exitAndroidActivity(
   loadProcess: () => Promise<AndroidProcessApi> = () => import("@tauri-apps/plugin-process"),
 ): Promise<void> {
@@ -20,37 +23,17 @@ export async function exitAndroidActivity(
   await exit(0);
 }
 
-export interface AndroidBackDispatchDeps {
-  dismissTransient(): boolean;
-  dismissDrawer(): boolean;
-  restoreDrawerFocus(): void;
-  /** Whether Tine actually went back. The WebView's own `canGoBack` cannot
-   * answer this: the mobile router pushes same-URL entries, so its history
-   * moves without the address or the entry count changing, and entries that
-   * are not Tine's can sit in the same stack. Only the router knows. */
-  historyBack(): boolean;
-  closeRoot(): void;
-}
+/** Kept as names for the Android-facing seam; the ladder itself lives in
+ * src/appBack.ts and is shared with the iOS edge swipe. */
+export type AndroidBackDispatchDeps = AppBackDeps;
+export type AndroidBackDisposition = AppBackDisposition;
 
-export type AndroidBackDisposition = "transient" | "drawer" | "history" | "root";
-
-/** Synchronous ordering matters: a hardware Back gesture selects exactly one
- * rung and never synthesizes a KeyboardEvent or a second router back action. */
+/** The native `canGoBack` payload is not consulted (master 07cb27262). */
 export function dispatchAndroidBack(
   _payload: AndroidBackPayload,
   deps: AndroidBackDispatchDeps,
 ): AndroidBackDisposition {
-  if (deps.dismissTransient()) return "transient";
-  if (deps.dismissDrawer()) {
-    deps.restoreDrawerFocus();
-    return "drawer";
-  }
-  // The rung is chosen by whether the router moved, not by the WebView's
-  // opinion of its own stack. `canGoBack` was true on a phone whose router had
-  // nothing to pop, so Back landed here and silently did nothing, forever.
-  if (deps.historyBack()) return "history";
-  deps.closeRoot();
-  return "root";
+  return dispatchAppBack(deps);
 }
 
 export interface AndroidBackInstallDeps extends AndroidBackDispatchDeps {
@@ -59,22 +42,23 @@ export interface AndroidBackInstallDeps extends AndroidBackDispatchDeps {
   setupFailed?(error: unknown): void;
 }
 
-/** Installs exactly one listener owned by Tine's native SafeBackPlugin. Until
- * setup resolves, after setup rejection, and after cleanup, that native owner
- * consumes Back rather than falling through to WebView history/activity exit. */
+/** On Android, register one SafeBack listener (the native owner's event) for this installation.
+ * Dispatch dismisses a transient, then a drawer, then router history, then
+ * requests root close. Other platforms install nothing. Setup failures call
+ * setupFailed when supplied and do not reject through the returned cleanup
+ * function. Cleanup unregisters an installed listener; dispatch is O(1). */
 export function installAndroidBackHandler(deps: AndroidBackInstallDeps): () => void {
   let disposed = false;
   let listener: AndroidBackListener | null = null;
+  const owner = ownedWhen(() => !disposed);
 
-  void deps.platform()
+  void readOwned(owner, deps.platform())
     .then(async (platform) => {
-      if (platform !== "android" || disposed) return null;
-      return deps.subscribe((payload) => { dispatchAndroidBack(payload, deps); });
-    })
-    .then((installed) => {
-      if (!installed) return;
-      if (disposed) void installed.unregister();
-      else listener = installed;
+      if (platform.kind === "stale" || platform.value !== "android") return;
+      const installed = await readOwnedResource(owner,
+        deps.subscribe((payload) => { dispatchAndroidBack(payload, deps); }),
+        (handle) => handle.unregister());
+      if (installed.kind === "current") listener = installed.value;
     })
     .catch((error) => deps.setupFailed?.(error));
 

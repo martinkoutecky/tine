@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { sheetConfig } from "./config";
+import { AGGREGATE_FNS, isAggregateFn } from "./aggregate";
+import { initParser } from "../render/parse";
+import { facetsOf } from "../render/facets";
+beforeAll(initParser);
+import { beforeAll, describe, expect, it } from "vitest";
 import { astToExpr, parseFormula } from "./formula";
 import {
   planSheetFieldRename,
@@ -9,8 +14,6 @@ import {
   rewriteSchemaValueLosslessly,
   type RenameSource,
 } from "./renameField";
-import { AGGREGATE_FNS, isAggregateFn } from "./aggregate";
-import { sheetConfig } from "./config";
 import type { Format } from "../render/ast";
 
 function source(id: string, raw: string, format: Format = "md", page = "Sheet"): RenameSource {
@@ -24,6 +27,36 @@ function source(id: string, raw: string, format: Format = "md", page = "Sheet"):
 }
 
 describe("Sheet field rename planner", () => {
+  it("renames a field alongside canonical Unicode properties", () => {
+    const owner = source("table", "Table\ntine.fields:: qty=number");
+    const row = source("row", "Row\nqty:: 2\ncafé:: note");
+    row.recognizedProperties = facetsOf(row.raw, "md").properties;
+    const result = planSheetFieldRename({ rowSource: "children", ownerWritable: true, schemaHome: "block",
+      owner, rows: [row], oldField: "prop:qty", newName: "amount" });
+    expect(result.ok).toBe(true);
+  });
+
+  it("keeps Unicode Org properties and multibyte CRLF source offsets lossless", () => {
+    const raw = "Žluťoučký\r\n:PROPERTIES:\r\n  :qty: 2\r\n  :café: note\r\n:END:";
+    expect(renameCanonicalPropertyKey(raw, "org", "qty", "amount")).toEqual({
+      ok: true, count: 1, raw: raw.replace(":qty:", ":amount:") });
+    const md = "Žluťoučký\r\nqty:: 2\r\ncafé:: note";
+    expect(renameCanonicalPropertyKey(md, "md", "qty", "amount")).toEqual({
+      ok: true, count: 1, raw: md.replace("qty::", "amount::") });
+  });
+
+  it("round-trips an Org owner and rows with canonical facet verification", () => {
+    const owner = source("table", "Table\n:PROPERTIES:\n:tine.view: table\n:tine.fields: occurrence=number\n:tine.formula.rpn: occurrence * 2\n:END:\nbody", "org");
+    const row = source("row", "Row\n:PROPERTIES:\n:occurrence: 2\n:other: kept\n:END:\nbody", "org");
+    owner.recognizedProperties = facetsOf(owner.raw, "org").properties;
+    row.recognizedProperties = facetsOf(row.raw, "org").properties;
+    expect(propertyOccurrences(owner.raw, "org").map((p) => [p.key, p.value])).toEqual(owner.recognizedProperties);
+    const result = planSheetFieldRename({ rowSource: "children", ownerWritable: true, schemaHome: "block",
+      owner, rows: [row], recognizeProperties: (raw, format) => facetsOf(raw, format).properties,
+      oldField: "prop:occurrence", newName: "OCC" });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+  });
+
   it("renames canonical Markdown and Org keys in place without touching body or fences", () => {
     const md = [
       "Row",
@@ -269,4 +302,19 @@ describe("Sheet field rename planner", () => {
       expect(result).toMatchObject({ ok: false });
     }
   });
+});
+
+it.each([40, 6000])("field rename handles a %i-term imported formula without throwing", (terms) => {
+  const owner = source("table", `Table\ntine.fields:: qty=number\ntine.formula.total:: ${Array(terms).fill("qty").join(" + ")}`);
+  const result = planSheetFieldRename({ rowSource: "children", ownerWritable: true, schemaHome: "block", owner, rows: [source("row", "Row\nqty:: 2")], oldField: "prop:qty", newName: "amount" });
+  if (terms === 40) expect(result.ok).toBe(true);
+  else expect(result).toMatchObject({ ok: false, error: expect.stringContaining("depth") });
+});
+
+it("I-12: planSheetFieldRename preserves ordered query aggregates through the shared lossless answerer", () => {
+  const result = planSheetFieldRename({ rowSource: "children", ownerWritable: true, schemaHome: "block",
+    owner: source("owner", "Table\ntine.fields:: cost=number\ntine.col-aggregates:: count;prop:cost=sum;prop:cost=avg;unrelated"),
+    rows: [source("row", "Row\ncost:: 2")], oldField: "prop:cost", newName: "price" });
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.plan.ownerRaw).toContain("tine.col-aggregates:: count;prop:price=sum;prop:price=avg;unrelated");
 });

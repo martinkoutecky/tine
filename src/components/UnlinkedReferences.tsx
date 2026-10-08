@@ -1,96 +1,66 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, type JSX } from "solid-js";
+import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { classifyReferenceLoadError, referenceLoadErrorMessage, type ReferenceLoadError } from "../referenceLoadError";
+import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
-import { openPageContextMenu, openPageInSidebar } from "../ui";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
+import { openPageContextMenu, openPageInSidebar } from "../ui";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { ReferenceExcerptBlocks } from "./ReferenceEvidence";
-import type { RefGroup } from "../types";
-import {
-  referenceLoadErrorMessage,
-  type ReferenceLoadError,
-} from "../lib/referenceLoadError";
-import { createReferenceFetcher, referenceRead, referenceIndexPendingMessage } from "../lib/referenceFetch";
-import { IndexFailedNotice } from "./IndexFailedNotice";
-import type { QueryNotReadyError } from "../backend";
-import {
-  collapsedGroupsFor,
-  sectionOverride,
-  setCollapsedGroupsFor,
-  setSectionOverride,
-} from "../referenceSectionState";
-import { pageIdentityKey } from "../pageIdentity";
-import { mergeReferenceGroups } from "../lib/referenceGroups";
 import { ReferenceExportChooser } from "./ReferenceExportChooser";
+import type { RefGroup } from "../types";
+import { mergeReferenceGroups } from "../referenceGroups";
+import { sectionOverride, setSectionOverride } from "../referenceSectionState";
 import { readOr } from "../resourceRead";
-
 
 type BoundedEvidence = NonNullable<RefGroup["evidence"]>[number] & {
   total?: number;
   truncated?: boolean;
 };
 
-
 // "Unlinked References" — plain-text mentions of the page, collapsed by default.
+/** Show bounded plain-text mentions for one page. Expansion survives remounts
+ * within the graph session, and batch export snapshots the current results.
+ * One backend read per target; only the fixed result-limit token selects the
+ * bounded failure alert. */
 export function UnlinkedReferences(props: { name: string }): JSX.Element {
-  // GH #272 was reported against Linked References, but this section had the
-  // identical latent defect: `open` was component-local, so a remount silently
-  // closed a section the user had opened. Held outside the component for the
-  // same reason. See referenceSectionState.
-  const [openSignal, setOpenSignal] = createSignal(sectionOverride("unlinked", props.name) ?? false);
-  const open = openSignal;
+  const readScope = {};
+  let alive = true;
+  onCleanup(() => { alive = false; });
+  const [open, setOpenSignal] = createSignal(sectionOverride("unlinked", props.name) ?? false);
   const setOpen = (value: boolean) => {
     setSectionOverride("unlinked", props.name, value);
     setOpenSignal(value);
   };
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
   const [exportChooserOpen, setExportChooserOpen] = createSignal(false);
-  const [collapsedGroupsSignal, setCollapsedGroupsSignal] =
-    createSignal<Set<string>>(collapsedGroupsFor("unlinked", props.name));
-  const collapsedGroups = collapsedGroupsSignal;
-  const setCollapsedGroups = (next: Set<string> | ((current: Set<string>) => Set<string>)) => {
-    setCollapsedGroupsSignal((current) => {
-      const value = typeof next === "function" ? next(current) : next;
-      setCollapsedGroupsFor("unlinked", props.name, value);
-      return value;
-    });
-  };
-  // A pane can route to another page without remounting; restore that page's
-  // state rather than carrying this one's over.
+  const { groupCollapsed, setGroupCollapsed, setAll, reload: reloadGroupCollapse } = createReferenceGroupCollapse("unlinked", () => props.name);
   createEffect(() => {
     const page = props.name;
+    reloadGroupCollapse();
     setOpenSignal(sectionOverride("unlinked", page) ?? false);
-    setCollapsedGroupsSignal(collapsedGroupsFor("unlinked", page));
-  });
-  const [indexPending, setIndexPending] = createSignal<QueryNotReadyError | null>(null);
-  const fetchReferences = createReferenceFetcher({
-    currentRead: () => referenceRead(props.name),
-    setLoadError,
-    setIndexPending,
   });
   const [groupsResource] = createResource(
-    () => referenceRead(props.name),
-    (read) => fetchReferences(read, () => backend().getUnlinkedRefs(read.name))
+    () => props.name,
+    async (n) => {
+      const owner = latestOwner(readScope, "unlinked", graphOwner(() => alive && props.name === n));
+      setLoadError(null);
+      try {
+        const result = await readOwned(owner, backend().getUnlinkedRefs(n));
+        return result.kind === "current" ? result.value : [];
+      } catch (error) {
+        if (owner()) setLoadError(classifyReferenceLoadError(error));
+        return [];
+      }
+    }
   );
-  // `createReferenceFetcher` already routes a failure to `loadError` (rendered
-  // below), so this covers the read itself rather than replacing that channel.
+  // The resource loader reports failures through loadError; readOr covers reads.
   const groups = () => readOr(groupsResource, undefined, "unlinked references");
   const mergedGroups = createMemo(() => mergeReferenceGroups(groups() ?? []));
   const count = () => mergedGroups().reduce((a, g) => a + g.blocks.length, 0);
-  const groupKey = (group: RefGroup) => pageIdentityKey(group.page);
-  const groupCollapsed = (group: RefGroup) => collapsedGroups().has(groupKey(group));
-  const setGroupCollapsed = (group: RefGroup, value: boolean) => {
-    setCollapsedGroups((current) => {
-      const next = new Set(current);
-      if (value) next.add(groupKey(group));
-      else next.delete(groupKey(group));
-      return next;
-    });
-  };
-  const setAllGroups = (value: boolean) => {
-    setCollapsedGroups(value ? new Set<string>(mergedGroups().map(groupKey)) : new Set<string>());
-  };
+  const setAllGroups = (value: boolean) => setAll(mergedGroups(), value);
   const occurrenceLimit = createMemo(() => {
     let shown = 0;
     let total = 0;
@@ -110,42 +80,21 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
         <Show when={groups()}>
           <span class="references-count">{count()}</span>
         </Show>
-        <Show when={groupsResource.loading}>
-          <span class="references-loading"> {referenceIndexPendingMessage(indexPending()) ?? "Loading…"}</span>
-        </Show>
-        <button
-          type="button"
-          class="reference-export-toggle"
-          aria-label="Copy / export unlinked references"
-          title="Copy / export selected unlinked references"
+        <Show when={groupsResource.loading}><span class="references-loading"> Loading…</span></Show>
+        <button type="button" class="reference-export-toggle"
+          aria-label="Copy / export unlinked references" title="Copy / export selected unlinked references"
           disabled={!count()}
-          onClick={(event) => {
-            event.stopPropagation();
-            setExportChooserOpen(true);
-          }}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z" fill="currentColor" /></svg>
-        </button>
+          onClick={(event) => { event.stopPropagation(); setExportChooserOpen(true); }}
+        ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z" /></svg></button>
       </div>
       <Show when={exportChooserOpen()}>
-        <ReferenceExportChooser
-          subject="Unlinked References"
-          groups={mergedGroups()}
-          onClose={() => setExportChooserOpen(false)}
-        />
+        <ReferenceExportChooser subject="Unlinked References" groups={mergedGroups()} onClose={() => setExportChooserOpen(false)} />
       </Show>
       <Show when={open()}>
         <Show when={loadError()}>
-          <Show
-            when={loadError()!.kind === "index_failed"}
-            fallback={
-              <div class="reference-filter-error reference-error" role="alert">
-                {referenceLoadErrorMessage(loadError()!)}
-              </div>
-            }
-          >
-            <IndexFailedNotice subject="Unlinked References" failure={loadError()!.indexFailure ?? "other"} />
-          </Show>
+          <div class="reference-filter-error reference-error" role="alert">
+            {referenceLoadErrorMessage(loadError()!)}
+          </div>
         </Show>
         <Show when={occurrenceLimit().truncated}>
           <div class="reference-truncation" role="status">

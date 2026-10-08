@@ -30,10 +30,12 @@ class MainActivity : TauriActivity() {
     // Android WebView 124 on API 35 reports CSS env(safe-area-inset-*) as zero
     // even in viewport-fit=cover. Apply the actual system-bar/cutout insets to
     // the Activity content root so the WebView viewport itself starts below the
-    // status bar and ends above navigation OR the keyboard. Edge-to-edge WebView
-    // can leave visualViewport unchanged under IME occlusion; this existing native
-    // viewport owner must exclude it too. Return unconsumed insets so descendants
-    // can still observe IME visibility without introducing a second geometry owner.
+    // status bar and ends above navigation OR the keyboard (GH #205; master
+    // d5412929a). Edge-to-edge WebView can leave visualViewport unchanged under
+    // IME occlusion; this native viewport owner must exclude it too. This is the
+    // sole inset owner on Android: src/systemInsets.ts zeroes the CSS tokens
+    // here. Return unconsumed insets so descendants can still observe IME
+    // visibility without introducing a second geometry owner.
     val content = findViewById<android.view.View>(android.R.id.content)
     ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
       val safe = insets.getInsets(

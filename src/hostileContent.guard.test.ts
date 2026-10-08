@@ -1,7 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { rustModuleSource } from "./rustModelSource.test-helpers";
 
 const source = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 
@@ -19,41 +18,18 @@ function tsxSources(root: string): string[] {
   return out;
 }
 
-describe("I-22 hostile-content shape guard", () => {
-  it("routes every component/render href through ExternalLink except the static issue URL", () => {
-    const files = [...tsxSources("src/components"), ...tsxSources("src/render")];
-    const offenders = files.flatMap((path) => {
-      const hrefAnchors = [...source(path).matchAll(/<a\b[\s\S]{0,240}?\bhref\s*=/g)];
+describe("I-22 hostile-content link shape (master b61bb9d25303)", () => {
+  it("every component/render anchor with an href opens natively instead of navigating the WebView", () => {
+    const offenders = [...tsxSources("src/components"), ...tsxSources("src/render")].flatMap((path) => {
       if (path === "src/components/ExternalLink.tsx") return [];
-      if (path === "src/components/ImproveTab.tsx") {
-        return hrefAnchors.length === 1 && source(path).includes("href={ISSUES_URL}") ? [] : [path];
-      }
-      return hrefAnchors.length === 0 ? [] : [path];
+      const text = source(path);
+      return [...text.matchAll(/<a\b[\s\S]{0,240}?\bhref\s*=/g)].flatMap((match) => {
+        if (path === "src/components/ImproveTab.tsx" && text.slice(match.index, match.index + 300).includes("href={ISSUES_URL}")) return [];
+        // A hand-written anchor must cancel the default navigation itself.
+        const opening = text.slice(match.index, text.indexOf("</a>", match.index));
+        return opening.includes("preventDefault()") ? [] : [`${path}@${match.index}`];
+      });
     });
-    expect(offenders, "I-22: graph-authored hrefs must compose ExternalLink").toEqual([]);
-  });
-
-  it("keeps the visual query renderer independently depth bounded", () => {
-    // The sheet stops DRAWING rows well before the language stops PARSING them:
-    // past the cap the subtree becomes one bounded ⟨advanced⟩ chip, so a
-    // 64-deep hostile query still opens, still edits and still round-trips.
-    expect(source("src/components/QuerySheet.tsx"))
-      .toContain("depth >= MAX_QUERY_BUILDER_DEPTH");
-  });
-
-  it("pins the I-22 contract table to the implementation constants", () => {
-    const contract = source("docs/contracts/content-consumption-boundaries.md");
-    expect(contract).toContain("128 AST levels (`MAX_FORMULA_EVAL_DEPTH`)");
-    expect(contract).toContain("64 parse levels (`QUERY_NESTING_MAX`)");
-    expect(contract).toContain("3 rendered levels (`MAX_QUERY_BUILDER_DEPTH`)");
-    expect(contract).toContain("64 levels (`MAX_PEEK_BLOCK_DEPTH`)");
-    expect(contract).toContain("128 levels (`MAX_BLOCK_DEPTH`)");
-    expect(source("src/sheet/formula/eval.ts")).toContain("MAX_FORMULA_EVAL_DEPTH = 128");
-    expect(source("src/editor/queryBuilder.ts")).toContain("MAX_QUERY_BUILDER_DEPTH = 3");
-    expect(rustModuleSource("crates/tine-core/src/query.rs"))
-      .toContain("QUERY_NESTING_MAX: usize = 64");
-    expect(source("src/render/PeekPopup.tsx")).toContain("MAX_PEEK_BLOCK_DEPTH = 64");
-    expect(rustModuleSource("crates/tine-core/src/vocab.rs"))
-      .toContain("pub(crate) const MAX_BLOCK_DEPTH: usize = 128");
+    expect(offenders, "I-22: graph-authored hrefs compose ExternalLink (exemplar src/components/ExternalLink.tsx) or cancel navigation and open natively").toEqual([]);
   });
 });

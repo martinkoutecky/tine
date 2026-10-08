@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
-import { TweetMacro, VideoMacro, YoutubeTimestamp } from "./Macro";
-import { backend } from "../backend";
+import { VideoMacro, YoutubeTimestamp } from "./Macro";
 
 interface MockPlayer {
   seekTo: ReturnType<typeof vi.fn>;
@@ -26,23 +25,17 @@ function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => 
 
 afterEach(() => {
   delete (window as Window & { YT?: unknown }).YT;
-  vi.restoreAllMocks();
   document.body.innerHTML = "";
 });
 
 describe("YouTube timestamp macros", () => {
-  it("routes a hostile tweet destination through the native external boundary", () => {
-    const openExternal = vi.spyOn(backend(), "openExternal").mockResolvedValue();
-    const { root, dispose } = mount(() => <TweetMacro body="tweet javascript:alert(1)" />);
+  it.each(["video https://youtu.be/JI-AyLv68Xs", "youtube JI-AyLv68Xs"])("renders the GH #600 video through %s", (body) => {
+    const { root, dispose } = mount(() => <VideoMacro body={body} />);
     try {
-      const anchor = root.querySelector<HTMLAnchorElement>("a")!;
-      const event = new MouseEvent("click", { bubbles: true, cancelable: true });
-      anchor.dispatchEvent(event);
-      expect(event.defaultPrevented).toBe(true);
-      expect(openExternal).toHaveBeenCalledWith("javascript:alert(1)");
-    } finally {
-      dispose();
-    }
+      const iframe = root.querySelector("iframe")!;
+      expect(iframe.src).toBe("https://www.youtube.com/embed/JI-AyLv68Xs?enablejsapi=1");
+      expect(iframe.getAttribute("referrerpolicy")).toBe("strict-origin-when-cross-origin");
+    } finally { dispose(); }
   });
 
   it("renders a clickable timestamp that seeks the later YouTube player", async () => {

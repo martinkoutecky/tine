@@ -1,3 +1,4 @@
+import { browserPlatform } from "./browserPlatform";
 import { isPublishedExport } from "./publishedBackend";
 
 /** `published` is a query export opened in an ordinary browser (Stage 2): its
@@ -6,9 +7,10 @@ import { isPublishedExport } from "./publishedBackend";
 export type EditableEmojiPlatform = "windows" | "apple" | "android" | "safe-monochrome" | "published";
 
 export function editableEmojiPlatform(userAgent: string): EditableEmojiPlatform {
-  if (/Android/i.test(userAgent)) return "android";
-  if (/Windows/i.test(userAgent)) return "windows";
-  if (/(Macintosh|Mac OS|iPhone|iPad|iPod)/i.test(userAgent)) return "apple";
+  const hints = browserPlatform(userAgent);
+  if (hints.android) return "android";
+  if (hints.windows) return "windows";
+  if (hints.appleEmoji) return "apple";
   return "safe-monochrome";
 }
 

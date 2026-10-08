@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { QuickSwitcher } from "./QuickSwitcher";
-import { closeSwitcher, openCommandPalette, setGraphMeta, switcherOpen } from "../ui";
+import { closeSwitcher, openCommandPalette, setActivePane, switcherOpen } from "../ui";
+import { setGraphMeta } from "../graphSession";
 import { focusedPaneId, focusPane, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "../panes";
 import { interfaceZoom, installInterfaceZoomKeys, zoomIn, zoomOut, zoomReset } from "../zoom";
 
@@ -16,6 +17,7 @@ afterEach(() => {
   dispose = undefined;
   zoomReset();
   setGraphMeta(null);
+  setActivePane("notes");
   resetPaneLayoutToSingle();
   document.body.replaceChildren();
 });
@@ -41,7 +43,8 @@ describe("Reset zoom through the rendered command palette", () => {
       activeIndex: 0,
     });
     const pdfPane = splitRootAtEdge("right", "main")!;
-    paneRouter(pdfPane).openInNewTab({ kind: "pdf", viewId: "reading-view", filename: "assets/paper.pdf", label: "Paper", page: 7, scale: 1.8 }, true);
+    // og shows a PDF in its own pane (activePane below), not as a pane route.
+    paneRouter(pdfPane).openInNewTab({ kind: "page", name: "Paper", pageKind: "page" }, true);
     focusPane(pdfPane);
     const paneIds = layoutPaneIds();
     const snapshots = paneIds.map((id) => paneRouter(id).snapshot());
@@ -75,13 +78,16 @@ describe("Reset zoom through the rendered command palette", () => {
     expect(interfaceZoom()).toBe(1);
     expect(paneIds.map((id) => paneRouter(id).snapshot())).toEqual(snapshots);
 
-    // The new unbound command must not steal the existing PDF key route.
+    // The new unbound command must not steal the existing PDF key route. og keeps
+    // the PDF viewer as its own pane (activePane) rather than a pane route.
     uninstallKeys = installInterfaceZoomKeys();
+    setActivePane("pdf");
     const pdfPlus = new KeyboardEvent("keydown", { key: "+", ctrlKey: true, cancelable: true });
     window.dispatchEvent(pdfPlus);
     expect(pdfPlus.defaultPrevented).toBe(false);
     expect(interfaceZoom()).toBe(1);
     focusPane("main");
+    setActivePane("notes");
     const notesPlus = new KeyboardEvent("keydown", { key: "+", ctrlKey: true, cancelable: true });
     window.dispatchEvent(notesPlus);
     expect(notesPlus.defaultPrevented).toBe(true);

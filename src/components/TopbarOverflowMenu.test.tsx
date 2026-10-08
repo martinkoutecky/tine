@@ -82,4 +82,25 @@ describe("TopbarOverflowMenu", () => {
     item.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     expect(host.querySelector('[role="menu"]')).not.toBeNull();
   });
+
+  // GH #472 (master 8198daf34): "the user pressed outside" has one producer.
+  // A touch or pen press delivers pointerdown; this menu listened only for
+  // mousedown, so it stayed open when tapped away from.
+  it("closes on an outside pointerdown, and a press on its trigger still toggles", () => {
+    const { host } = mount();
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    const trigger = host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!;
+    trigger.click();
+    expect(host.querySelector(".topbar-overflow-menu")).not.toBeNull();
+    outside.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(host.querySelector(".topbar-overflow-menu")).toBeNull();
+
+    trigger.click();
+    trigger.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    trigger.dispatchEvent(new Event("mousedown", { bubbles: true }));
+    expect(host.querySelector(".topbar-overflow-menu")).not.toBeNull();
+    trigger.click();
+    expect(host.querySelector(".topbar-overflow-menu")).toBeNull();
+  });
 });

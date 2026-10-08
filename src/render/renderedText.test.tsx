@@ -53,7 +53,7 @@ describe("renderedBlockText", () => {
 
   it("flattens tables to cell rows and honors removeProperties", () => {
     expect(renderedBlockText("|a|b|\n|-|-|\n|1|2|", "md", O)).toBe("a | b\n1 | 2");
-    expect(renderedBlockText("text\nkey:: val", "md", O)).toBe("text\nkey val");
+    expect(renderedBlockText("text\nkey:: val", "md", O)).toBe("text\nkey:: val");
     expect(renderedBlockText("text\nkey:: val", "md", { ...O, removeProperties: true })).toBe("text");
   });
 
@@ -61,6 +61,14 @@ describe("renderedBlockText", () => {
     expect(renderedBlockText(`see ((${REF_ID})) and {{poem red, blue}}`, "md", O)).toBe(
       `see ${REF_ID} and {{poem red, blue}}`,
     );
+  });
+
+  // GH #589 (master 34272cf6b): an unresolved reference reads as its source
+  // text, as OG shows it; `(((uuid)))` parses as the id `(uuid` followed by `)`.
+  it("renders an unresolved block ref as its full source text", () => {
+    const miss: RenderedTextOptions = { ...O, resolveBlockRef: () => null };
+    expect(renderedBlockText(`see ((${REF_ID}))`, "md", miss)).toBe(`see ((${REF_ID}))`);
+    expect(renderedBlockText(`(((${REF_ID})))`, "md", miss)).toBe(`(((${REF_ID})))`);
   });
 
   it("resolves bare block refs to the referenced rendered first line", () => {
@@ -82,14 +90,6 @@ describe("renderedBlockText", () => {
           uuid === REF_ID ? { raw: "**Referenced** first line\nsecond line", format: "md" } : null,
       }),
     ).toBe("see Referenced first line\nsecond line");
-  });
-
-  // GH #589: an unresolved reference reads as its source text, as OG shows
-  // it; `(((uuid)))` parses as the id `(uuid` followed by `)`.
-  it("renders an unresolved block ref as its full source text", () => {
-    const miss: RenderedTextOptions = { ...O, resolveBlockRef: () => null };
-    expect(renderedBlockText(`see ((${REF_ID}))`, "md", miss)).toBe(`see ((${REF_ID}))`);
-    expect(renderedBlockText(`(((${REF_ID})))`, "md", miss)).toBe(`(((${REF_ID})))`);
   });
 
   it("keeps labeled block refs as labels and does not consult the resolver", () => {

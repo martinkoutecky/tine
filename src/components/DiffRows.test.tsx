@@ -12,10 +12,13 @@ import {
   previewLine,
   seedSuggestedExceptArtifact,
   seedSuggestedOrNoLoss,
+  collectRows,
+  countSuggestions,
+  visibleDiffRows,
 } from "./DiffRows";
 import type { DiffRow, MergeDecision } from "../types";
 
-// Concord's fourth row outcome (`concord-intrablock-merge.md`). Two things are
+// Concord's fourth row outcome (ported from master for og 8c). Two things are
 // asserted here that nothing else covers:
 //
 //  - the SUGGESTED MERGED BODY: a row whose two edits touched different parts of
@@ -71,7 +74,6 @@ function mountRow(row: DiffRow, seeded: Record<string, MergeDecision>): {
           depth={0}
           decisions={decisions()}
           setDecision={(id, d) => setDecisions((m) => ({ ...m, [id]: d }))}
-          showUnchanged={false}
           fallback="both"
           labels={{ mine: "This device", theirs: "Copy" }}
         />
@@ -421,5 +423,36 @@ describe("the collapsed preview and the expander in the resolver", () => {
     } finally {
       dispose();
     }
+  });
+});
+
+describe("row traversal at the outline cap (I-22)", () => {
+  // og keeps the diff tree walk iterative: a chain deeper than any JS stack
+  // would tolerate recursively still seeds, collects and lists in order.
+  function chain(levels: number): DiffRow[] {
+    let row: DiffRow | null = null;
+    for (let level = levels; level >= 1; level--) {
+      row = { id: String(level), kind: level % 2 ? "modified" : "unchanged", mine: view(`m${level}`), theirs: view(`t${level}`), children: row ? [row] : [] };
+    }
+    return [row!];
+  }
+
+  it("seeds and collects every decidable row of a 20,000-deep chain in document order", () => {
+    const rows = chain(20_000);
+    const collected = collectRows(rows);
+    expect(collected.length).toBe(10_000);
+    expect(collected[0].id).toBe("1");
+    expect(collected[collected.length - 1].id).toBe("19999");
+    const seeded = seedSuggestedOrNoLoss(rows);
+    expect(Object.keys(seeded).length).toBe(10_000);
+    expect(seeded["1"]).toBe("both");
+    expect(countSuggestions(rows)).toBe(0);
+  });
+
+  it("lists visible rows with depth, hiding an unchanged row's subtree", () => {
+    const row = (id: string, kind: DiffRow["kind"], children: DiffRow[] = []): DiffRow => ({ id, kind, mine: view(id), theirs: view(id), children });
+    const tree = [row("A", "modified", [row("B", "unchanged", [row("C", "modified")]), row("E", "added")]), row("D", "removed")];
+    expect(visibleDiffRows(tree, false).map((r) => `${r.depth}:${r.row.id}`)).toEqual(["0:A", "1:E", "0:D"]);
+    expect(visibleDiffRows(tree, true).map((r) => `${r.depth}:${r.row.id}`)).toEqual(["0:A", "1:B", "2:C", "1:E", "0:D"]);
   });
 });

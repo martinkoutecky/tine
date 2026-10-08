@@ -2,7 +2,10 @@
 // deliberately app UI state (tine-settings.json), not graph configuration.
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
+import { latestOwner, readOwned } from "../owned";
 import type { LinkAutocompletePolicy } from "./autocomplete";
+import { writePreference, seedPreference } from "../preferenceWrites";
+import { pushToast } from "../toasts";
 
 export type { LinkAutocompletePolicy } from "./autocomplete";
 
@@ -12,7 +15,7 @@ const [policy, setPolicy] = createSignal<LinkAutocompletePolicy>("adaptive");
 // `initLinkDefault` is called again whenever persistent Quick Capture is shown.
 // Reads can overlap, so only the most recently started refresh may mutate this
 // WebView's shared signal. A direct Settings update also invalidates older reads.
-let refreshGeneration = 0;
+const refreshScope = {};
 
 export const linkAutocompletePolicy = policy;
 
@@ -26,46 +29,47 @@ export function migrateLinkAutocompletePolicy(value: unknown, legacy?: boolean |
   return legacy === true ? "existing" : "adaptive";
 }
 
-/** Apply a new setting live and persist only the generic string key. */
+/** Apply now and queue the generic string key only. A failed write rolls back
+ * and toasts; return does not confirm persistence. O(1) plus backend write. */
 export function setLinkAutocompletePolicy(next: LinkAutocompletePolicy): void {
-  ++refreshGeneration;
-  setPolicy(next);
-  void backend().setAppString(POLICY_KEY, next).catch(() => {});
+  latestOwner(refreshScope, "policy");
+  writePreference(policy, setPolicy, next, (value) => backend().setAppString(POLICY_KEY, value), "link autocomplete policy");
 }
 
-/** Read the string policy in each WebView. Quick Capture is an independent
- * WebView, and calls this again every time its persistent window is shown. */
+/** Refresh this WebView from the device-local string key; Quick Capture refreshes
+ * on each show. Missing or invalid values fall back to the legacy boolean
+ * (true = existing, otherwise adaptive), possibly writing a migrated string.
+ * Only the latest refresh applies. Read errors toast and resolve. O(1) reads
+ * plus an optional migration write. */
 export async function initLinkDefault(): Promise<void> {
-  const generation = ++refreshGeneration;
+  const owner = latestOwner(refreshScope, "policy");
   const applyIfCurrent = (next: LinkAutocompletePolicy) => {
-    if (generation === refreshGeneration) setPolicy(next);
+    if (owner()) { setPolicy(next); seedPreference(policy); }
   };
   try {
-    const stored = await backend().getAppString(POLICY_KEY, "");
+    const storedResult = await readOwned(owner, backend().getAppString(POLICY_KEY, ""));
+    if (storedResult.kind === "stale") return;
+    const stored = storedResult.value;
     if (validPolicies.has(stored as LinkAutocompletePolicy)) {
       applyIfCurrent(stored as LinkAutocompletePolicy);
       return;
     }
     let legacy: boolean | undefined;
     try {
-      legacy = await backend().getLinkFirstMatch();
+      const result = await readOwned(owner, backend().getLinkFirstMatch());
+      if (result.kind === "stale") return;
+      legacy = result.value;
     } catch {
-      // Backend/read failure remains the safe current default.
+      if (owner()) pushToast("Could not load legacy link preference.", "error");
     }
     const migrated = migrateLinkAutocompletePolicy(stored, legacy);
     applyIfCurrent(migrated);
-    if (legacy !== undefined && generation === refreshGeneration) {
-      void backend().setAppString(POLICY_KEY, migrated).catch(() => {});
+    if (legacy !== undefined && owner()) {
+      void backend().setAppString(POLICY_KEY, migrated)
+        .catch(() => pushToast("Could not save migrated link autocomplete policy.", "error"));
     }
   } catch {
     applyIfCurrent("adaptive");
+    pushToast("Could not load link autocomplete policy.", "error");
   }
-}
-
-// Compatibility surface for patch callers and the retained Rust commands. New
-// UI code must use the three-mode API above.
-export const linkFirstMatch = () => policy() === "existing";
-export function setLinkFirstMatch(on: boolean): void {
-  setLinkAutocompletePolicy(on ? "existing" : "adaptive");
-  void backend().setLinkFirstMatch(on).catch(() => {});
 }

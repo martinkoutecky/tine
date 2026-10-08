@@ -5,11 +5,15 @@
 //! re-bulleted parse input to `DocBlock::raw`; query surfaces then select a
 //! canonical page/alias set without reparsing or inventing another matcher.
 
+use crate::model::{ReferenceKind, ReferenceOccurrence, ReferenceSpan};
 use crate::refs;
-use crate::vocab::{ReferenceKind, ReferenceOccurrence, ReferenceSpan};
 use lsdoc::ast::{Block, Inline, ListItem, Span, Url};
 use std::ops::Range;
-use unicode_normalization::UnicodeNormalization;
+use std::sync::OnceLock;
+
+mod plain_match;
+mod signature;
+pub use signature::{BlockSignature, ReferenceFilter};
 
 pub const ENGINE_VERSION: &str = "reference-evidence/v1";
 const MAX_OCCURRENCES_PER_BLOCK: usize = 64;
@@ -83,44 +87,88 @@ const OG_HIDDEN_BUILT_IN_PROPERTIES: &[&str] = &[
     "card-last-score",
 ];
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProjectedPageRef {
+/// One parser-recognized page reference and its source span.
+#[deny(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProjectedPageRef {
+    /// Reference target spelling.
     pub name: String,
+    /// Byte range in the block's raw source. Browser-facing
+    /// `ReferenceSpan` values convert these offsets to UTF-16 code units.
     pub range: Range<usize>,
-    pub rule: &'static str,
-    pub property_key: Option<String>,
+    /// Parser rule that recognized this reference.
+    #[serde(with = "reference_rule")]
+    pub rule: crate::block_regions::StaticStr,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum ProjectedBlockRefKind {
-    Reference,
-    Embed,
+/// `ProjectedPageRef::rule` over serde (the launch checkpoint): the rules are a
+/// closed set, so a deserialized rule maps back to its static spelling and an
+/// unknown one is an error. `rules_are_a_closed_set` pins the list.
+pub mod reference_rule {
+    use serde::{Deserialize, Deserializer, Serializer};
+    /// Every rule this module's `push_explicit*` callers name.
+    pub const RULES: &[&str] = &[
+        "explicit_link",
+        "explicit_nested_link",
+        "explicit_tag",
+        "explicit_embed",
+        "explicit_property_key",
+        "implicit_linkable_property",
+    ];
+    pub fn serialize<S: Serializer>(value: &&'static str, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(value)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<&'static str, D::Error> {
+        let value = String::deserialize(d)?;
+        RULES
+            .iter()
+            .copied()
+            .find(|rule| *rule == value)
+            .ok_or_else(|| serde::de::Error::custom("unknown reference rule"))
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProjectedBlockRef {
-    pub raw_claim: String,
-    pub range: Range<usize>,
-    pub kind: ProjectedBlockRefKind,
+/// Borrowed view of the reference spans retained with a block projection.
+/// The stored form is split (sparse vectors live behind the projection's
+/// optional box); every reader works through this one view.
+#[deny(missing_docs)]
+#[derive(Debug, Clone, Copy)]
+pub struct ReferenceSource<'a> {
+    /// Explicit page references recognized by the parser.
+    pub explicit: &'a [ProjectedPageRef],
+    /// Byte ranges in the raw source eligible for plain-text matching.
+    pub plain_ranges: &'a [Range<usize>],
+    /// Structural source ranges excluded from plain-text matching.
+    pub withheld_ranges: &'a [Range<usize>],
 }
 
-#[derive(Debug, Clone, Default)]
-pub(crate) struct ReferenceSourceProjection {
+/// Reference spans produced by one projection build, owned. A block stores
+/// them split (see [`ReferenceSource`]); this form is the build result.
+#[deny(missing_docs)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ReferenceSourceProjection {
+    /// Explicit page references recognized by the parser.
     pub explicit: Vec<ProjectedPageRef>,
-    pub block_references: Vec<ProjectedBlockRef>,
-    /// Source ranges eligible for an unlinked (plain-text) match.
-    ///
-    /// This is the COMPLEMENT of the ranges the parser already claimed as
-    /// reference syntax or as non-prose bookkeeping — not an allowlist of
-    /// "safe" block types. See `plain_search_ranges`.
+    /// Byte ranges in the raw source left after explicit links and structural
+    /// bookkeeping are removed; literal code, math, and HTML remain eligible.
     pub plain_ranges: Vec<Range<usize>>,
-    /// Ranges withheld from the plain complement that are not themselves page
-    /// references: structural property declarations and `:LOGBOOK:` drawers.
+    /// Structural source ranges excluded from plain-text matching.
     pub withheld_ranges: Vec<Range<usize>>,
 }
 
+impl ReferenceSourceProjection {
+    /// Borrow this build result as a [`ReferenceSource`].
+    pub fn as_source(&self) -> ReferenceSource<'_> {
+        ReferenceSource {
+            explicit: &self.explicit,
+            plain_ranges: &self.plain_ranges,
+            withheld_ranges: &self.withheld_ranges,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub(crate) struct BoundedOccurrences {
+pub struct BoundedOccurrences {
     pub occurrences: Vec<ReferenceOccurrence>,
     pub total: usize,
     pub truncated: bool,
@@ -203,32 +251,18 @@ fn flatten_inlines(inlines: &[Inline], out: &mut String) {
     }
 }
 
-fn local_asset(value: &str) -> bool {
-    value.trim_start_matches(['.', '/']).starts_with("assets") || value.starts_with("draws")
-}
-
-fn unbracket(value: &str) -> &str {
-    let trimmed = value.trim();
-    trimmed
-        .strip_prefix("[[")
-        .and_then(|rest| rest.strip_suffix("]]"))
-        .unwrap_or(value)
-}
+use crate::block_regions::{nested_reference_names as nested_names, unbracket};
 
 fn link_page_name(url: &Url, label: &[Inline], is_org: bool) -> Option<String> {
-    match url {
-        Url::PageRef { v } if !local_asset(v) => Some(v.clone()),
-        Url::Search { v } if v.trim().starts_with("[[") && v.trim().ends_with("]]") => {
-            Some(unbracket(v).to_string())
-        }
-        Url::Search { v } if is_org && !local_asset(v) => Some(v.clone()),
-        Url::File { .. } if !label.is_empty() => {
-            let mut value = String::new();
-            flatten_inlines(label, &mut value);
-            (!value.trim().is_empty()).then_some(value)
-        }
-        _ => None,
-    }
+    let mut text = String::new();
+    flatten_inlines(label, &mut text);
+    let (kind, value) = match url {
+        Url::PageRef { v } => ("page_ref", v.as_str()),
+        Url::Search { v } => ("search", v.as_str()),
+        Url::File { v } => ("file", v.as_str()),
+        _ => return None,
+    };
+    crate::block_regions::reference_target_name(kind, value, &text, is_org, false)
 }
 
 fn tag_name(children: &[Inline]) -> String {
@@ -244,12 +278,11 @@ fn push_explicit(
     mapper: SpanMapper,
     raw_len: usize,
     rule: &'static str,
-    property_key: Option<&str>,
 ) {
     let Some(range) = span.and_then(|span| mapper.map(span, raw_len)) else {
         return;
     };
-    push_explicit_range(projection, name, range, raw_len, rule, property_key);
+    push_explicit_range(projection, name, range, raw_len, rule);
 }
 
 fn push_explicit_range(
@@ -258,65 +291,15 @@ fn push_explicit_range(
     range: Range<usize>,
     raw_len: usize,
     rule: &'static str,
-    property_key: Option<&str>,
 ) {
     if range.start > range.end || range.end > raw_len {
         return;
     }
     if !name.trim().is_empty() {
-        projection.explicit.push(ProjectedPageRef {
-            name,
-            range,
-            rule,
-            property_key: property_key.map(crate::doc::property_key_norm),
-        });
+        projection
+            .explicit
+            .push(ProjectedPageRef { name, range, rule });
     }
-}
-
-fn push_block_reference(
-    projection: &mut ReferenceSourceProjection,
-    raw_claim: String,
-    span: Option<&Span>,
-    mapper: SpanMapper,
-    raw_len: usize,
-    kind: ProjectedBlockRefKind,
-) {
-    let Some(range) = span.and_then(|span| mapper.map(span, raw_len)) else {
-        return;
-    };
-    if !raw_claim.trim().is_empty() {
-        projection.block_references.push(ProjectedBlockRef {
-            raw_claim,
-            range,
-            kind,
-        });
-    }
-}
-
-fn nested_names(content: &str) -> Vec<String> {
-    let mut starts = Vec::new();
-    let mut out = Vec::new();
-    let bytes = content.as_bytes();
-    let mut index = 0;
-    while index + 1 < bytes.len() {
-        if bytes[index] == b'[' && bytes[index + 1] == b'[' {
-            starts.push(index + 2);
-            index += 2;
-        } else if bytes[index] == b']' && bytes[index + 1] == b']' {
-            if let Some(start) = starts.pop() {
-                if start <= index {
-                    out.push(content[start..index].to_string());
-                }
-            }
-            index += 2;
-        } else {
-            index += content[index..].chars().next().map_or(1, char::len_utf8);
-        }
-    }
-    if out.is_empty() && !content.trim().is_empty() {
-        out.push(unbracket(content).to_string());
-    }
-    out
 }
 
 fn walk_inlines(
@@ -324,30 +307,20 @@ fn walk_inlines(
     mapper: SpanMapper,
     raw_len: usize,
     is_org: bool,
-    property_key: Option<&str>,
     projection: &mut ReferenceSourceProjection,
 ) {
     for inline in inlines {
         match inline {
             Inline::Link {
-                url: Url::BlockRef { v },
-                label,
-                span,
-                ..
-            } => {
-                push_block_reference(
-                    projection,
-                    v.clone(),
-                    span.as_ref(),
-                    mapper,
-                    raw_len,
-                    ProjectedBlockRefKind::Reference,
-                );
-                walk_inlines(label, mapper, raw_len, is_org, property_key, projection);
-            }
-            Inline::Link {
                 url, label, span, ..
             } => {
+                // A block UUID link is parser-owned syntax. It does not name a
+                // page and must not become a plain page mention either.
+                if matches!(url, Url::BlockRef { .. }) {
+                    if let Some(range) = span.as_ref().and_then(|span| mapper.map(span, raw_len)) {
+                        projection.withheld_ranges.push(range);
+                    }
+                }
                 if let Some(name) = link_page_name(url, label, is_org) {
                     push_explicit(
                         projection,
@@ -356,10 +329,9 @@ fn walk_inlines(
                         mapper,
                         raw_len,
                         "explicit_link",
-                        property_key,
                     );
                 }
-                walk_inlines(label, mapper, raw_len, is_org, property_key, projection);
+                walk_inlines(label, mapper, raw_len, is_org, projection);
             }
             Inline::NestedLink { content, span } => {
                 for name in nested_names(content) {
@@ -370,7 +342,6 @@ fn walk_inlines(
                         mapper,
                         raw_len,
                         "explicit_nested_link",
-                        property_key,
                     );
                 }
             }
@@ -382,9 +353,8 @@ fn walk_inlines(
                     mapper,
                     raw_len,
                     "explicit_tag",
-                    property_key,
                 );
-                walk_inlines(children, mapper, raw_len, is_org, property_key, projection);
+                walk_inlines(children, mapper, raw_len, is_org, projection);
             }
             Inline::Macro { name, args, span } if name == "embed" => {
                 let value = if args.len() <= 1 {
@@ -392,40 +362,22 @@ fn walk_inlines(
                 } else {
                     args.join(", ")
                 };
-                let trimmed = value.trim();
-                if let Some(claim) = trimmed
-                    .strip_prefix("((")
-                    .and_then(|rest| rest.strip_suffix("))"))
-                {
-                    push_block_reference(
-                        projection,
-                        claim.trim().to_string(),
-                        span.as_ref(),
-                        mapper,
-                        raw_len,
-                        ProjectedBlockRefKind::Embed,
-                    );
-                } else {
-                    push_explicit(
-                        projection,
-                        unbracket(&value).trim().to_string(),
-                        span.as_ref(),
-                        mapper,
-                        raw_len,
-                        "explicit_embed",
-                        property_key,
-                    );
-                }
+                push_explicit(
+                    projection,
+                    unbracket(&value).trim().to_string(),
+                    span.as_ref(),
+                    mapper,
+                    raw_len,
+                    "explicit_embed",
+                );
             }
             Inline::Emphasis { children, .. }
             | Inline::Subscript { children, .. }
             | Inline::Superscript { children, .. } => {
-                walk_inlines(children, mapper, raw_len, is_org, property_key, projection)
+                walk_inlines(children, mapper, raw_len, is_org, projection)
             }
-            // Plain text needs no arm: `plain_search_ranges` derives the
-            // unlinked-match region as the complement of what the parser DID
-            // claim, so text this walk never visits (code, math, raw HTML,
-            // examples, hiccup) stays searchable exactly as it does in Logseq.
+            // Code/verbatim and the remaining opaque inline forms are deliberately
+            // not plain-reference search ranges.
             _ => {}
         }
     }
@@ -436,101 +388,13 @@ fn walk_list_item(
     mapper: SpanMapper,
     raw: &str,
     is_org: bool,
-    property_key: Option<&str>,
     projection: &mut ReferenceSourceProjection,
 ) {
-    walk_inlines(
-        &item.name,
-        mapper,
-        raw.len(),
-        is_org,
-        property_key,
-        projection,
-    );
-    walk_blocks(&item.content, mapper, raw, is_org, property_key, projection);
+    walk_inlines(&item.name, mapper, raw.len(), is_org, projection);
+    walk_blocks(&item.content, mapper, raw, is_org, projection);
     for child in &item.items {
-        walk_list_item(child, mapper, raw, is_org, property_key, projection);
+        walk_list_item(child, mapper, raw, is_org, projection);
     }
-}
-
-fn property_values(
-    span: Option<&Span>,
-    mapper: SpanMapper,
-    raw: &str,
-    is_org: bool,
-) -> Vec<PropertySource> {
-    let Some(range) = span.and_then(|span| mapper.map(span, raw.len())) else {
-        return Vec::new();
-    };
-    let Some(source) = raw.get(range.clone()) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    let mut line_offset = range.start;
-    for line in source.split_inclusive('\n') {
-        let line_without_newline = line.strip_suffix('\n').unwrap_or(line);
-        let parsed = if is_org {
-            parse_org_property_line(line_without_newline)
-        } else {
-            crate::doc::parse_property_line(line_without_newline).and_then(|(key, value)| {
-                // The recognizer returns borrowed slices into this line, so the
-                // source ranges are plain pointer arithmetic — previously they
-                // were re-derived by rfind and could pair a duplicated value
-                // with the wrong offset.
-                let base = line_without_newline.as_ptr() as usize;
-                let key_at = key.as_ptr() as usize - base;
-                let value_at = value.as_ptr() as usize - base;
-                Some((
-                    key.to_string(),
-                    value.to_string(),
-                    key_at,
-                    key.len(),
-                    value_at,
-                ))
-            })
-        };
-        if let Some((key, value, key_at, key_len, value_at)) = parsed {
-            out.push(PropertySource {
-                key,
-                key_range: line_offset + key_at..line_offset + key_at + key_len,
-                value_offset: line_offset + value_at,
-                value,
-            });
-        }
-        line_offset += line.len();
-    }
-    out
-}
-
-fn parse_org_property_line(line: &str) -> Option<(String, String, usize, usize, usize)> {
-    let leading = line.len() - line.trim_start().len();
-    let source = line.get(leading..)?;
-    let rest = source.strip_prefix(':')?;
-    let delimiter = rest.find(':')?;
-    let key_source = &rest[..delimiter];
-    if key_source.is_empty()
-        || key_source.eq_ignore_ascii_case("properties")
-        || key_source.eq_ignore_ascii_case("end")
-    {
-        return None;
-    }
-    let value_source = &rest[delimiter + 1..];
-    let value_leading = value_source.len() - value_source.trim_start().len();
-    let value = value_source.trim().to_string();
-    Some((
-        key_source.to_string(),
-        value,
-        leading + 1,
-        key_source.len(),
-        leading + 1 + delimiter + 1 + value_leading,
-    ))
-}
-
-struct PropertySource {
-    key: String,
-    key_range: Range<usize>,
-    value_offset: usize,
-    value: String,
 }
 
 fn property_key_eligible(key: &str) -> bool {
@@ -555,9 +419,48 @@ fn project_property_key(
             key_range,
             raw_len,
             "explicit_property_key",
-            Some(key),
         );
     }
+}
+
+/// Page candidates in accepted tags/alias/aliases values. Quoted values stay
+/// literal; explicit and implicit references share the existing evidence.
+/// O(properties + references), zero parses or allocation; inputs must be the
+/// memoized regions and evidence of the same raw block.
+pub fn linkable_property_names<'a>(
+    projection: ReferenceSource<'a>,
+    regions: &'a crate::block_regions::BlockRegions,
+) -> impl Iterator<Item = &'a str> {
+    let mut properties = regions
+        .properties
+        .iter()
+        .filter(|p| {
+            p.applicable
+                && (p.key.eq_ignore_ascii_case("tags")
+                    || p.key.eq_ignore_ascii_case("alias")
+                    || p.key.eq_ignore_ascii_case("aliases"))
+                && !quoted_linkable_value(&p.value)
+        })
+        .peekable();
+    projection.explicit.iter().filter_map(move |reference| {
+        while properties
+            .peek()
+            .is_some_and(|p| p.value_range.1 <= reference.range.start)
+        {
+            properties.next();
+        }
+        properties
+            .peek()
+            .filter(|p| {
+                p.value_range.0 <= reference.range.start && reference.range.end <= p.value_range.1
+            })
+            .map(|_| reference.name.as_str())
+    })
+}
+
+fn quoted_linkable_value(value: &str) -> bool {
+    let whole = value.trim();
+    whole.len() >= 2 && whole.starts_with('"') && whole.ends_with('"')
 }
 
 fn project_implicit_linkable_property(
@@ -573,15 +476,14 @@ fn project_implicit_linkable_property(
     {
         return;
     }
-    let whole = value.trim();
-    if whole.len() >= 2 && whole.starts_with('"') && whole.ends_with('"') {
+    if quoted_linkable_value(value) {
         return;
     }
 
     let mut segment_start = 0;
     for (index, separator) in value
         .char_indices()
-        .filter(|(_, ch)| *ch == ',' || *ch == '，')
+        .filter(|(_, ch)| refs::is_linkable_property_separator(*ch))
         .map(|(index, ch)| (index, ch.len_utf8()))
         .chain(std::iter::once((value.len(), 0)))
     {
@@ -604,15 +506,14 @@ fn project_implicit_linkable_property(
                 start..end,
                 raw_len,
                 "implicit_linkable_property",
-                Some(key),
             );
         }
         segment_start = index + separator;
     }
 }
 
-fn structural_property(key: &str, raw: &str) -> bool {
-    (key.eq_ignore_ascii_case("id") && refs::block_id(raw).is_some())
+fn structural_property(key: &str, raw: &str, is_org: bool) -> bool {
+    (key.eq_ignore_ascii_case("id") && refs::block_id(raw, is_org).is_some())
         || key.eq_ignore_ascii_case("collapsed")
         || key.to_ascii_lowercase().starts_with("logseq.")
 }
@@ -622,7 +523,6 @@ fn walk_blocks(
     mapper: SpanMapper,
     raw: &str,
     is_org: bool,
-    property_key: Option<&str>,
     projection: &mut ReferenceSourceProjection,
 ) {
     for block in blocks {
@@ -631,69 +531,28 @@ fn walk_blocks(
             | Block::Heading { inline, .. }
             | Block::Bullet { inline, .. }
             | Block::FootnoteDef { inline, .. } => {
-                walk_inlines(inline, mapper, raw.len(), is_org, property_key, projection)
+                walk_inlines(inline, mapper, raw.len(), is_org, projection)
             }
             Block::Quote { children, .. } | Block::Custom { children, .. } => {
-                walk_blocks(children, mapper, raw, is_org, property_key, projection)
+                walk_blocks(children, mapper, raw, is_org, projection)
             }
             Block::List { items, .. } => {
                 for item in items {
-                    walk_list_item(item, mapper, raw, is_org, property_key, projection);
+                    walk_list_item(item, mapper, raw, is_org, projection);
                 }
             }
             Block::Table { header, rows, .. } => {
                 if let Some(header) = header {
                     for cell in header {
-                        walk_inlines(cell, mapper, raw.len(), is_org, property_key, projection);
+                        walk_inlines(cell, mapper, raw.len(), is_org, projection);
                     }
                 }
                 for row in rows {
                     for cell in row {
-                        walk_inlines(cell, mapper, raw.len(), is_org, property_key, projection);
+                        walk_inlines(cell, mapper, raw.len(), is_org, projection);
                     }
                 }
             }
-            Block::Properties { span, .. } => {
-                for property in property_values(span.as_ref(), mapper, raw, is_org) {
-                    project_property_key(
-                        projection,
-                        &property.key,
-                        property.key_range.clone(),
-                        raw.len(),
-                    );
-                    let PropertySource {
-                        key,
-                        key_range,
-                        value_offset: offset,
-                        value,
-                    } = property;
-                    if structural_property(&key, raw) {
-                        // Withheld from the plain complement. Logseq does scan
-                        // `id::`/`collapsed::`/`logseq.*` text, but those are
-                        // bookkeeping the user never wrote as prose, and a
-                        // page named after a uuid fragment is not a real
-                        // outcome. Named divergence; see the GH #270 receipt.
-                        projection
-                            .withheld_ranges
-                            .push(key_range.start..offset + value.len());
-                        continue;
-                    }
-                    let parsed = lsdoc::parse_format(&value, if is_org { "org" } else { "md" });
-                    walk_blocks(
-                        &parsed.blocks,
-                        SpanMapper::direct(offset),
-                        raw,
-                        is_org,
-                        Some(&key),
-                        projection,
-                    );
-                    project_implicit_linkable_property(projection, &key, offset, &value, raw.len());
-                }
-            }
-            // Logseq strips the logbook before matching
-            // (`drawer/remove-logbook` in `get-page-unlinked-references`), so
-            // clock entries never manufacture an unlinked reference. Every
-            // other drawer keeps its text, exactly as Logseq does.
             Block::Drawer {
                 name,
                 span: Some(span),
@@ -707,36 +566,20 @@ fn walk_blocks(
     }
 }
 
-/// The unlinked-match region: everything the parser did NOT already claim.
-///
-/// Logseq matches unlinked references with a raw regex over the whole block
-/// content (`db/model.cljs` `get-page-unlinked-references`), so code fences,
-/// inline code, math, raw HTML and every other opaque form are searchable
-/// there. Tine keeps a single parser-derived matcher and reaches the same
-/// region by subtraction rather than by re-scanning the source: an allowlist of
-/// block kinds silently loses coverage every time lsdoc grows a variant, which
-/// is precisely how GH #270 happened.
 fn plain_search_ranges(
     raw_len: usize,
     projection: &ReferenceSourceProjection,
 ) -> Vec<Range<usize>> {
-    let mut claimed: Vec<Range<usize>> = projection
+    let mut claimed: Vec<_> = projection
         .explicit
         .iter()
         .map(|reference| reference.range.clone())
-        .chain(
-            projection
-                .block_references
-                .iter()
-                .map(|reference| reference.range.clone()),
-        )
         .chain(projection.withheld_ranges.iter().cloned())
         .filter(|range| range.start < range.end && range.end <= raw_len)
         .collect();
     claimed.sort_by_key(|range| (range.start, range.end));
-
     let mut out = Vec::new();
-    let mut cursor = 0usize;
+    let mut cursor = 0;
     for range in claimed {
         if range.start > cursor {
             out.push(cursor..range.start);
@@ -749,16 +592,37 @@ fn plain_search_ranges(
     out
 }
 
-pub(crate) fn project(raw: &str, is_org: bool, blocks: &[Block]) -> ReferenceSourceProjection {
+/// Project parser-claimed references and the remaining plain-search spans for
+/// one block source. Work and allocation are bounded by that source's spans;
+/// malformed ranges are omitted, and no graph state or files are touched.
+pub fn project(raw: &str, is_org: bool, blocks: &[Block]) -> ReferenceSourceProjection {
     let mut projection = ReferenceSourceProjection::default();
-    walk_blocks(
-        blocks,
-        SpanMapper::block(raw),
-        raw,
-        is_org,
-        None,
-        &mut projection,
-    );
+    walk_blocks(blocks, SpanMapper::block(raw), raw, is_org, &mut projection);
+    let regions = crate::block_regions::from_blocks(raw, is_org, blocks);
+    for property in regions.properties.iter().filter(|p| p.applicable) {
+        let key = &property.key;
+        let key_range = property.key_range.0..property.key_range.1;
+        let offset = property.value_range.0;
+        let value = property.value_range.slice(raw);
+        project_property_key(&mut projection, key, key_range.clone(), raw.len());
+        if structural_property(key, raw, is_org) {
+            projection
+                .withheld_ranges
+                .push(key_range.start..property.value_range.1);
+            continue;
+        }
+        if let Some(parsed) = crate::render::parse_text_bounded(value, is_org) {
+            walk_blocks(
+                &parsed.blocks,
+                SpanMapper::direct(offset),
+                raw,
+                is_org,
+                &mut projection,
+            );
+        }
+        project_implicit_linkable_property(&mut projection, key, offset, value, raw.len());
+    }
+
     projection.explicit.sort_by(|a, b| {
         a.range
             .start
@@ -767,38 +631,29 @@ pub(crate) fn project(raw: &str, is_org: bool, blocks: &[Block]) -> ReferenceSou
             .then_with(|| a.name.cmp(&b.name))
     });
     projection.explicit.dedup();
-    projection.block_references.sort_by(|left, right| {
-        left.range
-            .start
-            .cmp(&right.range.start)
-            .then_with(|| left.range.end.cmp(&right.range.end))
-            .then_with(|| left.kind.cmp(&right.kind))
-            .then_with(|| left.raw_claim.cmp(&right.raw_claim))
-    });
-    projection.block_references.dedup();
     projection.plain_ranges = plain_search_ranges(raw.len(), &projection);
     projection
 }
 
 fn byte_to_utf16(raw: &str, byte: usize) -> usize {
-    raw.get(..byte)
-        .map(|prefix| prefix.encode_utf16().count())
-        .unwrap_or_else(|| raw.encode_utf16().count())
+    utf16_len(raw.get(..byte).unwrap_or(raw))
+}
+
+/// UTF-16 length of `text`: one unit per scalar value, two for those outside
+/// the BMP (4 UTF-8 bytes). Counting lead bytes vectorizes where
+/// `encode_utf16().count()` decodes every character (GH #623: this runs twice
+/// per occurrence, over the block prefix).
+fn utf16_len(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let scalars = bytes.iter().filter(|&&b| (b & 0xC0) != 0x80).count();
+    let astral = bytes.iter().filter(|&&b| b >= 0xF0).count();
+    scalars + astral
 }
 
 fn is_og_edge_alphanumeric(ch: Option<char>) -> bool {
     ch.is_some_and(|ch| ch.is_ascii_alphanumeric())
 }
 
-/// Exact Logseq prefix semantics from `db/model.cljs`'s `pattern`:
-/// `(^|[^\[#0-9a-zA-Z]|((^|[^\[])\[))`.
-///
-/// A `#` or a doubled `[` immediately before the name is already-linked syntax
-/// and never counts as an unlinked match. This used to be implied by the
-/// overlap check against parsed references, but the plain region now includes
-/// text the parser never interprets — `[[Page]]` inside a code fence, or an
-/// escaped `\[[Page]]` — where no reference span exists to overlap with. A
-/// single `[`, as in a Markdown link label, is still a valid boundary.
 fn og_prefix_allows(raw: &str, start: usize) -> bool {
     let mut preceding = raw.get(..start).unwrap_or_default().chars().rev();
     match preceding.next() {
@@ -811,84 +666,6 @@ fn og_prefix_allows(raw: &str, start: usize) -> bool {
 
 fn overlaps(range: &Range<usize>, other: &Range<usize>) -> bool {
     range.start < other.end && other.start < range.end
-}
-
-/// Visit source-order matches with memory bounded by the target name, not the
-/// number or size of matches in the block.
-fn visit_plain_matches(
-    raw: &str,
-    range: &Range<usize>,
-    needle: &str,
-    mut visit: impl FnMut(Range<usize>) -> bool,
-) {
-    let Some(source) = raw.get(range.clone()) else {
-        return;
-    };
-    if needle.is_empty() {
-        return;
-    }
-    let needle: String = needle.to_lowercase().nfc().collect();
-    let first_requires_boundary = needle.chars().next().is_some_and(|ch| ch.is_alphanumeric());
-    let last_requires_boundary = needle
-        .chars()
-        .next_back()
-        .is_some_and(|ch| ch.is_alphanumeric());
-    // A cheap prefilter for the common case. It skips a start position only
-    // when BOTH the needle's first character and the source character are
-    // ASCII, where lowercase is exact and NFC is the identity — so no match
-    // can begin there. Anything non-ASCII falls through to the authoritative
-    // lowercase+NFC matcher below, which keeps folding cases like the Kelvin
-    // sign correct. Worth having because the searchable region grew to the
-    // whole block once opaque forms stopped being skipped (GH #270).
-    let ascii_first = needle
-        .chars()
-        .next()
-        .filter(char::is_ascii)
-        .map(|ch| (ch.to_ascii_lowercase(), ch.to_ascii_uppercase()));
-    for (offset, first) in source.char_indices() {
-        if let Some((lower, upper)) = ascii_first {
-            if first.is_ascii() && first != lower && first != upper {
-                continue;
-            }
-        }
-        let start = range.start + offset;
-        let mut end = start;
-        let mut candidate_raw = String::new();
-        let mut matched = false;
-        for (relative, ch) in source[offset..].char_indices() {
-            candidate_raw.push(ch);
-            end = start + relative + ch.len_utf8();
-            let candidate: String = candidate_raw.to_lowercase().nfc().collect();
-            if candidate == needle {
-                matched = true;
-                break;
-            }
-            // The final scalar may still compose with the next combining mark.
-            let without_last = candidate
-                .char_indices()
-                .next_back()
-                .map_or("", |(index, _)| &candidate[..index]);
-            if !needle.starts_with(&candidate) && !needle.starts_with(without_last) {
-                break;
-            }
-        }
-        if !matched {
-            continue;
-        }
-        let before = raw
-            .get(..start)
-            .and_then(|prefix| prefix.chars().next_back());
-        let after = raw.get(end..).and_then(|suffix| suffix.chars().next());
-        // Exact OG edge semantics: only adjacent ASCII alphanumerics exclude
-        // an unlinked match. `_` and continuous CJK are valid boundaries.
-        if og_prefix_allows(raw, start)
-            && (!first_requires_boundary || !is_og_edge_alphanumeric(before))
-            && (!last_requires_boundary || !is_og_edge_alphanumeric(after))
-            && !visit(start..end)
-        {
-            return;
-        }
-    }
 }
 
 fn push_unique_bounded(
@@ -909,7 +686,7 @@ fn push_unique_bounded(
     if out.len() >= MAX_OCCURRENCES_PER_BLOCK {
         return false;
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-counters"))]
     OCCURRENCE_CONSTRUCTIONS.with(|count| count.set(count.get().saturating_add(1)));
     out.push(ReferenceOccurrence {
         matched_name: matched_name.to_string(),
@@ -921,18 +698,18 @@ fn push_unique_bounded(
     true
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-counters"))]
 thread_local! {
     static OCCURRENCE_CONSTRUCTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[cfg(test)]
-pub(crate) fn reset_occurrence_constructions() {
+#[cfg(any(test, feature = "test-counters"))]
+pub fn reset_occurrence_constructions() {
     OCCURRENCE_CONSTRUCTIONS.with(|count| count.set(0));
 }
 
-#[cfg(test)]
-pub(crate) fn occurrence_constructions() -> usize {
+#[cfg(any(test, feature = "test-counters"))]
+pub fn occurrence_constructions() -> usize {
     OCCURRENCE_CONSTRUCTIONS.with(std::cell::Cell::get)
 }
 
@@ -953,19 +730,69 @@ fn projected_reference_matches(
         .any(|name| refs::same_page(name, &reference.name))
 }
 
-pub(crate) fn occurrences_of_kind_bounded(
+/// The page names of one query, with the plain-text matcher's per-name folding
+/// done once (lazily: explicit-kind callers never pay for it) instead of once
+/// per block (GH #623, I-25: no per-block work that depends only on the query).
+pub struct ReferenceNeedles<'a> {
+    names: &'a [String],
+    needles: OnceLock<Vec<Option<plain_match::Needle>>>,
+}
+
+impl<'a> ReferenceNeedles<'a> {
+    pub fn new(names: &'a [String]) -> Self {
+        Self {
+            names,
+            needles: OnceLock::new(),
+        }
+    }
+
+    pub fn names(&self) -> &'a [String] {
+        self.names
+    }
+
+    fn needles(&self) -> &[Option<plain_match::Needle>] {
+        self.needles.get_or_init(|| {
+            self.names
+                .iter()
+                .map(|name| plain_match::Needle::new(name))
+                .collect()
+        })
+    }
+}
+
+pub fn occurrences_of_kind_bounded(
     raw: &str,
-    projection: &ReferenceSourceProjection,
+    projection: ReferenceSource<'_>,
     canonical: &str,
     names_norm: &[String],
     kind: ReferenceKind,
     config: &crate::config::Config,
 ) -> BoundedOccurrences {
-    let mut out = Vec::with_capacity(MAX_OCCURRENCES_PER_BLOCK.min(8));
+    occurrences_of_kind_prepared(
+        raw,
+        projection,
+        canonical,
+        &ReferenceNeedles::new(names_norm),
+        kind,
+        config,
+    )
+}
+
+/// `occurrences_of_kind_bounded` with the query's folded names shared across
+/// blocks.
+pub fn occurrences_of_kind_prepared(
+    raw: &str,
+    projection: ReferenceSource<'_>,
+    canonical: &str,
+    names: &ReferenceNeedles<'_>,
+    kind: ReferenceKind,
+    config: &crate::config::Config,
+) -> BoundedOccurrences {
+    let mut out = Vec::new();
     let mut total = 0usize;
     if kind == ReferenceKind::Explicit {
-        for reference in &projection.explicit {
-            if !projected_reference_matches(reference, names_norm, config) {
+        for reference in projection.explicit {
+            if !projected_reference_matches(reference, names.names, config) {
                 continue;
             }
             total = total.saturating_add(1);
@@ -990,9 +817,12 @@ pub(crate) fn occurrences_of_kind_bounded(
         };
     }
 
-    for name in names_norm {
-        for eligible in &projection.plain_ranges {
-            visit_plain_matches(raw, eligible, name, |range| {
+    for (name, needle) in names.names.iter().zip(names.needles()) {
+        let Some(needle) = needle else {
+            continue;
+        };
+        for eligible in projection.plain_ranges {
+            plain_match::visit_plain_matches(raw, eligible, needle, |range| {
                 if projection
                     .explicit
                     .iter()
@@ -1026,9 +856,9 @@ pub(crate) fn occurrences_of_kind_bounded(
     }
 }
 
-pub(crate) fn occurrences_of_kind(
+pub fn occurrences_of_kind(
     raw: &str,
-    projection: &ReferenceSourceProjection,
+    projection: ReferenceSource<'_>,
     canonical: &str,
     names_norm: &[String],
     kind: ReferenceKind,
@@ -1039,10 +869,27 @@ pub(crate) fn occurrences_of_kind(
 
 /// Cheap membership path used once a result construction budget is closed.
 /// It performs no occurrence/string construction and stops at the first hit.
-pub(crate) fn has_occurrence_kind(
+pub fn has_occurrence_kind(
     raw: &str,
-    projection: &ReferenceSourceProjection,
+    projection: ReferenceSource<'_>,
     names_norm: &[String],
+    kind: ReferenceKind,
+    config: &crate::config::Config,
+) -> bool {
+    has_occurrence_prepared(
+        raw,
+        projection,
+        &ReferenceNeedles::new(names_norm),
+        kind,
+        config,
+    )
+}
+
+/// `has_occurrence_kind` with the query's folded names shared across blocks.
+pub fn has_occurrence_prepared(
+    raw: &str,
+    projection: ReferenceSource<'_>,
+    names: &ReferenceNeedles<'_>,
     kind: ReferenceKind,
     config: &crate::config::Config,
 ) -> bool {
@@ -1050,12 +897,12 @@ pub(crate) fn has_occurrence_kind(
         return projection
             .explicit
             .iter()
-            .any(|reference| projected_reference_matches(reference, names_norm, config));
+            .any(|reference| projected_reference_matches(reference, names.names, config));
     }
-    for name in names_norm {
-        for eligible in &projection.plain_ranges {
+    for needle in names.needles().iter().flatten() {
+        for eligible in projection.plain_ranges {
             let mut found = false;
-            visit_plain_matches(raw, eligible, name, |range| {
+            plain_match::visit_plain_matches(raw, eligible, needle, |range| {
                 found = !projection
                     .explicit
                     .iter()
@@ -1070,29 +917,34 @@ pub(crate) fn has_occurrence_kind(
     false
 }
 
-pub(crate) fn occurrences(
+pub fn occurrences(
     raw: &str,
-    projection: &ReferenceSourceProjection,
+    projection: ReferenceSource<'_>,
     canonical: &str,
     names_norm: &[String],
     config: &crate::config::Config,
 ) -> Vec<ReferenceOccurrence> {
-    let mut out = occurrences_of_kind(
+    let names = ReferenceNeedles::new(names_norm);
+    let mut out = occurrences_of_kind_prepared(
         raw,
         projection,
         canonical,
-        names_norm,
+        &names,
         ReferenceKind::Explicit,
         config,
+    )
+    .occurrences;
+    out.extend(
+        occurrences_of_kind_prepared(
+            raw,
+            projection,
+            canonical,
+            &names,
+            ReferenceKind::Plain,
+            config,
+        )
+        .occurrences,
     );
-    out.extend(occurrences_of_kind(
-        raw,
-        projection,
-        canonical,
-        names_norm,
-        ReferenceKind::Plain,
-        config,
-    ));
     out.sort_by(|a, b| {
         a.span
             .start
@@ -1105,30 +957,35 @@ pub(crate) fn occurrences(
     out
 }
 
-/// Deliberately uncached parser path used by diagnostics/tests as a drift
-/// oracle for the memoized `DocBlock::projection` integration.
-pub(crate) fn slow_occurrences(
-    raw: &str,
-    is_org: bool,
-    canonical: &str,
-    names_norm: &[String],
-    config: &crate::config::Config,
-) -> Vec<ReferenceOccurrence> {
-    let parsed = crate::render::parse_projection(raw, is_org);
-    let source = project(raw, is_org, &parsed.blocks);
-    occurrences(raw, &source, canonical, names_norm, config)
-}
-
 #[cfg(test)]
 mod tests {
+
     use super::*;
+
+    #[test]
+    fn utf16_len_agrees_with_encode_utf16() {
+        for text in [
+            "",
+            "plain ascii",
+            "caf\u{e9} \u{4e2d}\u{6587}",
+            "astral \u{1f600}\u{10348} end",
+            "e\u{301}\u{1f1e8}\u{1f1ff}",
+        ] {
+            assert_eq!(utf16_len(text), text.encode_utf16().count(), "{text:?}");
+            for (cut, _) in text.char_indices() {
+                assert_eq!(byte_to_utf16(text, cut), text[..cut].encode_utf16().count());
+            }
+        }
+        // A cut that is not a char boundary falls back to the whole text.
+        assert_eq!(byte_to_utf16("\u{e9}", 1), 1);
+    }
 
     fn evidence(raw: &str, names: &[&str]) -> Vec<ReferenceOccurrence> {
         let parsed = crate::render::parse_projection(raw, false);
         let projected = project(raw, false, &parsed.blocks);
         occurrences(
             raw,
-            &projected,
+            projected.as_source(),
             "Target",
             &names
                 .iter()
@@ -1152,13 +1009,10 @@ mod tests {
             .iter()
             .filter(|hit| hit.kind == ReferenceKind::Plain)
             .collect::<Vec<_>>();
-        // The prose mention and the inline-code mention. The `[[Target]]` text
-        // is claimed by the explicit reference and is not double-counted.
-        assert_eq!(plains.len(), 2, "{got:?}");
+        assert_eq!(plains.len(), 2);
         assert!(plains
             .iter()
             .all(|hit| &raw[hit.span.start..hit.span.end] == "Target"));
-        assert!(plains.iter().all(|hit| hit.span.start > 10));
     }
 
     #[test]
@@ -1171,73 +1025,11 @@ mod tests {
         assert_eq!(plains.len(), 2);
     }
 
-    /// GH #270. Logseq's unlinked-reference matcher is a raw regex over the
-    /// whole block content, so code is searched and an escaped `\[[Name]]` is
-    /// not. Tine used to have this exactly inverted: it reported the escaped
-    /// bracket and hid both code mentions.
     #[test]
-    fn code_is_searched_and_escaped_brackets_are_not() {
-        let raw = "\\[[Target]] and `Target`\n```\nTarget\n```";
-        let got = evidence(raw, &["Target"]);
-        assert!(
-            got.iter().all(|hit| hit.kind == ReferenceKind::Plain),
-            "{got:?}"
-        );
-        let starts = got.iter().map(|hit| hit.span.start).collect::<Vec<_>>();
-        assert_eq!(
-            starts,
-            vec![
-                raw.find("`Target`").unwrap() + 1,
-                raw.find("\nTarget\n").unwrap() + 1,
-            ],
-            "{got:?}"
-        );
-    }
-
-    /// The `[`/`#` prefix rule is what keeps already-linked syntax out of the
-    /// unlinked panel now that unparsed regions are searchable: inside a fence
-    /// there is no parsed reference to overlap with.
-    #[test]
-    fn already_linked_syntax_inside_code_is_still_not_an_unlinked_match() {
-        for raw in [
-            "```\n[[Target]]\n```",
-            "```\n#Target\n```",
-            "`[[Target]]`",
-            "$$\n[[Target]]\n$$",
-        ] {
-            assert!(evidence(raw, &["Target"]).is_empty(), "{raw}");
-        }
-        // A single bracket is an ordinary boundary, as in a Markdown label.
-        assert_eq!(evidence("```\n[Target](x)\n```", &["Target"]).len(), 1);
-    }
-
-    /// Every block kind the old allowlist dropped. Each of these is one of the
-    /// seven measured divergences from Logseq recorded in the GH #270 receipt.
-    #[test]
-    fn opaque_block_kinds_are_searched_like_logseq_does() {
-        for raw in [
-            "```clojure\nTarget\n```",
-            "$$\nx = Target\n$$",
-            "<div>Target</div>",
-            "#+BEGIN_EXPORT html\nTarget\n#+END_EXPORT",
-            "#+BEGIN_EXAMPLE\nTarget\n#+END_EXAMPLE",
-            "\\begin{align}\nTarget\n\\end{align}",
-            "[:span \"Target\"]",
-        ] {
-            let got = evidence(raw, &["Target"]);
-            assert_eq!(got.len(), 1, "{raw}: {got:?}");
-            assert_eq!(got[0].kind, ReferenceKind::Plain, "{raw}");
-        }
-    }
-
-    /// Logseq applies `drawer/remove-logbook` before matching, so clock lines
-    /// never manufacture an unlinked reference. Other drawers keep their text.
-    #[test]
-    fn the_logbook_drawer_is_stripped_but_other_drawers_are_not() {
-        let logbook = "do the thing\n:LOGBOOK:\nCLOCK: Target\n:END:";
-        assert!(evidence(logbook, &["Target"]).is_empty(), "logbook leaked");
-        let other = "do the thing\n:NOTES:\nTarget\n:END:";
-        assert_eq!(evidence(other, &["Target"]).len(), 1, "{other}");
+    fn escaped_link_is_not_plain_but_code_mentions_are() {
+        let got = evidence("\\[[Target]] and `Target`\n```\nTarget\n```", &["Target"]);
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!(got.iter().all(|hit| hit.kind == ReferenceKind::Plain));
     }
 
     #[test]
@@ -1316,7 +1108,7 @@ mod tests {
         reset_occurrence_constructions();
         let got = occurrences_of_kind(
             &raw,
-            &projected,
+            projected.as_source(),
             "Target",
             &[refs::normalize("Target")],
             ReferenceKind::Plain,
@@ -1334,7 +1126,7 @@ mod tests {
         let projected = project(&raw, false, &parsed.blocks);
         let got = occurrences_of_kind_bounded(
             &raw,
-            &projected,
+            projected.as_source(),
             "Target",
             &[refs::normalize("Target")],
             ReferenceKind::Plain,
@@ -1354,29 +1146,38 @@ mod tests {
         );
     }
 
-    /// The searchable region is now the whole block, so a start position that
-    /// cannot begin the name must be rejected without building a candidate
-    /// string. Asserted as a ratio against a same-sized input where every
-    /// position IS a plausible start, so it does not depend on the machine.
     #[test]
-    fn impossible_start_positions_are_skipped_without_building_candidates() {
-        let haystack = "ababab ".repeat(40_000);
-        let range = 0..haystack.len();
-
-        let absent = std::time::Instant::now();
-        visit_plain_matches(&haystack, &range, "qqqq", |_| true);
-        let absent = absent.elapsed().max(std::time::Duration::from_nanos(1));
-
-        let plausible = std::time::Instant::now();
-        visit_plain_matches(&haystack, &range, "aaaa", |_| true);
-        let plausible = plausible.elapsed();
-
-        assert!(
-            plausible.as_nanos() > absent.as_nanos() * 4,
-            "a name whose first character never occurs cost {absent:?}, \
-             barely less than the {plausible:?} of one that does — the \
-             prefilter is gone and every position is building a candidate"
+    fn block_reference_uuid_is_not_a_plain_page_mention() {
+        let got = evidence(
+            "((11111111-1111-4111-8111-111111111111))",
+            &["11111111-1111-4111-8111-111111111111"],
         );
+        assert!(
+            got.is_empty(),
+            "block link leaked into page evidence: {got:?}"
+        );
+    }
+
+    #[test]
+    fn unlinked_mentions_include_literal_regions_without_counting_link_syntax() {
+        for raw in [
+            "`Target`",
+            "```\nTarget\n```",
+            "$$\nTarget\n$$",
+            "<div>Target</div>",
+        ] {
+            let got = evidence(raw, &["Target"]);
+            assert_eq!(
+                got.iter()
+                    .filter(|hit| hit.kind == ReferenceKind::Plain)
+                    .count(),
+                1,
+                "{raw}: {got:?}"
+            );
+        }
+        for raw in ["```\n[[Target]]\n```", "`#Target`", "\\[[Target]]"] {
+            assert!(evidence(raw, &["Target"]).is_empty(), "{raw}");
+        }
     }
 
     #[test]

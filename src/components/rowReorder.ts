@@ -1,103 +1,69 @@
-// Pointer-based vertical row reorder shared by the sidebar lists (GH
-// #211: right-sidebar items, left-sidebar favorites).
-//
-// HTML5 DnD is unreliable in WebKitGTK (see TabBar/Block), so this follows
-// the repo's hand-rolled pattern: the row gets onPointerDown, a 4px movement
-// threshold separates a reorder drag from an ordinary click, and the click
-// that ends a drag is swallowed via rowReorderClickSuppressed() so the row's
-// own click handler (navigate/activate) does not also fire. Rows must carry
-// `data-row-index` with their current index so the drop target can be found
-// with document.elementFromPoint.
-const DRAG_THRESHOLD_PX = 4;
-
-let suppressClick = false;
-
-// A reorder is not a text gesture — see dragSelectionGuard.ts, which owns the
-// mechanism this and the outline bullet drag (GH #424) both use.
+// Pointer-based row reorder (port of master GH #211 rowReorder.ts, used by the
+// favorites tree). HTML5 DnD is unreliable in WebKitGTK, so: pointerdown arms,
+// a 4px move starts the drag, the drop row comes from elementFromPoint via
+// `data-row-index`, and the click that ends a drag is swallowed. While a drag
+// runs the document is unselectable (WebKit otherwise smears a text selection
+// across every row the pointer crosses) — see dragSelectionGuard.ts, which owns
+// the mechanism this and the outline bullet drag (GH #424) both use.
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
 
-/** True for the click that terminates a reorder drag — row click handlers
- *  must bail out when this returns true. */
-export function rowReorderClickSuppressed(): boolean {
-  return suppressClick;
-}
+const DRAG_THRESHOLD_PX = 4;
+let suppressClick = false;
+
+/** True for the click that ends a reorder drag; row click handlers bail. */
+export const rowReorderClickSuppressed = () => suppressClick;
 
 export interface RowDropTarget {
   index: number;
   before: boolean;
-  /** How far right of where the drag STARTED the pointer now is. Flat lists
-   *  ignore it; the favorites tree reads it as a change in nesting depth, which
-   *  is the only way a pointer can ask for "under that row" rather than "after
-   *  it". Relative to the grab point, not to the row's left edge — otherwise
-   *  where in the row the user happened to grab would decide the depth. */
+  /** Pointer x relative to where the drag STARTED (not the row's edge), so
+   *  where the row was grabbed never decides a nesting depth. */
   dx: number;
+  /** The row element the pointer is over, for a caller whose rows live in several lists. */
+  row: HTMLElement;
 }
 
-/** Attach a reorder drag to a row's pointerdown. `commit(from, to, target)`
- *  receives the final `to` index in the post-removal array (ready for
- *  splice-insert) plus the raw drop target, which a nested list needs because
- *  its own arithmetic is not a single splice. Self-drops and no-op placements
- *  never call it unless `opts.commitUnchanged` says they must — in a tree the
- *  same slot at a different depth is a real move. `setIndicator` reports the
- *  live half-row drop target (or null) for the indicator classes. */
+/** Attach a reorder drag to a row's pointerdown. `onTarget` reports the live
+ *  drop target (or null); `commit` receives the final one. */
 export function beginRowReorderDrag(
   event: PointerEvent,
-  from: number,
   rowSelector: string,
-  setIndicator: (target: RowDropTarget | null) => void,
-  commit: (from: number, to: number, target: RowDropTarget) => void,
-  opts: { commitUnchanged?: boolean } = {},
+  onTarget: (target: RowDropTarget | null) => void,
+  commit: (target: RowDropTarget) => void,
 ): void {
   if (event.button !== 0) return;
   const startX = event.clientX;
   const startY = event.clientY;
   let dragging = false;
   let target: RowDropTarget | null = null;
-
   const onMove = (ev: PointerEvent) => {
     if (!dragging) {
       if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD_PX) return;
       dragging = true;
       setDragSelectionSuppressed(true);
     }
-    // WebKit can re-establish the selection mid-drag; the class alone is not
-    // enough once a selection is already anchored.
-    dropSelection();
-    const row = document
-      .elementFromPoint(ev.clientX, ev.clientY)
-      ?.closest<HTMLElement>(rowSelector);
-    if (row && row.dataset.rowIndex !== undefined) {
-      const index = Number(row.dataset.rowIndex);
+    dropSelection(); // WebKit can re-anchor a selection mid-drag
+    const row = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(rowSelector);
+    if (row?.dataset.rowIndex !== undefined) {
       const rect = row.getBoundingClientRect();
-      target = { index, before: ev.clientY < rect.top + rect.height / 2, dx: ev.clientX - startX };
-    } else {
-      target = null;
-    }
-    setIndicator(target);
+      target = { index: Number(row.dataset.rowIndex), before: ev.clientY < rect.top + rect.height / 2, dx: ev.clientX - startX, row };
+    } else target = null;
+    onTarget(target);
   };
-
   const cleanup = () => {
     document.removeEventListener("pointermove", onMove);
     document.removeEventListener("pointerup", onUp);
     document.removeEventListener("pointercancel", cleanup);
     setDragSelectionSuppressed(false);
-    setIndicator(null);
+    onTarget(null);
   };
   const onUp = () => {
     cleanup();
     if (!dragging) return;
-    // Swallow the click that follows a real reorder drag so rows whose
-    // primary action is a click (navigation) don't fire it as the drop lands.
     suppressClick = true;
-    setTimeout(() => {
-      suppressClick = false;
-    }, 0);
-    if (!target) return;
-    const to = target.index + (target.before ? 0 : 1);
-    const adjusted = from < to ? to - 1 : to;
-    if (adjusted !== from || opts.commitUnchanged) commit(from, adjusted, target);
+    setTimeout(() => { suppressClick = false; }, 0);
+    if (target) commit(target);
   };
-
   document.addEventListener("pointermove", onMove);
   document.addEventListener("pointerup", onUp);
   document.addEventListener("pointercancel", cleanup);

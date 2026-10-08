@@ -31,7 +31,7 @@ Remember them; they go in the properties file below.
 **2. Create `src-tauri/gen/android/keystore.properties`** (gitignored) with:
 
 ```properties
-storeFile=/home/koutecky/.android-keys/tine-release.jks
+storeFile=/absolute/path/to/tine-release.jks
 storePassword=YOUR_STORE_PASSWORD
 keyAlias=tine
 keyPassword=YOUR_KEY_PASSWORD
@@ -63,22 +63,6 @@ $ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs \
 ```
 
 The printed certificate DN should be `CN=Tine, …`, not `CN=Android Debug`.
-
-## Delivering a test APK to Martin
-
-`~/research/tine.apk` is the stable Syncthing delivery path for the current
-Android test build, parallel to `~/research/tine` for the desktop binary. After
-the exact APK has passed the required checks and its release signature has been
-verified, retain the versioned artifact and copy it to the stable path:
-
-```sh
-cp -f /path/to/exact-signed.apk ~/research/tine.apk
-chmod 0644 ~/research/tine.apk
-sha256sum /path/to/exact-signed.apk ~/research/tine.apk
-```
-
-The two hashes must match. Do not deploy an unsigned, debug-signed, stale, or
-different-commit APK to this path.
 
 ## Signing in CI (the normal path — GitHub Actions builds signed APKs)
 

@@ -1,22 +1,10 @@
-// When does a session END, for the purposes of "Tine did not close cleanly"?
-//
-// GH #426. The recorder writes a `session-active` marker at startup and removes
-// it at the one orderly end it knows about — the desktop event loop's
-// `RunEvent::Exit`. Mobile has no such moment: iOS and Android suspend a
-// backgrounded app and reap it later without notice, so the marker always
-// survived and every single launch opened with the sticky warning. A reporter
-// put it exactly: "It does happen every time in iOS/iPadOS. The OS kills the
-// app when in background so I am having this issue all the time."
-//
-// So on mobile the recorded session follows visibility: it ends when the app is
-// hidden (from then on, being reaped is expected) and restarts when the user
-// comes back (a crash they actually witness is still worth reporting). This is
-// the same lifecycle edge `backgroundFlush.ts` uses to get the user's typing to
-// disk, and for the same reason — it is the last moment we are certain to get.
-//
-// Desktop is deliberately excluded: a minimised or occluded window is still a
-// running session, and honouring visibility there would silently hide the
-// background crashes the recorder exists to catch.
+// When does a recorded session END, for "Tine did not close cleanly"? (GH #426,
+// master a846665f; og ADR 0058.) The backend arms a session marker at startup
+// and clears it at `RunEvent::Exit`. Android and iOS suspend a hidden app and
+// reap it without notice, so on mobile the session follows visibility: it ends
+// when the app is hidden and restarts when the user returns — a crash the user
+// witnesses is still reported, an OS reap is not. Desktop installs nothing: a
+// minimised window is a live session whose crash must still be reported.
 
 export interface SessionActivityDeps {
   /** Tell the backend whether the session should count as live from now on. */

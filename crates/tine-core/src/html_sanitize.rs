@@ -1,98 +1,63 @@
 //! Raw-HTML sanitizer for the static-HTML export.
 //!
-//! This is the Rust half of a MIRRORED policy — the TypeScript half is
-//! `src/render/htmlSanitize.ts` (DOMPurify, for the live app). lsdoc emits
-//! `raw_html`/`inline_html` nodes with the source bytes verbatim (byte-parity
-//! with mldoc); sanitizing is a render-layer safety decision applied at each
-//! render boundary, not in the parser. The export re-publishes user HTML as
-//! served content, so it needs the same allowlist the app enforces.
-//!
-//! `fixtures/html-sanitize-cases.json` contract-tests that this and the TS side
-//! agree. Keep the two allowlists in lockstep.
+//! Inventories live in `fixtures/html-sanitize-policy.json` (I-12). The browser
+//! adapter uses global attributes; native export retains tag-scoped attributes,
+//! explicit schemes and link rel. Shared safety outcomes are fixture-tested.
+//! Media tags (`audio`/`video`/`source`) follow OG 6e7afa8eb's raw-HTML DOMPurify path
+//! (src/main/frontend/security.cljs:5-11, components/block.cljs:3258-3261); keep the set
+//! bounded to media, never iframe/object/embed. `autoplay` stays absent.
 
 use ammonia::Builder;
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
-/// Mirror of `RAW_HTML_TAGS` in `src/render/htmlSanitize.ts`.
-const TAGS: &[&str] = &[
-    "b",
-    "strong",
-    "i",
-    "em",
-    "u",
-    "ins",
-    "del",
-    "s",
-    "strike",
-    "sub",
-    "sup",
-    "mark",
-    "kbd",
-    "abbr",
-    "small",
-    "code",
-    "cite",
-    "q",
-    "span",
-    "br",
-    "p",
-    "div",
-    "blockquote",
-    "details",
-    "summary",
-    "a",
-    "img",
-    // OG 6e7afa8eb's raw-HTML DOMPurify path preserves native playback elements
-    // (src/main/frontend/security.cljs:5-11 and
-    // src/main/frontend/components/block.cljs:3258-3261). Keep this bounded to
-    // media, not embedded browsing/plugin contexts such as iframe/object/embed.
-    "audio",
-    "video",
-    "source",
-];
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativePolicy {
+    generic_attributes: Vec<String>,
+    tag_attributes: HashMap<String, Vec<String>>,
+    url_schemes: Vec<String>,
+    link_rel: String,
+    deny_data_attributes: Vec<String>,
+    deny_data_tag_attributes: HashMap<String, Vec<String>>,
+}
+#[derive(Deserialize)]
+struct Policy {
+    tags: Vec<String>,
+    native: NativePolicy,
+}
+fn policy() -> &'static Policy {
+    static POLICY: OnceLock<Policy> = OnceLock::new();
+    POLICY.get_or_init(|| {
+        serde_json::from_str(include_str!("../../../fixtures/html-sanitize-policy.json"))
+            .expect("checked-in HTML sanitizer policy")
+    })
+}
 
 /// Sanitize a raw-HTML fragment to the shared allowlist. Event handlers,
 /// `style`, `<iframe>`/`<script>`, and `javascript:` URIs are stripped;
 /// `href`/`src` are limited to safe schemes.
 pub fn sanitize(html: &str) -> String {
-    let tags: HashSet<&str> = TAGS.iter().copied().collect();
-
-    // `class`/`title` on any tag; `href`/`src`/etc. only where they belong.
-    let generic: HashSet<&str> = ["class", "title"].into_iter().collect();
-    let mut tag_attrs: HashMap<&str, HashSet<&str>> = HashMap::new();
-    tag_attrs.insert("a", ["href"].into_iter().collect());
-    tag_attrs.insert(
-        "img",
-        ["src", "alt", "width", "height"].into_iter().collect(),
-    );
-    // User-driven playback plus inert playback state/fetch/layout metadata.
-    // `autoplay` remains absent; `src`/`poster` are checked by ammonia against
-    // the safe scheme set below. Mirror RAW_HTML_ATTRS in the live renderer.
-    tag_attrs.insert(
-        "audio",
-        ["src", "controls", "loop", "muted", "preload"]
-            .into_iter()
-            .collect(),
-    );
-    tag_attrs.insert(
-        "video",
-        [
-            "src", "controls", "loop", "muted", "preload", "poster", "width", "height",
-        ]
-        .into_iter()
-        .collect(),
-    );
-    tag_attrs.insert("source", ["src", "type"].into_iter().collect());
-    tag_attrs.insert("details", ["open"].into_iter().collect());
-
-    // `data:` stays allowed for media payloads (base64-embedded images etc.) —
-    // DOMPurify (= OG's sanitizer, security.cljs:5-11) permits `data:` on its
-    // DATA_URI_TAGS (img/audio/video/source). `javascript:` was never admitted.
-    // OG/DOMPurify do NOT allow `data:` in link hrefs, so strip it there via
-    // the attribute filter below (this tightens a pre-existing looseness where
-    // the global scheme set let `<a href="data:...">` through).
-    let schemes: HashSet<&str> = ["https", "http", "mailto", "tel", "data"]
-        .into_iter()
+    let policy = policy();
+    let tags: HashSet<&str> = policy.tags.iter().map(String::as_str).collect();
+    let generic = policy
+        .native
+        .generic_attributes
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let tag_attrs = policy
+        .native
+        .tag_attributes
+        .iter()
+        .map(|(tag, attrs)| (tag.as_str(), attrs.iter().map(String::as_str).collect()))
+        .collect();
+    let schemes = policy
+        .native
+        .url_schemes
+        .iter()
+        .map(String::as_str)
         .collect();
 
     Builder::default()
@@ -108,14 +73,23 @@ pub fn sanitize(html: &str) -> String {
             // DOMPurify permits data: only in media-tag data-URI attributes
             // (src); it strips data: from link hrefs and from `poster`. Mirror
             // both exclusions so live render and static export agree.
-            let deny = (element == "a" && attribute == "href") || attribute == "poster";
+            let deny = policy
+                .native
+                .deny_data_attributes
+                .iter()
+                .any(|a| a == attribute)
+                || policy
+                    .native
+                    .deny_data_tag_attributes
+                    .get(element)
+                    .is_some_and(|attrs| attrs.iter().any(|a| a == attribute));
             if deny && is_data {
                 None
             } else {
                 Some(value.into())
             }
         })
-        .link_rel(Some("noopener noreferrer"))
+        .link_rel(Some(&policy.native.link_rel))
         .clean(html)
         .to_string()
 }

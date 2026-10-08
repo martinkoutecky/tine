@@ -3,7 +3,9 @@ import { For } from 'solid-js';
 import { render } from 'solid-js/web';
 import { installKeybindings } from '../keybindings';
 import { initParser } from '../render/parse';
-import { doc, loadSingle, pageByName, resetStore } from '../store';
+import { pageByName, resetStore } from '../document';
+import { loadSingle } from '../document/workingSet';
+import { doc } from '../document/model';
 import { Block } from './Block';
 
 beforeAll(async()=>{await initParser()});

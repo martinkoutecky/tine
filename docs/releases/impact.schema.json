@@ -4,20 +4,19 @@
   "type": "object",
   "required": ["schemaVersion", "version", "baseTag", "items"],
   "properties": {
-    "schemaVersion": { "const": 2 },
+    "schemaVersion": { "const": 1 },
     "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
     "baseTag": { "type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+$" },
     "items": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["section", "text", "userVisible", "regressions", "guide", "docs", "website", "blog"],
+        "required": ["section", "text", "userVisible", "regressions", "docs", "website", "blog"],
         "properties": {
           "section": { "enum": ["Added", "Changed", "Fixed"] },
           "text": { "type": "string", "minLength": 3 },
           "userVisible": { "type": "boolean" },
           "regressions": { "type": "array", "items": { "type": "string", "pattern": "^UI-[A-Z0-9-]+$" } },
-          "guide": { "$ref": "#/$defs/disposition" },
           "docs": { "$ref": "#/$defs/disposition" },
           "website": { "$ref": "#/$defs/disposition" },
           "blog": { "$ref": "#/$defs/disposition" }

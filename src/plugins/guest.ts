@@ -1,6 +1,5 @@
 import { MAX_EVENT_BYTES, MAX_RESPONSE_BYTES, parsePluginResponse, type PluginEvent, type PluginResponse } from "./protocol";
 
-const WASM_PAGE_BYTES = 64 * 1024;
 const REQUIRED_EXPORTS = ["tine_alloc", "tine_handle", "tine_result_len"] as const;
 
 export interface PluginGuestLimits {
@@ -119,8 +118,4 @@ export function invokePluginGuest(guest: PluginGuest, event: PluginEvent): Plugi
     throw new PluginGuestError("guest returned invalid UTF-8 JSON");
   }
   return parsePluginResponse(decoded);
-}
-
-export function guestMaximumBytes(limits: PluginGuestLimits): number {
-  return limits.memoryMaximumPages * WASM_PAGE_BYTES;
 }

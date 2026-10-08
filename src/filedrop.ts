@@ -9,21 +9,13 @@ import { backend } from "./backend";
 import { assetFileName, assetMarkdown } from "./media";
 import { matrixGridNode, delimitedCellCount } from "./sheet/conversions";
 import { parseDelimitedText, type DelimitedKind } from "./sheet/tsv";
-import {
-  BULK_INSERTION_UNAVAILABLE_TOAST,
-  bulkRouteFenceCurrent,
-  captureBulkRouteFence,
-  doc,
-  formatForBlock,
-  insertOutlineAfter,
-  pageByName,
-  trackAssetWrite,
-  visibleOrder,
-  withUndoUnit,
-} from "./store";
-import { pushToast } from "./ui";
+import { formatForBlock, insertOutlineAfter, pageByName, trackAssetWrite, visibleOrder, withUndoUnit, node as docNode } from "./document";
+import { pushToast } from "./toasts";
+import { reportStaleAsset } from "./assetLanding";
+import { captureBinding } from "./binding";
+import { bindingOwner, readOwned, writeOwned } from "./owned";
+import { graphMeta } from "./graphSession";
 import type { OutlineNode } from "./editor/outline";
-import { dispatchDroppedFileInsertion } from "./storageDispatch";
 
 const MAX_DROPPED_CELLS = 5000;
 
@@ -43,73 +35,12 @@ function titleWithoutExtension(path: string, kind: DelimitedKind): string {
   return name.slice(0, Math.max(0, name.length - kind.length - 1)) || "Dropped table";
 }
 
-async function insertDroppedFilesDirect(afterId: string, paths: readonly string[]): Promise<void> {
-  // Direct Files does its IO one file at a time, so this routine can be mid-read
-  // when the graph binding changes underneath it. The route it chose is only
-  // true for as long as the fence holds; resuming past it would insert an
-  // outline against a binding it was never admitted to (GH #325).
-  const fence = captureBulkRouteFence(afterId);
-  if (!fence) return;
-  const nodes: OutlineNode[] = [];
-  for (const path of paths) {
-    // Stop reading further files the moment the fence breaks: the outline can no
-    // longer be inserted, and the target block may already be gone.
-    if (!bulkRouteFenceCurrent(fence)) break;
-    const kind = delimitedKind(path);
-    if (kind) {
-      const text = await backend().readTextFile(path);
-      const matrix = parseDelimitedText(text, kind);
-      const cells = delimitedCellCount(matrix);
-      if (cells > MAX_DROPPED_CELLS) {
-        pushToast(`"${basename(path)}" has ${cells} cells; CSV/TSV drops are limited to ${MAX_DROPPED_CELLS}.`, "error");
-        continue;
-      }
-      nodes.push(matrixGridNode(titleWithoutExtension(path, kind), matrix));
-      continue;
-    }
-    const orig = basename(path) || undefined;
-    const saved = await trackAssetWrite(backend().importAsset(path, assetFileName(orig)));
-    if (!bulkRouteFenceCurrent(fence)) break;
-    const page = pageByName(fence.targetPage);
-    nodes.push({
-      raw: assetMarkdown(saved, {
-        label: orig,
-        pagePath: page?.path,
-        format: formatForBlock(afterId),
-      }),
-      children: [],
-    });
-  }
-  if (!nodes.length) return;
-  if (!bulkRouteFenceCurrent(fence)) {
-    pushToast("Couldn't insert the dropped files: this graph changed while they were being read.", "error");
-    return;
-  }
-  withUndoUnit("file-drop", [doc.byId[afterId].page], () => insertOutlineAfter(afterId, nodes));
-  pushToast(`Inserted ${nodes.length} file${nodes.length === 1 ? "" : "s"}`, "success");
-}
-
-/** Insert an already-native-resolved file drop. Direct Files does its IO
- * sequentially under a route fence; the page has no size limits. */
-export async function insertDroppedFiles(afterId: string, paths: readonly string[]): Promise<void> {
-  try {
-    // Authority is selected once, by the dispatcher (I-6).
-    await dispatchDroppedFileInsertion<void>(
-      { afterId, paths },
-      {
-        direct: () => insertDroppedFilesDirect(afterId, paths),
-        unavailable: () => {
-          pushToast(BULK_INSERTION_UNAVAILABLE_TOAST, "error");
-        },
-      },
-    );
-  } catch (e) {
-    pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");
-  }
-}
-
-/** Install the OS file-drop handler. Returns an uninstaller. No-op outside the
- *  Tauri shell (browser mock / tests). */
+/** Install Tauri file-drop handling and return cleanup; outside Tauri return
+ * an inert cleanup. A drop onto a block imports ordinary files as assets or
+ * parses CSV/TSV into a grid (up to 5000 cells), then inserts blocks. Work
+ * grows with dropped file bytes and visible blocks. Errors toast; imported
+ * assets from earlier files can remain if a later step fails or the target
+ * retires. Installation errors reject. */
 export async function installFileDrop(): Promise<() => void> {
   let webview: ReturnType<typeof getCurrentWebview>;
   try {
@@ -136,12 +67,59 @@ export async function installFileDrop(): Promise<() => void> {
     const onBlock = el?.closest("[data-block-id]")?.getAttribute("data-block-id") ?? null;
     const order = visibleOrder();
     const afterId = onBlock ?? order[order.length - 1] ?? null;
-    if (!afterId || !doc.byId[afterId]) {
+    if (!afterId || !docNode(afterId)) {
       pushToast("Drop a file onto a block to insert it.", "error");
       return;
     }
+    const binding = captureBinding();
+    const dropRoot = graphMeta()?.root;
+    const dropPage = docNode(afterId).page;
+    const owner = bindingOwner(() => graphMeta()?.root === dropRoot && docNode(afterId)?.page === dropPage);
+    const pagePath = pageByName(dropPage)?.id;
+    const format = formatForBlock(afterId);
 
-    await insertDroppedFiles(afterId, paths);
+    try {
+      const nodes: OutlineNode[] = [];
+      let storedAssets = 0;
+      for (const path of paths) {
+        const kind = delimitedKind(path);
+        if (kind) {
+          const result = await readOwned(owner, backend().readTextFile(path));
+          if (result.kind === "stale") return;
+          const matrix = parseDelimitedText(result.value, kind);
+          const cells = delimitedCellCount(matrix);
+          if (cells > MAX_DROPPED_CELLS) {
+            pushToast(`"${basename(path)}" has ${cells} cells; CSV/TSV drops are limited to ${MAX_DROPPED_CELLS}.`, "error");
+            continue;
+          }
+          nodes.push(matrixGridNode(titleWithoutExtension(path, kind), matrix));
+          continue;
+        }
+        const orig = basename(path) || undefined;
+        const result = await writeOwned(owner, trackAssetWrite(backend().importAsset(path, assetFileName(orig), binding.backendGeneration)));
+        if (result.kind === "stale") { storedAssets++; continue; }
+        const saved = result.value;
+        storedAssets++;
+        nodes.push({
+          raw: assetMarkdown(saved, {
+            label: orig,
+            pagePath,
+            format,
+          }),
+          children: [],
+        });
+      }
+      if (!nodes.length) { if (storedAssets && !owner()) reportStaleAsset(); return; }
+      if (!owner()) {
+        if (storedAssets) reportStaleAsset();
+        return;
+      }
+      const inserted = withUndoUnit("file-drop", [dropPage], () => insertOutlineAfter(afterId, nodes));
+      if (!inserted) { pushToast("Dropped files could not be inserted at this outline depth.", "error"); return; }
+      pushToast(`Inserted ${nodes.length} file${nodes.length === 1 ? "" : "s"}`, "success");
+    } catch (e) {
+      pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");
+    }
   });
 
   return () => {

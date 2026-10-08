@@ -1,15 +1,18 @@
-#[cfg(test)]
-use clap::CommandFactory;
+//! Desktop command line over og's Store. One typed clap schema owns parsing,
+//! `--help`, `--version`, the generated man pages, the cold GUI launch and the
+//! request forwarded to an already-running instance (master ADR 0068; before this
+//! the hand-rolled parser, `graph::resolve_root` and the single-instance handler
+//! each re-interpreted argv, and `tine open GRAPH` was forwarded as a page called
+//! "open"). Export keeps og's create-only shape: `--output` names an existing
+//! external parent and both formats install one new child there; no direct
+//! projection, graph-relative publication or replacement path exists.
+
 use clap::{ArgAction, Args, Parser, Subcommand};
-use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::Write;
-use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
-
-use tine_core::publish::app_export::{AppHome, PublishedAppBundle};
-use tine_core::publish::{publish_graph_app_to, publish_graph_to, PublicationOutput};
-use tine_core::Graph;
+use std::path::{Path, PathBuf};
+use tine_graph_features::publish_query::{publish_live_home, publish_static, ExportReceipt};
+use tine_store::Store;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -32,10 +35,6 @@ struct Cli {
     #[arg(long, conflicts_with = "graph")]
     capture: bool,
 
-    /// Internal Guide-copy smoke-test switch.
-    #[arg(long, hide = true)]
-    tine_ci_copy_guide: bool,
-
     /// Graph to open in the desktop app (legacy shorthand for `tine open GRAPH`).
     #[arg(value_name = "GRAPH", value_hint = clap::ValueHint::DirPath)]
     graph: Option<PathBuf>,
@@ -53,12 +52,12 @@ enum Command {
     },
     /// Open Quick Capture in the desktop app.
     Capture,
-    /// Export public pages from a graph.
+    /// Publish a graph as a static site or a read-only Tine app.
     Export {
         #[command(subcommand)]
         format: ExportFormat,
     },
-    /// Check that a graph can be discovered and parsed without changing it.
+    /// Check that a graph can be read and parsed without changing it.
     Doctor {
         #[arg(value_name = "GRAPH", value_hint = clap::ValueHint::DirPath)]
         graph: PathBuf,
@@ -71,26 +70,8 @@ enum Command {
 enum ExportFormat {
     /// Write the static HTML site.
     Static(ExportArgs),
-    /// Write the read-only Tine app, with the static site as its fallback.
+    /// Write the read-only Tine app.
     Live(LiveExportArgs),
-}
-
-#[derive(Debug, Args)]
-struct ExportArgs {
-    #[arg(value_name = "GRAPH", value_hint = clap::ValueHint::DirPath)]
-    graph: PathBuf,
-
-    /// Graph-relative output directory.
-    #[arg(long, default_value = "publish", value_name = "DIRECTORY")]
-    output: PathBuf,
-
-    /// Publish every page, ignoring `public:: true` selection for this run.
-    #[arg(long)]
-    all_pages: bool,
-
-    /// Retire an existing output into recovery and install the new export.
-    #[arg(long)]
-    replace: bool,
 }
 
 #[derive(Debug, Args)]
@@ -98,61 +79,171 @@ struct LiveExportArgs {
     #[command(flatten)]
     export: ExportArgs,
 
-    /// Page to open first. Defaults to configured home, Welcome to Tine, or the first page.
+    /// Page to open first. Defaults to the configured home page when it is exported, Welcome to Tine, or the first page.
     #[arg(long, value_name = "PAGE")]
     home: Option<String>,
-
-    /// Name shown in the published app. Defaults to the graph directory name.
-    #[arg(long, value_name = "NAME")]
-    name: Option<String>,
 }
 
+#[derive(Debug, Args)]
+struct ExportArgs {
+    #[arg(value_name = "GRAPH", value_hint = clap::ValueHint::DirPath)]
+    graph: PathBuf,
+
+    /// Existing absolute folder outside the graph; a new child is created in it.
+    #[arg(long, required = true, value_name = "PARENT", value_hint = clap::ValueHint::DirPath)]
+    output: PathBuf,
+
+    /// Name of the created child and of the published site. Defaults to the graph folder name.
+    #[arg(long, value_name = "NAME")]
+    name: Option<String>,
+
+    /// Publish every page, ignoring `public:: true` selection for this run.
+    #[arg(long)]
+    all_pages: bool,
+}
+
+/// What a launch asks the GUI to do; the same value comes from the cold-start
+/// argv and from a second instance's forwarded argv.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LaunchRequest {
     Focus,
     Open(PathBuf),
     Capture,
+    Link(String),
 }
-
-pub(crate) enum Startup {
-    Gui,
-    Exit(i32),
-}
-
-#[derive(Debug)]
-struct CliError(String);
-
-impl std::fmt::Display for CliError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl From<String> for CliError {
-    fn from(message: String) -> Self {
-        Self(message)
-    }
-}
-
-impl From<&str> for CliError {
-    fn from(message: &str) -> Self {
-        Self(message.to_string())
-    }
-}
-
-type CliResult<T> = Result<T, CliError>;
 
 fn terminal_stdout(arguments: std::fmt::Arguments<'_>) {
-    let mut output = std::io::stdout().lock();
-    let _ = writeln!(output, "{arguments}");
+    let _ = writeln!(std::io::stdout().lock(), "{arguments}");
 }
 
 fn terminal_stderr(arguments: std::fmt::Arguments<'_>) {
-    let mut output = std::io::stderr().lock();
-    let _ = writeln!(output, "{arguments}");
+    let _ = writeln!(std::io::stderr().lock(), "{arguments}");
 }
 
-pub(crate) fn dispatch_env() -> Startup {
+fn bundle() -> Vec<(String, Vec<u8>)> {
+    let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+    let assets = context.assets();
+    let mut files: Vec<_> = assets
+        .iter()
+        .map(|(path, _)| path.into_owned())
+        .filter(|path| {
+            let name = path.trim_start_matches('/');
+            name == "index.html" || (name.starts_with("assets/") && !name.contains(".."))
+        })
+        .filter_map(|path| {
+            let key = tauri::utils::assets::AssetKey::from(path.as_str());
+            assets
+                .get(&key)
+                .map(|bytes| (path.trim_start_matches('/').to_owned(), bytes.into_owned()))
+        })
+        .collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files
+}
+
+fn open_store(path: &Path) -> Result<Store, String> {
+    let root = path
+        .canonicalize()
+        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    Store::open(&root, Default::default())
+        .map(|(store, _, _)| store)
+        .map_err(|e| format!("cannot read graph {}: {e:?}", root.display()))
+}
+
+fn export(format: ExportFormat) -> Result<ExportReceipt, String> {
+    let (live, args) = match format {
+        ExportFormat::Static(args) => (None, args),
+        ExportFormat::Live(args) => (Some(args.home), args.export),
+    };
+    if !args.output.is_absolute() {
+        return Err("--output must be an absolute folder path".into());
+    }
+    let store = open_store(&args.graph)?;
+    let display = args.name.unwrap_or_else(|| {
+        args.graph
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Tine export".into())
+    });
+    let result = match live {
+        Some(home) => publish_live_home(
+            &store,
+            &args.output,
+            &display,
+            args.all_pages,
+            home.as_deref(),
+            &bundle(),
+        ),
+        None => publish_static(&store, &args.output, &display, args.all_pages),
+    };
+    result.map_err(|e| e.to_string())
+}
+
+/// What `tine doctor` found: summary lines for stdout and one line per problem.
+#[derive(Debug)]
+struct DoctorReport {
+    summary: Vec<String>,
+    problems: Vec<String>,
+}
+
+fn doctor_report(path: &Path) -> Result<DoctorReport, String> {
+    let store = open_store(path)?;
+    let graph = store
+        .whole_graph()
+        .map_err(|e| format!("cannot parse graph: {e:?}"))?;
+    let corpus = graph.corpus();
+    // One identity per page name under the store's own fold (`page_key`): two
+    // files claiming it make links and edits land on only one of them.
+    let mut identities: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for page in &corpus.pages {
+        identities
+            .entry(tine_core::refs::page_key(&page.name))
+            .or_default()
+            .push(String::from(page.id.clone()));
+    }
+    let mut problems: Vec<String> = graph
+        .unreadable_files()
+        .iter()
+        .map(|(file, reason)| format!("parse failure: {}: {reason}", file.as_str()))
+        .collect();
+    problems.extend(
+        identities
+            .into_iter()
+            .filter(|(_, paths)| paths.len() > 1)
+            .map(|(name, paths)| format!("duplicate page identity {name:?}: {}", paths.join(", "))),
+    );
+    let config = store.config();
+    let summary = vec![
+        format!("Graph: {}", path.display()),
+        format!("Pages and journals: {}", corpus.pages.len()),
+        format!(
+            "Default home: {}",
+            config.config.default_home.as_deref().unwrap_or("(none)")
+        ),
+    ];
+    Ok(DoctorReport { summary, problems })
+}
+
+fn doctor(path: &Path) -> Result<(), String> {
+    let report = doctor_report(path)?;
+    for line in &report.summary {
+        terminal_stdout(format_args!("{line}"));
+    }
+    if report.problems.is_empty() {
+        terminal_stdout(format_args!(
+            "OK: graph files are readable and parseable; page identities are unique"
+        ));
+        return Ok(());
+    }
+    for line in &report.problems {
+        terminal_stderr(format_args!("{line}"));
+    }
+    Err("graph checks found problems".into())
+}
+
+/// Handle non-GUI desktop commands before Tauri starts. `None` continues into
+/// the ordinary GUI; `Some(code)` exits after printing the result or error.
+pub(crate) fn dispatch() -> Option<i32> {
     let argv = std::env::args_os().collect::<Vec<_>>();
     prepare_console_if_needed(&argv);
     let cli = match Cli::try_parse_from(&argv) {
@@ -160,216 +251,47 @@ pub(crate) fn dispatch_env() -> Startup {
         Err(error) => {
             let code = if error.use_stderr() { 2 } else { 0 };
             let _ = error.print();
-            return Startup::Exit(code);
+            return Some(code);
         }
     };
-    match cli.command {
+    let result = match cli.command {
         Some(Command::Version) => {
             terminal_stdout(format_args!("tine {}", env!("CARGO_PKG_VERSION")));
-            Startup::Exit(0)
+            return Some(0);
         }
-        Some(Command::Doctor { graph }) => command_result(doctor(&graph)),
-        Some(Command::Export { format }) => command_result(export(format)),
-        _ => Startup::Gui,
-    }
-}
-
-fn command_result(result: CliResult<()>) -> Startup {
+        Some(Command::Doctor { graph }) => doctor(&graph),
+        Some(Command::Export { format }) => export(format).map(|receipt| {
+            terminal_stdout(format_args!(
+                "Published {} pages to {}",
+                receipt.pages, receipt.path
+            ));
+        }),
+        _ => return None,
+    };
     match result {
-        Ok(()) => Startup::Exit(0),
-        Err(message) => {
-            terminal_stderr(format_args!("tine: {message}"));
-            Startup::Exit(1)
+        Ok(()) => Some(0),
+        Err(error) => {
+            terminal_stderr(format_args!("tine: {error}"));
+            Some(1)
         }
     }
 }
 
-fn open_graph(path: &Path) -> CliResult<(Graph, tempfile::TempDir)> {
-    let root = path
-        .canonicalize()
-        .map_err(|error| format!("cannot open graph {}: {error}", path.display()))?;
-    if !root.is_dir() {
-        return Err(format!("graph is not a directory: {}", root.display()).into());
-    }
-    let projection = tempfile::Builder::new()
-        .prefix("tine-cli-projection-")
-        .tempdir()
-        .map_err(|error| format!("cannot create temporary derived state: {error}"))?;
-    let graph = Graph::open(&root);
-    graph
-        .attach_direct_projection(projection.path().join("direct.sqlite"))
-        .map_err(|error| format!("cannot prepare graph index: {error}"))?;
-    graph.warm_cache();
-    Ok((graph, projection))
-}
-
-fn export(format: ExportFormat) -> CliResult<()> {
-    match format {
-        ExportFormat::Static(args) => {
-            let (mut graph, _projection) = open_graph(&args.graph)?;
-            graph.config_mut().all_pages_public |= args.all_pages;
-            let output = publication_output(&args.output, args.replace)?;
-            let outcome = publish_graph_to(&graph, output)
-                .map_err(|error| format!("static export failed: {error}"))?;
-            print_outcome(&outcome);
-            Ok(())
-        }
-        ExportFormat::Live(args) => {
-            let (mut graph, _projection) = open_graph(&args.export.graph)?;
-            graph.config_mut().all_pages_public |= args.export.all_pages;
-            let output = publication_output(&args.export.output, args.export.replace)?;
-            let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
-            let bundle = embedded_app_bundle(&context);
-            if bundle.index().is_none() {
-                return Err(
-                    "this binary has no embedded frontend; use an installed or release Tine build"
-                        .into(),
-                );
-            }
-            let name = args.name.unwrap_or_else(|| {
-                graph
-                    .root
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or("Tine export")
-                    .to_string()
-            });
-            let home = args.home.map(AppHome::Page).unwrap_or(AppHome::Auto);
-            let outcome = publish_graph_app_to(&graph, Arc::new(bundle), &name, home, output)
-                .map_err(|error| format!("live export failed: {error}"))?;
-            print_outcome(&outcome);
-            Ok(())
-        }
-    }
-}
-
-fn print_outcome(outcome: &tine_core::publish::PublishOutcome) {
-    terminal_stdout(format_args!(
-        "Published {} pages to {}",
-        outcome.pages, outcome.path
-    ));
-    if let Some(retired) = &outcome.retired {
-        terminal_stdout(format_args!("Previous output retained at {retired}"));
-    }
-    for warning in &outcome.warnings {
-        terminal_stderr(format_args!("warning: {warning}"));
-    }
-}
-
-fn embedded_app_bundle(context: &tauri::Context<tauri::Wry>) -> PublishedAppBundle {
-    let assets = context.assets();
-    let paths = assets
-        .iter()
-        .map(|(path, _)| path.into_owned())
-        .filter(|path| PublishedAppBundle::ships(path))
-        .collect::<Vec<_>>();
-    let mut files = paths
-        .into_iter()
-        .filter_map(|path| {
-            let key = tauri::utils::assets::AssetKey::from(path.as_str());
-            assets
-                .get(&key)
-                .map(|bytes| (path.trim_start_matches('/').to_string(), bytes.into_owned()))
-        })
-        .collect::<Vec<_>>();
-    files.sort_by(|left, right| left.0.cmp(&right.0));
-    PublishedAppBundle { files }
-}
-
-fn publication_output(path: &Path, replace: bool) -> CliResult<PublicationOutput> {
-    if path.is_absolute() {
-        return Err("--output must be relative to the graph root".into());
-    }
-    let components = path.components().collect::<Vec<_>>();
-    if components.is_empty()
-        || components
-            .iter()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err("--output must be a non-empty graph-relative directory".into());
-    }
-    let leaf = components
-        .last()
-        .and_then(|component| match component {
-            Component::Normal(value) => value.to_str(),
-            _ => None,
-        })
-        .ok_or_else(|| "--output must end in a valid directory name".to_string())?
-        .to_string();
-    let parent =
-        components[..components.len() - 1]
-            .iter()
-            .fold(PathBuf::new(), |mut path, component| {
-                if let Component::Normal(value) = component {
-                    path.push(value);
-                }
-                path
-            });
-    Ok(PublicationOutput {
-        parent,
-        leaf,
-        replace,
-    })
-}
-
-fn doctor(path: &Path) -> CliResult<()> {
-    let root = path
-        .canonicalize()
-        .map_err(|error| format!("cannot inspect graph {}: {error}", path.display()))?;
-    if !root.is_dir() {
-        return Err(format!("graph is not a directory: {}", root.display()).into());
-    }
-    let graph = Graph::open(&root);
-    let pages = graph
-        .try_list_pages()
-        .map_err(|error| format!("cannot list pages of {}: {error}", root.display()))?;
-    let failures = graph.page_index_failures();
-    let mut identities: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for page in &pages {
-        identities
-            .entry(page.name.to_lowercase())
-            .or_default()
-            .push(page.rel_path.clone());
-    }
-    let duplicates = identities
-        .into_iter()
-        .filter(|(_, paths)| paths.len() > 1)
-        .collect::<Vec<_>>();
-
-    terminal_stdout(format_args!("Graph: {}", root.display()));
-    terminal_stdout(format_args!("Pages and journals: {}", pages.len()));
-    terminal_stdout(format_args!(
-        "Default home: {}",
-        graph.config().default_home.as_deref().unwrap_or("(none)")
-    ));
-    if failures.is_empty() && duplicates.is_empty() {
-        terminal_stdout(format_args!(
-            "OK: graph files are readable and parseable; page identities are unique"
-        ));
-        return Ok(());
-    }
-    for failure in failures {
-        terminal_stderr(format_args!("parse failure: {failure}"));
-    }
-    for (name, paths) in duplicates {
-        terminal_stderr(format_args!(
-            "duplicate page identity {name:?}: {}",
-            paths.join(", ")
-        ));
-    }
-    Err("graph checks found problems".into())
-}
-
+/// The GUI request in `argv`, with a relative graph resolved against `cwd`
+/// (the sender's, for a forwarded launch). Unparseable argv only focuses.
 pub(crate) fn launch_request(argv: &[String], cwd: &Path) -> LaunchRequest {
+    if let Some(url) = argv.iter().skip(1).find(|arg| arg.starts_with("tine:")) {
+        return LaunchRequest::Link(url.clone());
+    }
     let Ok(cli) = Cli::try_parse_from(argv) else {
         return LaunchRequest::Focus;
     };
     let request = match cli.command {
         Some(Command::Open { graph }) => LaunchRequest::Open(graph),
         Some(Command::Capture) => LaunchRequest::Capture,
-        _ if cli.capture => LaunchRequest::Capture,
-        _ => cli
+        Some(_) => LaunchRequest::Focus,
+        None if cli.capture => LaunchRequest::Capture,
+        None => cli
             .graph
             .map(LaunchRequest::Open)
             .unwrap_or(LaunchRequest::Focus),
@@ -386,19 +308,20 @@ pub(crate) fn launch_request_env() -> LaunchRequest {
     launch_request(&argv, &cwd)
 }
 
+/// A GUI-subsystem Windows binary has no console; attach the parent's so
+/// `--help`, `doctor` and `export` can print. GUI launches never attach.
 #[cfg(target_os = "windows")]
 fn prepare_console_if_needed(argv: &[OsString]) {
     let headless = argv.iter().skip(1).any(|argument| {
         let argument = argument.to_string_lossy();
-        let gui_flag = argument
-            .strip_prefix("--")
-            .is_some_and(|name| matches!(name, "debug" | "capture" | "tine-ci-copy-guide"));
+        let gui_flag = matches!(argument.as_ref(), "--debug" | "--capture");
         matches!(
             argument.as_ref(),
             "help" | "version" | "export" | "doctor" | "-h" | "--help" | "-v" | "-V" | "--version"
         ) || (argument.starts_with('-') && !gui_flag)
     });
     if headless {
+        // SAFETY: AttachConsole takes no pointer; failure (no parent console) is ignored.
         unsafe {
             windows_sys::Win32::System::Console::AttachConsole(
                 windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS,
@@ -413,40 +336,200 @@ fn prepare_console_if_needed(_: &[OsString]) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|part| (*part).to_owned()).collect()
+    }
 
     #[test]
     fn legacy_and_named_gui_launches_share_one_parser() {
         let cwd = Path::new("/graphs");
+        for form in [
+            &["tine", "notes"][..],
+            &["tine", "open", "notes"],
+            &["tine", "--debug", "notes"],
+        ] {
+            assert_eq!(
+                launch_request(&argv(form), cwd),
+                LaunchRequest::Open(PathBuf::from("/graphs/notes")),
+                "{form:?}"
+            );
+        }
         assert_eq!(
-            launch_request(&["tine".into(), "notes".into()], cwd),
-            LaunchRequest::Open(PathBuf::from("/graphs/notes"))
+            launch_request(&argv(&["tine", "open", "/abs/notes"]), cwd),
+            LaunchRequest::Open(PathBuf::from("/abs/notes"))
         );
+        for form in [
+            &["tine", "capture"][..],
+            &["tine", "--capture"],
+            &["tine", "--debug", "capture"],
+        ] {
+            assert_eq!(
+                launch_request(&argv(form), cwd),
+                LaunchRequest::Capture,
+                "{form:?}"
+            );
+        }
+        assert_eq!(launch_request(&argv(&["tine"]), cwd), LaunchRequest::Focus);
         assert_eq!(
-            launch_request(&["tine".into(), "open".into(), "notes".into()], cwd),
-            LaunchRequest::Open(PathBuf::from("/graphs/notes"))
-        );
-        assert_eq!(
-            launch_request(&["tine".into(), "capture".into()], cwd),
-            LaunchRequest::Capture
-        );
-        assert_eq!(
-            launch_request(&["tine".into(), "--capture".into()], cwd),
-            LaunchRequest::Capture
+            launch_request(&argv(&["tine", "--bogus"]), cwd),
+            LaunchRequest::Focus
         );
     }
 
     #[test]
-    fn output_is_graph_relative_and_create_only_by_default() {
-        let output = publication_output(Path::new("exports/live"), false).unwrap();
-        assert_eq!(output.parent, PathBuf::from("exports"));
-        assert_eq!(output.leaf, "live");
-        assert!(!output.replace);
-        assert!(publication_output(Path::new("../outside"), false).is_err());
-        assert!(publication_output(Path::new("/outside"), false).is_err());
+    fn a_graph_folder_named_like_a_command_is_reachable_with_open() {
+        let cwd = Path::new("/graphs");
+        assert_eq!(
+            launch_request(&argv(&["tine", "open", "export"]), cwd),
+            LaunchRequest::Open(PathBuf::from("/graphs/export"))
+        );
     }
 
     #[test]
-    fn checked_in_man_page_is_generated_from_the_cli_schema() {
+    fn terminal_commands_never_request_a_gui_action() {
+        for form in [
+            &["tine", "doctor", "g"][..],
+            &["tine", "export", "static", "g", "--output", "/o"],
+            &["tine", "version"],
+        ] {
+            assert_eq!(
+                launch_request(&argv(form), Path::new("/")),
+                LaunchRequest::Focus,
+                "{form:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn external_url_argv_never_becomes_a_relative_graph_path() {
+        let url = "tine://block/11111111-1111-4111-8111-111111111111";
+        assert_eq!(
+            launch_request(&argv(&["tine", url]), Path::new("/wrong")),
+            LaunchRequest::Link(url.into())
+        );
+    }
+
+    #[test]
+    fn export_requires_an_output_parent_and_accepts_both_formats() {
+        for format in ["static", "live"] {
+            assert!(Cli::try_parse_from(["tine", "export", format, "g"]).is_err());
+            let parsed = Cli::try_parse_from([
+                "tine",
+                "export",
+                format,
+                "g",
+                "--output",
+                "/o",
+                "--name",
+                "N",
+                "--all-pages",
+            ])
+            .unwrap();
+            assert!(matches!(parsed.command, Some(Command::Export { .. })));
+        }
+        let live = Cli::try_parse_from([
+            "tine",
+            "export",
+            "live",
+            "g",
+            "--output",
+            "/o",
+            "--home",
+            "Directory",
+        ])
+        .unwrap();
+        let Some(Command::Export {
+            format: ExportFormat::Live(args),
+        }) = live.command
+        else {
+            panic!("live export did not parse");
+        };
+        assert_eq!(args.home.as_deref(), Some("Directory"));
+        assert!(Cli::try_parse_from([
+            "tine",
+            "export",
+            "static",
+            "g",
+            "--output",
+            "/o",
+            "--home",
+            "Directory",
+        ])
+        .is_err());
+        let relative = export(ExportFormat::Static(ExportArgs {
+            graph: PathBuf::from("g"),
+            output: PathBuf::from("relative"),
+            name: None,
+            all_pages: false,
+        }));
+        assert_eq!(
+            relative.unwrap_err(),
+            "--output must be an absolute folder path"
+        );
+    }
+
+    /// og I1f (#35, port of master e7af4db9): doctor names an unreadable page
+    /// and a duplicate page identity, and exits 1, instead of printing OK.
+    fn doctor_fixture(tag: &str) -> tempfile::TempDir {
+        let root = tempfile::Builder::new()
+            .prefix(&format!("tine-doctor-{tag}-"))
+            .tempdir()
+            .unwrap();
+        std::fs::create_dir_all(root.path().join("pages")).unwrap();
+        std::fs::create_dir_all(root.path().join("journals")).unwrap();
+        std::fs::write(root.path().join("pages/Note.md"), "- fine\n").unwrap();
+        root
+    }
+
+    #[test]
+    fn doctor_passes_a_clean_graph() {
+        let root = doctor_fixture("clean");
+        assert_eq!(doctor(root.path()), Ok(()));
+    }
+
+    #[test]
+    fn doctor_reports_an_unreadable_page_and_fails() {
+        let root = doctor_fixture("unreadable");
+        std::fs::write(root.path().join("pages/Bad.md"), [0xff, 0xfe]).unwrap();
+        let report = doctor_report(root.path()).unwrap();
+        assert!(
+            report
+                .problems
+                .iter()
+                .any(|line| line.starts_with("parse failure: ") && line.contains("Bad.md")),
+            "{:?}",
+            report.problems
+        );
+        assert_eq!(
+            doctor(root.path()).unwrap_err(),
+            "graph checks found problems"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_a_duplicate_page_identity_and_fails() {
+        let root = doctor_fixture("duplicate");
+        std::fs::write(root.path().join("pages/A.md"), "title:: Same\n\n- a\n").unwrap();
+        std::fs::write(root.path().join("pages/B.md"), "title:: same\n\n- b\n").unwrap();
+        let report = doctor_report(root.path()).unwrap();
+        assert!(
+            report.problems.iter().any(|line| line
+                .starts_with("duplicate page identity \"same\": ")
+                && line.contains("A.md")
+                && line.contains("B.md")),
+            "{:?}",
+            report.problems
+        );
+        assert_eq!(
+            doctor(root.path()).unwrap_err(),
+            "graph checks found problems"
+        );
+    }
+
+    #[test]
+    fn checked_in_man_pages_are_generated_from_the_cli_schema() {
         const MAN_PAGES: &[(&str, &str)] = &[
             ("tine.1", include_str!("../../docs/tine.1")),
             ("tine-open.1", include_str!("../../docs/tine-open.1")),
@@ -477,18 +560,18 @@ mod tests {
             assert_eq!(
                 std::fs::read_to_string(generated.path().join(name)).unwrap(),
                 *expected,
-                "{name} drifted from the CLI schema"
+                "{name} drifted from the CLI schema (TINE_UPDATE_MAN_PAGE=1 regenerates)"
             );
         }
-    }
-
-    #[cfg(feature = "custom-protocol")]
-    #[test]
-    fn embedded_release_frontend_is_exportable() {
-        let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
-        let bundle = embedded_app_bundle(&context);
-        let index = std::str::from_utf8(bundle.index().expect("embedded index.html"))
-            .expect("UTF-8 index.html");
-        assert!(index.to_ascii_lowercase().contains("<head>"), "{index}");
+        let packaged = include_str!("../tauri.conf.json");
+        for (name, _) in MAN_PAGES {
+            assert!(
+                packaged
+                    .matches(&format!("usr/share/man/man1/{name}"))
+                    .count()
+                    == 2,
+                "{name} must ship in both the deb and the rpm package"
+            );
+        }
     }
 }

@@ -24,7 +24,7 @@ screenshots/
 scripts/app-icon-1024.png
 
 # Agent working agreement: repo-root AGENTS.md / CLAUDE.md are tracked POINTERS
-# to the canonical /aux/koutecky/logseq/tine-agents/AGENTS.md (kept outside the
+# to the canonical ../tine-agents/AGENTS.md (kept outside the
 # worktree so `git clean` can't delete it). They are tracked on purpose — a
 # tracked file survives `git clean`; do NOT ignore them.
 
@@ -32,31 +32,7 @@ scripts/app-icon-1024.png
 # deferred-work list. Working artifacts between Martin and Claude, not shared.
 /subagent-tasks
 /DEFERRED.md
+/RECEIPT*.md
 
 # Private Reddit outreach data — keep locally, never publish
 reddit-backup/
-
-# Lane evidence (receipts, gate baselines, necessity/fail-before logs). Workers
-# write these to the worktree root; the manager archives them under
-# tine-agents/evidence/ before integration. They must never be tracked: they
-# leak private worktree paths and dossier names to both public remotes
-# (census guard g_h_repository_root_tracks_no_lane_evidence).
-/RECEIPT*.md
-/baseline-*.txt
-/necessity-*.txt
-# Every root-level log, not an enumeration of the shapes lanes have used so far:
-# the list below had grown to nine patterns and still missed *-pass-after.log,
-# *-debug.log and *-gate.log, which is most of what a lane actually writes. No
-# root .log file has ever been tracked, so the wide rule costs nothing and a lane
-# can no longer invent a name that escapes it.
-/*.log
-/*-cargo-metadata.json
-/after-*.txt
-/measurement-*.txt
-/measurement*-*.md
-# A sandboxed lane cannot write the default npm cache directory, so it makes one
-# here. It is a build artifact, not source.
-/.npm-cache/
-
-# compact-projection budget measurement output (scripts/measure-projection.mjs)
-/projection-budget.json

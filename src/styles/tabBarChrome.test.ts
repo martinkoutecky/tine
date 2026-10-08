@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { readAppStylesheet } from "../testSource";
+import { readFileSync } from "node:fs";
 
-const css = readAppStylesheet();
+const css = readFileSync("src/styles/app.css", "utf8");
 
 function rule(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

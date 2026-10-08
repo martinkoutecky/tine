@@ -1,6 +1,8 @@
 // Native H2 proof: delayed PDF work stays with the graph/window generation that
-// created it.  The oracle is sidecar bytes plus a real close/relaunch, never
-// pixels or debounce duration alone.
+// created it.  The oracle is sidecar bytes, each graph's own session file, plus a
+// real close/relaunch, never pixels or debounce duration alone. Reading and
+// zooming write no graph files (GH #577, Martin 2026-10-04): the reader position
+// persists in the window's pane route, saved to the creating graph's session.
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -8,10 +10,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { frameExtents as sharedFrameExtents, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-
-await ensureDisplay();
+import { APP_ID } from "./lib/app-identity.mjs";
+import { x11Tools } from "./lib/e2e-x11.mjs";
 
 if (process.platform !== "linux") throw new Error("PDF ownership native proof is Linux-only");
 
@@ -45,7 +45,7 @@ for (const [graph, owner] of [[GRAPH_A, "A"], [GRAPH_B, "B"]]) {
   );
 }
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
-const appData = path.join(TMP, "xdg", "data", "page.tine.Tine");
+const appData = path.join(TMP, "xdg", "data", APP_ID);
 fs.mkdirSync(appData, { recursive: true });
 fs.writeFileSync(path.join(appData, "tine-settings.json"), JSON.stringify({
   known_graphs: [
@@ -69,63 +69,13 @@ const env = {
   LIBGL_ALWAYS_SOFTWARE: "1",
   GDK_BACKEND: "x11",
 };
-const xdoEnv = process.env.E2E_XDOTOOL_LIB
-  ? { ...env, LD_LIBRARY_PATH: process.env.E2E_XDOTOOL_LIB }
-  : env;
-const xdo = (...args) => execFileSync(XDOTOOL, args, { encoding: "utf8", env: xdoEnv }).trim();
+const { xdo, geometry, windowIds, frameExtents } = x11Tools(env, { xdotool: XDOTOOL });
 let driver;
 let browser;
 let appPid;
 let wm;
 let driverLog;
 let wmLog;
-
-function geometry(id) {
-  // xdotool's --shell Y coordinate double-counts Openbox's reparented titlebar
-  // in this environment. xwininfo reports the client origin that
-  // _NET_FRAME_EXTENTS is defined around.
-  const raw = execFileSync("xwininfo", ["-id", id], { encoding: "utf8", env });
-  const read = (label) => {
-    const value = raw.match(new RegExp(`^\\s*${label}:\\s*(-?\\d+)`, "m"))?.[1];
-    if (value === undefined) throw new Error(`xwininfo omitted ${label}: ${raw.trim()}`);
-    return Number(value);
-  };
-  return {
-    X: read("Absolute upper-left X"),
-    Y: read("Absolute upper-left Y"),
-    WIDTH: read("Width"),
-    HEIGHT: read("Height"),
-  };
-}
-
-function windowIds() {
-  try {
-    // xdotool uses POSIX extended regular expressions (no `(?:...)`).
-    return xdo("search", "--onlyvisible", "--name", "^Tine( — .*)?$")
-      .split(/\s+/)
-      .filter(Boolean)
-      // Tauri/Openbox can also expose a tiny same-title helper surface. The
-      // graph window is the largest visible match and owns the real frame.
-      .sort((a, b) => {
-        try {
-          const ga = geometry(a);
-          const gb = geometry(b);
-          return gb.WIDTH * gb.HEIGHT - ga.WIDTH * ga.HEIGHT;
-        } catch {
-          return 0;
-        }
-      });
-  } catch {
-    return [];
-  }
-}
-
-// This suite's window sorting treats a missing frame-extents property as
-// malformed; the shared parser (e2e-capabilities.mjs) exposes that policy as
-// `strict: true` — the suite's old behavior, now with one parse core.
-function frameExtents(id) {
-  return sharedFrameExtents(id, env, { strict: true });
-}
 
 function processAlive(pid) {
   try {
@@ -137,7 +87,11 @@ function processAlive(pid) {
 }
 
 function startDriver() {
-  driver = spawn(TD, webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, WD), { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+  driver = spawn(TD, [
+    "--port", String(DRIVER_PORT),
+    "--native-port", String(NATIVE_PORT),
+    "--native-driver", WD,
+  ], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
 }
 
 async function stopDriver() {
@@ -162,7 +116,11 @@ async function connect() {
     logLevel: "error",
     connectionRetryCount: 1,
     connectionRetryTimeout: 60_000,
-    capabilities: tauriCapabilities(APP, "pdf-ownership"),
+    capabilities: {
+      browserName: "wry",
+      "wdio:enforceWebDriverClassic": true,
+      "tauri:options": { application: APP },
+    },
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 30_000 });
   const windowId = await waitForNode(() => windowIds()[0], "Tine native window did not appear");
@@ -240,21 +198,36 @@ function sidecar(graph) {
   return path.join(graph, "assets", "shared.edn");
 }
 
-function sidecarScale(graph) {
-  const text = fs.readFileSync(sidecar(graph), "utf8");
-  const value = Number(text.match(/:scale\s+([0-9.]+)/)?.[1]);
-  if (!Number.isFinite(value)) throw new Error(`missing sidecar scale in ${text}`);
-  return value;
+// The graph session file the backend keys by the graph folder name plus a path
+// hash (settings.rs session_id). Returns the scale of every saved PDF route for
+// shared.pdf, wherever it sits in the persisted tabs/layout.
+function sessionPdfScales(graph) {
+  const dir = path.join(appData, "sessions");
+  const prefix = `${path.basename(graph).replace(/[^A-Za-z0-9]/g, "_")}-`;
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return []; }
+  const files = names.filter((name) => name.startsWith(prefix) && /^[0-9a-f]{16}\.json$/.test(name.slice(prefix.length)));
+  const scales = [];
+  const visit = (value) => {
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (!value || typeof value !== "object") return;
+    if (value.kind === "pdf" && value.filename === "shared.pdf" && typeof value.scale === "number") scales.push(value.scale);
+    Object.values(value).forEach(visit);
+  };
+  for (const name of files) {
+    try { visit(JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"))); } catch {}
+  }
+  return scales;
+}
+
+function sessionHasScale(graph, scale) {
+  return sessionPdfScales(graph).some((value) => Math.abs(value - scale) < 0.0001);
 }
 
 async function openSharedPdf() {
   const link = await browser.$(".pdf-link");
   await link.waitForExist({ timeout: 15_000 });
   await link.click();
-  await waitForSharedPdf();
-}
-
-async function waitForSharedPdf() {
   await browser.waitUntil(() => browser.execute(() =>
     document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "shared.pdf" &&
     document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready") === "true"), {
@@ -285,7 +258,7 @@ async function switchGraph(graph) {
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
 }
 
-const receipt = { graphSwitch: {}, safeClose: {}, sessionRestore: {} };
+const receipt = { graphSwitch: {}, safeClose: {} };
 try {
   wmLog = fs.openSync(path.join(ARTIFACTS, "window-manager.log"), "w");
   driverLog = fs.openSync(path.join(ARTIFACTS, "tauri-driver.log"), "w");
@@ -297,28 +270,36 @@ try {
     "window manager did not become ready for native close",
   );
   await connect();
+  const originalA = fs.readFileSync(sidecar(GRAPH_A));
   const originalB = fs.readFileSync(sidecar(GRAPH_B));
   await openSharedPdf();
   await browser.$('button[title="Zoom in"]').click();
   const graphAScheduledZoom = Number((await browser.$(".pdf-zoom-level").getText()).replace("%", "")) / 100;
 
-  // Switch immediately, before the ordinary four-second view-state callback.
-  // The graph transaction must force A durable, unmount it, and bind B only
-  // after the old generation is quiescent.
+  // Switch immediately, before the ordinary debounced session save. The graph
+  // transaction must force A's position durable in A's own session, unmount the
+  // viewer, and bind B only after the old generation is quiescent.
   await switchGraph(GRAPH_B);
   await browser.$(".pdf-viewer").waitForExist({ reverse: true, timeout: 10_000 });
   await waitForNode(
-    () => Math.abs(sidecarScale(GRAPH_A) - graphAScheduledZoom) < 0.0001,
-    "graph switch did not flush graph A's pending PDF position",
+    () => sessionHasScale(GRAPH_A, graphAScheduledZoom),
+    `graph switch did not flush graph A's pending PDF position into A's session: ${JSON.stringify(sessionPdfScales(GRAPH_A))}`,
   );
   await sleep(4300); // expose any uncancelled old debounce; filesystem is the oracle
+  if (sessionHasScale(GRAPH_B, graphAScheduledZoom)) {
+    throw new Error(`graph A's PDF position landed in graph B's session: ${JSON.stringify(sessionPdfScales(GRAPH_B))}`);
+  }
   if (!fs.readFileSync(sidecar(GRAPH_B)).equals(originalB)) {
     throw new Error("graph A's stale PDF callback changed graph B's same-name sidecar");
   }
+  if (!fs.readFileSync(sidecar(GRAPH_A)).equals(originalA)) {
+    throw new Error("reading and zooming graph A's PDF rewrote its sidecar");
+  }
   receipt.graphSwitch = {
     graphAScheduledZoom,
-    graphAPersistedZoom: sidecarScale(GRAPH_A),
-    graphBByteStable: true,
+    graphASessionZooms: sessionPdfScales(GRAPH_A),
+    graphBSessionZooms: sessionPdfScales(GRAPH_B),
+    sidecarsByteStable: true,
     oldViewerUnmounted: true,
   };
 
@@ -331,48 +312,29 @@ try {
   const closeScheduledZoom = Number((await browser.$(".pdf-zoom-level").getText()).replace("%", "")) / 100;
   await closeTineNatively();
   await waitForNode(
-    () => Math.abs(sidecarScale(GRAPH_A) - closeScheduledZoom) < 0.0001,
-    "safe close did not persist the pending PDF position",
+    () => sessionHasScale(GRAPH_A, closeScheduledZoom),
+    `safe close did not persist the pending PDF position into A's session: ${JSON.stringify(sessionPdfScales(GRAPH_A))}`,
   );
+  if (!fs.readFileSync(sidecar(GRAPH_A)).equals(originalA)) {
+    throw new Error("safe close wrote graph A's reader position into its sidecar");
+  }
   try { await browser.deleteSession(); } catch {}
   browser = undefined;
   await stopDriver();
 
   await connect();
-  // The open PDF resource is graph-session state. A clean relaunch must mount
-  // it automatically under the freshly minted graph ownership generation.
-  await waitForSharedPdf();
+  await openSharedPdf();
   const relaunchedZoom = Number((await browser.$(".pdf-zoom-level").getText()).replace("%", "")) / 100;
   if (Math.abs(relaunchedZoom - closeScheduledZoom) >= 0.0001) {
     throw new Error(`relaunch restored PDF scale ${relaunchedZoom}, expected ${closeScheduledZoom}`);
   }
   receipt.safeClose = {
     closeScheduledZoom,
-    persistedZoom: sidecarScale(GRAPH_A),
+    sessionZooms: sessionPdfScales(GRAPH_A),
     relaunchedZoom,
   };
-  receipt.sessionRestore.openPdfRestoredAutomatically = true;
-
-  // An explicit user close is also durable and must not be confused with the
-  // transition-only suspend used while rebinding a graph.
-  await browser.$(".pdf-close-btn").click();
-  await browser.$(".pdf-viewer").waitForExist({ reverse: true, timeout: 10_000 });
-  await closeTineNatively();
-  try { await browser.deleteSession(); } catch {}
-  browser = undefined;
-  await stopDriver();
-  await connect();
-  // Prove the graph has rebound and rendered its real journal content before
-  // treating viewer absence as evidence. A fixed delay could pass vacuously on
-  // a slow startup whose session restore had not run yet.
-  await browser.$(".pdf-link").waitForExist({ timeout: 15_000 });
-  if (await browser.$(".pdf-viewer").isExisting()) {
-    throw new Error("explicitly closed PDF reopened after a clean relaunch");
-  }
-  receipt.sessionRestore.postBindContentReady = true;
-  receipt.sessionRestore.explicitCloseStayedClosed = true;
   fs.writeFileSync(path.join(ARTIFACTS, "pdf-ownership-native-receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
-  console.log(`PASS: PDF ownership and graph-session restore are stable: ${JSON.stringify(receipt)}`);
+  console.log(`PASS: PDF graph-switch and safe-close ownership are filesystem-stable: ${JSON.stringify(receipt)}`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { await stopApp(); } catch {}

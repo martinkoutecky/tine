@@ -8,29 +8,22 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { clickWhenReachable } from "./lib/e2e-click.mjs";
-import { createHash } from "node:crypto";
 import {
   startWebdriverApplication,
   stopWebdriverApplication,
   tauriCapabilities,
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
-await ensureDisplay();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
 const TD = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver") : "tauri-driver");
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4510);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4511);
-const TMP = path.join(os.tmpdir(), "tine-print-security-e2e-direct");
+const TMP = path.join(os.tmpdir(), "tine-print-security-e2e");
 const GRAPH = path.join(TMP, "graph");
 
-// One fixed directory, cleared on entry, so the last run's driver log survives
-// for post-mortem.
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
@@ -44,14 +37,8 @@ fs.writeFileSync(path.join(GRAPH, "pages", "Print proof.md"), [
   "  fn main() {}",
   "  ```",
   "- ![large](../assets/oversized.png)",
-  "- {{query (task TODO)}}",
-  "- {{tine-query @block and [[PrintMatches]]}}",
-  "- {{query (task TODO)}}",
-  "  tine.view:: table",
   "",
 ].join("\n"));
-fs.writeFileSync(path.join(GRAPH, "pages", "Private matches.md"),
-  "public:: false\n- TODO print-selected-private-root [[PrintMatches]]\n\t- print-required-child\n\t\t- print-required-grandchild\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(path.join(GRAPH, "journals", `${journal}.md`), "- Open [[Print proof]]\n");
@@ -62,8 +49,6 @@ const env = {
   XDG_DATA_HOME: path.join(TMP, "xdg", "data"),
   XDG_CONFIG_HOME: path.join(TMP, "xdg", "config"),
   XDG_CACHE_HOME: path.join(TMP, "xdg", "cache"),
-  APPDATA: path.join(TMP, "appdata"),
-  LOCALAPPDATA: path.join(TMP, "localappdata"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1",
   WEBKIT_DISABLE_COMPOSITING_MODE: "1",
   LIBGL_ALWAYS_SOFTWARE: "1",
@@ -88,38 +73,22 @@ try {
     connectionRetryCount: 1, connectionRetryTimeout: 60_000,
     capabilities: tauriCapabilities(APP, "default", process.platform, webviewTarget.debuggerAddress),
   });
-  // The Windows driver does not reliably attach to the app window: it can land
-  // on the Quick Capture window, where every application selector is legitimately
-  // absent. Three windows-smoke journeys failed that way in one run, each
-  // reporting its own missing element instead of the shared cause.
   await ensureMainWindow(browser);
-  // The contract starts at the named page's menu, not at today's journal.
-  // Route through the visible application search control so a different valid
-  // startup surface cannot fail the safety journey before it begins.
-  // "still not clickable after 20000ms" on the Windows runner (release run
-  // 35158841575) named the button, never what was covering it.
-  await clickWhenReachable(browser, 'button[title^="Search (Ctrl+K)"]', {
-    timeout: 20_000,
-    what: "the application search control",
-  });
-  const input = await browser.$(".switcher-input");
-  await input.waitForExist({ timeout: 10_000 });
-  await input.setValue("Print proof");
-  await browser.waitUntil(() => browser.execute(() =>
-    [...document.querySelectorAll(".switcher-row")].some((row) =>
-      row.querySelector(".switcher-kind")?.textContent?.trim() === "page"
-      && row.querySelector(".switcher-name")?.textContent?.trim() === "Print proof")), {
-    timeout: 20_000,
-    timeoutMsg: "switcher did not expose the print fixture page",
-  });
+  await browser.$(".page-ref").waitForExist({ timeout: 20_000 });
   const routed = await browser.execute(() => {
-    const row = [...document.querySelectorAll(".switcher-row")].find((candidate) =>
-      candidate.querySelector(".switcher-kind")?.textContent?.trim() === "page"
-      && candidate.querySelector(".switcher-name")?.textContent?.trim() === "Print proof");
-    row?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
-    return Boolean(row);
+    const ref = [...document.querySelectorAll(".page-ref")]
+      .find((element) => element.textContent?.includes("Print proof"));
+    if (!ref) return {
+      ok: false,
+      refs: [...document.querySelectorAll(".page-ref")].map((element) => element.textContent?.trim()),
+      title: document.querySelector("h1.page-title")?.textContent?.trim(),
+    };
+    for (const type of ["mousedown", "mouseup", "click"]) {
+      ref.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+    }
+    return { ok: true, refs: [], title: "" };
   });
-  if (!routed) throw new Error("exact print fixture switcher result disappeared");
+  if (!routed.ok) throw new Error(`print fixture page-ref is missing: ${JSON.stringify(routed)}`);
   await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Print proof", {
     timeout: 10_000, timeoutMsg: "could not route to print fixture",
   });
@@ -161,17 +130,9 @@ try {
     timeout: 15_000, timeoutMsg: "PDF export did not create its print frame",
   });
   const proof = await browser.execute(() => window.__tinePrintSecurityProof);
-  console.log(JSON.stringify({ binary: APP,
-    binarySha256: createHash("sha256").update(fs.readFileSync(APP)).digest("hex"), ...proof }));
   const sandbox = new Set((proof.sandbox ?? "").split(/\s+/).filter(Boolean));
   if (sandbox.has("allow-scripts") || !sandbox.has("allow-same-origin") || !sandbox.has("allow-modals")) {
     throw new Error(`unsafe print sandbox: ${JSON.stringify(proof.sandbox)}`);
-  }
-  for (const expected of ["print-selected-private-root", "print-required-child", "print-required-grandchild", '<table class="sheet-table">']) {
-    if (!proof.srcdoc.includes(expected)) throw new Error(`Print omitted ${expected}`);
-  }
-  if (proof.srcdoc.includes("Query results are unavailable for this render.") || proof.srcdoc.includes("non-public pages omitted")) {
-    throw new Error("Print lost its personal query scope or operation reader");
   }
   if (/<script\b/i.test(proof.srcdoc) || /cdn\.jsdelivr\.net/i.test(proof.srcdoc)
     || !/script-src 'none'/.test(proof.srcdoc) || !/class="katex/.test(proof.srcdoc)

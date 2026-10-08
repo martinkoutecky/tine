@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "tine-publish-security-"));
@@ -20,7 +20,7 @@ fs.writeFileSync(path.join(TMP, "pages", "Visible.md"), [
 fs.writeFileSync(path.join(TMP, "pages", "Twin.md"), "public:: true\n- public twin\n");
 fs.writeFileSync(path.join(TMP, "journals", "Twin.md"), "- PRIVATE TWIN SENTINEL\n");
 
-const built = spawnSync("cargo", ["run", "-q", "-p", "tine-core", "--example", "publish_security_fixture", "--", TMP], {
+const built = spawnSync("cargo", ["run", "-q", "-p", "tine-store", "--example", "publish_security_fixture", "--", TMP], {
   cwd: ROOT,
   encoding: "utf8",
   env: process.env,

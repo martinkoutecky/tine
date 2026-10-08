@@ -7,12 +7,10 @@ export type SearchMatchSpan = MatchSpan;
 export interface Segment {
   text: string;
   marked: boolean;
-  /**
-   * The occurrence this marked run belongs to, in RAW block offsets — the full
-   * span, not the part the window happened to keep. Unlinked References uses it
-   * to make the highlight itself the jump affordance (GH #200), so a marked run
-   * must be able to name where it came from even when the excerpt clipped it.
-   */
+  /** The occurrence this marked run belongs to, in RAW block offsets: the full
+   *  span, not the part the window kept. Unlinked References makes the highlight
+   *  itself the jump control (master GH #200), so a marked run must be able to
+   *  name where it came from even when the excerpt clipped it. */
   span?: SearchMatchSpan;
 }
 
@@ -42,10 +40,9 @@ function graphemeBoundaries(text: string): number[] {
   return boundaries;
 }
 
-function snapWindow(text: string, window: Window): Window {
-  const boundaries = graphemeBoundaries(text);
+function snapWindow(boundaries: number[], window: Window): Window {
   let start = 0;
-  let end = text.length;
+  let end = boundaries[boundaries.length - 1];
   for (const boundary of boundaries) {
     if (boundary <= window.start) start = boundary;
     if (boundary >= window.end) {
@@ -99,11 +96,12 @@ function excerptWindows(text: string, spans: SearchMatchSpan[]): Window[] {
     if (windows.length >= MAX_WINDOWS) break;
   }
 
+  const boundaries = graphemeBoundaries(text);
   let remaining = MAX_TOTAL_CHARS;
   return windows.map((window) => {
     const end = Math.min(window.end, window.start + remaining);
     remaining = Math.max(0, remaining - (end - window.start));
-    return snapWindow(text, { start: window.start, end });
+    return snapWindow(boundaries, { start: window.start, end });
   }).filter((window) => window.end > window.start);
 }
 

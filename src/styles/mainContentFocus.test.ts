@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { readAppStylesheet } from "../testSource";
+import { readFileSync } from "node:fs";
 
-const css = readAppStylesheet();
+const css = readFileSync("src/styles/app.css", "utf8");
 
 function rule(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`${escaped}\\s*\\{([^}]*)\\}`).exec(css)?.[1] ?? "";
 }
 
-// GH #345: the pane scroller is `tabindex="-1"` — it is clicked it shows the tab's pin tooltip. The component renders the element so the rule pins the attribute contract; the style rule pins the default-frame suppression. jsdom can't answer the frame question either way (no layout/focus-visible heuristics).
+// GH #345 (master c3b7f42d7): the pane scroller is tabindex="-1" only as a programmatic focus
+// target; a click on empty space focuses it and the UA then paints its default frame around
+// the whole content area. jsdom has no focus-visible heuristics, so the rule is source-scanned.
 describe("main-content default focus frame (GH #345)", () => {
   it("suppresses the default focus outline on the pane scroller", () => {
     expect(rule(".main-content:focus")).toMatch(/outline:\s*(none|0)\b/);

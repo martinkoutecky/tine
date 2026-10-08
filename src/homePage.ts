@@ -1,65 +1,68 @@
-// Graph home page (GH #245/#269): an optional page that opens automatically in
-// the primary tab. Logseq-compatible config.edn owns the value; the old
-// device-local string is read only for one-time migration.
+// Graph home page: the ONE answer to "which page is home" (I-12). OG reads
+// config.edn `:default-home {:page "..."}` (state/get-default-home) and keeps it
+// only while that page exists (container.cljs `get-default-home-if-valid`); the
+// :home route then redirects there, else shows the Journals feed. `g h` and
+// graph open both land here. Nothing is ever created for a missing page.
 import { backend } from "./backend";
-import { openPage } from "./router";
-import { graphMeta, setGraphMeta } from "./ui";
+import { graphMeta } from "./graphSession";
+import { isJournalTitle } from "./journal";
+import { readOwned } from "./owned";
+import { focusedSurfaceOwner } from "./focusedSurface";
+import { focusedRouter } from "./panes";
+import { openJournals } from "./router";
+import { pushToast } from "./toasts";
 
-const KEY_PREFIX = "home.page.";
+/** Configured home page name, trimmed (the backend keeps the config value
+ *  untrimmed and drops only blank ones); null when none. O(1), no I/O. */
+export function configuredHomePage(): string | null {
+  return graphMeta()?.default_home?.trim() || null;
+}
 
-export async function getHomePageSetting(root: string): Promise<string> {
-  const meta = graphMeta();
-  const configured = meta?.root === root ? (meta.default_home ?? "").trim() : "";
-  if (configured) return configured;
+/** What a home navigation did: `opened` the configured page; `unresolved` —
+ *  none configured, the page no longer resolves, or its read failed (reported);
+ *  `stale` — a graph rebind or a navigation of the focused route landed first. */
+export type HomeOutcome = "opened" | "unresolved" | "stale";
 
+/** Open the configured home page in place in the focused tab when it resolves
+ *  and neither the graph binding, the focused pane/tab, nor that tab's route
+ *  intent changed during the lookup. A name in the graph's journal title format
+ *  resolves as that journal. "In place" matches master (GH #245/#276): it
+ *  replaces the focused tab's route even when the tab is pinned (history keeps
+ *  a Back entry), and on graph open it replaces the restored session tab.
+ *  Cost: one `getPage`, which waits (no timeout) for the backend's initial
+ *  whole-graph parse — O(pages) — so on graph open the home page can land
+ *  seconds after the landing on a large graph, or not at all if the user
+ *  navigates first. Writes nothing to the graph (navigation schedules the
+ *  usual session save). The name is read from `graphMeta` at call time, which
+ *  follows an outside config.edn edit, a Settings choice and a rename of the
+ *  home page without reopening the graph. */
+export async function openConfiguredHomePage(): Promise<HomeOutcome> {
+  const name = configuredHomePage();
+  if (!name) return "unresolved";
+  // Own the focused surface (router, active tab, route intent and route): an
+  // A→B→A navigation or a focus move to another pane/tab showing an equal
+  // route retires the read.
+  const router = focusedRouter();
+  const owner = focusedSurfaceOwner();
   try {
-    const legacy = (await backend().getAppString(KEY_PREFIX + root, "")).trim();
-    if (!legacy) return "";
-    try {
-      await backend().setDefaultHome(legacy);
-      const current = graphMeta();
-      if (current?.root === root) setGraphMeta({ ...current, default_home: legacy });
-      // The graph-owned commit is authoritative. Clearing the obsolete local
-      // cache is best-effort and must not make a successful graph write appear
-      // to have failed.
-      await backend().setAppString(KEY_PREFIX + root, "").catch(() => {});
-    } catch {
-      // A malformed graph-owned value is refused by the native writer. Keep
-      // honoring the legacy value for this session and retry on a later read;
-      // never replace graph bytes we do not understand.
-    }
-    return legacy;
-  } catch {
-    return "";
+    // A journal-titled home (OG resolves any page entity) opens that journal;
+    // the classifier is the one `[[links]]` and favorites use.
+    const kind = isJournalTitle(name) ? "journal" : "page";
+    const read = await readOwned(owner, backend().getPage(name, kind));
+    if (read.kind === "stale") return "stale";
+    if (!read.value) return "unresolved";
+    router.openPage(read.value.name, read.value.kind, { inPlace: true });
+    return "opened";
+  } catch (error) {
+    if (!owner()) return "stale";
+    pushToast(`Couldn't open the home page "${name}". (${String(error)})`, "error");
+    return "unresolved";
   }
 }
 
-export async function setHomePageSetting(root: string, name: string | null): Promise<boolean> {
-  const value = (name ?? "").trim();
-  try {
-    await backend().setDefaultHome(value || null);
-    const meta = graphMeta();
-    if (meta?.root === root) setGraphMeta({ ...meta, default_home: value || null });
-    await backend().setAppString(KEY_PREFIX + root, "").catch(() => {});
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Navigate the primary tab to the graph's configured home page. Falling back
- *  to the ordinary landing is silent: nothing is created, no toast, no retry —
- *  a deleted/renamed page just means the normal landing stays (GH #245).
- *  Resolves true when it actually navigated, so callers (e.g. the `gh`
- *  hotstring) can fall through to their own landing otherwise. */
-export async function openConfiguredHomePage(
-  root: string,
-  isCurrent: () => boolean = () => true,
-): Promise<boolean> {
-  const name = (await getHomePageSetting(root)).trim();
-  if (!name || !isCurrent()) return false;
-  const dto = await backend().getPage(name, "page").catch(() => null);
-  if (!dto || !isCurrent()) return false;
-  openPage(dto.name, "page", { inPlace: true });
-  return true;
+/** `g h`: the configured home page, else the Journals feed (OG's default home). */
+export function goHome(): void {
+  void openConfiguredHomePage().then((outcome) => {
+    if (outcome === "unresolved") openJournals();
+  });
 }

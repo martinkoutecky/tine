@@ -1,22 +1,9 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../render/parse";
-import {
-  blockProperty,
-  blockIsGridView,
-  blockSubtreeMarkdown,
-  doc,
-  loadSingle,
-  pageToDto,
-  resetStore,
-  setDoc,
-  undo,
-  redo,
-  createPageMutationPlan,
-  applyPageMutationPlan,
-  __pageMutationPlanDeeplyFrozenForTest,
-  __setPageMutationEffectFailureForTest,
-  __setStoreMutationObserverForTest,
-} from "../store";
+import { blockProperty, blockIsGridView, blockSubtreeMarkdown, resetStore, undo } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { pageToDto } from "../document/convert";
+import { doc, setDoc } from "../document/model";
 import type { BlockDto, PageDto } from "../types";
 import {
   deleteColumn,
@@ -28,7 +15,6 @@ import {
   fillSheetSelection,
   insertColumn,
   insertRow,
-  insertSheetSeam,
   materializeCell,
   moveSheetSelection,
   pasteTextIntoSheetSelection,
@@ -39,13 +25,13 @@ import {
   deleteColumns,
 } from "./mutations";
 import { parseDelimitedText } from "./tsv";
-import { setToasts, toasts } from "../ui";
+import { setToasts, toasts } from "../toasts";
 import { observeMatrixDimensions } from "./matrix";
-import { graphBindingRuntime } from "../graphBindingRuntime";
-import { __setBackendForTest } from "../backend";
+import { backend } from "../backend";
+import { writeClipboardText } from "../clipboard";
+import { OUTLINE_MAX_DEPTH, outlineDepth } from "../editor/outline";
 
 let counter = 0;
-let bindingCounter = 1_000;
 function blk(raw: string, children: BlockDto[] = []): BlockDto {
   return { id: `m${counter++}`, raw, collapsed: false, children };
 }
@@ -117,79 +103,21 @@ beforeAll(() => initParser());
 beforeEach(() => {
   counter = 0;
   resetStore();
-  graphBindingRuntime.bind(++bindingCounter, {
-    binding_generation: bindingCounter,
-  });
   setToasts([]);
-  __setStoreMutationObserverForTest(null);
-  __setBackendForTest(null);
-  __setPageMutationEffectFailureForTest(false);
 });
+afterEach(() => vi.restoreAllMocks());
 
 describe("sheet structural mutations", () => {
-
-  // GH #320 reported that pasting into a Sheet's cells materializes an unbounded
-  // number of blocks with no admission at all, so the limit is only discovered at
-  // save time with a partial edit already on the page. The atomic-plan route
-  // answers it: every cell is built in a detached candidate, the authority sees
-  // the WHOLE resulting page, and the live page changes only on acceptance.
-
-  it("finalizes a deeply immutable effect authority and revokes retained builder references", () => {
+  it("keeps a cell when another copy takes the clipboard during Cut", async () => {
     const gridId = loadGrid();
-    let retained: Parameters<Parameters<typeof createPageMutationPlan>[2]>[0] | null = null;
-    const plan = createPageMutationPlan("Sheet", "sheet:tamper-proof", (draft) => {
-      retained = draft;
-      return draft.createChild(gridId, 1);
-    });
-    expect(plan).not.toBeNull();
-    expect(__pageMutationPlanDeeplyFrozenForTest(plan!)).toBe(true);
-    expect(retained!.node(gridId)).toBeUndefined();
-    expect(retained!.createChild(gridId, 0)).toBeNull();
-    expect(() => ((plan!.candidate.blocks[0] as { raw: string }).raw = "tampered")).toThrow();
-    expect(applyPageMutationPlan(plan!).kind).toBe("applied");
-  });
-
-  it("helper replay failure refuses before undo, publication, or dirty work", () => {
-    const gridId = loadGrid();
-    const before = pageToDto("Sheet");
-    const observations: string[] = [];
-    __setStoreMutationObserverForTest((event) => observations.push(event.kind));
-    __setPageMutationEffectFailureForTest(true);
-    insertColumn(gridId, 1);
-    expect(pageToDto("Sheet")).toEqual(before);
-    expect(observations).toEqual([]);
-  });
-
-  it("publishes one undo snapshot, one store update, and one dirty mark for axis, sparse rectangle, and seam-growth representatives", () => {
-    const gridId = loadGrid();
-    const observations: string[] = [];
-    __setStoreMutationObserverForTest((event) => observations.push(event.kind));
-
-    insertColumn(gridId, 1);
-    expect(observations).toEqual(["undo-snapshot", "publication", "dirty"]);
-
-    observations.length = 0;
-    pasteTextIntoSheetSelection({ kind: "cell", gridId, row: 1, col: 3 }, "X\tY\nZ\tW");
-    expect(observations).toEqual(["undo-snapshot", "publication", "dirty"]);
-
-    observations.length = 0;
-    insertSheetSeam(gridId, "row", doc.byId[gridId].children.length, 4);
-    expect(observations).toEqual(["undo-snapshot", "publication", "dirty"]);
-  });
-
-  it("undo and redo of one planned Sheet command each publish the page once", () => {
-    const gridId = loadGrid();
-    const observations: string[] = [];
-    __setStoreMutationObserverForTest((event) => observations.push(event.kind));
-    insertColumn(gridId, 1);
-
-    observations.length = 0;
-    undo();
-    expect(observations.filter((kind) => kind === "publication")).toHaveLength(1);
-
-    observations.length = 0;
-    redo();
-    expect(observations.filter((kind) => kind === "publication")).toHaveLength(1);
+    let finish!: () => void;
+    vi.spyOn(backend(), "writeRich").mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    vi.spyOn(backend(), "writeText").mockResolvedValue();
+    const pending = cutSheetSelection({ kind: "cell", gridId, row: 0, col: 0 });
+    await writeClipboardText("other copy");
+    finish();
+    await pending;
+    expect(rowCells(rows(gridId)[0])[0]).toBe("A");
   });
   it("inserts an empty row and one undo fully reverts it", () => {
     const gridId = loadGrid();
@@ -419,6 +347,29 @@ describe("sheet structural mutations", () => {
     expect(pageToDto("Sheet")).toEqual(before);
   });
 
+  it("refuses a structural paste that fits the source but exceeds the populated target depth", async () => {
+    loadStructuralPasteDoc();
+    const byId = { ...doc.byId };
+    let parent = "s11c";
+    for (let i = 0; i < OUTLINE_MAX_DEPTH - 5; i++) {
+      const id = `deep-${i}`;
+      byId[parent] = { ...byId[parent], children: [id] };
+      byId[id] = { id, raw: `level ${i}`, collapsed: false, parent, page: "Sheet", children: [] };
+      parent = id;
+    }
+    setDoc({ ...doc, byId });
+    const copied = { kind: "range", gridId: "src", anchor: { row: 0, col: 0 }, focus: { row: 1, col: 1 } } as const;
+    const { text } = sheetSelectionText(copied);
+    await copySheetSelection(copied);
+    const copiedOutline = structuralSheetPasteNode(text);
+    expect(copiedOutline).not.toBeNull();
+    expect(outlineDepth([copiedOutline!])).toBeGreaterThan(OUTLINE_MAX_DEPTH - 4);
+    const before = pageToDto("Sheet");
+    expect(splatStructuralSheetSelection({ kind: "cell", gridId: "target", row: 0, col: 0 }, text)).toBeNull();
+    expect(pageToDto("Sheet")).toEqual(before);
+    expect(toasts().some((toast) => toast.message.includes("too deep"))).toBe(true);
+  });
+
   it("splat appends exactly the missing rows when the footprint extends past the grid", async () => {
     const gridId = loadGrid();
     const copied = {
@@ -564,15 +515,37 @@ describe("sheet structural mutations", () => {
     expect(splatStructuralSheetSelection({ kind: "cell", gridId: "dst", row: 0, col: 0 }, text)).toBeUndefined();
   });
 
-  it("cut clears the source and one undo restores it", () => {
+  it("cut clears the source and one undo restores it", async () => {
     const gridId = loadGrid();
     const before = pageToDto("Sheet");
 
-    cutSheetSelection({ kind: "range", gridId, anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } });
+    await cutSheetSelection({ kind: "range", gridId, anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } });
 
     expect(rowCells(rows(gridId)[0])).toEqual(["", "", "C"]);
     undo();
     expect(pageToDto("Sheet")).toEqual(before);
+  });
+
+  it("keeps sheet cells until the clipboard succeeds and preserves edits made while pending", async () => {
+    const gridId = loadGrid();
+    let finish!: () => void;
+    const write = vi.spyOn(backend(), "writeRich").mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    const sel = { kind: "cell", gridId, row: 0, col: 0 } as const;
+    cutSheetSelection(sel);
+    expect(doc.byId[cellId(gridId, 0, 0)!].raw).toBe("A");
+    setDoc("byId", cellId(gridId, 0, 0)!, "raw", "Edited");
+    finish();
+    await Promise.resolve();
+    expect(write).toHaveBeenCalledOnce();
+    expect(doc.byId[cellId(gridId, 0, 0)!].raw).toBe("Edited");
+    write.mockRestore();
+  });
+
+  it("keeps sheet cells when the clipboard rejects Cut", async () => {
+    const gridId = loadGrid();
+    vi.spyOn(backend(), "writeRich").mockRejectedValue(new Error("clipboard denied"));
+    cutSheetSelection({ kind: "cell", gridId, row: 0, col: 0 });
+    await vi.waitFor(() => expect(doc.byId[cellId(gridId, 0, 0)!].raw).toBe("A"));
   });
 
   it.each(["table", "board"])(
@@ -791,8 +764,8 @@ describe("fill preserves target hidden properties", () => {
       byId: {
         grid: { id: "grid", raw: "Grid\ntine.view:: grid", collapsed: false, parent: null, page: "Sheet", children: ["r1"] },
         r1: { id: "r1", raw: "", collapsed: false, parent: "grid", page: "Sheet", children: ["a", "b"] },
-        a: { id: "a", raw: "A", collapsed: false, parent: "r1", page: "Sheet", children: [] },
-        b: { id: "b", raw: "B\nid:: keep", collapsed: false, parent: "r1", page: "Sheet", children: [] },
+        a: { id: "a", raw: "A\ncollapsed:: true\ntine.view:: grid\ntine.plugin-config:: source\nuser:: kept", collapsed: false, parent: "r1", page: "Sheet", children: [] },
+        b: { id: "b", raw: "B\nid:: keep\ncollapsed:: false\ntine.plugin-config:: target", collapsed: false, parent: "r1", page: "Sheet", children: [] },
       },
       pages: [{ name: "Sheet", kind: "page", title: "Sheet", preBlock: null, roots: ["grid"], format: "md", readOnly: false, guide: false }],
       feed: ["Sheet"],
@@ -805,6 +778,41 @@ describe("fill preserves target hidden properties", () => {
     );
 
     expect(ok).toBe(true);
-    expect(doc.byId.b.raw).toBe("A\nid:: keep");
+    expect(doc.byId.b.raw).toBe("A\nuser:: kept\nid:: keep\ncollapsed:: false\ntine.plugin-config:: target");
+  });
+});
+
+describe("sheet hidden metadata transfer class", () => {
+  it.each(["md", "org"] as const)("fill-down copies user properties but keeps target configuration (%s)", (format) => {
+    const source = format === "md"
+      ? "A\ncollapsed:: true\ntine.view:: grid\nuser:: kept"
+      : "A\n:PROPERTIES:\n:collapsed: true\n:tine.view: grid\n:user: kept\n:END:";
+    const target = format === "md"
+      ? "B\nid:: target\ncollapsed:: false\ntine.plugin:: target"
+      : "B\n:PROPERTIES:\n:id: target\n:collapsed: false\n:tine.plugin: target\n:END:";
+    const grid = blk(format === "md" ? "Grid\ntine.view:: grid" : "Grid\n:PROPERTIES:\n:tine.view: grid\n:END:",
+      [blk("", [blk(source)]), blk("", [blk(target)])]);
+    grid.properties = [["tine.view", "grid"]];
+    loadSingle({ name: "Sheet", kind: "page", title: "Sheet", pre_block: null, blocks: [grid], format });
+    const id = cellId(grid.id, 1, 0)!;
+    expect(fillSheetSelection({ kind: "range", gridId: grid.id, anchor: { row: 0, col: 0 }, focus: { row: 1, col: 0 } }, "down")).toBe(true);
+    expect(blockProperty(id, "id")).toBe("target");
+    expect(blockProperty(id, "collapsed")).toBe("false");
+    expect(blockProperty(id, "tine.plugin")).toBe("target");
+    expect(blockProperty(id, "tine.view")).toBeNull();
+    expect(blockProperty(id, "user")).toBe("kept");
+    undo();
+    expect(doc.byId[id].raw).toBe(target);
+  });
+
+  it("structural paste strips source hidden keys through the same visible-cell writer", async () => {
+    loadStructuralPasteDoc();
+    setDoc("byId", "s11", "raw", "Source\ncollapsed:: true\ntine.view:: grid\ntine.plugin:: source\nuser:: kept");
+    setDoc("byId", "target", "raw", "Target\nid:: target\ncollapsed:: false\ntine.plugin:: target");
+    const copied = { kind: "range", gridId: "src", anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } } as const;
+    const { text } = sheetSelectionText(copied);
+    await copySheetSelection(copied);
+    expect(splatStructuralSheetSelection({ kind: "cell", gridId: "dst", row: 0, col: 0 }, text)).toBeTruthy();
+    expect(doc.byId.target.raw).toBe("Source\nuser:: kept\nid:: target\ncollapsed:: false\ntine.plugin:: target");
   });
 });

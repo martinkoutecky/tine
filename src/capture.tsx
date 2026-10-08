@@ -1,3 +1,5 @@
+import { initDebug } from "./debug";
+import { Toasts } from "./components/Toasts";
 // Quick-capture mini window. A separate Tauri webview (capture.html) that the
 // running app pops on a `tine --capture` signal. It renders the SAME block tree
 // the main app uses (Block + Editor) over an isolated scratch store — so all
@@ -14,17 +16,12 @@ import { initLinkDefault } from "./editor/linkDefault";
 import { Block, CaptureCtx, type CaptureApi } from "./components/Block";
 import { DatePicker } from "./components/DatePicker";
 import { datePicker } from "./ui";
-import {
-  installCaptureScratchPage,
-  pageByName,
-  blockSubtreeMarkdown,
-  deleteBlock,
-  setRaw,
-  doc,
-} from "./store";
+import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw, node as docNode } from "./document";
 import { startEditing } from "./editorController";
 import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
+import { reportUiFailure } from "./uiFailure";
+import { latestOwner, readOwned } from "./owned";
 import { installBackendClock } from "./journal";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
@@ -48,6 +45,7 @@ import "./lsShimInstall";
 import "./styles/inter.css";
 import "@fontsource-variable/noto-emoji/wght.css";
 import { installEditableEmojiPlatform } from "./editableEmoji";
+import "./styles/editableEmoji.css";
 import "./styles/app.css";
 import "./styles/capture.css";
 
@@ -88,11 +86,10 @@ function Capture() {
   const roots = () => pageByName(SCRATCH)?.roots ?? [];
 
   const seed = () => {
-    // The scratch page is local-only and must never reach the graph, so it takes
-    // no core activation. It also cannot be refused: it has no path, so a
-    // re-seed matches the incumbent exactly and reuses it. (GH #254 inc 3, C9.)
-    installCaptureScratchPage(createCaptureScratchPage());
-    const root = pageByName(SCRATCH)?.roots[0];
+    // The scratch page has no file, so a re-seed matches the incumbent and is
+    // never refused; if it were, no editor would open on another page's block.
+    const refused = ensurePageLoaded(createCaptureScratchPage());
+    const root = refused ? undefined : pageByName(SCRATCH)?.roots[0];
     if (root) startEditing(root, 0, null);
     setReady(true);
   };
@@ -103,7 +100,7 @@ function Capture() {
     const rid = page?.roots[0];
     if (!page || !rid) return;
     for (const r of page.roots.slice(1)) deleteBlock(r);
-    const first = doc.byId[rid];
+    const first = docNode(rid);
     if (first) for (const c of [...first.children]) deleteBlock(c);
     setRaw(rid, "");
     startEditing(rid, 0, null);
@@ -129,7 +126,7 @@ function Capture() {
     const root = roots()[0];
     if (!root) return;
     if (!document.querySelector(".capture-shell .page-blocks textarea")) {
-      startEditing(root, doc.byId[root]?.raw.length ?? 0, null);
+      startEditing(root, docNode(root)?.raw.length ?? 0, null);
     }
     // Solid mounts the real Editor synchronously from startEditing; defer the
     // capture-specific fit/focus until that lifecycle has attached its textarea.
@@ -177,7 +174,7 @@ function Capture() {
       const h = Math.max(140, Math.min(measured, screenMax, 700));
       // Diagnostic (visible when launched from a terminal): if the window is ever
       // mis-sized, this shows whether the fault is the measurement or setSize.
-      console.log("[capture] fit", { measured, screenMax, h, lastH });
+      console.log("[capture] fit");
       if (Math.abs(h - lastH) < 2) return; // avoid churn / feedback loops
       lastH = h;
       await win.setSize(new LogicalSize(600, h));
@@ -207,11 +204,13 @@ function Capture() {
       // not in Tauri, hidden again, or shutting down
     }
   };
-  let activationGeneration = 0;
+  const captureScope = {};
+  let captureAlive = true;
+  onCleanup(() => { captureAlive = false; });
   const activateWhenEditorReady = () => {
-    const generation = ++activationGeneration;
+    const owner = latestOwner(captureScope, "activation", () => captureAlive);
     const tryActivate = (attempt: number) => {
-      if (generation !== activationGeneration) return;
+      if (!owner()) return;
       const editor = document.querySelector<HTMLTextAreaElement>(".capture-shell textarea");
       if (editor) {
         refit();
@@ -224,7 +223,7 @@ function Capture() {
       // read-only text, and typing has no destination until the user clicks it.
       if (attempt === 0) {
         const root = roots()[0];
-        const block = root ? doc.byId[root] : undefined;
+        const block = root ? docNode(root) : undefined;
         if (root) startEditing(root, block?.raw.length ?? 0, null);
       }
       // The capture shell mounts before its Block editor on a cold WebView.
@@ -245,11 +244,10 @@ function Capture() {
   // either use adaptive or issue its query without any graph candidates.
   // A later show wins if refreshes overlap while the window is being hidden or
   // re-shown, so stale reads cannot activate an older lifecycle.
-  let policyRefreshGeneration = 0;
   const refreshPolicyThenResettleAndActivate = async () => {
-    const generation = ++policyRefreshGeneration;
-    await Promise.all([initLinkDefault(), backend().bindCaptureGraph()]);
-    if (generation !== policyRefreshGeneration) return;
+    const owner = latestOwner(captureScope, "policy", () => captureAlive);
+    const result = await readOwned(owner, Promise.all([initLinkDefault(), backend().bindCaptureGraph()]));
+    if (result.kind === "stale") return;
     resettleAndActivate();
   };
   const blurGate = createCaptureBlurGate();
@@ -273,13 +271,16 @@ function Capture() {
   };
 
   const loadPref = () => {
-    void backend().getCaptureEnterFiles().then(setEnterFiles).catch(() => {});
+    const owner = latestOwner(captureScope, "enter-files", () => captureAlive);
+    void readOwned(owner, backend().getCaptureEnterFiles())
+      .then((result) => { if (result.kind === "current") setEnterFiles(result.value); })
+      .catch((error) => { if (owner()) reportUiFailure("capture-preference", error); });
   };
 
   type PendingCapture = {
     id: string;
     attemptsStarted: number;
-    payload: QuickCaptureRequest;
+    payload: QuickCaptureRequest & { bindingGeneration: number };
     target: string;
     unlisten?: () => void;
     timer?: number;
@@ -301,10 +302,12 @@ function Capture() {
     if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
   };
   const requestTheme = async () => {
+    const owner = latestOwner(captureScope, "theme-request", () => captureAlive);
     try {
       const { emitTo } = await import("@tauri-apps/api/event");
-      const target = await backend().captureTarget();
-      await emitTo(target, "capture-request-theme", { target });
+      const result = await readOwned(owner, backend().captureTarget());
+      if (result.kind === "stale") return;
+      await emitTo(result.value, "capture-request-theme", { target: result.value });
     } catch {
       // not in Tauri
     }
@@ -317,19 +320,29 @@ function Capture() {
   // it, so a remapped shortcut is honored in the capture window too.
   let disposeKeys: () => void = () => {};
   const requestShortcuts = async () => {
+    const owner = latestOwner(captureScope, "shortcuts-request", () => captureAlive);
     try {
       const { emitTo } = await import("@tauri-apps/api/event");
-      const target = await backend().captureTarget();
-      await emitTo(target, "capture-request-shortcuts", { target });
+      const result = await readOwned(owner, backend().captureTarget());
+      if (result.kind === "stale") return;
+      await emitTo(result.value, "capture-request-shortcuts", { target: result.value });
     } catch {
       // not in Tauri
     }
   };
 
+  const submitScope = {};
+  let submitAlive = true;
+  onCleanup(() => { submitAlive = false; });
+  const scratchMarkdown = () => roots().map((r) => blockSubtreeMarkdown(r)).join("\n");
+  let scratchRevision = 0;
   const submit = () => {
     if (pendingCapture) return;
-    const md = roots().map((r) => blockSubtreeMarkdown(r)).join("\n").trim();
-    const pageTitle = title().trim();
+    const submitOwner = latestOwner(submitScope, "capture", () => submitAlive);
+    const submittedScratch = scratchMarkdown(), submittedTitle = title();
+    const submittedRevision = scratchRevision;
+    const bindingGeneration = backend().graphBindingGeneration();
+    const md = submittedScratch.trim(), pageTitle = submittedTitle.trim();
     void (async () => {
       if (!md) {
         setCaptureStatus("idle");
@@ -342,17 +355,21 @@ function Capture() {
       const id = createQuickCaptureRequestId();
       let target: string;
       try {
-        target = await backend().captureTarget();
+        const result = await readOwned(submitOwner, backend().captureTarget());
+        if (result.kind === "stale") return;
+        target = result.value;
       } catch {
-        setCaptureStatus("error");
-        setCaptureMessage("No graph window is ready — text kept");
-        scheduleFit();
+        if (submitOwner()) {
+          setCaptureStatus("error");
+          setCaptureMessage("No graph window is ready — text kept");
+          scheduleFit();
+        }
         return;
       }
       const pending: PendingCapture = {
         id,
         attemptsStarted: 0,
-        payload: { id, target, text: md, title: pageTitle },
+        payload: { id, target, bindingGeneration, text: md, title: pageTitle },
         target,
       };
       const finish = async (ok: boolean) => {
@@ -361,8 +378,15 @@ function Capture() {
         if (ok) {
           setCaptureStatus("idle");
           setCaptureMessage("");
+          // The ack owns the submitted snapshot, not edits made while transport
+          // or save awaited. Input revisions also cover DOM-local IME text.
+          if (scratchRevision !== submittedRevision || scratchMarkdown() !== submittedScratch || title() !== submittedTitle) {
+            setCaptureMessage("Submitted capture saved — newer edits kept");
+            scheduleFit();
+            return;
+          }
           clearScratch();
-          setTitle(""); // reset for the next capture — don't carry over the filed text
+          setTitle("");
           await hideWindow();
         } else {
           setCaptureStatus("error");
@@ -412,7 +436,7 @@ function Capture() {
           giveUp();
           return;
         }
-        scheduleTimeout();
+        if (pendingCapture === pending) scheduleTimeout();
       };
       try {
         const unlisten = await listen<QuickCaptureAck>("quick-capture-ack", (e) => {
@@ -432,6 +456,7 @@ function Capture() {
   };
 
   const cancel = () => {
+    latestOwner(submitScope, "capture");
     disposePendingCapture();
     setCaptureStatus("idle");
     setCaptureMessage("");
@@ -459,6 +484,7 @@ function Capture() {
   });
 
   onMount(() => {
+    void initDebug();
     // Populate the keybinding table so editor shortcuts (bold/italic/…) work the
     // same as the main window — defaults until the main window sends the merged
     // map (see the capture-apply-shortcuts listener). Its global handler is
@@ -551,7 +577,7 @@ function Capture() {
 
   return (
     <CaptureCtx.Provider value={captureApi}>
-      <div class="capture-shell">
+      <div class="capture-shell" onInput={() => { scratchRevision++; }} onCompositionStart={() => { scratchRevision++; }}>
         <Show when={ready()}>
           {/* Optional page title. Filled → the capture becomes a NEW page; empty →
               appended to today. Plain Enter drops into the bullet; the submit
@@ -602,6 +628,7 @@ function Capture() {
         </Show>
       </div>
       <DatePicker />
+      <Toasts />
     </CaptureCtx.Provider>
   );
 }
@@ -611,6 +638,6 @@ function Capture() {
 // wasm init. The parser loads in the background; any block that renders before it's
 // ready falls back to raw text (AstBody/InlineText) and swaps in once `parserReady`
 // flips (typically tens of ms, well before you finish typing the first block).
-void initParser().catch((e) => console.error("lsdoc-wasm init failed:", e));
+void initParser().catch(() => console.error("lsdoc-wasm init failed"));
 installBackendClock(() => backend().localClock());
 render(() => <Capture />, document.getElementById("capture-root")!);

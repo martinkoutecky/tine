@@ -1,38 +1,14 @@
 // **The TypeScript mirror of the Rust query IR** (SPEC §3.1, §7.1).
-//
-// One query language, defined once, in `crates/tine-core/src/query/ir.rs`. This
-// file is the JSON shape of that value as it crosses Tauri — nothing more. It
-// declares no semantics, parses no text and prints no text: `query_parse`,
-// `query_print` and `query_og_expressible` are the only things that produce or
-// interpret an IR, and they all live in Rust (D-14 — the frontend's second
-// grammar is what this packet exists to remove).
-//
-// ## Why it is a hand-written mirror and how it is kept honest
-//
-// The wire format is internally tagged on `kind`, in `snake_case`, and is fixed
-// by §3.1 — a lane may not change it on either side. Because this file is
-// hand-written, the danger is not that it disagrees loudly but that it agrees
-// SILENTLY: a variant Rust added and TypeScript never learned about is, to
-// `JSON.parse`, just an object, and it flows through the app as `never` until
-// something reads a field that is not there.
-//
-// So the mirror is CHECKED, not asserted. `crates/tine-core/tests/fixtures/
-// query-ir/*.json` are the golden wire fixtures the Rust side already
-// round-trips; `src/editor/queryIr.test.ts` reads the same files from here and
-// requires every variant in them to be constructible and exhaustively handled by
-// this module's own visitor. A mirror that quietly ignored an unknown variant is
-// the exact defect that test exists to catch.
-//
-// Spans are UTF-16 code-unit offsets into the ORIGINAL source text, converted
-// once at the Rust boundary (`Span::from_byte_range`) precisely because the
-// consumer is JavaScript.
+// I-12: structural classification lives here; golden Rust wire fixtures pin the
+// vocabulary. Evaluators retain their row/context and Off policies, and omission
+// and normalization remain distinct transforms, not generic Boolean folds.
 
 import type { PageKind, RefGroup } from "../types";
-import type { FriendlyPageMatchScope, QueryDisplayDraft } from "./queryDisplayDraft";
+/** The validated, non-presentation half of a workspace display. */
+export type QueryDisplayDraft = Omit<ViewSettings, "view">;
+export type FriendlyPageMatchScope = "names" | "content" | "both";
 
-// --------------------------------------------------------------------------
 // Scalars
-// --------------------------------------------------------------------------
 
 /** A source span, in UTF-16 code units into the original source text. */
 export interface Span {
@@ -44,29 +20,25 @@ export interface Span {
 export type Anchor = "block" | "page";
 export const ANCHORS: readonly Anchor[] = ["block", "page"];
 
-/** The attributes of a block row, of a page row, and the three attributes of the
- *  elements relations yield. Which set is legal is decided by the ROW the leaf
- *  sits on, never by a second enum (I-12). */
+/** The attributes of a block row, of a page row, and the three attributes of the elements relations yield. */
 export type Attr =
   // block row
-  | "content" | "task" | "priority" | "scheduled" | "deadline"
+  | "content" | "task" | "priority" | "scheduled" | "deadline" | "created_at" | "last_modified_at"
   // page row
-  | "name" | "journal" | "day" | "namespace"
+  | "name" | "journal" | "day" | "namespace" | "used_as_tag"
   // property element
   | "key" | "value" | "atom_count";
 export const ATTRS: readonly Attr[] = [
-  "content", "task", "priority", "scheduled", "deadline",
-  "name", "journal", "day", "namespace",
+  "content", "task", "priority", "scheduled", "deadline", "created_at", "last_modified_at",
+  "name", "journal", "day", "namespace", "used_as_tag",
   "key", "value", "atom_count",
 ];
 
-/** One relation of the anchor row. Bare identifiers inside a relation predicate
- *  bind to the ELEMENT, never to the outer row (§3.2). */
-export type Rel = "refs" | "tags" | "props" | "children" | "blocks" | "page";
-export const RELS: readonly Rel[] = ["refs", "tags", "props", "children", "blocks", "page"];
+/** One relation of the anchor row. */
+export type Rel = "refs" | "tags" | "props" | "children" | "parent" | "ancestors" | "descendants" | "blocks" | "page";
+export const RELS: readonly Rel[] = ["refs", "tags", "props", "children", "parent", "ancestors", "descendants", "blocks", "page"];
 
-/** OData §5.1.1.13 quantifiers: `any` is false and `every` true on an empty
- *  collection (Q5). */
+/** OData §5.1.1.13 quantifiers: `any` is false and `every` true on an empty collection (Q5). */
 export type Quant = "any" | "none" | "every";
 export const QUANTS: readonly Quant[] = ["any", "none", "every"];
 
@@ -87,21 +59,16 @@ export const CMP_OPS: readonly CmpOp[] = [
   "is_set", "is_not_set", "is_blank",
 ];
 
-/** Why a query is (partly) not understood. Every kind names an in-scope
- *  scenario: unknown vocabulary, malformed input, or an I-22 refusal. */
+/** Why a query is (partly) not understood. */
 export type DiagnosticKind =
   | "unknown_head" | "syntax" | "unknown_ident" | "not_applicable" | "depth" | "size";
 export const DIAGNOSTIC_KINDS: readonly DiagnosticKind[] = [
   "unknown_head", "syntax", "unknown_ident", "not_applicable", "depth", "size",
 ];
 
-// --------------------------------------------------------------------------
 // Values, leaves, the boolean tree
-// --------------------------------------------------------------------------
 
-/** A comparison operand. `date` carries the UNRESOLVED literal (`-7d`, `today`,
- *  `2026-09-04`): resolution happens at evaluation time from the execution's own
- *  `today`, so a cached IR never pins a day. */
+/** A comparison operand. */
 export type Value =
   | { kind: "text"; text: string }
   | { kind: "number"; number: number }
@@ -118,8 +85,7 @@ export type Leaf =
   /** A quantifier over ONE relation of the current row. */
   | { kind: "rel"; rel: Rel; quant: Quant; pred: Filter };
 
-/** The boolean tree. Identity elements are explicit: after normalization `and([])`
- *  is `true` and `or([])` is `false`. */
+/** The boolean tree. */
 export type Filter =
   | { kind: "and"; items: Filter[] }
   | { kind: "or"; items: Filter[] }
@@ -127,11 +93,7 @@ export type Filter =
   | { kind: "leaf"; leaf: Leaf }
   /** Q12: present, round-trips, structurally omitted at evaluation (§3.5). */
   | { kind: "off"; inner: Filter }
-  /** An unparsed or unknown span. **Always paired with a diagnostic**, and
-   *  lossless by contract (§4.3.2, R4): `text` is the exact payload the author
-   *  wrote and `diagnostic_kind` the diagnostic that rejected it. Both survive
-   *  every save, reopen and neighbouring edit, as the `raw_hex(…)` capsule.
-   *  The wire name is `diagnostic_kind` because `kind` is already the tag. */
+  /** An unparsed or unknown span. */
   | { kind: "raw"; text: string; diagnostic_kind: DiagnosticKind; span?: Span }
   | { kind: "true" }
   | { kind: "false" };
@@ -141,58 +103,43 @@ export interface Diagnostic {
   message: string;
   suggestions?: string[];
   /** Set for a diagnostic inside an `off` subtree: the row renders greyed with
-   *  its message but does NOT invalidate the query (§3.5). */
+  *  its message but does NOT invalidate the query (§3.5). */
   disabled?: boolean;
   kind: DiagnosticKind;
 }
 
-/** Where the query's text came from, and the bytes to preserve.
- *
- *  `original` is the exact form slice WITHOUT the trailing options map;
- *  `og_options` is that map INCLUDING its braces, verbatim and opaque — EDN
- *  comments and unknown keys and all. The map has exactly ONE owner, the Rust
- *  parser: nothing outside `query_parse` splits a query argument, and every macro
- *  printer re-appends it once (§3.1, X4, W2). */
+/** Where the query's text came from, and the bytes to preserve. */
 export type Source =
   | { kind: "og"; original: string; og_options?: string }
   | { kind: "tql"; original: string; og_options?: string }
-  /** Datalog. `original` is the COMPLETE authored advanced form, including
-   *  `:query` / `:inputs` when present (§4.4) — a whole `{:query …}` map is the
-   *  FORM, and only a map that FOLLOWS it is options. */
+  /** Datalog. */
   | { kind: "advanced"; original: string; og_options?: string }
   /** Built in the UI: no authored text to preserve. */
   | { kind: "builder" };
 
-/** The opaque trailing options map, or `""`. The ONE reader, so the map cannot be
- *  re-derived per dialect (I-12). Mirrors `Source::og_options`. */
+/** The opaque trailing options map, or `""`. */
 export function sourceOptions(source: Source): string {
   return source.kind === "builder" ? "" : source.og_options ?? "";
 }
 
-/** The exact authored form slice, without the trailing options map, or null for a
- *  builder-authored query. Mirrors `Source::original`. */
+/** The exact authored form slice, without the trailing options map, or null for a builder-authored query. */
 export function sourceOriginal(source: Source): string | null {
   return source.kind === "builder" ? null : source.original;
 }
 
-// --------------------------------------------------------------------------
 // View settings, bounds, the query
-// --------------------------------------------------------------------------
 
 export type SortDir = "asc" | "desc";
 /** `search` is the existing fourth view (`Macro.tsx`), and it stays. */
-export type ViewKind = "search" | "list" | "table" | "board";
-export const VIEW_KINDS: readonly ViewKind[] = ["search", "list", "table", "board"];
+export type ViewKind = (typeof VIEW_KINDS)[number];
+/** The one list of presentations; `QueryPresentation`, `QueryView`, the router normalizer and every picker derive from it. */
+export const VIEW_KINDS = ["search", "list", "table", "board"] as const;
 export type AggFn = "count" | "sum" | "avg";
 
-/** A sort/group/column/aggregate target: a property key or an OG-sortable field
- *  name, kept as the user wrote it. Serialized transparently as a bare string. */
+/** A sort/group/column/aggregate target: a property key or an OG-sortable field name, kept as the user wrote it. */
 export type Field = string;
 
-/** Presentation. NEVER part of the filter (Q15): `sort-by`, `sample`, `aggregate`
- *  and `group-by` are lifted here on parse and re-emitted from here by the
- *  printers. `["", "count"]` is the whole-result count — today's fieldless
- *  `(aggregate count)` (X3). */
+/** Presentation. */
 export interface ViewSettings {
   view?: ViewKind;
   sort?: [Field, SortDir][];
@@ -202,8 +149,7 @@ export interface ViewSettings {
   sample?: number;
 }
 
-/** The two construction limits the result bridge already enforces, and nothing
- *  else. */
+/** The two construction limits the result bridge already enforces, and nothing else. */
 export interface Bounds {
   max_rows: number;
   max_bytes: number;
@@ -217,10 +163,7 @@ export interface Query {
   source: Source;
 }
 
-/** Page/block presentation state read from a saved query's scoped `tine.*`
- * properties. Every field is optional so an old `{query, view}` response keeps
- * exactly its old JSON shape. Unreadable authored settings are reported here,
- * independently of predicate diagnostics. */
+/** Page/block presentation state read from a saved query's scoped `tine.*` properties. */
 export interface ScopedDisplaySettings {
   page_presentation?: ViewKind;
   page_display?: QueryDisplayDraft;
@@ -230,17 +173,7 @@ export interface ScopedDisplaySettings {
   unreadable_settings?: string[];
 }
 
-/** The Display half of a `run_graph_search` request (§7.6, Q3).
- *
- * Every member is optional and an absent object is "this caller states
- * nothing", which is exactly the request that existed before Display did. Each
- * supplied view is ALREADY RESOLVED — inheritance between a scoped draft and
- * the singular settings happens on this side, in `queryDisplayDraft.ts`, so
- * Rust never re-inherits a missing member and the two halves cannot disagree
- * about what a query shows (I-12).
- *
- * `pageMatchScope` is page MEMBERSHIP and is unrelated to `QueryPageScope`,
- * which is the physical routed page a block search is confined to. */
+/** The Display half of a `run_graph_search` request (§7.6, Q3). */
 export interface GraphSearchDisplayOptions {
   pageMatchScope?: FriendlyPageMatchScope;
   pageView?: ViewSettings;
@@ -249,24 +182,20 @@ export interface GraphSearchDisplayOptions {
 
 export type GraphSearchConsumer = "non_interactive" | "ctrl_k" | "search_tab";
 
-/** `query_parse`'s answer. `Query` and `ViewSettings` are SEPARATE values: the
- * filter never contains presentation (§3.1). Scoped display state is flattened
- * beside that unchanged pair. */
+/** `query_parse`'s answer. */
 export interface ParsedQuery extends ScopedDisplaySettings {
+  /** Rust reads Logseq options, query-table and the trailing table marker. */
+  legacy_table?: boolean;
   query: Query;
   view: ViewSettings;
 }
 
-/** A query with at least one ENABLED diagnostic is invalid: it returns zero
- *  results plus its diagnostics (§3.5). A diagnostic inside an `off` subtree
- *  carries `disabled: true` and does not invalidate. Mirrors `Query::is_invalid`. */
+/** A query with at least one ENABLED diagnostic is invalid: it returns zero results plus its diagnostics (§3.5). */
 export function isInvalid(query: Query): boolean {
   return (query.diagnostics ?? []).some((d) => !d.disabled);
 }
 
-// --------------------------------------------------------------------------
 // Results
-// --------------------------------------------------------------------------
 
 /** One `@page` result row. Needs no document load (K16). */
 export interface PageRow {
@@ -277,8 +206,26 @@ export interface PageRow {
   properties: [string, string][];
 }
 
-/** The advanced-query report (M5): OG/TQL sources report an empty `ignored` and
- *  `supported: true`. */
+/** The ONE answerer for "what does this page column show": a Table cell, a Board
+ * group key and the friendly-search page rows all call it. `fallbackDay` is the
+ * catalog's `date_key` for a page whose hydrated row is absent. Cost O(properties
+ * on the row); never throws. */
+export function pageRowFieldValue(
+  page: { name: string; kind: PageKind },
+  row: PageRow | undefined,
+  field: string,
+  fallbackDay?: number | null,
+): string {
+  const name = field.startsWith("prop:") ? field.slice(5) : field;
+  if (name === "name") return page.name;
+  if (name === "kind") return page.kind === "journal" ? "Journal" : "Page";
+  if (name === "day" || name === "journal-day" || name === "journal_day")
+    return String(row?.journal_day ?? fallbackDay ?? "");
+  const key = name.trim().toLowerCase();
+  return row?.properties.find(([property]) => property.trim().toLowerCase() === key)?.[1] ?? "";
+}
+
+/** The advanced-query report (M5): OG/TQL sources report an empty `ignored` and `supported: true`. */
 export interface QueryReport {
   ran?: string[];
   ignored?: string[];
@@ -331,40 +278,27 @@ export type QueryResult = {
   | { anchor: "page"; pages: PageRow[] }
 );
 
-/** The runtime inputs an execution binds against (§4.4, §7.1, R5).
- *
- *  It exists because an advanced query's answer is a function of WHERE and WHEN
- *  it runs, not only of its text. An absent `current_page` is NOT "unknown,
- *  guess": `?current-page` simply has no binding and the clause that needs it
- *  stays unsupported. The execution DAY is deliberately not a field — the
- *  resolver snapshots it once per execution. */
+/** The runtime inputs an execution binds against (§4.4, §7.1, R5). */
 export interface ExecutionContext {
   current_page?: string;
 }
 
 /** One row of `query_explain_empty` (Q14, N19): a top-level conjunct, the anchor
- *  rows matching it ALONE, and the rows matching all the OTHERS without it. */
+*  rows matching it ALONE, and the rows matching all the OTHERS without it. */
 export interface EmptyExplanation {
   conjunct: string;
   alone: number;
   without?: number;
 }
 
-/** `query_explain_empty`'s complete answer.
- *
- *  The rows alone were not enough: when execution-time resolution fails there are
- *  no honest counts to report, and an empty row list without the diagnostics and
- *  the support report would read as "every conjunct matches nothing" instead of
- *  "this query was never bound". */
+/** `query_explain_empty`'s complete answer. */
 export interface ExplainEmptyResult {
   rows: EmptyExplanation[];
   diagnostics?: Diagnostic[];
   report: QueryReport;
 }
 
-// --------------------------------------------------------------------------
 // The property registry (§6.1)
-// --------------------------------------------------------------------------
 
 export type ObservedType = "text" | "number" | "date" | "checkbox" | "ref";
 export type Cardinality = "one" | "many";
@@ -388,16 +322,9 @@ export interface RegistrySnapshot {
   generation: number;
 }
 
-// --------------------------------------------------------------------------
 // The exhaustive visitor — the mirror's own proof that it knows every variant
-// --------------------------------------------------------------------------
 
-/** Thrown when a value arrives carrying a `kind` this mirror does not know.
- *
- *  **This is the point of the whole module.** An unknown variant must be LOUD:
- *  silently treating it as an opaque object is how a frontend ends up rendering
- *  a query it cannot represent, and then saving that misreading back over the
- *  author's bytes. */
+/** Thrown when a value arrives carrying a `kind` this mirror does not know. */
 export class UnknownIrVariantError extends Error {
   constructor(readonly where: string, readonly value: unknown) {
     super(
@@ -410,12 +337,7 @@ export class UnknownIrVariantError extends Error {
   }
 }
 
-/** Walk every node of a filter tree, depth-first, in wire order.
- *
- *  Exhaustive by construction: an unrecognised `kind` throws
- *  `UnknownIrVariantError` rather than being skipped. Every consumer that needs
- *  to know "what is in this query" goes through here, so there is one answer to
- *  that question rather than one per component (I-12). */
+/** Walk every node of a filter tree, depth-first, in wire order. */
 export function forEachFilter(filter: Filter, visit: (node: Filter) => void): void {
   visit(filter);
   switch (filter.kind) {
@@ -468,10 +390,7 @@ function assertKnownValue(value: Value): void {
   }
 }
 
-/** Validate a whole parsed query against this mirror, throwing on the first
- *  variant it does not know. The type-mirror consistency test runs this over
- *  every golden fixture; callers that have just received a `query_parse` answer
- *  can run it too — it is a cheap tree walk, not a parse. */
+/** Validate a whole parsed query against this mirror, throwing on the first variant it does not know. */
 export function assertMirrorsIr(query: Query): void {
   switch (query.source.kind) {
     case "og":
@@ -503,32 +422,29 @@ export function assertMirrorsIr(query: Query): void {
   });
 }
 
-// --------------------------------------------------------------------------
-// Command dialects (SPEC §7.1, §4.3)
-// --------------------------------------------------------------------------
+/** Whether a node is a single condition rather than a group — the unit that
+*  renders as ONE row, and the unit a `not`/`off` wrapper can decorate without
+*  costing a level of indentation. */
+export function isLeafLike(filter: Filter): boolean {
+  return (
+    filter.kind === "leaf" ||
+    filter.kind === "raw" ||
+    filter.kind === "true" ||
+    filter.kind === "false"
+  );
+}
 
-/** What `query_parse` is being handed.
- *
- *  `macro_query` / `macro_tql` take the COMPLETE raw macro argument and are the
- *  ONLY inputs that split a trailing options map — once, in Rust. `og`, `tql` and
- *  `advanced` are explicit form inputs; `advanced` also serves the existing
- *  `#+BEGIN_QUERY` container extractor. There is no speculative
- *  parse-and-fallback: the caller states the form, or names the macro and lets
- *  the one Rust discriminator decide. */
+// Command dialects (SPEC §7.1, §4.3)
+
+/** What `query_parse` is being handed. */
 export type QueryTextDialect = "og" | "tql" | "advanced" | "macro_query" | "macro_tql";
 
-/** The printed form a `query_print` caller wants (§4.3).
- *
- *  `tql` is the text pane's editing layout — filter and anchor only, never
- *  options or view directives. `tql_macro` is the persisted single-line
- *  `{{tine-query …}}` form, `advanced_macro` a `{{query [:find …]}}` printed from
- *  its authored source, and `og` the legacy DSL, which is PARTIAL and therefore
- *  the only dialect that can refuse. */
+/** The printed form a `query_print` caller wants (§4.3). */
 export type QueryPrintDialect = "og" | "tql" | "tql_macro" | "advanced_macro";
 
 /** The parse dialect for a macro of this name (§7.1): `{{query …}}` carries OG
- *  or advanced text, `{{tine-query …}}` carries TQL. The ONE mapping, so a
- *  caller cannot pick a dialect that contradicts the name it is about to write. */
+*  or advanced text, `{{tine-query …}}` carries TQL. The ONE mapping, so a
+*  caller cannot pick a dialect that contradicts the name it is about to write. */
 export function macroTextDialect(macroName: string): QueryTextDialect {
   return macroName.toLowerCase() === "tine-query" ? "macro_tql" : "macro_query";
 }
@@ -538,15 +454,7 @@ export function macroPrintDialect(macroName: string): QueryPrintDialect {
   return macroName.toLowerCase() === "tine-query" ? "tql_macro" : "og";
 }
 
-/** The print dialect that re-emits the query the way it was AUTHORED.
- *
- *  This is a different question from {@link macroPrintDialect}, which answers
- *  "what dialect does this macro NAME print in". A `{{query …}}` macro can hold
- *  either the OG DSL or advanced datalog, and only the parse knows which — so a
- *  source-preserving re-emit (`preserveForm`) has to pick the dialect off the
- *  source variant, or Rust refuses the pair as mismatched. A builder query has
- *  no authored form at all; `og` is returned so the caller takes the ordinary
- *  lowering path, where `queryOgExpressible` decides. */
+/** The print dialect that re-emits the query the way it was AUTHORED. */
 export function sourcePrintDialect(source: Source): QueryPrintDialect {
   switch (source.kind) {
     case "advanced":

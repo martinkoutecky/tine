@@ -1,8 +1,8 @@
 // Render and exercise the signed community catalogue against the browser mock.
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = 5194;
 const server = spawn(
@@ -11,7 +11,17 @@ const server = spawn(
   { stdio: "inherit" }
 );
 
-const waitForServer = (url) => waitForHttpServer(url, 40, 250);
+async function waitForServer(url) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      if ((await fetch(url)).ok) return;
+    } catch {
+      // Preview is still starting.
+    }
+    await sleep(250);
+  }
+  throw new Error("preview server did not start");
+}
 
 try {
   const url = `http://127.0.0.1:${PORT}/`;

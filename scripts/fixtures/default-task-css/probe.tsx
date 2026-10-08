@@ -1,7 +1,6 @@
 import { render } from "solid-js/web";
 import { PageView } from "../../../src/components/Page";
 import { backend } from "../../../src/backend";
-import { graphBindingRuntime } from "../../../src/graphBindingRuntime";
 import { initParser } from "../../../src/render/parse";
 import { journalTitle, localDayKey } from "../../../src/journal";
 import { ensureLsShimStyle } from "../../../src/lsShim";
@@ -13,13 +12,12 @@ import "../../../src/styles/theme.css";
 import "../../../src/styles/app.css";
 await initParser();
 ensureLsShimStyle(); ensureThemeStyle();
-graphBindingRuntime.bind(1, { binding_generation: 1 });
 const name=journalTitle(new Date());
 const targetId="39400000-0000-4000-8000-000000000001";
 const blocks=MARKERS.map((marker,i)=>({id:`task-${marker.toLowerCase()}`,raw:`${marker} Task ${i+1}: plain **bold** and [[linked page]]`,marker,collapsed:false,children:[]}));
 blocks.push({id:targetId,raw:`DONE Referenced task\nid:: ${targetId}`,marker:"DONE",collapsed:false,children:[]});
 blocks.push({id:"completed-ref",raw:`DONE Completed containing ((${targetId}))`,marker:"DONE",collapsed:false,children:[]});
-const page={name,title:name,kind:"journal" as const,pre_block:null,blocks};
+const page={id:`journals/${name}.md`,name,title:name,kind:"journal" as const,pre_block:null,blocks};
 backend().journalFeedPage=async()=>({pages:[page],as_of_day:localDayKey(),next_before_day:null,done:true});
 backend().resolveBlocks=async()=>[{page:name,kind:"journal",blocks:[blocks[MARKERS.length]]}];
 render(()=><main style="max-width:900px;margin:32px auto"><PageView />

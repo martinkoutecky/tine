@@ -1,0 +1,19 @@
+{
+  "removed": [
+    "pages/Old Name.md"
+  ],
+  "files": [
+    {
+      "path": "journals/2026_06_15.md",
+      "bytes": "- ref [[New Name]]\n"
+    },
+    {
+      "path": "pages/New Name.md",
+      "bytes": "- the page body\n"
+    },
+    {
+      "path": "pages/Other.md",
+      "bytes": "- see [[New Name]] and #[[New Name]]\n"
+    }
+  ]
+}

@@ -1,0 +1,1366 @@
+//! Regression: full-text search reflects a marker toggle once the edited page is
+//! saved back (the path a {{query}}-result edit takes).
+use crate::model::Graph;
+use crate::test_config_client::ConfigClient;
+use std::sync::Arc;
+use tine_core::PageKind;
+use tine_graph_features::{assets, journals, pages, pdf};
+use tine_store::Store;
+
+fn mk(tag: &str) -> std::path::PathBuf {
+    // Unique per test (pid + tag) so parallel tests don't share a dir.
+    let root = std::env::temp_dir().join(format!("tine-se-{}-{}", std::process::id(), tag));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    root
+}
+
+fn store_at(root: &std::path::Path) -> Store {
+    Store::open(root, tine_store::OpenOptions::default())
+        .unwrap()
+        .0
+}
+
+fn query_simple(store: &Store, source: &str) -> Arc<Vec<tine_core::model::RefGroup>> {
+    match store
+        .whole_graph()
+        .unwrap()
+        .query(source, tine_store::QueryDialect::Simple)
+        .unwrap()
+    {
+        tine_store::QueryResult::Simple(groups) => groups,
+        _ => unreachable!(),
+    }
+}
+
+fn toggle_and_save(store: &Store, name: &str, journal: bool) {
+    let id = match store.whole_graph().unwrap().resolve(name, journal) {
+        tine_store::Resolved::Existing { id, .. } => id,
+        _ => panic!("missing page {name}"),
+    };
+    let mut read = store.page(&id).unwrap();
+    read.doc.blocks[0].raw = read.doc.blocks[0].raw.replace("TODO", "DOING");
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &read.doc
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+}
+
+fn save_named(store: &Store, name: &str, edit: impl FnOnce(&mut tine_core::model::PageDto)) {
+    let id = match store.whole_graph().unwrap().resolve(name, false) {
+        tine_store::Resolved::Existing { id, .. } => id,
+        _ => panic!("missing page {name}"),
+    };
+    let mut read = store.page(&id).unwrap();
+    edit(&mut read.doc);
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &read.doc
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+}
+
+fn search_matches(store: &Store, text: &str) -> bool {
+    let view = store.whole_graph().unwrap();
+    let req = tine_store::SearchRequest {
+        text: text.into(),
+        within: None,
+        page_limit: 20,
+        block_limit: 20,
+        explain: false,
+        page_match_scope: None,
+        page_view: None,
+        block_view: None,
+    };
+    let cancel = tine_store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
+    !view.search(&req, &cancel).unwrap().hits.is_empty()
+}
+
+// `(sort-by priority)` must sort the WHOLE result set, not within each page — so
+// priority-A tasks float to the top no matter which page they're on. Read the
+// global order ACROSS blocks (a sort may coalesce adjacent same-page results into
+// one group — see sort_coalesces_consecutive_same_page_results).
+#[test]
+fn sort_by_priority_is_global_across_pages() {
+    let root = mk("sortprio");
+    std::fs::write(
+        root.join("pages").join("P1.md"),
+        "- TODO [#C] c-one\n- TODO [#A] a-one\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages").join("P2.md"),
+        "- TODO [#B] b-two\n- TODO [#A] a-two\n",
+    )
+    .unwrap();
+    let store = store_at(&root);
+    let prios = |q: &str| -> Vec<char> {
+        query_simple(&store, q)
+            .iter()
+            .flat_map(|grp| grp.blocks.iter())
+            .map(|b| {
+                b.raw[b.raw.find("[#").unwrap() + 2..]
+                    .chars()
+                    .next()
+                    .unwrap()
+            })
+            .collect()
+    };
+    assert_eq!(
+        prios("(and (task TODO) (sort-by priority asc))"),
+        vec!['A', 'A', 'B', 'C'],
+        "A floats to the top globally"
+    );
+    assert_eq!(
+        prios("(and (task TODO) (sort-by priority desc))"),
+        vec!['C', 'B', 'A', 'A'],
+        "descending sinks A to the bottom"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// `(sort-by modified …)` orders results on ONE recency axis: journal pages by the
+// day they represent (stable — NOT their file mtime), other pages by file mtime.
+// A page written "now" (>> any 2020 journal day) is the most recent, so `desc`
+// (the "Newest first" preset) floats it above the journal days, newest journal
+// next — journal and non-journal todos interleaved on a single timeline.
+#[test]
+fn sort_by_modified_interleaves_journal_and_pages() {
+    let root = mk("sortmod");
+    std::fs::write(
+        root.join("journals").join("2020_01_01.md"),
+        "- TODO j-old\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("journals").join("2020_01_02.md"),
+        "- TODO j-new\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("pages").join("Proj.md"), "- TODO p-now\n").unwrap();
+    let store = store_at(&root);
+    let tag = |grp: &tine_core::RefGroup| {
+        grp.blocks[0]
+            .raw
+            .split_whitespace()
+            .last()
+            .unwrap()
+            .to_string()
+    };
+    let desc: Vec<String> = query_simple(&store, "(and (task TODO) (sort-by modified desc))")
+        .iter()
+        .map(tag)
+        .collect();
+    assert_eq!(
+        desc,
+        vec!["p-now", "j-new", "j-old"],
+        "newest first: page(mtime now) > 2020-01-02 > 2020-01-01"
+    );
+    let asc: Vec<String> = query_simple(&store, "(and (task TODO) (sort-by modified asc))")
+        .iter()
+        .map(tag)
+        .collect();
+    assert_eq!(
+        asc,
+        vec!["j-old", "j-new", "p-now"],
+        "oldest first reverses"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// `(sort-by deadline)` orders by the DEADLINE planning date — soonest first in
+// ascending order; tasks without a deadline sort last (the `~` sentinel). All three
+// live on one page, so they coalesce under a single heading (one group, blocks in
+// sorted order) — read across blocks, not groups.
+#[test]
+fn sort_by_deadline_soonest_first() {
+    let root = mk("sortdead");
+    std::fs::write(
+        root.join("pages").join("D.md"),
+        "- TODO later\n  DEADLINE: <2026-12-01 Tue>\n- TODO soon\n  DEADLINE: <2026-01-05 Mon>\n- TODO none\n",
+    )
+    .unwrap();
+    let store = store_at(&root);
+    let groups = query_simple(&store, "(and (task TODO) (sort-by deadline asc))");
+    assert_eq!(groups.len(), 1, "same-page results share one heading");
+    let asc: Vec<String> = groups[0]
+        .blocks
+        .iter()
+        .map(|b| {
+            b.raw
+                .lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .last()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        asc,
+        vec!["soon", "later", "none"],
+        "soonest deadline first; no-deadline last"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// The user's case (Jul 4 2026): several matching todos on ONE journal day must
+// render under a SINGLE page heading, not repeat it per block — and a sort keeps
+// document order within that page.
+#[test]
+fn sort_coalesces_consecutive_same_page_results() {
+    let root = mk("sortcoalesce");
+    std::fs::write(
+        root.join("journals").join("2020_02_02.md"),
+        "- TODO a1\n- TODO a2\n- TODO a3\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("journals").join("2020_01_01.md"), "- TODO b1\n").unwrap();
+    let store = store_at(&root);
+    let groups = query_simple(&store, "(and (task TODO) (sort-by modified desc))");
+    assert_eq!(
+        groups.len(),
+        2,
+        "consecutive same-page results share one heading (2, not 4)"
+    );
+    assert_eq!(
+        groups[0].blocks.len(),
+        3,
+        "the 3 same-day todos are under one group"
+    );
+    let first_day: Vec<String> = groups[0]
+        .blocks
+        .iter()
+        .map(|b| b.raw.split_whitespace().last().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        first_day,
+        vec!["a1", "a2", "a3"],
+        "within-page document order kept even under desc"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// Coalescing merges only ADJACENT same-page runs: a page whose blocks sort to
+// DIFFERENT positions (an A and a C task under a priority sort) still appears at
+// each rank — it is not collapsed into one heading.
+#[test]
+fn sort_does_not_over_merge_nonadjacent_same_page() {
+    let root = mk("sortsplit");
+    std::fs::write(
+        root.join("pages").join("P.md"),
+        "- TODO [#A] pa\n- TODO [#C] pc\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("pages").join("Q.md"), "- TODO [#B] qb\n").unwrap();
+    let store = store_at(&root);
+    let groups = query_simple(&store, "(and (task TODO) (sort-by priority asc))");
+    let seq: Vec<(String, usize)> = groups
+        .iter()
+        .map(|g| (g.page.clone(), g.blocks.len()))
+        .collect();
+    assert_eq!(
+        seq,
+        vec![
+            ("P".to_string(), 1),
+            ("Q".to_string(), 1),
+            ("P".to_string(), 1)
+        ],
+        "P split across its A and C ranks; only adjacent same-page runs merge"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// Setting the first day of week writes config.edn `:start-of-week` (Logseq
+// convention, 0=Monday … 6=Sunday) and round-trips on reopen — replacing an
+// existing value and inserting when the key is absent.
+#[test]
+fn set_start_of_week_round_trips_through_config_edn() {
+    let root = mk("sow");
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::write(
+        root.join("logseq").join("config.edn"),
+        "{:start-of-week 6}\n",
+    )
+    .unwrap();
+    let g = Graph::open(&root);
+    assert_eq!(g.meta().start_of_week, 6);
+    g.set_start_of_week(0).expect("write start-of-week");
+    assert_eq!(
+        Graph::open(&root).meta().start_of_week,
+        0,
+        "0 (Monday) persisted"
+    );
+
+    // Insert into a config that has no :start-of-week key yet.
+    std::fs::write(
+        root.join("logseq").join("config.edn"),
+        "{:preferred-workflow :todo}\n",
+    )
+    .unwrap();
+    Graph::open(&root)
+        .set_start_of_week(2)
+        .expect("insert start-of-week");
+    let g2 = Graph::open(&root);
+    assert_eq!(g2.meta().start_of_week, 2);
+    assert_eq!(
+        g2.meta().preferred_workflow,
+        "todo",
+        "existing key preserved"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn search_reflects_toggle_on_named_page() {
+    let root = mk("named");
+    std::fs::write(
+        root.join("pages").join("Tasks.md"),
+        "- TODO ship the thing\n",
+    )
+    .unwrap();
+    let store = store_at(&root);
+    toggle_and_save(&store, "Tasks", false);
+    assert!(
+        search_matches(&store, "DOING"),
+        "named: DOING found after save"
+    );
+    assert!(
+        !search_matches(&store, "TODO"),
+        "named: TODO gone after toggle"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn search_reflects_toggle_on_journal_page() {
+    let root = mk("journal");
+    std::fs::write(
+        root.join("journals").join("2026_06_16.md"),
+        "- TODO ship the thing\n",
+    )
+    .unwrap();
+    let store = store_at(&root);
+    let title = query_simple(&store, "(task TODO)")[0].page.clone();
+    toggle_and_save(&store, &title, true);
+    assert!(
+        search_matches(&store, "DOING"),
+        "journal: DOING found after save"
+    );
+    assert!(
+        !search_matches(&store, "TODO"),
+        "journal: TODO gone after toggle"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// The watcher must recognize Tine's own writes: after save_page, sync_file on
+// journals_desc reads from the warmed cache (perf); a brand-new journal created
+// after warming must still appear in the feed — its cache entry must carry a
+// date_key, else today's freshly-created page would silently vanish.
+#[test]
+fn new_journal_appears_in_journals_desc_via_cache() {
+    let root = mk("newjournal");
+    std::fs::write(root.join("journals").join("2026_06_16.md"), "- old day\n").unwrap();
+    let store = store_at(&root);
+    let feed = |store: &Store| {
+        tine_graph_features::journals::feed_journals_desc_through(store, tine_store::Day(99991231))
+            .unwrap()
+    };
+    assert_eq!(feed(&store).len(), 1);
+
+    let dto = tine_core::model::PageDto {
+        name: "Jun 18th, 2026".into(),
+        kind: PageKind::Journal,
+        title: "Jun 18th, 2026".into(),
+        pre_block: None,
+        blocks: vec![tine_core::model::BlockDto {
+            raw: "a new task".into(),
+            ..Default::default()
+        }],
+        rev: None,
+        format: Default::default(),
+        read_only: false,
+
+        guide: false,
+    };
+    let id = store.journal_id(tine_store::Day(20260618));
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::CreateNew,
+            &dto
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+
+    let js = feed(&store);
+    assert_eq!(
+        js.len(),
+        2,
+        "the freshly-created journal must appear in the feed"
+    );
+    assert_eq!(
+        store.page(&js[0].1).unwrap().doc.name,
+        "Jun 18th, 2026",
+        "newest day sorts first"
+    );
+    store.close();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// that file returns None (no phantom external-change → no false conflict).
+#[test]
+fn own_write_is_suppressed_by_watcher() {
+    let root = mk("selfwrite");
+    let path = root.join("pages").join("Notes.md");
+    // A block WITHOUT id:: (the common case): cache uuid is generated, disk has none.
+    std::fs::write(&path, "- TODO ship the thing\n- another line\n").unwrap();
+    let store = store_at(&root);
+    let id = tine_store::PageId::from("pages/Notes.md");
+    let before = store.whole_graph().unwrap().rev();
+
+    // Before any edit, an unchanged file is already suppressed.
+    store.scan_refresh().unwrap();
+    assert_eq!(
+        store.whole_graph().unwrap().rev(),
+        before,
+        "unchanged file → suppressed"
+    );
+
+    // Edit + save through the normal path.
+    let read = store.page(&id).unwrap();
+    let mut dto = read.doc;
+    dto.blocks[0].raw = dto.blocks[0].raw.replace("TODO", "DOING");
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &dto
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+
+    // The watcher polling this file must see it as OUR write, not external.
+    let after_save = store.whole_graph().unwrap().rev();
+    store.scan_refresh().unwrap();
+    assert_eq!(
+        store.whole_graph().unwrap().rev(),
+        after_save,
+        "own write → suppressed (no phantom graph-changed)"
+    );
+
+    // A genuine external change is still detected.
+    std::fs::write(&path, "- DOING ship the thing\n- edited by hand\n").unwrap();
+    store.scan_refresh().unwrap();
+    assert!(
+        store.whole_graph().unwrap().rev() > after_save,
+        "external edit → detected"
+    );
+    store.close();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn journal_content_days_distinguishes_empty() {
+    let root = mk("contentdays");
+    // Non-empty journal, an empty one (placeholder bullet), and a props-only one.
+    std::fs::write(
+        root.join("journals").join("2026_06_16.md"),
+        "- went for a walk\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("journals").join("2026_06_15.md"), "- \n").unwrap();
+    std::fs::write(root.join("journals").join("2026_06_14.md"), "title:: x\n").unwrap();
+    let store = store_at(&root);
+    let days = store.whole_graph().unwrap().journal_content_days();
+    assert!(
+        days.contains(&tine_store::Day(20260616)),
+        "non-empty day present: {days:?}"
+    );
+    assert!(
+        !days.contains(&tine_store::Day(20260615)),
+        "empty bullet day absent"
+    );
+    assert!(
+        !days.contains(&tine_store::Day(20260614)),
+        "props-only day absent"
+    );
+    store.close();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn frontend_added_id_survives_reload_and_resolves() {
+    let root = mk("idpersist");
+    std::fs::write(
+        root.join("pages").join("TODOs.md"),
+        "- {{query (task TODO)}}\n",
+    )
+    .unwrap();
+    let store = store_at(&root);
+
+    // Simulate the frontend save: load the page, append `id:: <uuid>` to the
+    // query block's raw (what ensureStableBlockId does), save back.
+    let id = match store.whole_graph().unwrap().resolve("TODOs", false) {
+        tine_store::Resolved::Existing { id, .. } => id,
+        _ => panic!("TODOs missing"),
+    };
+    let mut read = store.page(&id).unwrap();
+    let uuid = read.doc.blocks[0].id.clone();
+    eprintln!("store uuid = {uuid}");
+    read.doc.blocks[0].raw = format!("{}\nid:: {}", read.doc.blocks[0].raw, uuid);
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &read.doc
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+
+    eprintln!(
+        "--- file on disk ---\n{}",
+        std::fs::read_to_string(root.join("pages").join("TODOs.md")).unwrap()
+    );
+
+    // Reopen from scratch (fresh process would do this).
+    drop(store);
+    let reopened = store_at(&root);
+    let dto2 = reopened.page(&id).unwrap().doc;
+    eprintln!("reloaded uuid = {}", dto2.blocks[0].id);
+    assert_eq!(
+        dto2.blocks[0].id, uuid,
+        "block uuid stable across reload via id::"
+    );
+    assert!(
+        reopened
+            .whole_graph()
+            .unwrap()
+            .blocks(&[uuid.clone()])
+            .unwrap()[0]
+            .is_some(),
+        "resolve_block finds it by id::"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn memoized_query_and_backlinks_invalidate_after_edit() {
+    let root = mk("querycache");
+    std::fs::write(root.join("pages").join("Tasks.md"), "- TODO a\n- DONE b\n").unwrap();
+    std::fs::write(root.join("pages").join("Note.md"), "- see [[Tasks]]\n").unwrap();
+    let store = store_at(&root);
+    let total = |r: &[tine_core::RefGroup]| r.iter().map(|g| g.blocks.len()).sum::<usize>();
+
+    // Prime the memo: one open TODO, one backlink to Tasks.
+    let old = store.whole_graph().unwrap();
+    let old_query = match old
+        .query("(task TODO)", tine_store::QueryDialect::Simple)
+        .unwrap()
+    {
+        tine_store::QueryResult::Simple(groups) => groups,
+        _ => unreachable!(),
+    };
+    assert_eq!(total(&old_query), 1);
+    assert_eq!(total(&old.backlinks("Tasks").unwrap()), 1);
+
+    // Edit Tasks (flip DONE→TODO) and Note (drop the [[Tasks]] link) via saves.
+    save_named(&store, "Tasks", |page| page.blocks[1].raw = "TODO b".into());
+    save_named(&store, "Note", |page| {
+        page.blocks[0].raw = "no link anymore".into()
+    });
+
+    // The memo MUST reflect the edits, not serve the primed results.
+    assert_eq!(
+        total(&query_simple(&store, "(task TODO)")),
+        2,
+        "query must see the flipped task"
+    );
+    assert_eq!(
+        total(&store.whole_graph().unwrap().backlinks("Tasks").unwrap()),
+        0,
+        "backlinks must see the removed link"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn write_highlights_preserves_externally_added_ones() {
+    use tine_core::pdf::{Highlight, Position, Rect};
+    let root = mk("hlmerge");
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let mk_hl = |id: &str, text: &str| {
+        let r = Rect {
+            top: 0.0,
+            left: 0.0,
+            width: 1.0,
+            height: 1.0,
+            source_width: None,
+            source_height: None,
+        };
+        Highlight {
+            id: id.into(),
+            page: 1,
+            position: Position {
+                page: 1,
+                bounding: r.clone(),
+                rects: vec![r],
+            },
+            color: "yellow".into(),
+            text: Some(text.into()),
+            image: None,
+        }
+    };
+    let ids = |store: &Store| -> std::collections::HashSet<String> {
+        pdf::read_highlights(store, "paper.pdf")
+            .into_iter()
+            .map(|h| h.id)
+            .collect()
+    };
+    // Tine writes H1 (no baseline yet).
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[mk_hl("H1", "one")], &[]).unwrap();
+    // An external editor (OG) adds H2 to the same EDN.
+    let edn_path = root
+        .join("assets")
+        .join(format!("{}.edn", tine_core::pdf::asset_key("paper.pdf")));
+    let mut both = tine_core::pdf::parse_highlights(&std::fs::read_to_string(&edn_path).unwrap());
+    both.push(mk_hl("H2", "two"));
+    crate::test_fixture_io::atomic_write(&edn_path, tine_core::pdf::write_highlights(&both, ""))
+        .unwrap();
+    // Tine, baseline [H1], adds H3 and writes — H2 (external) must NOT be dropped.
+    pdf::write_highlights(
+        &store,
+        "paper.pdf",
+        "Paper",
+        &[mk_hl("H1", "one"), mk_hl("H3", "three")],
+        &[mk_hl("H1", "one")],
+    )
+    .unwrap();
+    assert!(
+        ids(&store).is_superset(&["H1", "H2", "H3"].map(String::from).into_iter().collect()),
+        "got {:?}",
+        ids(&store)
+    );
+
+    // Now DELETE H2: baseline is everything currently on disk; current omits H2.
+    let base = pdf::read_highlights(&store, "paper.pdf");
+    pdf::write_highlights(
+        &store,
+        "paper.pdf",
+        "Paper",
+        &[mk_hl("H1", "one"), mk_hl("H3", "three")],
+        &base,
+    )
+    .unwrap();
+    let after = ids(&store);
+    assert!(
+        !after.contains("H2"),
+        "deleted highlight must stay deleted: {after:?}"
+    );
+    assert!(
+        after.contains("H1") && after.contains("H3"),
+        "kept ones must survive: {after:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn highlight_write_is_not_seen_as_external_change() {
+    // Saving a highlight rewrites the hls__ notes page, which is a normal watched
+    // page. A watcher poll after the write must not raise a false "changed on disk"
+    // against it — post-write, disk_revs reflects the write and suppresses the poll.
+    use tine_core::pdf::{Highlight, Position, Rect};
+    let root = mk("hlself");
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    store.whole_graph().unwrap();
+    let changes = store.subscribe();
+
+    let r = Rect {
+        top: 0.0,
+        left: 0.0,
+        width: 1.0,
+        height: 1.0,
+        source_width: None,
+        source_height: None,
+    };
+    let h = Highlight {
+        id: "H1".into(),
+        page: 1,
+        position: Position {
+            page: 1,
+            bounding: r.clone(),
+            rects: vec![r],
+        },
+        color: "yellow".into(),
+        text: Some("noted".into()),
+        image: None,
+    };
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[]).unwrap();
+
+    store.scan_refresh().unwrap();
+    let observed: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
+    let highlights = store
+        .file_id(tine_store::Area::Pages, "hls__paper.md")
+        .unwrap();
+    assert!(
+        observed
+            .iter()
+            .filter(|change| change.origin == tine_store::Origin::External)
+            .all(|change| change.files.iter().all(|(file, _, _)| file != &highlights)),
+        "highlight write must not be reported as an external change: {observed:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn save_new_page_while_initial_load_is_pending() {
+    let root = mk("save-before-load");
+    std::fs::write(root.join("pages").join("A.md"), "- a\n").unwrap();
+    let pause = root.join(".tine-test-pause-load");
+    std::fs::write(&pause, "").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let mut b = store
+        .page(&tine_store::PageId::from("pages/A.md"))
+        .unwrap()
+        .doc;
+    b.name = "B".into();
+    b.title = "B".into();
+    b.rev = None;
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &tine_store::PageId::from("pages/B.md"),
+            tine_store::SaveBase::CreateNew,
+            &b,
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+    std::fs::remove_file(pause).unwrap();
+    assert!(root.join("pages/B.md").exists());
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn list_pages_memo_reflects_new_and_deleted_pages() {
+    let root = mk("listmemo");
+    std::fs::write(root.join("pages").join("A.md"), "- a\n").unwrap();
+    let store = store_at(&root);
+    let names = |store: &Store| {
+        let mut v: Vec<String> = store
+            .whole_graph()
+            .unwrap()
+            .inventory()
+            .0
+            .iter()
+            .filter(|entry| !entry.is_journal)
+            .filter(|entry| matches!(entry.target, tine_store::Resolved::Existing { .. }))
+            .map(|entry| entry.name.clone())
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(names(&store), vec!["A"]);
+
+    // Create B via a save (cache_upsert bumps cache_gen → memo invalidates). A
+    // brand-new page carries no path, so the save resolves the file by name (a
+    // loaded page keeps its own path and saves back to that file, #21).
+    let mut b = store
+        .page(&tine_store::PageId::from("pages/A.md"))
+        .unwrap()
+        .doc;
+    b.name = "B".into();
+    b.title = "B".into();
+    b.rev = None;
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &tine_store::PageId::from("pages/B.md"),
+            tine_store::SaveBase::CreateNew,
+            &b
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+    assert!(
+        names(&store).contains(&"B".to_string()),
+        "new page must appear: {:?}",
+        names(&store)
+    );
+
+    // Delete A → memo must drop it.
+    let (_, rev) = store
+        .read(&tine_store::PageId::from("pages/A.md").file(), None)
+        .unwrap();
+    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+    tx.trash(&tine_store::PageId::from("pages/A.md").file(), rev);
+    assert!(matches!(
+        tx.commit(),
+        tine_store::TxOutcome::Committed { .. }
+    ));
+    assert!(
+        !names(&store).contains(&"A".to_string()),
+        "deleted page must disappear: {:?}",
+        names(&store)
+    );
+    store.close();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn delete_page_moves_to_trash_recoverable() {
+    let root = mk("deltrash");
+    std::fs::write(root.join("pages").join("Doomed.md"), "- keep me\n").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let cancel = tine_store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
+    assert_eq!(
+        store
+            .whole_graph()
+            .unwrap()
+            .find_blocks("keep me", 10, &cancel)
+            .unwrap()
+            .len(),
+        1
+    );
+    pages::delete_page_expected(&store, "Doomed", PageKind::Page, None, None).expect("delete");
+
+    // Gone from pages/, no longer resolvable...
+    assert!(!root.join("pages").join("Doomed.md").exists());
+    assert!(matches!(
+        store.whole_graph().unwrap().resolve("Doomed", false),
+        tine_store::Resolved::Absent { .. }
+    ));
+    assert!(store
+        .whole_graph()
+        .unwrap()
+        .find_blocks("keep me", 10, &cancel)
+        .unwrap()
+        .is_empty());
+    // ...but recoverable from the local trash (content intact).
+    let trash = root.join("logseq").join(".tine-trash").join("pages");
+    let trashed: Vec<_> = std::fs::read_dir(&trash).unwrap().flatten().collect();
+    assert_eq!(trashed.len(), 1, "deleted file should be in the trash");
+    let body = std::fs::read_to_string(trashed[0].path()).unwrap();
+    assert!(body.contains("keep me"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn delete_page_errors_when_trash_path_is_file_and_keeps_page_cached() {
+    let root = mk("deltrash-blocked");
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::write(root.join("logseq").join(".tine-trash"), "not a dir").unwrap();
+    std::fs::write(root.join("pages").join("Doomed.md"), "- keep me\n").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let cancel = tine_store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
+    assert_eq!(
+        store
+            .whole_graph()
+            .unwrap()
+            .find_blocks("keep me", 10, &cancel)
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let err = pages::delete_page_expected(&store, "Doomed", PageKind::Page, None, None)
+        .expect_err("trash path is blocked");
+    assert!(
+        err.to_string().contains(".tine-trash"),
+        "error should name the trash path: {err}"
+    );
+    assert!(
+        root.join("pages").join("Doomed.md").is_file(),
+        "source page survives"
+    );
+    let hits = store
+        .whole_graph()
+        .unwrap()
+        .find_blocks("keep me", 10, &cancel)
+        .unwrap();
+    assert_eq!(hits.len(), 1, "page stays in the live cache");
+    assert_eq!(hits[0].blocks[0].raw, "keep me");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn trash_journal_file_errors_when_trash_path_is_file_and_keeps_source() {
+    let root = mk("journaltrash-blocked");
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::write(root.join("logseq").join(".tine-trash"), "not a dir").unwrap();
+    let journal = root.join("journals").join("2026_06_20.md");
+    std::fs::write(&journal, "- journal body\n").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let err =
+        journals::trash_journal_file(&store, "2026_06_20.md").expect_err("trash path is blocked");
+    assert!(
+        err.to_string().contains(".tine-trash"),
+        "error should name the trash path: {err}"
+    );
+    assert!(journal.is_file(), "source journal survives");
+    assert_eq!(
+        std::fs::read_to_string(&journal).unwrap(),
+        "- journal body\n"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn trash_asset_errors_when_trash_path_is_file_and_keeps_source() {
+    let root = mk("assettrash-blocked");
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("assets")).unwrap();
+    std::fs::write(root.join("logseq").join(".tine-trash"), "not a dir").unwrap();
+    let asset = root.join("assets").join("clip.png");
+    std::fs::write(&asset, b"asset bytes").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+
+    let err = assets::trash_asset(&store, "clip.png").expect_err("trash path is blocked");
+    assert!(
+        err.to_string().contains(".tine-trash"),
+        "error should name the trash path: {err}"
+    );
+    assert!(asset.is_file(), "source asset survives");
+    assert_eq!(std::fs::read(&asset).unwrap(), b"asset bytes");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn page_icons_answer_from_cached_pages_with_page_key_lookup() {
+    let root = mk("page-icons-cache");
+    std::fs::write(
+        root.join("pages").join("IconPage.md"),
+        "icon:: star\nalias:: Icon Alias\n- body\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("pages").join("NoIcon.md"), "- body\n").unwrap();
+    let store = store_at(&root);
+    let view = store.whole_graph().unwrap();
+    std::fs::rename(root.join("pages"), root.join("pages.offline")).unwrap();
+
+    let icons = view.page_icons(&[
+        "iconpage".to_string(),
+        "Icon Alias".to_string(),
+        "NoIcon".to_string(),
+        "Missing".to_string(),
+    ]);
+    assert_eq!(icons.get("iconpage").map(String::as_str), Some("star"));
+    assert_eq!(icons.get("Icon Alias").map(String::as_str), Some("star"));
+    assert!(!icons.contains_key("NoIcon"));
+    assert!(!icons.contains_key("Missing"));
+    store.close();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn page_icons_index_updates_after_icon_and_alias_edit() {
+    let root = mk("page-icons-edit");
+    std::fs::write(
+        root.join("pages/IconPage.md"),
+        "icon:: star\nalias:: Old Alias\n- body\n",
+    )
+    .unwrap();
+    let store = store_at(&root);
+    let old = store.whole_graph().unwrap();
+    let id = tine_store::PageId::from("pages/IconPage.md");
+    let read = store.page(&id).unwrap();
+    let mut doc = read.doc;
+    doc.pre_block = Some("icon:: moon\nalias:: New Alias\n".into());
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &doc
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+    let current = store.whole_graph().unwrap();
+    assert_eq!(
+        old.page_icons(&["Old Alias".into()])
+            .get("Old Alias")
+            .map(String::as_str),
+        Some("star")
+    );
+    let icons = current.page_icons(&["IconPage".into(), "Old Alias".into(), "New Alias".into()]);
+    assert_eq!(icons.get("IconPage").map(String::as_str), Some("moon"));
+    assert_eq!(icons.get("New Alias").map(String::as_str), Some("moon"));
+    assert!(!icons.contains_key("Old Alias"));
+    store.close();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn resolve_blocks_uses_indexed_hinted_page_lookup() {
+    let src = include_str!("../src/query.rs");
+    assert!(
+        !src.contains("pages.iter().find(|(e, _)| &e.name == page)"),
+        "hinted resolve_blocks lookup must not linearly scan all pages per hinted page"
+    );
+}
+
+#[test]
+fn run_advanced_query_uses_generation_keyed_memo_cache() {
+    let src = include_str!("../src/model.rs");
+    // og 14 Q2: every query entry point shares the one scoped query memo
+    // (`query/memo.rs`); the behaviour is pinned by
+    // `advanced_query_reuses_cached_result_until_graph_changes`.
+    let body = src
+        .split("pub(crate) fn run_advanced_query_bounded_cached(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n    }\n").next())
+        .expect("advanced bridge");
+    assert!(
+        body.contains("self.query_answer("),
+        "advanced queries should be memoized by the query memo"
+    );
+    assert!(
+        !src.contains("Not memoized (invoked on demand)"),
+        "stale non-memoized advanced-query comment should be gone"
+    );
+}
+
+#[test]
+fn resolve_block_index_refreshes_after_cache_change() {
+    let root = mk("blockidx");
+    std::fs::write(
+        root.join("pages").join("A.md"),
+        "- alpha\n  id:: aaaa-1111\n",
+    )
+    .unwrap();
+    let (store, _, _) =
+        crate::store::Store::open(&root, crate::store::OpenOptions::default()).unwrap();
+    let original = store.whole_graph().unwrap();
+    assert_eq!(
+        original.blocks(&["aaaa-1111".into()]).unwrap()[0]
+            .as_ref()
+            .unwrap()
+            .page,
+        "A"
+    );
+
+    // A new page appears on disk; invalidate the cache as the watcher would.
+    std::fs::write(
+        root.join("pages").join("B.md"),
+        "- beta\n  id:: bbbb-2222\n",
+    )
+    .unwrap();
+    store.scan_refresh().unwrap();
+    let current = store.whole_graph().unwrap();
+    assert_eq!(
+        current.blocks(&["bbbb-2222".into()]).unwrap()[0]
+            .as_ref()
+            .unwrap()
+            .page,
+        "B"
+    );
+    assert_eq!(
+        current.blocks(&["aaaa-1111".into()]).unwrap()[0]
+            .as_ref()
+            .unwrap()
+            .page,
+        "A"
+    );
+    assert!(original.blocks(&["bbbb-2222".into()]).unwrap()[0].is_none());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn resolve_blocks_batch_resolves_across_pages_with_duplicates() {
+    // The batch resolver groups hinted ids by page (each hinted page scanned
+    // once) and falls back to a single whole-graph scan for the rest. It must:
+    //  - resolve ids that live on different pages,
+    //  - resolve several ids on the SAME page,
+    //  - resolve an id via its persisted `id::` as well as its assigned uuid,
+    //  - return None (not a panic) for an unknown id,
+    //  - be positional & per-input (a repeated input uuid resolves each time).
+    let root = mk("resolvebatch");
+    std::fs::write(
+        root.join("pages").join("A.md"),
+        "- alpha one\n  id:: aaaa-1111\n- alpha two\n  id:: aaaa-2222\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages").join("B.md"),
+        "- beta\n  id:: bbbb-3333\n",
+    )
+    .unwrap();
+    let (store, _, _) =
+        crate::store::Store::open(&root, crate::store::OpenOptions::default()).unwrap();
+    let view = store.whole_graph().unwrap();
+
+    let req = vec![
+        "aaaa-1111".to_string(), // page A
+        "bbbb-3333".to_string(), // page B
+        "aaaa-2222".to_string(), // page A again (same page, second id)
+        "nope-0000".to_string(), // unknown
+        "aaaa-1111".to_string(), // duplicate input
+    ];
+    let out = view.blocks(&req).unwrap();
+    assert_eq!(out.len(), req.len(), "one result slot per input");
+    assert_eq!(out[0].as_ref().unwrap().page, "A");
+    assert_eq!(
+        out[0].as_ref().unwrap().blocks[0].raw,
+        "alpha one\nid:: aaaa-1111"
+    );
+    assert_eq!(out[1].as_ref().unwrap().page, "B");
+    assert_eq!(out[2].as_ref().unwrap().page, "A");
+    assert_eq!(
+        out[2].as_ref().unwrap().blocks[0].raw,
+        "alpha two\nid:: aaaa-2222"
+    );
+    assert!(out[3].is_none(), "unknown id resolves to None, not a panic");
+    assert_eq!(
+        out[4].as_ref().unwrap().page,
+        "A",
+        "duplicate input resolves again"
+    );
+
+    // Batch agrees with N single resolves (same semantics, just one pass).
+    for u in &req {
+        assert_eq!(
+            view.blocks(std::slice::from_ref(u))
+                .unwrap()
+                .into_iter()
+                .next()
+                .unwrap()
+                .map(|r| r.page),
+            view.blocks(std::slice::from_ref(u)).unwrap()[0]
+                .as_ref()
+                .map(|r| r.page.clone()),
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn new_journal_saved_with_date_stem_not_title() {
+    let root = mk("journalname");
+    let store = store_at(&root);
+    let _ = store.whole_graph().unwrap();
+    // Save a brand-new journal by its title (no file yet).
+    let dto = tine_core::model::PageDto {
+        name: "Jun 18th, 2026".into(),
+        kind: PageKind::Journal,
+        title: "Jun 18th, 2026".into(),
+        pre_block: None,
+        blocks: vec![tine_core::model::BlockDto {
+            id: String::new(),
+            raw: "TODO carried task".into(),
+            collapsed: false,
+            children: vec![],
+            breadcrumb: vec![],
+            ..Default::default()
+        }],
+        rev: None,
+        format: Default::default(),
+        read_only: false,
+
+        guide: false,
+    };
+    let id = store.journal_id(tine_store::Day(20260618));
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::CreateNew,
+            &dto
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+    // It must land on the date-stem file, and reopening must show it in the feed.
+    assert!(
+        root.join("journals").join("2026_06_18.md").exists(),
+        "stem-named file"
+    );
+    assert!(
+        !root.join("journals").join("Jun 18th, 2026.md").exists(),
+        "no title-named file"
+    );
+    store.close();
+    let reopened = store_at(&root);
+    assert!(
+        journals::feed_journals_desc_through(&reopened, tine_store::Day(99991231))
+            .unwrap()
+            .iter()
+            .any(|(day, id)| *day == tine_store::Day(20260618)
+                && reopened.page(id).unwrap().doc.name == "Jun 18th, 2026"),
+        "new journal appears in the feed after reload"
+    );
+    reopened.close();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn migrate_renames_title_named_journal_files() {
+    let root = mk("journalmigrate");
+    // Simulate a previously-mis-saved journal (title as filename).
+    std::fs::write(
+        root.join("journals").join("Jun 18th, 2026.md"),
+        "- TODO recovered\n",
+    )
+    .unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let n = journals::migrate_journal_filenames(
+        &store,
+        &journals::journal_filename_migrations(&store).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(n.migrated, 1);
+    assert!(n.skipped.is_empty());
+    assert!(
+        root.join("journals").join("2026_06_18.md").exists(),
+        "renamed to stem"
+    );
+    assert!(
+        !root.join("journals").join("Jun 18th, 2026.md").exists(),
+        "title file gone"
+    );
+    // Content preserved + now visible.
+    assert!(
+        journals::feed_journals_desc_through(&store, tine_store::Day(99991231))
+            .unwrap()
+            .iter()
+            .any(|(day, id)| *day == tine_store::Day(20260618)
+                && store.page(id).unwrap().doc.name == "Jun 18th, 2026")
+    );
+    store.close();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// CRLF graphs (e.g. a graph edited on Windows) round-trip safely: parsing strips
+// the `\r` so it never pollutes content, an UNCHANGED save stays byte-identical
+// (no Syncthing churn / no LF flip), and a real edit keeps the file's CRLF.
+#[test]
+fn crlf_files_round_trip_without_churn() {
+    let root = mk("crlf");
+    let original = "title:: Win\r\n\r\n- TODO ship it\r\n- second line\r\n";
+    let path = root.join("pages").join("Win.md");
+    std::fs::write(&path, original).unwrap();
+    let store = store_at(&root);
+    let id = tine_store::PageId::from("pages/Win.md");
+    let _ = store.whole_graph().unwrap();
+
+    let read = store.page(&id).unwrap();
+    let dto = read.doc;
+    // (1) no stray CR leaks into the in-memory model
+    assert!(
+        dto.pre_block.as_deref().map_or(true, |p| !p.contains('\r')),
+        "pre-block CR"
+    );
+    for b in &dto.blocks {
+        assert!(!b.raw.contains('\r'), "block raw carries a CR: {:?}", b.raw);
+    }
+    // (2) an unchanged save is byte-identical — CRLF preserved, no churn
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &dto
+        ),
+        tine_store::SaveOutcome::Unchanged(_) | tine_store::SaveOutcome::Saved(_)
+    ));
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        original,
+        "unchanged save must keep the exact CRLF bytes"
+    );
+    // (3) a real edit keeps CRLF (only the changed line differs, no lone LF)
+    let read2 = store.page(&id).unwrap();
+    let mut dto2 = read2.doc;
+    dto2.blocks[0].raw = dto2.blocks[0].raw.replace("ship it", "shipped");
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read2.rev),
+            &dto2
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+    let after = std::fs::read_to_string(&path).unwrap();
+    assert!(after.contains("shipped"), "edit applied: {after:?}");
+    assert!(after.contains("\r\n"), "edited file keeps CRLF: {after:?}");
+    assert_eq!(
+        after.matches('\n').count(),
+        after.matches("\r\n").count(),
+        "no lone LF mixed in: {after:?}"
+    );
+    store.close();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn held_view_recency_uses_its_observed_mtimes_not_a_later_stat() {
+    // A held `WholeGraph` answers `(sort-by modified …)` from the mtimes captured
+    // with its page table; a later mtime-only change on disk must not reorder it.
+    let root = mk("heldmtime");
+    let a = root.join("pages").join("A.md");
+    let b = root.join("pages").join("B.md");
+    std::fs::write(&a, "- TODO a\n").unwrap();
+    std::fs::write(&b, "- TODO b\n").unwrap();
+    let t0 = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+    let set = |p: &std::path::Path, t: std::time::SystemTime| {
+        std::fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(t)
+            .unwrap()
+    };
+    set(&a, t0);
+    set(&b, t0 + std::time::Duration::from_secs(100));
+    let store = store_at(&root);
+    // Each call uses its own query text so a per-view result memo cannot answer
+    // the second evaluation from the first.
+    let order = |view: &tine_store::WholeGraph, dir: &str| -> Vec<String> {
+        match view
+            .query(
+                &format!("(and (task TODO) (sort-by modified {dir}))"),
+                tine_store::QueryDialect::Simple,
+            )
+            .unwrap()
+        {
+            tine_store::QueryResult::Simple(groups) => groups
+                .iter()
+                .map(|g| {
+                    g.blocks[0]
+                        .raw
+                        .split_whitespace()
+                        .last()
+                        .unwrap()
+                        .to_string()
+                })
+                .collect(),
+            _ => unreachable!(),
+        }
+    };
+    let held = store.whole_graph().unwrap();
+    assert_eq!(
+        order(&held, "desc"),
+        vec!["b", "a"],
+        "precondition: B is newer"
+    );
+    set(&a, t0 + std::time::Duration::from_secs(200));
+    assert_eq!(
+        order(&held, "asc"),
+        vec!["a", "b"],
+        "a held view must keep the mtimes it observed, not re-stat the file"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

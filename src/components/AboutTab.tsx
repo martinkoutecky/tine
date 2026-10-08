@@ -1,23 +1,21 @@
-// The "About" settings tab (GH #32): version, build info, project links, and
-// credits. Read-only — it configures nothing; it lives in Settings only because
-// that's already where Tine keeps its other informational panes (shortcuts,
-// backups, help-improve) and it needs no separate window plumbing.
-import { createSignal, onMount, Show, type JSX } from "solid-js";
-import { backend, isTauri } from "../backend";
+// About: build/project information and device-local update controls.
+import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { ownedWhen, readOwned } from "../owned";
+import { APP_PRODUCT_NAME } from "../appIdentity";
+import { writeClipboardTextStrict } from "../clipboard";
+import { isTauri } from "../backend";
 import { platformKind } from "../platform";
 import { checkForUpdateNow, openReleasesPage } from "../update";
+import { checkForUpdatesAutomatically, setCheckForUpdatesAutomatically, initUpdateSettings } from "../updateSettings";
+import { openExternal } from "./primitives";
 
 const WEBSITE = "https://tine.page";
 const REPO = "https://github.com/martinkoutecky/tine";
 const ISSUES = "https://github.com/martinkoutecky/tine/issues";
 const CHANGELOG = "https://github.com/martinkoutecky/tine/blob/HEAD/CHANGELOG.md";
 const KOFI = "https://ko-fi.com/martinkoutecky";
-const PRIVACY = "https://tine.page/privacy.html";
-const SUPPORT_EMAIL = "mailto:support@tine.page";
 
-function openExternal(url: string) {
-  void backend().openExternal(url).catch(() => {});
-}
+
 
 // Build-time constants (vite.config.ts). __GIT_COMMIT__ is "" outside a git
 // checkout — the commit row is hidden then.
@@ -29,25 +27,43 @@ function buildStamp(): string {
   }
 }
 
+/** Render build/project information and the automatic-update preference. Each link opens through the
+ * backend once per click; a failed open shows fixed text without error detail. */
 export function AboutTab(): JSX.Element {
   const [version, setVersion] = createSignal("");
   const [status, setStatus] = createSignal("");
+  const [copyStatus, setCopyStatus] = createSignal("Copy version");
+  const versionLabel = () => `${APP_PRODUCT_NAME} ${version() || "development build"}`;
+  const copyVersion = async () => {
+    try { await writeClipboardTextStrict(versionLabel()); setCopyStatus("Copied!"); }
+    catch { setCopyStatus("Copy failed"); }
+  };
+  // View-only ownership: nothing here reads or writes graph state, so only the
+  // tab's own lifetime decides whether a late completion may land (I-20).
+  let alive = true;
+  onCleanup(() => { alive = false; });
+  const owner = ownedWhen(() => alive);
   const [checking, setChecking] = createSignal(false);
-  const [nativePlatform, setNativePlatform] = createSignal<"loading" | "desktop" | "android" | "ios" | "unavailable">(
+  const [updatePlatform, setUpdatePlatform] = createSignal<"loading" | "desktop" | "mobile" | "unavailable">(
     isTauri() ? "loading" : "unavailable"
   );
 
   onMount(async () => {
     if (!isTauri()) return;
     try {
-      setNativePlatform(await platformKind());
+      const desktop = (await platformKind()) === "desktop";
+      if (!owner()) return;
+      if (desktop) await initUpdateSettings();
+      if (!owner()) return;
+      setUpdatePlatform(desktop ? "desktop" : "mobile");
     } catch {
       // Fail closed: an unknown native platform must not expose the desktop updater.
-      setNativePlatform("unavailable");
+      if (owner()) setUpdatePlatform("unavailable");
     }
     try {
       const { getVersion } = await import("@tauri-apps/api/app");
-      setVersion(await getVersion());
+      const read = await readOwned(owner, getVersion());
+      if (read.kind === "current") setVersion(read.value);
     } catch {
       /* dev / non-Tauri — no runtime version */
     }
@@ -56,10 +72,12 @@ export function AboutTab(): JSX.Element {
   const check = async () => {
     setChecking(true);
     setStatus("");
-    const r = await checkForUpdateNow();
+    const result = await readOwned(owner, checkForUpdateNow());
+    if (result.kind === "stale") return;
+    const r = result.value;
     setChecking(false);
     if (r.kind === "current") setStatus(`You're on the latest version (${r.version}).`);
-    else if (r.kind === "available") setStatus(`Tine ${r.version} is available — choose Install update in the notification.`);
+    else if (r.kind === "available") setStatus(`${APP_PRODUCT_NAME} ${r.version} is available — choose Install update in the notification.`);
     else setStatus("Couldn't check right now — see the releases page.");
   };
 
@@ -73,25 +91,37 @@ export function AboutTab(): JSX.Element {
           </g>
         </svg>
         <div class="about-title">
-          <div class="about-name">Tine</div>
+          <div class="about-name">{APP_PRODUCT_NAME}</div>
           <div class="about-tagline">A fast, local-first, Logseq-compatible outliner.</div>
         </div>
       </div>
 
       <div class="about-version">
         <Show when={version()} fallback={<span class="settings-hint">Development build</span>}>
-          <span class="about-ver-num">Version {version()}</span>
+          <span class="about-ver-num">{versionLabel()}</span>
         </Show>
+        <button class="btn-secondary" onClick={() => void copyVersion()}>{copyStatus()}</button>
         <Show when={__GIT_COMMIT__}>
           <span class="about-commit mono">· {__GIT_COMMIT__}</span>
         </Show>
-        <Show when={nativePlatform() === "desktop"}>
+        <Show when={updatePlatform() === "desktop"}>
           <button class="btn-secondary about-check" onClick={check} disabled={checking()}>
             {checking() ? "Checking…" : "Check for updates"}
           </button>
         </Show>
       </div>
-      <Show when={nativePlatform() === "android" || nativePlatform() === "ios"}>
+      <Show when={updatePlatform() === "desktop"}>
+        <div class="settings-row">
+          <span class="settings-label">Check for updates automatically</span>
+          <button class="settings-toggle" classList={{ on: checkForUpdatesAutomatically() }}
+            role="switch" aria-label="Check for updates automatically" aria-checked={checkForUpdatesAutomatically()}
+            onClick={() => setCheckForUpdatesAutomatically(!checkForUpdatesAutomatically())}>
+            <span class="settings-toggle-knob" />
+          </button>
+        </div>
+        <div class="settings-hint">Applies to this device. Manual checks remain available when turned off.</div>
+      </Show>
+      <Show when={updatePlatform() === "mobile"}>
         <div class="settings-hint about-status">
           Updates arrive through your app's distribution channel.
         </div>
@@ -122,27 +152,21 @@ export function AboutTab(): JSX.Element {
           <span class="about-link-url">GitHub</span>
         </button>
 
-        <Show when={!isTauri() || nativePlatform() === "desktop" || nativePlatform() === "android"}>
-          <button class="about-link" onClick={() => openExternal(KOFI)}>
-            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
-              <path d="M4 8h13v5a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z" />
-              <path d="M17 9h1.8a2.2 2.2 0 0 1 0 4.4H17" />
-              <path d="M8 3.2c-.6.7-.6 1.4 0 2.1M11.5 3.2c-.6.7-.6 1.4 0 2.1" stroke-linecap="round" />
-            </svg>
-            <span>Support Tine</span>
-            <span class="about-link-url">Ko-fi</span>
-          </button>
-        </Show>
+        <button class="about-link" onClick={() => openExternal(KOFI)}>
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
+            <path d="M4 8h13v5a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z" />
+            <path d="M17 9h1.8a2.2 2.2 0 0 1 0 4.4H17" />
+            <path d="M8 3.2c-.6.7-.6 1.4 0 2.1M11.5 3.2c-.6.7-.6 1.4 0 2.1" stroke-linecap="round" />
+          </svg>
+          <span>Support Tine</span>
+          <span class="about-link-url">Ko-fi</span>
+        </button>
       </div>
 
       <div class="about-meta">
         <button class="about-linkbtn" onClick={() => openExternal(CHANGELOG)}>Changelog</button>
         <span class="about-dot">·</span>
         <button class="about-linkbtn" onClick={() => openExternal(ISSUES)}>Report an issue</button>
-        <span class="about-dot">·</span>
-        <button class="about-linkbtn" onClick={() => openExternal(PRIVACY)}>Privacy</button>
-        <span class="about-dot">·</span>
-        <button class="about-linkbtn" onClick={() => openExternal(SUPPORT_EMAIL)}>Email support</button>
         <span class="about-dot">·</span>
         <span>License: AGPL-3.0-only</span>
       </div>

@@ -44,17 +44,6 @@ impl QueryTextDialect {
             QueryTextDialect::MacroTql => QueryInput::MacroTql,
         }
     }
-
-    /// The wire dialect a core input is named by (the inverse of [`Self::input`]).
-    pub fn from_input(input: QueryInput) -> Self {
-        match input {
-            QueryInput::Og => QueryTextDialect::Og,
-            QueryInput::Advanced => QueryTextDialect::Advanced,
-            QueryInput::Tql => QueryTextDialect::Tql,
-            QueryInput::MacroQuery => QueryTextDialect::MacroQuery,
-            QueryInput::MacroTql => QueryTextDialect::MacroTql,
-        }
-    }
 }
 
 /// The `{query, view}` pair every parse returns (SPEC §7.1).
@@ -62,12 +51,18 @@ impl QueryTextDialect {
 pub struct ParsedQuery {
     pub query: Query,
     pub view: ViewSettings,
+    /// OG's read-only table request: options, query-table, or a trailing table.
+    /// Explicit Tine presentation properties override this in the renderer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub legacy_table: bool,
     #[serde(default, flatten)]
     pub scoped: ScopedDisplaySettings,
 }
 
 /// The whole of `query_parse` that is not slot plumbing: parse, then merge the
-/// host block's `tine.*` properties over the lifted directives (§4.1).
+/// host block's `tine.*` properties over the lifted directives (§4.1), and
+/// read OG table presentation from options, `query-table` and trailing `table`.
+/// Pure, O(source length + supplied properties); never changes source bytes.
 pub fn parse_query_pair(
     text: &str,
     dialect: QueryTextDialect,
@@ -80,9 +75,20 @@ pub fn parse_query_pair(
         crate::date::JournalDate::today(),
         registry,
     );
+    // OG components/query.cljs query: table? is options OR the host property
+    // OR ends-with? on the trimmed query string. Keep this answer in Rust.
+    let legacy_table = crate::query_edn::options(query.source.og_options())
+        .is_some_and(|options| options.table)
+        || block_properties.iter().any(|(key, value)| {
+            crate::doc::property_key_norm(key) == "query-table"
+                && !matches!(value.trim(), "false" | "nil")
+        })
+        || matches!(&query.source, super::ir::Source::Og { original, .. }
+            if original.trim_end().ends_with("table"));
     let scoped = super::view::read_scoped_display_settings(block_properties);
     ParsedQuery {
         query,
+        legacy_table,
         view: super::view::merge_block_property_view(&parsed_view, block_properties),
         scoped,
     }
@@ -177,6 +183,33 @@ mod tests {
             page,
             serde_json::json!({ "view": "list", "sort": [], "columns": [], "aggregates": [] }),
             "the page half inherits the singular view, which the draft did not touch"
+        );
+    }
+
+    /// GH #619 item 9: the macro's "pages and blocks" choice rides in
+    /// `tine.result-kinds`, a host property the engine does not read. Present or
+    /// absent, the parse is identical (OG ignores it the same way).
+    #[test]
+    fn the_result_kinds_host_property_does_not_change_the_reading() {
+        let with = vec![(
+            "tine.result-kinds".to_string(),
+            "pages-and-blocks".to_string(),
+        )];
+        let a = parse_query_pair(
+            "(task TODO)",
+            QueryTextDialect::MacroQuery,
+            &with,
+            Registry::none(),
+        );
+        let b = parse_query_pair(
+            "(task TODO)",
+            QueryTextDialect::MacroQuery,
+            &[],
+            Registry::none(),
+        );
+        assert_eq!(
+            serde_json::to_value(&a).unwrap(),
+            serde_json::to_value(&b).unwrap()
         );
     }
 }

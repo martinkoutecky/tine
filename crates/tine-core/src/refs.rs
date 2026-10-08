@@ -1,112 +1,12 @@
-//! Page-name identity, reference REWRITING, and the code/org fence machinery
-//! the rewriting needs. UTF-8 safe (advances by char boundaries).
-//!
-//! This file does NOT extract references. It said it did until 2026-09, long
-//! after the hand-rolled `page_refs`/`block_refs`/`block_ref_ids`/
-//! `references_page` were deleted as a dead second copy (see the note above
-//! `block_id`); OG-faithful extraction lives in lsdoc's `render::block_refs`,
-//! reaches `doc.rs`'s `projection()`, and is what every query and backlink
-//! reads. A stale header here is not cosmetic — it is what sends the next
-//! change to the wrong file, which is exactly how that second copy came to
-//! exist. `this_module_does_not_extract_references` keeps the boundary.
-//!
-//! What IS here: the one page-name fold ([`page_key`], [`normalize`],
-//! [`same_page`]), the reference-source exclusions, the rename rewriters
-//! ([`rename_refs`], [`rename_tags_property`] and their multi/format
-//! variants), [`block_id`], and the bracket-link/block-ref readers shared with
-//! `publish.rs`.
-
-use unicode_normalization::UnicodeNormalization;
+//! Reference extraction from block text: `[[page]]`, `#tag` (and `#[[multi
+//! word]]`), and `((block-uuid))`. Used for the backlink index and queries.
+//! UTF-8 safe (advances by char boundaries).
 
 use crate::config::FileNameFormat;
 
-/// The ONE page-name identity key: trimmed + **Unicode** lowercase + NFC (the
-/// OG/Logseq fold). Use this — never a bare
-/// `to_ascii_lowercase`/`eq_ignore_ascii_case` on a
-/// page name — so the ref/backlink index and the file/cache resolution agree on
-/// identity (a non-ASCII name like `Über` must resolve the same everywhere). Display
-/// uses the original casing.
-/// Pages that never appear as reference SOURCES.
-///
-/// There are two, and both mean "this text is not user content mentioning the
-/// target": the target page itself (OG excludes a page from its own linked
-/// references), and Tine's Favorites layout page, whose `[[links]]` are a
-/// sidebar arrangement rather than a mention.
-///
-/// This is the ONE predicate. Eight sites previously open-coded
-/// `refs::page_key(name) == excluded`, which is exactly how copies drift apart:
-/// a rule added to one is silently absent from another. Keep it that way — a
-/// new exclusion belongs in this type, not at a call site.
-#[derive(Clone, Debug, Default)]
-pub struct ReferenceSourceExclusions {
-    keys: Vec<String>,
-}
-
-impl ReferenceSourceExclusions {
-    /// `self_page` is the reference target; `favorites_page` is the graph's
-    /// `:tine/favorites-page`, when it has one.
-    pub fn new(self_page: &str, favorites_page: Option<&str>) -> Self {
-        let mut keys = Vec::with_capacity(2);
-        keys.push(page_key(self_page));
-        if let Some(page) = favorites_page {
-            let key = page_key(page);
-            if !key.is_empty() && !keys.contains(&key) {
-                keys.push(key);
-            }
-        }
-        Self { keys }
-    }
-
-    /// Exclude nothing. For call sites that have no graph configuration.
-    pub fn none() -> Self {
-        Self { keys: Vec::new() }
-    }
-
-    pub fn excludes_name(&self, page_name: &str) -> bool {
-        self.excludes_key(&page_key(page_name))
-    }
-
-    pub fn excludes_key(&self, key: &str) -> bool {
-        // At most two entries; a linear scan beats hashing.
-        self.keys.iter().any(|candidate| candidate == key)
-    }
-
-    /// The already-normalized keys for a projection query that must apply the
-    /// same source exclusions before an interactive match window is counted.
-    pub(crate) fn keys(&self) -> &[String] {
-        &self.keys
-    }
-}
-
-/// Whether `name` names a page at all: its [`page_key`] is non-empty. `[[ ]]`,
-/// `[[/]]`, `#/`, `tags:: /` and an ideographic-space `[[　]]` all fold to
-/// the empty key, which no page can own. Every reference, tag and alias source
-/// drops such a name, so the in-memory graph and the index agree -- and the
-/// index, which refuses an empty name, is never handed one: a single `[[/]]`
-/// used to fail the whole graph's index build (GH #594).
-pub fn names_a_page(name: &str) -> bool {
-    !page_key(name).is_empty()
-}
-
-pub fn page_key(name: &str) -> String {
-    // Preserve Tine's historical surrounding-whitespace tolerance. Otherwise
-    // this is OG page-name-sanity-lc: lowercase, remove one slash at each
-    // boundary, then NFC (never NFKC or accent folding).
-    let lowered = name.trim().to_lowercase();
-    let without_leading = lowered.strip_prefix('/').unwrap_or(&lowered);
-    let without_boundaries = without_leading.strip_suffix('/').unwrap_or(without_leading);
-    without_boundaries.nfc().collect()
-}
-
-/// Fold a `page.name LIKE` pattern under the page-identity comparison rules.
-///
-/// Unlike [`page_key`], a pattern is not a page name: surrounding whitespace,
-/// wildcard escapes, and literal boundary slashes are authored matching syntax
-/// and must survive. This is therefore the historical lowercase + NFC portion
-/// of the identity fold, owned beside the identity key it is matched against.
-pub(crate) fn page_identity_pattern(pattern: &str) -> String {
-    pattern.to_lowercase().nfc().collect()
-}
+#[path = "page_identity.rs"]
+mod page_identity;
+pub use page_identity::page_key;
 
 /// Comparison form for page identity. NFC composition requires allocation; this
 /// deliberately delegates to the canonical key so cache scans cannot drift.
@@ -120,109 +20,38 @@ pub fn normalize(name: &str) -> String {
     page_key(name)
 }
 
+/// Pages whose text is never a reference source: the target page itself (OG
+/// excludes a page from its own references) and Tine's Favorites arrangement
+/// page (`:tine/favorites-page`), whose `[[links]]` are a sidebar layout, not a
+/// mention. The ONE predicate; a new exclusion belongs here, not at a call site.
+#[derive(Clone, Debug, Default)]
+pub struct ReferenceSourceExclusions {
+    keys: Vec<String>,
+}
+
+impl ReferenceSourceExclusions {
+    pub fn new(self_page: &str, favorites_page: Option<&str>) -> Self {
+        let mut keys = vec![page_key(self_page)];
+        if let Some(key) = favorites_page.map(page_key) {
+            if !key.is_empty() && !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        Self { keys }
+    }
+
+    pub fn excludes_name(&self, page_name: &str) -> bool {
+        let key = page_key(page_name);
+        self.keys.iter().any(|candidate| *candidate == key)
+    }
+}
+
 fn is_tag_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '-' | '_' | '/' | '.')
 }
 
-/// Byte ranges of `raw` that are inside code — fenced blocks (``` / ~~~) or
-/// inline `…` spans. Like OG, references inside code are literal: they are
-/// neither indexed as backlinks nor rewritten on rename, so a code example that
-/// shows `[[Foo]]`/`#Foo` (or a URL fragment inside code) isn't corrupted when
-/// page Foo is renamed. (A bare URL `…#Foo` in prose is a separate case.)
-/// Strip one leading unordered-list bullet (`- `/`* `/`+ `) so a fenced code block
-/// that opens directly on a bullet line (`- ```lang`) is recognized as a fence.
-fn strip_list_bullet(s: &str) -> &str {
-    let b = s.as_bytes();
-    if b.len() >= 2 && matches!(b[0], b'-' | b'*' | b'+') && b[1] == b' ' {
-        &s[2..]
-    } else {
-        s
-    }
-}
-
-fn code_ranges(raw: &str) -> Vec<std::ops::Range<usize>> {
-    // Neither inline code nor a Markdown fence can start without one of these.
-    if !raw.contains(['`', '~']) {
-        return Vec::new();
-    }
-    let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
-    let mut fence: Option<(u8, usize)> = None; // (marker byte, run length) while open
-    let mut pos = 0usize;
-    for line in raw.split_inclusive('\n') {
-        let line_start = pos;
-        pos += line.len();
-        let content = line.strip_suffix('\n').unwrap_or(line);
-        let trimmed = content.trim_start();
-        if let Some((fc, fl)) = fence {
-            ranges.push(line_start..pos); // whole line (incl. newline) is code
-                                          // A closing fence is the same marker, >= the opening run, nothing after
-                                          // it. It is a bare line (no bullet) — a Logseq bulleted code block closes
-                                          // with an aligned `  ``` `, so the close check uses the un-stripped text.
-            let cm = trimmed.bytes().next().filter(|&c| c == b'`' || c == b'~');
-            let cr = cm.map_or(0, |m| trimmed.bytes().take_while(|&c| c == m).count());
-            if cm == Some(fc)
-                && cr >= fl
-                && trimmed.as_bytes()[cr..].iter().all(u8::is_ascii_whitespace)
-            {
-                fence = None;
-            }
-            continue;
-        }
-        // An OPENING fence may sit right after a list bullet (`- ```lang`), so strip
-        // one bullet before testing. Without this, the opener is missed but its bare
-        // closing ``` gets mis-read as an opener, swallowing everything after the
-        // block (e.g. a later `[[ref]]`) as "code".
-        let body = strip_list_bullet(trimmed);
-        let marker = body.bytes().next().filter(|&c| c == b'`' || c == b'~');
-        let run = marker.map_or(0, |m| body.bytes().take_while(|&c| c == m).count());
-        if run >= 3 {
-            ranges.push(line_start..pos);
-            fence = Some((marker.unwrap(), run));
-            continue;
-        }
-        inline_code_spans(content, line_start, &mut ranges);
-    }
-    ranges
-}
-
-/// Append byte ranges of inline `code` spans on one (non-fenced) line. A span is
-/// a run of N backticks, closed by the next run of exactly N (CommonMark-ish).
-fn inline_code_spans(line: &str, base: usize, out: &mut Vec<std::ops::Range<usize>>) {
-    let b = line.as_bytes();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'`' {
-            let open = i;
-            let k = b[i..].iter().take_while(|&&c| c == b'`').count();
-            let mut j = i + k;
-            let mut end = None;
-            while j < b.len() {
-                if b[j] == b'`' {
-                    let r = b[j..].iter().take_while(|&&c| c == b'`').count();
-                    if r == k {
-                        end = Some(j + k);
-                        break;
-                    }
-                    j += r;
-                } else {
-                    j += 1;
-                }
-            }
-            match end {
-                Some(e) => {
-                    out.push(base + open..base + e);
-                    i = e;
-                }
-                None => i = open + k, // unterminated: the backticks are literal
-            }
-        } else {
-            i += 1;
-        }
-    }
-}
-
 /// Whether byte `pos` is inside a code range, using a monotone cursor. The callers
-/// (`rename_refs`, `rename_tags_property`) scan left-to-right with a monotonically
+/// (`rename_refs_multi`, `rename_tags_property`) scan left-to-right with a monotonically
 /// increasing `pos`, and `ranges` are ascending + non-overlapping (see
 /// `code_ranges_for`), so we advance `cursor` past spent ranges instead of scanning
 /// ALL ranges for every byte — making rename O(n) instead of O(n·ranges).
@@ -233,63 +62,13 @@ fn in_code_at(pos: usize, ranges: &[std::ops::Range<usize>], cursor: &mut usize)
     ranges.get(*cursor).is_some_and(|r| r.contains(&pos))
 }
 
-/// Ranges to protect from ref rewriting: markdown fenced/inline code always, plus
-/// — for an org file — `#+BEGIN_…#+END_…` blocks (whose `[[..]]`/`#..` are literal
-/// source, not references). `is_org` is gated so a literal `#+BEGIN_` in a real
-/// markdown file is never mistaken for a block.
+/// Parser-owned literal bytes, including nested blocks and Org inline literals.
 fn code_ranges_for(raw: &str, is_org: bool) -> Vec<std::ops::Range<usize>> {
-    let mut r = code_ranges(raw);
-    if is_org {
-        // `code_ranges` is already ascending+non-overlapping; `org_block_ranges` is
-        // appended out of byte-order, so re-sort + coalesce to restore the invariant
-        // the monotone-cursor `in_code_at` relies on. R = #code regions (tiny), and
-        // this runs once per rename — the per-byte scan stays O(n).
-        r.extend(org_block_ranges(raw));
-        r.sort_unstable_by_key(|x| x.start);
-        let mut merged: Vec<std::ops::Range<usize>> = Vec::with_capacity(r.len());
-        for cur in r {
-            match merged.last_mut() {
-                Some(prev) if cur.start <= prev.end => prev.end = prev.end.max(cur.end),
-                _ => merged.push(cur),
-            }
-        }
-        return merged;
-    }
-    r
-}
-
-/// Byte ranges (whole lines, inclusive) of org `#+BEGIN_x … #+END_x` blocks.
-/// Mirrors `org.rs`'s headline-scanner block tracking; an unclosed block extends
-/// to end-of-text (so a stray ref after it is treated conservatively as literal).
-fn org_block_ranges(raw: &str) -> Vec<std::ops::Range<usize>> {
-    let mut ranges = Vec::new();
-    let mut pos = 0usize;
-    let mut depth = 0usize;
-    let mut start = 0usize;
-    for line in raw.split_inclusive('\n') {
-        let line_start = pos;
-        pos += line.len();
-        let kw = line.trim_start_matches([' ', '\t']).strip_prefix("#+");
-        let is_begin = kw.is_some_and(|k| k.len() >= 6 && k[..6].eq_ignore_ascii_case("begin_"));
-        let is_end = kw.is_some_and(|k| k.len() >= 4 && k[..4].eq_ignore_ascii_case("end_"));
-        if depth == 0 {
-            if is_begin {
-                depth = 1;
-                start = line_start;
-            }
-        } else if is_begin {
-            depth += 1;
-        } else if is_end {
-            depth -= 1;
-            if depth == 0 {
-                ranges.push(start..pos);
-            }
-        }
-    }
-    if depth > 0 {
-        ranges.push(start..pos);
-    }
-    ranges
+    crate::block_regions::parse(raw, is_org)
+        .literals
+        .into_iter()
+        .map(|r| r.0..r.1)
+        .collect()
 }
 
 /// A `#tag` is only a tag at a word boundary: `#` at the start, or preceded by a
@@ -310,14 +89,13 @@ fn tag_boundary(raw: &str, i: usize) -> bool {
 // used to sit here were a dead second copy (only tests called them) — a "fix the
 // wrong file" trap — and were removed. What remains in this file is the LIVE half:
 // `normalize`, `rename_*`, `block_id`, the bracket-link/block-ref helpers (shared
-// with `publish.rs`), and the code/org fence machinery.
+// with `publish.rs`), and parser-owned literal masks.
 
 /// A block's `id::` property value (its uuid), if any.
-pub fn block_id(raw: &str) -> Option<String> {
-    raw.lines().find_map(|l| {
-        crate::doc::parse_property_line(l)
-            .and_then(|(k, v)| k.eq_ignore_ascii_case("id").then(|| v.to_string()))
-    })
+pub fn block_id(raw: &str, is_org: bool) -> Option<String> {
+    crate::block_regions::parse(raw, is_org)
+        .id
+        .map(|p| p.value.trim().to_string())
 }
 
 /// Read a `[label](target)` starting at the leading `[`. The target is read with
@@ -363,18 +141,6 @@ pub fn as_block_ref(url: &str) -> Option<&str> {
         .map(str::trim)
 }
 
-/// Rewrite every reference to page `from` (case-insensitive) as `to`, returning
-/// the new text. Handles `[[from]]`, `#from`, and `#[[from]]`. A `#tag` becomes
-/// `#[[to]]` when `to` contains characters that aren't valid in a bare tag
-/// (e.g. spaces), matching Logseq.
-pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
-    // Single-target is just the one-entry multi case — keep ONE rewriter so the
-    // single- and multi-target callers can never drift on matching/escaping rules.
-    let mut map = std::collections::HashMap::with_capacity(1);
-    map.insert(normalize(from), to.to_string());
-    rename_refs_multi(raw, &map, is_org)
-}
-
 /// Rewrite every reference to ANY page in `renames` (keyed by `normalize(from)`,
 /// valued by the display `to`) in a SINGLE left-to-right pass, computing the
 /// code/fence ranges ONCE. This is the namespace-rename hot path: a primary page
@@ -382,18 +148,11 @@ pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
 /// per `(old,new)` pair); now each file is scanned once against the whole rename
 /// set. Each matched ref is mapped by its own normalized name (no chaining — a
 /// reference to `A` always becomes `renames[A]`, even if some other pair renames
-/// to `A`).
+/// to `A`). Org `[[file:…]]` links decode and re-encode their target stem
+/// through the graph's `file_name_format`, the codec the page move itself uses
+/// (master b8f73b9af107), so legacy, triple-lowbar and reserved-character
+/// targets name the renamed file.
 pub fn rename_refs_multi(
-    raw: &str,
-    renames: &std::collections::HashMap<String, String>,
-    is_org: bool,
-) -> String {
-    rename_refs_multi_with_format(raw, renames, is_org, FileNameFormat::TripleLowbar)
-}
-
-/// Config-aware form used by graph rename so Org file links derive their new
-/// target from the same filename codec as the actual transactional page move.
-pub(crate) fn rename_refs_multi_with_format(
     raw: &str,
     renames: &std::collections::HashMap<String, String>,
     is_org: bool,
@@ -405,7 +164,7 @@ pub(crate) fn rename_refs_multi_with_format(
     let mut i = 0;
     while i < raw.len() {
         let rest = &raw[i..];
-        // Inside a code fence / inline-code span, refs are literal — copy verbatim
+        // Inside a code fence / inline-code span, refs are literal — copy verbatim,
         // never rewrite, so code examples aren't corrupted by a rename.
         if !in_code_at(i, &code, &mut code_cur) {
             // Org file link: `[[file:…/<stem>.org][desc]]` / `[[file:…/<stem>.org]]`.
@@ -413,7 +172,7 @@ pub(crate) fn rename_refs_multi_with_format(
             // can't match it — rewrite the filename stem so the link survives the
             // rename (L1). Only for org; markdown has no `file:` page links.
             if is_org && rest.starts_with("[[") {
-                if let Some(end) = rest[2..].find("]]") {
+                if let Some(end) = link_end(&rest[2..]) {
                     if let Some(rw) =
                         rewrite_org_file_link(&rest[2..2 + end], renames, file_name_format)
                     {
@@ -424,7 +183,7 @@ pub(crate) fn rename_refs_multi_with_format(
                 }
             }
             if let Some(after) = rest.strip_prefix("[[") {
-                if let Some(end) = after.find("]]") {
+                if let Some(end) = link_end(after) {
                     if let Some(to) = renames.get(&normalize(&after[..end])) {
                         out.push_str(&format!("[[{to}]]"));
                     } else {
@@ -436,7 +195,7 @@ pub(crate) fn rename_refs_multi_with_format(
             }
             if tag_boundary(raw, i) {
                 if let Some(after) = rest.strip_prefix("#[[") {
-                    if let Some(end) = after.find("]]") {
+                    if let Some(end) = link_end(after) {
                         if let Some(to) = renames.get(&normalize(&after[..end])) {
                             out.push_str(&tag_for(to));
                         } else {
@@ -461,9 +220,10 @@ pub(crate) fn rename_refs_multi_with_format(
                 }
             }
         }
-        // Only '[' and '#' can start a reference. Copy the intervening literal
-        // run at once; the next opener still checks its exact code-range position.
-        // Consume this character first so an unmatched opener also makes progress.
+        // Only '[' and '#' can start a reference (master db17142fdf03, GH #406).
+        // Copy the intervening literal run at once; the next opener still checks
+        // its exact code-range position. Consume this character first so an
+        // unmatched opener also makes progress.
         let first = rest.chars().next().unwrap().len_utf8();
         let end = first + rest[first..].find(['[', '#']).unwrap_or(rest.len() - first);
         out.push_str(&rest[..end]);
@@ -471,6 +231,19 @@ pub(crate) fn rename_refs_multi_with_format(
     }
     out
 }
+
+/// End of a `[[…]]` body (the offset of its first `]]`), unless another `[[`
+/// opens before it. That opener is then not a link for rename: OG rewrites a
+/// literal `[[Old]]` wherever it stands (`replace-page-ref!`), so the scan
+/// resumes after one `[` and still finds `[[Old]]` in `use [[ to link [[Old]]`
+/// and inside a nested `[[a [[Old]] c]]` (C3W W3, L03), where taking the span to
+/// the first `]]` used to swallow the real reference and leave it stale.
+fn link_end(after: &str) -> Option<usize> {
+    let end = after.find("]]")?;
+    (!after[..end].contains("[[")).then_some(end)
+}
+
+pub use crate::block_regions::is_linkable_property_separator;
 
 /// Rewrite an org `[[file:…]]` link's inner text if its target file's basename
 /// (namespace-decoded `___`→`/`, extension stripped) normalizes to a key in
@@ -494,9 +267,9 @@ fn rewrite_org_file_link(
         Some((s, e)) => (s, format!(".{e}")),
         None => (file, String::new()),
     };
-    let decoded = crate::vocab::decode_page_name(stem, file_name_format);
+    let decoded = crate::model::decode_page_name(stem, file_name_format);
     let to = renames.get(&normalize(&decoded))?;
-    let new_stem = crate::vocab::encode_page_name(to, file_name_format);
+    let new_stem = crate::model::encode_page_name(to, file_name_format);
     let desc_part = desc.map(|d| format!("][{d}")).unwrap_or_default();
     Some(format!("[[file:{dir}{new_stem}{ext}{desc_part}]]"))
 }
@@ -511,10 +284,10 @@ fn tag_for(to: &str) -> String {
 }
 
 /// Rewrite **bare** page-name refs in `tags::` property values from `from` to
-/// `to`. `page_refs`/`rename_refs` only see inline `[[..]]`/`#..`, so bare
+/// `to`. `page_refs`/`rename_refs_multi` only see inline `[[..]]`/`#..`, so bare
 /// comma-separated tag names (`tags:: Old, Foo`) are invisible to them — yet
 /// Logseq indexes those as real references, so a rename must update them too.
-/// Bracketed (`[[..]]`) and `#`-prefixed values are left to `rename_refs`.
+/// Bracketed (`[[..]]`) and `#`-prefixed values are left to `rename_refs_multi`.
 /// `tags::` lines inside a code fence are skipped (literal text, like inline
 /// refs in code). Whitespace, commas, and the `key::` prefix are preserved
 /// verbatim for byte-exact round-tripping of everything but the matched name.
@@ -532,7 +305,7 @@ pub fn rename_tags_property_multi(
     renames: &std::collections::HashMap<String, String>,
     is_org: bool,
 ) -> String {
-    // The existing property parser requires this literal separator.
+    // The property parser requires this literal separator.
     if !raw.contains("::") {
         return raw.to_owned();
     }
@@ -571,50 +344,63 @@ fn tags_value_start(line: &str) -> Option<usize> {
 /// segment whose trimmed, **bare** name normalizes to `target`, swap the name
 /// for `to`, keeping the segment's surrounding whitespace.
 fn rewrite_bare_tags(valpart: &str, renames: &std::collections::HashMap<String, String>) -> String {
-    valpart
-        .split(',')
-        .map(|seg| {
-            let trimmed = seg.trim();
-            if trimmed.is_empty() || trimmed.starts_with("[[") || trimmed.starts_with('#') {
-                return seg.to_string(); // empty, or handled by rename_refs
+    let mut out = String::with_capacity(valpart.len());
+    let mut rest = valpart;
+    loop {
+        let (seg, sep) = match rest.find(is_linkable_property_separator) {
+            Some(at) => {
+                let len = rest[at..].chars().next().map_or(1, char::len_utf8);
+                (&rest[..at], Some(&rest[at..at + len]))
             }
-            if let Some(to) = renames.get(&normalize(trimmed)) {
+            None => (rest, None),
+        };
+        let trimmed = seg.trim();
+        let to = (!trimmed.is_empty() && !trimmed.starts_with("[[") && !trimmed.starts_with('#'))
+            .then(|| renames.get(&normalize(trimmed)))
+            .flatten(); // empty, or handled by rename_refs
+        match to {
+            Some(to) => {
                 let lead = seg.len() - seg.trim_start().len();
                 let trail = seg.trim_end().len();
-                format!("{}{}{}", &seg[..lead], to, &seg[trail..])
-            } else {
-                seg.to_string()
+                out.push_str(&seg[..lead]);
+                out.push_str(to);
+                out.push_str(&seg[trail..]);
             }
-        })
-        .collect::<Vec<_>>()
-        .join(",")
+            None => out.push_str(seg),
+        }
+        match sep {
+            Some(sep) => {
+                out.push_str(sep);
+                rest = &rest[seg.len() + sep.len()..];
+            }
+            None => return out,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Tine's page-name key folds case and NFC/NFD, so a case- or
-    /// normalization-folding filesystem can never merge two pages Tine holds
-    /// apart: its equivalence classes are a subset of Tine's. The storage
-    /// contract's §2.10d rests on this fact.
+    /// Single-target rewrite: the one-entry case of [`rename_refs_multi`], so the
+    /// tests exercise the same rewriter the graph rename uses.
+    fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
+        let mut map = std::collections::HashMap::with_capacity(1);
+        map.insert(normalize(from), to.to_string());
+        rename_refs_multi(raw, &map, is_org, FileNameFormat::TripleLowbar)
+    }
+
     #[test]
-    fn filesystem_folding_never_separates_names_tine_already_treats_as_one() {
-        for (left, right) in [
-            (
-                "K\u{16f}\u{148} b\u{11b}\u{17e}\u{ed}",
-                "k\u{16f}\u{148} b\u{11b}\u{17e}\u{ed}",
-            ),
-            ("\u{17d} pilot notes", "Z\u{30c} pilot notes"),
-            ("Foo", "foo"),
-        ] {
-            assert_eq!(
-                page_key(left),
-                page_key(right),
-                "a filesystem fold must never split a pair Tine treats as one page: \
-                 {left} / {right}"
-            );
-        }
+    fn rename_literal_runs_cross_code_boundaries_and_preserve_unicode() {
+        let literal = "é猫 ordinary prose ".repeat(100);
+        let raw = format!("{literal}`literal code` [[Old]]\n```\n{literal}[[Old]]\n```\n{literal}#Old [broken [ [[Old]]");
+        let expected = format!("{literal}`literal code` [[New]]\n```\n{literal}[[Old]]\n```\n{literal}#New [broken [ [[New]]");
+        assert_eq!(rename_refs(&raw, "Old", "New", false), expected);
+        let org = format!("{literal}\n#+BEGIN_SRC\n[[Old]]\n#+END_SRC\n{literal}[[Old]]");
+        assert_eq!(
+            rename_refs(&org, "Old", "New", true),
+            format!("{literal}\n#+BEGIN_SRC\n[[Old]]\n#+END_SRC\n{literal}[[New]]")
+        );
     }
 
     #[test]
@@ -637,11 +423,11 @@ mod tests {
     #[test]
     fn block_id_reads_id_property() {
         assert_eq!(
-            block_id("text\nid:: 1234-abcd"),
+            block_id("text\nid:: 1234-abcd", false),
             Some("1234-abcd".to_string())
         );
-        assert_eq!(block_id("ID:: Xyz"), Some("Xyz".to_string())); // case-insensitive key
-        assert_eq!(block_id("no props here"), None);
+        assert_eq!(block_id("ID:: Xyz", false), Some("Xyz".to_string())); // case-insensitive key
+        assert_eq!(block_id("no props here", false), None);
     }
 
     #[test]
@@ -704,13 +490,10 @@ mod tests {
             out,
             "see [[New]] here\n#+BEGIN_SRC clojure\n(def s \"[[Old]]\") ; #Old\n#+END_SRC\nand [[New]] again\n"
         );
-        // Same input as markdown (is_org=false) WOULD rewrite inside (no org fence
-        // awareness) — proving the gate matters.
+        // mldoc 1.5.9 emits Src for this input in Markdown too. The same
+        // parser-owned literal protection applies in both formats.
         let md = rename_refs(raw, "Old", "New", false);
-        assert!(
-            md.contains("(def s \"[[New]]\")"),
-            "md path rewrites inside (expected): {md:?}"
-        );
+        assert_eq!(md, out);
     }
 
     #[test]
@@ -762,10 +545,7 @@ mod tests {
                 "[[file:./pages/{}.org][page]]",
                 crate::model::encode_page_name(new_title, format)
             );
-            assert_eq!(
-                rename_refs_multi_with_format(&raw, &renames, true, format),
-                expected
-            );
+            assert_eq!(rename_refs_multi(&raw, &renames, true, format), expected);
         }
     }
 
@@ -790,18 +570,6 @@ mod tests {
     }
 
     #[test]
-    fn page_identity_pattern_preserves_pattern_syntax_without_search_folding() {
-        assert_eq!(
-            page_identity_pattern(" /CAFÉ\\_%/ "),
-            " /café\\_%/ ",
-            "whitespace, escapes, wildcards, and boundary slashes are literal pattern syntax"
-        );
-        assert_eq!(page_identity_pattern("Cafe\u{301}"), "café");
-        assert_ne!(page_identity_pattern("Cafe"), page_identity_pattern("Café"));
-        assert_ne!(page_identity_pattern("Ｃａｆｅ"), "cafe");
-    }
-
-    #[test]
     fn rename_monotone_cursor_handles_many_interleaved_code_spans() {
         // 3 real refs (renamed) interleaved with 2 inline-code spans (literal). The
         // O(n) monotone cursor must advance past each spent code span without losing
@@ -810,19 +578,6 @@ mod tests {
         assert_eq!(
             rename_refs(raw, "Old", "New", false),
             "[[New]] `[[Old]]` mid [[New]] `x [[Old]]` end [[New]]"
-        );
-    }
-
-    #[test]
-    fn rename_literal_runs_cross_code_boundaries_and_preserve_unicode() {
-        let literal = "é猫 ordinary prose ".repeat(100);
-        let raw = format!("{literal}`literal code` [[Old]]\n```\n{literal}[[Old]]\n```\n{literal}#Old [broken [ [[Old]]");
-        let expected = format!("{literal}`literal code` [[New]]\n```\n{literal}[[Old]]\n```\n{literal}#New [broken [ [[New]]");
-        assert_eq!(rename_refs(&raw, "Old", "New", false), expected);
-        let org = format!("{literal}\n#+BEGIN_SRC\n[[Old]]\n#+END_SRC\n{literal}[[Old]]");
-        assert_eq!(
-            rename_refs(&org, "Old", "New", true),
-            format!("{literal}\n#+BEGIN_SRC\n[[Old]]\n#+END_SRC\n{literal}[[New]]")
         );
     }
 
@@ -854,34 +609,5 @@ mod tests {
             rename_tags_property(raw, "Old", "New", false),
             "tags:: New\n```\ntags:: Old\n```\n"
         );
-    }
-
-    /// The module doc above claims this file rewrites references but does not
-    /// extract them. The extractors it once held were a dead second copy that
-    /// only tests called, and their removal is the reason the boundary exists:
-    /// a reader who believes the old header edits reference behaviour here and
-    /// changes nothing a user can see.
-    #[test]
-    fn this_module_does_not_extract_references() {
-        let source = include_str!("refs.rs");
-        let production = source
-            .split_once("\n#[cfg(test)]\nmod tests {")
-            .expect("this file still has a test module")
-            .0;
-        for extractor in [
-            "fn page_refs(",
-            "fn block_refs(",
-            "fn block_ref_ids(",
-            "fn references_page(",
-        ] {
-            assert!(
-                !production.contains(extractor),
-                "refs.rs defines {extractor} again. Reference extraction belongs to \
-                 lsdoc's render::block_refs, consumed through doc.rs's projection(); a \
-                 copy here is a second answer to one question that no query reads \
-                 (invariants I-11, I-12). If this really moved back, rewrite the module \
-                 doc in the same change."
-            );
-        }
     }
 }

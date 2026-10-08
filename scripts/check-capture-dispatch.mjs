@@ -1,4 +1,3 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Source-served desktop Quick Capture dispatch regression.
 //
 // This deliberately loads /capture.html through Vite (not dist), leaves the
@@ -6,7 +5,7 @@ import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // drives real bubbling KeyboardEvents at the real title/editor nodes.  It owns
 // the Vite server and Chromium lifecycle so it can be used as both the P1B
 // fail-before recorder and the pass-after regression gate.
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -49,6 +48,27 @@ function startServer() {
   });
 }
 
+async function waitForServer() {
+  for (let i = 0; i < 80; i++) {
+    if (server.exitCode !== null) {
+      const outcome = await serverExit;
+      throw new Error(`owned Vite exited before readiness (${outcome.kind === "error" ? outcome.error.message : `code ${outcome.code}, signal ${outcome.signal}`})\n${serverLog}`);
+    }
+    try {
+      if ((await fetch(URL)).ok) {
+        // The port was exclusively acquired immediately before this direct Vite
+        // child was spawned; a live child plus its own readiness response is the
+        // ownership proof. A foreign listener makes either preflight or strictPort fail.
+        if (server.exitCode !== null) continue;
+        return;
+      }
+    } catch {
+      // Vite is still starting.
+    }
+    await sleep(125);
+  }
+  throw new Error(`Vite did not serve ${URL}\n${serverLog}`);
+}
 
 async function stopServer() {
   if (!server) return;
@@ -355,15 +375,7 @@ let cleanupError;
 try {
   await assertPortAvailable("Vite startup");
   startServer();
-  await waitForHttpServer(URL, 80, 125, {
-      beforeAttempt: async () => {
-        if (server.exitCode === null) return;
-        const outcome = await serverExit;
-        throw new Error(`owned Vite exited before readiness (${outcome.kind === "error" ? outcome.error.message : `code ${outcome.code}, signal ${outcome.signal}`})\n${serverLog}`);
-      },
-      ready: () => server.exitCode === null,
-      failureMessage: () => `Vite did not serve ${URL}\n${serverLog}`,
-    });
+  await waitForServer();
   browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   const pageErrors = [];
   if (failBefore) await runFailBefore(browser, pageErrors);

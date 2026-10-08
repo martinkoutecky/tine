@@ -1,26 +1,10 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "./render/parse";
-import {
-  blockSubtreeMarkdown,
-  clearSelection,
-  deleteBlock,
-  deleteSelection,
-  doc,
-  moveSelection,
-  flushPage,
-  forceSave,
-  markDirty,
-  resetStore,
-  selectBlock,
-  selectedIds,
-  setBlockProperty,
-  setDoc,
-  splitBlock,
-  toggleCollapse,
-  type FeedPage,
-  type Node,
-} from "./store";
-import { dirtyPages } from "./persistence";
+import { blockSubtreeMarkdown, clearSelection, deleteBlock, deleteSelection, moveSelection, flushPage, markDirty, resetStore, selectBlock, selectedIds, setBlockProperty, splitBlock, toggleCollapse } from "./document";
+import { forceSave } from "./document/save/engine";
+import { type FeedPage, type Node } from "./document/model";
+import { doc, setDoc } from "./document/model";
+import { dirtyPages } from "./document/save/engine";
 import { backend } from "./backend";
 
 beforeAll(() => initParser());
@@ -66,8 +50,8 @@ describe("editing/collapse boundary regressions", () => {
       byId: { p: node("p", "Parent", "Org") },
       pages: [page("Org", ["p"], "org", true)], feed: ["Org"], loaded: true,
     });
-    const save = vi.spyOn(backend(), "savePage");
-    markDirty("Org");
+    const save = vi.spyOn(backend(), "savePages");
+    markDirty("Org", "save-block");
     expect([...dirtyPages()]).not.toContain("Org");
     expect(await flushPage("Org")).toBe(true);
     expect(save).not.toHaveBeenCalled();

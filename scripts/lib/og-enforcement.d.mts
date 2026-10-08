@@ -1,0 +1,12 @@
+export const BASE: string;
+export const SIZE_LIMIT: number;
+export const PERSISTED_FORMATS: readonly string[];
+export const PINNED_FORMAT_COUNT: number;
+export function isProduction(file: string): boolean;
+export function lines(source: string): number;
+export function checkSizeRatchet(current: Record<string, number>, baseline: Record<string, number>): void;
+export function readSizeCounts(root: string): { current: Record<string, number>; baseline: Record<string, number> };
+export function checkFormatCount(formats?: readonly string[]): void;
+export function writerSiteCounts(source: string): number;
+export function checkWriterSites(current: Record<string, number>, baseline: Record<string, number>): void;
+export function readWriterSiteCounts(root: string): { current: Record<string, number>; baseline: Record<string, number> };

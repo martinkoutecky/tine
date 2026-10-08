@@ -13,18 +13,24 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay, stopDisplay } from "./lib/e2e-display.mjs";
-import { resolveTauriDriver, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-
-await ensureDisplay();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const G = "/tmp/txdg-bsel-g";
 const LOCAL_APP = path.join(ROOT, "target/release/tine");
+const LOCAL_TAURI_DRIVER = path.resolve(ROOT, "..", ".toolchain", "cargo", "bin", "tauri-driver");
+const CARGO_TAURI_DRIVER = process.env.CARGO_HOME
+  ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver")
+  : null;
 const APP =
   process.env.TINE_APP ||
   (fs.existsSync(LOCAL_APP) ? LOCAL_APP : `${process.env.HOME}/research/tine`);
-const TD = resolveTauriDriver();
+const TD =
+  process.env.TAURI_DRIVER ||
+  (CARGO_TAURI_DRIVER && fs.existsSync(CARGO_TAURI_DRIVER)
+    ? CARGO_TAURI_DRIVER
+    : fs.existsSync(LOCAL_TAURI_DRIVER)
+      ? LOCAL_TAURI_DRIVER
+      : "tauri-driver");
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4444);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4445);
 
@@ -57,6 +63,29 @@ function seed() {
   fs.writeFileSync(`${G}/journals/${stem}.md`, JOURNAL_FIXTURE);
 }
 
+let xvfb;
+async function ensureDisplay() {
+  if (process.env.DISPLAY) return;
+  const displays = process.env.XVFB_DISPLAY ? [process.env.XVFB_DISPLAY] : [":98", ":99", ":100", ":101"];
+  let lastLog = "/tmp/xvfb-bsel.log";
+  let lastError = "";
+  for (const display of displays) {
+    const suffix = display.replace(/[^0-9]/g, "") || "x";
+    lastLog = `/tmp/xvfb-bsel-${suffix}.log`;
+    const xvfbLog = fs.openSync(lastLog, "w");
+    let spawnError = "";
+    const child = spawn("Xvfb", [display, "-screen", "0", "1400x1000x24"], {
+      stdio: ["ignore", xvfbLog, xvfbLog],
+    });
+    child.on("error", (e) => { spawnError = e.message; });
+    await sleep(900);
+    if (spawnError) { lastError = spawnError; continue; }
+    if (child.exitCode == null) { xvfb = child; process.env.DISPLAY = display; return; }
+    lastError = `display ${display} exited with code ${child.exitCode}`;
+  }
+  throw new Error(`Xvfb failed to start (${lastError}); see ${lastLog}`);
+}
+
 seed();
 await ensureDisplay();
 
@@ -77,7 +106,7 @@ const env = {
 console.log("DISPLAY=", process.env.DISPLAY, "APP=", APP);
 
 const tdLog = fs.openSync("/tmp/td-bsel.log", "w");
-const td = spawn(TD, webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), {
+const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
   env, stdio: ["ignore", tdLog, tdLog], detached: true,
 });
 await sleep(3000);
@@ -140,7 +169,11 @@ let browser;
 try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/",
-    capabilities: tauriCapabilities(APP, "blockselect"),
+    capabilities: {
+      browserName: "wry",
+      "wdio:enforceWebDriverClassic": true,
+      "tauri:options": { application: APP },
+    },
     logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60000,
   });
 
@@ -435,5 +468,5 @@ try {
   console.log(`\nWrote raw log to ${path.join(notesDir, "issue2-block-select-raw.md")}`);
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}
-  stopDisplay();
+  xvfb?.kill("SIGKILL");
 }

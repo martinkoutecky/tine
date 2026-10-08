@@ -1,0 +1,10 @@
+{
+ :feature/enable-timetracking? false
+ ; :favorites ["comment"]
+ :favorites ; odd spacing
+ ["Old"]
+ :preferred-workflow  ; comment
+ :now
+ :start-of-week   2
+ :default-templates { :pages "P" ; keep
+ :journals "Old"}}

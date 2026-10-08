@@ -1,3 +1,5 @@
+import { adjustSidebarWidth } from "./sidebarSizing";
+import { browserPlatform } from "./browserPlatform";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
 // bindings; users override them via config.edn `:shortcuts {:cmd "binding"}`
 // (delivered in GraphMeta.shortcuts). "mod" = Ctrl (Cmd on macOS). Bindings may
@@ -7,80 +9,38 @@
 // (Block.tsx) resolve keys through the same merged binding table, so every
 // listed command is remappable from config.edn.
 
-import {
-  openSwitcher,
-  openCommandPalette,
-  openDevtools,
-  toggleTheme,
-  toggleSidebar,
-  openSettings,
-  toggleHelpPopup,
-  toggleRightSidebar,
-  toggleWideMode,
-  toggleDocumentMode,
-  toggleFocusMode,
-  toggleDimInactiveBlocks,
-  focusMode,
-  exitFocusMode,
-  carryDays,
-  showBrackets,
-  changeShowBrackets,
-  pushToast,
-  openPdfExport,
-  graphMeta,
-  dismissMobileDrawer,
-} from "./ui";
+import { openSwitcher, closeSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, dismissMobileDrawer } from "./ui";
+import { pushToast } from "./toasts";
 import { restoreDrawerFocus } from "./mobileDrawers";
 import { zoomReset } from "./zoom";
-import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
-import { openConfiguredHomePage } from "./homePage";
-import { journalTitle, parseJournalTitle, appNow } from "./journal";
 import {
   openJournals,
+  openQueryInNewTab,
+  openPage,
   goBack,
   goForward,
   closeActiveTab,
   reopenClosedTab,
   activateNextTab,
   activatePrevTab,
-  openPage,
   route,
-  sameRoute,
 } from "./router";
-import {
-  undo,
-  redo,
-  hasSelection,
-  moveSelection,
-  cycleSelectionTasks,
-  moveSelectionItems,
-  indentSelection,
-  outdentSelection,
-  deleteSelection,
-  expandBlockSelection,
-  selectionMarkdown,
-  clearSelection,
-  selectedIds,
-  blockIsGridView,
-  doc,
-  pageVisibleOrder,
-  selectBlock,
-  visibleOrder,
-  toggleUndoRedoMode,
-  buildClipboardPayload,
-} from "./store";
+import { journalTitle, parseJournalTitle, appNow } from "./journal";
+import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, clearSelection, selectedIds, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
+import { cutBlocks } from "./cut";
 import { deleteRenderedTextSelection } from "./editor/renderedSelectionDelete";
+import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { openInPageFind } from "./inpageFind";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
 import {
   closePane,
-  focusPane,
   adjustPaneSize,
+  focusPane,
   focusedPaneId,
   layoutHasMultiplePanes,
   layoutPaneIds,
@@ -88,9 +48,9 @@ import {
   moveActiveTabInDirection,
   paneRouter,
   splitPane,
-  togglePaneMaximize,
   splitPaneAtSeam,
   splitRootAtEdge,
+  togglePaneMaximize,
 } from "./panes";
 import {
   enterPaneSelect,
@@ -105,22 +65,33 @@ import {
   type PaneDirection,
 } from "./paneSelect";
 import { openGuide } from "./guide";
+import { goHome } from "./homePage";
 import { pluginManager } from "./plugins/manager";
 import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCurrent, type OwnedPluginBlockSnapshot } from "./plugins/ownership";
 
+/** Open the adjacent journal route (+1 next, -1 previous) from the current
+ * journal date, or today's local date on another route. O(1) before navigation;
+ * the page loader owns any read error. No page is written here. */
+export function goAdjacentJournal(dir: 1 | -1): void {
+  const current = route();
+  const anchor = current.kind === "page" && current.pageKind === "journal"
+    ? parseJournalTitle(current.name) ?? appNow()
+    : appNow();
+  openPage(journalTitle(new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + dir)), "journal");
+}
 function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {
   const owner = capturePluginGraphOwner();
   if (!owner) return undefined;
   const id = editingId();
-  const node = id ? doc.byId[id] : undefined;
+  const node = id ? docNode(id) : undefined;
   if (!node) return undefined;
   let depth = 0;
   let parentId = node.parent;
-  while (parentId && doc.byId[parentId] && depth < 1_000) {
+  while (parentId && docNode(parentId) && depth < 1_000) {
     depth++;
-    parentId = doc.byId[parentId].parent;
+    parentId = docNode(parentId).parent;
   }
-  const format = doc.pages.find((page) => page.name === node.page)?.format === "org" ? "org" : "md";
+  const format = loadedPage(node.page)?.format === "org" ? "org" : "md";
   if (!isPluginGraphOwnerCurrent(owner)) return undefined;
   const owned = bindPluginBlockSnapshot({ id: node.id, raw: node.raw, parentId: node.parent, depth, format });
   if (!owned || owned.owner.graphRoot !== owner.graphRoot || owned.owner.generation !== owner.generation) return undefined;
@@ -130,7 +101,7 @@ function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {
 interface Chord {
   mod: boolean;
   // Physical Control is distinct from portable `mod` on macOS. Elsewhere the
-  // same key remains `mod`, preserving existing cross-platform bindings.
+  // same key remains `mod`, preserving existing cross-platform bindings (GH #378).
   ctrl: boolean;
   shift: boolean;
   alt: boolean;
@@ -151,22 +122,21 @@ interface CommandDef {
    *  matched by Block.tsx inside the textarea handler. */
   scope: "global" | "editor";
   run?: () => void;
-  /** A SECOND default chord that runs the same command. It exists for a
-   *  platform convention a user will certainly try and that Logseq does not
-   *  bind, so the key reaches the command it obviously means without
-   *  displacing Logseq's own binding or taking a second row in Settings.
-   *  An alias is a default, not an override: the moment the user binds the
-   *  command themselves, their chord is the only one, because an alias they
-   *  can neither see in the recorder nor reset must not outlive their choice.
-   *  Global scope only, and it loses every collision with a primary binding. */
+  /** A SECOND default chord that runs the same command: a platform convention a
+   *  user will certainly try and that Logseq does not bind, so the key reaches
+   *  the command it obviously means without displacing Logseq's own binding or
+   *  taking a second row in Settings. An alias is a default, not an override: the
+   *  moment the user binds the command themselves, their chord is the only one,
+   *  because an alias they can neither see in the recorder nor reset must not
+   *  outlive their choice. Global scope only; it loses every collision with a
+   *  primary binding. */
   alias?: string;
   /** When false (default), a global command does not fire while typing in an
    *  editor unless its chord includes a modifier. */
   global?: boolean;
 }
 
-const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
-
+const isMac = typeof navigator !== "undefined" && browserPlatform("", navigator.platform).macKeyboard;
 function focusPaneByNumber(n: number) {
   if (!layoutHasMultiplePanes()) return;
   const pane = readingOrderPanes(layoutRoot())[n - 1];
@@ -179,36 +149,8 @@ function focusPaneInDirection(dir: PaneDirection) {
   if (target) focusPane(target);
 }
 
-// GH #276: the remaining Logseq journal/navigation hotstrings beside `g j`.
-// gh reuses the graph home-page resolver; when no home is configured or the
-// configured page no longer resolves, the journals landing is home (OG's
-// default) — the user-visible outcome, not a dead key.
-export function goHome() {
-  const root = graphMeta()?.root;
-  const startingRoute = { ...route() };
-  const isCurrent = () => graphMeta()?.root === root && sameRoute(route(), startingRoute);
-  void openConfiguredHomePage(root ?? "", isCurrent).then((navigated) => {
-    if (!navigated && isCurrent()) openJournals();
-  });
-}
-
-// gn/gp step calendar DAYS (local Y/M/D constructor, so month/year/leap-day
-// edges land correctly), never millisecond arithmetic. Inside a journal the
-// anchor is that journal's date via the shared title parser; anywhere else it
-// is today, per OG.
-export function goAdjacentJournal(dir: 1 | -1) {
-  const r = route();
-  const anchor =
-    r.kind === "page" && r.pageKind === "journal"
-      ? parseJournalTitle(r.name) ?? appNow()
-      : appNow();
-  const target = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + dir);
-  openPage(journalTitle(target), "journal");
-}
-
-// With no pane in the requested direction, the panes.ts implementation grows
-// the layout instead of no-op'ing (GH #282), so the single-pane gate the focus
-// commands keep does not apply here.
+// With no pane in the requested direction, panes.ts grows the layout instead
+// of no-op'ing (GH #282), so the focus commands' single-pane gate does not apply.
 function moveActiveTab(dir: PaneDirection) {
   moveActiveTabInDirection(focusedPaneId(), dir);
 }
@@ -228,7 +170,7 @@ function firstVisibleBlockInFocusedPane(): string | null {
 
 function restoreBlockSelectionAfterPaneReturn(previous: string | null) {
   if (hasSelection()) return;
-  const target = previous && doc.byId[previous] ? previous : firstVisibleBlockInFocusedPane();
+  const target = previous && docNode(previous) ? previous : firstVisibleBlockInFocusedPane();
   if (target) selectBlock(target);
 }
 
@@ -325,7 +267,6 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/follow-link", binding: "mod+o", label: "Open the link at the caret", scope: "global", run: () => { followLinkUnderCaret(); }, global: true },
   { id: "editor/open-link-in-sidebar", binding: "mod+shift+o", label: "Open the link at the caret in the sidebar", scope: "global", run: () => { openLinkUnderCaretInSidebar(); }, global: true },
   { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: () => openCommandPalette(pluginFocusedBlock() ?? null), global: true },
-  { id: "ui/reset-zoom", binding: "", label: "Reset interface zoom", scope: "global", run: zoomReset, global: true },
   // Toggle the WebKit Web Inspector for theme/CSS debugging (GH #31). The usual
   // Ctrl+Shift+I / F12 / Ctrl+Shift+C are all swallowed by WebKitGTK itself (its
   // built-in inspector keys, handled in the web process below where the app can
@@ -334,7 +275,6 @@ const COMMANDS: CommandDef[] = [
   // mod-chord, so it fires even while editing; remap it in Settings if you like.
   { id: "ui/toggle-devtools", binding: "mod+shift+j", label: "Toggle developer tools", scope: "global", run: openDevtools, global: true },
   { id: "go/journals", binding: "g j", label: "Go to journals", scope: "global", run: openJournals },
-  // GH #276: Logseq's remaining default navigation hotstrings.
   { id: "go/home", binding: "g h", label: "Go to home page", scope: "global", run: goHome },
   { id: "go/journal-next", binding: "g n", label: "Go to next journal day", scope: "global", run: () => goAdjacentJournal(1) },
   { id: "go/journal-prev", binding: "g p", label: "Go to previous journal day", scope: "global", run: () => goAdjacentJournal(-1) },
@@ -357,6 +297,16 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/split-right", binding: "mod+alt+\\", label: "Split right", scope: "global", run: () => void splitPane(focusedPaneId(), "row"), global: true },
   { id: "pane/split-down", binding: "mod+alt+shift+\\", label: "Split down", scope: "global", run: () => void splitPane(focusedPaneId(), "col"), global: true },
   { id: "pane/close", binding: "", label: "Close pane", scope: "global", run: () => void closePane(focusedPaneId()), global: true },
+  { id: "pane/toggle-maximize", binding: "mod+alt+m", label: "Toggle maximize active pane", scope: "global", run: () => { togglePaneMaximize(); }, global: true },
+  { id: "sidebar/grow-width", binding: "", label: "Grow left sidebar width", scope: "global", run: () => adjustSidebarWidth("left", true), global: true },
+  { id: "sidebar/shrink-width", binding: "", label: "Shrink left sidebar width", scope: "global", run: () => adjustSidebarWidth("left", false), global: true },
+  { id: "right-sidebar/grow-width", binding: "", label: "Grow right sidebar width", scope: "global", run: () => adjustSidebarWidth("right", true), global: true },
+  { id: "right-sidebar/shrink-width", binding: "", label: "Shrink right sidebar width", scope: "global", run: () => adjustSidebarWidth("right", false), global: true },
+  { id: "go/search-tab", binding: "", label: "Open search tab", scope: "global", run: () => { closeSwitcher(); openQueryInNewTab("", "search", true); }, global: true },
+  { id: "pane/grow-width", binding: "", label: "Grow active pane width", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", true); }, global: true },
+  { id: "pane/shrink-width", binding: "", label: "Shrink active pane width", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", false); }, global: true },
+  { id: "pane/grow-height", binding: "", label: "Grow active pane height", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", true); }, global: true },
+  { id: "pane/shrink-height", binding: "", label: "Shrink active pane height", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", false); }, global: true },
   // Palette-discoverable entry into pane-select (it's otherwise only reachable
   // via Esc-with-nothing-open, which users won't guess — Martin didn't).
   { id: "pane/select-mode", binding: "", label: "Pane select mode (arrows move, Enter opens/splits)", scope: "global", run: enterPaneSelectFromFocus, global: true },
@@ -376,17 +326,8 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/move-tab-right", binding: "mod+alt+shift+right", label: "Move tab to pane right", scope: "global", run: () => moveActiveTab("right"), global: true },
   { id: "pane/move-tab-up", binding: "mod+alt+shift+up", label: "Move tab to pane up", scope: "global", run: () => moveActiveTab("up"), global: true },
   { id: "pane/move-tab-down", binding: "mod+alt+shift+down", label: "Move tab to pane down", scope: "global", run: () => moveActiveTab("down"), global: true },
-  // GH #285: transient maximize — the pane borrows the whole pane area without
-  // touching the split tree/ratios, so toggling restores the exact layout.
-  { id: "pane/toggle-maximize", binding: "mod+alt+m", label: "Toggle maximize active pane", scope: "global", run: () => { togglePaneMaximize(); }, global: true },
-  // GH #286: resize the active pane through its nearest same-axis ancestor
-  // split (5 points a step, existing 15–85% clamps). Shipped unbound like
-  // pane/close — remappable, palette-discoverable.
-  { id: "pane/grow-width", binding: "", label: "Grow active pane width", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", true); }, global: true },
-  { id: "pane/shrink-width", binding: "", label: "Shrink active pane width", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", false); }, global: true },
-  { id: "pane/grow-height", binding: "", label: "Grow active pane height", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", true); }, global: true },
-  { id: "pane/shrink-height", binding: "", label: "Shrink active pane height", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", false); }, global: true },
   { id: "ui/toggle-theme", binding: "t t", label: "Toggle dark / light", scope: "global", run: toggleTheme },
+  { id: "ui/reset-zoom", binding: "", label: "Reset interface zoom", scope: "global", run: zoomReset, global: true },
   { id: "ui/toggle-brackets", binding: "mod+c mod+b", label: "Toggle reference brackets", scope: "global", run: () => changeShowBrackets(!showBrackets()), global: true },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: "Toggle left sidebar", scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: "Toggle right sidebar", scope: "global", run: toggleRightSidebar },
@@ -418,15 +359,10 @@ const COMMANDS: CommandDef[] = [
   { id: "task/carry-n", binding: "", label: "Carry unfinished tasks: last N days (Settings)", scope: "global", run: () => void carryDaysBack(carryDays()) },
   { id: "editor/undo", binding: "mod+z", label: "Undo", scope: "global", run: undo, global: true },
   // Logseq binds redo to mod+shift+z alone, and that stays the binding Settings
-  // shows and remaps. Ctrl+Y is the Windows convention for redo and Logseq
-  // leaves it unbound, so a Windows user who presses it gets silence rather
-  // than a conflict (GH #491). It rides along as an alias instead of a second
-  // command so the shortcuts list keeps one Redo row.
-  //
-  // Not on macOS: there Ctrl+Y is already taken by the system's Emacs-style
-  // text bindings (yank from the kill ring) inside every text field, and redo
-  // is Cmd+Shift+Z anyway. Claiming it would break an existing gesture to add
-  // a convention that platform does not have.
+  // shows and remaps. Ctrl+Y is the Windows/Linux convention for redo and Logseq
+  // leaves it unbound, so pressing it was silence (GH #491, master 2721c0126). It
+  // rides along as an alias so the shortcuts list keeps one Redo row. Not on
+  // macOS: there Ctrl+Y is the system's Emacs-style yank inside every text field.
   { id: "editor/redo", binding: "mod+shift+z", alias: isMac ? "" : "ctrl+y", label: "Redo", scope: "global", run: redo, global: true },
   // Palette-only, matching OG's empty binding and mode report at
   // `src/main/frontend/modules/shortcut/config.cljs:355-356` and
@@ -786,9 +722,7 @@ export function paletteCommands(
     .map((c) => ({
       id: c.id,
       label: c.label,
-      binding: (overridesApplied[c.id] ?? c.binding) === "false"
-        ? ""
-        : overridesApplied[c.id] ?? c.binding,
+      binding: (overridesApplied[c.id] ?? c.binding) === "false" ? "" : overridesApplied[c.id] ?? c.binding,
       run: c.run!,
     }));
   const plugins = pluginManager.commands().map(({ pluginId, contribution }) => ({
@@ -811,16 +745,6 @@ export function runGlobalCommand(id: string): boolean {
   if (!cmd?.run) return false;
   cmd.run();
   return true;
-}
-
-/** Merged shortcuts for the Settings reference. */
-export function currentShortcuts(): { id: string; label: string; binding: string; scope: ShortcutScope }[] {
-  return [...COMMANDS, ...pluginCommandDefs()].map((c) => ({
-    id: c.id,
-    label: c.label,
-    binding: overridesApplied[c.id] ?? c.binding,
-    scope: shortcutScope(c),
-  })).filter((c) => c.binding !== "false");
 }
 
 /** Built-in command defaults (id + label + default binding) for the Settings
@@ -900,14 +824,18 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   if (mod && e.key.toLowerCase() === "c") {
     const ids = selectedIds();
     const text = selectionMarkdown();
-    void copyBlockOutline("copy", text, buildClipboardPayload(ids));
+    void copyBlockOutline("copy", text, buildClipboardPayload(ids))
+      .catch(() => pushToast("Couldn't copy selection: clipboard write failed.", "error"));
     return true;
   }
   if (mod && e.key.toLowerCase() === "x") {
     const ids = selectedIds();
-    const text = selectionMarkdown();
-    void copyBlockOutline("cut", text, buildClipboardPayload(ids));
-    deleteSelection();
+    // Cut deletes whole subtrees, so its public text carries them regardless of the copy preference.
+    const text = selectionMarkdown(true);
+    void cutBlocks(ids, text, () =>
+      JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown(true) : "",
+      () => deleteSelection())
+      .catch(() => pushToast("Couldn't cut selection: clipboard write failed.", "error"));
     return true;
   }
   if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a") {
@@ -941,8 +869,8 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   }
 
   // Global dispatch list (sequences + global chords). Aliases come last, so a
-  // primary binding always wins a collision, and are dropped for any command
-  // the user has bound themselves.
+  // primary binding always wins a collision, and are dropped for any command the
+  // user has bound themselves.
   const primary = allCommands.filter((c) => c.scope === "global" && c.run)
     .map((c) => ({ ...c, chords: bindings[c.id] }))
     .filter((c) => c.chords);
@@ -1070,31 +998,21 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     }
 
     // OG contenteditable parity: Delete/Backspace over a RENDERED (not-editing)
-    // text selection deletes that text from the block's source. Without this the
-    // keypress reaches no editor and dies silently — selection stays, nothing
-    // happens ("select text quickly, hit delete, nothing happens" report).
-    if (
-      !editing && (e.key === "Delete" || e.key === "Backspace") &&
-      !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
-    ) {
-      if (deleteRenderedTextSelection()) {
-        e.preventDefault();
-        resetSeq();
-        return;
-      }
+    // text selection deletes that text from the block's source; without this the
+    // keypress reaches no editor and dies silently.
+    if (!editing && (e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+        && deleteRenderedTextSelection()) {
+      e.preventDefault();
+      resetSeq();
+      return;
     }
 
     // While typing, only modifier chords are eligible (so "g j" doesn't fire).
-    // Alt counts as a modifier here (GH #461). It did not, so a global command
-    // bound to a bare Alt chord — Alt+S to switch tabs — worked everywhere in
-    // the app except inside a block, while Ctrl+Alt+S worked fine; that split is
-    // what the reporter hit, and Chrome and VS Code both fire Alt shortcuts with
-    // a text field focused. Only `scope: "global"` commands with a `run` are
-    // matched below (see `commands`), so the editor's own bare-Alt bindings
-    // (alt+f/alt+b/alt+w/alt+d/alt+u/alt+k/alt+l, dispatched from the block
-    // editor) are untouched, and an Alt chord nothing is bound to still falls
-    // through to the textarea unprevented — dead keys and Option-composed
-    // characters keep working.
+    // Alt counts as a modifier here (GH #461): Chrome and VS Code fire Alt
+    // shortcuts with a text field focused. Only `scope: "global"` commands with
+    // a `run` are matched below, so the editor's own bare-Alt bindings are
+    // untouched, and an Alt chord nothing is bound to still reaches the textarea
+    // unprevented (dead keys and Option-composed characters keep working).
     if (editing && !chord.mod && !chord.ctrl && !chord.alt) {
       // Cancel GTK/browser focus traversal on Tab/Shift+Tab in the capture
       // phase (WebKitGTK grabs it before an outline editor can), but still let
@@ -1114,7 +1032,7 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
       if (cs.length > seq.length) continue;
       const tail = seq.slice(seq.length - cs.length);
       if (cs.every((c, i) => chordEq(c, tail[i]))) {
-        if (cmd.id === "go/find-in-page" && route().kind === "pdf") {
+        if (cmd.id === "go/find-in-page" && paneRouter(focusedPaneId()).route().kind === "pdf") {
           resetSeq();
           return;
         }

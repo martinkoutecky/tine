@@ -1,10 +1,12 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Capture real mock-app screenshots while exercising all launch plugins.
 // Usage: npm run build, build the plugin WASMs, then run this script.
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { build } from "vite";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   resolveLaunchPluginRoots,
@@ -31,12 +33,69 @@ const BULLET_SHOTS = screenshotDir(BULLET_ROOT, "bullet-threading");
 const QUERY_SHOTS = screenshotDir(QUERY_ROOT, "query-filter");
 const HEADING_SHOTS = screenshotDir(HEADING_ROOT, "heading-level-shortcuts");
 
+// The preview has no query engine. Supply fixed rows at its mock boundary,
+// while the real view toggle, sheet filter and plugin WASM still run unchanged.
+// Keep the fixture in this harness's temporary build, never in the shipped app.
+const previewDir = mkdtempSync(join(tmpdir(), "tine-plugin-preview-"));
+let fixtureInstalled = false;
+try {
+  await build({
+    root: ROOT,
+    build: { outDir: previewDir, emptyOutDir: true },
+    plugins: [{
+      name: "launch-plugin-query-fixture",
+      transform(code, id) {
+        if (id !== join(ROOT, "src/mockQuery.ts")) return;
+        fixtureInstalled = true;
+        return `${code}
+const previewParse = mockQueryCommands.parseQuery;
+const previewRun = mockQueryCommands.queryRun;
+mockQueryCommands.parseQuery = async (...args) => {
+  const parsed = await previewParse(...args);
+  if (args[0] === "(todo TODO DOING DONE)") parsed.query.diagnostics = [];
+  return parsed;
+};
+mockQueryCommands.queryRun = async (query) => sourceOriginal(query.source) === "(todo TODO DOING DONE)"
+  ? {
+    anchor: "block",
+    groups: [{ page: "Plugin tasks", kind: "page", blocks: [
+      { id: "plugin-todo", raw: "TODO Open task", collapsed: false, children: [], marker: "TODO" },
+      { id: "plugin-done", raw: "DONE Closed task", collapsed: false, children: [], marker: "DONE" },
+    ] }],
+    diagnostics: [], report: { ran: ["task"], ignored: [], supported: true },
+    total: 2, matched_total: 2, exceeded: false,
+  }
+  : previewRun(query);
+`;
+      },
+    }],
+  });
+  if (!fixtureInstalled) throw new Error("I-12: launch plugin fixture must use src/mockQuery.ts, the preview query boundary");
+} catch (error) {
+  rmSync(previewDir, { recursive: true, force: true });
+  throw error;
+}
+
+let browser;
 let serverSpawnError;
-const server = spawn(VITE, ["preview", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], {
+const server = spawn(VITE, ["preview", "--outDir", previewDir, "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], {
   stdio: "ignore",
 });
 server.once("error", (error) => { serverSpawnError = error; });
 
+async function waitForServer(url) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (serverSpawnError) throw serverSpawnError;
+    try {
+      if ((await fetch(url)).ok) return;
+    } catch {
+      // Preview is still starting.
+    }
+    await sleep(250);
+  }
+  if (serverSpawnError) throw serverSpawnError;
+  throw new Error("preview server did not start");
+}
 
 async function openPlugins(page) {
   await page.getByTitle("Settings (t s)").click();
@@ -99,12 +158,8 @@ async function navigate(page, name) {
 try {
   if (!["desktop", "android", "ios"].includes(PLATFORM)) throw new Error(`unsupported test platform ${PLATFORM}`);
   const url = `http://127.0.0.1:${PORT}/${PLATFORM === "desktop" ? "" : `?platform=${PLATFORM}`}`;
-  await waitForHttpServer(url, 40, 250, {
-      beforeAttempt: () => { if (serverSpawnError) throw serverSpawnError; },
-      beforeFailure: () => { if (serverSpawnError) throw serverSpawnError; },
-      failureMessage: "preview server did not start",
-    });
-  const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
+  await waitForServer(url);
+  browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   const page = await browser.newPage({
     viewport: PLATFORM === "desktop" ? { width: 1180, height: 820 } : { width: 390, height: 844 },
     deviceScaleFactor: 2,
@@ -118,48 +173,6 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   page.on("console", (message) => message.type() === "error" && errors.push(`console: ${message.text()}`));
-
-  // The browser preview deliberately has no query engine. Give this plugin
-  // journey fixed engine answers through the existing mock-only data seam, so
-  // it can prove a completed row exists and that the plugin actually hides it.
-  await page.addInitScript(() => {
-    const text = (value) => ({ kind: "text", text: value });
-    globalThis.__tineMockQueryFixture = {
-      parse: {
-        query: {
-          anchor: "block",
-          filter: {
-            kind: "leaf",
-            leaf: {
-              kind: "attr",
-              attr: "task",
-              op: "in",
-              value: { kind: "list", items: [text("TODO"), text("DOING"), text("DONE")] },
-            },
-          },
-          diagnostics: [],
-          source: { kind: "og", original: "(todo TODO DOING DONE)", og_options: "" },
-        },
-        view: { view: "table" },
-      },
-      run: {
-        anchor: "block",
-        groups: [{
-          page: "Plugin tasks",
-          kind: "page",
-          blocks: [
-            { id: "plugin-todo", raw: "TODO Open task", collapsed: false, children: [], marker: "TODO" },
-            { id: "plugin-done", raw: "DONE Closed task", collapsed: false, children: [], marker: "DONE" },
-          ],
-        }],
-        diagnostics: [],
-        report: { ran: ["task"], ignored: [], supported: true },
-        total: 2,
-        matched_total: 2,
-        exceeded: false,
-      },
-    };
-  });
 
   await page.goto(url);
   await page.waitForSelector(".page-title");
@@ -186,12 +199,19 @@ try {
   await queryBlock.locator(".block-content").first().click({ position: { x: 24, y: 10 } });
   const editor = page.locator("textarea.block-editor");
   await editor.waitFor();
-  await editor.fill("Tasks\n{{query (todo TODO DOING DONE)}}\ntine.view:: table");
+  await editor.fill(
+    PLATFORM === "desktop"
+      ? "Tasks\n{{query (todo TODO DOING DONE)}}"
+      : "Tasks\n{{query (todo TODO DOING DONE)}}\ntine.view:: table",
+  );
   await page.keyboard.press("Escape");
   await editor.waitFor({ state: "detached" });
+  if (PLATFORM === "desktop") {
+    await tasksBlock.getByRole("button", { name: "Table", exact: true }).click();
+  }
   await page.locator(".sheet-table").waitFor();
-  const initialClosedCells = tasksBlock.locator(".sheet-table .sheet-cell").filter({ hasText: /^(?:DONE|CANCELED|CANCELLED)$/ });
-  if (!(await initialClosedCells.count())) throw new Error("canned query result did not expose a completed row before filtering");
+  await tasksBlock.locator(".sheet-table .sheet-cell").filter({ hasText: /^DONE$/ }).waitFor();
+  await tasksBlock.getByText("Open task", { exact: true }).waitFor();
   await tasksBlock.locator(".block-content").first().click({ position: { x: 24, y: 10 } });
   const tableEditor = page.locator("textarea.block-editor");
   await tableEditor.waitFor();
@@ -205,7 +225,8 @@ try {
   await page.getByText("Query view: hide completed rows", { exact: true }).waitFor();
   await page.screenshot({ path: `${QUERY_SHOTS}/query-filter-command.png` });
   await page.getByText("Query view: hide completed rows", { exact: true }).click();
-  await sleep(300);
+  await tasksBlock.locator(".sheet-table .sheet-cell").filter({ hasText: /^DONE$/ }).waitFor({ state: "detached" });
+  await tasksBlock.getByText("Open task", { exact: true }).waitFor();
   if (await page.locator(".toast-error").count()) {
     throw new Error(`query-filter command failed: ${await page.locator(".toast-error").innerText()}`);
   }
@@ -238,8 +259,9 @@ try {
   await headingBlock.screenshot({ path: `${HEADING_SHOTS}/heading-level-result.png` });
 
   if (errors.length) throw new Error(`browser errors: ${errors.join("; ")}`);
-  await browser.close();
   console.log(`${PLATFORM} plugin behavior and documentation screenshots captured`);
 } finally {
+  await browser?.close();
   server.kill("SIGTERM");
+  rmSync(previewDir, { recursive: true, force: true });
 }

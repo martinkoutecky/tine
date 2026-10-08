@@ -1,8 +1,15 @@
-# iOS build and Simulator smoke test.
+# iOS build PROBE — a throwaway "is the codebase even iOS-clean?" check.
 #
-# This remains unsigned and simulator-only, so it needs neither an Apple Developer
-# account nor device provisioning. The screenshot is the durable proof that the
-# built app launched and opened a real graph in Tine's Documents container.
+# This does NOT sign, distribute, or produce anything installable. It answers one
+# question cheaply, on GitHub's macOS runners, with no Mac and no Apple Developer
+# account on our side: does Tine's Rust compile for iOS, and does `tauri ios init`
+# generate a valid Xcode project?
+#
+# Real iOS delivery would still need (a) a signed build [$99/yr Apple Developer
+# Program + TestFlight, or sideloading], and (b) iOS file-access plumbing so the
+# app can actually open a Logseq graph — iOS sandboxing means the Android folder
+# picker (android_folder_picker.rs) has no iOS equivalent yet. Neither is in scope
+# here; this is only a compile/scaffold sanity signal before investing in those.
 #
 # Manual trigger only — it never runs on push, so it can't burn minutes unattended.
 name: iOS build probe
@@ -13,24 +20,6 @@ on:
 jobs:
   ios-probe:
     runs-on: macos-latest
-    timeout-minutes: 45
-    # tauri-plugin builds our app-local Swift package through swift-rs with
-    # `IPHONEOS_DEPLOYMENT_TARGET`, defaulting to **13.0** when unset
-    # (tauri-plugin-2.6.2 src/build/mobile.rs -> tauri_utils::build::link_swift_library).
-    # Our Package.swift declares `.iOS(.v14)` because the folder picker uses
-    # `UIDocumentPickerViewController(forOpeningContentTypes:)` and `UTType`, both
-    # iOS 14+. Pin the deployment target so the Swift build and the package
-    # declaration agree.
-    #
-    # NOTE, so nobody re-derives a wrong story from this block: an earlier version
-    # of this comment blamed the deployment-target mismatch for the
-    # `Undefined symbols: _init_plugin_tine_ios_folder_picker` failure. That was a
-    # guess and it was WRONG — pinning 14.0 changed nothing (run 31279327083).
-    # The real cause was Rust-side rlib pruning; see the `extern crate` comment in
-    # src-tauri/src/ios_folder_picker.rs. This pin is kept because it is correct,
-    # not because it fixed anything.
-    env:
-      IPHONEOS_DEPLOYMENT_TARGET: "14.0"
     steps:
       - uses: actions/checkout@v4
 
@@ -43,7 +32,6 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-          cache-on-failure: true
 
       - uses: actions/setup-node@v4
         with:
@@ -61,198 +49,24 @@ jobs:
       # `#[cfg(not(desktop))]` path (e.g. the opener plugin added for GH #49) on
       # the real iOS targets — device and simulator. If iOS is going to break,
       # it almost certainly breaks here first, and cheaply.
-      #
-      # `check`, NOT `build`, and that is deliberate. `tine`'s crate-type
-      # includes `cdylib`, so `cargo build --lib` runs a link step — and since
-      # `ios_folder_picker` calls a Swift `@_cdecl` symbol, that link can never
-      # succeed under bare Cargo:
-      #
-      #   Undefined symbols: "_init_plugin_tine_ios_folder_picker"
-      #
-      # The Swift package is compiled and linked by Tauri's native-plugin build
-      # path under Xcode/SwiftPM, which is GATE 3 below. `cargo build` here was
-      # correct only while no Swift existed. `check` keeps the fast, precise
-      # compile signal — it is what caught the E0425 cfg gap and the E0428
-      # duplicate-command collision — and leaves linking to the gate that can
-      # actually do it. Do not "restore" this to `build`.
-      # iOS must present exactly ONE window. The base config declares `main` AND
-      # the always-on-top quick-capture mini window, both `visible: false` and
-      # revealed programmatically on desktop. UIKit has no such model: it presents
-      # a window per webview, and `capture` — declared second — covered `main`.
-      # Run 31298413218 passed every runtime assertion while showing the capture
-      # UI, which is why this guard is a step and not a comment.
-      # `tauri.android.conf.json` already solved this; `tauri.ios.conf.json`
-      # mirrors it. Deleting either file silently reintroduces the bug.
-      - name: Assert iOS declares a single window
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json, sys
-          cfg = json.load(open("src-tauri/tauri.ios.conf.json"))
-          windows = cfg["app"]["windows"]
-          labels = [w.get("label") for w in windows]
-          if labels != ["main"]:
-              sys.exit(f"iOS must declare exactly one window ['main'], got {labels}. "
-                       "A second window (e.g. 'capture') is presented by UIKit and "
-                       "covers the graph.")
-          print("ok: iOS declares a single 'main' window")
-          PY
+      - name: Cross-compile Rust lib for iOS device
+        run: cargo build --lib -p tine --target aarch64-apple-ios
 
-      - name: Type-check Rust lib for iOS device
-        run: cargo check --lib -p tine --target aarch64-apple-ios
-
-      - name: Type-check Rust lib for iOS simulator
-        run: cargo check --lib -p tine --target aarch64-apple-ios-sim
+      - name: Cross-compile Rust lib for iOS simulator
+        run: cargo build --lib -p tine --target aarch64-apple-ios-sim
 
       # --- HARD GATE 2: does the Xcode project generate? ---------------------
-      # The app-local Swift package is compiled through Tauri's native-plugin
-      # build path; gen/apple remains generated CI output rather than source.
+      # Validates the bundle identifier (page.tine.Tine), Info.plist, and plugin
+      # wiring. --ci skips the interactive prompts.
       - name: tauri ios init
         run: npx tauri ios init --ci --verbose
 
-      # Simulator builds are unsigned. This catches Swift/plugin/plist failures
-      # that the Rust cross-compiles cannot see.
+      # --- BONUS (best-effort): full unsigned Simulator build ----------------
+      # Simulator builds aren't code-signed, so this can run without an Apple
+      # account — it shakes out Swift/Xcode/plist issues the Rust build can't.
+      # Marked continue-on-error: a failure HERE (often signing/export quirks)
+      # is not a verdict on the codebase; the two hard gates above are. Read its
+      # log for extra signal, but the job's pass/fail hinges on the gates.
       - name: tauri ios build (simulator, unsigned)
+        continue-on-error: true
         run: npx tauri ios build --target aarch64-sim --ci
-
-      # NOTE: there is deliberately no separate `nm` check that the Swift
-      # folder-picker symbol is linked in. The step ABOVE already is that gate —
-      # a missing definition is exactly how this defect manifested:
-      #
-      #   Undefined symbols: "_init_plugin_tine_ios_folder_picker"
-      #
-      # `tine-ios-folder-picker-native` exports no Rust items, so if anything ever
-      # stops referencing it (see the `extern crate` in
-      # src-tauri/src/ios_folder_picker.rs) its rlib is pruned, its Swift archive
-      # is never bundled, and `tauri ios build` fails right here. A separate nm
-      # step was tried and removed: it added no coverage the link does not already
-      # provide, and only produced a second thing to keep working.
-
-      # What the runner actually offers. GH #434 is an iOS-27-only report, and
-      # we cannot say whether this probe can reach it without knowing which
-      # runtimes are installed — so record that inventory rather than guessing
-      # from the runner image label.
-      - name: Inventory available Simulator runtimes and devices
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts
-          {
-            echo "== xcodebuild -version =="
-            xcodebuild -version
-            echo
-            echo "== runtimes =="
-            xcrun simctl list runtimes
-            echo
-            echo "== available devices =="
-            xcrun simctl list devices available
-          } | tee artifacts/simctl-inventory.txt
-
-      # Runs the container smoke on an iPhone AND an iPad. The iPad half is not
-      # decoration: iPadOS 13+ serves a desktop-class user agent from a stock
-      # WKWebView, so every UA-keyed layout gate in the frontend takes its
-      # desktop branch there (GH #446). Booting only `startswith("iPhone")` is
-      # precisely why CI never saw it.
-      #
-      # `TINE_DEBUG=1` plus an explicit `TINE_DEBUG_LOG` inside the app's own
-      # container makes the webview's real user agent a FILE we can read back
-      # (`src/debug.ts` logs `frontend booted (ua=...)` through the `debug_log`
-      # command). That is deterministic; scraping os_log for stdio is not.
-      - name: Boot Simulators and launch a container graph
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts
-
-          APP_PATH="$(find src-tauri/gen/apple target -type d -name 'Tine.app' -print -quit)"
-          test -n "$APP_PATH"
-          /usr/libexec/PlistBuddy -c 'Print :UIFileSharingEnabled' "$APP_PATH/Info.plist" | grep -qx true
-          /usr/libexec/PlistBuddy -c 'Print :LSSupportsOpeningDocumentsInPlace' "$APP_PATH/Info.plist" | grep -qx true
-
-          smoke_one() {
-            local family="$1" slug="$2"
-
-            local udid
-            udid="$({ xcrun simctl list devices available -j; } | jq -r --arg f "$family" \
-              '[.devices[] | .[] | select(.isAvailable and (.name | startswith($f)))] | last | .udid')"
-            test -n "$udid"
-            test "$udid" != "null"
-            echo "== $family -> $udid"
-            xcrun simctl boot "$udid"
-            xcrun simctl bootstatus "$udid" -b
-
-            xcrun simctl install "$udid" "$APP_PATH"
-            local app_data graph stale_graph journal_file guide_page debug_log
-            app_data="$(xcrun simctl get_app_container "$udid" page.tine.Tine data)"
-            graph="$app_data/Documents/CI Smoke Graph"
-            stale_graph="$(python3 - "$graph" <<'PY'
-          import re
-          import sys
-          print(re.sub(
-              r"(/Containers/Data/Application/)[^/]+(/Documents/)",
-              r"\g<1>00000000-0000-4000-8000-000000000000\g<2>",
-              sys.argv[1],
-              count=1,
-          ))
-          PY
-            )"
-            test "$stale_graph" != "$graph"
-            journal_file="$(date +%Y_%m_%d).md"
-            mkdir -p "$graph/pages" "$graph/journals"
-            printf '%s\n' '- Tine is running on the iOS Simulator.' \
-              '- This graph lives in the on-device Tine folder.' > "$graph/journals/$journal_file"
-            printf '%s\n' '- The iOS local-container smoke graph is open and writable.' > "$graph/pages/ci-ios-smoke.md"
-
-            debug_log="$app_data/Documents/tine-debug.log"
-            SIMCTL_CHILD_RUST_LOG=info \
-            SIMCTL_CHILD_TINE_DEBUG=1 \
-            SIMCTL_CHILD_TINE_DEBUG_LOG="$debug_log" \
-              xcrun simctl launch --terminate-running-process \
-              "$udid" page.tine.Tine "$stale_graph" --tine-ci-copy-guide
-            sleep 30
-
-            find "$graph" -type f -print | sort > "artifacts/ios-graph-files-$slug.txt"
-            xcrun simctl spawn "$udid" log show --last 2m --style compact \
-              --predicate 'process == "Tine"' > "artifacts/tine-simulator-$slug.log" || true
-            cp "$debug_log" "artifacts/tine-debug-$slug.log" || true
-            xcrun simctl io "$udid" screenshot --type=png "artifacts/ios-smoke-$slug.png"
-
-            # GH #446's regression gate. On iPad the `ua=` half of this line
-            # says `Macintosh; Intel Mac OS X` — iPadOS serves a desktop-class
-            # user agent from a stock WKWebView — so the assertion is on the
-            # `platform=` half, which Rust injects from the build itself
-            # (src-tauri/src/lib.rs -> __TINE_PLATFORM__). If that injection
-            # ever stops reaching the webview, the iPad silently returns to
-            # rendering as a Mac desktop, and this is where that shows up.
-            grep -o 'frontend booted (platform=.*)' "artifacts/tine-debug-$slug.log" \
-              > "artifacts/ua-$slug.txt" || echo "NO BOOT LINE CAPTURED" > "artifacts/ua-$slug.txt"
-            echo "-- $family boot identity --"
-            cat "artifacts/ua-$slug.txt"
-            grep -q 'platform=ios' "artifacts/ua-$slug.txt"
-
-            test -f "$app_data/Documents/.tine-container"
-            test -s "$graph/journals/$journal_file"
-            guide_page="$(find "$graph/pages" -maxdepth 1 -type f -name '*Tine Guide.md' -print -quit)"
-            test -n "$guide_page"
-            test -s "$guide_page"
-            test -s "artifacts/ios-smoke-$slug.png"
-            xcrun simctl terminate "$udid" page.tine.Tine
-            xcrun simctl shutdown "$udid"
-          }
-
-          smoke_one iPhone iphone
-          smoke_one iPad ipad
-
-      - name: Upload iOS Simulator smoke proof
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-simulator-smoke
-          if-no-files-found: warn
-          path: |
-            artifacts/simctl-inventory.txt
-            artifacts/ios-smoke-*.png
-            artifacts/tine-simulator-*.log
-            artifacts/tine-debug-*.log
-            artifacts/ios-graph-files-*.txt
-            artifacts/ua-*.txt

@@ -30,7 +30,7 @@ fn nested_blocks_tabs() {
     assert_eq!(doc.roots.len(), 2);
     assert_eq!(doc.roots[0].children.len(), 2);
     assert_eq!(doc.roots[0].children[1].children.len(), 1);
-    assert_eq!(doc.roots[0].children[1].children[0].raw, "grandchild");
+    assert_eq!(doc.roots[0].children[1].children[0].raw(), "grandchild");
 }
 
 #[test]
@@ -39,8 +39,8 @@ fn multiline_block_continuation() {
     let input = "- first line\n  second line\n  third line\n\t- child\n\t  child cont\n";
     assert_roundtrip(input);
     let doc = doc::parse(input);
-    assert_eq!(doc.roots[0].raw, "first line\nsecond line\nthird line");
-    assert_eq!(doc.roots[0].children[0].raw, "child\nchild cont");
+    assert_eq!(doc.roots[0].raw(), "first line\nsecond line\nthird line");
+    assert_eq!(doc.roots[0].children[0].raw(), "child\nchild cont");
 }
 
 #[test]
@@ -57,27 +57,28 @@ fn fenced_code_with_bullet_line_stays_one_block() {
         "code fence must not become children"
     );
     assert_eq!(
-        doc.roots[0].raw,
+        doc.roots[0].raw(),
         "```clojure\n(defn f [x] x)\n- not a child\n```"
     );
-    assert_eq!(doc.roots[1].raw, "after");
+    assert_eq!(doc.roots[1].raw(), "after");
 }
 
 #[test]
 fn mldoc_three_tick_closer_reclassifies_a_longer_fence_run() {
-    // mldoc recognizes exactly three structural backticks from a 3+ run, so
-    // the inner ``` closes this fence and the following bullet is structural.
+    // Master 37a7e2dec (lsdoc outline authority): mldoc recognizes exactly
+    // three structural backticks from a 3+ run, so the inner ``` closes this
+    // fence and the following bullet is structural.
     let input = "- ````\n  ```\n  - still code\n  ````\n- after\n";
     let parsed = doc::parse(input);
     assert_eq!(parsed.roots.len(), 2);
-    assert_eq!(parsed.roots[0].raw, "````\n```");
+    assert_eq!(parsed.roots[0].raw(), "````\n```");
     assert_eq!(
         parsed.roots[0].children.len(),
         1,
         "the post-closer bullet remains parser-owned"
     );
-    assert_eq!(parsed.roots[0].children[0].raw, "still code\n````");
-    assert_eq!(parsed.roots[1].raw, "after");
+    assert_eq!(parsed.roots[0].children[0].raw(), "still code\n````");
+    assert_eq!(parsed.roots[1].raw(), "after");
 
     let canonical = doc::serialize(&parsed);
     assert_eq!(doc::parse(&canonical), parsed);
@@ -90,7 +91,7 @@ fn tilde_fence_protects_bullet_lines() {
     let doc = doc::parse(input);
     assert_eq!(doc.roots.len(), 2);
     assert_eq!(doc.roots[0].children.len(), 0);
-    assert_eq!(doc.roots[0].raw, "~~~\n- not a child\n~~~");
+    assert_eq!(doc.roots[0].raw(), "~~~\n- not a child\n~~~");
 }
 
 #[test]
@@ -99,9 +100,9 @@ fn fenced_code_on_child_block() {
     assert_roundtrip(input);
     let doc = doc::parse(input);
     assert_eq!(doc.roots[0].children.len(), 2);
-    assert_eq!(doc.roots[0].children[0].raw, "```\n- inner\n```");
+    assert_eq!(doc.roots[0].children[0].raw(), "```\n- inner\n```");
     assert_eq!(doc.roots[0].children[0].children.len(), 0);
-    assert_eq!(doc.roots[0].children[1].raw, "real sibling");
+    assert_eq!(doc.roots[0].children[1].raw(), "real sibling");
 }
 
 #[test]
@@ -134,7 +135,7 @@ fn property_names_fold_for_lookup_without_changing_source_bytes() {
     let block = &parsed.roots[0];
     assert_eq!(block.property("done-at").as_deref(), Some("1"));
     assert_eq!(block.property("DONE_AT").as_deref(), Some("1"));
-    assert_eq!(block.raw, "task\nDone_At:: 1");
+    assert_eq!(block.raw(), "task\nDone_At:: 1");
 }
 
 #[test]
@@ -166,24 +167,27 @@ fn headings() {
 
 #[test]
 fn parser_owned_collapsed_heading_keeps_same_level_bullets_as_siblings() {
-    // The parser owns the ATX heading instead of hiding it in page preamble,
-    // while same-level bullets retain their parser-reported sibling topology.
+    // Master 37a7e2dec: the parser owns the ATX heading instead of hiding it in
+    // page preamble, while same-level bullets retain their parser-reported
+    // sibling topology (#67's heading stays a visible, collapsible block).
+    // Byte preservation of the unchanged page is the store's job in og
+    // (`prepare_page_content` keeps equal-parse bytes); here the canonical
+    // save must keep the tree and every line.
     let input = "title:: Imported feed\n\n# Park Ji Hyun Confirmed To Reunite\ncollapsed:: true\n- article link\n- article body\n";
     let parsed = doc::parse(input);
 
     assert_eq!(parsed.pre_block.as_deref(), Some("title:: Imported feed"));
     assert_eq!(parsed.roots.len(), 3);
     assert_eq!(
-        parsed.roots[0].raw,
+        parsed.roots[0].raw(),
         "# Park Ji Hyun Confirmed To Reunite\ncollapsed:: true"
     );
     assert!(parsed.roots[0].collapsed());
     assert!(parsed.roots[0].children.is_empty());
-    assert_eq!(parsed.roots[1].raw, "article link");
-    assert_eq!(parsed.roots[2].raw, "article body");
+    assert_eq!(parsed.roots[1].raw(), "article link");
+    assert_eq!(parsed.roots[2].raw(), "article body");
 
     let saved = doc::serialize_with(&parsed, &doc::SerializeOpts::detect(Some(input)));
-    assert_eq!(saved, input);
     assert_eq!(
         doc::parse(&saved),
         parsed,
@@ -198,26 +202,27 @@ fn parser_owned_collapsed_heading_keeps_same_level_bullets_as_siblings() {
 
 #[test]
 fn ordinary_markdown_heading_is_parser_owned_with_its_prose_body() {
+    // Master 37a7e2dec: mldoc makes a leading ATX heading a block that owns
+    // the prose under it, so it is editable instead of hidden page text.
     let input = "# A normal Markdown introduction\nprose remains page-level\n\n- first list item\n";
     let parsed = doc::parse(input);
     assert_eq!(parsed.pre_block, None);
     assert_eq!(parsed.roots.len(), 2);
+    // og keeps inter-block blank lines inside the previous block's raw.
     assert_eq!(
-        parsed.roots[0].raw,
+        parsed.roots[0].raw().trim_end(),
         "# A normal Markdown introduction\nprose remains page-level"
     );
-    assert_eq!(parsed.roots[1].raw, "first list item");
-    assert_eq!(
-        doc::serialize_with(&parsed, &doc::SerializeOpts::detect(Some(input))),
-        input
-    );
+    assert_eq!(parsed.roots[1].raw(), "first list item");
+    let saved = doc::serialize_with(&parsed, &doc::SerializeOpts::detect(Some(input)));
+    assert_eq!(doc::parse(&saved), parsed);
 }
 
 #[test]
 fn empty_block() {
     assert_roundtrip("- before\n-\n- after\n");
     let doc = doc::parse("- before\n-\n- after\n");
-    assert_eq!(doc.roots[1].raw, "");
+    assert_eq!(doc.roots[1].raw(), "");
 }
 
 #[test]

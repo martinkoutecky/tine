@@ -1,9 +1,12 @@
+// Ported from master src/components/QueryBuilder.transient.test.tsx. og changes:
+// the Display-panel popover family is Q4b's; registry keys are read off the
+// QueryListbox add-condition picker instead of the (Q4b) vocabulary picker.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { autocompleteFacets, backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { bumpGraphEpoch, setDataRev } from "../ui";
+import { bumpGraphEpoch, setDataRev } from "../graphSession";
 import type { RegistrySnapshot } from "../editor/queryIr";
 import {
   clearTransientLayersForTest,
@@ -23,7 +26,6 @@ import {
   taskFilter,
 } from "../editor/queryBuilder";
 import type { Filter } from "../editor/queryIr";
-import { stubVocabularyGeometry } from "./QueryVocabularyPicker.test-helpers";
 
 // The builder edits the IR now, so the harness hands it a `Filter` rather than a
 // DSL string: there is no frontend parser left to turn text into a tree, and the
@@ -84,15 +86,7 @@ const FAMILIES: PopoverFamily[] = [
   { name: "row field menu", open: (s) => s.querySelector<HTMLButtonElement>(".qs-row .qs-field")!, visible: ".qs-menu" },
   { name: "row operator menu", open: (s) => s.querySelector<HTMLButtonElement>(".qs-row .qs-op")!, visible: ".qs-menu" },
   { name: "add-condition picker", open: (s) => s.querySelector<HTMLButtonElement>(".qs-add")!, visible: ".qs-menu" },
-  {
-    // `+ sort` and `+ summarize` are gone (P5B, Q3): the sheet mounts the ONE
-    // shared Display panel, which states all six display facts instead of a
-    // fraction of two of them.
-    name: "display panel",
-    open: (s) => s.querySelector<HTMLButtonElement>(".qd-trigger")!,
-    visible: ".qd-panel",
-    portalled: true,
-  },
+  // master's fifth family, the Display panel (`.qd-trigger`), is Q4b's surface.
 ];
 
 /** Where a family's panel is drawn. */
@@ -122,8 +116,6 @@ function snapshot(keys: [string, number][]): RegistrySnapshot {
 }
 
 afterEach(() => {
-  restoreGeometry?.();
-  restoreGeometry = null;
   clearTransientLayersForTest();
   resetSharedQueryResultsForTests();
   resetQueryRegistryRevisionForTests();
@@ -131,12 +123,10 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-let restoreGeometry: (() => void) | null = null;
 
 beforeEach(() => {
   // The vocabulary list is virtualized, so a picker in a zero-height jsdom
   // viewport would mount overscan alone (N2). Production sizing is unchanged.
-  restoreGeometry = stubVocabularyGeometry();
   resetQueryRegistryRevisionForTests();
   vi.spyOn(backend(), "queryFacets").mockResolvedValue([]);
   vi.spyOn(backend(), "queryRegistry").mockResolvedValue(snapshot([]));
@@ -195,7 +185,7 @@ describe("QueryBuilder transient ownership (post-GH #161)", () => {
   });
 
   it("renders a bounded ⟨advanced⟩ chip instead of recursing through a hostile query tree", () => {
-    // 64 levels still PARSE (`QUERY_NESTING_MAX`); what is bounded here is the
+    // 64 levels still PARSE (under `QUERY_NESTING_MAX`); what is bounded here is the
     // drawing. Both the sentence and the rows stop at the rendering cap, so a
     // query written by outside content cannot make either of them big (I-22).
     const depth = 64;
@@ -403,9 +393,7 @@ describe("QueryBuilder registry sharing (Harvest W4-P1 item 3)", () => {
   function propertyKeysOffered(sheet: HTMLElement): string[] {
     const add = sheet.querySelector<HTMLButtonElement>(".qs-add")!;
     add.click();
-    const keys = [
-      ...sheet.querySelectorAll<HTMLButtonElement>('.qs-vocab-option[data-section="property"]'),
-    ].map((button) => button.getAttribute("data-vocabulary-key") ?? "");
+    const keys = listboxPropertyKeys(sheet);
     add.click(); // The trigger toggles: leave the picker closed for the next read.
     return keys;
   }
@@ -499,7 +487,7 @@ describe("QueryBuilder registry sharing (Harvest W4-P1 item 3)", () => {
 });
 
 describe("QueryBuilder registry landing (I-20)", () => {
-  it.each(["data", "declaration"])("withdraws obsolete rows while the %s revision is pending", async (kind) => {
+  it.each(["data", "declaration"])("keeps rows visible but type edits disabled while the %s revision is pending", async (kind) => {
     const registry = vi.mocked(backend().queryRegistry);
     registry.mockReset();
     let release!: (value: RegistrySnapshot) => void;
@@ -513,7 +501,10 @@ describe("QueryBuilder registry landing (I-20)", () => {
       if (kind === "data") setDataRev((n) => n + 1);
       else requestQueryRegistryRefresh();
       await settleRegistry(registry);
-      expect(propertyKeys(sheet)).toEqual([]);
+      expect(propertyKeys(sheet)).toEqual(["obsolete-type"]);
+      sheet.querySelector<HTMLButtonElement>(".qs-add")!.click();
+      expect(sheet.querySelector(".qs-registry-pending")).not.toBeNull();
+      sheet.querySelector<HTMLButtonElement>(".qs-add")!.click();
       release(snapshot([["current-type", 4]]));
       await settleRegistry(registry);
       expect(propertyKeys(sheet)).toEqual(["current-type"]);
@@ -558,9 +549,18 @@ describe("QueryBuilder registry landing (I-20)", () => {
 function propertyKeys(sheet: HTMLElement): string[] {
   const add = sheet.querySelector<HTMLButtonElement>(".qs-add")!;
   add.click();
-  const keys = [
-    ...sheet.querySelectorAll<HTMLButtonElement>('.qs-vocab-option[data-section="property"]'),
-  ].map((button) => button.getAttribute("data-vocabulary-key") ?? "");
+  const keys = listboxPropertyKeys(sheet);
   add.click();
+  return keys;
+}
+
+/** og: the property keys are the QueryListbox options under "Properties". */
+function listboxPropertyKeys(sheet: HTMLElement): string[] {
+  const keys: string[] = [];
+  let section = "";
+  for (const el of sheet.querySelectorAll<HTMLElement>(".qs-options > *")) {
+    if (el.classList.contains("qs-option-section")) section = el.textContent ?? "";
+    else if (section === "Properties") keys.push(el.childNodes[0]?.textContent ?? "");
+  }
   return keys;
 }

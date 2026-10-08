@@ -1,13 +1,62 @@
 /* tslint:disable */
 /* eslint-disable */
 
+/**
+ * Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
+ */
+export function canonical_group_field(value: string): string | undefined;
+
+/**
+ * Decode a Logseq page stem in legacy or triple-lowbar (legacy = false) format.
+ * O(stem bytes), no I/O; malformed percent escapes are preserved.
+ */
+export function decode_page_name(stem: string, legacy: boolean): string;
+
+export function edit_block_regions_json(raw: string, is_org: boolean, regions: any, request: any): string;
+
+/**
+ * Encode a Windows-safe Logseq page stem; legacy selects percent-encoded
+ * namespaces, false selects triple-lowbar. O(title bytes), no I/O or failure.
+ */
+export function encode_page_name(name: string, legacy: boolean): string;
+
+/**
+ * Native date formatter over explicit civil parts; same bounded format cache.
+ */
+export function format_journal_date(year: number, month: number, day: number, pattern: string): string;
+
+/**
+ * Accepted marker/priority of one block with their byte spans (`block_regions::header_tokens`).
+ * O(block bytes); no regions walk.
+ */
+export function header_tokens_json(raw: string, is_org: boolean): string;
+
+export function install_panic_hook(): void;
+
+/**
+ * Whether a parser-tokenized macro name is a query; O(name bytes), no I/O.
+ */
+export function is_query_macro_name(name: string): boolean;
+
+/**
+ * Whether a block property key is hidden from rendered chips (I-12: the one
+ * answerer the static export also asks). O(key bytes + hidden keys), no I/O.
+ */
+export function is_render_hidden_prop(key: string, user_hidden: string[]): boolean;
+
+/**
+ * The message of the most recent panic in this instance ("" if none). A trapped
+ * instance still answers small calls; the glue reads this before reinstantiating.
+ */
+export function last_panic(): string;
+
 export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_marker: string, new_marker: string, enabled: boolean, with_seconds: boolean): string;
 
 export function logbook_clock_in(raw: string, is_org: boolean, with_seconds: boolean): string;
 
-export function logbook_clock_out(raw: string, with_seconds: boolean): string;
+export function logbook_clock_out(raw: string, is_org: boolean, with_seconds: boolean): string;
 
-export function logbook_info_json(raw: string): string;
+export function logbook_info_json(raw: string, is_org: boolean): string;
 
 /**
  * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
@@ -17,6 +66,41 @@ export function logbook_info_json(raw: string): string;
  * See docs/wasm-parse-plan.md §7D.
  */
 export function lsdoc_tag(): string;
+
+/**
+ * MIME from the final case-insensitive path extension; O(path bytes), no I/O.
+ * Unknown extensions return application/octet-stream. Shared with native media.
+ */
+export function mime_from_path(path: string): string;
+
+/**
+ * Names inside an accepted NestedLink node; O(node bytes).
+ */
+export function nested_reference_names(content: string): string[];
+
+/**
+ * Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
+ */
+export function ordered_list_glyph(index: number, depth: number): string;
+
+/**
+ * Markdown page header (leading accepted properties, see `block_regions::page_header`).
+ * O(preamble bytes); no I/O.
+ */
+export function page_header_json(raw: string): string;
+
+/**
+ * Native page-name key: O(name bytes), no I/O; Rust trim/lowercase/slashes/NFC.
+ */
+export function page_identity_key(name: string): string;
+
+/**
+ * Whole-preamble property ownership, with parser-owned literals excluded.
+ * O(preamble bytes); no block wrapper or I/O.
+ */
+export function page_regions_json(raw: string, is_org: boolean): string;
+
+export function parse_block_bundle_json(raw: string, is_org: boolean): string;
 
 /**
  * Parse one de-bulleted block body into lsdoc's render AST, serialized to JSON.
@@ -37,6 +121,52 @@ export function parse_block_json(raw: string, is_org: boolean): string;
 export function parse_document_json(text: string, is_org: boolean): string;
 
 /**
+ * Inline-only parsing for property values: bounded by the same shared native
+ * tree admission. O(value bytes); null refuses excessive depth, no I/O.
+ */
+export function parse_inline_json(raw: string, is_org: boolean): string;
+
+/**
+ * Native calendar format grammar, cached (16 patterns). O(title + pattern) on
+ * cold compile, O(title) warm; null means invalid. No clock, graph or I/O.
+ */
+export function parse_journal_format_json(text: string, pattern: string): string;
+
+/**
+ * PDF identity with the existing preview/native suffix policy. O(filename bytes).
+ */
+export function pdf_asset_key(filename: string, preview: boolean): string;
+
+/**
+ * Accepted single Markdown property line, using the native borrowed grammar.
+ * O(line bytes), no parse or I/O; malformed input serializes as null.
+ */
+export function property_line_json(line: string): string;
+
+/**
+ * Query EDN reads/splices from the same byte-span reader as native macro_text.
+ * O(source bytes), at most 1 MiB / 128 levels; null refuses unreadable EDN.
+ * Title edits preserve all unrelated bytes. No I/O or graph state.
+ */
+export function query_edn_json(source: string, operation: string, value: string): string;
+
+/**
+ * Query raw extents from the native reader. O(raw bytes), no parser or I/O;
+ * JSON offsets are UTF-8 bytes. Unterminated candidates are omitted.
+ */
+export function query_macro_extents_json(raw: string): string;
+
+/**
+ * The raw reader's literal grammar for a macro name; O(name bytes), no I/O.
+ */
+export function query_macro_is_tql(name: string): boolean;
+
+/**
+ * Shared native target classification on an accepted AST link. O(target).
+ */
+export function reference_target_name(kind: string, value: string, label: string, org: boolean, filename_candidates: boolean): string | undefined;
+
+/**
  * Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
  * contract — `lsdoc::render_html`): structural tags + classes + `data-*` hooks, no
  * ref/asset/math/macro resolution. Re-bullets EXACTLY like `parse_block_json` so the
@@ -53,53 +183,94 @@ export function render_block_html(raw: string, is_org: boolean): string;
 export function __tineReinstantiate(): void;
 
 /**
- * Fold text with Tine's exact A6 search transform.
- *
- * This is whole-string lowercase plus compatibility decomposition, removal of
- * Unicode nonspacing marks, canonical reorder and composition. It deliberately
- * is not full Unicode casefold and is not idempotent for every compatibility
- * character, so callers must pass raw text and invoke it exactly once.
+ * Shared comparison form; O(text bytes), no graph access.
  */
-export function search_fold(text: string): string;
+export function search_fold(text: string, remove_accents: boolean): string;
 
 /**
- * Fold raw text once and serialize its provenance as
- * `{text, sources: [{start, end}]}`. Each source range uses raw UTF-16 offsets,
- * and there is exactly one range per output Unicode scalar (not per UTF-16 code
- * unit).
+ * Membership against a policy-matched pre-folded body; O(text × terms).
  */
-export function search_fold_map_json(text: string): string;
+export function search_matches(query: string, remove_accents: boolean, lower: string, original: string): boolean;
 
 /**
- * Parse one shared search matcher and apply it to a JSON string array.
- *
- * Boolean queries fold each raw candidate exactly once; regex queries see raw
- * text only. Empty and invalid-regex queries retain every candidate, with the
- * latter returning its diagnostic in `search_error`. Malformed JSON is a bridge
- * error rather than a fabricated match-all result.
+ * Parse metadata for UI builders. Same grammar, errors and folds as native.
  */
-export function search_match_batch_json(query: string, texts_json: string): string;
+export function search_query_json(query: string, remove_accents: boolean): string;
+
+/**
+ * UTF-16 search evidence, capped by limit. First mode retains zero-width hits
+ * and considers all positive terms; multi-range mode uses the satisfied group.
+ */
+export function search_spans_json(query: string, remove_accents: boolean, text: string, limit: number, first: boolean): string;
+
+/**
+ * Bounded original UTF-16 evidence, O(text × needle scalars).
+ */
+export function search_substring_spans_json(text: string, needle: string, limit: number, remove_accents: boolean): string;
+
+/**
+ * Split already-parsed linkable property values with the native separator.
+ * O(value bytes), without parsing or I/O. Empty members retain their position.
+ */
+export function split_linkable_property(value: string): string[];
+
+/**
+ * The checkbox a task marker draws: true checked, false empty, undefined none.
+ */
+export function task_checkbox_state(marker: string): boolean | undefined;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly canonical_group_field: (a: number, b: number) => [number, number];
+    readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
+    readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];
+    readonly encode_page_name: (a: number, b: number, c: number) => [number, number];
+    readonly format_journal_date: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly header_tokens_json: (a: number, b: number, c: number) => [number, number];
+    readonly install_panic_hook: () => void;
+    readonly is_query_macro_name: (a: number, b: number) => number;
+    readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number) => number;
+    readonly last_panic: () => [number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly logbook_clock_out: (a: number, b: number, c: number) => [number, number];
-    readonly logbook_info_json: (a: number, b: number) => [number, number];
+    readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly logbook_info_json: (a: number, b: number, c: number) => [number, number];
     readonly lsdoc_tag: () => [number, number];
+    readonly mime_from_path: (a: number, b: number) => [number, number];
+    readonly nested_reference_names: (a: number, b: number) => [number, number];
+    readonly ordered_list_glyph: (a: number, b: number) => [number, number];
+    readonly page_header_json: (a: number, b: number) => [number, number];
+    readonly page_identity_key: (a: number, b: number) => [number, number];
+    readonly page_regions_json: (a: number, b: number, c: number) => [number, number];
+    readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
+    readonly parse_inline_json: (a: number, b: number, c: number) => [number, number];
+    readonly parse_journal_format_json: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly pdf_asset_key: (a: number, b: number, c: number) => [number, number];
+    readonly property_line_json: (a: number, b: number) => [number, number];
+    readonly query_edn_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly query_macro_extents_json: (a: number, b: number) => [number, number];
+    readonly query_macro_is_tql: (a: number, b: number) => number;
+    readonly reference_target_name: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
     readonly render_block_html: (a: number, b: number, c: number) => [number, number];
-    readonly search_fold: (a: number, b: number) => [number, number];
-    readonly search_fold_map_json: (a: number, b: number) => [number, number];
-    readonly search_match_batch_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly search_fold: (a: number, b: number, c: number) => [number, number];
+    readonly search_matches: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
+    readonly search_query_json: (a: number, b: number, c: number) => [number, number];
+    readonly search_spans_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
+    readonly search_substring_spans_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly split_linkable_property: (a: number, b: number) => [number, number];
+    readonly task_checkbox_state: (a: number, b: number) => number;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_exn_store: (a: number) => void;
+    readonly __externref_table_alloc: () => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __externref_table_dealloc: (a: number) => void;
+    readonly __externref_drop_slice: (a: number, b: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

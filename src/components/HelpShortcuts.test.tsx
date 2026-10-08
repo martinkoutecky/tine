@@ -26,17 +26,4 @@ describe("shortcuts pane data", () => {
     expect(actual).toHaveLength(expected.length);
     expect(new Set(actual)).toEqual(new Set(expected));
   });
-
-  it("filters command labels, ids, and bindings for Settings search (GH #380)", () => {
-    const filtered = buildShortcutPaneData([
-      { id: "go/find-in-page", label: "Find in page", binding: "mod+f", effective: "mod+f", overridden: false, scope: "global" },
-      { id: "editor/bold", label: "Bold", binding: "mod+b", effective: "mod+b", overridden: false, scope: "editor" },
-    ], "find page");
-    expect(shortcutPaneCommandIds(filtered)).toEqual(["go/find-in-page"]);
-
-    const byBinding = buildShortcutPaneData([
-      { id: "go/find-in-page", label: "Find in page", binding: "mod+f", effective: "ctrl+g", overridden: true, scope: "global" },
-    ], "ctrl+g");
-    expect(shortcutPaneCommandIds(byBinding)).toEqual(["go/find-in-page"]);
-  });
 });

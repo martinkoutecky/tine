@@ -1,6 +1,6 @@
 // The frontend half of the SHARED raw-macro-reader corpus (SPEC §4.3.1, §7.9).
 //
-// `crates/tine-core/tests/fixtures/query-macro/extents.json` is read here and by
+// `crates/tine-core/src/query/fixtures/query-macro/extents.json` is read here and by
 // `crates/tine-core/tests/query_macro_extents.rs`. Both must recover the same
 // `{text, name, argument}` for every case. That agreement is the ONLY reason
 // §4.3.1 permits a reader on each side: rendering, in-place rewriting and Export
@@ -10,7 +10,7 @@
 // Offsets are deliberately not compared across the pair — Rust reports byte
 // offsets, JavaScript UTF-16 code units — so the recovered TEXT is the contract.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -29,7 +29,7 @@ interface Case {
 }
 
 const FIXTURES = fileURLToPath(
-  new URL("../../crates/tine-core/tests/fixtures/query-macro/extents.json", import.meta.url),
+  new URL("../../crates/tine-core/src/query/fixtures/query-macro/extents.json", import.meta.url),
 );
 const CASES: Case[] = JSON.parse(readFileSync(FIXTURES, "utf8"));
 
@@ -125,4 +125,52 @@ describe("query macro NAME recognition (§7.9)", () => {
     expect(extent?.name).toBe("tine-query");
     expect(extent?.argument).toBe("@block");
   });
+});
+
+// Moved from `edn.test.ts` when og's name-blind `edn.queryMacroExtent(s)` was
+// retired for the one macro-name-aware scanner (I-12).
+describe("queryMacroExtents keeps the retired edn scanner's guarantees", () => {
+  const text = (raw: string) => queryMacroExtents(raw).map((e) => raw.slice(e.start, e.end));
+  it("ignores }} inside strings and page refs and excludes trailing property lines", () => {
+    const tricky = '{{query (and (task TODO)) {:title "Sprint }} board"}}}';
+    expect(text(tricky)).toEqual([tricky]);
+    expect(text('{{query (todo) {:title "A"}}}\nid:: abc')).toEqual(['{{query (todo) {:title "A"}}}']);
+    expect(text('{{query (page [[A }} B]]) {:title "t"}}}\nid:: x')).toEqual(['{{query (page [[A }} B]]) {:title "t"}}}']);
+  });
+  it("finds every query macro in a block, in order, under either name", () => {
+    expect(text("A {{query (task TODO)}} B {{tine-query task = TODO}}")).toEqual([
+      "{{query (task TODO)}}",
+      "{{tine-query task = TODO}}",
+    ]);
+    expect(queryMacroExtents("no queries here")).toEqual([]);
+  });
+});
+
+
+it("reads many valid macros with only linear source slicing (OG-B-FRONT)", () => {
+  const raw = '{{query (property x "}")}} '.repeat(2000);
+  const original = String.prototype.slice;
+  let sliced = 0;
+  const spy = vi.spyOn(String.prototype, "slice").mockImplementation(function (this: string, start, end) {
+    const result = original.call(this, start, end);
+    if (String(this) === raw) sliced += result.length;
+    return result;
+  });
+  try {
+    const macros = queryMacroExtents(raw);
+    expect(macros).toHaveLength(2000);
+    expect(macros[1999].argument).toBe('(property x "}")');
+    expect(sliced, "I-15: queryMacro must not materialize each remaining suffix").toBeLessThan(raw.length * 3);
+  } finally { spy.mockRestore(); }
+});
+
+it("rejects separated closing braces like the native macro extent reader", () => {
+  expect(queryMacroExtents("{{query x} }")).toEqual([]);
+});
+
+it("converts native byte extents into UTF-16 indices after emoji and multibyte text", () => {
+  const raw = "🙂 中文 {{query (task TODO)}} é {{tine-query @block}}";
+  const found = queryMacroExtents(raw);
+  expect(found.map((e) => raw.slice(e.start, e.end))).toEqual(["{{query (task TODO)}}", "{{tine-query @block}}"]);
+  expect(found.map((e) => e.start)).toEqual([raw.indexOf("{{query"), raw.indexOf("{{tine-query")]);
 });

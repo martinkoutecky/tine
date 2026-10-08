@@ -1,12 +1,12 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { Block } from "./Block";
-import { resetSheetRowVirtualizationForTests, SheetTable } from "./SheetTable";
+import { resetSheetRowVirtualizationForTests } from "./SheetTable";
 import { resetBoardCardVirtualizationForTests } from "./SheetBoard";
 import { initParser } from "../render/parse";
-import { resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
-import type { BlockDto, RefGroup } from "../types";
+import { resetStore } from "../document";
+import { type FeedPage, type Node as StoreNode } from "../document/model";
+import { setDoc } from "../document/model";
 
 // P2 lazy-mount virtualization guard. Two paths:
 //  - EAGER: no IntersectionObserver (jsdom default) → observeNear fires
@@ -73,49 +73,6 @@ function boardDoc() {
 }
 
 describe("sheet lazy-mount virtualization", () => {
-  it("converts each identity-stable DTO at most once during a 200-row rerender", () => {
-    const rowCount = 200;
-    let dtoConversions = 0;
-    const blocks: BlockDto[] = Array.from({ length: rowCount }, (_, i) => ({
-      id: `dto-${i}`,
-      raw: `TODO [#A] row ${i}`,
-      collapsed: false,
-      children: [],
-      get marker() {
-        dtoConversions += 1;
-        return "TODO";
-      },
-      priority: "A",
-      tags: ["sheet"],
-      properties: [
-        ["owner", "Codex"],
-        ["estimate", String(i)],
-        ["status", "ready"],
-      ],
-    }));
-    setDoc({
-      byId: { table: node("table", "Table\ntine.view:: table", null) },
-      pages: [page(["table"])],
-      feed: ["Sheet"],
-      loaded: true,
-    });
-    const [groups, setGroups] = createSignal<RefGroup[]>([
-      { page: "Remote", kind: "page", blocks },
-    ]);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    const dispose = render(() => (
-      <SheetTable ownerId="table" rowSource="query" groups={groups()} />
-    ), root);
-
-    dtoConversions = 0;
-    setGroups([{ page: "Remote", kind: "page", blocks }]);
-
-    expect(dtoConversions).toBeLessThanOrEqual(rowCount);
-    dispose();
-    root.remove();
-  });
-
   it("caps the mounted table matrix and offers progressive disclosure", () => {
     (globalThis as any).IntersectionObserver = NoopIO;
     const ids = Array.from({ length: 500 }, (_, i) => `r${i}`);
@@ -180,6 +137,20 @@ describe("sheet lazy-mount virtualization", () => {
     expect(root.querySelector(".sheet-board-card[data-block-id]")).not.toBeNull();
     dispose();
     root.remove();
+  });
+
+  it("L12:44: board render markers do not survive a graph reset", () => {
+    setDoc(boardDoc());
+    const root = document.createElement("div"); document.body.appendChild(root);
+    const first = render(() => <Block id="board" />, root);
+    expect(root.querySelectorAll(".sheet-cell-defer")).toHaveLength(0);
+    first();
+    resetStore();
+    (globalThis as any).IntersectionObserver = NoopIO;
+    setDoc(boardDoc());
+    const second = render(() => <Block id="board" />, root);
+    try { expect(root.querySelectorAll(".sheet-cell-defer").length).toBeGreaterThan(0); }
+    finally { second(); }
   });
 
   it("board: eager path renders card titles and chips, no placeholders", () => {

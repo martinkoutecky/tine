@@ -1,5 +1,7 @@
 // Read-only rendering of a BlockDto tree. Shared by Linked References, query
 // results, and embeds. Mirrors the rendered (non-editing) block look.
+// Visits at most 64 ancestor levels per branch and shows a message below that;
+// cost is O(rendered blocks), bounded by the supplied result tree.
 
 import { For, Show, createMemo, type JSX } from "solid-js";
 import type { BlockDto } from "../types";
@@ -7,7 +9,7 @@ import { pageProperties, visibleBody } from "../render/block";
 import { effectiveHeadingLevel, facetsFromDto } from "../render/facets";
 import { taskCheckboxState } from "../markers";
 import { InlineText } from "../render/inline";
-import { formatForPage } from "../store";
+import { formatForPage } from "../document";
 import { openBlockInSidebar } from "../ui";
 import { openInNewTab, type Route } from "../router";
 import { openRouteInOtherPane } from "../panes";
@@ -15,6 +17,8 @@ import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from ".
 import { PagePropertyValue } from "./PagePropertyValue";
 import { BeginQuery, inspectBeginQuery } from "./BeginQuery";
 import { blockDtoExternalId } from "../blockIdentity";
+
+const MAX_REF_BLOCK_DEPTH = 64;
 
 // `page`/`pageKind` (where these blocks live) are threaded through so a
 // shift-click can open the block live in the sidebar.
@@ -24,6 +28,16 @@ export function RefBlocks(props: {
   pageKind?: "journal" | "page";
   depth?: number;
 }): JSX.Element {
+  return <RefBlocksAtDepth {...props} treeDepth={1} />;
+}
+
+function RefBlocksAtDepth(props: {
+  blocks: BlockDto[];
+  page?: string;
+  pageKind?: "journal" | "page";
+  depth?: number;
+  treeDepth: number;
+}): JSX.Element {
   return (
     <For each={props.blocks}>
       {(b) => (
@@ -32,6 +46,7 @@ export function RefBlocks(props: {
           page={props.page}
           pageKind={props.pageKind}
           depth={props.depth ?? b.breadcrumb?.length ?? 0}
+          treeDepth={props.treeDepth}
         />
       )}
     </For>
@@ -43,6 +58,7 @@ function RefBlock(props: {
   page?: string;
   pageKind?: "journal" | "page";
   depth: number;
+  treeDepth: number;
 }): JSX.Element {
   // Header facts (marker/done) off the one lsdoc parse (cache hit if the panel's
   // DTOs were seeded); the visible body lines via the shared body-text extractor.
@@ -89,16 +105,15 @@ function RefBlock(props: {
             onMouseDown={(e) => {
               // GH #207's other half: suppress shift-range selection and
               // middle-button autoscroll / PRIMARY-paste for the gestures this
-              // bullet now answers.
+              // bullet answers.
               if (!props.block.page_property) internalLinkMouseDown(e);
             }}
             onClick={(e) => {
               if (props.block.page_property) return;
-              // Sibling of the live outline's bullet (GH #456): a reference
-              // bullet honoured Shift alone, so the other modifiers silently
-              // did nothing here too. Same one decision, same destinations —
-              // minus the in-place zoom, which a read-only reference has no
-              // equivalent of, so a plain click keeps doing nothing.
+              // Sibling of the live outline's bullet (GH #456): the same one
+              // decision, same destinations, minus the in-place zoom, which a
+              // read-only reference has no equivalent of, so a plain click keeps
+              // doing nothing.
               const dest = internalLinkDest(e);
               if (dest === "default") return;
               e.stopPropagation();
@@ -184,12 +199,16 @@ function RefBlock(props: {
           </div>
         </div>
       </div>
-      <Show when={props.block.children.length}>
+      <Show when={props.block.children.length && props.treeDepth < MAX_REF_BLOCK_DEPTH}>
         <div class="block-children-container">
           <div class="block-children">
-            <RefBlocks blocks={props.block.children} page={props.page} pageKind={props.pageKind} depth={props.depth + 1} />
+            <RefBlocksAtDepth blocks={props.block.children} page={props.page} pageKind={props.pageKind}
+              depth={props.depth + 1} treeDepth={props.treeDepth + 1} />
           </div>
         </div>
+      </Show>
+      <Show when={props.block.children.length && props.treeDepth >= MAX_REF_BLOCK_DEPTH}>
+        <div class="ref-block-depth-warning">More nested blocks are available on the page</div>
       </Show>
     </div>
   );

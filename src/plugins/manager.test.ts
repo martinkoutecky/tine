@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "../backend";
-import { doc, isDirty, resetStore, setDoc } from "../store";
-import { bumpGraphEpoch, setGraphMeta, setGraphTransitioning } from "../ui";
+import { isDirty, resetStore } from "../document";
+import { doc, setDoc } from "../document/model";
+import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
+import { setGraphTransitioning } from "../ui";
 import type { GraphMeta } from "../types";
 import { installedPlugins, PluginManager } from "./manager";
 import { bindPluginBlockSnapshot, capturePluginGraphOwner } from "./ownership";
@@ -38,7 +40,7 @@ function graphMeta(root: string): GraphMeta {
     shortcuts: {}, start_of_week: 6, block_hidden_properties: [], linked_references_collapsed_threshold: 100, default_journal_template: null,
     favorites: [], journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "yyyy_MM_dd",
     preferred_format: "md", macros: {}, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
-    logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true,
+    logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true, mobile_gestures_disabled_in_block_with_tags: [],
   };
 }
 
@@ -71,6 +73,35 @@ afterEach(() => {
 });
 
 describe("installed plugin lifecycle", () => {
+  it("preserves both concurrent setting changes in the persisted map", async () => {
+    const api = backend();
+    const value = {
+      ...manifest("page.tine.settings-race", "Settings race"),
+      capabilities: ["settings.read"],
+      settings: [
+        { key: "first", type: "boolean", label: "First", description: "First setting", default: false },
+        { key: "second", type: "boolean", label: "Second", description: "Second setting", default: false },
+      ],
+    };
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([{ ...record(value.id, value.name), manifest_json: JSON.stringify(value), enabled: false }]);
+    vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    let releaseFirst!: () => void;
+    const writes: string[] = [];
+    vi.spyOn(api, "setAppString").mockImplementation(async (_key, serialized) => {
+      writes.push(serialized);
+      if (writes.length === 1) await new Promise<void>((resolve) => { releaseFirst = resolve; });
+    });
+    const manager = new PluginManager();
+    await manager.initialize();
+    const first = manager.setSetting(value.id, value.version, "first", true);
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    const second = manager.setSetting(value.id, value.version, "second", true);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(JSON.parse(writes.at(-1)!)).toEqual({ first: true, second: true });
+    expect(installedPlugins()[0].settings).toEqual({ first: true, second: true });
+  });
   it("uninstalls an incompatible stored manifest through its real package identity", async () => {
     const manifest = {
       schemaVersion: 1,
@@ -301,6 +332,39 @@ describe("installed plugin lifecycle", () => {
     });
   });
 
+  it.each(["entry", "settings", "activation"] as const)("L15:83: uninstall retires automatic startup during %s", async (phase) => {
+    const api = backend(), id = "page.tine.uninstall-startup";
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([record(id, "Uninstall startup")]);
+    const entry = vi.spyOn(api, "readPluginEntry").mockResolvedValue(new Uint8Array([0, 97, 115, 109]));
+    const settings = vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    vi.spyOn(api, "setAppString").mockResolvedValue();
+    vi.spyOn(api, "uninstallPlugin").mockResolvedValue();
+    const persist = vi.spyOn(api, "setPluginEnabled").mockResolvedValue();
+    const runtime = { invoke: vi.fn().mockResolvedValue({ effects: [] }), dispose: vi.fn() };
+    vi.spyOn(PluginRuntime, "create").mockResolvedValue(runtime as unknown as PluginRuntime);
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    if (phase === "entry") entry.mockImplementationOnce(async () => { await pending; return new Uint8Array([0, 97, 115, 109]); });
+    // The first settings read builds the installed catalog; the second owns startup.
+    if (phase === "settings") settings.mockImplementationOnce(async () => "{}").mockImplementationOnce(async () => { await pending; return "{}"; });
+    if (phase === "activation") runtime.invoke.mockImplementationOnce(async () => { await pending; return { effects: [] }; });
+    const manager = new PluginManager();
+    const initializing = manager.initialize();
+    await vi.waitFor(() => {
+      if (phase === "entry") expect(entry).toHaveBeenCalled();
+      else if (phase === "settings") expect(settings).toHaveBeenCalledTimes(2);
+      else expect(runtime.invoke).toHaveBeenCalled();
+    });
+    await manager.uninstall(id, "1.0.0");
+    if (phase !== "entry") expect(runtime.dispose).toHaveBeenCalled();
+    finish();
+    await initializing;
+    expect(installedPlugins().some((plugin) => plugin.manifest.id === id)).toBe(false);
+    await expect(manager.invokeCommand(id, "write")).rejects.toThrow("plugin is not running");
+    expect(persist).not.toHaveBeenCalled();
+  });
+
   it("makes a successful held enable the selected durable intent so disable can clear it", async () => {
     const api = backend();
     const id = "page.tine.held-enable-disable";
@@ -380,6 +444,38 @@ describe("installed plugin lifecycle", () => {
 });
 
 describe("plugin invocation ownership", () => {
+  // Q1 (Martin, 2026-09-28, option b): an explicit command/slash invocation is
+  // consent to read that one block; passive decorations need graph.read.visible.
+  it.each([
+    ["command", false, true],
+    ["slash-command", false, true],
+    ["decorate-blocks", false, false],
+    ["decorate-blocks", true, true],
+  ] as const)("%s guest (graph.read.visible=%s) receives block text: %s", async (kind, declared, expectText) => {
+    const api = backend();
+    const entry = commandRecord();
+    const value = JSON.parse(entry.manifest_json) as { capabilities: string[] };
+    if (declared) value.capabilities.push("graph.read.visible");
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([{ ...entry, manifest_json: JSON.stringify(value) }]);
+    vi.spyOn(api, "readPluginEntry").mockResolvedValue(new Uint8Array([0, 97, 115, 109]));
+    vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    vi.spyOn(api, "setPluginEnabled").mockResolvedValue();
+    const runtime = { invoke: vi.fn().mockResolvedValue({ protocolVersion: 2 as const, effects: [] }), dispose: vi.fn() };
+    vi.spyOn(PluginRuntime, "create").mockResolvedValue(runtime as unknown as PluginRuntime);
+    setGraphMeta(graphMeta("/graph-a"));
+    sharedDoc("private block text");
+    const manager = new PluginManager();
+    await manager.initialize();
+    const focused = bindPluginBlockSnapshot({ id: "shared-id", raw: "private block text", parentId: null, depth: 0 })!;
+    if (kind === "command") await manager.invokeCommand("page.tine.graph-owner", "write", focused);
+    if (kind === "slash-command") await manager.invokeSlashCommand("page.tine.graph-owner", "insert", focused);
+    if (kind === "decorate-blocks") await manager.decorateBlocks("page.tine.graph-owner", "badge", { owner: focused.owner, blocks: [focused.block] });
+    const event = runtime.invoke.mock.calls.at(-1)?.[0] as PluginEvent;
+    expect(event.kind).toBe(kind);
+    expect(JSON.stringify(event).includes("private block text")).toBe(expectText);
+  });
+
   it("drops a delayed graph-A write when graph B has the same UUID and raw bytes", async () => {
     const api = backend();
     vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");

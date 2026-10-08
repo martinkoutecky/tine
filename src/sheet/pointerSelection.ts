@@ -1,4 +1,5 @@
 import type { SheetCellCtx } from "./context";
+import { graphOwner } from "../owned";
 import { extendCellSelectionTo, setCellRangeSelection, setCellSel } from "./selection";
 
 const DRAG_THRESHOLD_PX = 4;
@@ -46,6 +47,14 @@ export function beginCellPointerSelection(e: PointerEvent, gridId: string): bool
 
   setCellSel(anchor);
 
+  // The drag owns three window listeners that only a pointerup/cancel removes.
+  // A release the page never sees (the window lost focus, the cell re-rendered
+  // under the pointer, another graph opened) must not leave them extending a
+  // selection nobody is dragging (I-20/I-21): every event re-proves ownership,
+  // and any failure removes the listeners.
+  const anchorEl = (e.target as Element).closest(".sheet-cell");
+  const pointerId = e.pointerId;
+  const owner = graphOwner(() => !!anchorEl?.isConnected);
   const startX = e.clientX;
   const startY = e.clientY;
   let moved = false;
@@ -66,8 +75,11 @@ export function beginCellPointerSelection(e: PointerEvent, gridId: string): bool
     window.removeEventListener("pointermove", onMove, true);
     window.removeEventListener("pointerup", onUp, true);
     window.removeEventListener("pointercancel", onCancel, true);
+    window.removeEventListener("blur", onCancel);
   };
   const onMove = (ev: PointerEvent) => {
+    if (ev.pointerId !== pointerId) return;
+    if (!owner()) { removeListeners(); return; }
     if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD_PX) return;
     moved = true;
     const focus = focusAt(ev);
@@ -76,6 +88,7 @@ export function beginCellPointerSelection(e: PointerEvent, gridId: string): bool
     ev.preventDefault();
   };
   const onUp = (ev: PointerEvent) => {
+    if (ev.pointerId !== pointerId) return;
     removeListeners();
     if (moved) ev.preventDefault();
   };
@@ -86,5 +99,6 @@ export function beginCellPointerSelection(e: PointerEvent, gridId: string): bool
   window.addEventListener("pointermove", onMove, true);
   window.addEventListener("pointerup", onUp, true);
   window.addEventListener("pointercancel", onCancel, true);
+  window.addEventListener("blur", onCancel);
   return true;
 }

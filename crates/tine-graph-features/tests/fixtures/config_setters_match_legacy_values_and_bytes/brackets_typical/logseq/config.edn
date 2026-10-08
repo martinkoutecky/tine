@@ -1,0 +1,1 @@
+{:favorites ["Old"] :preferred-workflow :now :feature/enable-timetracking? true :ui/show-brackets? false :shortcut/doc-mode-enter-for-new-block? false :editor/logical-outdenting? false :tine/guide-announced? false :preferred-format "Markdown" :journal/page-title-format "MMM do, yyyy" :default-templates {:journals "Old" :pages "P"} :start-of-week 0}

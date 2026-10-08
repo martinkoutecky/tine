@@ -10,29 +10,26 @@ import {
   layoutPaneIds,
   layoutRoot,
   focusedPaneId,
-  lastFocusedLayoutPaneId,
-  maximizedPaneId,
-  moveActiveTabInDirection,
   moveActiveTabToPane,
   moveTabToSplitPane,
-  togglePaneMaximize,
-  visibleLayoutNode,
   paneRouter,
   resetPaneLayoutToSingle,
-  restorePaneLayout,
   setFocusedPaneId,
-  setSplitRatio,
   splitLayoutNode,
   splitPane,
+  togglePaneMaximize,
+  visibleLayoutNode,
   type LayoutNode,
 } from "./panes";
-import { pdfNavigationIntent } from "./pdfNavigation";
-import { hasSelection, selectBlock, setDoc } from "./store";
+import { hasSelection, selectBlock } from "./document";
+import { setDoc } from "./document/model";
 import { cellSel, setCellSel } from "./sheet/selection";
 import type { PaneSnapshot } from "./router";
 import { clearRecent, recentPages } from "./ui";
 import { journalTitle } from "./journal";
 import { exitPaneSelect, rememberBlockSelectionForPaneReturn } from "./paneSelect";
+import { pdfNavigationIntent, resetPdfNavigationForTest } from "./pdfNavigation";
+import { invalidateBinding } from "./binding";
 
 const pageSnapshot = (name: string): PaneSnapshot => ({
   tabs: [{ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false }],
@@ -45,10 +42,43 @@ const journalsSnapshot = (): PaneSnapshot => ({
 });
 
 beforeEach(() => {
+  resetPdfNavigationForTest();
   clearRecent();
   exitPaneSelect();
   resetPaneLayoutToSingle(journalsSnapshot());
   paneRouter("main").setScrollerElement(null);
+});
+
+describe("PDF workspace routes", () => {
+  it("opens a PDF in a companion tab and preserves its position on a plain reopen", () => {
+    const route = openPdf("paper.pdf", "Paper")!;
+    const readerId = layoutPaneIds().find((id) => paneRouter(id).route().kind === "pdf")!;
+    expect(readerId).toBeTruthy();
+    expect(paneRouter(readerId).route()).toMatchObject({ kind: "pdf", filename: "paper.pdf" });
+    paneRouter(readerId).updateActivePdfViewState({ page: 7, scale: 1.75 });
+    const serial = pdfNavigationIntent(route.viewId)()?.serial;
+
+    openPdf("paper.pdf", "Paper");
+    expect(paneRouter(readerId).route()).toMatchObject({ page: 7, scale: 1.75 });
+    expect(pdfNavigationIntent(route.viewId)()?.serial).toBe(serial);
+    expect(layoutPaneIds()).toHaveLength(2);
+
+    openPdf("paper.pdf", "Paper", 3);
+    expect(paneRouter(readerId).route()).toMatchObject({ page: 3 });
+    expect(pdfNavigationIntent(route.viewId)()?.serial).not.toBe(serial);
+  });
+
+  it("reuses an existing companion Notes tab", () => {
+    const route = openPdf("paper.pdf", "Paper")!;
+    const readerId = layoutPaneIds().find((id) => paneRouter(id).route().kind === "pdf")!;
+    const notesId = openPdfNotes(readerId, "hls__paper.pdf")!;
+    const tabsBefore = paneRouter(notesId).tabs().length;
+    paneRouter(notesId).openJournals();
+    openPdfNotes(readerId, "hls__paper.pdf");
+    expect(paneRouter(notesId).tabs()).toHaveLength(tabsBefore);
+    expect(paneRouter(notesId).route()).toMatchObject({ kind: "page", name: "hls__paper.pdf" });
+    expect(route.kind).toBe("pdf");
+  });
 });
 
 function setJournalFeed(entries: { name: string; blockId?: string }[]) {
@@ -66,6 +96,31 @@ function setJournalFeed(entries: { name: string; blockId?: string }[]) {
 }
 
 describe("pane layout mutations", () => {
+  it("maximizes transiently and restores the exact split tree", () => {
+    const other = splitPane("main", "row")!;
+    const original = layoutRoot();
+    expect(togglePaneMaximize(other)).toBe(true);
+    expect(visibleLayoutNode()).toEqual({ kind: "pane", paneId: other });
+    expect(layoutRoot()).toEqual(original);
+    expect(togglePaneMaximize(other)).toBe(true);
+    expect(visibleLayoutNode()).toEqual(original);
+  });
+
+  it("drops a transient maximize when its graph binding is retired", () => {
+    const other = splitPane("main", "row")!;
+    expect(togglePaneMaximize(other)).toBe(true);
+    invalidateBinding();
+    expect(visibleLayoutNode()).toEqual(layoutRoot());
+  });
+
+  it("grows and shrinks the focused branch at the nearest matching split", () => {
+    const other = splitPane("main", "row")!;
+    expect(adjustPaneSize(other, "height", true)).toBe(false);
+    expect(adjustPaneSize(other, "width", true)).toBe(true);
+    expect(layoutRoot()).toMatchObject({ kind: "split", ratio: 0.45 });
+    expect(adjustPaneSize(other, "width", false)).toBe(true);
+    expect(layoutRoot()).toMatchObject({ kind: "split", ratio: 0.5 });
+  });
   it("redirects a journals split to the selected feed day's plain, unpinned page", () => {
     setJournalFeed([{ name: "Selected journal day", blockId: "selected-feed-block" }]);
     resetPaneLayoutToSingle({
@@ -339,331 +394,6 @@ describe("pane layout mutations", () => {
   });
 });
 
-describe("moveActiveTabInDirection (GH #282)", () => {
-  it("moves the active tab into the pane that already lies in the direction", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const right = splitPane("main", "row")!;
-    focusPane("main");
-
-    expect(moveActiveTabInDirection("main", "right")).toBe(right);
-
-    expect(layoutPaneIds(layoutRoot())).toEqual([right]);
-    expect(focusedPaneId()).toBe(right);
-  });
-
-  it("spawns a right-hand mirror pane from a single one-tab pane", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-
-    const created = moveActiveTabInDirection("main", "right")!;
-
-    expect(created).toBeTruthy();
-    expect(layoutRoot()).toEqual({
-      kind: "split",
-      dir: "row",
-      ratio: 0.5,
-      children: [
-        { kind: "pane", paneId: "main" },
-        { kind: "pane", paneId: created },
-      ],
-    });
-    // One-tab source has no empty-pane route: the original tab stays and the
-    // new pane opens as a mirror of the same tab history.
-    expect(paneRouter("main").route()).toEqual({ kind: "page", name: "Source", pageKind: "page" });
-    expect(paneRouter(created).route()).toEqual({ kind: "page", name: "Source", pageKind: "page" });
-    expect(focusedPaneId()).toBe(created);
-  });
-
-  it("places the spawned pane before the source for left/up and after it for down", () => {
-    for (const [dir, axis, first] of [
-      ["left", "row", true],
-      ["up", "col", true],
-      ["down", "col", false],
-    ] as const) {
-      resetPaneLayoutToSingle(pageSnapshot("Source"));
-
-      const created = moveActiveTabInDirection("main", dir)!;
-
-      const layout = layoutRoot();
-      expect(layout.kind).toBe("split");
-      if (layout.kind !== "split") throw new Error("expected a split layout");
-      expect(layout.dir).toBe(axis);
-      expect(layout.children).toEqual(
-        first
-          ? [{ kind: "pane", paneId: created }, { kind: "pane", paneId: "main" }]
-          : [{ kind: "pane", paneId: "main" }, { kind: "pane", paneId: created }]
-      );
-      expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
-      expect(paneRouter(created).route()).toMatchObject({ kind: "page", name: "Source" });
-      resetPaneLayoutToSingle(journalsSnapshot());
-    }
-  });
-
-  it("donates only the active tab when a multi-tab source grows a missing neighbor", () => {
-    resetPaneLayoutToSingle({
-      tabs: [
-        { history: [{ kind: "page", name: "One", pageKind: "page" }], pos: 0, pinned: false },
-        { history: [{ kind: "page", name: "Two", pageKind: "page" }], pos: 0, pinned: false },
-      ],
-      activeIndex: 0,
-    });
-
-    const created = moveActiveTabInDirection("main", "down")!;
-
-    expect(layoutRoot()).toMatchObject({ kind: "split", dir: "col" });
-    expect(paneRouter("main").tabs().map((t) => t.history[0])).toEqual([
-      { kind: "page", name: "Two", pageKind: "page" },
-    ]);
-    expect(paneRouter(created).route()).toEqual({ kind: "page", name: "One", pageKind: "page" });
-    expect(focusedPaneId()).toBe(created);
-  });
-
-  it("splits the other axis when the layout extends only horizontally", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const right = splitPane("main", "row")!;
-    focusPane("main");
-
-    const created = moveActiveTabInDirection("main", "down")!;
-
-    expect(layoutRoot()).toEqual({
-      kind: "split",
-      dir: "row",
-      ratio: 0.5,
-      children: [
-        {
-          kind: "split",
-          dir: "col",
-          ratio: 0.5,
-          children: [
-            { kind: "pane", paneId: "main" },
-            { kind: "pane", paneId: created },
-          ],
-        },
-        { kind: "pane", paneId: right },
-      ],
-    });
-    expect(paneRouter(created).route()).toMatchObject({ kind: "page", name: "Source" });
-    expect(focusedPaneId()).toBe(created);
-  });
-
-  it("mirrors a lone journals tab instead of refusing when there is no neighbor", () => {
-    const created = moveActiveTabInDirection("main", "right")!;
-
-    expect(created).toBeTruthy();
-    expect(layoutPaneIds(layoutRoot())).toEqual(["main", created]);
-    expect(paneRouter("main").route()).toEqual({ kind: "journals" });
-  });
-
-  it("keeps the existing refusal for a lone journals tab that already has a neighbor", () => {
-    const right = splitPane("main", "row", { focusNew: false })!;
-    focusPane("main");
-
-    expect(moveActiveTabInDirection("main", "right")).toBe(null);
-    expect(layoutPaneIds(layoutRoot())).toEqual(["main", right]);
-    expect(paneRouter("main").route()).toEqual({ kind: "journals" });
-  });
-});
-
-describe("pane maximize (GH #285)", () => {
-  it("is a no-op on a single-pane window", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-
-    expect(togglePaneMaximize("main")).toBe(false);
-    expect(maximizedPaneId()).toBe(null);
-    expect(visibleLayoutNode()).toEqual({ kind: "pane", paneId: "main" });
-  });
-
-  it("shows only the maximized pane while keeping the real tree and ratios untouched", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const right = splitPane("main", "row")!;
-    focusPane("main");
-    const treeBefore = layoutRoot();
-
-    expect(togglePaneMaximize("main")).toBe(true);
-
-    expect(maximizedPaneId()).toBe("main");
-    expect(visibleLayoutNode()).toEqual({ kind: "pane", paneId: "main" });
-    // Session/workspace persistence reads layoutRoot(): the full tree (with
-    // its ratio) survives maximization, so nothing transient is serialized.
-    expect(layoutRoot()).toEqual(treeBefore);
-    expect(layoutRoot()).toEqual({
-      kind: "split",
-      dir: "row",
-      ratio: 0.5,
-      children: [
-        { kind: "pane", paneId: "main" },
-        { kind: "pane", paneId: right },
-      ],
-    });
-
-    expect(togglePaneMaximize("main")).toBe(true);
-    expect(maximizedPaneId()).toBe(null);
-    expect(visibleLayoutNode()).toEqual(treeBefore);
-  });
-
-  it("keeps mutations made while maximized, restoring the evolved tree exactly", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const right = splitPane("main", "row", { focusNew: false })!;
-    togglePaneMaximize("main");
-
-    const below = splitPane(right, "col", { focusNew: false })!;
-
-    expect(visibleLayoutNode()).toEqual({ kind: "pane", paneId: "main" });
-    expect(togglePaneMaximize("main")).toBe(true);
-    expect(visibleLayoutNode()).toEqual({
-      kind: "split",
-      dir: "row",
-      ratio: 0.5,
-      children: [
-        { kind: "pane", paneId: "main" },
-        {
-          kind: "split",
-          dir: "col",
-          ratio: 0.5,
-          children: [
-            { kind: "pane", paneId: right },
-            { kind: "pane", paneId: below },
-          ],
-        },
-      ],
-    });
-  });
-
-  it("clears when the maximized pane disappears, showing the surviving tree", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const right = splitPane("main", "row")!;
-    togglePaneMaximize("main");
-
-    expect(closePane("main")).toBe(true);
-
-    expect(maximizedPaneId()).toBe(null);
-    expect(visibleLayoutNode()).toEqual({ kind: "pane", paneId: right });
-    expect(layoutRoot()).toEqual({ kind: "pane", paneId: right });
-  });
-
-  it("stays engaged when a sibling pane closes, and collapses gracefully to one pane", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const right = splitPane("main", "row")!;
-    focusPane("main");
-    togglePaneMaximize("main");
-
-    expect(closePane(right)).toBe(true);
-
-    // Only the maximized pane is left; the visible surface is still just it.
-    expect(visibleLayoutNode()).toEqual({ kind: "pane", paneId: "main" });
-    // Toggling again from this degenerate state still unmaximizes cleanly.
-    expect(togglePaneMaximize("main")).toBe(true);
-    expect(maximizedPaneId()).toBe(null);
-    expect(visibleLayoutNode()).toEqual({ kind: "pane", paneId: "main" });
-  });
-
-  it("restores the full layout when focus escapes to another pane", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const right = splitPane("main", "row")!;
-    focusPane("main");
-    togglePaneMaximize("main");
-
-    focusPane(right);
-
-    expect(maximizedPaneId()).toBe(null);
-    expect(visibleLayoutNode()).toEqual(layoutRoot());
-    expect(focusedPaneId()).toBe(right);
-  });
-
-  it("restores the full layout through the shared focus-state boundary", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const right = splitPane("main", "row")!;
-    focusPane("main");
-    togglePaneMaximize("main");
-
-    // Session/history adapters use this lower-level boundary directly.
-    setFocusedPaneId(right);
-
-    expect(maximizedPaneId()).toBeNull();
-    expect(visibleLayoutNode()).toEqual(layoutRoot());
-    expect(focusedPaneId()).toBe(right);
-  });
-});
-
-describe("adjustPaneSize (GH #286)", () => {
-  it("is a no-op for a sole pane", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-
-    expect(adjustPaneSize("main", "width", true)).toBe(false);
-    expect(layoutRoot()).toEqual({ kind: "pane", paneId: "main" });
-  });
-
-  it("grows and shrinks the first child through its row split by five points", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    splitPane("main", "row");
-
-    expect(adjustPaneSize("main", "width", true)).toBe(true);
-    expect(layoutRoot()).toMatchObject({ kind: "split", dir: "row", ratio: 0.55 });
-
-    expect(adjustPaneSize("main", "width", false)).toBe(true);
-    expect(layoutRoot()).toMatchObject({ kind: "split", dir: "row", ratio: 0.5 });
-  });
-
-  it("moves the same ratio the other way for the second child", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const right = splitPane("main", "row")!;
-
-    expect(adjustPaneSize(right, "width", true)).toBe(true);
-    expect(layoutRoot()).toMatchObject({ kind: "split", ratio: 0.45 });
-
-    expect(adjustPaneSize(right, "width", false)).toBe(true);
-    expect(layoutRoot()).toMatchObject({ kind: "split", ratio: 0.5 });
-  });
-
-  it("adjusts height only through a column split, never through a row split", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    splitPane("main", "row");
-
-    expect(adjustPaneSize("main", "height", true)).toBe(false);
-    expect(layoutRoot()).toMatchObject({ kind: "split", ratio: 0.5 });
-  });
-
-  it("walks past a nearer wrong-axis ancestor to the nearest matching one", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const right = splitPane("main", "row")!;
-    const below = splitPane(right, "col")!;
-
-    // `below` sits under a col split inside the second row child: a width
-    // change must skip the nearer col ancestor and adjust the root row split.
-    expect(adjustPaneSize(below, "width", true)).toBe(true);
-
-    expect(layoutRoot()).toEqual({
-      kind: "split",
-      dir: "row",
-      ratio: 0.45, // second child holds `below`; growing it shrinks the ratio
-      children: [
-        { kind: "pane", paneId: "main" },
-        {
-          kind: "split",
-          dir: "col",
-          ratio: 0.5, // untouched — wrong axis for a width command
-          children: [
-            { kind: "pane", paneId: right },
-            { kind: "pane", paneId: below },
-          ],
-        },
-      ],
-    });
-  });
-
-  it("respects the existing 15–85% clamps", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    splitPane("main", "row");
-    setSplitRatio([], 0.85);
-
-    expect(adjustPaneSize("main", "width", true)).toBe(true);
-    expect(layoutRoot()).toMatchObject({ kind: "split", ratio: 0.85 });
-
-    setSplitRatio([], 0.15);
-    expect(adjustPaneSize("main", "width", false)).toBe(true);
-    expect(layoutRoot()).toMatchObject({ kind: "split", ratio: 0.15 });
-  });
-});
-
 describe("openRouteInOtherPane", () => {
   it("a freshly-created pane ends with a SINGLE tab (target replaces the split duplicate)", () => {
     resetPaneLayoutToSingle(pageSnapshot("Source"));
@@ -688,163 +418,22 @@ describe("openRouteInOtherPane", () => {
 
     expect(paneRouter(other).tabs().length).toBe(before + 1);
   });
-
-  it("uses the nearest-ancestor sibling rather than a globally-nearest tie", () => {
-    const root: LayoutNode = {
-      kind: "split",
-      dir: "col",
-      ratio: 0.1,
-      children: [
-        {
-          kind: "split", dir: "row", ratio: 0.5,
-          children: [
-            { kind: "pane", paneId: "main" },
-            { kind: "pane", paneId: "z-structural" },
-          ],
-        },
-        {
-          kind: "split", dir: "row", ratio: 0.5,
-          children: [
-            { kind: "pane", paneId: "a-global-tie" },
-            { kind: "pane", paneId: "far" },
-          ],
-        },
-      ],
-    };
-    const snapshots = new Map([
-      ["main", pageSnapshot("Source")],
-      ["z-structural", pageSnapshot("Structural")],
-      ["a-global-tie", pageSnapshot("Global")],
-      ["far", pageSnapshot("Far")],
-    ]);
-    restorePaneLayout(root, snapshots, "main");
-
-    expect(openRouteInOtherPane({ kind: "page", name: "Dest", pageKind: "page" }, "main"))
-      .toBe("z-structural");
-  });
-
-  it("does not escape the structural selector for a missing source leaf", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const before = paneRouter("main").snapshot();
-
-    expect(openRouteInOtherPane({ kind: "page", name: "Dest", pageKind: "page" }, "missing"))
-      .toBeNull();
-    expect(layoutPaneIds()).toEqual(["main"]);
-    expect(paneRouter("main").snapshot()).toEqual(before);
-  });
 });
 
-describe("last focused layout pane", () => {
-  it("ignores satellite and legacy PDF focus while retaining current focus behavior", () => {
+// Master 4fdb9253b (GH #285 follow-up): every focus route, including the
+// session/history adapters that call setFocusedPaneId directly, reveals the pane
+// it focuses; a hidden pane never becomes the logical target under a maximize.
+describe("pane maximize at the focus-state boundary", () => {
+  it("restores the full layout when a hidden pane is focused through setFocusedPaneId", () => {
     resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const other = splitPane("main", "row")!;
-    setFocusedPaneId(other);
-    expect(lastFocusedLayoutPaneId()).toBe(other);
-
-    // The dedicated PDF representation may still publish its pseudo id during
-    // the migration. It must not become a future satellite action's source.
-    setFocusedPaneId("pdf", false);
-    expect(focusedPaneId()).toBe("pdf");
-    expect(lastFocusedLayoutPaneId()).toBe(other);
-
-    // Current outside-pane pointer behavior still retargets current focus to
-    // main, but does not erase the last focus backed by a real pane surface.
-    setFocusedPaneId("main", false);
-    expect(focusedPaneId()).toBe("main");
-    expect(lastFocusedLayoutPaneId()).toBe(other);
-  });
-});
-
-describe("PDF pane routes", () => {
-  it("opens beside the source in one exact PDF tab without cloned source history", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-
-    const opened = openPdf("assets/alpha.pdf", "Alpha", 3, undefined, { sourcePaneId: "main" });
-
-    expect(opened).toMatchObject({ kind: "pdf", filename: "assets/alpha.pdf", page: 3 });
-    expect(layoutPaneIds()).toHaveLength(2);
-    const pdfPane = layoutPaneIds().find((id) => id !== "main")!;
-    expect(paneRouter(pdfPane).snapshot().tabs).toEqual([{
-      history: [opened], pos: 0, pinned: false,
-    }]);
-    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
-  });
-
-  it("reuses one companion pane for different PDFs and focuses an existing document tab", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const alpha = openPdf("assets/alpha.pdf", "Alpha", 1, undefined, { sourcePaneId: "main" })!;
-    const pdfPane = focusedPaneId();
+    const right = splitPane("main", "row")!;
     focusPane("main");
-    openPdf("assets/beta.pdf", "Beta", 2, undefined, { sourcePaneId: "main" });
-    expect(layoutPaneIds()).toHaveLength(2);
-    expect(paneRouter(pdfPane).tabs()).toHaveLength(2);
+    expect(togglePaneMaximize("main")).toBe(true);
+    expect(visibleLayoutNode()).toEqual({ kind: "pane", paneId: "main" });
 
-    focusPane("main");
-    const reused = openPdf("assets/alpha.pdf", "Alpha", 9, "hl-9", { sourcePaneId: "main" });
-    expect(reused?.viewId).toBe(alpha.viewId);
-    expect(layoutPaneIds()).toHaveLength(2);
-    expect(paneRouter(pdfPane).route()).toMatchObject({ kind: "pdf", viewId: alpha.viewId, page: 9 });
-  });
+    setFocusedPaneId(right);
 
-  it("reopening the PDF you are already reading keeps your place", () => {
-    // OG parity: clicking the link for the current resource, with no page and
-    // no highlight asked for, is a NO-OP. Tine published a navigation intent
-    // anyway, and the viewer's navigation effect resolves `target.page ?? 1`
-    // and clears the highlight overlay -- so clicking the link for the PDF
-    // already on screen threw away your scroll position and your highlight.
-    // The intent channel is the seam: an intent published here IS a request to
-    // move, so "no new intent" is the same statement as "no jump".
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const opened = openPdf("assets/alpha.pdf", "Alpha", 4, "hl-4", { sourcePaneId: "main" })!;
-    const afterOpen = pdfNavigationIntent(opened.viewId)();
-    expect(afterOpen).toMatchObject({ page: 4, highlightId: "hl-4" });
-
-    focusPane("main");
-    const reopened = openPdf("assets/alpha.pdf", "Alpha", undefined, undefined, {
-      sourcePaneId: "main",
-    });
-
-    expect(reopened?.viewId).toBe(opened.viewId);
-    expect(pdfNavigationIntent(opened.viewId)()).toBe(afterOpen);
-  });
-
-  it("still navigates when reopening the current PDF DOES ask for a page", () => {
-    // The other half: the no-op above must not swallow a real request.
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    const opened = openPdf("assets/alpha.pdf", "Alpha", 4, undefined, { sourcePaneId: "main" })!;
-    const afterOpen = pdfNavigationIntent(opened.viewId)();
-
-    focusPane("main");
-    openPdf("assets/alpha.pdf", "Alpha", 7, undefined, { sourcePaneId: "main" });
-    const afterJump = pdfNavigationIntent(opened.viewId)();
-
-    expect(afterJump).not.toBe(afterOpen);
-    expect(afterJump).toMatchObject({ page: 7 });
-
-    focusPane("main");
-    openPdf("assets/alpha.pdf", "Alpha", undefined, "hl-9", { sourcePaneId: "main" });
-    expect(pdfNavigationIntent(opened.viewId)()).toMatchObject({ highlightId: "hl-9" });
-  });
-
-  it("does not expose deliberate duplicate views before shared annotation ownership lands", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    openPdf("assets/alpha.pdf", "Alpha", undefined, undefined, { sourcePaneId: "main" });
-    expect(openPdf("assets/alpha.pdf", "Alpha", undefined, undefined, {
-      sourcePaneId: "main", anotherView: true,
-    })).toBeNull();
-  });
-
-  it("focuses an existing notes tab in the structural companion instead of duplicating it", () => {
-    resetPaneLayoutToSingle(pageSnapshot("Source"));
-    openPdf("assets/alpha.pdf", "Alpha", undefined, undefined, { sourcePaneId: "main" });
-    const pdfPane = focusedPaneId();
-    const notesPane = splitPane(pdfPane, "row", { focusNew: false })!;
-    paneRouter(notesPane).openPage("hls__alpha", "page");
-    const before = paneRouter(notesPane).tabs().length;
-
-    expect(openPdfNotes(pdfPane, "hls__alpha")).toBe(notesPane);
-    expect(paneRouter(notesPane).tabs()).toHaveLength(before);
-    expect(paneRouter(notesPane).route()).toMatchObject({ kind: "page", name: "hls__alpha" });
-    expect(focusedPaneId()).toBe(pdfPane);
+    expect(visibleLayoutNode()).toEqual(layoutRoot());
+    expect(focusedPaneId()).toBe(right);
   });
 });

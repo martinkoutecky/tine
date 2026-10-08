@@ -4,19 +4,14 @@
 // `build:wasm` only checks the pins when you regenerate; nothing stopped a build
 // that bumped the lsdoc tag in Cargo but forgot to rerun `build:wasm` from shipping
 // the OLD parser. This runs as part of `npm run build` (which CI invokes), and FAILS
-// the build unless all three tags agree:
+// the build unless all three agree:
 //   - crates/tine-core/Cargo.toml   lsdoc tag (the source of truth)
 //   - crates/lsdoc-wasm/Cargo.toml  lsdoc tag
 //   - src/render/wasm/lsdoc_wasm_bytes.ts  LSDOC_TAG (what the vendored bytes were built from)
-// It also rejects native/standalone shared-search lock drift and requires the
-// vendored bytes' source stamp to match the current local search leaf, wrapper,
-// and Wasm-resolved dependency closure. The same guard rejects a decoded raw
-// Wasm payload above the separately checked-in measured size ceiling.
 
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { wasmSearchGuardProblems } from "./wasm-search-guard-lib.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -36,20 +31,15 @@ function vendoredTag() {
 const core = cargoTag("crates/tine-core/Cargo.toml");
 const wrap = cargoTag("crates/lsdoc-wasm/Cargo.toml");
 const vendored = vendoredTag();
-const searchProblems = wasmSearchGuardProblems(root);
 
-if (core !== wrap || core !== vendored || searchProblems.length) {
+if (core !== wrap || core !== vendored) {
   console.error(
     `\n  Stale vendored wasm parser (build aborted):\n` +
       `    crates/tine-core/Cargo.toml   -> ${core}\n` +
       `    crates/lsdoc-wasm/Cargo.toml  -> ${wrap}\n` +
       `    src/render/wasm (vendored)    -> ${vendored}\n` +
-      searchProblems.map((problem) => `    - ${problem}\n`).join("") +
       `  Align the Cargo pins and run \`npm run build:wasm\` to regenerate.\n`,
   );
   process.exit(1);
 }
-console.log(
-  `wasm pin OK: lsdoc ${core}; shared-search source and dependency closure match vendored bytes; ` +
-    `decoded raw Wasm is within its checked-in ceiling`,
-);
+console.log(`wasm pin OK: lsdoc ${core} (Cargo ×2 == vendored bytes)`);

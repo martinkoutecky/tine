@@ -1,40 +1,33 @@
+import type { PageDto, PageRead } from "../types";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { setDoc } from "../store";
+import { openPdf, layoutPaneIds, paneRouter, resetPaneLayoutToSingle } from "../panes";
+import { pdfNavigationIntent, resetPdfNavigationForTest } from "../pdfNavigation";
+import type { PdfRoute } from "../router";
+import { setDoc } from "../document/model";
 import { AnnotationBody } from "../components/AnnotationBody";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
-import { layoutPaneIds, openPdf, paneRouter, resetPaneLayoutToSingle } from "../panes";
-import { pdfNavigationIntent } from "../pdfNavigation";
-import type { PdfRoute } from "../router";
+import { activatePdfOwnership, resetPdfOwnershipForTest } from "../pdfOwnership";
 
 beforeAll(async () => {
   await initParser();
 });
 
 beforeEach(() => {
-  resetPaneLayoutToSingle({
-    tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
-    activeIndex: 0,
-  });
+  activatePdfOwnership("/test/annotation-graph");
+  resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
+  resetPdfNavigationForTest();
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
+  resetPdfOwnershipForTest();
   setDoc("pages", []);
   document.body.replaceChildren();
 });
-
-function openedPdf(filename?: string): PdfRoute | null {
-  for (const paneId of layoutPaneIds()) {
-    for (const tab of paneRouter(paneId).tabs()) {
-      const route = tab.history[tab.pos];
-      if (route.kind === "pdf" && (!filename || route.filename === filename)) return route;
-    }
-  }
-  return null;
-}
 
 async function settle(): Promise<void> {
   await Promise.resolve();
@@ -42,18 +35,15 @@ async function settle(): Promise<void> {
   await Promise.resolve();
 }
 
+function currentPdfRoute(): PdfRoute | null {
+  for (const id of layoutPaneIds()) {
+    const route = paneRouter(id).route();
+    if (route.kind === "pdf") return route;
+  }
+  return null;
+}
+
 describe("PDF annotation block references (GH #61)", () => {
-  it("opens and closes through ordinary pane routing without a second PDF authority", async () => {
-    const route = openPdf("assets/paper.pdf", "Paper")!;
-    expect(openedPdf()).toEqual(route);
-    expect(layoutPaneIds()).toHaveLength(2);
-
-    const paneId = layoutPaneIds().find((id) => paneRouter(id).route().kind === "pdf")!;
-    await paneRouter(paneId).closePdf();
-    expect(openedPdf()).toBeNull();
-    expect(layoutPaneIds()).toEqual(["main"]);
-  });
-
   it("opens the owning PDF at hl-page on a plain click", async () => {
     const id = "61a00000-0000-0000-0000-000000000001";
     vi.spyOn(backend(), "resolveBlocks").mockResolvedValue([{
@@ -73,7 +63,7 @@ describe("PDF annotation block references (GH #61)", () => {
       title: "A Book",
       pre_block: "file:: [A Book](../assets/A_Book.pdf)\nfile-path:: ../assets/A_Book.pdf",
       blocks: [],
-    });
+    } as PageDto as PageRead);
 
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -86,21 +76,40 @@ describe("PDF annotation block references (GH #61)", () => {
       await settle();
 
       expect(backend().getPage).toHaveBeenCalledWith("hls__book", "page");
-      const route = openedPdf("A_Book.pdf")!;
-      expect(route).toMatchObject({ filename: "A_Book.pdf", label: "A_Book.pdf", page: 42 });
-      expect(pdfNavigationIntent(route.viewId)()).toMatchObject({ page: 42, highlightId: id });
+      expect(currentPdfRoute()).toMatchObject({ filename: "A_Book.pdf", label: "A_Book.pdf", page: 42 });
+      expect(pdfNavigationIntent(currentPdfRoute()!.viewId)()).toMatchObject({ page: 42, highlightId: id });
     } finally {
       dispose();
     }
   });
 
+  it("renders a reference to literal annotation text as an ordinary block", async () => {
+    const id = "61a00000-0000-0000-0000-000000000009";
+    vi.spyOn(backend(), "resolveBlocks").mockResolvedValue([{
+      page: "plain", kind: "page", blocks: [{ id, raw: "```\nls-type:: annotation\nhl-page:: 42\n```", collapsed: false, children: [], properties: [] }],
+    }]);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <AstBody raw={`See ((${id}))`} />, host);
+    try {
+      await settle();
+      const ref = host.querySelector(".block-ref");
+      expect(ref).toBeTruthy();
+      expect(ref!.getAttribute("title")).toContain("Click to go to the block");
+      expect(ref!.getAttribute("title")).not.toContain("PDF");
+    } finally { dispose(); }
+  });
+
   it("keeps the current location when a direct link reopens the same PDF", () => {
-    const original = openPdf("assets/paper.pdf", "Paper", 7)!;
+    const first = openPdf("assets/paper.pdf", "Paper", 7)!;
+    paneRouter(layoutPaneIds().find((id) => paneRouter(id).route().kind === "pdf")!).updateActivePdfViewState({ page: 7 });
+    const serial = pdfNavigationIntent(first.viewId)()?.serial;
     openPdf("assets/paper.pdf", "Paper");
-    expect(openedPdf("assets/paper.pdf")).toMatchObject({ viewId: original.viewId, page: 7 });
+    expect(currentPdfRoute()).toMatchObject({ filename: "assets/paper.pdf", label: "Paper", page: 7 });
+    expect(pdfNavigationIntent(first.viewId)()?.serial).toBe(serial);
 
     openPdf("assets/paper.pdf", "Paper", 3);
-    expect(openedPdf("assets/paper.pdf")?.page).toBe(3);
+    expect(currentPdfRoute()?.page).toBe(3);
   });
 
   it("carries the exact id from a rendered annotation block", async () => {
@@ -109,7 +118,7 @@ describe("PDF annotation block references (GH #61)", () => {
       name: "hls__book",
       preBlock: "file-path:: ../assets/A_Book.pdf",
       roots: [],
-      format: "markdown",
+      format: "md",
     } as any]);
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -124,9 +133,8 @@ describe("PDF annotation block references (GH #61)", () => {
     ), host);
     try {
       host.querySelector<HTMLElement>(".hl-prefix")!.click();
-      const route = openedPdf("A_Book.pdf")!;
-      expect(route).toMatchObject({ filename: "A_Book.pdf", label: "A_Book.pdf", page: 7 });
-      expect(pdfNavigationIntent(route.viewId)()).toMatchObject({ page: 7, highlightId: id });
+      expect(currentPdfRoute()).toMatchObject({ filename: "A_Book.pdf", label: "A_Book.pdf", page: 7 });
+      expect(pdfNavigationIntent(currentPdfRoute()!.viewId)()).toMatchObject({ page: 7, highlightId: id });
     } finally {
       dispose();
     }

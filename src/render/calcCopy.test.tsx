@@ -2,7 +2,12 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { CalcBlock } from "./body";
 import { initParser } from "./parse";
-import { resetStore } from "../store";
+import { For } from "solid-js";
+import { resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc, pageByName } from "../document/model";
+import { startEditing } from "../editorController";
+import { Block } from "../components/Block";
 import { clearClipboardPayload } from "../clipboard";
 import { backend } from "../backend";
 
@@ -63,5 +68,29 @@ describe("CalcBlock copy button (GH #228)", () => {
     btn.click();
     expect(root.querySelectorAll(".calc-out")).toHaveLength(before);
     dispose();
+  });
+
+  it("the live editor's result column offers the same copy button and leaves the block untouched", () => {
+    const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue();
+    const raw = "```calc\n1 + 1\nbad /\n```";
+    loadSingle({ name: "Calc", kind: "page", title: "Calc", pre_block: null, blocks: [{ id: "calc", raw, collapsed: false, children: [] }] });
+    startEditing("calc", 0);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <For each={pageByName("Calc")?.roots ?? []}>{(id) => <Block id={id} />}</For>, root);
+    try {
+      const column = root.querySelector(".calc-results")!;
+      expect(column).not.toBeNull();
+      const btns = column.querySelectorAll<HTMLButtonElement>(".calc-out button.copy-btn");
+      expect(btns).toHaveLength(1); // the error line offers none
+      const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      const before = editor.value;
+      btns[0]!.click();
+      expect(writeText).toHaveBeenCalledWith("2");
+      expect(editor.value).toBe(before);
+      expect(doc.byId.calc.raw).toBe(raw);
+    } finally {
+      dispose();
+    }
   });
 });

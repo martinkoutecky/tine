@@ -1,0 +1,2 @@
+alias:: mine
+- shared

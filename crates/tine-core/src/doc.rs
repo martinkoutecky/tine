@@ -11,10 +11,8 @@
 //! structured views (`properties`, `marker`, `collapsed`) are computed on top.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
-use std::ops::Range;
 
-pub use crate::property_line::parse_property_line;
+use crate::outline::{self, OutlineFormat};
 
 /// Recognized task markers (leading keyword of a block).
 pub const MARKERS: &[&str] = &[
@@ -31,190 +29,244 @@ pub const MARKERS: &[&str] = &[
     "IN-PROGRESS",
 ];
 
-/// A parsed `.md` document: an optional page-property pre-block plus a forest
+/// A parsed Markdown or Org document: an optional page-property pre-block plus a forest
 /// of blocks.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Document {
     /// Raw text of the region before the first bullet (page properties / free
     /// text), with the trailing blank separator removed. `None` if the file
     /// starts with a bullet.
     pub pre_block: Option<String>,
+    /// Top-level blocks in document order.
     pub roots: Vec<DocBlock>,
 }
 
-/// One canonical document parse plus the exact source-byte interval owned by
-/// each structural block in depth-first/source order. A parent's own interval
-/// ends at its first child's header; a leaf owns through the next structural
-/// header or file end.
-#[derive(Clone)]
-pub(crate) struct ParsedDocument {
-    pub(crate) document: Document,
-    pub(crate) block_spans: Vec<Range<usize>>,
-    /// Whether each source-order structural event was an lsdoc-owned
-    /// unbulleted Markdown ATX heading. This stays parallel to `block_spans` so
-    /// layout retention never has to invoke the outline parser per block.
-    pub(crate) unbulleted_markdown_headings: Vec<bool>,
-    /// Empty structural lines immediately before each block header, in
-    /// depth-first/source order. These are document formatting, not block raw.
-    pub(crate) blank_lines_before_blocks: Vec<usize>,
-    /// Empty separator lines between the preamble and first block.
-    pub(crate) blank_lines_after_preamble: usize,
-    /// Empty lines before the first block when no semantic preamble exists.
-    pub(crate) leading_blank_lines: usize,
-    /// Exact source layout when the first root is an lsdoc-authorized ATX
-    /// preamble heading that remains unbulleted while owning following outline
-    /// blocks as children. Org documents never have this Markdown-only layout.
-    pub(crate) promoted_heading_layout: Option<PromotedHeadingLayout>,
-}
-
-/// One receipt-proved association between a source structural locator and the
-/// stable identity of the semantic block that occupied it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct StructuralLayoutIdentity {
-    pub(crate) locator: Vec<u32>,
-    pub(crate) block_identity: String,
-}
-
-/// Read the structural locator -> block identity map straight off a document
-/// tree, so an ordinary editor save can claim the same source-layout retention
-/// the guarded projection path claims.
-///
-/// Without this the retention machinery below is inert on the Direct save path:
-/// every call site passed an empty identity slice, so
-/// `identity_bound_unbulleted_headings` was always empty and an unbulleted
-/// `## Heading` was re-emitted as `- ## Heading` the first time the user edited
-/// any *other* block on the page. On a real 1,045-file graph that rewrote
-/// untouched bytes in 96 files (9.8%) — see the 2026-08-09 Direct Files
-/// data-safety audit.
-///
-/// Blocks without a stable identity are skipped: an empty identity can never
-/// match a serialized block, and admitting one would let two unrelated blocks
-/// collide on the empty string.
-pub(crate) fn layout_identities_of(doc: &Document) -> Vec<StructuralLayoutIdentity> {
-    fn visit(blocks: &[DocBlock], locator: &mut Vec<u32>, out: &mut Vec<StructuralLayoutIdentity>) {
-        for (position, block) in blocks.iter().enumerate() {
-            let Ok(index) = u32::try_from(position) else {
-                return;
-            };
-            locator.push(index);
-            if !block.uuid.is_empty() {
-                out.push(StructuralLayoutIdentity {
-                    locator: locator.clone(),
-                    block_identity: block.uuid.clone(),
-                });
-            }
-            visit(&block.children, locator, out);
-            locator.pop();
-        }
-    }
-    let mut out = Vec::new();
-    visit(&doc.roots, &mut Vec::new(), &mut out);
-    out
-}
-
-#[derive(Clone, Debug)]
-struct IdentityBoundBlankLines {
-    block_identity: String,
-    blank_lines: usize,
-}
-
+/// One parsed block with raw text and nested children.
+#[deny(missing_docs)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DocBlock {
     /// Dedented block body: first line + continuation lines joined with `\n`.
-    pub raw: String,
+    pub(crate) raw: String,
+    /// Child blocks in document order.
     pub children: Vec<DocBlock>,
     /// Runtime/store identity assigned from the document's physical owner and
     /// structural sibling-index path. Persisted `id::` is a separate external
     /// reference identity. This key round-trips through an in-memory save but is
-    /// never serialized — `#[serde(skip)]`, like `proj`, so the claim is the
-    /// attribute rather than a comment; `serialized_document_carries_no_runtime_identity`
-    /// pins it. (It was `#[serde(default)]`, which suppresses nothing on the way
-    /// out.) It is NOT part of block *content*, so it is excluded from equality —
-    /// otherwise the conflict guard (`parse(disk) == cached`) would always see a
-    /// "change".
-    #[serde(skip)]
+    /// skipped by serde serialization; deserialization defaults it to an empty
+    /// string until a parse assigns runtime identities. It is not part of block content, so it is excluded
+    /// from equality. Store write conflicts use raw-byte `FileRev` guards.
+    #[serde(default, skip_serializing)]
     pub uuid: String,
     /// Whether this block's page is Org (vs Markdown) — the format lsdoc needs to
     /// parse inline refs correctly (e.g. org `[[target][alias]]`). Page-level
     /// metadata, not content, so excluded from equality (like `uuid`); set at
     /// parse time. `#[serde(default)]` → false on any legacy deserialize.
     #[serde(default)]
-    pub is_org: bool,
-    /// Lazily-computed, memoized projection of `raw` for the hot read paths
-    /// (see [`DocBlock::projection`]). Derived metadata, not content: excluded
-    /// from equality + serialization, and reset on clone. `pub(crate)` only so
-    /// the constructors in sibling modules can initialize it empty.
+    pub(crate) is_org: bool,
+    /// Derived projection of the current block body.
+    // set_raw clears this memo; cloning starts with an empty memo.
     #[serde(skip)]
     pub(crate) proj: std::sync::OnceLock<BlockProjection>,
 }
 
-/// Memoized projection of a block's `raw`, so whole-graph scans (full-text
-/// search per keystroke, backlink/page-ref matching, `(content …)`) don't
-/// re-parse every block's `raw` on each run.
-#[derive(Debug, Clone, Default)]
+/// Parsed values derived from a block's current raw text.
+// Memoization avoids reparsing each block during whole-graph scans.
+//
+// Memory shape (GH #623): this slot is paid inline by every block, so it holds only what
+// every block has. Facets set on a minority of blocks live in one `Option<Box<..>>`, and
+// text that equals another stored text is not stored again: `visible` is `None` when it
+// equals the block's `raw`, `visible_lower` is `None` when it equals `visible`. Those
+// fallbacks need the block's `raw`, so the ONLY readers are `DocBlock::visible_text` and
+// `DocBlock::visible_folded`; the fields are private so no caller can re-implement the
+// fallback. Unrelated to behaviour: every accessor returns what the eager form returned.
+#[deny(missing_docs)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BlockProjection {
-    /// Visible (non-property) text, original case — the body the reader sees,
-    /// for breadcrumb labels / display. `raw` minus the byte ranges lsdoc
-    /// recognized as `Properties` blocks (see `visible_minus_properties`).
-    pub visible: String,
-    /// `visible`, folded by the native A6 search owner — for `search` /
-    /// `(content …)` (hot path, pre-folded once).
-    pub visible_lower: String,
-    /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
-    pub refs_norm: Vec<String>,
-    /// The SAME page references in lsdoc's original case — for `referenced_page_names`
-    /// (the virtual-page list behind `[[`/`#`/Ctrl-K autocomplete), which needs display
-    /// case. Kept on the projection so that hot path reads the memoized parse instead of
-    /// re-parsing every block on each cache generation (audit F1).
-    pub refs_page: Vec<String>,
-    /// Block references (`((uuid))` / `[l](((uuid)))` / `{{embed ((uuid))}}`),
-    /// UUID-gated — for the block-referrers / ref-count scans. From the same
-    /// lsdoc parse as `refs_norm`.
-    pub block_refs: Vec<String>,
-    /// Block-header task marker (`TODO`, `DOING`, …) off lsdoc's first node — the
-    /// ONE marker recognizer (no more `doc.rs`/`blockView`/lsdoc disagreement).
-    pub marker: Option<String>,
-    /// Block-header `[#A]` priority off lsdoc's first node — header-position only, so a
-    /// mid-text/inline-code `[#A]` is NOT a priority (the old `[#A]`-anywhere scanner
-    /// disagreed with the chip — audit C3).
-    pub priority: Option<String>,
-    /// ATX heading level (1..=6) when the block body is a heading, else `None`.
-    pub heading_level: Option<u8>,
-    /// `key:: value` block properties (md trailer / org `:PROPERTIES:` drawer) as
-    /// lsdoc projects them — the ONE property recognizer for the read path.
-    pub properties: Vec<(String, String)>,
-    /// SCHEDULED / DEADLINE planning date text (the `<…>` content) when lsdoc emits
-    /// a real `Timestamp` for it — code/fence-robust by construction (a `SCHEDULED:`
-    /// inside inline code is NOT a Timestamp, so never badged). `None` otherwise.
-    pub scheduled: Option<String>,
-    pub deadline: Option<String>,
-    /// Inline `#tag` / org headline tags, first-seen and de-duplicated. Page refs
-    /// stay separate in `refs_page`; this is only the tag field.
-    pub tags: Vec<String>,
-    /// Parser-owned source spans used by both linked and unlinked reference
-    /// surfaces. Kept on the memoized projection so reference queries do not
-    /// parse every block again.
-    pub(crate) reference_source: crate::reference_evidence::ReferenceSourceProjection,
+    /// Parser-owned raw byte regions from the same cached single-block AST.
+    /// Sparse edit data stays out of the inline block; empty regions are shared.
+    #[serde(deserialize_with = "deserialize_shared_regions")]
+    pub regions: std::sync::Arc<crate::block_regions::BlockRegions>,
+    /// Visible (non-property) text, original case — `raw` minus the byte ranges lsdoc
+    /// recognized as `Properties` blocks. `None` when identical to `raw`.
+    visible: Option<Box<str>>,
+    /// `visible` folded with accent-removing `canonical_fold`, independent of graph
+    /// policy. `None` when identical to the visible text.
+    visible_lower: Option<Box<str>>,
+    /// Lazy accent-sensitive fold, populated only when that graph policy is used;
+    /// the inner `None` means identical to the visible text. Checkpointed in
+    /// whatever state it is in (built or not), like every lazy answer.
+    #[serde(with = "once_cell_as_option")]
+    visible_literal: std::sync::OnceLock<Option<Box<str>>>,
+    /// Byte ranges of `raw` eligible for plain-text (unlinked) reference matching.
+    plain_ranges: Vec<std::ops::Range<usize>>,
+    /// Facets set on a minority of blocks; `None` when the block has none of them.
+    extra: Option<Box<ProjectionExtra>>,
+}
+
+/// The facets of a [`BlockProjection`] that most blocks do not have (g13k: 80% of blocks
+/// have none of them), kept behind one pointer so an ordinary block does not pay for them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ProjectionExtra {
+    refs_norm: Vec<String>,
+    refs_page: Vec<String>,
+    block_refs: Vec<String>,
+    marker: Option<String>,
+    priority: Option<String>,
+    heading_level: Option<u8>,
+    properties: Vec<(String, String)>,
+    scheduled: Option<String>,
+    deadline: Option<String>,
+    tags: Vec<String>,
+    explicit: Vec<crate::reference_evidence::ProjectedPageRef>,
+    withheld_ranges: Vec<std::ops::Range<usize>>,
+}
+
+impl ProjectionExtra {
+    fn is_empty(&self) -> bool {
+        self.refs_norm.is_empty()
+            && self.refs_page.is_empty()
+            && self.block_refs.is_empty()
+            && self.marker.is_none()
+            && self.priority.is_none()
+            && self.heading_level.is_none()
+            && self.properties.is_empty()
+            && self.scheduled.is_none()
+            && self.deadline.is_none()
+            && self.tags.is_empty()
+            && self.explicit.is_empty()
+            && self.withheld_ranges.is_empty()
+    }
+
+    /// Exact-size buffers: the build grows these Vecs by doubling, and a
+    /// projection lives as long as its page (GH #623, ~98 MiB of slack on g13k).
+    fn shrink(&mut self) {
+        self.refs_norm.shrink_to_fit();
+        self.refs_page.shrink_to_fit();
+        self.block_refs.shrink_to_fit();
+        self.properties.shrink_to_fit();
+        self.tags.shrink_to_fit();
+        self.explicit.shrink_to_fit();
+        self.withheld_ranges.shrink_to_fit();
+    }
 }
 
 impl BlockProjection {
-    /// Whether this block references page `name` (case-insensitive) — checks the
-    /// lsdoc-extracted normalized refs (`refs_norm`), the live ref index.
+    /// Visible text; `raw` must be the raw body this projection was built from.
+    fn visible_text<'a>(&'a self, raw: &'a str) -> &'a str {
+        self.visible.as_deref().unwrap_or(raw)
+    }
+
+    /// Visible text folded for the graph's search policy. The accent-sensitive
+    /// form is computed once per block body; both forms reset with the projection.
+    fn visible_folded<'a>(&'a self, raw: &'a str, remove_accents: bool) -> &'a str {
+        let visible = self.visible_text(raw);
+        if remove_accents {
+            self.visible_lower.as_deref().unwrap_or(visible)
+        } else {
+            self.visible_literal
+                .get_or_init(|| {
+                    let folded = crate::search_query::literal_fold(visible);
+                    (folded != visible).then(|| folded.into_boxed_str())
+                })
+                .as_deref()
+                .unwrap_or(visible)
+        }
+    }
+
+    fn extra(&self) -> Option<&ProjectionExtra> {
+        self.extra.as_deref()
+    }
+
+    /// Whether this block references page `name` under page-name normalization.
     pub fn refs_contains(&self, name: &str) -> bool {
         self.refs_contains_norm(&crate::refs::normalize(name))
     }
 
-    /// Like [`refs_contains`] but takes an already-[`crate::refs::normalize`]d
+    /// Like [`Self::refs_contains`] but takes an already-[`crate::refs::normalize`]d
     /// target — for hot loops testing ONE target against every block, so the
     /// normalize is hoisted out of the per-block loop instead of repeated.
     pub fn refs_contains_norm(&self, normalized: &str) -> bool {
-        self.refs_norm.iter().any(|r| r == normalized)
+        self.refs_norm().iter().any(|r| r == normalized)
+    }
+
+    /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
+    pub fn refs_norm(&self) -> &[String] {
+        self.extra().map_or(&[], |e| &e.refs_norm)
+    }
+
+    /// The SAME page references in lsdoc's original case — for `referenced_page_names`
+    /// (the virtual-page list behind `[[`/`#`/Ctrl-K autocomplete), which needs display
+    /// case. Kept on the projection to reuse the parse across cache generations.
+    pub fn refs_page(&self) -> &[String] {
+        self.extra().map_or(&[], |e| &e.refs_page)
+    }
+
+    /// Block references (`((uuid))` / `[l](((uuid)))` / `{{embed ((uuid))}}`),
+    /// UUID-gated — for the block-referrers / ref-count scans. From the same
+    /// lsdoc parse as `refs_norm`.
+    pub fn block_refs(&self) -> &[String] {
+        self.extra().map_or(&[], |e| &e.block_refs)
+    }
+
+    /// Block-header task marker (`TODO`, `DOING`, …) off lsdoc's first node — the
+    /// ONE marker recognizer (no more `doc.rs`/`blockView`/lsdoc disagreement).
+    pub fn marker(&self) -> Option<&str> {
+        self.extra().and_then(|e| e.marker.as_deref())
+    }
+
+    /// Block-header `[#A]` priority off lsdoc's first node — header-position only, so a
+    /// mid-text/inline-code `[#A]` is NOT a priority (the old `[#A]`-anywhere scanner
+    /// disagreed with the chip — audit C3).
+    pub fn priority(&self) -> Option<&str> {
+        self.extra().and_then(|e| e.priority.as_deref())
+    }
+
+    /// ATX heading level (1..=6) when the block body is a heading, else `None`.
+    pub fn heading_level(&self) -> Option<u8> {
+        self.extra().and_then(|e| e.heading_level)
+    }
+
+    /// `key:: value` block properties (md trailer / org `:PROPERTIES:` drawer) as
+    /// lsdoc projects them — the ONE property recognizer for the read path.
+    pub fn properties(&self) -> &[(String, String)] {
+        self.extra().map_or(&[], |e| &e.properties)
+    }
+
+    /// SCHEDULED planning date text (the `<…>` content) when lsdoc emits
+    /// a real `Timestamp` for it — code/fence-robust by construction (a `SCHEDULED:`
+    /// inside inline code is NOT a Timestamp, so never badged). `None` otherwise.
+    pub fn scheduled(&self) -> Option<&str> {
+        self.extra().and_then(|e| e.scheduled.as_deref())
+    }
+
+    /// DEADLINE planning date text, when present in parsed syntax.
+    pub fn deadline(&self) -> Option<&str> {
+        self.extra().and_then(|e| e.deadline.as_deref())
+    }
+
+    /// Inline `#tag` / org headline tags, first-seen and de-duplicated. Page refs
+    /// stay separate in `refs_page`; this is only the tag field.
+    pub fn tags(&self) -> &[String] {
+        self.extra().map_or(&[], |e| &e.tags)
+    }
+
+    /// Parser-owned source byte spans used by linked and unlinked reference
+    /// surfaces. Browser-facing reference spans instead use UTF-16 offsets.
+    // Kept on the memoized projection so reference queries avoid reparsing.
+    pub fn reference_source(&self) -> crate::reference_evidence::ReferenceSource<'_> {
+        let extra = self.extra();
+        crate::reference_evidence::ReferenceSource {
+            explicit: extra.map_or(&[], |e| &e.explicit),
+            plain_ranges: &self.plain_ranges,
+            withheld_ranges: extra.map_or(&[], |e| &e.withheld_ranges),
+        }
     }
 }
 
 // Identity is metadata, not content: two blocks are equal iff their body and
-// subtree match, regardless of uuid. Keeps the external-change conflict guard
-// and the round-trip tests comparing on content alone.
+// subtree match, regardless of uuid. Store write guards compare raw FileRev;
+// content equality is useful for in-memory comparison and round-trip tests.
 impl PartialEq for DocBlock {
     fn eq(&self, other: &Self) -> bool {
         self.raw == other.raw && self.children == other.children
@@ -248,20 +300,32 @@ impl DocBlock {
         }
     }
 
-    /// A page's preamble (`Document::pre_block`) as a block of the page's own
-    /// format, so its properties, tags and visible text come from the same
-    /// lsdoc projection as any block's.
-    pub(crate) fn preamble(raw: &str, is_org: bool) -> Self {
-        let mut block = DocBlock::new(raw);
-        block.is_org = is_org;
-        block
+    /// Raw block body, including continuation lines and properties.
+    pub fn raw(&self) -> &str {
+        &self.raw
     }
 
-    /// Lazily-computed, memoized projection of `raw` (visible search-folded text
-    /// + normalized refs). Safe to memoize because it's a pure function of
-    /// `raw` and a cached DocBlock is REPLACED wholesale (a fresh, empty cell)
-    /// whenever its content changes — cached blocks are never mutated in place
-    /// — so the memo can't outlive the `raw` it was derived from.
+    /// Replace the block body and invalidate its derived projection.
+    pub fn set_raw(&mut self, raw: impl Into<String>) {
+        self.raw = raw.into();
+        self.proj = std::sync::OnceLock::new();
+    }
+
+    /// Whether this block is parsed with Org inline syntax.
+    pub fn is_org(&self) -> bool {
+        self.is_org
+    }
+
+    /// Change inline syntax and invalidate its derived projection.
+    pub fn set_org(&mut self, is_org: bool) {
+        if self.is_org != is_org {
+            self.is_org = is_org;
+            self.proj = std::sync::OnceLock::new();
+        }
+    }
+
+    /// Visible text, references, and facets derived from the current raw body.
+    /// [`Self::set_raw`] clears this cache when the body changes.
     pub fn projection(&self) -> &BlockProjection {
         self.proj.get_or_init(|| {
             // ONE lsdoc parse of the block body yields every header facet (marker,
@@ -275,19 +339,22 @@ impl DocBlock {
             let (marker, priority, heading_level, properties) = header_facets(&proj.blocks);
             let (scheduled, deadline) = planning_dates(&proj.blocks, &self.raw);
             let tags = tags_from_blocks(&proj.blocks);
-            let visible = visible_minus_properties(&self.raw, &proj.blocks);
+            let regions = crate::block_regions::from_blocks(&self.raw, self.is_org, &proj.blocks);
+            let visible = regions
+                .apply(&self.raw, self.is_org, crate::block_regions::Edit::Visible)
+                .expect("parsed regions");
+            let regions = shared_regions(regions);
             let visible_lower = crate::search_query::canonical_fold(&visible);
-            let mut refs_page = proj.refs.page;
-            refs_page.retain(|name| crate::refs::names_a_page(name));
+            let refs_page = proj.refs.page;
             let refs_norm = refs_page
                 .iter()
                 .map(|r| crate::refs::normalize(r))
                 .collect();
             let reference_source =
                 crate::reference_evidence::project(&self.raw, self.is_org, &proj.blocks);
-            BlockProjection {
-                visible,
-                visible_lower,
+            let mut plain_ranges = reference_source.plain_ranges;
+            plain_ranges.shrink_to_fit();
+            let mut extra = ProjectionExtra {
                 refs_norm,
                 refs_page,
                 block_refs: proj.refs.block,
@@ -298,7 +365,20 @@ impl DocBlock {
                 scheduled,
                 deadline,
                 tags,
-                reference_source,
+                explicit: reference_source.explicit,
+                withheld_ranges: reference_source.withheld_ranges,
+            };
+            extra.shrink();
+            let extra = (!extra.is_empty()).then(|| Box::new(extra));
+            let visible_lower = (visible_lower != visible).then(|| visible_lower.into_boxed_str());
+            let visible = (visible != self.raw).then(|| visible.into_boxed_str());
+            BlockProjection {
+                regions,
+                visible,
+                visible_lower,
+                visible_literal: std::sync::OnceLock::new(),
+                plain_ranges,
+                extra,
             }
         })
     }
@@ -306,13 +386,13 @@ impl DocBlock {
     /// `key:: value` block properties as lsdoc projects them (md trailer / org
     /// `:PROPERTIES:` drawer; fence-aware — a `key::` inside a code fence is content).
     pub fn properties(&self) -> Vec<(String, String)> {
-        self.projection().properties.clone()
+        self.projection().properties().to_vec()
     }
 
     pub fn property(&self, key: &str) -> Option<String> {
         let key = property_key_norm(key);
         self.projection()
-            .properties
+            .properties()
             .iter()
             .find(|(k, _)| property_key_norm(k) == key)
             .map(|(_, v)| v.clone())
@@ -324,181 +404,64 @@ impl DocBlock {
 
     /// The leading task marker, if any (`TODO`, `DOING`, ...), off lsdoc's first node.
     pub fn marker(&self) -> Option<&str> {
-        self.projection().marker.as_deref()
+        self.projection().marker()
     }
 
     /// The block-header `[#A]` priority (`"A"`/`"B"`/`"C"`), off lsdoc's first node —
     /// header position only (a mid-text `[#A]` is not a priority).
     pub fn priority(&self) -> Option<&str> {
-        self.projection().priority.as_deref()
+        self.projection().priority()
     }
 
     /// Heading level (1..=6) if the block body is an ATX heading, else `None`.
     pub fn heading_level(&self) -> Option<u8> {
-        self.projection().heading_level
+        self.projection().heading_level()
     }
 
     /// The block's *visible* text (original case): `raw` minus property/drawer
     /// ranges. The body a reader sees — for breadcrumb labels and sort keys.
     pub fn visible_text(&self) -> &str {
-        &self.projection().visible
+        self.projection().visible_text(&self.raw)
+    }
+
+    /// [`Self::visible_text`] folded for the graph's search policy:
+    /// accent-removing `canonical_fold` when `remove_accents`, else `literal_fold`.
+    /// The ONE reader of the folded text; each form is computed once per body.
+    pub fn visible_folded(&self, remove_accents: bool) -> &str {
+        self.projection().visible_folded(&self.raw, remove_accents)
     }
 
     /// SCHEDULED / DEADLINE planning date text, when lsdoc emits a real `Timestamp`
     /// (code/fence-robust). For the render badge + agenda.
     pub fn scheduled(&self) -> Option<&str> {
-        self.projection().scheduled.as_deref()
+        self.projection().scheduled()
     }
     pub fn deadline(&self) -> Option<&str> {
-        self.projection().deadline.as_deref()
+        self.projection().deadline()
     }
 
     /// Inline `#tag` / org headline tags off the same lsdoc projection as the
     /// other facets.
     pub fn tags(&self) -> Vec<String> {
-        self.projection().tags.clone()
+        self.projection().tags().to_vec()
     }
 }
 
-/// How many characters of a block's first visible line a breadcrumb label keeps
-/// before it is elided. One value, because a trail whose segments truncate at
-/// different lengths depending on which code path produced them is a bug the
-/// user sees.
-pub(crate) const CRUMB_MAX_CHARS: usize = 60;
-
-/// A short, single-line label for a block in a breadcrumb trail: the first line
-/// of its visible text, trimmed, elided with `…` past [`CRUMB_MAX_CHARS`].
-///
-/// DUP-8: this used to exist three times -- byte-identical in `query.rs` and
-/// `query_plan.rs`, and a third time over a synthesized
-/// `DocBlock`. Three copies of a truncation rule is three places for the rule
-/// to drift.
-pub(crate) fn crumb_line(block: &DocBlock) -> String {
-    crumb_line_text(block.visible_text())
-}
-
-/// The breadcrumb transform over an already projected exact visible string.
-/// Database-backed readers use this rather than synthesizing a `DocBlock` or
-/// reparsing source solely to apply the shared first-line/elision rule.
-pub(crate) fn crumb_line_text(visible: &str) -> String {
-    let line = visible.lines().next().unwrap_or("").trim();
-    if line.chars().count() > CRUMB_MAX_CHARS {
-        format!(
-            "{}…",
-            line.chars().take(CRUMB_MAX_CHARS).collect::<String>()
-        )
+fn shared_regions(
+    regions: crate::block_regions::BlockRegions,
+) -> std::sync::Arc<crate::block_regions::BlockRegions> {
+    static EMPTY: std::sync::OnceLock<std::sync::Arc<crate::block_regions::BlockRegions>> =
+        std::sync::OnceLock::new();
+    if regions == crate::block_regions::BlockRegions::default() {
+        std::sync::Arc::clone(EMPTY.get_or_init(|| std::sync::Arc::new(Default::default())))
     } else {
-        line.to_owned()
-    }
-}
-
-#[cfg(test)]
-mod crumb_line_tests {
-    use super::*;
-
-    fn block(raw: &str) -> DocBlock {
-        DocBlock {
-            raw: raw.to_owned(),
-            children: Vec::new(),
-            uuid: String::new(),
-            is_org: false,
-            proj: std::sync::OnceLock::new(),
-        }
-    }
-
-    #[test]
-    fn a_line_of_exactly_the_limit_is_kept_whole() {
-        let raw = "x".repeat(CRUMB_MAX_CHARS);
-        assert_eq!(crumb_line(&block(&raw)), raw);
-    }
-
-    #[test]
-    fn one_character_past_the_limit_elides() {
-        let raw = "x".repeat(CRUMB_MAX_CHARS + 1);
-        let crumb = crumb_line(&block(&raw));
-        assert_eq!(crumb, format!("{}…", "x".repeat(CRUMB_MAX_CHARS)));
-        assert_eq!(crumb.chars().count(), CRUMB_MAX_CHARS + 1);
-    }
-
-    /// The limit counts CHARACTERS, not bytes -- 60 multi-byte characters are
-    /// still 60 characters.
-    #[test]
-    fn the_limit_counts_characters_not_bytes() {
-        let raw = "é".repeat(CRUMB_MAX_CHARS);
-        assert_eq!(crumb_line(&block(&raw)), raw);
-        assert_eq!(
-            crumb_line(&block(&"é".repeat(CRUMB_MAX_CHARS + 1))),
-            format!("{}…", "é".repeat(CRUMB_MAX_CHARS))
-        );
-    }
-
-    /// Only the FIRST line becomes the label, and it is trimmed.
-    #[test]
-    fn a_multi_line_block_labels_on_its_first_line_only() {
-        assert_eq!(
-            crumb_line(&block("  Parent heading  \nsecond line\nthird line")),
-            "Parent heading"
-        );
-    }
-
-    /// Properties are not visible text, so they never reach a breadcrumb.
-    #[test]
-    fn properties_are_not_part_of_the_label() {
-        assert_eq!(
-            crumb_line(&block("Parent heading\nid:: 6512-abcd\ncollapsed:: true")),
-            "Parent heading"
-        );
-    }
-
-    #[test]
-    fn an_empty_block_has_an_empty_label() {
-        assert_eq!(crumb_line(&block("")), "");
-    }
-
-    /// The three collapsed copies had one rule between them; this pins the rule
-    /// each of them implemented, verbatim, so the collapse cannot have moved
-    /// any output.
-    #[test]
-    fn the_shared_rule_reproduces_what_the_three_copies_did() {
-        fn original(block: &DocBlock) -> String {
-            let line = block
-                .visible_text()
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            if line.chars().count() > 60 {
-                format!("{}…", line.chars().take(60).collect::<String>())
-            } else {
-                line
-            }
-        }
-        for raw in [
-            "",
-            "   ",
-            "\n\n",
-            "short",
-            "  padded  ",
-            "one\ntwo",
-            &"x".repeat(59),
-            &"x".repeat(60),
-            &"x".repeat(61),
-            &"é".repeat(61),
-            &format!("{}\nsecond", "x".repeat(61)),
-            "TODO [#A] a task with a marker",
-            "Parent heading\nid:: 6512-abcd",
-            "  \tleading tab and a very long tail ---------------------------------------",
-        ] {
-            let b = block(raw);
-            assert_eq!(crumb_line(&b), original(&b), "diverged on {raw:?}");
-        }
+        std::sync::Arc::new(regions)
     }
 }
 
 fn push_tag(out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>, tag: String) {
     let tag = tag.trim().to_string();
-    if !crate::refs::names_a_page(&tag) {
+    if tag.is_empty() {
         return;
     }
     let key = tag.to_lowercase();
@@ -723,7 +686,7 @@ fn inline_is_empty(i: &lsdoc::ast::Inline) -> bool {
 /// without deleting body content that shares their Paragraph (#75). A neighboring
 /// line break is removed only when the timestamp has no same-line body suffix;
 /// mid-text timestamps are untouched.
-pub(crate) fn strip_planning_lines(
+pub fn strip_planning_lines(
     mut blocks: Vec<lsdoc::ast::Block>,
     raw: &str,
 ) -> Vec<lsdoc::ast::Block> {
@@ -792,149 +755,96 @@ fn angle_after(slice: &str, ts: &str) -> Option<String> {
     Some(after[lt + 1..lt + 1 + gt].to_string())
 }
 
-/// Properties + visible text for a block we only have `raw` for (a query-result
-/// DTO has no projection), off the one lsdoc recognizer. md mode: query-result
-/// sort keys are cosmetic, and an org `key::` here is format-agnostic exactly as
-/// the old line-scan was. Call once per block (decorate-sort), never per compare.
-pub(crate) fn block_sort_facets(raw: &str) -> (Vec<(String, String)>, String) {
-    let blocks = crate::render::parse_block(raw, false);
-    let (_, _, _, properties) = header_facets(&blocks);
-    let visible = visible_minus_properties(raw, &blocks);
-    (properties, visible)
-}
-
-/// `raw` with the byte ranges lsdoc recognized as `Properties` blocks removed,
-/// whole-line (so no blank line remains). The lsdoc input is `"{prefix} {raw_trimmed}"`
-/// where prefix is the 2-byte `"- "`/`"* "`, so `input[2..] == raw[lead..]` byte-for-byte
-/// (`lead` = leading whitespace trimmed) and a span `[s,e)` maps to raw `[s-2+lead, e-2+lead)`.
-/// Drawers (`:LOGBOOK:`) are intentionally KEPT (searchable, as before); only
-/// `Properties` (md `key::` / org `:PROPERTIES:`) are dropped — exactly the lines
-/// the old `visible_lines` dropped, now decided by the one property recognizer.
-fn visible_minus_properties(raw: &str, blocks: &[lsdoc::ast::Block]) -> String {
-    use lsdoc::ast::Block;
-    let lead = raw.len() - raw.trim_start().len();
-    let bytes = raw.as_bytes();
-    let mut cuts: Vec<(usize, usize)> = Vec::new();
-    for b in blocks {
-        if let Block::Properties { span: Some(sp), .. } = b {
-            let mut rs = (sp.0.saturating_sub(2) + lead).min(raw.len());
-            let mut re = (sp.1.saturating_sub(2) + lead).min(raw.len());
-            if rs >= re {
-                continue;
-            }
-            // Extend to whole lines (newlines are char boundaries → slices stay UTF-8 valid).
-            while rs > 0 && bytes[rs - 1] != b'\n' {
-                rs -= 1;
-            }
-            while re < raw.len() && bytes[re - 1] != b'\n' {
-                re += 1;
-            }
-            cuts.push((rs, re));
-        }
-    }
-    if cuts.is_empty() {
-        return raw.to_string();
-    }
-    cuts.sort_by_key(|c| c.0);
-    let mut out = String::with_capacity(raw.len());
-    let mut pos = 0usize;
-    for (s, e) in cuts {
-        if s < pos {
-            pos = pos.max(e); // overlapping/adjacent property ranges
-            continue;
-        }
-        out.push_str(&raw[pos..s]);
-        pos = e;
-    }
-    out.push_str(&raw[pos..]);
-    out.trim_end_matches('\n').to_string()
-}
-
-pub(crate) fn property_key_norm(key: &str) -> String {
+pub fn property_key_norm(key: &str) -> String {
     key.trim().to_ascii_lowercase().replace([' ', '_'], "-")
 }
 
-/// Original-case page names carried by OG-compatible `tags::`, `alias::`, or
-/// `aliases::` properties. Quoted whole values are ordinary text rather than a
-/// reference list; list items may be bare, `#tag`, or `[[page]]` spellings.
-pub(crate) fn property_reference_page_names(text: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    for line in text.lines() {
-        let Some((key, value)) = parse_property_line(line) else {
-            continue;
-        };
-        if !(key.eq_ignore_ascii_case("tags")
-            || key.eq_ignore_ascii_case("alias")
-            || key.eq_ignore_ascii_case("aliases"))
-        {
-            continue;
-        }
-        let quoted = value.trim();
-        if quoted.len() >= 2 && quoted.starts_with('"') && quoted.ends_with('"') {
-            continue;
-        }
-        for value in value.split([',', '，']) {
-            let value = value.trim();
-            let value = value.strip_prefix('#').unwrap_or(value).trim();
-            let value = value
-                .strip_prefix("[[")
-                .and_then(|inner| inner.strip_suffix("]]"))
-                .unwrap_or(value)
-                .trim();
-            if crate::refs::names_a_page(value) {
-                names.push(value.to_string());
-            }
-        }
+pub use crate::property_line::parse_property_line;
+
+/// Rewrite every line terminator to `\n`. Page text ends a line at `\r\n`,
+/// `\n` or a lone `\r`, as mldoc (`eol_chars = ['\r'; '\n']`) and lsdoc's lexer
+/// do. Borrows when the text has no `\r`; otherwise two O(n) copies (CRLF
+/// first, then lone CR, so `\r\r\n` becomes `\n\n`).
+pub fn normalize_line_endings(content: &str) -> std::borrow::Cow<'_, str> {
+    if content.contains('\r') {
+        std::borrow::Cow::Owned(content.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(content)
     }
-    names
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PromotedHeadingLayout {
-    /// The first parser-owned block is an unbulleted ATX heading, but its next
-    /// outline event is a sibling rather than a child.
-    UnbulletedRoot,
-    /// Native Markdown outline: lsdoc reports the owned bullets deeper than the
-    /// unbulleted heading, so children retain one indentation level on write.
-    NestedChildren,
-}
-
-/// Ask lsdoc whether writing `raw` as an unbulleted heading followed by one
-/// serializer-level child still forms a bounded nested-heading promotion. The
-/// synthetic root boundary prevents the probe child from claiming an
-/// unbounded suffix; no handwritten heading or property grammar participates.
-fn lsdoc_authorizes_nested_heading_raw(raw: &str, indent: &str) -> bool {
-    const CHILD_PROBE: &str = "tine nested-heading child probe";
-    const BOUNDARY_PROBE: &str = "tine nested-heading boundary probe";
-
-    let body = format!("{raw}\n{indent}- {CHILD_PROBE}\n- {BOUNDARY_PROBE}");
-    matches!(
-        crate::outline::parse_document(&body, crate::outline::OutlineFormat::Markdown),
-        Ok(ParsedDocument {
-            document: Document { roots, .. },
-            promoted_heading_layout: Some(PromotedHeadingLayout::NestedChildren),
-            ..
-        }) if roots.len() == 2
-            && roots[0].raw == raw
-            && roots[0].children.len() == 1
-            && roots[0].children[0].raw == CHILD_PROBE
-            && roots[1].raw == BOUNDARY_PROBE
-    )
-}
-
+/// Parse Markdown page text into a [`Document`]: a pre-block plus a block
+/// forest. lsdoc decides which lines open a block and how blocks nest
+/// (`crate::outline`, the outline authority): dash bullets and unbulleted ATX
+/// headings open blocks; fences and `#+BEGIN_…` regions hide look-alike lines,
+/// exactly as mldoc reads the page for OG. A block's `raw` is its header line
+/// after the structural prefix (`- ` and indentation; nothing for an
+/// unbulleted heading, whose whole line is `raw`) plus every following line up
+/// to the next header, dedented by the bullet's content column. The
+/// pre-block is everything before the first header, trailing blank lines
+/// dropped (the separator is re-added on write).
+///
+/// Ends a line at `\r\n`, `\n` or a lone `\r`; the model is LF-canonical, so the
+/// file's terminators are restored at the write boundary (tine-store
+/// `model/line_endings.rs`). Assigns no block uuids (empty). Does not enforce
+/// the nesting ceiling — callers validate first
+/// (`parse_input_depth_within_limit`). A page whose outline lsdoc cannot
+/// represent one block per line (or will not own) has no blocks: the whole
+/// text is the pre-block, so a save writes it back unchanged. Pure,
+/// infallible; one lsdoc parse, O(page bytes).
 pub fn parse(content: &str) -> Document {
-    parse_with_source_spans(content).document
+    parse_document_with(content, |_, _, _| ()).0
 }
 
-pub(crate) fn try_parse_with_source_spans(
+/// Parse a Markdown page and infer its serialization layout from the SAME
+/// lsdoc outline. Returns the document and formatting knobs together, so a
+/// writer inspecting old content need not parse it again to detect layout.
+/// Pure, infallible; one lsdoc outline parse, O(page bytes). Line terminators
+/// are normalized for parsing; the store restores them when writing.
+pub fn parse_with_opts(content: &str) -> (Document, SerializeOpts) {
+    parse_document_with(content, SerializeOpts::from_outline)
+}
+
+fn parse_document_with<T>(
     content: &str,
-) -> Result<ParsedDocument, crate::outline::OutlineAdapterError> {
-    crate::outline::parse_document(content, crate::outline::OutlineFormat::Markdown)
+    layout: impl FnOnce(&str, &[&str], &[outline::Header]) -> T,
+) -> (Document, T) {
+    // A stray `\r` in the model would pollute property / `id::` values.
+    let normalized = normalize_line_endings(content);
+    let content: &str = &normalized;
+    let body = content.strip_suffix('\n').unwrap_or(content);
+    let lines: Vec<&str> = if body.is_empty() {
+        Vec::new()
+    } else {
+        body.split('\n').collect()
+    };
+    let headers = outline::headers_or_none(content, OutlineFormat::Markdown);
+    let first = headers.first().map_or(lines.len(), |header| header.line);
+    let mut pre_end = first;
+    while pre_end > 0 && lines[pre_end - 1].trim().is_empty() {
+        pre_end -= 1;
+    }
+    let opts = layout(content, &lines, &headers);
+    let document = Document {
+        pre_block: (pre_end > 0).then(|| lines[..pre_end].join("\n")),
+        roots: outline::blocks(&lines, &headers, false),
+    };
+    (document, opts)
 }
 
-pub(crate) fn parse_with_source_spans(content: &str) -> ParsedDocument {
-    try_parse_with_source_spans(content)
-        .unwrap_or_else(|error| panic!("unrepresentable lsdoc Markdown outline: {error}"))
+/// Whether lsdoc reads `line` alone as an unbulleted Markdown ATX heading
+/// (`# Title`), the one block form written without a `- ` bullet. For a
+/// writer that keeps such a heading unbulleted; the reparse stays the judge.
+pub fn is_unbulleted_heading_line(line: &str) -> bool {
+    outline::is_unbulleted_heading_line(line)
+}
+
+/// The raw text the outline parser reads from a continuation `line` of a block
+/// whose continuations dedent by `content_indent` bytes: up to that many
+/// leading tabs, spaces or form feeds removed. For a writer reusing a line's
+/// old bytes; the reparse stays the judge.
+pub fn continuation_raw(line: &str, content_indent: usize) -> &str {
+    outline::strip_layout_ws(line, content_indent)
 }
 
 /// Formatting knobs detected from a file so re-saving preserves its existing
@@ -942,22 +852,13 @@ pub(crate) fn parse_with_source_spans(content: &str) -> ParsedDocument {
 /// writes files with NO trailing newline; imposing one would rewrite every file.
 #[derive(Debug, Clone)]
 pub struct SerializeOpts {
-    /// Number of trailing `\n` characters to end the file with.
+    /// Trailing `\n` count to end the file with when the last block does not
+    /// already end in blank lines. When it does (parse gives EOF blank lines to
+    /// the last block), the serializer appends exactly one `\n`, so a detect →
+    /// parse → serialize round trip reproduces the original count.
     pub trailing_newlines: usize,
-    /// Empty separator lines between the page preamble and first block.
-    pub blank_lines_after_preamble: usize,
-    /// Empty lines before the first block when no semantic preamble exists.
-    pub leading_blank_lines: usize,
-    /// Source-order layout is safe only when the complete semantic document is
-    /// unchanged. Edited documents use the identity-bound subset below.
-    source_document: Option<Document>,
-    source_blank_lines_before_blocks: Vec<usize>,
-    identity_bound_blank_lines: Vec<IdentityBoundBlankLines>,
-    /// Unbulleted ATX headings whose parser-owned source layout is retained by
-    /// a stable block identity after another block changes.
-    identity_bound_unbulleted_headings: HashSet<String>,
-    source_promoted_heading_layout: Option<PromotedHeadingLayout>,
-    promoted_heading_identity: Option<String>,
+    /// Emit a blank line between the page-property pre-block and the first block.
+    pub blank_after_props: bool,
     /// Whitespace for one level of indentation (e.g. `"\t"` or `"  "`).
     pub indent: String,
 }
@@ -966,183 +867,40 @@ impl Default for SerializeOpts {
     fn default() -> Self {
         SerializeOpts {
             trailing_newlines: 1,
-            blank_lines_after_preamble: 1,
-            leading_blank_lines: 0,
-            source_document: None,
-            source_blank_lines_before_blocks: Vec::new(),
-            identity_bound_blank_lines: Vec::new(),
-            identity_bound_unbulleted_headings: HashSet::new(),
-            source_promoted_heading_layout: None,
-            promoted_heading_identity: None,
+            blank_after_props: true,
             indent: "\t".into(),
         }
     }
 }
 
 impl SerializeOpts {
-    /// Infer the formatting of an existing on-disk file so a save reproduces it.
-    /// `None` (new file) falls back to the default.
+    /// Infer the three formatting knobs (trailing newlines, blank after the
+    /// preamble, indent unit) of an existing file, read in its LF form. Line
+    /// terminators are not detected here; the store writer restores them.
+    /// `None` (new file) gives the default.
     pub fn detect(existing: Option<&str>) -> SerializeOpts {
-        Self::detect_with_layout_identities(existing, &[])
-    }
-
-    pub(crate) fn detect_with_layout_identities(
-        existing: Option<&str>,
-        identities: &[StructuralLayoutIdentity],
-    ) -> SerializeOpts {
         match existing {
             None => SerializeOpts::default(),
             Some(s) => {
-                let parsed = parse_with_source_spans(s);
-                Self::from_parsed_source(s, parsed, detect_indent(s), identities)
+                let s = normalize_line_endings(s);
+                let lines: Vec<&str> = s.split('\n').collect();
+                Self::from_outline(
+                    &s,
+                    &lines,
+                    &outline::headers_or_none(&s, OutlineFormat::Markdown),
+                )
             }
         }
     }
-
-    pub(crate) fn from_parsed_source(
-        source: &str,
-        parsed: ParsedDocument,
-        indent: String,
-        identities: &[StructuralLayoutIdentity],
-    ) -> SerializeOpts {
-        let mut locator_indexes = HashMap::with_capacity(parsed.block_spans.len());
-        collect_locator_indexes(
-            &parsed.document.roots,
-            &mut Vec::new(),
-            &mut locator_indexes,
-        );
-        let mut identity_bound_blank_lines = Vec::with_capacity(identities.len());
-        let mut identity_bound_unbulleted_headings = HashSet::new();
-        let source_promoted_heading_layout = parsed.promoted_heading_layout;
-        let mut promoted_heading_identity = None;
-        for identity in identities {
-            let Some(index) = locator_indexes.get(identity.locator.as_slice()).copied() else {
-                continue;
-            };
-            let Some(blank_lines) = parsed.blank_lines_before_blocks.get(index).copied() else {
-                continue;
-            };
-            identity_bound_blank_lines.push(IdentityBoundBlankLines {
-                block_identity: identity.block_identity.clone(),
-                blank_lines,
-            });
-            if parsed
-                .unbulleted_markdown_headings
-                .get(index)
-                .copied()
-                .unwrap_or(false)
-            {
-                identity_bound_unbulleted_headings.insert(identity.block_identity.clone());
-            }
-            if source_promoted_heading_layout.is_some() && identity.locator.as_slice() == [0] {
-                promoted_heading_identity = Some(identity.block_identity.clone());
-            }
+    fn from_outline(s: &str, lines: &[&str], headers: &[outline::Header]) -> Self {
+        Self {
+            trailing_newlines: crate::org::trailing_newlines(s),
+            blank_after_props: match headers.first() {
+                Some(header) if header.line > 0 => lines[header.line - 1].trim().is_empty(),
+                _ => true,
+            },
+            indent: detect_indent(lines, headers),
         }
-        SerializeOpts {
-            // Count trailing `\n` within the trailing run of newline bytes, so
-            // a CRLF file's `\r` doesn't truncate the count.
-            trailing_newlines: source
-                .bytes()
-                .rev()
-                .take_while(|b| *b == b'\n' || *b == b'\r')
-                .filter(|b| *b == b'\n')
-                .count(),
-            blank_lines_after_preamble: parsed.blank_lines_after_preamble,
-            leading_blank_lines: parsed.leading_blank_lines,
-            source_document: Some(parsed.document),
-            source_blank_lines_before_blocks: parsed.blank_lines_before_blocks,
-            identity_bound_blank_lines,
-            identity_bound_unbulleted_headings,
-            source_promoted_heading_layout,
-            promoted_heading_identity,
-            indent,
-        }
-    }
-
-    pub(crate) fn resolved_blank_lines(&self, doc: &Document) -> Vec<usize> {
-        if self.source_document.as_ref() == Some(doc) {
-            return self.source_blank_lines_before_blocks.clone();
-        }
-        let by_identity = self
-            .identity_bound_blank_lines
-            .iter()
-            .map(|layout| (layout.block_identity.as_str(), layout.blank_lines))
-            .collect::<HashMap<_, _>>();
-        let mut resolved = Vec::new();
-        collect_identity_bound_blank_lines(&doc.roots, &by_identity, &mut resolved);
-        if let Some(first) = resolved.first_mut() {
-            // Moving an inter-block separator ahead of the first target block
-            // would turn it into page-leading trivia (and, for Org, a semantic
-            // preamble). That local context is no longer the source context.
-            *first = 0;
-        }
-        resolved
-    }
-
-    fn promoted_heading_layout(&self, doc: &Document) -> Option<PromotedHeadingLayout> {
-        let first = doc.roots.first()?;
-        let source_unchanged = self.source_document.as_ref() == Some(doc);
-        let promoted_identity_remains_first = !first.uuid.is_empty()
-            && self.promoted_heading_identity.as_deref() == Some(first.uuid.as_str());
-        let promoted_root_authorized = source_unchanged || promoted_identity_remains_first;
-        authorized_promoted_heading_layout(
-            doc,
-            self.source_promoted_heading_layout,
-            self.indent.as_str(),
-            promoted_root_authorized,
-        )
-    }
-}
-
-fn authorized_promoted_heading_layout(
-    doc: &Document,
-    source_layout: Option<PromotedHeadingLayout>,
-    indent: &str,
-    promoted_root_authorized: bool,
-) -> Option<PromotedHeadingLayout> {
-    let first = doc.roots.first()?;
-    match source_layout {
-        Some(PromotedHeadingLayout::UnbulletedRoot)
-            if promoted_root_authorized
-                && lsdoc_authorizes_nested_heading_raw(&first.raw, indent) =>
-        {
-            Some(PromotedHeadingLayout::UnbulletedRoot)
-        }
-        Some(PromotedHeadingLayout::NestedChildren)
-            if promoted_root_authorized
-                && first.children.first().is_some()
-                && lsdoc_authorizes_nested_heading_raw(&first.raw, indent) =>
-        {
-            Some(PromotedHeadingLayout::NestedChildren)
-        }
-        _ => None,
-    }
-}
-
-fn collect_locator_indexes(
-    blocks: &[DocBlock],
-    locator: &mut Vec<u32>,
-    indexes: &mut HashMap<Vec<u32>, usize>,
-) {
-    for (position, block) in blocks.iter().enumerate() {
-        let Ok(position) = u32::try_from(position) else {
-            return;
-        };
-        locator.push(position);
-        indexes.insert(locator.clone(), indexes.len());
-        collect_locator_indexes(&block.children, locator, indexes);
-        locator.pop();
-    }
-}
-
-fn collect_identity_bound_blank_lines(
-    blocks: &[DocBlock],
-    by_identity: &HashMap<&str, usize>,
-    resolved: &mut Vec<usize>,
-) {
-    for block in blocks {
-        resolved.push(by_identity.get(block.uuid.as_str()).copied().unwrap_or(0));
-        collect_identity_bound_blank_lines(&block.children, by_identity, resolved);
     }
 }
 
@@ -1156,18 +914,17 @@ fn gcd(a: usize, b: usize) -> usize {
 
 /// Infer the per-level indentation unit from a file's indented bullet lines:
 /// a tab if any are tab-indented, else N spaces (the GCD of space widths).
-fn detect_indent(s: &str) -> String {
+fn detect_indent(lines: &[&str], headers: &[outline::Header]) -> String {
     let mut space_widths: Vec<usize> = Vec::new();
-    for line in s.split('\n') {
-        let lead_len = line.len() - line.trim_start_matches([' ', '\t']).len();
+    for header in headers {
+        // Inspect only the structural prefix lsdoc already identified. Literal
+        // lines cannot contribute a bogus indent unit.
+        let prefix = &lines[header.line][..header.prefix_len];
+        let lead_len = prefix.len() - prefix.trim_start_matches([' ', '\t']).len();
         if lead_len == 0 {
             continue;
         }
-        let rest = &line[lead_len..];
-        if !(rest == "-" || rest.starts_with("- ")) {
-            continue; // only indented bullet lines reveal the level unit
-        }
-        if line[..lead_len].contains('\t') {
+        if prefix[..lead_len].contains('\t') {
             return "\t".into();
         }
         space_widths.push(lead_len);
@@ -1185,97 +942,37 @@ pub fn serialize(doc: &Document) -> String {
     serialize_with(doc, &SerializeOpts::default())
 }
 
-/// Serialize, reproducing a file's detected formatting (see [`SerializeOpts`]).
+/// Serialize a Markdown [`Document`] from scratch (no source bytes), applying the
+/// three detected knobs in [`SerializeOpts`]: indent unit, blank line after the
+/// page-property preamble, and trailing newlines. Everything else is canonical:
+/// `- ` bullets, continuation lines at indent + two spaces, and LF line endings
+/// (the caller restores CRLF). Not for Org pages. Infallible, pure, O(blocks of
+/// the page).
 pub fn serialize_with(doc: &Document, opts: &SerializeOpts) -> String {
-    let blank_lines_before_blocks = opts.resolved_blank_lines(doc);
-    let promoted_heading_layout = opts.promoted_heading_layout(doc);
-    serialize_with_layout(
-        doc,
-        opts.trailing_newlines,
-        opts.blank_lines_after_preamble,
-        opts.leading_blank_lines,
-        &opts.indent,
-        &blank_lines_before_blocks,
-        promoted_heading_layout,
-        &opts.identity_bound_unbulleted_headings,
-    )
-}
-
-fn serialize_with_layout(
-    doc: &Document,
-    trailing_newlines: usize,
-    blank_lines_after_preamble: usize,
-    leading_blank_lines: usize,
-    indent: &str,
-    blank_lines_before_blocks: &[usize],
-    promoted_heading_layout: Option<PromotedHeadingLayout>,
-    identity_bound_unbulleted_headings: &HashSet<String>,
-) -> String {
     let mut out: Vec<String> = Vec::new();
     if let Some(pre) = &doc.pre_block {
         for line in pre.split('\n') {
             out.push(line.to_string());
         }
-        if !doc.roots.is_empty() {
-            out.extend(std::iter::repeat_with(String::new).take(blank_lines_after_preamble));
+        // Blank separator before blocks — only when blocks follow and the file
+        // used one.
+        if !doc.roots.is_empty() && opts.blank_after_props {
+            out.push(String::new());
         }
-    } else if !doc.roots.is_empty() {
-        out.extend(std::iter::repeat_with(String::new).take(leading_blank_lines));
     }
-    let mut block_index = 0_usize;
     for block in &doc.roots {
-        emit_block(
-            block,
-            0,
-            indent,
-            blank_lines_before_blocks,
-            &mut block_index,
-            promoted_heading_layout,
-            identity_bound_unbulleted_headings,
-            &mut out,
-        );
+        emit_block(block, 0, &opts.indent, &mut out);
     }
     let mut s = out.join("\n");
-    s.push_str(&"\n".repeat(trailing_newlines));
+    // `parse` gives blank EOF lines to the last block's raw, so the body may
+    // already end in them; they then need exactly the one `\n` that `parse`
+    // strips. Appending the detected count again doubled them (2n-1) per save.
+    let tail = s.len() - s.trim_end_matches('\n').len();
+    s.push_str(&"\n".repeat(if tail > 0 { 1 } else { opts.trailing_newlines }));
     s
 }
 
-fn emit_block(
-    block: &DocBlock,
-    level: usize,
-    unit: &str,
-    blank_lines_before_blocks: &[usize],
-    block_index: &mut usize,
-    promoted_heading_layout: Option<PromotedHeadingLayout>,
-    identity_bound_unbulleted_headings: &HashSet<String>,
-    out: &mut Vec<String>,
-) {
-    let unbulleted_promoted_heading = promoted_heading_layout.is_some() && *block_index == 0;
-    let unbulleted_identity_heading = identity_bound_unbulleted_headings.contains(&block.uuid)
-        && crate::outline::markdown_atx_heading_line_end(&block.raw).is_some();
-    let blank_lines = blank_lines_before_blocks
-        .get(*block_index)
-        .copied()
-        .unwrap_or(0);
-    out.extend(std::iter::repeat_with(String::new).take(blank_lines));
-    *block_index = block_index.saturating_add(1);
-    if unbulleted_promoted_heading || unbulleted_identity_heading {
-        out.extend(block.raw.split('\n').map(ToOwned::to_owned));
-        let child_level = level.saturating_add(1);
-        for child in &block.children {
-            emit_block(
-                child,
-                child_level,
-                unit,
-                blank_lines_before_blocks,
-                block_index,
-                promoted_heading_layout,
-                identity_bound_unbulleted_headings,
-                out,
-            );
-        }
-        return;
-    }
+fn emit_block(block: &DocBlock, level: usize, unit: &str, out: &mut Vec<String>) {
     let ind = unit.repeat(level);
     let mut lines = block.raw.split('\n');
     let first = lines.next().unwrap_or("");
@@ -1285,748 +982,40 @@ fn emit_block(
         out.push(format!("{ind}- {first}"));
     }
     for line in lines {
-        out.push(format!("{ind}  {line}"));
+        if line.is_empty() {
+            out.push(String::new());
+        } else {
+            out.push(format!("{ind}  {line}"));
+        }
     }
     for child in &block.children {
-        emit_block(
-            child,
-            level + 1,
-            unit,
-            blank_lines_before_blocks,
-            block_index,
-            promoted_heading_layout,
-            identity_bound_unbulleted_headings,
-            out,
-        );
-    }
-}
-
-/// Whether detected Markdown formatting plus the parsed document reproduces
-/// the exact source bytes. Mixed line endings and non-uniform indentation fail
-/// closed because detected formatting deliberately has one representation.
-pub fn markdown_round_trips(content: &str) -> bool {
-    let Ok(parsed) = try_parse_with_source_spans(content) else {
-        return false;
-    };
-    let document = parsed.document.clone();
-    let opts = SerializeOpts::from_parsed_source(content, parsed, detect_indent(content), &[]);
-    let mut rendered = serialize_with(&document, &opts);
-    if content.contains("\r\n") {
-        rendered = rendered.replace('\n', "\r\n");
-    }
-    rendered == content
-}
-
-/// Whether parsing and format-preserving serialization retain the complete
-/// document model, even when insignificant source trivia is canonicalized.
-///
-/// Harmless whitespace normalization passes; a change to block content or
-/// ancestry does not. Serializer tests use it as their round-trip oracle. It is
-/// test-only because Direct Files has no Markdown read-only gate; the outline
-/// differential pins the inputs whose canonical save reshapes the outline.
-#[cfg(test)]
-pub(crate) fn markdown_structurally_round_trips(content: &str) -> bool {
-    let Ok(parsed) = try_parse_with_source_spans(content) else {
-        return false;
-    };
-    markdown_structurally_round_trips_parsed(content, &parsed)
-}
-
-#[cfg(test)]
-pub(crate) fn markdown_structurally_round_trips_parsed(
-    content: &str,
-    parsed: &ParsedDocument,
-) -> bool {
-    let indent = detect_indent(content);
-    let mut rendered = serialize_with_layout(
-        &parsed.document,
-        content
-            .bytes()
-            .rev()
-            .take_while(|byte| matches!(byte, b'\n' | b'\r'))
-            .filter(|byte| *byte == b'\n')
-            .count(),
-        parsed.blank_lines_after_preamble,
-        parsed.leading_blank_lines,
-        &indent,
-        &parsed.blank_lines_before_blocks,
-        parsed.promoted_heading_layout,
-        &HashSet::new(),
-    );
-    if content.contains("\r\n") {
-        rendered = rendered.replace('\n', "\r\n");
-    }
-    try_parse_with_source_spans(&rendered)
-        .is_ok_and(|canonical| canonical.document == parsed.document)
-}
-
-/// Distinct VCS merge-conflict marker kinds present in `content`, in order of
-/// first appearance — empty when the file is not merge-conflicted.
-///
-/// Recognizes the column-0 markers git writes (`<<<<<<< ours`, diff3
-/// `||||||| base`, `=======`, `>>>>>>> theirs`) and Fossil's verbose variants
-/// (`<<<<<<< BEGIN MERGE CONFLICT: …`, `####### SUGGESTED CONFLICT RESOLUTION
-/// follows …`, `||||||| COMMON ANCESTOR content follows …`, `======= MERGED IN
-/// content follows …`, `>>>>>>> END MERGE CONFLICT …` — the `mergeMarker` table
-/// in fossil's `src/merge3.c`). Both tools write markers at column 0 only, so
-/// indented lines never count.
-///
-/// Two guards keep a page that merely DOCUMENTS merge conflicts from being
-/// flagged:
-/// - lines inside column-0 fenced code blocks (``` / ~~~) are ignored; markers
-///   quoted in an indented fence inside a bullet are not at column 0 anyway;
-/// - the file counts as conflicted only if an anchor line (`<<<<<<< ` or
-///   `>>>>>>> `) is present — a lone `=======` (e.g. a setext-style divider)
-///   never quarantines a page.
-pub fn vcs_conflict_markers(content: &str) -> Vec<&'static str> {
-    let scan = scan_vcs_conflict_markers(content);
-    if !scan
-        .iter()
-        .any(|(_, kind)| matches!(kind, ConflictMarkerKind::Ours | ConflictMarkerKind::Theirs))
-    {
-        // No anchor line → not a conflicted file (a lone `=======` is a divider).
-        return Vec::new();
-    }
-    let mut seen: Vec<&'static str> = Vec::new();
-    for (_, kind) in scan {
-        let token = kind.token();
-        if !seen.contains(&token) {
-            seen.push(token);
-        }
-    }
-    seen
-}
-
-/// One recognized column-0 VCS merge-conflict marker line.
-///
-/// Ordering inside a git/Fossil conflict region is
-/// `Ours` → [`Suggested` (Fossil only)] → [`Base`] → `Divider` → `Theirs`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConflictMarkerKind {
-    /// `<<<<<<< ours` — opens the region; our/local side follows.
-    Ours,
-    /// `||||||| base` (git diff3) / `||||||| COMMON ANCESTOR …` (Fossil).
-    Base,
-    /// `=======` / `======= MERGED IN …` — their side follows.
-    Divider,
-    /// `####### SUGGESTED CONFLICT RESOLUTION follows …` (Fossil only).
-    Suggested,
-    /// `>>>>>>> theirs` — closes the region.
-    Theirs,
-}
-
-impl ConflictMarkerKind {
-    /// The bare marker token, as reported to the user.
-    pub fn token(self) -> &'static str {
-        match self {
-            ConflictMarkerKind::Ours => "<<<<<<<",
-            ConflictMarkerKind::Base => "|||||||",
-            ConflictMarkerKind::Divider => "=======",
-            ConflictMarkerKind::Suggested => "#######",
-            ConflictMarkerKind::Theirs => ">>>>>>>",
-        }
-    }
-}
-
-/// THE scanner for VCS merge-conflict marker lines: `(line index, kind)` for
-/// every column-0 marker outside a column-0 fenced code block, in file order.
-///
-/// Single source of truth — [`vcs_conflict_markers`] (detection/quarantine) and
-/// the Concord marker parser (`crate::concord_queue`) both derive from it, so
-/// "what counts as a marker" can never diverge between the code that REFUSES to
-/// rewrite a file and the code that RESOLVES it. See [`vcs_conflict_markers`]
-/// for the recognized dialects and the two false-positive guards.
-pub fn scan_vcs_conflict_markers(content: &str) -> Vec<(usize, ConflictMarkerKind)> {
-    let mut fence: Option<char> = None;
-    let mut out = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(delimiter) = fence {
-            if line.chars().take_while(|&c| c == delimiter).count() >= 3 {
-                fence = None;
-            }
-            continue;
-        }
-        if line.starts_with("```") {
-            fence = Some('`');
-            continue;
-        }
-        if line.starts_with("~~~") {
-            fence = Some('~');
-            continue;
-        }
-        let kind = if line.starts_with("<<<<<<< ") {
-            Some(ConflictMarkerKind::Ours)
-        } else if line.starts_with(">>>>>>> ") {
-            Some(ConflictMarkerKind::Theirs)
-        } else if line.starts_with("||||||| ") {
-            Some(ConflictMarkerKind::Base)
-        } else if line == "=======" || line.starts_with("======= ") {
-            Some(ConflictMarkerKind::Divider)
-        } else if line.starts_with("####### ") {
-            Some(ConflictMarkerKind::Suggested)
-        } else {
-            None
-        };
-        if let Some(kind) = kind {
-            out.push((index, kind));
-        }
-    }
-    out
-}
-
-#[cfg(test)]
-mod runtime_identity_serialization_tests {
-    use super::*;
-
-    /// `DocBlock::uuid` is run-local: it is derived from the owning file plus the
-    /// block's structural sibling path, so a value from one process means nothing
-    /// in another. The doc comment has always said it "is never serialized"; the
-    /// attribute said `#[serde(default)]`, which only supplies a fallback on the
-    /// way IN. This is the test that makes the sentence true.
-    #[test]
-    fn serialized_document_carries_no_runtime_identity() {
-        let mut child = DocBlock::new("child");
-        child.uuid = "run-local-child".into();
-        let mut root = DocBlock::new("root");
-        root.uuid = "run-local-root".into();
-        root.children.push(child);
-        let document = Document {
-            pre_block: Some("title:: Page".into()),
-            roots: vec![root],
-        };
-
-        let encoded = serde_json::to_string(&document).expect("Document is Serialize");
-        assert!(
-            !encoded.contains("uuid"),
-            "runtime block identity leaked into a serialized Document: {encoded}"
-        );
-        assert!(
-            !encoded.contains("run-local"),
-            "runtime block identity leaked into a serialized Document: {encoded}"
-        );
-        // The content the type exists to carry still round-trips.
-        assert!(encoded.contains("root") && encoded.contains("child"));
-    }
-
-    /// And nothing can put one back: a payload naming `uuid` deserializes to the
-    /// empty run-local identity the receiving process will assign itself.
-    #[test]
-    fn a_uuid_in_a_payload_is_not_adopted() {
-        let decoded: Document = serde_json::from_str(
-            r#"{"pre_block":null,"roots":[{"raw":"root","children":[],"uuid":"forged"}]}"#,
-        )
-        .expect("unknown/skipped fields are ignored");
-        assert_eq!(decoded.roots[0].uuid, "");
-        assert_eq!(decoded.roots[0].raw, "root");
+        emit_block(child, level + 1, unit, out);
     }
 }
 
 #[cfg(test)]
-mod property_fence_tests {
-    use super::*;
-
-    #[test]
-    fn property_lines_skip_fenced_key_colons() {
-        // A `key:: value` line inside a code fence is literal content, not a block
-        // property — it must not become a chip / match a (property …) query, and it
-        // must stay in the visible (searchable) text.
-        let b = DocBlock::new("title:: Real\n```\nlang:: rust\nlet x = 1;\n```\nfoo:: bar");
-        let props = b.properties();
-        assert!(props.iter().any(|(k, _)| k == "title"));
-        assert!(props.iter().any(|(k, _)| k == "foo"));
-        assert!(
-            !props.iter().any(|(k, _)| k == "lang"),
-            "fenced lang:: is not a property: {props:?}"
-        );
-        assert_eq!(b.property("lang"), None);
-        // The fenced property line stays visible (it's code); real props are dropped.
-        let vis = b.projection().visible_lower.clone();
-        assert!(
-            vis.contains("lang:: rust"),
-            "fenced line searchable: {vis:?}"
-        );
-        assert!(
-            !vis.contains("title:: real"),
-            "real property dropped from visible text"
-        );
-    }
-
-    #[test]
-    fn parse_normalizes_crlf_to_lf() {
-        let crlf = parse("title:: x\r\n\r\n- a\r\n- b\r\n");
-        // No stray CR leaks into the model (would otherwise pollute property/id values).
-        assert_eq!(crlf.pre_block.as_deref(), Some("title:: x"));
-        for b in &crlf.roots {
-            assert!(!b.raw.contains('\r'), "stray CR in block raw: {:?}", b.raw);
-        }
-        // CRLF parses to the same model as LF; serialize is LF-canonical.
-        let lf = parse("title:: x\n\n- a\n- b\n");
-        assert_eq!(serialize(&crlf), serialize(&lf));
-        assert!(!serialize(&crlf).contains('\r'));
-    }
-
-    #[test]
-    fn detect_trailing_newlines_is_crlf_robust() {
-        assert_eq!(
-            SerializeOpts::detect(Some("- a\r\n\r\n")).trailing_newlines,
-            2
-        );
-        assert_eq!(SerializeOpts::detect(Some("- a\r\n")).trailing_newlines, 1);
-        assert_eq!(SerializeOpts::detect(Some("- a\n\n")).trailing_newlines, 2);
-    }
-
-    #[test]
-    fn structural_blank_line_trivia_round_trips_without_entering_block_raw() {
-        let cases = [
-            ("final-blank-lines", "- a\n\n"),
-            ("between-blocks", "- a\n\n- b\n"),
-            ("crlf", "- a\r\n\r\n- b\r\n\r\n"),
-            ("no-final-newline", "- a"),
-            ("leading-blank-lines", "\n\n- a\n"),
-            ("preamble", "title:: Page\n\n\n- a\n"),
-            (
-                "fence-and-logbook",
-                "- fenced\n  ```text\n  \n  - literal\n  ```\n\n- task\n  :LOGBOOK:\n  CLOCK: [2026-07-29 Wed]\n  :END:\n\n- final\n",
-            ),
-        ];
-
-        for (name, source) in cases {
-            let parsed = parse(source);
-            assert!(
-                markdown_round_trips(source),
-                "{name} must retain exact structural trivia"
-            );
-            assert!(
-                parsed.roots.iter().all(|block| !block.raw.ends_with('\n')),
-                "{name} leaked document-owned trailing trivia into a root raw: {:?}",
-                parsed.roots
-            );
-        }
-    }
-
-    #[test]
-    fn nested_blank_continuation_lines_round_trip_byte_exactly() {
-        let source = concat!(
-            "- ### Synthetic parent\n",
-            "\t- First line,\n",
-            "\t  wrapped continuation\n",
-            "\t  \n",
-            "\t  middle paragraph\n",
-            "\t  \n",
-            "\t  final paragraph\n",
-            "- Synthetic sibling\n"
-        );
-
-        let parsed = parse(source);
-        assert_eq!(
-            parsed.roots[0].children[0].raw,
-            "First line,\nwrapped continuation\n\nmiddle paragraph\n\nfinal paragraph"
-        );
-        assert!(
-            markdown_round_trips(source),
-            "blank continuation lines must retain their Logseq continuation prefix"
-        );
-        assert_eq!(
-            serialize(&parsed),
-            source,
-            "parse/serialize must reproduce nested blank continuation bytes"
-        );
-    }
-
-    #[test]
-    fn between_block_blank_trivia_does_not_enter_continuation_content() {
-        let source = concat!(
-            "- First block\n",
-            "\n",
-            "- Second block\n",
-            "  continuation\n",
-            "\n",
-            "- Third block\n"
-        );
-
-        let parsed = parse_with_source_spans(source);
-        assert_eq!(parsed.blank_lines_before_blocks, [0, 1, 1]);
-        assert_eq!(
-            parsed
-                .document
-                .roots
-                .iter()
-                .map(|block| block.raw.as_str())
-                .collect::<Vec<_>>(),
-            ["First block", "Second block\ncontinuation", "Third block"]
-        );
-        assert!(markdown_round_trips(source));
-        assert_eq!(
-            serialize_with(&parsed.document, &SerializeOpts::detect(Some(source))),
-            source
-        );
-    }
-}
+#[path = "doc/property_fence_tests.rs"]
+mod property_fence_tests;
 
 #[cfg(test)]
-mod promoted_heading_tests {
-    use super::*;
+#[path = "doc/unclosed_fence_tests.rs"]
+mod unclosed_fence_outline_tests;
 
-    const NESTED_SOURCE: &str =
-        "# Project\n\t- child one\n\t- child two\n- sibling\n\t- nested sibling child";
-
-    fn assign_layout_identities(doc: &mut Document) -> Vec<StructuralLayoutIdentity> {
-        fn visit(
-            blocks: &mut [DocBlock],
-            locator: &mut Vec<u32>,
-            identities: &mut Vec<StructuralLayoutIdentity>,
-        ) {
-            for (position, block) in blocks.iter_mut().enumerate() {
-                locator.push(position as u32);
-                block.uuid = format!("block-{}", identities.len());
-                identities.push(StructuralLayoutIdentity {
-                    locator: locator.clone(),
-                    block_identity: block.uuid.clone(),
-                });
-                visit(&mut block.children, locator, identities);
-                locator.pop();
-            }
-        }
-
-        let mut identities = Vec::new();
-        visit(&mut doc.roots, &mut Vec::new(), &mut identities);
-        identities
-    }
-
-    fn semantic_locators(doc: &Document) -> Vec<(Vec<u32>, String)> {
-        fn visit(
-            blocks: &[DocBlock],
-            locator: &mut Vec<u32>,
-            locators: &mut Vec<(Vec<u32>, String)>,
-        ) {
-            for (position, block) in blocks.iter().enumerate() {
-                locator.push(position as u32);
-                locators.push((locator.clone(), block.raw.clone()));
-                visit(&block.children, locator, locators);
-                locator.pop();
-            }
-        }
-
-        let mut locators = Vec::new();
-        visit(&doc.roots, &mut Vec::new(), &mut locators);
-        locators
-    }
-
-    #[test]
-    fn lsdoc_nested_outline_promotes_only_the_heading_owned_run() {
-        let doc = parse(NESTED_SOURCE);
-        assert_eq!(doc.pre_block, None);
-        assert_eq!(doc.roots.len(), 2);
-        assert_eq!(doc.roots[0].raw, "# Project");
-        assert_eq!(
-            doc.roots[0]
-                .children
-                .iter()
-                .map(|block| block.raw.as_str())
-                .collect::<Vec<_>>(),
-            vec!["child one", "child two"]
-        );
-        assert_eq!(doc.roots[1].raw, "sibling");
-        assert_eq!(doc.roots[1].children.len(), 1);
-        assert_eq!(doc.roots[1].children[0].raw, "nested sibling child");
-        assert_eq!(
-            serialize_with(&doc, &SerializeOpts::detect(Some(NESTED_SOURCE))),
-            NESTED_SOURCE
-        );
-        assert!(markdown_round_trips(NESTED_SOURCE));
-    }
-
-    #[test]
-    fn heading_led_markdown_admission_reuses_identical_canonical_parse() {
-        crate::outline::reset_parse_attempts();
-
-        assert!(markdown_structurally_round_trips(NESTED_SOURCE));
-        assert_eq!(
-            crate::outline::parse_attempts(),
-            1,
-            "an identical canonical source must reuse the exact original parse"
-        );
-    }
-
-    #[test]
-    fn heading_layout_identity_uses_page_parse_events_without_per_block_outline_parses() {
-        let mut doc = parse(NESTED_SOURCE);
-        doc.roots[0].uuid = "heading-layout-identity".into();
-        let identities = layout_identities_of(&doc);
-
-        crate::outline::reset_parse_attempts();
-        let opts = SerializeOpts::detect_with_layout_identities(Some(NESTED_SOURCE), &identities);
-        assert_eq!(
-            crate::outline::parse_attempts(),
-            1,
-            "layout retention must consume heading facts from the page parse"
-        );
-        assert_eq!(serialize_with(&doc, &opts), NESTED_SOURCE);
-    }
-
-    #[test]
-    fn lsdoc_extended_unbulleted_heading_forms_remain_byte_exact_with_layout_identity() {
-        for source in [
-            "####### Heading\n\t- child\n- sibling",
-            "###\n\t- child\n- sibling",
-        ] {
-            let mut doc = parse(source);
-            doc.roots[0].uuid = "extended-heading-layout-identity".into();
-            let identities = layout_identities_of(&doc);
-            let opts = SerializeOpts::detect_with_layout_identities(Some(source), &identities);
-            assert_eq!(serialize_with(&doc, &opts), source, "source={source:?}");
-        }
-    }
-
-    #[test]
-    fn edited_promoted_heading_keeps_nested_layout_while_identity_stays_first() {
-        let mut doc = parse(NESTED_SOURCE);
-        let identities = assign_layout_identities(&mut doc);
-        let opts = SerializeOpts::detect_with_layout_identities(Some(NESTED_SOURCE), &identities);
-
-        doc.roots[0].children[0].raw = "child one edited".into();
-        doc.roots.push(DocBlock::new("later sibling"));
-
-        assert_eq!(
-            serialize_with(&doc, &opts),
-            "# Project\n\t- child one edited\n\t- child two\n- sibling\n\t- nested sibling child\n- later sibling"
-        );
-    }
-
-    #[test]
-    fn identity_bound_nonleading_atx_headings_survive_unrelated_edits() {
-        let source = "- editable root\n## first section\n### second section\n- trailing root";
-        let mut doc = parse(source);
-        let identities = assign_layout_identities(&mut doc);
-        let opts = SerializeOpts::detect_with_layout_identities(Some(source), &identities);
-
-        doc.roots[0].raw = "edited root".into();
-
-        let rendered = serialize_with(&doc, &opts);
-        assert_eq!(
-            rendered,
-            "- edited root\n## first section\n### second section\n- trailing root"
-        );
-        assert_eq!(parse(&rendered), doc);
-    }
-
-    /// A page mixing a bulleted heading with later UNBULLETED ones survives a
-    /// full parse/serialize round trip untouched.
-    ///
-    /// This is not a hypothetical layout: real Logseq journals contain it. A
-    /// journal page in Martin's graph opens with a bulleted `- # A` and then
-    /// carries unbulleted `# B` / `# C` siblings, each owning tab-indented
-    /// children — both forms in one file, written by Logseq itself. A
-    /// canonicalisation that re-bulleted the later headings would churn those
-    /// bytes on save.
-    #[test]
-    fn a_page_mixing_bulleted_and_unbulleted_headings_round_trips_byte_for_byte() {
-        let source =
-            "- # A\n\t- first child\n# B\n\t- second child\n# C\n\t- third child\n\t- fourth child";
-        let mut doc = parse(source);
-        let identities = assign_layout_identities(&mut doc);
-        let opts = SerializeOpts::detect_with_layout_identities(Some(source), &identities);
-
-        assert_eq!(doc.roots.len(), 3);
-        assert_eq!(doc.roots[0].raw, "# A");
-        assert_eq!(doc.roots[1].raw, "# B");
-        assert_eq!(doc.roots[2].raw, "# C");
-        assert_eq!(doc.roots[2].children.len(), 2);
-
-        let rendered = serialize_with(&doc, &opts);
-        assert_eq!(rendered, source, "an untouched page must not be rewritten");
-        assert_eq!(parse(&rendered), doc);
-    }
-
-    /// Losing its children must not put a bullet in front of a leading heading.
-    ///
-    /// OG writes a leading Markdown heading WITHOUT a bullet
-    /// (`og@6e7afa8` `src/main/frontend/modules/file/core.cljs`
-    /// `transform-content`: `markdown-top-heading?` is
-    /// `(and markdown? (= parent page left) (number? heading))`, whose prefix is
-    /// `""`). That condition says nothing about children, so a childless
-    /// leading heading stays unbulleted. Adding one here would rewrite the
-    /// user's file on an edit that only deleted a child.
-    #[test]
-    fn edited_promoted_heading_without_children_stays_unbulleted_before_later_sibling() {
-        let source = "# Project\n\t- only child\n- sibling";
-        let mut doc = parse(source);
-        let identities = assign_layout_identities(&mut doc);
-        let opts = SerializeOpts::detect_with_layout_identities(Some(source), &identities);
-        doc.roots[0].children.clear();
-        let expected_locators = semantic_locators(&doc);
-
-        let rendered = serialize_with(&doc, &opts);
-        assert_eq!(rendered, "# Project\n- sibling");
-        let reparsed = parse(&rendered);
-        assert_eq!(reparsed, doc);
-        assert_eq!(semantic_locators(&reparsed), expected_locators);
-    }
-
-    /// Same rule as
-    /// [`edited_promoted_heading_without_children_stays_unbulleted_before_later_sibling`],
-    /// with the heading as the page's only block.
-    #[test]
-    fn edited_promoted_heading_without_children_stays_unbulleted_as_sole_root() {
-        let source = "# Project\n\t- only child";
-        let mut doc = parse(source);
-        let identities = assign_layout_identities(&mut doc);
-        let opts = SerializeOpts::detect_with_layout_identities(Some(source), &identities);
-        doc.roots[0].children.clear();
-        let expected_locators = semantic_locators(&doc);
-
-        let rendered = serialize_with(&doc, &opts);
-        assert_eq!(rendered, "# Project");
-        let reparsed = parse(&rendered);
-        assert_eq!(reparsed, doc);
-        assert_eq!(semantic_locators(&reparsed), expected_locators);
-    }
-
-    #[test]
-    fn edited_promoted_heading_non_heading_raw_canonicalizes_complete_tree() {
-        let mut doc = parse(NESTED_SOURCE);
-        let identities = assign_layout_identities(&mut doc);
-        let opts = SerializeOpts::detect_with_layout_identities(Some(NESTED_SOURCE), &identities);
-        doc.roots[0].raw = "Project renamed".into();
-        let expected_locators = semantic_locators(&doc);
-
-        let rendered = serialize_with(&doc, &opts);
-        assert_eq!(
-            rendered,
-            "- Project renamed\n\t- child one\n\t- child two\n- sibling\n\t- nested sibling child"
-        );
-        let reparsed = parse(&rendered);
-        assert_eq!(reparsed, doc);
-        assert_eq!(semantic_locators(&reparsed), expected_locators);
-    }
-
-    #[test]
-    fn legacy_collapsed_heading_uses_parser_owned_same_level_topology() {
-        let source = "# Parent\ncollapsed:: true\n- child\n- sibling";
-        let doc = parse(source);
-        assert_eq!(doc.pre_block, None);
-        assert_eq!(doc.roots.len(), 3);
-        assert_eq!(doc.roots[0].raw, "# Parent\ncollapsed:: true");
-        assert_eq!(doc.roots[1].raw, "child");
-        assert_eq!(doc.roots[2].raw, "sibling");
-        assert!(doc.roots.iter().all(|root| root.children.is_empty()));
-        assert!(markdown_round_trips(source));
-        assert!(markdown_structurally_round_trips(source));
-    }
-
-    #[test]
-    fn edited_legacy_flat_heading_with_later_root_canonicalizes_without_reparenting() {
-        let source = "# Parent\ncollapsed:: true\n- child\n- sibling";
-        let mut doc = parse(source);
-        let identities = assign_layout_identities(&mut doc);
-        let opts = SerializeOpts::detect_with_layout_identities(Some(source), &identities);
-        doc.roots.push(DocBlock::new("later root"));
-
-        let rendered = serialize_with(&doc, &opts);
-        assert_eq!(
-            rendered,
-            "# Parent\ncollapsed:: true\n- child\n- sibling\n- later root"
-        );
-        let reparsed = parse(&rendered);
-        assert_eq!(reparsed, doc);
-        assert_eq!(
-            semantic_locators(&reparsed),
-            vec![
-                (vec![0], "# Parent\ncollapsed:: true".into()),
-                (vec![1], "child".into()),
-                (vec![2], "sibling".into()),
-                (vec![3], "later root".into()),
-            ]
-        );
-    }
-
-    #[test]
-    fn parser_owned_heading_boundary_after_child_run_is_representable() {
-        for source in [
-            "# Parent\n\t- child\n# Same-level boundary",
-            "## Parent\n\t\t- child\n# Shallower boundary",
-        ] {
-            let parsed = parse_with_source_spans(source);
-            assert_eq!(parsed.document.pre_block, None, "{source:?}");
-            assert_eq!(parsed.document.roots.len(), 2, "{source:?}");
-            assert_eq!(parsed.document.roots[0].children.len(), 1, "{source:?}");
-            assert!(markdown_structurally_round_trips(source), "{source:?}");
-        }
-    }
-
-    #[test]
-    fn promoted_heading_multi_level_indent_jump_preserves_semantics() {
-        let source = "# Project\n\t\t\t- deep child\n- sibling";
-        let parsed = parse_with_source_spans(source);
-        assert_eq!(
-            parsed.promoted_heading_layout,
-            Some(PromotedHeadingLayout::NestedChildren)
-        );
-        let expected = parsed.document.clone();
-        let opts = SerializeOpts::from_parsed_source(source, parsed, detect_indent(source), &[]);
-        let rendered = serialize_with(&expected, &opts);
-        assert_eq!(rendered, "# Project\n\t- deep child\n- sibling");
-        assert_eq!(parse(&rendered), expected);
-    }
-
-    #[test]
-    fn promoted_heading_mixed_indent_canonicalizes_without_reparenting() {
-        let source = "    # Parent\n      - child\n- root\n  - other child";
-        let parsed = parse_with_source_spans(source);
-        assert_eq!(
-            parsed.promoted_heading_layout,
-            Some(PromotedHeadingLayout::NestedChildren)
-        );
-        let expected = parsed.document.clone();
-        let expected_locators = semantic_locators(&expected);
-        let opts = SerializeOpts::from_parsed_source(source, parsed, detect_indent(source), &[]);
-
-        let rendered = serialize_with(&expected, &opts);
-        assert_eq!(
-            rendered,
-            "-     # Parent\n  - child\n- root\n  - other child"
-        );
-        let reparsed = parse(&rendered);
-        assert_eq!(reparsed, expected);
-        assert_eq!(semantic_locators(&reparsed), expected_locators);
-    }
-
-    #[test]
-    fn promoted_heading_with_lone_cr_fails_closed() {
-        let source = "# Project\r\t- child\r- sibling";
-        assert!(!markdown_round_trips(source));
-    }
-
-    #[test]
-    fn ordinary_heading_and_same_level_bullet_are_parser_owned_siblings() {
-        let source = "# Notes\n- ordinary root";
-        let doc = parse(source);
-        assert_eq!(doc.pre_block, None);
-        assert_eq!(doc.roots.len(), 2);
-        assert_eq!(doc.roots[0].raw, "# Notes");
-        assert_eq!(doc.roots[1].raw, "ordinary root");
-        assert!(markdown_structurally_round_trips(source));
-    }
-
-    #[test]
-    fn promoted_heading_keeps_blank_lines_on_both_sides() {
-        let source = "title:: Page\n\n# Project\n\n\t- child\n- sibling";
-        let doc = parse(source);
-        assert_eq!(doc.pre_block.as_deref(), Some("title:: Page"));
-        assert_eq!(doc.roots.len(), 2);
-        assert_eq!(doc.roots[0].raw, "# Project");
-        assert_eq!(doc.roots[0].children[0].raw, "child");
-        assert_eq!(
-            serialize_with(&doc, &SerializeOpts::detect(Some(source))),
-            source
-        );
-        assert!(markdown_round_trips(source));
-    }
-}
+#[cfg(test)]
+#[path = "doc/outline_authority_tests.rs"]
+mod outline_authority_tests;
 
 #[cfg(test)]
 mod org_container_outline_tests {
     use super::*;
+
+    /// Canonical save keeps the meaning (not the bytes) of the fixture.
+    fn parse_structural_round_trip(input: &str) -> Document {
+        let doc = parse(input);
+        let canonical = serialize_with(&doc, &SerializeOpts::detect(Some(input)));
+        assert_eq!(parse(&canonical), doc, "{input:?} -> {canonical:?}");
+        doc
+    }
 
     fn parse_round_trip(input: &str) -> Document {
         let doc = parse(input);
@@ -2117,53 +1106,50 @@ mod org_container_outline_tests {
     }
 
     #[test]
-    fn continuation_begin_cannot_swallow_same_lane_sibling() {
+    fn continuation_begin_region_owns_the_look_alike_sibling() {
+        // lsdoc (= mldoc) closes the quote at the first compatible END, so
+        // the `- sibling` line inside it is quote content (master HEAD).
         let input = "- parent\n  #+BEGIN_QUOTE\n- sibling\n  #+END_QUOTE";
-        let doc = parse(input);
+        let doc = parse_structural_round_trip(input);
         assert_eq!(doc.roots.len(), 1);
         assert_eq!(
             doc.roots[0].raw,
             "parent\n#+BEGIN_QUOTE\n- sibling\n#+END_QUOTE"
         );
         assert!(doc.roots[0].children.is_empty());
-        assert!(markdown_structurally_round_trips(input));
     }
 
     #[test]
-    fn nested_child_closer_lane_does_not_open_region() {
+    fn a_deeper_closer_lane_still_closes_the_region() {
         let tabbed = "- #+BEGIN_QUOTE\n\t- child\n\t  #+END_QUOTE";
-        let doc = parse(tabbed);
+        let doc = parse_structural_round_trip(tabbed);
         assert_eq!(doc.roots.len(), 1);
         assert!(doc.roots[0].children.is_empty());
         assert_eq!(doc.roots[0].raw, "#+BEGIN_QUOTE\n- child\n #+END_QUOTE");
-        assert!(markdown_structurally_round_trips(tabbed));
 
         let spaced = "- #+BEGIN_QUOTE\n  - child\n    #+END_QUOTE";
-        let doc = parse(spaced);
+        let doc = parse_structural_round_trip(spaced);
         assert_eq!(doc.roots.len(), 1);
         assert!(doc.roots[0].children.is_empty());
         assert_eq!(doc.roots[0].raw, "#+BEGIN_QUOTE\n- child\n  #+END_QUOTE");
-        assert!(markdown_structurally_round_trips(spaced));
     }
 
     #[test]
-    fn tab_child_before_matching_end_opens_no_region() {
+    fn tab_child_before_matching_end_is_region_content() {
         let input = "- \t#+BEGIN_QUOTE\n\t- x\n\t  #+END_QUOTE";
-        let doc = parse(input);
+        let doc = parse_structural_round_trip(input);
         assert_eq!(doc.roots.len(), 1);
         assert!(doc.roots[0].children.is_empty());
         assert_eq!(doc.roots[0].raw, "\t#+BEGIN_QUOTE\n- x\n #+END_QUOTE");
-        assert!(markdown_structurally_round_trips(input));
     }
 
     #[test]
-    fn continuation_opener_before_tab_child_opens_no_region() {
+    fn continuation_opener_before_tab_child_owns_it() {
         let input = "- p\n  \t#+BEGIN_QUOTE\n\t- x\n\t  #+END_QUOTE";
-        let doc = parse(input);
+        let doc = parse_structural_round_trip(input);
         assert_eq!(doc.roots.len(), 1);
         assert!(doc.roots[0].children.is_empty());
         assert_eq!(doc.roots[0].raw, "p\n\t#+BEGIN_QUOTE\n- x\n #+END_QUOTE");
-        assert!(markdown_structurally_round_trips(input));
     }
 
     #[test]
@@ -2227,20 +1213,17 @@ mod org_container_outline_tests {
     }
 
     #[test]
-    fn lone_cr_org_container_decision_is_a_known_lsdoc_parity_gap() {
+    fn lone_cr_org_container_parses_like_its_lf_twin() {
+        // K01a (og 15a) closed the former lsdoc parity gap: a lone `\r` is a
+        // line break, so the container decision is the LF file's.
         let old_mac = "- #+BEGIN_QUOTE\r  - x\r  #+END_QUOTE";
+        let lf = old_mac.replace('\r', "\n");
         let doc = parse(old_mac);
+        assert_eq!(doc, parse(&lf));
         assert_eq!(
             serialize_with(&doc, &SerializeOpts::detect(Some(old_mac))),
-            "- #+BEGIN_QUOTE\n\t- x\n\t  #+END_QUOTE"
+            serialize_with(&parse(&lf), &SerializeOpts::detect(Some(&lf)))
         );
-        assert_ne!(
-            serialize_with(&doc, &SerializeOpts::detect(Some(old_mac))),
-            old_mac
-        );
-        assert_eq!(doc.roots.len(), 1);
-        assert_eq!(doc.roots[0].children.len(), 1);
-        assert_eq!(doc.roots[0].children[0].raw, "x\n#+END_QUOTE");
     }
 }
 
@@ -2249,13 +1232,31 @@ mod projection_tests {
     use super::*;
 
     #[test]
+    fn runtime_uuid_is_not_serialized() {
+        let mut block = DocBlock::new("body");
+        block.uuid = "runtime-only".into();
+        let value = serde_json::to_value(&block).unwrap();
+        assert!(value.get("uuid").is_none());
+    }
+
+    #[test]
+    fn editing_raw_invalidates_projection() {
+        let mut block = DocBlock::new("before [[Old]]");
+        assert!(block.projection().refs_contains("Old"));
+        block.set_raw("after [[New]]");
+        assert_eq!(block.visible_text(), "after [[New]]");
+        assert!(block.projection().refs_contains("New"));
+        assert!(!block.projection().refs_contains("Old"));
+    }
+
+    #[test]
     fn projection_matches_direct_computation() {
         let b = DocBlock::new("TODO ship [[Foo Bar]] and #tag\nid:: abc\nprop:: secret");
         let p = b.projection();
         // visible_lower == canonical_fold(visible_text(raw)): property lines dropped
-        assert_eq!(p.visible_lower, "todo ship [[foo bar]] and #tag");
+        assert_eq!(b.visible_folded(true), "todo ship [[foo bar]] and #tag");
         assert!(
-            !p.visible_lower.contains("secret"),
+            !b.visible_folded(true).contains("secret"),
             "property values excluded"
         );
         // refs_contains ≡ references_page (case-insensitive, normalized)
@@ -2263,8 +1264,11 @@ mod projection_tests {
         assert!(p.refs_contains("TAG"));
         assert!(!p.refs_contains("nope"));
         // memoized (stable across calls); a clone recomputes to an equal projection
-        assert_eq!(b.projection().visible_lower, p.visible_lower);
-        assert_eq!(b.clone().projection().refs_norm, p.refs_norm);
+        assert_eq!(
+            b.projection().visible_folded(&b.raw, true),
+            b.visible_folded(true)
+        );
+        assert_eq!(b.clone().projection().refs_norm(), p.refs_norm());
     }
 
     #[test]
@@ -2291,13 +1295,74 @@ mod projection_tests {
         assert_eq!(DocBlock::new("TODO task [#A] later").priority(), None); // not after marker
     }
 
+    /// GH #623: the fallback storage is invisible to readers. A plain block stores
+    /// neither visible text; a block with a property trailer stores `visible`; a block
+    /// whose fold differs (case/accents) stores `visible_lower`; each reads back the
+    /// text the eager form returned.
+    #[test]
+    fn visible_text_fallbacks_store_only_what_differs() {
+        let plain = DocBlock::new("plain lowercase text");
+        assert_eq!(plain.visible_text(), "plain lowercase text");
+        assert_eq!(plain.visible_folded(true), "plain lowercase text");
+        assert_eq!(plain.visible_folded(false), "plain lowercase text");
+        let p = plain.projection();
+        assert!(p.visible.is_none() && p.visible_lower.is_none());
+
+        let cased = DocBlock::new("Caf\u{e9} Ship");
+        assert_eq!(cased.visible_text(), "Caf\u{e9} Ship");
+        assert_eq!(cased.visible_folded(true), "cafe ship");
+        assert_eq!(cased.visible_folded(false), "caf\u{e9} ship");
+        let p = cased.projection();
+        assert!(p.visible.is_none() && p.visible_lower.is_some());
+
+        let props = DocBlock::new("Body Text\nid:: abc\nkey:: v");
+        assert_eq!(props.visible_text(), "Body Text");
+        assert_eq!(props.visible_folded(true), "body text");
+        assert!(props.projection().visible.is_some());
+
+        let mut edited = DocBlock::new("Caf\u{e9}");
+        assert_eq!(edited.visible_folded(true), "cafe");
+        edited.set_raw("plain");
+        assert_eq!(edited.visible_text(), "plain");
+        assert_eq!(edited.visible_folded(true), "plain");
+        assert!(edited.projection().visible_lower.is_none());
+    }
+
+    /// GH #623: an ordinary block (no refs, properties, planning, tags, marker) carries
+    /// no `extra` allocation, and the inline projection slot stays small. The bound
+    /// is the point: the slot is paid by every block of every open graph.
+    #[test]
+    fn ordinary_block_projection_stays_small() {
+        assert!(
+            std::mem::size_of::<BlockProjection>() <= 112,
+            "BlockProjection grew to {} B; every block pays this inline (GH #623). \
+             Put rarely-set facets in ProjectionExtra.",
+            std::mem::size_of::<BlockProjection>()
+        );
+        let plain = DocBlock::new("nothing special here");
+        assert!(plain.projection().extra.is_none());
+        let rich = DocBlock::new("TODO [[Page]] #tag\nkey:: v");
+        assert!(rich.projection().extra.is_some());
+        assert_eq!(rich.projection().refs_norm().len(), 2);
+        assert_eq!(rich.marker(), Some("TODO"));
+    }
+
+    #[test]
+    fn accent_sensitive_projection_cache_rebuilds_after_edit() {
+        let mut block = DocBlock::new("café");
+        assert_eq!(block.visible_folded(true), "cafe");
+        assert_eq!(block.visible_folded(false), "café");
+        block.set_raw("cafe");
+        assert_eq!(block.visible_folded(false), "cafe");
+    }
+
     #[test]
     fn visible_text_drops_properties_utf8_safe() {
         // Multi-byte body before a trailing property block: the span→raw byte
         // mapping (`span - 2 + lead`) must land on char boundaries, not split UTF-8.
         let b = DocBlock::new("Über café résumé\nid:: 123\nkey:: v");
         assert_eq!(b.visible_text(), "Über café résumé");
-        assert_eq!(b.projection().visible_lower, "uber cafe resume");
+        assert_eq!(b.visible_folded(true), "uber cafe resume");
         // leading whitespace in raw (lead > 0) still maps correctly.
         let b2 = DocBlock::new("  héllo\nid:: 9");
         assert_eq!(b2.visible_text().trim(), "héllo");
@@ -2387,5 +1452,93 @@ mod projection_tests {
             plain.visible_text().contains("foo:: bar"),
             "org key:: stays visible"
         );
+    }
+}
+
+/// A `OnceLock` in the launch-checkpoint form: its value when built, else
+/// `None`; a `None` loads back unbuilt.
+mod once_cell_as_option {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::OnceLock;
+
+    pub(super) fn serialize<T: Serialize, S: Serializer>(
+        cell: &OnceLock<T>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        cell.get().serialize(s)
+    }
+
+    pub(super) fn deserialize<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<OnceLock<T>, D::Error> {
+        let cell = OnceLock::new();
+        if let Some(value) = Option::<T>::deserialize(d)? {
+            let _ = cell.set(value);
+        }
+        Ok(cell)
+    }
+}
+
+fn deserialize_shared_regions<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<std::sync::Arc<crate::block_regions::BlockRegions>, D::Error> {
+    Ok(shared_regions(
+        crate::block_regions::BlockRegions::deserialize(d)?,
+    ))
+}
+
+/// A block forest in the launch-checkpoint form (storage spec §7.6): each
+/// block's raw text, format flag, memoized projection (when built) and
+/// children. Runtime uuids are not stored; the loader reassigns them with
+/// `projection::assign_doc_runtime_ids`, as a parse does. The serde wire form of
+/// [`DocBlock`] cannot be used: it skips the uuid and the projection.
+pub struct CheckpointBlocks<'a>(pub &'a [DocBlock]);
+
+struct CheckpointBlockRef<'a>(&'a DocBlock);
+
+impl Serialize for CheckpointBlocks<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(self.0.iter().map(CheckpointBlockRef))
+    }
+}
+
+impl Serialize for CheckpointBlockRef<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeTuple;
+        let mut out = s.serialize_tuple(4)?;
+        out.serialize_element(&self.0.raw)?;
+        out.serialize_element(&self.0.is_org)?;
+        out.serialize_element(&self.0.proj.get())?;
+        out.serialize_element(&CheckpointBlocks(&self.0.children))?;
+        out.end()
+    }
+}
+
+/// Owned counterpart of [`CheckpointBlocks`]' elements.
+#[derive(Deserialize)]
+pub struct CheckpointBlock(String, bool, Option<BlockProjection>, Vec<CheckpointBlock>);
+
+impl CheckpointBlock {
+    /// The block, with an empty runtime uuid (assign one before use).
+    pub fn into_block(self) -> DocBlock {
+        let CheckpointBlock(raw, is_org, projection, children) = self;
+        let proj = std::sync::OnceLock::new();
+        if let Some(projection) = projection {
+            let _ = proj.set(projection);
+        }
+        DocBlock {
+            raw,
+            children: children.into_iter().map(Self::into_block).collect(),
+            uuid: String::new(),
+            is_org,
+            proj,
+        }
+    }
+}
+
+impl DocBlock {
+    /// Whether this block's projection memo is populated.
+    pub fn projection_is_built(&self) -> bool {
+        self.proj.get().is_some()
     }
 }

@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "version": "0.7.0",
+  "baseTag": "v0.7.0-beta.2",
+  "focusedAudit": {
+    "required": false,
+    "reason": "0.7.0 is Tine Beta 0.7.0-beta.2 (tested by Beta users since 2026-10-06) plus three per-batch-verified fixes and the identity/channel flip. No exact-tree release audit was run; that is an explicit deferral (Martin 2026-10-08), not an audit certification."
+  },
+  "items": [
+    {
+      "section": "Changed",
+      "text": "Stable Tine is now built from the Beta line: plain Markdown/Org files are the only storage, with no on-disk search index to build or repair. Beta keeps its separate app and update channel and continues with 0.7.x betas.",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-BETA-CHANNEL"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-BETA-CHANNEL are covered on this candidate's commits.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No workflow changes: the Guide never described the on-disk index, and graphs, settings and sessions carry over.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The website and its demo are rebuilt from master when 0.7.0 lands there (master merge step of this release); this candidate branch does not regenerate website/.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "The 0.7.0 announcement is written separately for Martin's review; it is not generated from this candidate.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Opening pages: a single page whose properties were followed by a blank line and then a `#+` directive (for example `title:: X`, a blank line, `#+description: y`, or an Org file-level property drawer before `#+title:`) made every link and tag fail with \"Couldn't open this page: task N panicked with message \\\"byte range starts at N+1 but ends at N\\\"\" and left `[[` completion with no pages. Such pages now open and keep their title, and a page whose title cannot be read no longer stops the rest of the graph from loading (GH #644, REG-OG-GH644).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-GH644"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-GH644 are covered on this candidate's commits.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A crash fix; pages simply open.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The website and its demo are rebuilt from master when 0.7.0 lands there (master merge step of this release); this candidate branch does not regenerate website/.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "The 0.7.0 announcement is written separately for Martin's review; it is not generated from this candidate.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "External edits: a page changed on disk (by Syncthing, Dropbox or another editor) stayed stale while one of its blocks was open in the editor, which includes leaving Tine for another app with the caret still in a block; it updated only after you pressed Escape or navigated away and back, and typing into the stale block then raised a conflict. The page now updates in place and the editor stays on the same block (found by its `id::`, else by its place in the outline), with the caret kept; if the change deleted that block the editor closes. A change still waits while text is being composed with an input method, and a different file taking the page's name is still refused while you edit (REG-OG-RELOAD-WHILE-EDITING).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-RELOAD-WHILE-EDITING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-RELOAD-WHILE-EDITING are covered on this candidate's commits.",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Files, external edits and backups says pages update while a block is being edited.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The website and its demo are rebuilt from master when 0.7.0 lands there (master merge step of this release); this candidate branch does not regenerate website/.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "The 0.7.0 announcement is written separately for Martin's review; it is not generated from this candidate.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Android (GH #654): the copy button on an image (on the picture itself and in the full-screen view) always answered \"Couldn't copy the image\", because the system clipboard plugin Tine used cannot put an image on the Android clipboard. Tine now stages the picture in its cache and puts it on the Android clipboard through the app's own file provider, which is how Android apps share images. What could not be checked without a device is whether pasting that clipboard image into a block adds it as a picture on every Android version (UI-OG-GH654).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH654"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH654 are covered on this candidate's commits.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No Guide page describes image copy.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The website and its demo are rebuilt from master when 0.7.0 lands there (master merge step of this release); this candidate branch does not regenerate website/.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "The 0.7.0 announcement is written separately for Martin's review; it is not generated from this candidate.",
+        "refs": []
+      }
+    }
+  ]
+}

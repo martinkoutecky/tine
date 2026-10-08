@@ -9,23 +9,16 @@
 //   1. Read the lsdoc git tag from crates/tine-core/Cargo.toml (the single source
 //      of truth) and from crates/lsdoc-wasm/Cargo.toml; REFUSE if they differ
 //      (the stale-wasm / forgot-to-bump guard, plan §7D).
-//   2. Refuse native/standalone shared-search lock drift, then wasm-pack build
-//      --target web (release), with LSDOC_TAG stamped in.
-//   3. Fingerprint the resolved search dependency closure plus its local leaf
-//      and wrapper sources, then stamp it beside the base64-encoded .wasm in
-//      src/render/wasm/lsdoc_wasm_bytes.ts. Copy the wasm-bindgen JS glue + .d.ts.
-//      These committed files are what the app and CI consume — no fetch, no wasm
-//      toolchain at app-build time.
-//
-// This generator intentionally does not update scripts/wasm-size-ceiling.json:
-// that ceiling is an independently reviewed measurement, not generated output.
+//   2. wasm-pack build --target web (release), LSDOC_TAG stamped in.
+//   3. Base64-encode the .wasm into src/render/wasm/lsdoc_wasm_bytes.ts and copy
+//      the wasm-bindgen JS glue + .d.ts. These committed files are what the app
+//      and CI consume — no fetch, no wasm toolchain at app-build time.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { searchLockAlignmentProblems, searchSourceFingerprint } from "./wasm-search-guard-lib.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = join(root, "src", "render", "wasm");
@@ -50,39 +43,31 @@ if (coreTag !== wrapTag) {
 }
 console.log(`lsdoc pin: ${coreTag} (tine-core == lsdoc-wasm ✓)`);
 
-function requireSearchLockAlignment() {
-  const problems = searchLockAlignmentProblems(root);
-  if (problems.length) {
-    console.error(
-      `\n  Native/Wasm shared-search dependency mismatch (build aborted):\n` +
-        problems.map((problem) => `    - ${problem}\n`).join("") +
-        `  Align crates/lsdoc-wasm/Cargo.lock with Cargo.lock before regenerating the Wasm.\n`,
-    );
-    process.exit(1);
-  }
-}
-
-// A first build has no standalone lock to compare yet. Once present, reject a
-// known split before paying for wasm-pack; verify again afterward in case Cargo
-// resolved a new version during this build.
-if (existsSync(join(root, "crates", "lsdoc-wasm", "Cargo.lock"))) {
-  requireSearchLockAlignment();
-}
-
 const tmp = mkdtempSync(join(tmpdir(), "lsdoc-wasm-"));
 console.log(`wasm-pack build → ${tmp}`);
 // Panic locations embed source paths. Without the remap the checkout's
 // absolute path (a private worktree name) ships in the public bytes, and the
-// measured size ceiling moves with the length of that name.
-const rustflags = [process.env.RUSTFLAGS, `--remap-path-prefix=${root}=/tine`].filter(Boolean).join(" ");
+// clean-source rebuild check can never match a build made in another checkout.
+// Dependency sources live under CARGO_HOME (a local toolchain dir here,
+// ~/.cargo on CI); remap it too so the bytes do not depend on the machine.
+const cargoHome = process.env.CARGO_HOME || join(homedir(), ".cargo");
+// A toolchain with rust-src installed reports std panic locations under its
+// local sysroot; map them back to the canonical /rustc/<commit> form that a
+// toolchain without rust-src already uses.
+const rustcCommit = execFileSync("rustc", ["-vV"], { cwd: root, encoding: "utf8" }).match(/^commit-hash: (\S+)$/m)?.[1];
+const sysroot = execFileSync("rustc", ["--print", "sysroot"], { cwd: root, encoding: "utf8" }).trim();
+if (!rustcCommit) throw new Error("build-wasm: rustc -vV reported no commit-hash");
+const rustflags = [
+  process.env.RUSTFLAGS,
+  `--remap-path-prefix=${root}=/tine`,
+  `--remap-path-prefix=${cargoHome}=/cargo`,
+  `--remap-path-prefix=${join(sysroot, "lib", "rustlib", "src", "rust")}=/rustc/${rustcCommit}`,
+].filter(Boolean).join(" ");
 execFileSync(
   "wasm-pack",
   ["build", "crates/lsdoc-wasm", "--target", "web", "--release", "--out-dir", tmp, "--out-name", "lsdoc_wasm"],
   { cwd: root, stdio: "inherit", env: { ...process.env, LSDOC_TAG: coreTag, RUSTFLAGS: rustflags } },
 );
-
-requireSearchLockAlignment();
-const searchSourceSha256 = searchSourceFingerprint(root);
 
 mkdirSync(outDir, { recursive: true });
 
@@ -95,7 +80,6 @@ const bytesTs =
   `// Base64-inlined so the parser loads with NO fetch (works under Tauri's custom\n` +
   `// protocol + offline). Regenerate via \`npm run build:wasm\`.\n` +
   `export const LSDOC_TAG = ${JSON.stringify(coreTag)};\n` +
-  `export const SEARCH_SOURCE_SHA256 = ${JSON.stringify(searchSourceSha256)};\n` +
   `export const WASM_B64 = ${JSON.stringify(b64)};\n`;
 writeFileSync(join(outDir, "lsdoc_wasm_bytes.ts"), bytesTs);
 
@@ -141,6 +125,39 @@ export function __tineReinstantiate() {
 }
 `,
 );
+// Tine trap isolation (I-2): a Rust panic is an `unreachable` trap (panic = "abort"), and a
+// trap leaves the instance unusable for the session (leaked shadow stack, RefCell borrows that
+// never release). Only two doors used to recover (parse_block_bundle_json, header_tokens_json);
+// every other door took the whole page down with the next call. Wrap EVERY export so a trap
+// (or a stack overflow) reinstantiates a fresh instance and surfaces as an ordinary Error
+// carrying the panic message (see `last_panic` in crates/lsdoc-wasm), never as a poisoned
+// instance. The rename keeps the generated bindings byte-identical underneath.
+const exported = [...glue.matchAll(/^export function (\w+)\(/gm)].map((m) => m[1]).filter((n) => n !== "__tineReinstantiate");
+if (!exported.includes("last_panic")) {
+  throw new Error("build-wasm: last_panic export missing from glue — crates/lsdoc-wasm lost its panic hook.");
+}
+for (const name of exported) glue = glue.replace(new RegExp(`^export function ${name}\\(`, "m"), `function __tine_raw_${name}(`);
+glue +=
+  `
+// Tine trap isolation: see scripts/build-wasm.mjs. One guarded export per wasm-bindgen export.
+function __tineGuard(name, raw) {
+  return function (...args) {
+    try {
+      return raw.apply(this, args);
+    } catch (e) {
+      const trapped =
+        (typeof WebAssembly !== 'undefined' && e instanceof WebAssembly.RuntimeError) ||
+        (e instanceof RangeError && /call stack/i.test(String(e.message)));
+      if (!trapped) throw e;
+      let panic = '';
+      try { panic = __tine_raw_last_panic(); } catch (_) { /* the instance is too far gone to answer */ }
+      __tineReinstantiate();
+      throw new Error('lsdoc-wasm trap in ' + name + ': ' + (panic || e.message), { cause: e });
+    }
+  };
+}
+` +
+  exported.map((n) => `export const ${n} = __tineGuard(${JSON.stringify(n)}, __tine_raw_${n});\n`).join("");
 writeFileSync(join(outDir, "lsdoc_wasm.js"), glue);
 
 let dts = readFileSync(join(tmp, "lsdoc_wasm.d.ts"), "utf8");

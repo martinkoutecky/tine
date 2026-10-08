@@ -1,11 +1,12 @@
-// GH #211: drag-reorder of right-sidebar open items — pointer drag reorders
+// GH #211 (master 0236f5785, og 22b): drag-reorder of right-sidebar open items — pointer drag reorders
 // within the list only, clicks under the threshold keep navigating, and the
 // reordered array persists through the existing rightSidebar owner.
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { loadSingle, resetStore } from "../store";
+import { resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
 import { route, openJournals } from "../router";
 import { applySidebarSession, rightSidebar, setRightSidebar } from "../ui";
 import { rowReorderClickSuppressed } from "./rowReorder";

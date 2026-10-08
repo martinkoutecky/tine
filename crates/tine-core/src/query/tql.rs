@@ -20,9 +20,12 @@ use sqlparser::ast::{
     BinaryOperator, Expr, FunctionArg, FunctionArgExpr, FunctionArguments, Spanned as _,
     UnaryOperator, Value as SqlValue, Visit, Visitor,
 };
-use sqlparser::dialect::SQLiteDialect;
 use sqlparser::parser::Parser;
-use sqlparser::tokenizer::Token;
+use sqlparser::tokenizer::{Token, Tokenizer};
+
+mod boolean;
+mod prepass;
+use prepass::*;
 
 use crate::query::ir::{
     decode_raw_hex, encode_raw_hex, Anchor, Attr, CapsuleError, CmpOp, Diagnostic, DiagnosticKind,
@@ -74,6 +77,7 @@ pub(crate) fn parse_tql_with_options(
                     original: text,
                     source: &pre.sql,
                     source_offset: pre.offset,
+                    origins: &pre.origins,
                     not_applicable: None,
                 };
                 let scope = match pre.anchor {
@@ -101,564 +105,20 @@ pub(crate) fn parse_tql_with_options(
 }
 
 // ---------------------------------------------------------------------------
-// 4.2.1 Pre-pass
-// ---------------------------------------------------------------------------
-
-struct PrePass {
-    sql: String,
-    anchor: Anchor,
-    /// The anchor token was the whole query: every row of the anchor.
-    empty: bool,
-    /// Where `sql` starts inside the ORIGINAL text — `Some` only when the
-    /// pre-pass rewrote NOTHING, so a byte offset into `sql` is also a byte
-    /// offset into text the author actually typed.
-    ///
-    /// §4.3.2 makes spans presentation metadata, and §7.4's retained
-    /// wrong-anchor leaf carries one. A span into desugared or run-lifted text
-    /// would point at characters the user never wrote, so when the pre-pass
-    /// rewrote anything this is `None` and the retained leaf is simply
-    /// unspanned. Nothing downstream depends on the span: the frontend finds
-    /// the retained leaves by walking the tree.
-    offset: Option<usize>,
-}
-
-/// Byte ranges of every `'…'` string literal, quotes included, with SQL's `''`
-/// doubling honoured.
-///
-/// **M18's invariant, not its letter.** The spec describes one lexical scan
-/// whose literal map every later step consults; the steps below re-derive the
-/// map after each rewrite instead, because a rewrite moves the offsets. What
-/// M18 buys — nothing inside a literal is ever recognised or rewritten,
-/// including a line beginning `-- ` inside a multi-line literal — is exactly
-/// what re-deriving preserves.
-fn literal_spans(text: &str) -> Vec<(usize, usize)> {
-    let bytes = text.as_bytes();
-    let mut spans = Vec::new();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i] != b'\'' {
-            i += 1;
-            continue;
-        }
-        let start = i;
-        i += 1;
-        while i < bytes.len() {
-            if bytes[i] == b'\'' {
-                if bytes.get(i + 1) == Some(&b'\'') {
-                    i += 2;
-                    continue;
-                }
-                i += 1;
-                break;
-            }
-            i += 1;
-        }
-        spans.push((start, i));
-    }
-    spans
-}
-
-fn inside_literal(spans: &[(usize, usize)], at: usize) -> bool {
-    spans.iter().any(|(start, end)| at >= *start && at < *end)
-}
-
-fn pre_pass(text: &str, diagnostics: &mut Vec<Diagnostic>) -> PrePass {
-    let (anchor, rest, offset) = take_anchor(text);
-    report_stray_anchor(text, &rest, offset, diagnostics);
-    report_unquoted_relative_dates(text, &rest, offset, diagnostics);
-    if rest.trim().is_empty() {
-        return PrePass {
-            sql: "true".to_string(),
-            anchor,
-            empty: true,
-            offset: None,
-        };
-    }
-    // **Disabled runs are isolated FIRST (§4.2.1, §4.3.2 R4).** A run's payload
-    // may be malformed — an unmatched quote or bracket — and scanning it as
-    // part of the surrounding text lets it swallow the next ACTIVE row, which
-    // is exactly the defect `-- task = '` followed by a valid row exposes.
-    // Each run's payload is desugared in isolation with this same scanner.
-    let lifted = lift_disabled_runs(&rest, diagnostics);
-    let sql = desugar(&lifted, diagnostics);
-    let unchanged = sql == rest;
-    PrePass {
-        sql,
-        anchor,
-        empty: false,
-        offset: unchanged.then_some(offset),
-    }
-}
-
-/// Step 1: a leading `@block` / `@page`, plus one following `and`.
-fn take_anchor(text: &str) -> (Anchor, String, usize) {
-    let lead = text.len() - text.trim_start().len();
-    let body = &text[lead..];
-    let lower = body.to_ascii_lowercase();
-    for (token, anchor) in [("@block", Anchor::Block), ("@page", Anchor::Page)] {
-        if !lower.starts_with(token) {
-            continue;
-        }
-        let after = &body[token.len()..];
-        if after
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_alphanumeric() || c == '_')
-        {
-            continue;
-        }
-        let trimmed = after.trim_start();
-        let skipped = after.len() - trimmed.len();
-        let mut consumed = lead + token.len() + skipped;
-        let rest = if trimmed.len() >= 3
-            && trimmed[..3].eq_ignore_ascii_case("and")
-            && !trimmed[3..]
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_alphanumeric() || c == '_')
-        {
-            consumed += 3;
-            &trimmed[3..]
-        } else {
-            trimmed
-        };
-        return (anchor, rest.to_string(), consumed);
-    }
-    (Anchor::Block, text.to_string(), 0)
-}
-
-/// `@` anywhere but the front is the author reaching for an anchor in the wrong
-/// place — never silently ignored.
-fn report_stray_anchor(
-    original: &str,
-    rest: &str,
-    offset: usize,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    let spans = literal_spans(rest);
-    if let Some(at) = rest
-        .char_indices()
-        .find(|(index, ch)| *ch == '@' && !inside_literal(&spans, *index))
-        .map(|(index, _)| index)
-    {
-        diagnostics.push(
-            Diagnostic::new(DiagnosticKind::Syntax, "the anchor goes first").with_span(Some(
-                Span::from_byte_range(original, offset + at, offset + at + 1),
-            )),
-        );
-    }
-}
-
-/// Where the next `[[x]]` / `#x` sits: a value position spells the page NAME as
-/// a string literal (OG `parse-property-value`, M19), anywhere else it is a
-/// `refs` leaf.
-#[derive(Clone, Copy, PartialEq)]
-enum Prev {
-    Start,
-    Cmp,
-    Boolean,
-    Open,
-    Comma,
-    Other,
-}
-
-/// Step 2: sugar. `[[x]]` → `ref('x')`, `#x` → `ref('x')`, except in value
-/// position where both become the string literal `'x'`.
-fn desugar(text: &str, diagnostics: &mut Vec<Diagnostic>) -> String {
-    let bytes = text.as_bytes();
-    let mut out = String::with_capacity(text.len());
-    let mut prev = Prev::Start;
-    // One entry per open paren: whether it is the list of an `in`, and
-    // whether the pre-pass inserted an outer paren around a quantifier call.
-    let mut parens: Vec<(bool, bool)> = Vec::new();
-    let mut pending_in = false;
-    let mut pending_quantifier = false;
-    let mut i = 0usize;
-    while i < bytes.len() {
-        let value_position = prev == Prev::Cmp
-            || (matches!(prev, Prev::Open | Prev::Comma)
-                && parens.last().is_some_and(|(in_list, _)| *in_list));
-        match bytes[i] {
-            b' ' | b'\t' | b'\r' | b'\n' => {
-                out.push(bytes[i] as char);
-                i += 1;
-            }
-            b'\'' => {
-                let end = literal_end(text, i);
-                out.push_str(&text[i..end]);
-                prev = Prev::Other;
-                i = end;
-            }
-            b'"' => {
-                let end = double_quoted_end(text, i);
-                out.push_str(&text[i..end]);
-                prev = Prev::Other;
-                i = end;
-            }
-            b'-' if bytes.get(i + 1) == Some(&b'-') => {
-                let end = text[i..].find('\n').map_or(bytes.len(), |at| i + at);
-                out.push_str(&text[i..end]);
-                i = end;
-            }
-            b'/' if bytes.get(i + 1) == Some(&b'*') => {
-                let end = text[i + 2..]
-                    .find("*/")
-                    .map_or(bytes.len(), |at| i + 2 + at + 2);
-                out.push_str(&text[i..end]);
-                i = end;
-            }
-            b'[' if text[i..].starts_with("[[") => {
-                match text[i + 2..].find("]]") {
-                    Some(offset) => {
-                        let inner = &text[i + 2..i + 2 + offset];
-                        emit_page_name(&mut out, inner, value_position);
-                        i += 2 + offset + 2;
-                    }
-                    None => {
-                        diagnostics.push(Diagnostic::new(
-                            DiagnosticKind::Syntax,
-                            "a page reference opened with `[[` is never closed",
-                        ));
-                        out.push_str(&text[i..]);
-                        i = bytes.len();
-                    }
-                }
-                prev = Prev::Other;
-            }
-            b'#' => {
-                let mut end = i + 1;
-                while end < bytes.len() {
-                    let ch = text[end..].chars().next().expect("boundary");
-                    if ch.is_whitespace() || matches!(ch, '(' | ')' | ',') {
-                        break;
-                    }
-                    end += ch.len_utf8();
-                }
-                if end == i + 1 {
-                    out.push('#');
-                } else {
-                    emit_page_name(&mut out, &text[i + 1..end], value_position);
-                }
-                prev = Prev::Other;
-                i = end;
-            }
-            b'(' => {
-                parens.push((pending_in, pending_quantifier));
-                pending_in = false;
-                pending_quantifier = false;
-                out.push('(');
-                prev = Prev::Open;
-                i += 1;
-            }
-            b')' => {
-                let wrapped_quantifier = parens.pop().is_some_and(|(_, wrapped)| wrapped);
-                out.push(')');
-                if wrapped_quantifier {
-                    out.push(')');
-                }
-                prev = Prev::Other;
-                i += 1;
-            }
-            b',' => {
-                out.push(',');
-                prev = Prev::Comma;
-                i += 1;
-            }
-            b'=' | b'<' | b'>' | b'!' => {
-                let start = i;
-                while i < bytes.len() && matches!(bytes[i], b'=' | b'<' | b'>' | b'!') {
-                    i += 1;
-                }
-                out.push_str(&text[start..i]);
-                prev = Prev::Cmp;
-            }
-            byte if byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'.' => {
-                let start = i;
-                while i < bytes.len()
-                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'.')
-                {
-                    i += 1;
-                }
-                let word = &text[start..i];
-                let next = next_code_byte(text, i);
-                pending_quantifier = prev == Prev::Boolean
-                    && word.eq_ignore_ascii_case("any")
-                    && next.is_some_and(|at| bytes.get(at) == Some(&b'('));
-                // sqlparser treats `ANY` after a boolean operator as SQL's
-                // reserved quantified-comparison operator. An extra expression
-                // boundary makes the same token unambiguously the TQL function;
-                // the matching close is emitted by the paren frame above.
-                if pending_quantifier {
-                    out.push('(');
-                }
-                out.push_str(word);
-                pending_in = word.eq_ignore_ascii_case("in");
-                // The word-spelled comparison operators put the next token in
-                // value position exactly as `=` does.
-                prev = if ["like", "match", "between"]
-                    .iter()
-                    .any(|op| word.eq_ignore_ascii_case(op))
-                {
-                    Prev::Cmp
-                } else if word.eq_ignore_ascii_case("and") || word.eq_ignore_ascii_case("or") {
-                    Prev::Boolean
-                } else {
-                    Prev::Other
-                };
-            }
-            _ => {
-                let ch = text[i..].chars().next().expect("boundary");
-                out.push(ch);
-                prev = Prev::Other;
-                i += ch.len_utf8();
-            }
-        }
-    }
-    out
-}
-
-/// Next non-comment token byte. Quantifier calls remain calls when SQL comments
-/// separate their name and argument list, and comment payload is never scanned.
-fn next_code_byte(text: &str, mut at: usize) -> Option<usize> {
-    let bytes = text.as_bytes();
-    loop {
-        while bytes.get(at).is_some_and(|byte| byte.is_ascii_whitespace()) {
-            at += 1;
-        }
-        if bytes.get(at) == Some(&b'-') && bytes.get(at + 1) == Some(&b'-') {
-            at = text[at..]
-                .find('\n')
-                .map_or(bytes.len(), |end| at + end + 1);
-            continue;
-        }
-        if bytes.get(at) == Some(&b'/') && bytes.get(at + 1) == Some(&b'*') {
-            at = text[at + 2..]
-                .find("*/")
-                .map_or(bytes.len(), |end| at + 2 + end + 2);
-            continue;
-        }
-        return (at < bytes.len()).then_some(at);
-    }
-}
-
-/// End offset for a double-quoted SQL token, including doubled quotes. The
-/// pre-pass must not recognize a quantifier name inside quoted text.
-fn double_quoted_end(text: &str, start: usize) -> usize {
-    let bytes = text.as_bytes();
-    let mut i = start + 1;
-    while i < bytes.len() {
-        if bytes[i] == b'"' {
-            if bytes.get(i + 1) == Some(&b'"') {
-                i += 2;
-                continue;
-            }
-            return i + 1;
-        }
-        i += 1;
-    }
-    bytes.len()
-}
-
-fn emit_page_name(out: &mut String, inner: &str, value_position: bool) {
-    let quoted = format!("'{}'", inner.replace('\'', "''"));
-    if value_position {
-        out.push_str(&quoted);
-    } else {
-        out.push_str("ref(");
-        out.push_str(&quoted);
-        out.push(')');
-    }
-}
-
-/// The end offset (exclusive) of the `'…'` literal starting at `start`.
-fn literal_end(text: &str, start: usize) -> usize {
-    let bytes = text.as_bytes();
-    let mut i = start + 1;
-    while i < bytes.len() {
-        if bytes[i] == b'\'' {
-            if bytes.get(i + 1) == Some(&b'\'') {
-                i += 2;
-                continue;
-            }
-            return i + 1;
-        }
-        i += 1;
-    }
-    bytes.len()
-}
-
-/// `today` is a vocabulary identifier; every other relative date is quoted. An
-/// unquoted `-7d` would parse as arithmetic on an unknown identifier, so it is
-/// caught here where the suggestion can name the fix.
-fn report_unquoted_relative_dates(
-    original: &str,
-    text: &str,
-    offset: usize,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    let spans = literal_spans(text);
-    let bytes = text.as_bytes();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if !matches!(bytes[i], b'-' | b'+') || inside_literal(&spans, i) {
-            i += 1;
-            continue;
-        }
-        let mut end = i + 1;
-        while end < bytes.len() && bytes[end].is_ascii_digit() {
-            end += 1;
-        }
-        if end == i + 1 || !bytes.get(end).is_some_and(|b| b"dwmy".contains(b)) {
-            i += 1;
-            continue;
-        }
-        let unit = end;
-        end += 1;
-        if bytes
-            .get(end)
-            .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
-        {
-            i += 1;
-            continue;
-        }
-        let literal = &text[i..=unit];
-        diagnostics.push(
-            Diagnostic {
-                suggestions: vec![format!("quote relative dates: '{literal}'")],
-                ..Diagnostic::new(
-                    DiagnosticKind::Syntax,
-                    format!("`{literal}` is a relative date and must be quoted"),
-                )
-            }
-            .with_span(Some(Span::from_byte_range(
-                original,
-                offset + i,
-                offset + end,
-            ))),
-        );
-        i = end;
-    }
-}
-
-/// One `-- ` run and where it sits in the text.
-struct DisabledRun {
-    first_line: usize,
-    last_line: usize,
-    indent: String,
-    payload: String,
-}
-
-/// Step 3 (Q12): a maximal run of `-- ` lines becomes a positional
-/// `<connector> off(<rest>)`. Positional replacement is what makes nesting free:
-/// a run inside a parenthesized group becomes an `off()` operand of that group.
-fn lift_disabled_runs(text: &str, diagnostics: &mut Vec<Diagnostic>) -> String {
-    let spans = literal_spans(text);
-    let mut lines: Vec<String> = Vec::new();
-    let mut kinds: Vec<Option<(String, String)>> = Vec::new();
-    let mut offset = 0usize;
-    for line in text.split('\n') {
-        let indent_len = line.len() - line.trim_start().len();
-        let trimmed = line.trim();
-        let starts_in_literal = inside_literal(&spans, offset + indent_len);
-        let payload = if starts_in_literal || trimmed == "--" || !trimmed.starts_with("-- ") {
-            None
-        } else {
-            let rest = trimmed[3..].trim();
-            (!rest.is_empty()).then(|| (line[..indent_len].to_string(), rest.to_string()))
-        };
-        kinds.push(payload);
-        lines.push(line.to_string());
-        offset += line.len() + 1;
-    }
-
-    let mut runs: Vec<DisabledRun> = Vec::new();
-    let mut index = 0usize;
-    while index < kinds.len() {
-        let Some((indent, payload)) = kinds[index].clone() else {
-            index += 1;
-            continue;
-        };
-        let first_line = index;
-        let mut joined = payload;
-        index += 1;
-        while let Some(Some((_, next))) = kinds.get(index) {
-            joined.push(' ');
-            joined.push_str(next);
-            index += 1;
-        }
-        runs.push(DisabledRun {
-            first_line,
-            last_line: index - 1,
-            indent,
-            payload: joined,
-        });
-    }
-
-    for run in &runs {
-        let (connector, rest) = split_connector(&run.payload);
-        // The isolated operand gets the same sugar treatment as active text,
-        // from the same scanner (§4.2.1) — a disabled `[[a]]` is still a ref.
-        // Its diagnostics are disabled: a broken row a user turned off must not
-        // invalidate the query (§3.5).
-        let mut inner_diagnostics = Vec::new();
-        let sugared = desugar(rest, &mut inner_diagnostics);
-        let parses = parse_expr_guarded(&sugared).is_ok();
-        if parses {
-            for diagnostic in inner_diagnostics {
-                diagnostics.push(Diagnostic {
-                    disabled: true,
-                    ..diagnostic
-                });
-            }
-        }
-        let replacement = if parses {
-            format!("{}{connector}off({sugared})", run.indent)
-        } else {
-            // **Captured before the surrounding parse, never substituted with
-            // `off(false)` (§4.2.1, R4).** `off(false)` is a lie the author
-            // never wrote and it destroys the payload; the capsule keeps the
-            // exact bytes, so a save and reopen returns the same broken row and
-            // the renderer can show what the author typed. The disabled
-            // diagnostic that goes with it is derived at lowering, from the
-            // `off(…)` this replacement puts around it.
-            format!(
-                "{}{connector}off(raw_hex('{}', '{}'))",
-                run.indent,
-                DiagnosticKind::Syntax.capsule_name(),
-                encode_raw_hex(rest)
-            )
-        };
-        lines[run.first_line] = replacement;
-        for line in run.first_line + 1..=run.last_line {
-            lines[line] = String::new();
-        }
-    }
-    lines.join("\n")
-}
-
-fn split_connector(payload: &str) -> (&'static str, &str) {
-    for (word, connector) in [("and", "and "), ("or", "or ")] {
-        if payload.len() > word.len()
-            && payload[..word.len()].eq_ignore_ascii_case(word)
-            && payload.as_bytes()[word.len()].is_ascii_whitespace()
-        {
-            return (connector, payload[word.len()..].trim_start());
-        }
-    }
-    ("", payload)
-}
-
-// ---------------------------------------------------------------------------
 // 4.2.2 Guards
 // ---------------------------------------------------------------------------
 
 fn parse_expr_guarded(sql: &str) -> Result<Expr, String> {
-    let dialect = SQLiteDialect {};
+    let dialect = boolean::BooleanDialect;
+    let tokens = Tokenizer::new(&dialect, sql)
+        .tokenize_with_location()
+        .map_err(|error| error.to_string())?;
+    boolean::admit_tokens(&tokens)?;
     let mut parser = Parser::new(&dialect)
         .with_recursion_limit(RECURSION_LIMIT)
-        .try_with_sql(sql)
-        .map_err(|error| error.to_string())?;
+        .with_tokens_with_locations(tokens);
     let expr = parser.parse_expr().map_err(|error| error.to_string())?;
+    boolean::admit_ast(&expr)?;
     if parser.peek_token().token != Token::EOF {
         return Err(format!(
             "the query ends after a complete condition; `{}` is left over",
@@ -747,6 +207,7 @@ struct Lower<'a> {
     /// `original` byte offset of `source[0]`, or `None` when the pre-pass
     /// rewrote something and the two no longer line up.
     source_offset: Option<usize>,
+    origins: &'a [usize],
     /// **The one deferred rejection (§7.4).** A name that resolves on the OTHER
     /// row is not unknown — it does not APPLY here — and §7.4 requires the
     /// author's leaf to stay in the tree instead of collapsing to `False`. The
@@ -775,68 +236,23 @@ impl Lower<'_> {
     }
 
     fn filter(&mut self, expr: &Expr, scope: Scope) -> Filter {
+        if let Some((and, items)) = boolean::items(expr) {
+            let items = items.iter().map(|item| self.filter(item, scope)).collect();
+            return if and {
+                Filter::and(items)
+            } else {
+                Filter::or(items)
+            };
+        }
         match expr {
             Expr::Nested(inner) => self.filter(inner, scope),
             Expr::UnaryOp {
                 op: UnaryOperator::Not,
                 expr,
             } => Filter::not(self.filter(expr, scope)),
-            Expr::BinaryOp {
-                left,
-                op: BinaryOperator::And,
-                right,
-            } => {
-                let mut items = Vec::new();
-                self.and_items(left, scope, &mut items);
-                self.and_items(right, scope, &mut items);
-                Filter::and(items)
-            }
-            Expr::BinaryOp {
-                left,
-                op: BinaryOperator::Or,
-                right,
-            } => {
-                let mut items = Vec::new();
-                self.or_items(left, scope, &mut items);
-                self.or_items(right, scope, &mut items);
-                Filter::or(items)
-            }
             // Everything else is ONE condition of the author's, which is the
             // unit §7.4 retains when it does not apply to the anchor.
             leaf => self.leaf(leaf, scope),
-        }
-    }
-
-    /// sqlparser represents an unparenthesized boolean chain as a binary tree.
-    /// That associativity is parser bookkeeping, not an authored query-sheet
-    /// group: collect one n-ary group while a same-kind child is directly part
-    /// of the chain. `Expr::Nested` deliberately stops this walk, so explicit
-    /// parentheses survive as a nested same-kind group.
-    fn and_items(&mut self, expr: &Expr, scope: Scope, items: &mut Vec<Filter>) {
-        match expr {
-            Expr::BinaryOp {
-                left,
-                op: BinaryOperator::And,
-                right,
-            } => {
-                self.and_items(left, scope, items);
-                self.and_items(right, scope, items);
-            }
-            other => items.push(self.filter(other, scope)),
-        }
-    }
-
-    fn or_items(&mut self, expr: &Expr, scope: Scope, items: &mut Vec<Filter>) {
-        match expr {
-            Expr::BinaryOp {
-                left,
-                op: BinaryOperator::Or,
-                right,
-            } => {
-                self.or_items(left, scope, items);
-                self.or_items(right, scope, items);
-            }
-            other => items.push(self.filter(other, scope)),
         }
     }
 
@@ -848,8 +264,16 @@ impl Lower<'_> {
     /// on the way through, discard the `False` it produced and keep the exact
     /// source text of this condition as a `Raw` capsule instead.
     fn leaf(&mut self, expr: &Expr, scope: Scope) -> Filter {
+        let diagnostic_start = self.diagnostics.len();
         let filter = self.condition(expr, scope);
         let Some((message, suggestions)) = self.not_applicable.take() else {
+            if self.disabled_depth > 0 && !matches!(filter, Filter::Raw { .. }) {
+                if let Some(diagnostic) = self.diagnostics.get(diagnostic_start) {
+                    let kind = diagnostic.kind;
+                    let (text, _) = self.retained_slice(expr);
+                    return Filter::raw(text, kind);
+                }
+            }
             return filter;
         };
         let (text, span) = self.retained_slice(expr);
@@ -887,7 +311,12 @@ impl Lower<'_> {
             return (expr.to_string(), None);
         };
         let end = balanced_end(self.source, start, end);
-        let text = self.source[start..end].to_string();
+        let authored = self.origins.get(start).zip(self.origins.get(end));
+        let text = authored
+            .and_then(|(from, to)| self.original.get(*from..*to))
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| self.source.get(start..end).expect("SQL span boundaries"))
+            .to_string();
         let span = self
             .source_offset
             .map(|offset| Span::from_byte_range(self.original, offset + start, offset + end));
@@ -935,9 +364,23 @@ impl Lower<'_> {
                 any: false,
                 expr,
                 pattern,
-                escape_char: _,
+                escape_char,
             } => {
-                let filter = self.like(expr, pattern, scope);
+                let escape = match escape_char {
+                    None => '\\',
+                    Some(value) => match &value.value {
+                        SqlValue::SingleQuotedString(text) if text.chars().count() == 1 => {
+                            text.chars().next().unwrap_or('\\')
+                        }
+                        _ => {
+                            return self.reject(
+                                DiagnosticKind::Syntax,
+                                "`escape` takes a one-character quoted string",
+                            )
+                        }
+                    },
+                };
+                let filter = self.like(expr, pattern, escape, scope);
                 if *negated {
                     Filter::not(filter)
                 } else {
@@ -1072,7 +515,7 @@ impl Lower<'_> {
     /// The pattern is always text, but whether `like` applies is decided by the
     /// TARGET's type, as `presence` does: §4.2.3 refuses it on a date or
     /// checkbox attribute.
-    fn like(&mut self, left: &Expr, pattern: &Expr, scope: Scope) -> Filter {
+    fn like(&mut self, left: &Expr, pattern: &Expr, escape: char, scope: Scope) -> Filter {
         let Some(target) = self.target(left, scope) else {
             return Filter::False;
         };
@@ -1086,7 +529,11 @@ impl Lower<'_> {
                 "a `like` pattern is a quoted string",
             );
         };
-        match starts_with_prefix(&text) {
+        // The IR's LIKE pattern always escapes with `\`; an `ESCAPE 'c'` clause
+        // is re-encoded into that convention here, so the stored pattern means
+        // what the author wrote and prints back without the clause.
+        let text = crate::query::text::reencode_like_escape(&text, escape);
+        match crate::query::text::LikePattern::compile(&text).starts_with_prefix() {
             Some(prefix) => self.build(target, CmpOp::StartsWith, Value::text(prefix), ty),
             None => self.build(target, CmpOp::Like, Value::text(text), ty),
         }
@@ -1268,7 +715,7 @@ impl Lower<'_> {
             DiagnosticKind::UnknownIdent,
             format!("`{name}` is not a field of this query"),
         );
-        self.diagnostics.push(self.suggested(diagnostic, name));
+        self.diagnose(self.suggested(diagnostic, name));
     }
 
     /// Attach the registry's nearest keys to a diagnostic that named an
@@ -1281,7 +728,7 @@ impl Lower<'_> {
     /// `reject` for the identifier-shaped rejections, which carry suggestions.
     fn reject_ident(&mut self, name: &str, message: impl Into<String>) -> Filter {
         let diagnostic = Diagnostic::new(DiagnosticKind::UnknownIdent, message);
-        self.diagnostics.push(self.suggested(diagnostic, name));
+        self.diagnose(self.suggested(diagnostic, name));
         Filter::False
     }
 
@@ -1296,6 +743,22 @@ impl Lower<'_> {
             Target::Attr { ty, .. } => *ty,
             Target::Prop { .. } | Target::Atom => literal_type(operand),
         }
+    }
+
+    /// A date literal; an out-of-range relative offset is a diagnostic, never
+    /// a garbage day (the [`DateToken`](crate::query::DateToken) grammar).
+    fn date(&mut self, text: &str) -> Option<Value> {
+        if crate::query::DateToken::parse(text) == Some(crate::query::DateToken::OutOfRange) {
+            self.reject(
+                DiagnosticKind::Syntax,
+                format!(
+                    "date offset `{text}` is out of range (at most {} years)",
+                    crate::query::MAX_DATE_OFFSET_YEARS
+                ),
+            );
+            return None;
+        }
+        Some(Value::date(text))
     }
 
     fn value(&mut self, expr: &Expr, ty: ValueType) -> Option<Value> {
@@ -1320,14 +783,14 @@ impl Lower<'_> {
             Expr::Value(value) => match &value.value {
                 SqlValue::SingleQuotedString(text) | SqlValue::DoubleQuotedString(text) => {
                     Some(if ty == ValueType::Date {
-                        Value::date(text)
+                        self.date(text)?
                     } else {
                         Value::text(text)
                     })
                 }
                 SqlValue::Number(text, _) => {
                     if ty == ValueType::Date {
-                        return Some(Value::date(text));
+                        return self.date(text);
                     }
                     match text.parse::<f64>() {
                         Ok(number) => Some(Value::Number { number }),
@@ -1500,16 +963,26 @@ impl Lower<'_> {
             );
         };
         match (ident.value.to_ascii_lowercase().as_str(), scope) {
-            ("children", Scope::Block) => {
+            (name @ ("children" | "parent" | "ancestors" | "descendants"), Scope::Block) => {
                 let pred = self.filter(pred, Scope::Block);
-                Filter::rel(Rel::Children, quant, pred)
+                Filter::rel(
+                    match name {
+                        "parent" => Rel::Parent,
+                        "ancestors" => Rel::Ancestors,
+                        "descendants" => Rel::Descendants,
+                        _ => Rel::Children,
+                    },
+                    quant,
+                    pred,
+                )
             }
             ("blocks", Scope::Page) => {
                 let pred = self.filter(pred, Scope::Block);
                 Filter::rel(Rel::Blocks, quant, pred)
             }
             // The relation exists — on the other row (§7.4).
-            (name @ "children", Scope::Page) | (name @ "blocks", Scope::Block) => {
+            (name @ ("children" | "parent" | "ancestors" | "descendants"), Scope::Page)
+            | (name @ "blocks", Scope::Block) => {
                 self.park_not_applicable(name, scope, Vec::new());
                 Filter::False
             }
@@ -1604,6 +1077,8 @@ fn block_attr(name: &str) -> Option<(Attr, ValueType)> {
         "priority" => (Attr::Priority, ValueType::Text),
         "scheduled" => (Attr::Scheduled, ValueType::Date),
         "deadline" => (Attr::Deadline, ValueType::Date),
+        "created_at" => (Attr::CreatedAt, ValueType::Date),
+        "last_modified_at" => (Attr::LastModifiedAt, ValueType::Date),
         _ => return None,
     })
 }
@@ -1614,6 +1089,7 @@ fn page_attr(name: &str) -> Option<(Attr, ValueType)> {
         "journal" => (Attr::Journal, ValueType::Checkbox),
         "day" => (Attr::Day, ValueType::Date),
         "namespace" => (Attr::Namespace, ValueType::Text),
+        "used_as_tag" => (Attr::UsedAsTag, ValueType::Checkbox),
         _ => return None,
     })
 }
@@ -1625,10 +1101,13 @@ fn attr_label(attr: Attr) -> &'static str {
         Attr::Priority => "priority",
         Attr::Scheduled => "scheduled",
         Attr::Deadline => "deadline",
+        Attr::CreatedAt => "created at",
+        Attr::LastModifiedAt => "last modified at",
         Attr::Name => "name",
         Attr::Journal => "journal",
         Attr::Day => "day",
         Attr::Namespace => "namespace",
+        Attr::UsedAsTag => "used as tag",
         Attr::Key => "key",
         Attr::Value => "value",
         Attr::AtomCount => "atom count",
@@ -1706,7 +1185,12 @@ fn op_applies(target: &Target, op: CmpOp, ty: ValueType) -> bool {
                 || matches!(
                     target,
                     Target::Attr {
-                        attr: Attr::Task | Attr::Priority | Attr::Scheduled | Attr::Deadline,
+                        attr: Attr::Task
+                            | Attr::Priority
+                            | Attr::Scheduled
+                            | Attr::Deadline
+                            | Attr::CreatedAt
+                            | Attr::LastModifiedAt,
                         ..
                     }
                 )
@@ -1751,44 +1235,22 @@ fn is_day_ordinal(text: &str) -> bool {
     text.len() == 8 && text.bytes().all(|byte| byte.is_ascii_digit())
 }
 
-/// `'2026-09-04'` or a relative `'-7d'` / `'+2w'` / `'-1m'` / `'-1y'`.
+/// `'2026-09-04'` or a SIGNED relative `'-7d'` / `'+2w'` / `'-1m'` / `'-1y'`:
+/// the subset of the [`DateToken`](crate::query::DateToken) grammar that types
+/// a quoted TQL literal as a date (Rule 3: one grammar, no local recognizer).
+/// An out-of-range offset still types as a date, so it is diagnosed.
 fn is_date_literal(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    if text.len() == 10 && bytes[4] == b'-' && bytes[7] == b'-' {
-        return text
-            .split('-')
-            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()));
+    use crate::query::DateToken;
+    if text != text.trim() {
+        return false;
     }
-    if bytes.len() >= 3 && matches!(bytes[0], b'-' | b'+') {
-        let unit = bytes[bytes.len() - 1];
-        return b"dwmy".contains(&unit) && bytes[1..bytes.len() - 1].iter().all(u8::is_ascii_digit);
-    }
-    false
-}
-
-/// `like 'p%'` with no other wildcard is `StartsWith` (range-lowerable, §4.2.3);
-/// `\%` / `\_` are literal characters and do not disqualify the pattern.
-fn starts_with_prefix(pattern: &str) -> Option<String> {
-    let mut prefix = String::new();
-    let mut chars = pattern.chars().peekable();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\\' => match chars.next() {
-                Some(escaped @ ('%' | '_' | '\\')) => prefix.push(escaped),
-                Some(other) => {
-                    prefix.push('\\');
-                    prefix.push(other);
-                }
-                None => prefix.push('\\'),
-            },
-            '_' => return None,
-            '%' => {
-                return chars.peek().is_none().then(|| prefix.clone());
-            }
-            other => prefix.push(other),
+    match DateToken::parse(text) {
+        Some(DateToken::Relative { .. } | DateToken::OutOfRange) => {
+            matches!(text.as_bytes().first(), Some(b'+' | b'-'))
         }
+        Some(DateToken::Stem(_)) => text.len() == 10 && text.as_bytes()[4] == b'-',
+        _ => false,
     }
-    None
 }
 
 fn function_name(function: &sqlparser::ast::Function) -> String {
@@ -1816,874 +1278,5 @@ fn function_args(function: &sqlparser::ast::Function) -> Vec<&Expr> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::query::ir::Leaf;
-
-    fn parse(text: &str) -> Query {
-        parse_tql(text, crate::query::registry::Registry::none()).0
-    }
-
-    fn ok(text: &str) -> Filter {
-        let query = parse(text);
-        assert!(
-            !query.is_invalid(),
-            "{text} did not parse: {:?}",
-            query.diagnostics
-        );
-        query.filter
-    }
-
-    fn rejected(text: &str) -> Vec<Diagnostic> {
-        let query = parse(text);
-        assert!(
-            query.is_invalid(),
-            "{text} was accepted as {:?}",
-            query.filter
-        );
-        query.diagnostics
-    }
-
-    fn content(text: &str) -> Filter {
-        Filter::attr(Attr::Content, CmpOp::Like, Value::text(text))
-    }
-
-    fn property(key: &str, quant: Quant, op: CmpOp, value: Value) -> Filter {
-        Filter::rel(
-            Rel::Props,
-            quant,
-            Filter::and(vec![
-                Filter::attr(Attr::Key, CmpOp::Eq, Value::text(key)),
-                Filter::attr(Attr::Value, op, value),
-            ]),
-        )
-    }
-
-    // -- §4.2.2 probe set ---------------------------------------------------
-
-    #[test]
-    fn quantifier_disambiguation_ignores_quoted_text_and_comments() {
-        let source = "content = 'any(children, true)' and content = \"every(children, true)\" -- none(children, true)\nor any(children, true)";
-        let rewritten = desugar(source, &mut Vec::new());
-        assert_eq!(
-            rewritten,
-            "content = 'any(children, true)' and content = \"every(children, true)\" -- none(children, true)\nor (any(children, true))"
-        );
-        assert_eq!(
-            desugar(
-                "content like '%x%' and any /* any in a comment */ (children, true)",
-                &mut Vec::new(),
-            ),
-            "content like '%x%' and (any /* any in a comment */ (children, true))"
-        );
-
-        let mut diagnostics = Vec::new();
-        let unchanged = pre_pass("content = 'any(children, true)'", &mut diagnostics);
-        assert_eq!(unchanged.offset, Some(0));
-        let rewritten = pre_pass(
-            "content like '%x%' and any(children, true)",
-            &mut diagnostics,
-        );
-        assert_eq!(rewritten.offset, None);
-        assert!(diagnostics.is_empty());
-    }
-
-    #[test]
-    fn probe_anchor_alone_is_every_row_of_the_anchor() {
-        let query = parse("@block");
-        assert_eq!(query.anchor, Anchor::Block);
-        assert_eq!(query.filter, Filter::True);
-        let query = parse("@page");
-        assert_eq!(query.anchor, Anchor::Page);
-        assert_eq!(query.filter, Filter::True);
-    }
-
-    #[test]
-    fn probe_page_anchor_with_one_condition() {
-        let query = parse("@page and #x");
-        assert_eq!(query.anchor, Anchor::Page);
-        assert_eq!(query.filter, Filter::page_ref("x"));
-    }
-
-    #[test]
-    fn probe_two_refs_conjoined() {
-        assert_eq!(
-            ok("#x and #y"),
-            Filter::and(vec![Filter::page_ref("x"), Filter::page_ref("y")])
-        );
-    }
-
-    #[test]
-    fn unparenthesized_boolean_chains_are_nary_but_parenthesized_groups_survive() {
-        let alpha = || content("%alpha%");
-        let beta = || content("%beta%");
-        let gamma = || content("%gamma%");
-        let delta = || content("%delta%");
-
-        assert_eq!(
-            ok("off(content like '%alpha%') and content like '%beta%' and content like '%gamma%' and content like '%delta%'"),
-            Filter::and(vec![Filter::off(alpha()), beta(), gamma(), delta()]),
-        );
-        assert_eq!(
-            ok("content like '%alpha%' or content like '%beta%' or content like '%gamma%' or content like '%delta%'"),
-            Filter::or(vec![alpha(), beta(), gamma(), delta()]),
-        );
-        assert_eq!(
-            ok("content like '%alpha%' and (content like '%beta%' and content like '%gamma%') and content like '%delta%'"),
-            Filter::and(vec![
-                alpha(),
-                Filter::and(vec![beta(), gamma()]),
-                delta(),
-            ]),
-        );
-        assert_eq!(
-            ok("(content like '%alpha%' or content like '%beta%') or content like '%gamma%' or content like '%delta%'"),
-            Filter::or(vec![
-                Filter::or(vec![alpha(), beta()]),
-                gamma(),
-                delta(),
-            ]),
-        );
-    }
-
-    #[test]
-    fn quantifier_calls_after_boolean_operators_keep_their_exact_ir() {
-        for (name, quant) in [
-            ("any", Quant::Any),
-            ("every", Quant::Every),
-            ("none", Quant::None),
-        ] {
-            let relation = || Filter::rel(Rel::Children, quant, Filter::page_ref("x"));
-            assert_eq!(
-                ok(&format!(
-                    "content like '%before%' and {name}(children, ref('x'))"
-                )),
-                Filter::and(vec![content("%before%"), relation()]),
-                "{name} after and",
-            );
-            assert_eq!(
-                ok(&format!(
-                    "content like '%before%' or {name}(children, ref('x'))"
-                )),
-                Filter::or(vec![content("%before%"), relation()]),
-                "{name} after or",
-            );
-        }
-
-        let query = parse(
-            "@page and any(blocks, content like '%parent owns%' and any(children, ref('ParentOwn')))",
-        );
-        assert!(
-            !query.is_invalid(),
-            "valid nested PageBlocks query: {:?}",
-            query.diagnostics
-        );
-        assert_eq!(query.anchor, Anchor::Page);
-        assert_eq!(
-            query.filter,
-            Filter::rel(
-                Rel::Blocks,
-                Quant::Any,
-                Filter::and(vec![
-                    content("%parent owns%"),
-                    Filter::rel(Rel::Children, Quant::Any, Filter::page_ref("ParentOwn")),
-                ]),
-            )
-        );
-    }
-
-    #[test]
-    fn page_hops_follow_the_current_nested_scope() {
-        let page_status = || property("status", Quant::Any, CmpOp::Eq, Value::text("active"));
-        let page_name = || Filter::attr(Attr::Name, CmpOp::Eq, Value::text("Projects"));
-
-        // At a page row, both the ordinary and explicit spellings name that
-        // current page. Neither gains a Page(Page(...)) hop.
-        assert_eq!(ok("@page and prop('status') = 'active'"), page_status());
-        assert_eq!(
-            ok("@page and page_prop('status') = 'active'"),
-            page_status()
-        );
-        assert_eq!(ok("@page and name = 'Projects'"), page_name());
-        assert_eq!(
-            ok("@block and page_prop('status') = 'active'"),
-            Filter::rel(Rel::Page, Quant::Any, page_status()),
-        );
-        assert_eq!(
-            ok("@block and page.name = 'Projects'"),
-            Filter::rel(Rel::Page, Quant::Any, page_name()),
-        );
-
-        // `blocks` switches the current row to Block even though the outer
-        // anchor remains Page. Explicit page targets must hop back from there.
-        assert_eq!(
-            ok("@page and any(blocks, page_prop('status') = 'active')"),
-            Filter::rel(
-                Rel::Blocks,
-                Quant::Any,
-                Filter::rel(Rel::Page, Quant::Any, page_status()),
-            ),
-        );
-        assert_eq!(
-            ok("@page and any(blocks, page.name = 'Projects')"),
-            Filter::rel(
-                Rel::Blocks,
-                Quant::Any,
-                Filter::rel(Rel::Page, Quant::Any, page_name()),
-            ),
-        );
-
-        // An ordinary property inside `blocks` stays on the current block.
-        assert_eq!(
-            ok("@page and any(blocks, prop('status') = 'active')"),
-            Filter::rel(Rel::Blocks, Quant::Any, page_status()),
-        );
-    }
-
-    #[test]
-    fn quantified_page_properties_and_page_tags_use_the_same_current_scope_rule() {
-        for (name, quant) in [
-            ("any", Quant::Any),
-            ("every", Quant::Every),
-            ("none", Quant::None),
-        ] {
-            let expected = property("status", quant, CmpOp::Eq, Value::text("active"));
-            assert_eq!(
-                ok(&format!(
-                    "@page and {name}(prop('status'), value = 'active')"
-                )),
-                expected,
-            );
-            assert_eq!(
-                ok(&format!(
-                    "@page and any(blocks, {name}(page_prop('status'), value = 'active'))"
-                )),
-                Filter::rel(
-                    Rel::Blocks,
-                    Quant::Any,
-                    Filter::rel(Rel::Page, Quant::Any, expected),
-                ),
-            );
-        }
-
-        let tag = || property("tags", Quant::Any, CmpOp::Eq, Value::text("work"));
-        assert_eq!(ok("@page and page_tag('work')"), tag());
-        assert_eq!(
-            ok("@block and page_tag('work')"),
-            Filter::rel(Rel::Page, Quant::Any, tag()),
-        );
-        assert_eq!(
-            ok("@page and any(blocks, page_tag('work'))"),
-            Filter::rel(
-                Rel::Blocks,
-                Quant::Any,
-                Filter::rel(Rel::Page, Quant::Any, tag()),
-            ),
-        );
-    }
-
-    #[test]
-    fn p6_flat_boolean_chain_and_nested_current_scope_are_structural() {
-        let flat = ok("off(content like '%alpha%') and content like '%beta%' and content like '%gamma%' and content like '%delta%'");
-        let Filter::And { items } = flat else {
-            panic!("expected And")
-        };
-        assert_eq!(items.len(), 4, "an unparenthesized chain is four siblings");
-        assert!(matches!(items.first(), Some(Filter::Off { .. })));
-
-        let nested = ok("@page and any(blocks, page_prop('status') = 'active')");
-        let Filter::Leaf {
-            leaf:
-                Leaf::Rel {
-                    rel: Rel::Blocks,
-                    pred,
-                    ..
-                },
-        } = nested
-        else {
-            panic!("expected page Blocks relation");
-        };
-        assert!(matches!(
-            pred.as_ref(),
-            Filter::Leaf {
-                leaf: Leaf::Rel { rel: Rel::Page, .. }
-            }
-        ));
-    }
-
-    #[test]
-    fn probe_bracket_ref_keeps_its_spaces() {
-        assert_eq!(ok("[[a b]]"), Filter::page_ref("a b"));
-    }
-
-    #[test]
-    fn probe_bracket_inside_a_literal_is_not_sugar() {
-        assert_eq!(
-            ok("content like '[[not sugar]]'"),
-            Filter::attr(Attr::Content, CmpOp::Like, Value::text("[[not sugar]]"))
-        );
-    }
-
-    #[test]
-    fn probe_ref_in_value_position_compares_by_page_name() {
-        assert_eq!(
-            ok("prop('k') = [[x]]"),
-            Filter::rel(
-                Rel::Props,
-                Quant::Any,
-                Filter::and(vec![
-                    Filter::attr(Attr::Key, CmpOp::Eq, Value::text("k")),
-                    Filter::attr(Attr::Value, CmpOp::Eq, Value::text("x")),
-                ])
-            )
-        );
-    }
-
-    #[test]
-    fn probe_ref_list_in_value_position_compares_by_page_name() {
-        assert_eq!(
-            ok("prop('k') in (#a, #b)"),
-            Filter::rel(
-                Rel::Props,
-                Quant::Any,
-                Filter::and(vec![
-                    Filter::attr(Attr::Key, CmpOp::Eq, Value::text("k")),
-                    Filter::attr(
-                        Attr::Value,
-                        CmpOp::In,
-                        Value::List {
-                            items: vec![Value::text("a"), Value::text("b")]
-                        }
-                    ),
-                ])
-            )
-        );
-    }
-
-    #[test]
-    fn probe_between_on_a_date_attribute() {
-        assert_eq!(
-            ok("scheduled between today and '+7d'"),
-            Filter::attr(
-                Attr::Scheduled,
-                CmpOp::Between,
-                Value::List {
-                    items: vec![Value::date("today"), Value::date("+7d")]
-                }
-            )
-        );
-    }
-
-    #[test]
-    fn probe_unquoted_relative_date_is_rejected_with_the_quoting_suggestion() {
-        let diagnostics = rejected("scheduled between today and -7d");
-        assert!(diagnostics.iter().any(|d| d
-            .suggestions
-            .contains(&"quote relative dates: '-7d'".to_string())));
-    }
-
-    #[test]
-    fn probe_a_disabled_line_becomes_an_off_operand() {
-        assert_eq!(ok("-- #x"), Filter::off(Filter::page_ref("x")));
-    }
-
-    #[test]
-    fn probe_two_runs_separated_by_a_bare_dash_line_stay_two_nodes() {
-        let filter = ok("-- #x\n--\n-- and #y");
-        assert_eq!(
-            filter,
-            Filter::and(vec![
-                Filter::off(Filter::page_ref("x")),
-                Filter::off(Filter::page_ref("y")),
-            ])
-        );
-    }
-
-    #[test]
-    fn probe_a_run_inside_a_group_is_an_operand_of_that_group() {
-        let filter = ok("#a and (\n#b\n-- or #c\n)");
-        assert_eq!(
-            filter,
-            Filter::and(vec![
-                Filter::page_ref("a"),
-                Filter::or(vec![
-                    Filter::page_ref("b"),
-                    Filter::off(Filter::page_ref("c")),
-                ]),
-            ])
-        );
-    }
-
-    #[test]
-    fn probe_a_dash_line_inside_a_multiline_literal_is_not_a_run() {
-        let filter = ok("content like 'a\n-- b\nc'");
-        assert_eq!(
-            filter,
-            Filter::attr(Attr::Content, CmpOp::Like, Value::text("a\n-- b\nc"))
-        );
-    }
-
-    #[test]
-    fn probe_off_written_by_hand() {
-        assert_eq!(ok("off(#x)"), Filter::off(Filter::page_ref("x")));
-    }
-
-    #[test]
-    fn probe_property_presence_and_blankness() {
-        assert_eq!(
-            ok("prop('k') is null"),
-            Filter::rel(
-                Rel::Props,
-                Quant::None,
-                Filter::attr(Attr::Key, CmpOp::Eq, Value::text("k"))
-            )
-        );
-        assert_eq!(
-            ok("prop('k') is not null"),
-            Filter::rel(
-                Rel::Props,
-                Quant::Any,
-                Filter::attr(Attr::Key, CmpOp::Eq, Value::text("k"))
-            )
-        );
-        assert_eq!(
-            ok("prop('k') = ''"),
-            Filter::rel(
-                Rel::Props,
-                Quant::Any,
-                Filter::and(vec![
-                    Filter::attr(Attr::Key, CmpOp::Eq, Value::text("k")),
-                    Filter::attr(Attr::AtomCount, CmpOp::Eq, Value::Number { number: 0.0 }),
-                ])
-            )
-        );
-    }
-
-    #[test]
-    fn probe_every_over_property_atoms() {
-        assert_eq!(
-            ok("every(prop('k'), value > 3)"),
-            Filter::rel(
-                Rel::Props,
-                Quant::Every,
-                Filter::and(vec![
-                    Filter::attr(Attr::Key, CmpOp::Eq, Value::text("k")),
-                    Filter::attr(Attr::Value, CmpOp::Gt, Value::Number { number: 3.0 }),
-                ])
-            )
-        );
-    }
-
-    #[test]
-    fn probe_content_like_is_a_like_leaf() {
-        assert_eq!(
-            ok("content like '%foo%'"),
-            Filter::attr(Attr::Content, CmpOp::Like, Value::text("%foo%"))
-        );
-    }
-
-    #[test]
-    fn probe_trailing_percent_is_starts_with() {
-        assert_eq!(
-            ok("page.name like 'proj/%'"),
-            Filter::rel(
-                Rel::Page,
-                Quant::Any,
-                Filter::attr(Attr::Name, CmpOp::StartsWith, Value::text("proj/"))
-            )
-        );
-    }
-
-    #[test]
-    fn probe_trailing_statement_is_rejected() {
-        rejected("content = 'x' DROP TABLE blocks");
-    }
-
-    #[test]
-    fn probe_subquery_is_rejected() {
-        rejected("prop('k') in (select 1)");
-    }
-
-    // -- vocabulary ---------------------------------------------------------
-
-    /// A registry holding exactly these property keys and nothing else, so a
-    /// suggestion test asserts on the keys it named rather than on a fixture
-    /// graph's incidental vocabulary.
-    fn registry_with(keys: &[&str]) -> crate::query::registry::Registry {
-        use crate::query::atom::AtomFormat;
-        use crate::query::registry::{build_registry, OwnerRow, OwnerType, PageMeta};
-        let config = crate::config::ParseConfig::default();
-        let rows = keys.iter().enumerate().map(|(index, key)| OwnerRow {
-            owner_type: OwnerType::Block,
-            owner_id: format!("block-{index}"),
-            page_id: "page".to_string(),
-            source_name: (*key).to_string(),
-            normalized_name: crate::doc::property_key_norm(key),
-            ordinal: 0,
-            value: "v".to_string(),
-        });
-        build_registry(
-            rows,
-            &|_| {
-                Some(PageMeta {
-                    format: AtomFormat::Markdown,
-                    name: "page".to_string(),
-                })
-            },
-            &config,
-        )
-        .expect("every row names the one page")
-    }
-
-    #[test]
-    fn an_unknown_identifier_is_named_and_never_rewritten() {
-        let diagnostics = rejected("frobnicate = 'x'");
-        assert!(diagnostics
-            .iter()
-            .any(|d| d.kind == DiagnosticKind::UnknownIdent));
-        // Against no registry there is nothing to suggest, and a guess is not
-        // a suggestion: the list is empty rather than invented.
-        assert!(diagnostics.iter().all(|d| d.suggestions.is_empty()));
-        // The filter is refused either way -- a suggestion never rewrites.
-        assert_eq!(parse("frobnicate = 'x'").filter, Filter::False);
-    }
-
-    #[test]
-    fn an_unknown_identifier_suggests_the_registrys_nearest_keys() {
-        let registry = registry_with(&["status", "statuses", "author", "unrelated"]);
-        let (query, _) = parse_tql("statuss = 'done'", &registry);
-        let diagnostic = query
-            .diagnostics
-            .iter()
-            .find(|d| d.kind == DiagnosticKind::UnknownIdent)
-            .expect("an unknown identifier is named");
-        // Best first: `statuses` shares one more leading character with
-        // `statuss` than `status` does, so Jaro-Winkler ranks it above.
-        assert_eq!(
-            diagnostic.suggestions,
-            vec!["prop('statuses')".to_string(), "prop('status')".to_string()],
-        );
-        // Suggesting is not rewriting (I-22): the query is still refused.
-        assert_eq!(query.filter, Filter::False);
-    }
-
-    #[test]
-    fn a_registry_key_that_is_nothing_like_the_identifier_is_not_suggested() {
-        let registry = registry_with(&["author", "unrelated"]);
-        let (query, _) = parse_tql("statuss = 'done'", &registry);
-        assert!(query.diagnostics.iter().all(|d| d.suggestions.is_empty()));
-    }
-
-    #[test]
-    fn an_unknown_function_and_an_unknown_relation_suggest_keys_too() {
-        let registry = registry_with(&["status"]);
-        let (function, _) = parse_tql("statuss('done')", &registry);
-        assert_eq!(
-            function
-                .diagnostics
-                .iter()
-                .find(|d| d.kind == DiagnosticKind::UnknownIdent)
-                .map(|d| d.suggestions.clone()),
-            Some(vec!["prop('status')".to_string()]),
-        );
-        let (relation, _) = parse_tql("any(statuss, content = 'x')", &registry);
-        assert_eq!(
-            relation
-                .diagnostics
-                .iter()
-                .find(|d| d.kind == DiagnosticKind::UnknownIdent)
-                .map(|d| d.suggestions.clone()),
-            Some(vec!["prop('status')".to_string()]),
-        );
-    }
-
-    #[test]
-    fn an_unknown_function_is_not_a_condition() {
-        assert!(rejected("frobnicate('x')")
-            .iter()
-            .any(|d| d.kind == DiagnosticKind::UnknownIdent));
-    }
-
-    #[test]
-    fn an_anchor_in_the_middle_says_where_it_belongs() {
-        let diagnostics = rejected("#x and @page");
-        assert!(diagnostics
-            .iter()
-            .any(|d| d.message == "the anchor goes first"));
-    }
-
-    // -- §7.4 / §3.5: the anchor mismatch is its own diagnostic, and the
-    // author's leaf is RETAINED rather than dropped ------------------------
-
-    /// The one enabled `NotApplicable` diagnostic of a query, or a panic.
-    fn not_applicable_of(query: &Query) -> &Diagnostic {
-        query
-            .diagnostics
-            .iter()
-            .find(|d| d.kind == DiagnosticKind::NotApplicable)
-            .unwrap_or_else(|| {
-                panic!(
-                    "expected a NotApplicable diagnostic, got {:?}",
-                    query.diagnostics
-                )
-            })
-    }
-
-    fn retained_raw(filter: &Filter) -> (&str, DiagnosticKind, Option<Span>) {
-        match filter {
-            Filter::Raw { text, kind, span } => (text.as_str(), *kind, *span),
-            other => panic!("expected a retained Raw leaf, got {other:?}"),
-        }
-    }
-
-    /// K4: `like` is checked against the ATTRIBUTE's type (§4.2.3 marks it ✗
-    /// for dates and checkboxes), not the pattern's. Before K4 the parser
-    /// passed the pattern's Text type, so `scheduled like '2026%'` was
-    /// accepted and then silently matched nothing.
-    #[test]
-    fn like_on_a_date_or_checkbox_attribute_is_a_syntax_diagnostic() {
-        for (source, what) in [
-            ("scheduled like '2026%'", "`scheduled`"),
-            ("deadline like '%09%'", "`deadline`"),
-            ("page.day like '2026%'", "`day`"),
-            ("page.journal like 't%'", "`journal`"),
-        ] {
-            let query = parse(source);
-            assert!(
-                query.diagnostics.iter().any(|diagnostic| {
-                    diagnostic.kind == DiagnosticKind::Syntax
-                        && diagnostic.message == format!("`like` does not apply to {what}")
-                }),
-                "{source}: {:?}",
-                query.diagnostics
-            );
-        }
-        // The text attributes keep `like`.
-        for source in [
-            "task like 'DO%'",
-            "page.namespace like '%x%'",
-            "content like '%x%'",
-        ] {
-            assert!(parse(source).diagnostics.is_empty(), "{source}");
-        }
-    }
-
-    #[test]
-    fn a_block_attribute_at_the_page_anchor_is_retained_as_not_applicable() {
-        let query = parse("@page and task = 'TODO'");
-        let diagnostic = not_applicable_of(&query);
-        assert_eq!(diagnostic.message, "`task` does not apply to pages");
-        assert!(!diagnostic.disabled);
-        // These four plain inputs are pre-pass-unchanged, so the span points
-        // into the text the author actually typed.
-        assert!(
-            diagnostic.span.is_some(),
-            "a pre-pass-unchanged input is spanned"
-        );
-        let (text, kind, span) = retained_raw(&query.filter);
-        assert_eq!(text, "task = 'TODO'");
-        assert_eq!(kind, DiagnosticKind::NotApplicable);
-        assert!(span.is_some());
-    }
-
-    #[test]
-    fn a_block_relation_at_the_page_anchor_is_retained_as_not_applicable() {
-        let query = parse("@page and any(children, true)");
-        assert_eq!(
-            not_applicable_of(&query).message,
-            "`children` does not apply to pages"
-        );
-        let (text, kind, span) = retained_raw(&query.filter);
-        assert_eq!(text, "any(children, true)");
-        assert_eq!(kind, DiagnosticKind::NotApplicable);
-        assert!(span.is_some());
-    }
-
-    #[test]
-    fn a_page_relation_at_the_block_anchor_is_retained_as_not_applicable() {
-        let query = parse("@block and any(blocks, true)");
-        assert_eq!(
-            not_applicable_of(&query).message,
-            "`blocks` does not apply to blocks"
-        );
-        let (text, kind, _) = retained_raw(&query.filter);
-        assert_eq!(text, "any(blocks, true)");
-        assert_eq!(kind, DiagnosticKind::NotApplicable);
-    }
-
-    #[test]
-    fn a_bare_page_attribute_at_the_block_anchor_suggests_the_page_hop() {
-        let query = parse("@block and journal = true");
-        let diagnostic = not_applicable_of(&query);
-        assert_eq!(diagnostic.message, "`journal` does not apply to blocks");
-        assert_eq!(diagnostic.suggestions, vec!["page.journal".to_string()]);
-        let (text, kind, _) = retained_raw(&query.filter);
-        assert_eq!(text, "journal = true");
-        assert_eq!(kind, DiagnosticKind::NotApplicable);
-    }
-
-    #[test]
-    fn a_not_applicable_leaf_keeps_its_place_among_its_siblings() {
-        let query = parse("@page and name = 'x' and task = 'TODO'");
-        let Filter::And { items } = &query.filter else {
-            panic!("expected the surrounding and, got {:?}", query.filter);
-        };
-        assert_eq!(items.len(), 2);
-        assert_eq!(
-            items[0],
-            Filter::attr(Attr::Name, CmpOp::Eq, Value::text("x"))
-        );
-        assert_eq!(retained_raw(&items[1]).0, "task = 'TODO'");
-    }
-
-    #[test]
-    fn a_genuinely_unknown_name_is_still_an_unknown_identifier() {
-        let query = parse("@page and nonsense = 1");
-        assert!(query
-            .diagnostics
-            .iter()
-            .all(|d| d.kind != DiagnosticKind::NotApplicable));
-        assert!(query
-            .diagnostics
-            .iter()
-            .any(|d| d.kind == DiagnosticKind::UnknownIdent));
-        assert_eq!(query.filter, Filter::False);
-    }
-
-    #[test]
-    fn a_disabled_wrong_row_leaf_carries_a_disabled_diagnostic() {
-        let query = parse("@page and off(task = 'TODO')");
-        let diagnostic = not_applicable_of(&query);
-        assert!(diagnostic.disabled);
-        assert!(!query.is_invalid());
-        let Filter::Off { inner } = &query.filter else {
-            panic!("expected an off wrapper, got {:?}", query.filter);
-        };
-        assert_eq!(retained_raw(inner).0, "task = 'TODO'");
-    }
-
-    #[test]
-    fn a_retained_wrong_row_leaf_survives_print_and_reparse() {
-        let query = parse("@page and task = 'TODO'");
-        let printed = crate::query::print::print_tql(&query);
-        let reparsed = parse(&printed);
-        let (text, kind, _) = retained_raw(&reparsed.filter);
-        assert_eq!(text, "task = 'TODO'");
-        assert_eq!(kind, DiagnosticKind::NotApplicable);
-        assert_eq!(
-            not_applicable_of(&reparsed).message,
-            "`task = 'TODO'` does not apply to this row"
-        );
-    }
-
-    #[test]
-    fn ordering_operators_do_not_apply_to_text() {
-        assert!(rejected("priority < 'B'")
-            .iter()
-            .any(|d| d.message.contains("does not apply")));
-    }
-
-    #[test]
-    fn match_applies_only_to_content() {
-        assert_eq!(
-            ok("content match 'foo'"),
-            Filter::attr(Attr::Content, CmpOp::Match, Value::text("foo"))
-        );
-        assert!(rejected("task match 'foo'")
-            .iter()
-            .any(|d| d.message.contains("does not apply")));
-    }
-
-    #[test]
-    fn planning_presence_is_a_presence_leaf() {
-        assert_eq!(
-            ok("scheduled is not null"),
-            Filter::attr(Attr::Scheduled, CmpOp::IsSet, Value::None)
-        );
-    }
-
-    #[test]
-    fn children_quantifiers_carry_the_element_scope() {
-        assert_eq!(
-            ok("any(children, task = 'TODO')"),
-            Filter::rel(
-                Rel::Children,
-                Quant::Any,
-                Filter::attr(Attr::Task, CmpOp::Eq, Value::text("TODO"))
-            )
-        );
-        assert_eq!(
-            ok("@page and any(blocks, task = 'TODO')"),
-            Filter::rel(
-                Rel::Blocks,
-                Quant::Any,
-                Filter::attr(Attr::Task, CmpOp::Eq, Value::text("TODO"))
-            )
-        );
-    }
-
-    #[test]
-    fn page_attributes_need_no_hop_at_the_page_anchor() {
-        assert_eq!(
-            ok("@page and journal = true"),
-            Filter::attr(Attr::Journal, CmpOp::Eq, Value::Bool { value: true })
-        );
-    }
-
-    #[test]
-    fn a_tag_leaf_is_the_blocks_own_inline_tags() {
-        assert_eq!(
-            ok("tag('x')"),
-            Filter::rel(
-                Rel::Tags,
-                Quant::Any,
-                Filter::attr(Attr::Name, CmpOp::Eq, Value::text("x"))
-            )
-        );
-    }
-
-    #[test]
-    fn a_page_tag_leaf_reads_the_pages_tags_property() {
-        let filter = ok("page_tag('work')");
-        let Filter::Leaf {
-            leaf: Leaf::Rel { rel: Rel::Page, .. },
-        } = &filter
-        else {
-            panic!("expected a page hop, got {filter:?}");
-        };
-    }
-
-    #[test]
-    fn the_recursion_limit_refuses_a_pathological_nesting() {
-        let deep = format!("{}#x{}", "(".repeat(200), ")".repeat(200));
-        rejected(&deep);
-    }
-
-    // -- pre-pass units -----------------------------------------------------
-
-    #[test]
-    fn literal_spans_honour_doubled_quotes() {
-        let text = "a 'b''c' d";
-        assert_eq!(literal_spans(text), vec![(2, 8)]);
-    }
-
-    #[test]
-    fn a_malformed_disabled_span_is_a_disabled_diagnostic_and_does_not_invalidate() {
-        let query = parse("#a\n-- and )(");
-        assert!(
-            !query.is_invalid(),
-            "a disabled diagnostic must not invalidate: {:?}",
-            query.diagnostics
-        );
-        assert!(query.diagnostics.iter().any(|d| d.disabled));
-    }
-
-    #[test]
-    fn starts_with_recognises_only_a_single_trailing_wildcard() {
-        assert_eq!(starts_with_prefix("proj/%"), Some("proj/".to_string()));
-        assert_eq!(starts_with_prefix("%proj%"), None);
-        assert_eq!(starts_with_prefix("pro_j%"), None);
-        assert_eq!(starts_with_prefix("proj"), None);
-        assert_eq!(starts_with_prefix("50\\%%"), Some("50%".to_string()));
-    }
-}
+#[path = "tql_tests.rs"]
+mod tests;

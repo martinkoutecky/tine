@@ -1,140 +1,43 @@
-// Small global UI state: theme, left sidebar, and the quick-switcher modal.
-import { batch, createMemo, createSignal, useContext } from "solid-js";
-import { isPublishedExport } from "./publishedBackend";
-import { graphBinding } from "./persistence";
-import type {
-  ConflictObject,
-  GraphMeta,
-  JournalConflict,
-  SyncConflict,
-  VcsMarkerConflict,
-  PageKind,
-  PageDto,
-} from "./types";
-import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
-import {
-  backend,
-  cachedConflictCapsules,
-  isTauri,
-  loadConflictCapsules,
-  retireConflictCapsule,
-  storeConflictCapsule,
-} from "./backend";
-import { pageIdentityKey } from "./pageIdentity";
-import { failureShape } from "./failureShape";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { reportUiFailure } from "./uiFailure";
+import { graphMeta, setGraphMeta, bumpGraphEpoch } from "./graphSession";
+import { pushToast } from "./toasts";
 import { isMobilePlatform } from "./nativeChrome";
-import { membershipChanged, resetFavoritesLayout, setMembershipSink, storedFavoritesLayout } from "./favoritesStore";
-import { reconcileLayout } from "./favoritesLayout";
+// Small global UI state: theme, left sidebar, and the quick-switcher modal.
+import { createEffect, createRoot, createSignal, useContext } from "solid-js";
+import type { JournalConflict, PageKind } from "./types";
+import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
+import { backend } from "./backend";
+import { setFocusFullscreen } from "./focusFullscreen";
+import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "./binding";
+import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned } from "./owned";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
-import { route, focusBlock, openPageTarget, scheduleSessionSave, type PageTarget } from "./router";
+import { route, focusBlock, scheduleSessionSave, openPageTarget } from "./routerBridge";
+import { beginConflictRefresh, conflictQueue, conflictRefreshCurrent, forgetArrivalNotice, setConflictInventory, trackArrivalNotice } from "./conflictQueue";
+export { conflictQueue, settleArtifactConflict, syncConflicts, setSyncConflicts } from "./conflictQueue";
+import { parseBlockPos, type PageTarget } from "./routeTypes";
 import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
-import { setJournalTitleFormat, isJournalTitle } from "./journal";
+import { DEFAULT_TITLE_FORMAT, setJournalTitleFormat } from "./journal";
+import { pageIdentityKey } from "./pageIdentity";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
-import type { PdfOwnership } from "./pdfOwnership";
-import { issue248Collector, issue248Now } from "./issue248Probe";
-import type { ExportNode } from "./editor/exportText";
-import type { QueryGroupingControl } from "./sheet/fields";
+import { navigationName } from "./pageIndex";
+import { forgetDeletedFavorite, renameFavorite } from "./favorites";
+import { changeGraphSetting, writeGraphSignal } from "./graphPreferences";
 
-const THEME_KEY = "logseq-claude.theme";
-export type ThemePreference = "light" | "dark" | "system";
-
-function loadThemePreference(): ThemePreference {
-  try {
-    const t = localStorage.getItem(THEME_KEY);
-    if (t === "dark" || t === "light" || t === "system") return t;
-  } catch {
-    // ignore
-  }
-  return "light";
-}
-
-// --- OS color-scheme signal (GH #193) -------------------------------------
-// Cached so add/removeEventListener always target the same MediaQueryList.
-let colorSchemeMql: MediaQueryList | null | undefined;
-function colorSchemeQuery(): MediaQueryList | null {
-  if (colorSchemeMql !== undefined) return colorSchemeMql;
-  try {
-    const q =
-      typeof window !== "undefined" && typeof window.matchMedia === "function"
-        ? window.matchMedia("(prefers-color-scheme: dark)")
-        : null;
-    colorSchemeMql = q ?? null;
-  } catch {
-    colorSchemeMql = null;
-  }
-  return colorSchemeMql;
-}
-
-function systemColorScheme(): "light" | "dark" {
-  const mql = colorSchemeQuery();
-  // Deterministic fallback to Tine's default when the platform signal is missing.
-  return mql && mql.matches ? "dark" : "light";
-}
-
-export function resolveTheme(pref: ThemePreference): "light" | "dark" {
-  return pref === "system" ? systemColorScheme() : pref;
-}
-
-export const [appearancePreference, setAppearancePreferenceSignal] =
-  createSignal<ThemePreference>(loadThemePreference());
-// `theme` stays the resolved light/dark mode for every existing consumer; the
-// raw preference (incl. "system") lives in appearancePreference.
-export const [theme, setTheme] = createSignal<"light" | "dark">(resolveTheme(appearancePreference()));
-
-let colorSchemeListening = false;
-const onColorSchemeChange = () => {
-  if (appearancePreference() === "system") applyTheme();
-};
-
-// The OS listener lives only while the preference is "system": manual Light/Dark
-// must ignore later system changes, and an idle listener is meaningless there.
-function syncColorSchemeListener(pref: ThemePreference) {
-  const mql = colorSchemeQuery();
-  if (!mql) return;
-  const want = pref === "system";
-  if (want === colorSchemeListening) return;
-  try {
-    if (want) {
-      mql.addEventListener("change", onColorSchemeChange);
-      colorSchemeListening = true;
-    } else {
-      mql.removeEventListener("change", onColorSchemeChange);
-      colorSchemeListening = false;
-    }
-  } catch {
-    // ignore
-  }
-}
-
-/** Apply the resolved theme (preference + OS signal) to the document. */
-export function applyTheme() {
-  const resolved = resolveTheme(appearancePreference());
-  setTheme(resolved);
-  document.documentElement.setAttribute("data-theme", resolved);
-  void backend().setSystemBarAppearance(resolved === "dark").catch(() => {});
-  syncColorSchemeListener(appearancePreference());
-}
-
-/** Persist and apply an appearance choice: Light / Dark / System (GH #193). */
-export function setAppearancePreference(pref: ThemePreference) {
-  setAppearancePreferenceSignal(pref);
-  try {
-    localStorage.setItem(THEME_KEY, pref);
-  } catch {
-    // ignore
-  }
-  applyTheme();
-}
+export { appearancePreference, theme, resolveTheme, applyTheme, setAppearancePreference } from "./themePreference";
+export type { ThemePreference } from "./themePreference";
+import { theme, setAppearancePreference } from "./themePreference";
 
 // Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
 export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
-/** Set the workflow and persist it to config.edn (graph-portable, like Logseq).
- *  The signal is the runtime source of truth; the file is re-read on next open. */
+/** Set workflow optimistically and persist to graph config; failure rolls back
+ * and toasts. The file is re-read on next graph open. */
 export function changeWorkflow(wf: "now" | "todo") {
-  if (wf === workflow() || isPublishedExport()) return;
-  setWorkflow(wf);
-  void backend().setPreferredWorkflow(wf).catch(() => {});
+  if (wf === workflow()) return;
+  writeGraphSignal("workflow", workflow, setWorkflow, wf,
+    (next) => backend().setPreferredWorkflow(next), "preferred workflow");
 }
 
 export function timetrackingEnabled(): boolean {
@@ -146,11 +49,7 @@ export function logbookWithSecondSupport(): boolean {
 }
 
 export function changeTimetrackingEnabled(enabled: boolean) {
-  if (isPublishedExport()) return;
-  const m = graphMeta();
-  if (m && m.enable_timetracking === enabled) return;
-  if (m) setGraphMeta({ ...m, enable_timetracking: enabled });
-  void backend().setTimetrackingEnabled(enabled).catch(() => {});
+  changeGraphSetting("enable_timetracking", enabled, (next) => backend().setTimetrackingEnabled(next!), "time tracking preference");
 }
 
 export function showBrackets(): boolean {
@@ -158,11 +57,7 @@ export function showBrackets(): boolean {
 }
 
 export function changeShowBrackets(on: boolean) {
-  if (isPublishedExport()) return;
-  const m = graphMeta();
-  if (m && m.show_brackets === on) return;
-  if (m) setGraphMeta({ ...m, show_brackets: on });
-  void backend().setShowBrackets(on).catch(() => {});
+  changeGraphSetting("show_brackets", on, (next) => backend().setShowBrackets(next), "bracket display preference");
 }
 
 /** In document mode, should plain Enter retain the ordinary structural split?
@@ -173,10 +68,7 @@ export function docModeEnterForNewBlock(): boolean {
 }
 
 export function changeDocModeEnterForNewBlock(on: boolean) {
-  const m = graphMeta();
-  if (m && m.doc_mode_enter_for_new_block === on) return;
-  if (m) setGraphMeta({ ...m, doc_mode_enter_for_new_block: on });
-  void backend().setDocModeEnterForNewBlock(on).catch(() => {});
+  changeGraphSetting("doc_mode_enter_for_new_block", on, (next) => backend().setDocModeEnterForNewBlock(next!), "document mode Enter preference");
 }
 
 /** Logical (Roam-like) outdenting leaves following siblings under their current
@@ -187,10 +79,7 @@ export function logicalOutdenting(): boolean {
 }
 
 export function changeLogicalOutdenting(on: boolean) {
-  const m = graphMeta();
-  if (m && m.logical_outdenting === on) return;
-  if (m) setGraphMeta({ ...m, logical_outdenting: on });
-  void backend().setLogicalOutdenting(on).catch(() => {});
+  changeGraphSetting("logical_outdenting", on, (next) => backend().setLogicalOutdenting(next!), "logical outdenting preference");
 }
 
 // --- appearance: accent color, wide mode, document mode (all persisted) ---
@@ -198,16 +87,25 @@ function loadStr(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
+    if (typeof localStorage !== "undefined") pushToast("Could not load display preference.", "error");
     return null;
   }
 }
-function saveStr(key: string, val: string | null) {
+function saveStr(key: string, val: string | null, what = "display preference"): boolean {
   try {
     if (val === null) localStorage.removeItem(key);
     else localStorage.setItem(key, val);
+    return true;
   } catch {
-    // ignore
+    pushToast(`Could not save ${what}.`, "error");
+    return false;
   }
+}
+
+/** Persist the device theme through the shared display-preference writer.
+ * Returns whether storage accepted it; errors show the existing toast. */
+export function persistThemePreference(key: string, value: string): boolean {
+  return saveStr(key, value);
 }
 
 const ACCENT_KEY = "logseq-claude.accent";
@@ -225,8 +123,8 @@ export function applyAccent() {
   }
 }
 export function changeAccent(c: string | null) {
+  if (!saveStr(ACCENT_KEY, c)) return;
   setAccentColor(c);
-  saveStr(ACCENT_KEY, c);
   applyAccent();
 }
 
@@ -236,13 +134,13 @@ export const [wideMode, setWideMode] = createSignal(loadStr(WIDE_KEY) === "1");
 export const [documentMode, setDocumentMode] = createSignal(loadStr(DOC_KEY) === "1");
 export function toggleWideMode() {
   const v = !wideMode();
+  if (!saveStr(WIDE_KEY, v ? "1" : null)) return;
   setWideMode(v);
-  saveStr(WIDE_KEY, v ? "1" : null);
 }
 export function toggleDocumentMode() {
   const v = !documentMode();
+  if (!saveStr(DOC_KEY, v ? "1" : null)) return;
   setDocumentMode(v);
-  saveStr(DOC_KEY, v ? "1" : null);
 }
 
 // --- typographic replacements (a "Differs from Logseq" opinion): render `->` as
@@ -262,23 +160,21 @@ function loadTypographyMode(): TypographyMode {
 export const [typographyMode, setTypographyModeSig] =
   createSignal<TypographyMode>(loadTypographyMode());
 export function setTypographyMode(m: TypographyMode) {
+  if (!saveStr(TYPO_KEY, m === "render" ? null : m)) return;
   setTypographyModeSig(m);
-  // Persist only the non-default; absent key ⇒ "render".
-  saveStr(TYPO_KEY, m === "render" ? null : m);
   bumpGraphEpoch(); // re-render open pages so the change is immediate
 }
 
-// --- editor auto-pairing (ON by default — GH #291 OG parity: Logseq inserts
-// the counterpart when you type `(`/`{`/`[`/`"`/backtick). Typing one inserts
-// the matching closer (caret between), wraps a selection, types through a
-// closer, and Backspace deletes an empty pair. The always-on OG-style
-// `[[`→`[[]]` page-ref pairing is separate (autoPairEdit) and unaffected.
-// Persisted house-style: null/absent = ON, explicit "0" = opt-out. ---
+// --- editor auto-pairing (ON by default, OG parity, GH #291): typing `(`/`[`/
+// `{`/`"`/backtick inserts the matching closer (caret between), wraps a selection,
+// types-through a closer, and Backspace deletes an empty pair. The always-on
+// OG-style `[[`→`[[]]` page-ref pairing is separate (autoPairEdit) and unaffected.
+// Local editor pref: only an explicit opt-out is stored ("0"). ---
 const AUTOPAIR_KEY = "logseq-claude.autopair";
 export const [autoPairing, setAutoPairingSig] = createSignal(loadStr(AUTOPAIR_KEY) !== "0");
 export function setAutoPairing(v: boolean) {
+  if (!saveStr(AUTOPAIR_KEY, v ? null : "0")) return;
   setAutoPairingSig(v);
-  saveStr(AUTOPAIR_KEY, v ? null : "0");
 }
 
 // --- first day of week (calendar + scheduled/deadline date pickers) ---
@@ -295,41 +191,53 @@ export function firstDayOfWeek(): number {
 }
 /** Persist a new first-day-of-week (Logseq index 0=Monday … 6=Sunday) to
  *  config.edn and update graphMeta optimistically so the calendar reflects it
- *  immediately. */
+ *  immediately; invalid indexes clamp to 0..6 and failed writes roll back with a toast. */
 export function changeStartOfWeek(l: number) {
   const n = Math.min(6, Math.max(0, Math.floor(l)));
-  const m = graphMeta();
-  if (m) setGraphMeta({ ...m, start_of_week: n });
-  void backend().setStartOfWeek(n).catch(() => {});
+  changeGraphSetting("start_of_week", n, (next) => backend().setStartOfWeek(next), "start of week");
 }
 
-/** Persist the format new pages/journals are created in (`:preferred-format`)
- *  and update graphMeta optimistically. Existing files keep their own format. */
+/** Persist new-page format and update graphMeta optimistically. Existing files
+ * keep their format; failed writes roll back with a toast. */
 export function changePreferredFormat(fmt: "md" | "org") {
-  const m = graphMeta();
-  if (!m || m.preferred_format === fmt) return;
-  setGraphMeta({ ...m, preferred_format: fmt });
-  void backend().setPreferredFormat(fmt).catch(() => {});
+  changeGraphSetting("preferred_format", fmt, (next) => backend().setPreferredFormat(next), "preferred page format");
 }
 
-/** Change the journal display-title format (`:journal/page-title-format`).
- *  Optimistically updates the in-memory formatter + meta and bumps the graph
- *  epoch so open journal titles re-render; persists to config.edn. Display-only
- *  — journal file names (`:journal/file-name-format`) are unaffected. */
+const journalTitleFormatScope = {};
+/** Apply the title format to UI state immediately, then start a backend
+ * config write. Journal files are never renamed here (master e6f9b6e1ceae);
+ * Settings proposes renames for title-named files. Return does not confirm
+ * persistence. Failure may roll UI back and toasts. */
 export function changeJournalTitleFormat(fmt: string) {
-  const next = fmt.trim() || "MMM do, yyyy";
+  const next = fmt.trim() || DEFAULT_TITLE_FORMAT;
   const m = graphMeta();
   if (!m || m.journal_page_title_format === next) return;
   setGraphMeta({ ...m, journal_page_title_format: next });
   setJournalTitleFormat(next);
   bumpGraphEpoch(); // immediate: re-render open journal titles with the new format
-  // The backend writes config.edn; the format reaches the graph, so the
-  // backend reopens it once and announces `graph-rebound` (applyGraphReopened),
-  // which rebinds and repaints against the reopened graph. No journal file is
-  // renamed (GH #543, audits R9-15b and R10-07).
-  void backend()
-    .setJournalTitleFormat(next)
-    .catch(() => {});
+  const owner = latestOwner(journalTitleFormatScope, "title", bindingOwner(), () => graphMeta()?.root === m.root && graphMeta()?.journal_page_title_format === next);
+  // Bump again once config.edn is written so the feed and the rename proposals
+  // reload against the new format rather than racing the write.
+  void writeOwned(owner, backend().setJournalTitleFormat(next, ["rename-page"]))
+    .then((result) => {
+      if (result.kind === "stale") return;
+      bumpGraphEpoch();
+      void refreshJournalConflicts(); // the queue surfaces any day the new format reveals
+    })
+    .catch((error) => {
+      if (owner()) {
+        setGraphMeta({ ...graphMeta()!, journal_page_title_format: m.journal_page_title_format });
+        setJournalTitleFormat(m.journal_page_title_format);
+        bumpGraphEpoch();
+      }
+      pushToast(`Could not save journal title format: ${String(error)}`, "error");
+    });
+}
+
+export function journalMigrationSkipMessage(result: import("./types").JournalMigrationResult): string | null {
+  const count = result.skipped.length;
+  if (!count) return null;
+  return `${count} journal file${count === 1 ? "" : "s"} skipped during migration: ${result.skipped.map(({ file, reason }) => `${file} (${reason})`).join("; ")}`;
 }
 
 // --- duplicate journal days (a date with >1 file, e.g. a date-stem file + a
@@ -337,397 +245,99 @@ export function changeJournalTitleFormat(fmt: string) {
 // the user to reconcile; we surface them rather than letting a day silently show
 // twice in the feed. ---
 export const [journalConflicts, setJournalConflicts] = createSignal<JournalConflict[]>([]);
-/** Re-fetch the duplicate-journal-day list.
- *
- *  No longer toasts. Duplicate days became conflict-queue objects, so they
- *  reach the user the same calm way every other standing conflict does — the
- *  badge, the dock, and the in-page panel on the day itself — instead of a
- *  sticky startup toast that could only point at Settings. Same reasoning as
- *  the sync-conflict startup toast removed on 2026-08-24 (`ed550670`); it was
- *  kept here only until this day had a surface of its own. The Settings list
- *  stays as the fallback, exactly as Backups does for sync copies. */
+// I-20: its reconcile actions take graph-relative paths; a switch empties it.
+clearOnBindingInvalidated(() => setJournalConflicts([]));
+/** Re-fetch the duplicate-journal-day list (Settings' fallback list and the
+ *  in-page file rows). It no longer toasts: a duplicate day is a conflict-queue
+ *  object, so it reaches the user through the badge, the overview and the day's
+ *  own page like every other standing conflict (master 9dc54e4a7). */
 export async function refreshJournalConflicts(): Promise<void> {
-  // The listing walks journals/ off the main thread, so overlapping refreshes
-  // can answer out of order; only the newest may publish (GH #543, R6-02).
-  const generation = ++journalConflictRefreshGeneration;
+  const owner = bindingOwner();
   try {
-    const conflicts = await backend().listJournalConflicts();
-    if (generation === journalConflictRefreshGeneration) setJournalConflicts(conflicts);
-  } catch {
-    /* best-effort */
+    const result = await readOwned(owner, backend().listJournalConflicts());
+    if (result.kind === "stale") return;
+    setJournalConflicts(result.value);
+  } catch (error) {
+    // A failed listing must not read as "no duplicate days": say so, but only
+    // for the graph that asked (a switch already emptied the list).
+    if (owner()) pushToast(`Could not check for duplicate journal days: ${String(error)}`, "error");
   }
 }
-let journalConflictRefreshGeneration = 0;
 
-// --- sync-tool conflict copies (Syncthing/Dropbox `*.sync-conflict-*` files).
-// Excluded from the page list; surfaced here so the user can review + merge them
-// (Settings → Backups & recovery) instead of them rotting as garbage pages. ---
-export const [syncConflicts, setSyncConflicts] = createSignal<SyncConflict[]>([]);
-// Pages whose on-disk bytes carry unresolved VCS merge markers (git/Fossil).
-// Readable but quarantined from saves; surfaced in the same Settings area and
-// as a banner on the affected page.
-export const [vcsMarkerConflicts, setVcsMarkerConflicts] = createSignal<VcsMarkerConflict[]>([]);
-/** Whether the page loaded from `path` is quarantined by VCS merge markers. */
-export function vcsMarkerConflictFor(path: string | undefined): VcsMarkerConflict | undefined {
-  return path ? vcsMarkerConflicts().find((c) => c.path === path) : undefined;
-}
-// --- Concord L3: one conflict queue. Disk artifacts (conflict copies and
-// VCS-marker pages) are derived afresh; live save conflicts are app-private
-// capsules because their retained draft does not exist on disk. Neither source
-// writes metadata into the graph. The combined queue drives one calm badge and
-// the in-page resolver. ---
-const [conflictQueue, setConflictQueueSignal] = createSignal<ConflictObject[]>([]);
-export { conflictQueue };
-let artifactConflictQueue: ConflictObject[] = [];
-const liveSaveConflicts = new Map<string, ConflictObject>();
-const LIVE_CONFLICT_STORE_KEY = "tine.concord.live-conflicts.v1";
-
-function isLiveConflictCapsule(value: unknown): value is ConflictObject {
-  const item = value as Partial<ConflictObject> | null;
-  return item?.source === "live-save"
-    && typeof item.page_name === "string"
-    && typeof item.page_path === "string"
-    && !!item.live?.page;
-}
-
-async function persistLiveSaveConflict(conflict: ConflictObject): Promise<void> {
-  const root = graphMeta()?.root;
-  if (!root) throw new Error("no graph is bound");
-  await storeConflictCapsule(root, conflict);
-}
-
-/** Rehydrate unresolved live drafts after a process restart. The capsule stays
- * app-private; no marker or metadata is written into the graph. */
-export async function restoreLiveSaveConflicts(root: string): Promise<void> {
-  liveSaveConflicts.clear();
-  // The retired browser channel was never durable on every WebKitGTK profile.
-  // There is intentionally no migration: discard it on first native-channel use.
+// --- the Concord conflict inventory (src/conflictQueue.ts): sync-tool conflict
+// copies, marker-bearing pages, and the derived queue over both. The calm
+// sidebar badge, the Conflicts route and the in-page resolver carry the standing
+// inventory; like master, only a copy that ARRIVES mid-session is announced. ---
+/** Fetch the backend's derived conflict inventory (never stored). With
+ *  `notify === "new"`, toast for sync copies that newly arrived. A failed read
+ *  keeps the last successful inventory and reports its failure. */
+export async function refreshSyncConflicts(notify: "new" | false = false): Promise<void> {
+  const owner = bindingOwner();
+  const episode = beginConflictRefresh();
   try {
-    localStorage.removeItem(LIVE_CONFLICT_STORE_KEY);
-  } catch {
-    // A blocked browser store cannot affect the app-private native channel.
-  }
-  try {
-    // Browser fixtures have an in-memory cache and historically observe this
-    // helper synchronously. Native activation always takes the awaited branch.
-    const cached = cachedConflictCapsules(root);
-    const capsules = cached ?? await loadConflictCapsules(root);
-    for (const item of capsules) {
-      if (isLiveConflictCapsule(item) && item.live) {
-        liveSaveConflicts.set(item.page_name, {
-          ...item,
-          live: { ...item.live, restored: true },
-        });
-      }
+    const result = await readOwned(owner, backend().conflictInventory());
+    if (result.kind === "stale" || !conflictRefreshCurrent(episode)) return;
+    const previous = new Set(conflictQueue().map((conflict) => conflict.id));
+    setConflictInventory(result.value);
+    if (result.value.unreadable?.length) reportUiFailure("unreadable-files", result.value.unreadable.join(", "));
+    const arrived = result.value.queue.filter((c) => c.source === "sync-copy" && !previous.has(c.id));
+    if (notify === "new" && arrived.length) {
+      const first = arrived[0];
+      const toastId = pushToast(
+        `${arrived.length} new sync conflict${arrived.length === 1 ? " needs" : "s need"} review`,
+        "info",
+        { sticky: true, action: { label: "Review", run: () => openPageTarget({ name: first.page_name, pageKind: first.kind, path: first.page_path }) },
+          onDismiss: () => forgetArrivalNotice(toastId) }
+      );
+      trackArrivalNotice(toastId, arrived.map((conflict) => conflict.id));
     }
   } catch (error) {
-    pushToast(
-      `Tine couldn't restore restart-recovery conflicts. (${String(error)})`,
-      "error",
-      { sticky: true },
-    );
-  }
-  publishConflictQueue();
-}
-
-function publishConflictQueue(): void {
-  // A retained draft is the page's unsaved work and must be resolved before a
-  // disk artifact for that same page can safely replace its editor.
-  setConflictQueueSignal([...liveSaveConflicts.values(), ...artifactConflictQueue]);
-}
-
-/** Test/setup replacement of the complete queue. Production artifact refreshes
- * use `replaceArtifactConflictQueue` so they cannot erase retained live drafts. */
-export function setConflictQueue(queue: ConflictObject[]): void {
-  artifactConflictQueue = queue.filter((item) => item.source !== "live-save");
-  liveSaveConflicts.clear();
-  for (const item of queue) {
-    if (item.source === "live-save") liveSaveConflicts.set(item.page_name, item);
-  }
-  publishConflictQueue();
-}
-
-function replaceArtifactConflictQueue(queue: ConflictObject[]): void {
-  artifactConflictQueue = queue;
-  publishConflictQueue();
-}
-
-export function registerLiveSaveConflict(
-  page: PageDto,
-  baseRev: string | null,
-  conflictEpoch: number,
-  recovery?: { base_text: string | null; disk_rev: string },
-): Promise<void> {
-  const previous = liveSaveConflicts.get(page.name)?.live?.draft_version ?? 0;
-  const conflict: ConflictObject = {
-    id: `live:${page.path || page.name}`,
-    source: "live-save",
-    page_name: page.name,
-    page_path: page.path ?? page.name,
-    kind: page.kind,
-    sides: [
-      { role: "mine", label: "Your retained draft" },
-      { role: "theirs", label: "Current file on disk", path: page.path },
-      { role: "base", label: "Last version this editor loaded" },
-    ],
-    live: {
-      page,
-      base_rev: baseRev,
-      conflict_epoch: conflictEpoch,
-      draft_version: previous + 1,
-      base_text: recovery?.base_text,
-      disk_rev: recovery?.disk_rev,
-    },
-  };
-  liveSaveConflicts.set(page.name, conflict);
-  publishConflictQueue();
-  return persistLiveSaveConflict(conflict).catch((error) => {
-    pushToast(
-      `“${page.name}” is still recoverable in this window, but Tine could not preserve the conflict for an app restart.`,
-      "error",
-      { sticky: true },
-    );
-    console.error("[tine] conflict capsule store failed", failureShape(error));
-  });
-}
-
-export async function refreshLiveSaveConflictDraft(page: PageDto): Promise<void> {
-  const current = liveSaveConflicts.get(page.name);
-  if (!current?.live) return;
-  // The capsule already holds the registered draft. Save retries while the
-  // banner is open often carry that same draft, so compare only the fields
-  // that produce page bytes before paying for another atomic envelope write.
-  const persistedDraftBytes = JSON.stringify([
-    current.live.page.pre_block,
-    current.live.page.blocks,
-  ]);
-  const nextDraftBytes = JSON.stringify([page.pre_block, page.blocks]);
-  if (persistedDraftBytes === nextDraftBytes) return;
-  const conflict: ConflictObject = {
-    ...current,
-    live: { ...current.live, page, draft_version: current.live.draft_version + 1 },
-  };
-  liveSaveConflicts.set(page.name, conflict);
-  publishConflictQueue();
-  // The refreshed draft is already the in-memory truth; a failed capsule
-  // rewrite (disk full, I/O error) must not reject out of the autosave path.
-  await persistLiveSaveConflict(conflict).catch((error) => {
-    console.error("[tine] conflict capsule refresh failed", failureShape(error));
-  });
-}
-
-export async function updateLiveSaveConflictDiskRev(name: string, diskRev: string): Promise<void> {
-  const current = liveSaveConflicts.get(name);
-  if (!current?.live || current.live.disk_rev === diskRev) return;
-  const conflict: ConflictObject = {
-    ...current,
-    live: { ...current.live, disk_rev: diskRev },
-  };
-  liveSaveConflicts.set(name, conflict);
-  publishConflictQueue();
-  await persistLiveSaveConflict(conflict);
-}
-
-function retireCapsuleOnDisk(name: string): Promise<void> {
-  const root = graphMeta()?.root;
-  if (!root) return Promise.reject(new Error("no graph is bound"));
-  return retireConflictCapsule(root, name);
-}
-
-/** Clearing a retained draft retires its on-disk capsule too, on every path.
- * Retention and retirement are one property: a draft the user resolved through
- * the banner, an ordinary save that succeeded, or a page drop must never
- * resurrect as a stale conflict on the next launch. Non-blocking sites get the
- * retirement in the background with a sticky toast on failure; the in-page
- * resolver awaits it through `retireLiveSaveConflict` before acknowledging. */
-export function clearLiveSaveConflict(name: string): void {
-  if (!liveSaveConflicts.delete(name)) return;
-  publishConflictQueue();
-  retireCapsuleOnDisk(name).catch((error) => {
-    pushToast(
-      `“${name}” was resolved, but Tine could not retire its restart-recovery copy; it may reappear after a restart.`,
-      "error",
-      { sticky: true },
-    );
-    console.error("[tine] conflict capsule retire failed", failureShape(error));
-  });
-}
-
-/** Durably retire before a resolution surface removes or acknowledges it. The
- * in-memory entry stays until the on-disk capsule is gone, so a failed
- * retirement leaves the conflict visible instead of silently dropping it. */
-export async function retireLiveSaveConflict(name: string): Promise<void> {
-  const conflict = liveSaveConflicts.get(name);
-  if (!conflict) return;
-  const binding = graphBinding();
-  const root = graphMeta()?.root;
-  await retireCapsuleOnDisk(name);
-  if (graphBinding() !== binding || graphMeta()?.root !== root) return;
-  if (liveSaveConflicts.get(name) !== conflict) {
-    throw new Error("The retained draft changed during retirement; review the current draft again.");
-  }
-  liveSaveConflicts.delete(name);
-  publishConflictQueue();
-}
-/** The queue entry for the page loaded from `path`, if it has one. */
-export function conflictObjectFor(
-  path: string | undefined,
-  name?: string,
-): ConflictObject | undefined {
-  return conflictQueue().find((conflict) =>
-    (path && conflict.page_path === path)
-    || (conflict.source === "live-save" && name !== undefined && conflict.page_name === name)
-  );
-}
-const artifactArrivalToasts = new Map<number, Set<string>>();
-// Inventory calls include several awaited filesystem walks. Only the newest
-// refresh episode may publish: a conflicts-changed scan begun before Apply can
-// otherwise finish after the guarded native resolution and resurrect the exact
-// conflict object the user just settled.
-let artifactConflictRefreshGeneration = 0;
-
-/** Sticky conflict notices describe live derived objects, not history. Retire
- * them when the objects disappear so a successful resolution cannot leave a
- * blue "needs review" notice contradicting the green success confirmation. */
-function retireSettledArtifactArrivalToasts(queue: ConflictObject[]): void {
-  const live = new Set(queue.map((conflict) => conflict.id));
-  for (const [toastId, ids] of [...artifactArrivalToasts]) {
-    if ([...ids].some((id) => live.has(id))) continue;
-    artifactArrivalToasts.delete(toastId);
-    dismissToast(toastId);
+    if (owner() && conflictRefreshCurrent(episode)) reportUiFailure("conflict-inventory", error);
   }
 }
 
-/** Apply the exact local consequence of a successful guarded artifact resolve.
- * The native commit proves this one derived object is gone, so the UI need not
- * block on another graph-wide inventory walk before closing the resolver. A
- * best-effort refresh still follows in the background to catch unrelated
- * arrivals/removals. */
-export function settleArtifactConflict(id: string): void {
-  const settled = artifactConflictQueue.find((conflict) => conflict.id === id);
-  if (!settled) return;
-  ++artifactConflictRefreshGeneration;
-  replaceArtifactConflictQueue(artifactConflictQueue.filter((conflict) => conflict.id !== id));
-  switch (settled.source) {
-    case "sync-copy": {
-      const copy = settled.sides.find((side) => side.role === "theirs")?.path;
-      if (copy) setSyncConflicts(syncConflicts().filter((conflict) => conflict.path !== copy));
-      break;
-    }
-    case "vcs-markers":
-      setVcsMarkerConflicts(vcsMarkerConflicts().filter((conflict) => conflict.path !== settled.page_path));
-      break;
-    case "live-save":
-    case "duplicate-journal":
-      break;
-    default: {
-      const unhandled: never = settled.source;
-      throw new Error(`unsupported conflict source: ${String(unhandled)}`);
-    }
-  }
-  retireSettledArtifactArrivalToasts(artifactConflictQueue);
-}
-
-/** Re-derive the queue when an external change touched a page that is IN it.
- *
- *  The watcher's `conflicts-changed` event fires for conflict-copy files only,
- *  so a merge finished outside Tine (git resolving the markers) would otherwise
- *  leave a resolved page sitting in the queue until the next graph load. Gated
- *  on the queue being non-empty and actually touched, so the ordinary case —
- *  no conflicts — costs one length check per external change. */
-export async function refreshConflictQueueIfTouched(
-  changes: { name: string; kind: PageKind }[]
-): Promise<void> {
-  const queue = conflictQueue();
-  if (!queue.length) return;
-  const touched = changes.some((c) =>
-    queue.some((q) => q.page_name === c.name && q.kind === c.kind)
-  );
-  if (touched) await refreshSyncConflicts();
-}
-
-/** Re-fetch the sync-conflict + VCS-marker lists (and the Concord queue below).
- *
- *  With `notify === "new"`, toast for conflict copies that newly ARRIVED
- *  mid-session — the one moment nothing else announces (the badge just ticks,
- *  and on a phone the sidebar is hidden). There is deliberately no toast for
- *  the standing inventory: the calm badge, the in-page panel, its pinned dock
- *  bar, and the marker banner already carry it, and the pre-Concord startup
- *  toasts routed to the Settings FALLBACK surface while demanding a dismissal
- *  on every graph open (removed 2026-08-24, Martin's call). */
-export async function refreshSyncConflicts(notify: "new" | false = false): Promise<void> {
-  const generation = ++artifactConflictRefreshGeneration;
-  try {
-    const previousIds = new Set(artifactConflictQueue.map((conflict) => conflict.id));
-    // One call: the marker scan reads every page, and asking for the two
-    // listings and the queue separately read them twice (GH #543).
-    const { sync_conflicts, vcs_markers, queue } = await backend().conflictInventory();
-    if (generation !== artifactConflictRefreshGeneration) return;
-    setSyncConflicts(sync_conflicts);
-    setVcsMarkerConflicts(vcs_markers);
-    replaceArtifactConflictQueue(queue);
-    retireSettledArtifactArrivalToasts(queue);
-    if (notify === "new") {
-      const arrived = queue.filter((conflict) =>
-        conflict.source === "sync-copy" && !previousIds.has(conflict.id)
-      );
-      if (arrived.length) {
-        const first = arrived[0];
-        const toastId = pushToast(
-          `${arrived.length} new sync conflict${arrived.length === 1 ? " needs" : "s need"} review`,
-          "info",
-          {
-            sticky: true,
-            action: {
-              label: "Review",
-              run: () => openPageTarget({
-                name: first.page_name,
-                pageKind: first.kind,
-                path: first.page_path,
-              }),
-            },
-            onDismiss: () => artifactArrivalToasts.delete(toastId),
-          },
-        );
-        artifactArrivalToasts.set(toastId, new Set(arrived.map((conflict) => conflict.id)));
-      }
-    }
-  } catch {
-    // Best-effort: a missing inventory means no badge, never a broken app. The
-    // listings and the queue are one answer, so they go together: a banner
-    // with no queue entry behind it cannot be resolved (audit R9-12).
-    if (generation === artifactConflictRefreshGeneration) clearArtifactConflicts();
-  }
-}
-
-function clearArtifactConflicts(): void {
-  setSyncConflicts([]);
-  setVcsMarkerConflicts([]);
-  replaceArtifactConflictQueue([]);
-  retireSettledArtifactArrivalToasts([]);
-}
-
-/** Every conflict listing belongs to the graph it was read from. Opening a
- *  graph clears them and drops any answer still in flight from the old one, so
- *  graph A's marker banner never shows on graph B's page at the same path while
- *  B's inventory is still being read (GH #543, audit R9-12; I-20). Live save
- *  conflicts are per graph already: `restoreLiveSaveConflicts` replaces them. */
-export function resetGraphConflicts(): void {
-  ++artifactConflictRefreshGeneration;
-  ++journalConflictRefreshGeneration;
-  clearArtifactConflicts();
-  setJournalConflicts([]);
-}
-
-let paneFocusSetter: ((paneId: string, rememberLayout?: boolean) => void) | undefined;
-export function registerPaneFocusSetter(setter: (paneId: string, rememberLayout?: boolean) => void) {
+// --- which content pane is focused. Drives Ctrl+/- zoom routing (notes → whole
+// interface, pdf → the PDF's own scale). Transient session state, not persisted. ---
+export const [activePane, setActivePane] = createSignal<"notes" | "pdf">("notes");
+let paneFocusSetter: ((paneId: string) => void) | undefined;
+export function registerPaneFocusSetter(setter: (paneId: string) => void) {
   paneFocusSetter = setter;
 }
 /** Track the focused pane from clicks / focus moves. Capture-phase so it sees
  *  every interaction regardless of stopPropagation downstream. The notes pane is
  *  the default — anything outside the PDF pane (editor, sidebar, chrome) counts as
- *  "notes" for zoom purposes. Returns an uninstaller. */
+ *  "notes" for zoom purposes. Also owns one native launch-backup subscription,
+ *  reports only this graph binding's failures, and disposes late registration.
+ *  Cost O(1) per event, O(failures during graph open) on binding publication.
+ *  Returns an uninstaller for both subscriptions. */
 export function installPaneTracker(): () => void {
+  let alive = true;
+  let stopBackup: (() => void) | undefined;
+  type BackupFailure = { bindingGeneration: number; failure: string };
+  const [pendingBackup, setPendingBackup] = createSignal<BackupFailure[]>([]);
+  const stopPending = createRoot((dispose) => {
+    createEffect(() => {
+      const pending = pendingBackup();
+      if (graphTransitioning() || pending.length === 0) return;
+      const generation = backend().graphBindingGeneration();
+      setPendingBackup([]);
+      for (const payload of pending) {
+        if (payload.bindingGeneration === generation) reportUiFailure("backup-read", payload.failure);
+      }
+    });
+    return dispose;
+  });
+  if (isTauri()) void readOwnedResource(ownedWhen(() => alive),
+    listen<BackupFailure>("backup-failed", ({ payload }) => {
+      if (!alive) return;
+      if (payload.bindingGeneration === backend().graphBindingGeneration()) reportUiFailure("backup-read", payload.failure);
+      // Native backup can fail before load_graph's reply publishes its binding.
+      else if (graphTransitioning()) setPendingBackup((pending) => [...pending, payload]);
+    }), (stop) => stop(),
+  ).then((result) => {
+    if (result.kind === "current") { if (alive) stopBackup = result.value; else result.value(); }
+  })
+    .catch((error) => { if (alive) reportUiFailure("backup-feedback", error); });
   const update = (e: Event) => {
     const t = e.target as Element | null;
     const container = t?.closest?.("[data-pane-id]") ?? null;
@@ -740,7 +350,8 @@ export function installPaneTracker(): () => void {
     // main default.
     if (e.type === "focusin" && !container) return;
     const paneId = container?.getAttribute("data-pane-id") ?? "main";
-    paneFocusSetter?.(paneId, !!container);
+    paneFocusSetter?.(paneId);
+    setActivePane(paneId === "pdf" ? "pdf" : "notes");
   };
   const pointerdown = (e: Event) => {
     // Any click exits pane-select (standard modal behavior); without this the
@@ -764,6 +375,9 @@ export function installPaneTracker(): () => void {
   window.addEventListener("pointerdown", pointerdown, true);
   window.addEventListener("focusin", update, true);
   return () => {
+    alive = false;
+    stopBackup?.();
+    stopPending();
     window.removeEventListener("pointerdown", pointerdown, true);
     window.removeEventListener("focusin", update, true);
   };
@@ -792,9 +406,6 @@ export const [dimInFocus, setDimInFocusSig] = createSignal(loadStr(DIM_IN_FOCUS_
 export function setDimInFocus(v: boolean) {
   setDimInFocusSig(v);
   saveStr(DIM_IN_FOCUS_KEY, v ? null : "0");
-}
-export function toggleDimInFocus() {
-  setDimInFocus(!dimInFocus());
 }
 
 // --- carry-unfinished-tasks settings (persisted) ---
@@ -881,24 +492,24 @@ export function agendaQuery(): string {
   return `query (and ${window} (not (task DONE CANCELED CANCELLED)))`;
 }
 
-// When a query block is created via `/query` — one command since SPEC §7.3 —
-// hold its block id so the freshly-rendered QueryBuilder opens its SHEET with
-// the field chooser focused (the block id, consumed once on mount, then
-// cleared).
-export const [queryBuilderAutoOpen, setQueryBuilderAutoOpen] = createSignal<string | null>(null);
+// Block id of a "/Query" block whose QueryBuilder opens its add-filter picker once on mount.
+export const [queryBuilderAutoOpen, setQueryBuilderAutoOpen] = graphScopedSignal<string>();
+/** One graph-bound reviewed query export; a graph switch closes the dialog. */
+export const [queryExportRequest, setQueryExportRequest] = graphScopedSignal<import("./types").QueryPublicationRequest>();
+export function openQueryExport(request: import("./types").QueryPublicationRequest): void { setQueryExportRequest(request); }
+export function closeQueryExport(): void { setQueryExportRequest(null); }
 
-// Page-properties panel (alias / public / tags / icon / title), opened from the
-// page-title gear or the "/Page properties" command. Anchored at x,y.
-// One panel, two scopes (GH #164): a page's pre-block properties, or one
-// block's. The scope picks the reader/writer pair; the transient-layer id stays
-// "page-properties" for both, because that id is a pinned contract.
 export type PropsPanelScope = { kind: "page"; name: string } | { kind: "block"; id: string };
-export const [pagePropsPanel, setPagePropsPanel] = createSignal<{ scope: PropsPanelScope; x: number; y: number } | null>(null);
+/** The one open properties panel (GH #164) or null; page OR block scope despite the name (`name` = exact store page name, `id` = in-memory
+ *  block id), at viewport x,y. open*Props replaces any open panel. `binding` = graph session at open: a graph switch closes the panel,
+ *  and after a store reset or a reload of its page/block the panel refuses every write visibly and closes (PageProps.tsx writeOne).
+ *  An unknown/unloaded block id or page opens a read-only notice, never an edit row. Nothing here persists; O(1). */
+export const [pagePropsPanel, setPagePropsPanel] = createSignal<{ scope: PropsPanelScope; x: number; y: number; binding: ReturnType<typeof captureBinding> } | null>(null);
 export function openPageProps(name: string, x: number, y: number) {
-  setPagePropsPanel({ scope: { kind: "page", name }, x, y });
+  setPagePropsPanel({ scope: { kind: "page", name }, x, y, binding: captureBinding() });
 }
 export function openBlockProps(id: string, x: number, y: number) {
-  setPagePropsPanel({ scope: { kind: "block", id }, x, y });
+  setPagePropsPanel({ scope: { kind: "block", id }, x, y, binding: captureBinding() });
 }
 export function closePageProps() {
   setPagePropsPanel(null);
@@ -906,224 +517,53 @@ export function closePageProps() {
 
 // "Copy / export as" modal — a live-preview text export of a block subtree or a
 // multi-block selection, with indent-style + remove options (mirrors OG Logseq).
-// Two sources: store block ids (page/block gestures) or a prebuilt node forest
-// (GH #348 reference batch export, whose blocks are backend DTOs, not store ids).
-export type ExportRequest = { ids: string[] } | { nodes: ExportNode[]; count: number };
-export const [exportModal, setExportModal] = createSignal<ExportRequest | null>(null);
+export type ExportRequest = { ids: string[] } | { nodes: import("./editor/exportText").ExportNode[]; count: number };
+export const [exportModal, setExportModal] = graphScopedSignal<ExportRequest>();
+/** Open the shared export modal for a selection of document block ids. */
 export function openExportModal(ids: string[]) {
   if (ids.length) setExportModal({ ids });
 }
-export function openExportNodesModal(nodes: ExportNode[], count: number) {
+/** Open the shared export modal for an already materialized, read-only forest.
+ * The caller supplies its visible block count; this does not write graph data. */
+export function openExportNodesModal(nodes: import("./editor/exportText").ExportNode[], count: number) {
   if (nodes.length) setExportModal({ nodes, count });
 }
 export function closeExportModal() {
   setExportModal(null);
 }
 
-// Remember the window's pre-focus fullscreen state so exiting focus restores it
-// (rather than always dropping out of fullscreen if the user was already in it).
-let preFocusFullscreen = false;
-async function appWindow() {
-  const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  return getCurrentWindow();
-}
 export function toggleFocusMode() {
   if (focusMode()) void exitFocusMode();
   else void enterFocusMode();
 }
+/** Enable focus and request fullscreen. Failure toasts without rollback; resolves after request. O(1) plus native latency. */
 export async function enterFocusMode() {
   if (focusMode()) return;
   // When the setting is on, focus mode owns dim: on while focused, off when
   // exited (a transient signal change — it doesn't rewrite the t-b preference).
   if (dimInFocus()) setDimInactiveBlocks(true);
   setFocusMode(true);
-  if (!isTauri()) return;
   try {
-    const w = await appWindow();
-    preFocusFullscreen = await w.isFullscreen();
-    if (!preFocusFullscreen) await w.setFullscreen(true);
+    await setFocusFullscreen(true);
   } catch {
-    // ignore (window plugin unavailable)
+    pushToast("Could not enter fullscreen focus mode.", "error");
   }
 }
+/** Disable focus and request fullscreen exit. Failure toasts without rollback; resolves after request. O(1) plus native latency. */
 export async function exitFocusMode() {
   if (!focusMode()) return;
   setFocusMode(false);
   if (dimInFocus()) setDimInactiveBlocks(false);
-  if (!isTauri()) return;
   try {
-    if (!preFocusFullscreen) (await appWindow()).setFullscreen(false);
+    await setFocusFullscreen(false);
   } catch {
-    // ignore
+    pushToast("Could not leave fullscreen focus mode.", "error");
   }
 }
 
-// Loaded graph metadata (root path, dirs, shortcut overrides), for Settings.
-export const [graphMeta, setGraphMeta] = createSignal<GraphMeta | null>(null);
-
-// True once the startup graph-load attempt has finished (success OR failure). The
-// onboarding Welcome screen shows only when this is set AND no graph loaded — so a
-// fresh install with no configured graph gets the wizard, but a normal startup
-// never flashes it while the graph is still loading.
-export const [firstLoadDone, setFirstLoadDone] = createSignal(false);
-
-/** Set (or clear, with null) the template applied to new journal days, persisting
- *  it to config.edn `:default-templates {:journals "Name"}` and updating the live
- *  meta so the UI reflects it immediately. */
-export function setJournalTemplate(name: string | null) {
-  const m = graphMeta();
-  const prev = m?.default_journal_template ?? null;
-  if (m) setGraphMeta({ ...m, default_journal_template: name });
-  // On a config-write failure, revert the optimistic UI + tell the user, rather
-  // than silently showing a template that wasn't actually persisted.
-  void backend()
-    .setDefaultJournalTemplate(name)
-    .catch((e) => {
-      const cur = graphMeta();
-      if (cur) setGraphMeta({ ...cur, default_journal_template: prev });
-      pushToast(`Couldn't save the journal template setting. (${String(e)})`, "error");
-    });
-}
-// Bumped when the open graph changes, so views reload against the new graph.
-export const [graphEpoch, setGraphEpoch] = createSignal(0);
-export function bumpGraphEpoch() {
-  setGraphEpoch((n) => n + 1);
-}
-
-// --------------------------------------------------------------------------
-// One-time notices, dismissed per DEVICE and per graph (§4.3 "Notice", I-18)
-// --------------------------------------------------------------------------
-
-/** The §7.5 crossing notice — the only key today. */
-export const CROSSING_NOTICE = "query-crossing";
-
-/** Read ONCE per graph open, not per block render.
- *
- *  A `{{query}}` block that crossed to `{{tine-query}}` asks "has this device
- *  been told not to show this?" while it is rendering, and a page can hold many
- *  query blocks. Answering that with an IPC per block per render would put a
- *  graph-scoped question on a render path (I-13), so the answer is one shared
- *  read per `graphEpoch`. `undefined` until it resolves — a notice waits for the
- *  answer rather than flashing and retracting.
- *
- *  The store is device-local by decision (D-11): "don't show me this again" is a
- *  statement about this device's user, so it never enters the graph. */
-const [dismissedNotices, setDismissedNotices] = createSignal<Set<string> | null>(null);
-let dismissedNoticesEpoch = -1;
-
-/** Start the one read for the open graph, if it has not started already.
- *
- *  Kept separate from {@link noticeDismissed} so the READ is a plain read: a
- *  component may ask "is this dismissed?" from inside a tracked computation
- *  without that question writing a signal underneath it. */
-export function primeNoticeDismissals(): void {
-  const epoch = graphEpoch();
-  if (dismissedNoticesEpoch === epoch) return;
-  dismissedNoticesEpoch = epoch;
-  setDismissedNotices(null);
-  void backend()
-    .loadNotices()
-    .then((raw) => {
-      if (dismissedNoticesEpoch !== epoch) return; // a later graph won the race
-      const parsed: unknown = JSON.parse(raw);
-      const raw_list = (parsed as { dismissed?: unknown } | null)?.dismissed;
-      const list: string[] = Array.isArray(raw_list)
-        ? raw_list.filter((key): key is string => typeof key === "string")
-        : [];
-      setDismissedNotices(new Set(list));
-    })
-    .catch(() => {
-      // Recovery over refusal (D-3/G2): an unreadable record costs one extra
-      // notice, never the graph.
-      if (dismissedNoticesEpoch === epoch) setDismissedNotices(new Set<string>());
-    });
-}
-
-/** Whether `key` has been dismissed on this device for the open graph.
- *  `undefined` while the answer is still loading. */
-export function noticeDismissed(key: string): boolean | undefined {
-  const set = dismissedNotices();
-  return set ? set.has(key) : undefined;
-}
-
-/** Record "don't show this again" for the open graph, on this device only. */
-export function dismissNotice(key: string): void {
-  const next = new Set<string>(dismissedNotices() ?? []);
-  if (next.has(key)) return;
-  next.add(key);
-  setDismissedNotices(next);
-  void backend()
-    .saveNotices(JSON.stringify({ dismissed: [...next] }))
-    .catch(() => {
-      // The checkbox is a preference, not content: a failed write means the
-      // notice appears once more, which is not worth a toast.
-    });
-}
-
-/** Tests open several graphs in one process; the read is module state. */
-export function resetDismissedNoticesForTests(): void {
-  dismissedNoticesEpoch = -1;
-  setDismissedNotices(null);
-}
-
-// Bumped after a save batch lands (the Rust cache now reflects the edit), so
-// derived whole-graph views — {{query}} results, backlinks — can recompute.
-// This is Tine's stand-in for OG's reactive-DB query invalidation.
-export const [dataRev, setDataRev] = createSignal(0);
-export function bumpDataRev() {
-  const collector = issue248Collector();
-  if (!collector) {
-    setDataRev((n) => n + 1);
-    return;
-  }
-  const started = issue248Now();
-  setDataRev((n) => n + 1);
-  collector.record("frontend.dataRevSyncMs", issue248Now() - started);
-  const frameStarted = issue248Now();
-  const afterFrame = () => collector.record("frontend.dataRevToFrameMs", issue248Now() - frameStarted);
-  if (typeof requestAnimationFrame === "function") requestAnimationFrame(afterFrame);
-  else queueMicrotask(afterFrame);
-}
-// Page-name inventory changes are much rarer than ordinary content saves. Keep
-// their invalidation separate so navigation can refresh canonical names after a
-// create/delete without turning every keystroke save into a whole-page-list IPC.
-export const [pageInventoryRev, setPageInventoryRev] = createSignal(0);
-export function bumpPageInventoryRev() {
-  setPageInventoryRev((n) => n + 1);
-}
-// Which names RESOLVE to a page, as opposed to which pages exist on disk.
-// `existing_page_names` answers over page names UNION alias names, so adding or
-// removing an `alias::` changes that answer while creating and deleting no file
-// — `pageInventoryRev` never moves for it (GH #484). Anything caching a
-// name-resolves-to-a-page answer keys on BOTH revisions. Bumped only when the
-// alias map actually changes, so an ordinary keystroke save costs nothing.
-export const [aliasRev, setAliasRev] = createSignal(0);
-// The launch index check finished (`warm-cache-done`). Until then an answer may
-// come from the index as the last session left it; surfaces that show one and
-// do not otherwise refresh on `dataRev` (the reference panels, Ctrl+K) ask
-// again once when this moves (GH #550, launch design D4).
-export const [indexCorrectionRev, setIndexCorrectionRev] = createSignal(0);
-export function bumpIndexCorrectionRev() {
-  setIndexCorrectionRev((n) => n + 1);
-}
-/** The launch index check landed (`warm-cache-done`): every surface that may
- *  have shown an answer from the index as the last session left it asks
- *  again. Reference panels and Ctrl+K key on `indexCorrectionRev`, the page
- *  list and page identities on `pageInventoryRev`, and query blocks, aliases,
- *  referenced names and block-ref counts on `dataRev` (launch design D4). */
-export function correctLaunchAnswers() {
-  batch(() => {
-    bumpIndexCorrectionRev();
-    bumpPageInventoryRev();
-    bumpDataRev();
-  });
-}
-export function bumpAliasRev() {
-  setAliasRev((n) => n + 1);
-}
+/** Toggle the resolved palette between Light and Dark. A System choice becomes
+ * the opposite manual palette; persistence and native appearance follow. */
 export function toggleTheme() {
-  // Manual flip between light and dark — leaves System mode if it was active,
-  // picking the opposite of the currently resolved theme (GH #193).
   setAppearancePreference(theme() === "light" ? "dark" : "light");
 }
 
@@ -1152,8 +592,8 @@ export function resetLeftSidebarSections() {
 }
 
 function persistLeftOpen(v: boolean) {
+  if (!saveStr(SIDEBAR_OPEN_KEY, v ? null : "0")) return;
   setSidebarOpen(v);
-  saveStr(SIDEBAR_OPEN_KEY, v ? null : "0");
   scheduleSessionSave(); // durable open/closed state (localStorage isn't kept)
 }
 export function setLeftSidebarOpen(v: boolean, trigger?: HTMLElement | null) {
@@ -1200,115 +640,14 @@ export function applySidebarSession(s: SidebarSessionState) {
   normalizeSidebarDrawers();
 }
 
-const SIDEBAR_W_KEY = "logseq-claude.sidebarWidth";
-function loadSidebarWidth(): number {
-  try {
-    const v = Number(localStorage.getItem(SIDEBAR_W_KEY));
-    if (v >= 180 && v <= 600) return v;
-  } catch {
-    // ignore
-  }
-  return 246;
-}
-export const [sidebarWidth, setSidebarWidth] = createSignal(loadSidebarWidth());
-export function persistSidebarWidth() {
-  try {
-    localStorage.setItem(SIDEBAR_W_KEY, String(sidebarWidth()));
-  } catch {
-    // ignore
-  }
-}
+export { sidebarWidth, setSidebarWidth, persistSidebarWidth, rightSidebarWidth, setRightSidebarWidth, persistRightSidebarWidth } from "./sidebarSizing";
 
-const RS_W_KEY = "logseq-claude.rightSidebarWidth";
-function loadRsWidth(): number {
-  try {
-    const v = Number(localStorage.getItem(RS_W_KEY));
-    if (v >= 220 && v <= 800) return v;
-  } catch {
-    // ignore
-  }
-  return 360;
-}
-export const [rightSidebarWidth, setRightSidebarWidth] = createSignal(loadRsWidth());
-export function persistRightSidebarWidth() {
-  try {
-    localStorage.setItem(RS_W_KEY, String(rightSidebarWidth()));
-  } catch {
-    // ignore
-  }
-}
-
-// Favorites (starred pages/journals). Persisted PER GRAPH in that graph's
-// config.edn `:favorites` (the single source of truth) — NOT in a global
-// localStorage key, which would leak one graph's favorites into another and
-// leave dead links (clicking them opens an empty page) after a graph switch.
-// The signal starts empty and is (re)seeded from config.edn on every graph open
-// (see seedFavorites), so switching graphs always shows exactly that graph's set.
-export interface FavItem {
-  name: string;
-  kind: PageKind;
-}
-export const [favorites, setFavorites] = createSignal<FavItem[]>([]);
-/** THE membership key for favorites: alias-resolve pages, then fold with
- *  `pageIdentityKey`, kind-scoped. Every membership decision (star button,
- *  toggle, delete, rename dedupe) and the sidebar arrangement
- *  (`favoritesLayout.keyOf`) must agree on this one key — they used to carry
- *  four different predicates (exact-match, kind-blind, weak lowercase), so a
- *  page starred as `[[foo]]` showed an unfilled star on `Foo` and clicking
- *  appended a duplicate (DUP-2, 2026-08-25 duplication audit). */
-export function favoriteKey(name: string, kind: PageKind): string {
-  const canonical = kind === "page" ? resolveAlias(name) : name;
-  return `${kind}\0${pageIdentityKey(canonical)}`;
-}
-export function isFavorite(name: string): boolean {
-  return favorites().some((f) => favoriteKey(f.name, f.kind) === favoriteKey(name, f.kind));
-}
-function persistFavorites(next: FavItem[]) {
-  // Persist to config.edn :favorites so favorites travel with the graph and stay
-  // scoped to it. config.edn stores names only; kind is re-derived on seed.
-  const names = next.map((f) => f.name);
-  void backend().setFavorites(names).catch(() => {});
-  // Keep the arrangement (groups and order) in step. On a graph that has never
-  // grouped anything this only updates the in-memory layout — no page is
-  // created, and behaviour is exactly what it was before groups existed.
-  membershipChanged(names);
-}
-// Arrangement changes (reorder, move between groups) project their display
-// order back into the flat list every other consumer reads.
-setMembershipSink((names) =>
-  setFavorites(names.map((name): FavItem => ({ name, kind: isJournalTitle(name) ? "journal" : "page" })))
-);
-/** The arrangement AS RENDERED: the stored groups reconciled against live
- *  membership on every read. Deriving it rather than storing it is what makes
- *  it impossible for the sidebar to show a favorite that is no longer favorited,
- *  or to miss one that is. */
-export const favoritesLayout = createMemo(() =>
-  reconcileLayout(storedFavoritesLayout(), favorites().map((f) => f.name))
-);
-export function toggleFavorite(name: string, kind: "page" | "journal" = "page") {
-  // A published export has no favorites to keep: the star is not rendered
-  // and a shortcut must not change the sidebar away from the snapshot.
-  if (isPublishedExport()) return;
-  const f = favorites();
-  const target = favoriteKey(name, kind);
-  const matches = (item: FavItem) => favoriteKey(item.name, item.kind) === target;
-  const next = f.some(matches)
-    ? f.filter((x) => !matches(x))
-    : [...f, { name, kind }];
-  setFavorites(next);
-  persistFavorites(next);
-}
-/** Move a favorite to a new position (GH #211 drag-reorder). Order persists
- *  through the same config.edn :favorites owner as add/remove. */
-export function moveFavorite(from: number, to: number) {
-  const favs = favorites();
-  if (from === to || from < 0 || to < 0 || from >= favs.length || to >= favs.length) return;
-  const next = [...favs];
-  const [item] = next.splice(from, 1);
-  next.splice(to, 0, item);
-  setFavorites(next);
-  persistFavorites(next);
-}
+// Favorites live in ./favorites (one arrangement tree, one identity key).
+export { favorites, favoriteKey, isFavorite, seedFavorites, setFavorites, toggleFavorite, type FavItem } from "./favorites";
+/** Remove navigation entries for a deleted target. Favorites match by
+ * favoriteKey (kind + page identity); recents and sidebar check kind/path.
+ * Favorite changes queue config write; others schedule session persistence.
+ * O(favorites + recents + sidebar items). */
 export function removeDeletedPageFromNavigation(target: PageTarget): void;
 export function removeDeletedPageFromNavigation(name: string, kind: PageKind): void;
 export function removeDeletedPageFromNavigation(targetOrName: PageTarget | string, kind?: PageKind) {
@@ -1317,14 +656,7 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
     : targetOrName;
   const name = target.name;
   kind = target.pageKind;
-  // Kind-scoped, identity-folded: deleting a page must not drop a journal
-  // favorite that merely shares the name (was kind-blind exact match, DUP-2).
-  const removed = favoriteKey(name, kind);
-  const nextFavs = favorites().filter((f) => favoriteKey(f.name, f.kind) !== removed);
-  if (nextFavs.length !== favorites().length) {
-    setFavorites(nextFavs);
-    persistFavorites(nextFavs);
-  }
+  forgetDeletedFavorite(name, kind);
 
   const nextRecents = recentPages().filter((r) => !(
     r.name === name && r.kind === kind && (target.path === undefined || r.path === target.path)
@@ -1343,43 +675,20 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
   if (nextSidebar.length !== rightSidebar().length) setRightSidebar(nextSidebar);
 }
 
-/** Re-key sidebar navigation state after the backend has atomically renamed a
- * page. Keep ordering stable, collapse an existing destination duplicate, and
- * persist both stores before the subsequent openPage(next) promotes the one
- * canonical recent entry to the front. */
-export function renamePageInNavigation(from: PageTarget, to: PageTarget): void;
-export function renamePageInNavigation(from: string, to: string): void;
-export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string) {
+/** After backend rename, re-key favorite, recent and sidebar entries in order,
+ * deduplicating destinations even if source is absent. Only changed stores
+ * schedule persistence; writes need not finish before a later openPage. Does
+ * not rename or open a page. O(favorites + recents² + sidebar items). */
+export function renamePageInNavigation(from: PageTarget, to: PageTarget, opts?: { favorites?: boolean }): void;
+export function renamePageInNavigation(from: string, to: string, opts?: { favorites?: boolean }): void;
+export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string, opts: { favorites?: boolean } = {}) {
   const from: PageTarget = typeof fromOrName === "string"
     ? { name: fromOrName, pageKind: "page" }
     : fromOrName;
   const to: PageTarget = typeof toOrName === "string"
     ? { name: toOrName, pageKind: from.pageKind }
     : toOrName;
-  const dedupe = (items: FavItem[]): FavItem[] => {
-    const seen = new Set<string>();
-    const out: FavItem[] = [];
-    // Identity-folded on both the rename match and the dedupe key, so a
-    // favorite stored under a different spelling of the renamed page is
-    // re-keyed too, and spelling twins collapse (DUP-2).
-    const renamed = `${from.pageKind}\0${pageIdentityKey(from.name)}`;
-    for (const item of items) {
-      const next = `${item.kind}\0${pageIdentityKey(item.name)}` === renamed
-        ? { ...item, name: to.name }
-        : item;
-      const key = `${next.kind}\0${pageIdentityKey(next.name)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(next);
-    }
-    return out;
-  };
-
-  const nextFavorites = dedupe(favorites());
-  if (nextFavorites.some((item, i) => item !== favorites()[i]) || nextFavorites.length !== favorites().length) {
-    setFavorites(nextFavorites);
-    persistFavorites(nextFavorites);
-  }
+  if (opts.favorites !== false) renameFavorite(from, to);
 
   const nextRecents = recentPages().reduce<RecentItem[]>((out, item) => {
     const matches = item.kind === from.pageKind && item.name === from.name
@@ -1413,22 +722,13 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
     setRightSidebar(nextSidebar);
   }
 }
-/** Seed favorites from config.edn `:favorites` on graph open. config.edn is the
- *  source of truth, so this ALWAYS replaces the current set — including clearing
- *  it to empty when the newly-opened graph has no favorites — otherwise the
- *  previous graph's favorites would linger and open empty pages. config.edn
- *  stores names only; kind is re-derived so a favorited journal still routes as a
- *  journal (not a would-be-empty page). */
-export function seedFavorites(names: string[]) {
-  // A seeded membership list always implies a fresh arrangement: an
-  // arrangement built for one graph must never outlive it and re-order
-  // another's favorites. `loadFavoritesLayout` re-populates it right after.
-  resetFavoritesLayout();
-  setFavorites(
-    names.map((name): FavItem => ({ name, kind: isJournalTitle(name) ? "journal" : "page" }))
-  );
+/** A load resolved the requested page name `from` to the backend's page `to`
+ * (a case variant, or an alias's owner). Only the views (Recent, sidebar)
+ * follow; opening a page never rewrites the favorites config (D11), and a case
+ * variant is already the same favorite by `favoriteKey`. */
+export function adoptResolvedPageName(from: string, to: string): void {
+  renamePageInNavigation(from, to, { favorites: false });
 }
-
 // Recently-visited pages (navigation history), newest first. Unlike Favorites,
 // Recent is graph-scoped session state and may retain one exact physical owner.
 const RECENT_KEY = "logseq-claude.recent";
@@ -1501,12 +801,10 @@ function loadShortcutOverrides(): Record<string, string> {
 export const [shortcutOverrides, setShortcutOverrides] =
   createSignal<Record<string, string>>(loadShortcutOverrides());
 function persistShortcuts(next: Record<string, string>) {
+  // Like changeAccent: a refused write is announced and NOT applied, so the
+  // shortcut the user sees is the one that will still be there after a restart.
+  if (!saveStr(SHORTCUTS_KEY, JSON.stringify(next), "keyboard shortcuts")) return;
   setShortcutOverrides(next);
-  try {
-    localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(next));
-  } catch {
-    // ignore
-  }
 }
 export function setShortcutOverride(id: string, binding: string) {
   persistShortcuts({ ...shortcutOverrides(), [id]: binding });
@@ -1517,28 +815,16 @@ export function resetShortcutOverride(id: string) {
   persistShortcuts(next);
 }
 
-// Pages that failed to save because the file changed on disk (external edit /
-// Syncthing). Surfaced as a banner; the user resolves with reload or overwrite.
-export const [conflicts, setConflicts] = createSignal<string[]>([]);
-export function markConflict(name: string): void {
-  if (!conflicts().includes(name)) setConflicts([...conflicts(), name]);
-}
-export function clearConflict(name: string) {
-  setConflicts(conflicts().filter((n) => n !== name));
-  clearLiveSaveConflict(name);
-}
-export function isConflicted(name: string): boolean {
-  return conflicts().includes(name);
-}
-
-// Date picker popup for SCHEDULED / DEADLINE and typed sheet date properties.
+// Date picker: planning, journal-link insertion, and typed sheet date properties.
+// Journal callback receives the configured title only on commit, never cancellation.
 export type DatePickerTarget =
   | "scheduled"
   | "deadline"
+  | { insertJournal: (title: string) => void }
   | { field: `prop:${string}`; fieldType: "date" | "datetime" };
-export const [datePicker, setDatePicker] = createSignal<
-  { blockId: string; which: DatePickerTarget; x: number; y: number } | null
->(null);
+export const [datePicker, setDatePicker] = graphScopedSignal<
+  { blockId: string; which: DatePickerTarget; x: number; y: number }
+>();
 export function openDatePicker(blockId: string, which: DatePickerTarget, x: number, y: number) {
   setDatePicker({ blockId, which, x, y });
 }
@@ -1562,7 +848,8 @@ export interface FormulaEditorTarget {
   fields: readonly string[];
   home?: FormulaEditorHome | null;
 }
-export const [formulaEditor, setFormulaEditor] = createSignal<FormulaEditorTarget | null>(null);
+/** Graph-scoped (I-20): a graph switch closes the editor; `save` refuses a stale target. */
+export const [formulaEditor, setFormulaEditor] = graphScopedSignal<FormulaEditorTarget>();
 export function openFormulaEditor(target: FormulaEditorTarget) {
   setFormulaEditor(target);
 }
@@ -1608,6 +895,9 @@ export interface SidebarBlock {
   pageKind: "journal" | "page";
   /** Exact graph-relative owner. Absent on legacy entries, which resolve by name. */
   path?: string;
+  /** Sibling-index path to an ID-less block, saved by a session instead of writing an
+   * `id::` (navigation never mutates the graph); settled into `uuid` once resolved. */
+  blockPos?: number[];
   collapsed?: boolean;
 }
 export type SidebarItem = SidebarPage | SidebarBlock;
@@ -1626,6 +916,10 @@ export function sidebarItemKey(item: SidebarItem): string {
     : `block:${item.uuid}`;
 }
 
+function sameBlockPos(a: readonly number[] | undefined, b: readonly number[] | undefined): boolean {
+  return a === b || (!!a && !!b && a.length === b.length && a.every((n, i) => n === b[i]));
+}
+
 function sameSidebarItems(left: readonly SidebarItem[], right: readonly SidebarItem[]): boolean {
   return left.length === right.length && left.every((item, index) => {
     const other = right[index];
@@ -1635,7 +929,7 @@ function sameSidebarItems(left: readonly SidebarItem[], right: readonly SidebarI
     }
     return item.kind === "block" && other.kind === "block"
       && item.uuid === other.uuid && item.page === other.page && item.pageKind === other.pageKind
-      && item.path === other.path;
+      && item.path === other.path && sameBlockPos(item.blockPos, other.blockPos);
   });
 }
 
@@ -1651,7 +945,10 @@ function validSidebarItem(i: unknown): i is SidebarItem {
   if (o.collapsed !== undefined && typeof o.collapsed !== "boolean") return false;
   if (o.path !== undefined && typeof o.path !== "string") return false;
   if (o.kind === "page") return typeof o.name === "string";
-  if (o.kind === "block") return typeof o.uuid === "string" && typeof o.page === "string";
+  if (o.kind === "block") {
+    return typeof o.uuid === "string" && typeof o.page === "string"
+      && (o.blockPos === undefined || parseBlockPos(o.blockPos) !== null);
+  }
   return false;
 }
 export function parseStoredSidebarItems(raw: string | null): SidebarItem[] {
@@ -1758,19 +1055,9 @@ export function setRightSidebar(items: SidebarItem[]) {
   }
   scheduleSessionSave(); // durable right-sidebar items (localStorage isn't kept)
 }
-/** Move a right-sidebar item to a new position (GH #211 drag-reorder). Order
- *  persists through the same setRightSidebar owner (localStorage + session). */
-export function moveRightSidebarItem(from: number, to: number) {
-  const items = rightSidebar();
-  if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) return;
-  const next = [...items];
-  const [item] = next.splice(from, 1);
-  next.splice(to, 0, item);
-  setRightSidebar(next);
-}
 
 /** History captures the same sidebar-open/item app state as OG does at
- *  `src/main/frontend/modules/editor/undo_redo.cljs:261-272`
+ * `src/main/frontend/modules/editor/undo_redo.cljs:261-272`
  * (OG commit 6e7afa8eb). */
 export function captureHistorySidebarContext(): HistorySidebarContext {
   return { open: rightSidebarOpen(), items: rightSidebar().map((item) => ({ ...item })) };
@@ -1794,7 +1081,7 @@ export function openPageInSidebar(
     : targetOrName;
   pageKind = kind;
   path = targetPath;
-  if (pageKind === "page" && !path) name = resolveAlias(name);
+  if (pageKind === "page" && !path) name = navigationName(name);
   setRightSidebarOpen(true);
   // The working set is intentionally name-keyed. A duplicate physical file with
   // the same logical page name therefore replaces that one live sidebar slot;
@@ -1903,6 +1190,16 @@ export function closeRightSidebarItem(idx: number) {
 export function closeAllRightSidebarItems() {
   setRightSidebar([]);
 }
+/** Move a right-sidebar item to a new position (GH #211 drag-reorder). Order
+ *  persists through the same setRightSidebar owner (localStorage + session). */
+export function moveRightSidebarItem(from: number, to: number) {
+  const items = rightSidebar();
+  if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) return;
+  const next = [...items];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  setRightSidebar(next);
+}
 
 /** Remove block items whose live targets were structurally deleted. Their
  * collapse preference lives on the item, so no parallel stale-state map can
@@ -1913,27 +1210,32 @@ export function removeDeletedBlocksFromSidebar(uuids: ReadonlySet<string>) {
   if (next.length !== rightSidebar().length) setRightSidebar(next);
 }
 
-/** Drop restored block items whose block can't be resolved (its in-memory uuid
- *  changed across the restart). Page items are left untouched.
- *
- *  Only the current binding's definitive "no such block" removes an item. A
- *  failed read (a transient IPC error, a stale binding, a read refused during
- *  a graph switch) says nothing about the block, and the removal is persisted,
- *  so treating it as "gone" deleted the user's pin for good (GH #543, audit
- *  R6-08). */
+/** Swap a restored positional sidebar item for its settled form (same slot). */
+export function replaceSidebarBlock(from: SidebarBlock, to: SidebarBlock): void {
+  const items = rightSidebar();
+  if (!items.includes(from)) return;
+  setRightSidebar(items.map((item) => (item === from ? to : item)));
+}
+
+/** Resolve block items in parallel; remove and save only confirmed missing targets.
+ * Failed lookups remain and toast; pages are untouched. O(block items) backend calls plus save. */
 export async function pruneSidebarBlocks(): Promise<void> {
-  const blocks = rightSidebar().filter((i): i is SidebarBlock => i.kind === "block");
+  const root = graphMeta()?.root;
+  const owner = graphOwner(() => graphMeta()?.root === root);
+  // A positional item names an ID-less block, which the backend cannot resolve by
+  // uuid; the sidebar settles or drops it when its page loads.
+  const blocks = rightSidebar().filter((i): i is SidebarBlock => i.kind === "block" && !i.blockPos);
   if (!blocks.length) return;
-  const binding = graphBinding();
-  // One command for every pin: one resolve_block each waited in the backend
-  // side by side through the launch index pass (GH #543, audit R11-10).
-  const alive = await backend()
-    .resolveBlocks(blocks.map((b) => b.uuid))
-    .then((found) => blocks.map((_, i) => Boolean(found[i])), () => blocks.map(() => true));
-  if (graphBinding() !== binding) return;
-  const dead = new Set(blocks.filter((_, i) => !alive[i]).map((b) => b.uuid));
+  const result = await readOwned(owner, Promise.allSettled(blocks.map((b) => backend().resolveBlock(b.uuid))));
+  if (result.kind === "stale") return;
+  const resolved = result.value;
+  const dead = new Set(blocks.filter((_, i) =>
+    resolved[i].status === "fulfilled" && !resolved[i].value));
+  if (resolved.some((result) => result.status === "rejected")) {
+    pushToast("Could not check some sidebar blocks. Try again after the graph loads.", "error");
+  }
   if (dead.size) {
-    setRightSidebar(rightSidebar().filter((i) => i.kind !== "block" || !dead.has(i.uuid)));
+    setRightSidebar(rightSidebar().filter((i) => i.kind !== "block" || !dead.has(i)));
   }
 }
 
@@ -1943,7 +1245,7 @@ export async function pruneSidebarBlocks(): Promise<void> {
  *  row block to drop (works for grid + table, sort-safe). `gridId`/`col` enable a
  *  positional column delete (grid only; tables remove columns via "Remove from
  *  schema" on the header instead). */
-export type SheetCellRemoveCtx = { rowId?: string; gridId?: string; col?: number; surfaceId?: string };
+export type SheetCellRemoveCtx = { rowId?: string; gridId?: string; col?: number };
 
 export type CtxTarget =
   | { kind: "block"; blockId: string }
@@ -1968,9 +1270,6 @@ export type CtxTarget =
       fields?: readonly string[];
       formulas?: readonly [string, string][];
       filter?: string | null;
-      /** A query board's own grouping writer, so the menu and the board toolbar
-       *  share ONE path instead of each writing a property. */
-      queryGrouping?: QueryGroupingControl;
     }
   | { kind: "action-menu"; items: readonly ContextMenuAction[] };
 export interface ContextMenuAction {
@@ -1980,9 +1279,9 @@ export interface ContextMenuAction {
   danger?: boolean;
   children?: readonly ContextMenuAction[];
 }
-export const [contextMenu, setContextMenu] = createSignal<
-  ({ x: number; y: number } & CtxTarget) | null
->(null);
+export const [contextMenu, setContextMenu] = graphScopedSignal<
+  { x: number; y: number } & CtxTarget
+>();
 export function openContextMenu(x: number, y: number, blockId: string) {
   setContextMenu({ x, y, kind: "block", blockId });
 }
@@ -2045,7 +1344,6 @@ export function openSheetContextMenu(
     fields?: readonly string[];
     formulas?: readonly [string, string][];
     filter?: string | null;
-    queryGrouping?: QueryGroupingControl;
   } = {}
 ) {
   setContextMenu({ x, y, kind: "sheet", ownerId, surface, rowSource, groupBy, ...opts });
@@ -2061,15 +1359,15 @@ export function closeContextMenu() {
 // open when its target block mounts. The monotonically increasing token makes a
 // repeated request for the same block observable after the user closed it.
 let blockReferencesRequestToken = 0;
-export const [blockReferencesRequest, setBlockReferencesRequest] = createSignal<{
+export const [blockReferencesRequest, setBlockReferencesRequest] = graphScopedSignal<{
   id: string;
   token: number;
-} | null>(null);
+}>();
 export function requestBlockReferences(id: string) {
   setBlockReferencesRequest({ id, token: ++blockReferencesRequestToken });
 }
 
-export type SettingsTabId = "appearance" | "editor" | "journals" | "files" | "backups" | "graph" | "plugins" | "improve" | "shortcuts" | "diagnostics" | "about";
+export type SettingsTabId = "appearance" | "editor" | "journals" | "files" | "backups" | "graph" | "plugins" | "diagnostics" | "shortcuts" | "about";
 
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 
@@ -2079,9 +1377,6 @@ export const [settingsOpen, setSettingsOpen] = createSignal(false);
 export const [graphTransitioning, setGraphTransitioning] = createSignal(false);
 export const [settingsTabRequest, setSettingsTabRequest] = createSignal<SettingsTabId | null>(null);
 export function openSettings(tab?: SettingsTabId) {
-  // Settings is where the graph, storage, plugins and preferences are
-  // changed; a published export changes none of them (spec §5).
-  if (isPublishedExport()) return;
   if (tab) setSettingsTabRequest(tab);
   setSettingsOpen(true);
 }
@@ -2108,45 +1403,20 @@ export function closeWelcome() {
   setWelcomeOpen(false);
 }
 
-// Transient toast notifications (bottom-right), auto-dismissed.
-export interface Toast {
-  id: number;
-  message: string;
-  kind: "info" | "success" | "warn" | "error";
-  sticky?: boolean; // stays until the user closes it (✕); no auto-dismiss
-  // Optional action button (e.g. "Download"). Runs, then dismisses the toast.
-  action?: { label: string; run: () => void };
-  onDismiss?: () => void;
-}
-let toastSeq = 0;
-export const [toasts, setToasts] = createSignal<Toast[]>([]);
-export function pushToast(
-  message: string,
-  kind: Toast["kind"] = "info",
-  opts: {
-    sticky?: boolean;
-    dedupe?: boolean;
-    action?: { label: string; run: () => void };
-    onDismiss?: () => void;
-  } = {}
-): number {
-  if (opts.dedupe) {
-    const existing = toasts().find((toast) => toast.kind === kind && toast.message === message);
-    if (existing) return existing.id;
-  }
-  const id = ++toastSeq;
-  setToasts([...toasts(), { id, message, kind, sticky: opts.sticky, action: opts.action, onDismiss: opts.onDismiss }]);
-  if (!opts.sticky) setTimeout(() => dismissToast(id), 3200);
-  return id;
-}
-export function dismissToast(id: number) {
-  const toast = toasts().find((t) => t.id === id);
-  toast?.onDismiss?.();
-  setToasts(toasts().filter((t) => t.id !== id));
-}
-
 // Full-screen image lightbox (click an inline image to zoom).
 export const [lightbox, setLightbox] = createSignal<string | null>(null);
+// The images the viewer can page through (GH #501), starting at the opened one,
+// and which of them is showing. `lightbox()` stays the single source of truth for
+// the displayed src; when it does not match the gallery slot (a plain
+// setLightbox(src) caller) the viewer shows just that image.
+export const [lightboxGallery, setLightboxGallery] = createSignal<string[]>([]);
+export const [lightboxIndex, setLightboxIndex] = createSignal(0);
+export function openLightbox(src: string, gallery?: string[]) {
+  const list = gallery && gallery.length > 0 ? gallery : [src];
+  setLightboxGallery(list);
+  setLightboxIndex(0);
+  setLightbox(src);
+}
 
 // Expanded audio player overlay (the "Expand" button on an inline audio embed):
 // a dimmed, ~90%-wide panel with a waveform scrubber + skip controls. `url` is the
@@ -2155,15 +1425,7 @@ export const [lightbox, setLightbox] = createSignal<string | null>(null);
 export const [audioPlayer, setAudioPlayer] =
   createSignal<{ url: string; name: string } | null>(null);
 
-// Page aliases (alias:: → canonical), keyed by normalized alias; loaded per graph.
-export const [aliasMap, setAliasMap] = createSignal<Record<string, string>>({});
-// The page-identity fold lives in the dependency-free leaf `pageIdentity.ts`
-// (DUP-2/DUP-8); re-exported here so existing importers keep working.
 export { pageIdentityKey };
-/** Resolve a page name through `alias::` to its canonical page (else unchanged). */
-export function resolveAlias(name: string): string {
-  return aliasMap()[pageIdentityKey(name)] ?? name;
-}
 
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);
 export const [switcherPluginBlock, setSwitcherPluginBlock] = createSignal<OwnedPluginBlockSnapshot | null>(null);
@@ -2202,16 +1464,8 @@ export function closeSwitcher() {
 // PDF export: the page whose export-options dialog is open (null = closed). Set by
 // the page context menu / the "Export current page to PDF" command; the dialog
 // collects options and calls exportPagePdf.
-export const [pdfExportPage, setPdfExportPage] = createSignal<string | null>(null);
+export const [pdfExportPage, setPdfExportPage] = graphScopedSignal<string>();
 export function openPdfExport(name: string) {
-  // A mobile WebView cannot print, so the export silently did nothing (GH #560).
-  // Android's renderer disables scripted printing outright
-  // (AwPrintRenderFrameHelperDelegate::IsScriptedPrintEnabled returns false);
-  // on iOS WebKit does forward window.print() to the UI process, but only into
-  // the private WKUIDelegate SPI `_webView:printFrame:`, which wry does not
-  // implement. Neither path throws, so print.ts's `win.print()` returned
-  // normally, `afterprint` never fired, and the dialog led nowhere. This is the
-  // one funnel for every entry point (page context menu, command, keybinding).
   if (isMobilePlatform) {
     pushToast("PDF export needs the desktop app: a mobile WebView cannot print.", "info");
     return;
@@ -2222,26 +1476,7 @@ export function closePdfExport() {
   setPdfExportPage(null);
 }
 
-// "Export query results…": the query surface hands over exactly what it
-// executed; the dialog plans, shows the page set, and confirms. One at a time.
-export const [queryExportRequest, setQueryExportRequest] =
-  createSignal<import("./types").QueryPublicationRequest | null>(null);
-export function openQueryExport(request: import("./types").QueryPublicationRequest) {
-  setQueryExportRequest(request);
-}
-export function closeQueryExport() {
-  setQueryExportRequest(null);
-}
-
-// The PDF currently open in the side pane. `filename` is the stable resource
-// identity; page/highlightId are a navigation intent within that resource.
-// Keeping those concepts separate lets a second reference into the same PDF
-// scroll precisely without tearing down the loaded document.
-export interface PdfTarget {
-  filename: string;
-  label: string;
-  owner: PdfOwnership;
-  page?: number;
-  scale?: number;
-  highlightId?: string;
+/** Effective graph-local OG accent-removal setting for frontend search views. */
+export function searchRemoveAccents(): boolean {
+  return graphMeta()?.enable_search_remove_accents !== false;
 }

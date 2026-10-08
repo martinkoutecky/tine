@@ -1,0 +1,17 @@
+{
+  "ship": "release",
+  "identities": {
+    "release": {
+      "identifier": "page.tine.Tine",
+      "productName": "Tine",
+      "androidApplicationId": "page.tine.app",
+      "deployName": "tine"
+    },
+    "experiment": {
+      "identifier": "page.tine.TineBeta",
+      "productName": "Tine Beta",
+      "androidApplicationId": "page.tine.beta",
+      "deployName": "tine-og"
+    }
+  }
+}

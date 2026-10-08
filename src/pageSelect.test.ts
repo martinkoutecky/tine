@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { ensurePageLoaded, pageByName, resetStore, selectBlock, isSelected, moveSelection, selectedIds } from "./store";
+import { ensurePageLoaded, pageByName, resetStore, selectBlock, isSelected, moveSelection, selectedIds } from "./document";
 import type { PageDto } from "./types";
 
 afterEach(() => { resetStore(); });
@@ -10,8 +10,8 @@ function page(name: string): PageDto {
 }
 
 describe("block selection on a routed (non-feed) page", () => {
-  it("selects and walks blocks on a page loaded via ensurePageLoaded (not the feed)", async () => {
-    await ensurePageLoaded(page("SelTest"));
+  it("selects and walks blocks on a page loaded via ensurePageLoaded (not the feed)", () => {
+    ensurePageLoaded(page("SelTest"));
     const roots = pageByName("SelTest")!.roots;
     expect(roots.length).toBe(3);
 

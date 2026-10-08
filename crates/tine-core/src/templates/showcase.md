@@ -9,8 +9,6 @@ icon:: 🧪
 - **Bold**, *italic*, _also italic_, ~~strikethrough~~, `inline code`, ==highlight==, and ^^also highlight^^.
 - A mix in one line: a **bold `code` span**, an *italic [[link]]*, and a ~~struck ==highlight==~~.
 - Raw inline HTML renders (sanitized to a safe allowlist): <ins>inserted</ins>, <del>deleted</del>, <kbd>Ctrl</kbd> + <kbd>C</kbd>, <mark>marked</mark>, and <sup>superscript</sup> / <sub>subscript</sub>. Scripts and event handlers (`onerror=`, `<script>`) are stripped.
-- Logseq Hiccup vectors render through the same safe-markup boundary in Tine and in static HTML export:
-- [:span {:class "hiccup-sample"} "Hiccup " [:strong "markup"]]
 - *Parity note:* a tag glued to a word — `H<sub>2</sub>O`, `mc<sup>2</sup>` — stays **literal in Logseq too** (mldoc only starts inline HTML at a word boundary), and so do the Markdown carets `x^2^` / `H~2~O`. For a glued subscript, use math: $E = mc^2$, $H_2O$.
 - # 2 — Links & references
 - Page link: [[Welcome to Tine]] · tag: #demo · namespaced page: [[Features/Quick capture]].

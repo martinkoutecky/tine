@@ -1,9 +1,11 @@
+// Ported from master src/components/QueryBuilder.registry.test.tsx. og: a registry
+// failure is a plain Error (no typed index readiness).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorBoundary, createSignal } from "solid-js";
 import { render } from "solid-js/web";
-import { backend, QueryNotReadyError, QueryUnavailableError } from "../backend";
+import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { bumpGraphEpoch, setDataRev } from "../ui";
+import { bumpGraphEpoch, setDataRev } from "../graphSession";
 import type { Filter, RegistrySnapshot } from "../editor/queryIr";
 import { propertyFilter } from "../editor/queryBuilder";
 import { clearTransientLayersForTest } from "../transientLayers";
@@ -12,7 +14,6 @@ import {
   resetQueryRegistryRevisionForTests,
   type BuilderSession,
 } from "./QueryBuilder";
-import { stubVocabularyGeometry } from "./QueryVocabularyPicker.test-helpers";
 
 // **What a registry read that does not succeed looks like in the sheet.**
 //
@@ -49,7 +50,7 @@ function snapshot(keys: [string, number][]): RegistrySnapshot {
 }
 
 const FAILURE_MESSAGE = "The index could not be rebuilt.";
-const unavailable = () => new QueryUnavailableError("projection.failed", FAILURE_MESSAGE);
+const unavailable = () => new Error(FAILURE_MESSAGE);
 
 /** Let the shared registry request run through its promise chain. */
 async function settle(ticks = 12): Promise<void> {
@@ -117,18 +118,14 @@ function retryButton(): HTMLButtonElement {
   return button;
 }
 
-let restoreGeometry: (() => void) | null = null;
 
 beforeEach(() => {
-  restoreGeometry = stubVocabularyGeometry();
   resetQueryRegistryRevisionForTests();
   vi.spyOn(backend(), "queryFacets").mockResolvedValue([]);
   vi.spyOn(backend(), "printQuery").mockResolvedValue("(and (property cost 3))");
 });
 
 afterEach(() => {
-  restoreGeometry?.();
-  restoreGeometry = null;
   clearTransientLayersForTest();
   resetSharedQueryResultsForTests();
   resetQueryRegistryRevisionForTests();
@@ -151,12 +148,12 @@ describe("QueryBuilder registry failure handling (RET2-UI)", () => {
 
       // FAIL-BEFORE: the picker's own render threw, so it never opened.
       openChooser(sheet);
-      const failure = document.querySelector<HTMLElement>(".qs-vocab-failure");
+      const failure = document.querySelector<HTMLElement>(".qs-registry-failure");
       expect(failure).not.toBeNull();
       expect(failure!.textContent).toContain(FAILURE_MESSAGE);
       expect(failure!.getAttribute("role")).toBe("alert");
       // Neither of the two things a failure must never be mistaken for.
-      expect(document.querySelector(".qs-vocab-pending")).toBeNull();
+      expect(document.querySelector(".qs-registry-pending")).toBeNull();
       expect(retryButton()).not.toBeNull();
 
       // And nothing is still retrying behind it.
@@ -196,14 +193,14 @@ describe("QueryBuilder registry failure handling (RET2-UI)", () => {
       const sheet = builder.open();
       await settle();
       openChooser(sheet);
-      expect(document.querySelector(".qs-vocab")!.textContent).toContain("cost");
+      expect(document.querySelector(".qs-menu")!.textContent).toContain("cost");
 
       // A save bumps `dataRev`; the re-read for the NEW revision fails.
       setDataRev((revision) => revision + 1);
       await settle();
       expect(registry.mock.calls.length).toBe(2);
       expect(builder.boundary()).toBeNull();
-      const failure = document.querySelector<HTMLElement>(".qs-vocab-failure");
+      const failure = document.querySelector<HTMLElement>(".qs-registry-failure");
       expect(failure).not.toBeNull();
       expect(failure!.textContent).toContain(FAILURE_MESSAGE);
       // The previous revision's rows are not this revision's answer.
@@ -213,66 +210,9 @@ describe("QueryBuilder registry failure handling (RET2-UI)", () => {
     }
   });
 
-  it("retries typed readiness by itself and keeps the chosen key and its draft value", async () => {
-    const registry = vi.spyOn(backend(), "queryRegistry")
-      .mockResolvedValueOnce(snapshot([["cost", 12]]))
-      .mockRejectedValueOnce(new QueryNotReadyError("indexing"))
-      .mockResolvedValue(snapshot([["cost", 12], ["owner", 3]]));
-    const builder = mountBuilder();
-    try {
-      const sheet = builder.open();
-      await settle();
-      openChooser(sheet);
-      pickKey("cost");
-      await settle();
-      const input = document.querySelector<HTMLInputElement>(".qs-value-editor .qs-input")!;
-      input.value = "42";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      await settle();
-
-      setDataRev((revision) => revision + 1);
-      await settle();
-      // Readiness, not failure: the wait says so and no retry control appears.
-      expect(document.querySelector(".qs-registry-pending")).not.toBeNull();
-      expect(document.querySelector(".qs-registry-failure")).toBeNull();
-      expect(document.querySelector(".qs-value-editor .qs-menu-title")!.textContent)
-        .toContain("cost");
-
-      await vi.waitFor(() => expect(registry.mock.calls.length).toBe(3), { timeout: 2000 });
-      await vi.waitFor(() =>
-        expect(document.querySelector(".qs-registry-pending")).toBeNull());
-      // The key and the draft the user typed are exactly where they were.
-      expect(document.querySelector(".qs-value-editor .qs-menu-title")!.textContent)
-        .toContain("cost");
-      expect(document.querySelector<HTMLInputElement>(".qs-value-editor .qs-input")!.value)
-        .toBe("42");
-      expect(document.querySelector<HTMLButtonElement>(".qs-commit")!.disabled).toBe(false);
-      expect(builder.boundary()).toBeNull();
-    } finally {
-      builder.dispose();
-    }
-  });
-
-  it("stops the automatic retry when readiness turns into a terminal failure", async () => {
-    const registry = vi.spyOn(backend(), "queryRegistry")
-      .mockRejectedValueOnce(new QueryNotReadyError("recovering"))
-      .mockRejectedValue(unavailable());
-    const builder = mountBuilder();
-    try {
-      const sheet = builder.open();
-      await vi.waitFor(() => expect(registry.mock.calls.length).toBe(2), { timeout: 2000 });
-      await settle();
-      openChooser(sheet);
-      expect(document.querySelector<HTMLElement>(".qs-vocab-failure")!.textContent)
-        .toContain(FAILURE_MESSAGE);
-      // Two attempts, and then it stays two: the readiness backoff is over.
-      await settle(60);
-      expect(registry.mock.calls.length).toBe(2);
-      expect(builder.boundary()).toBeNull();
-    } finally {
-      builder.dispose();
-    }
-  });
+  // master's two readiness tests ("retries typed readiness by itself…", "stops the
+  // automatic retry when readiness turns into a terminal failure") are X-class:
+  // og's query_registry walks the files and has no index readiness to wait on.
 
   it("recovers on explicit retry without reopening the sheet or resetting the draft", async () => {
     const registry = vi.spyOn(backend(), "queryRegistry")
@@ -347,11 +287,11 @@ describe("QueryBuilder registry failure handling (RET2-UI)", () => {
       await settle(20);
 
       openChooser(sheet);
-      const list = document.querySelector<HTMLElement>(".qs-vocab")!;
+      const list = document.querySelector<HTMLElement>(".qs-menu")!;
       expect(list.textContent).toContain("owner");
       expect(list.textContent).not.toContain("stale");
-      expect(document.querySelector(".qs-vocab-failure")).toBeNull();
-      expect(document.querySelector(".qs-vocab-pending")).toBeNull();
+      expect(document.querySelector(".qs-registry-failure")).toBeNull();
+      expect(document.querySelector(".qs-registry-pending")).toBeNull();
       expect(builder.boundary()).toBeNull();
     } finally {
       builder.dispose();
@@ -386,6 +326,30 @@ describe("QueryBuilder registry failure handling (RET2-UI)", () => {
     } finally {
       first.dispose();
       second.dispose();
+    }
+  });
+
+  it("keeps the last registry choices visible during a save-triggered re-read", async () => {
+    let finish: ((value: RegistrySnapshot) => void) | undefined;
+    vi.spyOn(backend(), "queryRegistry")
+      .mockResolvedValueOnce(snapshot([["cost", 12]]))
+      .mockImplementationOnce(() => new Promise<RegistrySnapshot>((resolve) => { finish = resolve; }));
+    const builder = mountBuilder();
+    try {
+      const sheet = builder.open();
+      openChooser(sheet);
+      await settle();
+      const choices = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((item) => item.textContent?.trim());
+      expect(choices()).toContain("cost");
+      setDataRev(1);
+      await settle();
+      expect(finish).toBeDefined();
+      expect(choices()).toContain("cost");
+      finish!(snapshot([["cost", 13], ["owner", 2]]));
+      await settle();
+      expect(choices()).toContain("owner");
+    } finally {
+      builder.dispose();
     }
   });
 });

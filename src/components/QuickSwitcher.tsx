@@ -1,8 +1,13 @@
-import { For, Show, batch, createSignal, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
-import { runQueryWhenReady, searchIndexPendingMessage } from "../queryReadiness";
+import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPluginBlock, recentPages, graphMeta, isFavorite, pushToast, bumpPageInventoryRev, openPageInSidebar, openBlockInSidebar, openPageContextMenu, indexCorrectionRev } from "../ui";
-import { openPage, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route } from "../router";
+import { bindingIdentity, captureBinding } from "../binding";
+import { bindingOwner, readOwned, writeOwned, type Owned } from "../owned";
+import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
+import { createLongPress } from "../render/longPress";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
+import { graphMeta } from "../graphSession";
+import { pushToast } from "../toasts";
+import { openPage, openPageTarget, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route, type PageTarget } from "../router";
 import { paletteCommands } from "../keybindings";
 import { closePane, focusPane, focusedRouter, layoutPaneIds, openRouteInOtherPane, paneRouter } from "../panes";
 import { fuzzyScore } from "../editor/autocomplete";
@@ -12,14 +17,11 @@ import { SearchResultRow } from "./SearchResultRow";
 import type { MatchSpan, ObjectiveMatchClass, PageKind } from "../types";
 import { rankLauncherItems, recordLauncherActivation } from "../launcherRanking";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
-import { persistBlockRefTarget } from "../store";
+import { createPage as saveCreatedPage, CreatePageRefusal, switcherPage } from "../document";
 import type { QueryPageScope } from "../types";
 import { blockDtoExternalId } from "../blockIdentity";
-import { createLongPress } from "../render/longPress";
-import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { graphBinding } from "../persistence";
-import { captureGraphScope, landAsyncOrToast } from "../landAsync";
-import { pageIdentityKey } from "../pageIdentity";
+import { readOr } from "../resourceRead";
+import { ResourceFailure } from "./ResourceFailure";
 
 // One selectable result row.
 type Item =
@@ -96,84 +98,31 @@ export function QuickSwitcher(): JSX.Element {
   onCleanup(() => clearTimeout(qTimer));
   // Fetch OG's complete ranked pools once per query. Presentation paging below
   // changes only the rendered slice and therefore does not trigger another scan.
-  const [graphResults, setGraphResults] = createSignal<Awaited<ReturnType<ReturnType<typeof backend>["runGraphSearch"]>>>();
-  // The query the shown graph results answer. While a newer query is being
-  // searched the previous answer stays on screen (GH #543: blanking the list
-  // on every keystroke made each search look slower than it was), and Enter
-  // on that stale list waits for the fresh answer instead of choosing a row
-  // of the old one.
-  const [answeredQuery, setAnsweredQuery] = createSignal<string | null>(null);
-  const resultsStale = () => graphResults() !== undefined && answeredQuery() !== query();
-  let deferredEnter: ((it: Item | undefined) => void) | null = null;
-  const [searchPending, setSearchPending] = createSignal<string | null>(null);
-  const [searchError, setSearchError] = createSignal<string | null>(null);
-  const [searchRetry, setSearchRetry] = createSignal(0);
-  let searchRequest = 0;
-  createEffect(() => {
-    searchRetry();
-    // Ask again once the launch index check lands: an answer before it may
-    // come from the index as the last session left it (GH #550).
-    indexCorrectionRev();
-    const open = switcherOpen();
-    const raw = query();
-    const commands = commandsOnly();
-    const s = {
+  const [graphResultsResource, { refetch: retrySearch }] = createResource(
+    () => (commandsOnly() ? null : {
       q: debouncedQuery(),
       pages: currentPageOnly() ? 0 : PAGE_POOL,
       blocks: BLOCK_POOL,
       scope: currentPageScope(),
+      // Hits belong to one graph: a switch re-keys the search so the old graph's
+      // rows are neither shown nor reused.
       graphRoot: graphMeta()?.root ?? "",
-      graphBinding: graphBinding(),
-    };
-    const mine = ++searchRequest;
-    const controller = new AbortController();
-    onCleanup(() => controller.abort());
-    setSearchError(null);
-    setSearchPending(null);
-    if (!open || commands || !raw.trim()) {
-      setGraphResults(undefined);
-      setAnsweredQuery(null);
-      deferredEnter = null;
-      return;
-    }
-    setSearchPending("Searching…");
-    if (raw !== s.q) return;
-    const isCurrent = () => mine === searchRequest && !controller.signal.aborted;
-    void runQueryWhenReady(() => backend().runGraphSearch(
+      binding: bindingIdentity(),
+    }),
+    (s) => s && s.q.trim()
+      ? backend().runGraphSearch(
           s.q,
           s.pages,
           s.blocks,
           s.scope ? "quick-switch:current-page" : "quick-switch",
           false,
           s.scope ?? undefined,
-          undefined,
-          "ctrl_k",
-        ), {
-      signal: controller.signal,
-      isCurrent,
-      onPending: (error) => setSearchPending(searchIndexPendingMessage(error)),
-    }).then((answer) => {
-      if (!isCurrent()) return;
-      batch(() => {
-        setGraphResults(answer);
-        setAnsweredQuery(s.q);
-      });
-      if (deferredEnter && !resultsStale()) {
-        const run = deferredEnter;
-        deferredEnter = null;
-        run(flat()[sel()]);
-      }
-    })
-      .catch((error: unknown) => {
-        if (!isCurrent()) return;
-        batch(() => {
-          setGraphResults(undefined);
-          setAnsweredQuery(null);
-        });
-        deferredEnter = null;
-        setSearchError(error instanceof Error ? error.message : String(error));
-      });
-  });
+        )
+      : Promise.resolve({ hits: [], diagnostics: [], explanation: { branches: [] }, has_more: { pages: false, blocks: false }, cancelled: false })
+  );
+  // A failed search says so (below) instead of throwing into the switcher's render
+  // or claiming "No matched results".
+  const graphResults = () => readOr(graphResultsResource, undefined, "search results");
 
   const currentPageName = () => {
     const scope = currentPageScope();
@@ -216,7 +165,7 @@ export function QuickSwitcher(): JSX.Element {
         path: r.path,
         adaptiveClass: "exact",
         adaptiveIdentity: `page:${r.kind}:${r.path || r.name.toLocaleLowerCase()}`,
-        adaptiveFavorite: isFavorite(r.name),
+        adaptiveFavorite: isFavorite(r.name, r.kind),
       }));
       if (recents.length) out.push({ header: "Recent", items: recents });
       return out;
@@ -235,7 +184,7 @@ export function QuickSwitcher(): JSX.Element {
         matchedAlias: hit.matched_alias ?? undefined,
         adaptiveClass: hit.match_class ?? "substring",
         adaptiveIdentity: `page:${hit.page.kind}:${hit.page.path || hit.page.name.toLocaleLowerCase()}`,
-        adaptiveFavorite: isFavorite(hit.page.name),
+        adaptiveFavorite: isFavorite(hit.page.name, hit.page.kind),
       }));
     const rankedPages = rankLauncherItems(
       graphMeta()?.root ?? "",
@@ -253,15 +202,9 @@ export function QuickSwitcher(): JSX.Element {
         truncated: graphResults()?.has_more?.pages ? "pages" : undefined,
       });
 
-    // Create page only when the whole launcher query is not an existing page
-    // name or matched alias. Search Exact is deliberately broader under A6
-    // (for example `cafe` ranks `café` as Exact), so rank is not identity.
-    const queryIdentity = pageIdentityKey(q);
-    const existingIdentity = allPages.some((page) => page.t === "page" && (
-      pageIdentityKey(page.name) === queryIdentity
-      || (page.matchedAlias !== undefined && pageIdentityKey(page.matchedAlias) === queryIdentity)
-    ));
-    if (!currentPageOnly() && !existingIdentity) out.push({ header: "Create", items: [{ t: "create", name: q }] });
+    // Create page (when no exact match exists).
+    const exact = pageItems.some((p) => p.t === "page" && p.adaptiveClass === "exact");
+    if (!currentPageOnly() && !exact) out.push({ header: "Create", items: [{ t: "create", name: q }] });
 
     // Commands matching the query.
     const cmds = embryoPane || currentPageOnly() ? [] : commandItems(q);
@@ -285,7 +228,7 @@ export function QuickSwitcher(): JSX.Element {
           spans: hit.evidence.flatMap((evidence) => evidence.spans),
           adaptiveClass: hit.match_class ?? "body_evidence",
           adaptiveIdentity: `block:${hit.kind}:${hit.path || hit.page.toLocaleLowerCase()}:${hit.block.id}`,
-          adaptiveFavorite: isFavorite(hit.page),
+          adaptiveFavorite: isFavorite(hit.page, hit.kind),
         },
         onCur: currentPageOnly() || !!(cur && hit.page === cur),
       });
@@ -354,7 +297,7 @@ export function QuickSwitcher(): JSX.Element {
     if (sel() >= n) setSel(0);
   });
 
-  const choose = (it: Item) => {
+  const choose = async (it: Item) => {
     const embryo = switcherEmbryo();
     if (embryo) {
       void chooseEmbryo(it, embryo.paneId);
@@ -392,12 +335,12 @@ export function QuickSwitcher(): JSX.Element {
         it.path ? router.openFile(it.path, it.name, it.pageKind) : router.openPage(it.name, it.pageKind);
         break;
       case "create":
-        if (!(await landAsyncOrToast(
-          captureGraphScope(),
-          () => createPageFile(it.name),
-          "The graph changed before the page was created. Try again.",
-        )).landed) return;
-        router.openPage(it.name, "page");
+        {
+          const created = await createPageFile(it.name);
+          if (created.kind === "stale") return;
+          const target = created.value;
+          target?.path ? router.openFile(target.path, target.name, target.pageKind) : router.openPage(it.name, "page");
+        }
         break;
       case "block":
         router.openPageAtBlock(it.page, it.pageKind, it.blockId, it.path);
@@ -417,12 +360,12 @@ export function QuickSwitcher(): JSX.Element {
         openRouteInOtherPane({ kind: "page", name: it.name, pageKind: it.pageKind, path: it.path });
         break;
       case "create":
-        if (!(await landAsyncOrToast(
-          captureGraphScope(),
-          () => createPageFile(it.name),
-          "The graph changed before the page was created. Try again.",
-        )).landed) return;
-        openRouteInOtherPane({ kind: "page", name: it.name, pageKind: "page" });
+        {
+          const created = await createPageFile(it.name);
+          if (created.kind === "stale") return;
+          const target = created.value;
+          openRouteInOtherPane({ kind: "page", name: target?.name ?? it.name, pageKind: target?.pageKind ?? "page", path: target?.path });
+        }
         break;
       case "command":
         it.run();
@@ -434,15 +377,13 @@ export function QuickSwitcher(): JSX.Element {
     closeSwitcher();
   };
 
-  const chooseSidebar = (it: Extract<Item, { t: "page" | "block" }>) => {
+  const chooseSidebar = async (it: Extract<Item, { t: "page" | "block" }>) => {
     recordChoice(it);
     if (it.t === "page") {
       openPageInSidebar(it.name, it.pageKind, it.path);
     } else {
       // Search results can target a page that is not loaded in the frontend.
-      // Stamp its id:: through the guarded ordinary page-save path before the
-      // durable sidebar item outlives this search session.
-      void persistBlockRefTarget(it.blockId, it.page, it.pageKind, it.path);
+      // Opening is read-only (OG writes an id:: only when a reference is created).
       openBlockInSidebar({ uuid: it.blockId, page: it.page, pageKind: it.pageKind, path: it.path });
     }
     closeSwitcher();
@@ -452,7 +393,7 @@ export function QuickSwitcher(): JSX.Element {
   // fan several results out without re-searching. A block opens zoomed into
   // itself (self-contained and durable — the tab shows exactly what you found);
   // create/command have no background-tab meaning, so they're ignored.
-  const openInBackground = (it: Item) => {
+  const openInBackground = async (it: Item) => {
     recordChoice(it);
     if (it.t === "page")
       it.path
@@ -463,26 +404,50 @@ export function QuickSwitcher(): JSX.Element {
     });
   };
 
-  const createPageFile = async (name: string) => {
+  // `stale` means the graph changed while the page was being created: the caller
+  // must not open anything (and the user has been told). `current(null)` means the
+  // page was created (or failed and was toasted) and opens by name.
+  const createPageFile = async (name: string): Promise<Owned<PageTarget | null>> => {
+    const binding = captureBinding();
+    const owner = bindingOwner();
+    const stale = (): Owned<null> => {
+      pushToast("The graph changed before the page was created. Try again.", "warn");
+      return { kind: "stale" };
+    };
     try {
-      await backend().savePage(
-        { name, kind: "page", title: name, pre_block: null, blocks: [{ id: "", raw: "", collapsed: false, children: [] }] },
-        null, // brand-new page — no baseline
-        false
-      );
-      bumpPageInventoryRev();
-    } catch {
-      // ignore — still navigate; the page will be created on first edit
+      const resolution = await readOwned(owner, backend().resolvePage(name, "page"));
+      if (resolution.kind === "stale") return stale();
+      const resolved = resolution.value;
+      // Create means open-or-create: the Create row can be chosen before search
+      // results arrive, so any name that already resolves (a page or an alias)
+      // opens its target. Only an absent name writes a file.
+      if (resolved.kind !== "absent") {
+        const path = resolved.kind === "existing" ? resolved.id : resolved.owners[0];
+        const targetResult = await readOwned(owner, backend().getPageByPath(path));
+        if (targetResult.kind === "stale") return stale();
+        const target = targetResult.value;
+        if (!target) throw new Error("resolved page disappeared");
+        return { kind: "current", value: { name: target.name, pageKind: target.kind, path: target.id } };
+      }
+      const saved = await writeOwned(owner, saveCreatedPage(name, switcherPage(name), { id: resolved.id, bindingGeneration: binding.backendGeneration }));
+      return saved.kind === "stale" ? stale() : { kind: "current", value: null };
+    } catch (error) {
+      if (error instanceof CreatePageRefusal && error.reason === "graph-changed") return stale();
+      pushToast(`Could not create “${name}”: ${String(error)}. It will be saved on your first edit.`, "error");
+      return { kind: "current", value: null };
     }
   };
 
   const createPage = async (name: string) => {
-    if (!(await landAsyncOrToast(
-      captureGraphScope(),
-      () => createPageFile(name),
-      "The graph changed before the page was created. Try again.",
-    )).landed) return;
-    openPage(name, "page");
+    try {
+      const result = await createPageFile(name);
+      if (result.kind === "stale") return;
+      const target = result.value;
+      if (target) openPageTarget(target);
+      else openPage(name, "page");
+    } catch (error) {
+      pushToast(`Could not create “${name}”: ${String(error)}`, "error");
+    }
   };
 
   const move = (d: number) => {
@@ -500,23 +465,17 @@ export function QuickSwitcher(): JSX.Element {
       move(-1);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const activate = (it: Item | undefined) => {
-        if (!it) return;
-        // GH #463: the keyboard half of the same ladder the pointer already
-        // implements below. Ctrl/Cmd+Enter was the one rung missing, so it fell
-        // through to plain navigation and the modifier did nothing — while
-        // Ctrl/Cmd+click on the very same row opened a background tab. Like the
-        // click, it leaves the switcher open, so several results can be fanned
-        // out without searching again.
+      const it = flat()[sel()];
+      if (it) {
+        // GH #463: the keyboard ladder mirrors the row's mousedown ladder;
+        // Ctrl/Cmd+Enter opens a background tab and keeps Search open.
         const shiftOnly = e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
         const cmdCtrlOnly = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
-        if (shiftOnly && !switcherEmbryo() && (it.t === "page" || it.t === "block")) chooseSidebar(it);
-        else if (cmdCtrlOnly && (it.t === "page" || it.t === "block")) openInBackground(it);
+        if (shiftOnly && !switcherEmbryo() && (it.t === "page" || it.t === "block")) void chooseSidebar(it);
+        else if (cmdCtrlOnly && (it.t === "page" || it.t === "block")) void openInBackground(it);
         else if (e.altKey && !switcherEmbryo()) void chooseOther(it);
-        else choose(it);
-      };
-      if (resultsStale()) deferredEnter = activate;
-      else activate(flat()[sel()]);
+        else void choose(it);
+      }
     } else if (e.key === "Escape") {
       if (e.isComposing || e.keyCode === 229) return;
       if (dismissTopTransient("escape")) e.preventDefault();
@@ -620,22 +579,14 @@ export function QuickSwitcher(): JSX.Element {
                               setTimeout(() => (swallowNextPaste = false), 200);
                               openInBackground(it);
                             } else if (e.button === 0) {
-                              // GH #288: pointer modifiers mirror the Enter-key
-                              // semantics — Ctrl/Cmd+click = background tab like
-                              // middle-click (no PRIMARY paste to swallow; the
-                              // switcher stays open), Alt+click = other pane,
-                              // Shift+click = right sidebar. Create/command rows
-                              // keep only their existing safe actions.
-                              const cmdCtrl = e.ctrlKey || e.metaKey;
-                              if (cmdCtrl && !e.altKey && !e.shiftKey && (it.t === "page" || it.t === "block")) {
-                                openInBackground(it);
-                              } else if (!switcherEmbryo() && e.shiftKey && !e.altKey && !cmdCtrl && (it.t === "page" || it.t === "block")) {
-                                chooseSidebar(it);
-                              } else if (!switcherEmbryo() && e.altKey) {
+                              const mod = e.ctrlKey || e.metaKey;
+                              if (mod && !e.altKey && !e.shiftKey && (it.t === "page" || it.t === "block"))
+                                void openInBackground(it);
+                              else if (!switcherEmbryo() && e.shiftKey && !e.altKey && !mod && (it.t === "page" || it.t === "block"))
+                                void chooseSidebar(it);
+                              else if (!switcherEmbryo() && e.altKey)
                                 void chooseOther(it);
-                              } else {
-                                choose(it);
-                              }
+                              else void choose(it);
                             }
                           }}
                           onPointerDown={(e) => { if (it.t === "page") longPress.onPointerDown(e); }}
@@ -683,9 +634,11 @@ export function QuickSwitcher(): JSX.Element {
                 {graphResults()!.diagnostics.map((diagnostic) => diagnostic.message).join(" · ")}
               </div>
             </Show>
-            <Show when={searchPending()}><div class="switcher-empty" role="status">{searchPending()}</div></Show>
-            <Show when={searchError()}><div class="switcher-empty switcher-error" role="alert">{searchError()} <button onClick={() => setSearchRetry((n) => n + 1)}>Retry search</button></div></Show>
-            <Show when={query().trim() && !searchPending() && !searchError() && flat().length === 0 && !(graphResults()?.diagnostics.length ?? 0)}>
+            <ResourceFailure of={graphResultsResource} what="search results" onRetry={() => void retrySearch()} />
+            <Show when={query().trim() && (graphResultsResource.loading || debouncedQuery() !== query())}>
+              <div class="switcher-empty" role="status">Searching…</div>
+            </Show>
+            <Show when={query().trim() && !graphResultsResource.loading && debouncedQuery() === query() && flat().length === 0 && graphResultsResource.error === undefined && !(graphResults()?.diagnostics.length ?? 0)}>
               <div class="switcher-empty">No matched results</div>
             </Show>
           </div>

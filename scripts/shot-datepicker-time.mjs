@@ -1,4 +1,3 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Verify + screenshot the SCHEDULED/DEADLINE date picker's time row (#30): the
 // `/scheduled` slash command opens the picker; "+ Add time" reveals a native time
 // input (24h value regardless of the locale display) with an × to clear it, above
@@ -6,7 +5,7 @@ import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // the native time control renders per-Chromium here, per-WebKitGTK in the real app.
 // (The mock is intentionally lossy and shows no scheduled chip, so we open the
 // picker via the slash command rather than by clicking a chip.)
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -14,6 +13,13 @@ const PORT = 5292;
 const OUT = "screenshots";
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 
+async function waitForServer(url, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try { const r = await fetch(url); if (r.ok) return; } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 async function shotPicker(page, name) {
   const dp = page.locator(".date-picker").first();
   await dp.waitFor({ timeout: 5000 });
@@ -24,7 +30,7 @@ async function shotPicker(page, name) {
 
 let browser;
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 40, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 2 });
   page.on("pageerror", (e) => console.log("pageerror:", String(e).split("\n")[0]));

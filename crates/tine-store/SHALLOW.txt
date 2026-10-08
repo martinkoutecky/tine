@@ -1,0 +1,5 @@
+# tine-store public items NOT on the target surface (og batch 1, 01-arrival.md).
+# Each entry is resolved by rewiring its caller onto the target surface, moving
+# it to a client crate, or justifying it into SURFACE.txt (budget A).
+# This list only shrinks; arrived = empty. Enforced by tests/shallow_ratchet.rs.
+# ceiling: 0

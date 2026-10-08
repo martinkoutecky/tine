@@ -1,21 +1,18 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
-// Verify P1 block-render virtualization (lazy body parse/render) on a large page.
-// Loads the mock's gated 2000-block "Big" page (?big), then asserts:
-//   1. On load, most blocks are DEFERRED raw-text placeholders (.ast-deferred) and
-//      only the near-viewport ones have rendered heavy constructs (tables/code/math)
-//      — i.e. off-screen blocks were never parsed/rendered (the win).
-//   2. Scrolling to the bottom renders the bottom blocks on demand.
-//   3. Render-once-keep: blocks that rendered stay rendered after a scroll round-trip
-//      (no re-deferral, so no scroll-height churn).
-// Also dumps window.__tineParseStats if present (only in a dev build).
-//
-// Usage:  source scripts/env.sh && npm run build && node scripts/shot-virtualize.mjs
-import { chromium } from "./lib/playwright.mjs";
+// Verify bounded shell rendering and body latching in the production Big fixture.
+// Seen-window scroll extent must survive a top/bottom round trip (ADR 0072).
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = 5199;
-const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+const server = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+async function waitForServer(url, tries = 60) {
+  for (let i = 0; i < tries; i++) {
+    try { if ((await fetch(url)).ok) return; } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 const count = (page, sel) => page.evaluate((s) => document.querySelectorAll(s).length, sel);
 let failed = false;
@@ -25,7 +22,7 @@ const check = (name, cond, detail) => {
 };
 
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 60, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 900, height: 900 } });
   const errors = [];
@@ -40,7 +37,7 @@ try {
   await page.locator(".switcher-input").fill("Big");
   await sleep(400);
   await page.locator(".switcher-row").first().click();
-  await page.waitForSelector(".ls-block", { timeout: 3000 });
+  await page.waitForFunction(() => document.querySelector(".page-title")?.textContent.trim() === "Big");
   await sleep(700); // let the near-viewport blocks render + IO settle
 
   const totalBlocks = await count(page, ".ls-block");
@@ -49,8 +46,8 @@ try {
   console.log(`blocks=${totalBlocks} deferred0=${deferred0} heavy0=${heavy0}`);
   await page.screenshot({ path: "screenshots/virtualize-top.png" });
 
-  check("large page loaded", totalBlocks > 1500, `${totalBlocks} blocks`);
-  check("most blocks deferred on load", deferred0 > 1200, `${deferred0} deferred`);
+  check("large page has bounded mounted shells", totalBlocks > 0 && totalBlocks < 300, `${totalBlocks} shells`);
+  check("offscreen shells absent", await page.locator("[data-outline-window]").count() > totalBlocks / 24, `${deferred0} deferred bodies in mounted shells`);
   check("only near-viewport heavy constructs rendered", heavy0 < 250, `${heavy0} heavy`);
 
   // The top-of-page block is always inside the near-zone, so it must be rendered.
@@ -79,11 +76,10 @@ try {
   await page.screenshot({ path: "screenshots/virtualize-bottom.png" });
 
   check("last block rendered after scroll", lastDeferred === false);
-  check("more heavy constructs rendered after scrolling down", heavyBottom > heavy0, `${heavy0} → ${heavyBottom}`);
+  check("bottom renders heavy constructs", heavyBottom > 0, `${heavyBottom} heavy`);
+  const heightBottom = await page.locator(".main-content").evaluate((e) => e.scrollHeight);
 
-  // Render-once-keep: scroll back to top. Nothing that rendered may revert to a
-  // placeholder, so the deferred count must only ever go DOWN (never re-deferred) —
-  // this is the invariant that guarantees zero scroll-height churn on re-entry.
+  // Return over measured windows: shells remount, body latches remain.
   await page.evaluate(() => {
     const sc = document.querySelector(".main-content");
     if (sc) sc.scrollTop = 0;
@@ -91,7 +87,11 @@ try {
   await sleep(500);
   const deferredFinal = await count(page, ".ast-deferred");
   console.log(`deferredFinal=${deferredFinal}`);
-  check("render-once-keep: deferred count never increases (no re-deferral)", deferredFinal <= deferredBottom, `${deferred0} → ${deferredBottom} → ${deferredFinal}`);
+  check("returned top body stays rendered", await page.locator(".ls-block").first().locator(".ast-deferred").count() === 0);
+  await page.locator(".main-content").evaluate((e) => { e.scrollTop = e.scrollHeight; });
+  await sleep(500);
+  const heightAgain = await page.locator(".main-content").evaluate((e) => e.scrollHeight);
+  check("seen-window scrollbar extent stays stable", heightAgain === heightBottom, `${heightBottom} → ${heightAgain}`);
 
   const stats = await page.evaluate(() => window.__tineParseStats ?? null);
   console.log(stats ? `parseStats=${JSON.stringify(stats)}` : "parseStats unavailable (production build — DEV counter stripped)");

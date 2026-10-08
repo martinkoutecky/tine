@@ -1,5 +1,5 @@
 import { createServer } from "vite";
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { mkdir, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import path from "node:path";

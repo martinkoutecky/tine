@@ -1,0 +1,176 @@
+CreatePageRefusal
+FeedPage
+HistoryRouteContext
+Node
+OutlineScope
+PageLoadRefusal  # why: GH #254 family: one typed answer to whether a page file took its name slot; batchJ1
+UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
+admitPageFile  # why: capture and carry load the file their write must land in, refusing a second file; batchJ1
+appendFeed
+appendToTodayJournal
+applyGraphChange
+applyGraphChangesBulk  # why: a checkout-sized watcher batch (graph-changed-bulk) is applied once (family 10); batch22a
+beginPageHeaderEdit
+blockExternalId
+blockIsGridView
+blockPageReadOnly
+blockPositionRef  # why: a saved session names an ID-less zoomed block by position, so navigation never writes id:: (GH #623); batch-nav
+blockProperty
+blockRef
+blockSubtreeMarkdown
+blockWritable
+buildClipboardPayload
+captureScratchPage
+captureToPage
+carryTodayPage
+carryUnfinished
+childIds
+clearSelection
+collapseEpochOf  # why: embed occurrence folds compare the source collapse write epoch (GH #360); batch21c
+collapsibleDescendantIds
+conflictReason  # why: conflict bar reason text; batch03
+conflicts
+createPage
+cycleSelectionTasks
+deleteBlock
+deletePage
+deleteSelection
+demoJournalPage
+depthOf
+dtoSubtreeMarkdown
+emptyPage
+ensureBlockId
+ensureEmptyBlock
+ensurePageLoaded
+ensurePagePropertyOnKeyPage  # why: one guarded document operation for a query type declaration on its key page; batch16a
+existingBlockId  # why: editor buffers reuse the shared parser-owned identity answer instead of a second seed lookup; batchog-p10b2
+expandAncestors  # why: navigation reveals a block hidden in collapsed ancestors (GH #258); batch17a
+expandBlockSelection  # why: Ctrl/Cmd+A ladder in block selection (GH #262); batch17a
+exportNodesFor
+extendFeedForScroll
+extendSelectionTo
+favoritesArrangementBlocks  # why: favorites arrangement read with collapsed:: moved off the raw; batch12c
+favoritesArrangementPage  # why: favorites arrangement page written whole through createPage; batch12c
+feedNames
+finishPageHeaderEdit
+flushAll
+flushPage
+formatForBlock
+formatForPage
+graphRewriteFrozen  # why: hide query crossing Undo while graph rewrites freeze edits; batch14q4a-followup
+groupedPages  # why: show waiting pages in conflict bar; batch03
+hasSelection
+indentBlock
+indentSelection
+insertEmptyChildBlock
+insertOutlineAfter
+insertOutlineBefore  # why: Insert block above any bullet (GH #480); batch17a
+insertOutlineChildren
+installAliasDraftRouteHandler
+installDraftKeeper  # why: the app-data draft store keeps a crash-surviving copy while a page's edits cannot be saved (og ADR 0061); batch20b
+installExternalChangeUiHandler
+installHistoryRouteContextAdapter
+installLiveResolution  # why: the in-page resolver installs a committed live-conflict resolution only after the page's saves drain and only over the reviewed draft (og 8e; master 7e1b6ec42/ba80a151e); batch21a
+installPageIdentityNavigation  # why: route/tab rekey must precede exact-path working-set identity adoption; batch11e
+installRenameRefreshHandler
+isBlockMoving
+isBlockRefUuid  # why: an unresolved ((id)) that is not a UUID is shown, never looked up (GH #589); batch20b
+isConflicted
+isDirty
+isLoaded
+isSaving
+isSelected
+journalTemplatePage
+liveConflictDraft  # why: the in-page resolver reviews a disk-changed editor draft with the revision it was edited from (og 8e); batch21a
+loadFeed
+loadGuidePages
+loadRoutedPage  # why: route can be first graph load; arm saves without enabling capture scratch persistence; batch06d
+loadedPage
+mainPages
+makeOwnNumberedList
+markDirty
+mergeWithNext  # why: Delete at block end forward-merges (GH #213); batch17a
+mergeWithPrev
+moveBlock
+moveBlockFeed
+moveBlocksRelative  # why: bullet drag moves the captured selection relative to a target (GH #240); batch19b
+moveItem
+moveSelection
+moveSelectionItems
+nextVisible
+nextVisibleOrExtend
+node
+orderedListMarker
+outdentBlock
+outdentSelection
+outlineFits  # why: one placement cap shared by editor paste and structural sheet paste; batch15b-followup
+pageByName
+pageHeaderProperties  # why: one answerer for the rendered page header and the properties panel (Rule 3); batch14q5-followup
+pageLoadRefusalMessage  # why: a surface shows why its page did not load inline; batchJ1
+pageRoots
+pageVisibleOrder
+pasteClipboardPayload
+persistBlockRefTarget
+pinPageWhileDrafting  # why: a draft outside the block editor (sheet prop cell) pins the page its commit writes, so eviction cannot drop it (K17a); batch15a
+prevVisible
+promotePagePreamble
+queryWorkspacePage
+readPageProperties  # why: list every page property for the GH #164 properties editor; batch14q5
+readPageProperty
+readSchedule
+redo
+refuseConflictedMove  # why: carry conflict preflight before mutation; batch03
+registerPaneRouteProvider
+rekeyPageIdentityByPath  # why: watcher and own save adopt a changed effective title by physical path; batch11e
+reloadHlsIfLoaded
+removeOwnNumberedList
+renamePageOnDisk
+replaceChildOrders
+replaceEmptyBlockWithOutline
+replayDeferredExternalReloads  # why: returning to the window replays reloads deferred mid-edit (family 10 focus refresh); batch22a
+reportPageLoadRefusal  # why: every refused load is reported the same way; batchJ1
+resetStore
+resolveBlockRef
+resolveConflict  # why: one conflict resolution intent; batch03
+resolveGuideBlockRef
+resolveGuidePageDto
+restoreTodayJournalInFeed
+revealNode
+sameLiveDraft  # why: a live resolution applies only to the exact draft the user reviewed (og 8e); batch21a
+sanitizeOutlineIdsForPaste  # why: prevent off-screen ID collisions in ordinary paste; batch05
+selectBlock
+selectBlockSubtree  # why: Ctrl/Cmd+A escalation from the editor (GH #262); batch17a
+selectedIds
+selectionMarkdown
+setBlockProperty
+setCollapsed
+setCollapsedDeep
+setCollapsedDescendants
+setFeedExtender
+setHeading
+setPageProperty
+setRaw
+setSchedule
+setSelectionHeading  # why: context-menu heading applies to the whole selection in one undo (GH #240); batch19b
+settleBlockRef  # why: a restored position ref becomes the block's live identity once found (GH #623); batch-nav
+splitBlock
+stopOwnNumberedListOnEmptyEnter
+switcherPage
+toLoadablePage
+toggleBlockProperty
+toggleCollapse
+toggleListItemAtIndex
+toggleOwnNumberedList
+toggleUndoRedoMode
+trackAssetWrite
+undo
+undoTopTag  # why: the query crossing notice offers Undo only while its own save is still the top undo step; batch14q4a
+unsavedDrafts  # why: the unsaved-changes recovery panel and close prompt list each page whose edits are not on disk, with its draft (GH #540); batch20b
+unsavedPageCount  # why: a close that discards drafts records how many pages it dropped, as a count only; batch18a
+visibleOrder
+waitingFor  # why: show unresolved group member; batch03
+waitingOn  # why: show pages blocked by conflict; batch03
+whenPageReplaceable  # why: a refused load retries once the holder is replaceable; batchJ1
+withBlockMoving
+withToday
+withUndoUnit

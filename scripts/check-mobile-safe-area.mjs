@@ -1,4 +1,6 @@
-// Deterministic Chromium acceptance for the system-inset gutters on Android.
+// Deterministic Chromium acceptance for the system-inset gutters (port of
+// master e3b1c3868; GH #205). jsdom applies no layout, so this is the layer
+// that can see whether a fixed overlay lands under the system bars.
 //
 // `.app-container` pads the app SHELL by env(safe-area-inset-*), but every
 // `position: fixed` overlay is laid out against the viewport and escapes that
@@ -14,7 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { createServer } from "vite";
 import solid from "vite-plugin-solid";
 
@@ -41,6 +43,7 @@ const entrySource = String.raw`
   // measurement below is meaningless.
   import "/src/styles/theme.css";
   import "/src/styles/app.css";
+  import "/src/styles/topbar.css";
   import {
     closeExportModal,
     closePdfExport,
@@ -52,8 +55,8 @@ const entrySource = String.raw`
     openSettings,
     openSwitcher,
     openWelcome,
-    pushToast,
   } from "/src/ui.ts";
+  import { pushToast } from "/src/toasts.ts";
 
   // app.css defines --overlay-inset-* as env(safe-area-inset-*), which desktop
   // Chromium always reports as 0. An inline style on the root element outranks
@@ -177,7 +180,7 @@ async function startHarnessServer() {
 }
 
 const { server, url } = await startHarnessServer();
-const browser = await chromium.launch();
+const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
 const failures = [];
 try {
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, hasTouch: true });
@@ -185,7 +188,8 @@ try {
   page.on("pageerror", (error) => failures.push(`page error: ${error.message}`));
   if (process.env.TINE_SAFE_AREA_DEBUG) {
     page.on("console", (message) => console.log(`[page:${message.type()}]`, message.text()));
-    page.on("pageerror", (error) => console.log("[pageerror]", error.stack ?? error.message));
+    page.on("pageerror", (error) => console.log("[pageerror]", error.stack || error.message || String(error)));
+    page.on("response", (response) => { if (response.status() >= 400) console.log("[http]", response.status(), response.url()); });
   }
   await page.goto(url, { waitUntil: "load" });
   await page.waitForFunction(() => globalThis.__tineSafeArea?.ready === true, null, { timeout: 60_000 });

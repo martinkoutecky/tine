@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { initParser } from "./render/parse";
 import {
   clearInPageFindRenderedTextCacheForTests,
@@ -7,13 +7,17 @@ import {
   findTextOccurrences,
   revealInPageFindMatch,
   scopedInPageFindMatchesForQuery,
-  setInPageFindQuery,
   type InPageFindBlock,
+  openInPageFind,
+  closeInPageFind,
+  setInPageFindQuery,
 } from "./inpageFind";
 import { renderedBlockTextCallCountForTests, resetRenderedBlockTextCallCountForTests } from "./render/renderedText";
 import { focusPane, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
-import { resetStore, setDoc } from "./store";
+import { resetStore } from "./document";
+import { setDoc } from "./document/model";
 import type { PaneSnapshot } from "./router";
+import { setGraphMeta } from "./graphSession";
 
 beforeAll(async () => {
   await initParser();
@@ -35,6 +39,7 @@ const querySnapshot = (): PaneSnapshot => ({
 });
 
 afterEach(() => {
+  setGraphMeta(null);
   clearInPageFindRenderedTextCacheForTests();
   resetRenderedBlockTextCallCountForTests();
   resetStore();
@@ -43,6 +48,28 @@ afterEach(() => {
 });
 
 describe("in-page find model", () => {
+  it("does not scroll a stale result after Find closes during an animation frame", async () => {
+    resetPaneLayoutToSingle(querySnapshot());
+    document.body.innerHTML = '<main data-pane-id="main"><button data-inpage-find-surface="query:page:Alpha">needle</button></main>';
+    const element = document.querySelector<HTMLElement>("[data-inpage-find-surface]")!;
+    const scroll = vi.fn();
+    element.scrollIntoView = scroll;
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+    try {
+      openInPageFind();
+      setInPageFindQuery("needle");
+      expect(frames.length).toBeGreaterThan(0);
+      closeInPageFind({ restoreFocus: false });
+      frames.shift()!(0);
+      await Promise.resolve();
+      expect(scroll).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      closeInPageFind({ restoreFocus: false });
+    }
+  });
+
   it("counts matches in collapsed descendants because it searches the block model", () => {
     const blocks: InPageFindBlock[] = [
       {
@@ -71,10 +98,22 @@ describe("in-page find model", () => {
   });
 
   it("uses non-overlapping browser-style text occurrences", () => {
-    expect(findTextOccurrences("aaaa", "aa")).toEqual([
+    expect(findTextOccurrences("aaaa", "aa", true)).toEqual([
       { start: 0, end: 2 },
       { start: 2, end: 4 },
     ]);
+  });
+
+  it("finds folded accents and keeps highlights on the original graphemes", () => {
+    expect(findTextOccurrences("🧠 cafe\u0301 café", "cafe", true)).toEqual([
+      { start: 3, end: 8 }, { start: 9, end: 13 },
+    ]);
+  });
+
+  it("honors the graph's accent-removal opt-out", () => {
+    setGraphMeta({ enable_search_remove_accents: false } as never);
+    expect(findTextOccurrences("café", "cafe", false)).toEqual([]);
+    expect(findTextOccurrences("café", "café", false)).toEqual([{ start: 0, end: 4 }]);
   });
 
   it("keeps the same occurrence order and count across a many-block fixture", () => {
@@ -133,7 +172,7 @@ describe("in-page find model", () => {
     expect(renderedBlockTextCallCountForTests()).toBe(80);
   });
 
-  it("searches the focused page pane instead of the journals feed", () => {
+  it("searches both the journals feed and the routed split page", () => {
     setDoc({
       loaded: true,
       feed: ["Feed"],
@@ -161,7 +200,7 @@ describe("in-page find model", () => {
     );
     focusPane("pane-2");
 
-    expect(scopedInPageFindMatchesForQuery("needle").map((m) => m.blockId)).toEqual(["pane-block"]);
+    expect(scopedInPageFindMatchesForQuery("needle").map((m) => m.blockId)).toEqual(["feed-block", "pane-block"]);
   });
 
   it("searches visible rows in a persistent query workspace", () => {
@@ -209,9 +248,9 @@ describe("in-page find model", () => {
     });
     resetPaneLayoutToSingle(pageSnapshot("Target"));
     // An unlinked-reference excerpt renders each marked mention as a button that
-    // opens the source page there (GH #200). The words inside that button are the
-    // ones the reader searched for, so they are content; the row's own actions are
-    // chrome and must stay out of the searchable text.
+    // opens the source page there (master GH #200). The words inside it are the
+    // ones the reader searched for, so they are content; the row's own actions
+    // are chrome and must stay out of the searchable text.
     document.body.innerHTML = `
       <main data-pane-id="main">
         <div class="reference-blocks" data-inpage-find-surface="unlinked:Source">
@@ -223,6 +262,26 @@ describe("in-page find model", () => {
     expect(scopedInPageFindMatchesForQuery("names Query parity near the start").map((match) => match.surfaceId))
       .toEqual(["unlinked:Source"]);
     expect(scopedInPageFindMatchesForQuery("Show full block")).toEqual([]);
+  });
+
+  it("counts code text once, not again in the hidden line-gutter mirror", () => {
+    setDoc({
+      loaded: true,
+      feed: ["Target"],
+      pages: [{ name: "Target", kind: "page", title: "Target", preBlock: null, roots: [], format: "md", readOnly: false, guide: false }],
+      byId: {},
+    });
+    resetPaneLayoutToSingle(pageSnapshot("Target"));
+    // A code block's gutter repeats each line invisibly to mirror soft wraps; that
+    // copy is aria-hidden layout, not content, so find must not count it.
+    document.body.innerHTML = `
+      <main data-pane-id="main">
+        <div class="reference-blocks" data-inpage-find-surface="unlinked:Source">
+          <pre class="code-block"><div class="calc-gutter code-gutter" aria-hidden="true"><div class="gutter-row"><span class="calc-lineno">1</span><span class="gutter-mirror">let needle = 1;</span></div></div><code class="hljs">let needle = 1;</code></pre>
+        </div>
+      </main>`;
+
+    expect(scopedInPageFindMatchesForQuery("needle")).toHaveLength(1);
   });
 
   it("reveals the exact occurrence, not just the block, in a viewport-tall block (GH #253)", async () => {
@@ -270,15 +329,23 @@ describe("in-page find model", () => {
     (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = function (this: Element) {
       scrollIntoViewCalls.push(this);
     };
-    setInPageFindQuery("needle");
+    try {
+      // og reveals only while Find is open (stale-reveal guard); opening it
+      // reveals occurrence 0 on its own, so let that settle first.
+      openInPageFind();
+      setInPageFindQuery("needle");
+      for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+      st = 0;
 
-    await revealInPageFindMatch({ blockId: "b1", ordinalInBlock: 1, start: 13, end: 19 });
+      await revealInPageFindMatch({ blockId: "b1", ordinalInBlock: 1, start: 13, end: 19 });
 
-    // Scroller center is 400 (clientHeight 800, top 0); occurrence center is 2610.
-    expect(scroller.scrollTop).toBeCloseTo(2610 - 400, 5);
-    expect(scrollIntoViewCalls).toEqual([]);
-    delete (Range.prototype as unknown as { getClientRects?: unknown }).getClientRects;
-    delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+      // Scroller center is 400 (clientHeight 800, top 0); occurrence center is 2610.
+      expect(scroller.scrollTop).toBeCloseTo(2610 - 400, 5);
+      expect(scrollIntoViewCalls).toEqual([]);
+    } finally {
+      closeInPageFind({ restoreFocus: false });
+      delete (Range.prototype as unknown as { getClientRects?: unknown }).getClientRects;
+      delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+    }
   });
-
 });

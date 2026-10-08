@@ -1,8 +1,9 @@
 import { backend } from "../backend";
-import { ensurePageLoaded, pageByName } from "../store";
+import { graphOwner, readOwned } from "../owned";
+import { ensurePageLoaded, pageByName } from "../document";
 import type { RefGroup } from "../types";
-import { graphEpoch, graphMeta } from "../ui";
-import { graphBinding } from "../persistence";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { reportUiFailure } from "../uiFailure";
 
 export const SHEET_RENDER_PAGE = 200;
 const HYDRATE_CONCURRENCY = 4;
@@ -230,7 +231,9 @@ function limited(scope: string, task: () => Promise<void>): Promise<void> {
     const item: QueuedHydration = {
       scope,
       start: () => {
-        void task().catch(() => {}).finally(() => {
+        void task().then(undefined, (error) => {
+          if (!item.stale) reportUiFailure("query-hydration", error);
+        }).finally(() => {
           finishRunningHydration(item);
           finish();
           runNextHydration();
@@ -247,10 +250,8 @@ function limited(scope: string, task: () => Promise<void>): Promise<void> {
   });
 }
 
-function sameGraph(root: string, epoch: number, binding: number): boolean {
-  return graphEpoch() === epoch
-    && (graphMeta()?.root ?? "") === root
-    && graphBinding() === binding;
+function sameGraph(root: string, epoch: number): boolean {
+  return graphEpoch() === epoch && (graphMeta()?.root ?? "") === root;
 }
 
 function releaseClaim(claimKey: string, identity: string): void {
@@ -258,8 +259,9 @@ function releaseClaim(claimKey: string, identity: string): void {
 }
 
 /** Hydrate only pages represented in the currently rendered query-result window.
- * Query DTOs are sufficient for read-only display; full pages are needed only to
- * enable editing. A small worker pool prevents an IPC/file-load stampede. */
+ * Cost O(visible pages), with at most four concurrent IPC reads in a graph scope.
+ * DTOs still display if a read fails; the failure gets a fixed toast, and this
+ * promise resolves after all tasks settle. Callers need not manage the pool. */
 export async function hydrateVisibleQueryPages(
   rows: readonly { id: string; page: string }[],
   groups: readonly RefGroup[] | undefined,
@@ -271,8 +273,8 @@ export async function hydrateVisibleQueryPages(
     groupsByPage.set(group.page, pageGroups);
   }
 
-  // First resolve every visible row by composite identity. If both a page and a
-  // journal with the same name are visible, the current working set cannot hold
+  // First resolve every visible row by composite identity. If multiple physical sources
+  // with the same name are visible, the current working set cannot hold
   // them simultaneously (it is keyed by page name), so keep both DTO-only and
   // read-only instead of racing which file becomes the editable one.
   const requested = new Map<string, RefGroup>();
@@ -280,33 +282,30 @@ export async function hydrateVisibleQueryPages(
     const group = sourceGroupForRow(row, groupsByPage);
     if (group) requested.set(groupIdentity(group), group);
   }
-  const kindsByName = new Map<string, Set<RefGroup["kind"]>>();
+  const identitiesByName = new Map<string, Set<string>>();
   for (const group of requested.values()) {
-    const kinds = kindsByName.get(group.page) ?? new Set<RefGroup["kind"]>();
-    kinds.add(group.kind);
-    kindsByName.set(group.page, kinds);
+    const identities = identitiesByName.get(group.page) ?? new Set<string>();
+    identities.add(groupIdentity(group));
+    identitiesByName.set(group.page, identities);
   }
 
-  const pending = [...requested.values()].filter((group) => {
-    if ((kindsByName.get(group.page)?.size ?? 0) > 1) return false;
-    // A differently-kinded same-name page already occupies the name-keyed store.
-    // ensurePageLoaded cannot install this group safely without replacing it.
-    const loaded = pageByName(group.page);
-    return !loaded || (!!group.path && loaded.path !== group.path);
-  });
+  // Hydration may fill an empty name slot, never replace an occupied physical
+  // identity. Multiple requested paths for one name all remain DTO-only.
+  const pending = [...requested.values()].filter((group) =>
+    identitiesByName.get(group.page)?.size === 1 && !pageByName(group.page)
+  );
   await Promise.all(pending.map((group) => {
     const epoch = graphEpoch();
     const root = graphMeta()?.root ?? "";
-    const binding = graphBinding();
-    const scope = `${root}\0${epoch}\0${binding}`;
+    const scope = `${root}\0${epoch}`;
     const identity = groupIdentity(group);
     const key = `${scope}\0${identity}`;
     const existing = pageHydrations.get(key);
     if (existing) return existing;
 
-    // The store can hold only one kind for a display name. Serialize that claim
+    // The store can hold only one physical identity for a display name. Serialize that claim
     // globally across separate SheetTable/SheetBoard invocations; a concurrent
-    // opposite-kind request remains DTO-only instead of racing for the slot.
+    // different-source request remains DTO-only instead of racing for the slot.
     const claimKey = `${scope}\0${group.page}`;
     const claim = hydrationClaims.get(claimKey);
     if (claim && claim !== identity) return Promise.resolve();
@@ -314,23 +313,23 @@ export async function hydrateVisibleQueryPages(
 
     const job = limited(scope, async () => {
       // A stale queued task must die before IPC, not merely discard afterward.
-      if (!sameGraph(root, epoch, binding)) return;
+      if (!sameGraph(root, epoch)) return;
       const occupied = pageByName(group.page);
-      if (occupied && occupied.kind === group.kind && (!group.path || occupied.path === group.path)) return;
-      const dto = group.path
-        ? await backend().getPageByPath(group.path)
-        : await backend().getPage(group.page, group.kind);
-      if (!sameGraph(root, epoch, binding)) return;
+      if (occupied) return;
+      const result = await readOwned(graphOwner(() => sameGraph(root, epoch)), group.path
+        ? backend().getPageByPath(group.path)
+        : backend().getPage(group.page, group.kind));
+      if (result.kind === "stale") return;
+      const dto = result.value;
       // Recheck occupancy after the await: another surface may have loaded a
       // same-name twin meanwhile. Never replace or alias that identity.
       const after = pageByName(group.page);
-      if (after && (!group.path || after.path === group.path)) return;
-      if (!dto || dto.name !== group.page || dto.kind !== group.kind || (group.path && dto.path !== group.path)) return;
-      // Consume the refusal rather than assuming installation. Hydration is
-      // DTO-only and may stay so; a later interaction re-drives it. What it must
-      // not do is proceed as though the page it asked for is now loaded.
-      // (GH #254 increment 3.)
-      if (await ensurePageLoaded(dto, { expectedGraphBinding: binding })) return;
+      if (after) return;
+      if (!dto || dto.name !== group.page || dto.kind !== group.kind || (group.path && dto.id !== group.path)) return;
+      // Consume the refusal rather than assume installation: a declined load
+      // leaves the row DTO-only; a later interaction re-drives it (master
+      // 7bd793bd0). Nothing below may treat the page as loaded.
+      if (ensurePageLoaded(dto)) return;
     }).finally(() => {
       pageHydrations.delete(key);
       releaseClaim(claimKey, identity);

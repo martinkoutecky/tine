@@ -1,14 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import {
-  doc,
-  mergeWithPrev,
-  nextVisible,
-  pageByName,
-  prevVisible,
-  resetStore,
-  setDoc,
-  type OutlineScope,
-} from "./store";
+import { mergeWithPrev, nextVisible, pageByName, prevVisible, resetStore, type OutlineScope } from "./document";
+import { doc, setDoc } from "./document/model";
 import { initParser } from "./render/parse";
 
 // GH #341: a navOnly display-list scope (ref/query/embed group) drives arrow

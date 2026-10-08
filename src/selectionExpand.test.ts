@@ -7,7 +7,6 @@ import {
 } from "./render/facets";
 import {
   clearSelection,
-  doc,
   expandBlockSelection,
   moveSelection,
   pageByName,
@@ -16,8 +15,9 @@ import {
   selectBlockSubtree,
   selectedIds,
   type OutlineScope,
-} from "./store";
-import { loadSingle } from "./store";
+} from "./document";
+import { doc } from "./document/model";
+import { loadSingle } from "./document/workingSet";
 import type { BlockDto, PageDto } from "./types";
 
 beforeAll(async () => {

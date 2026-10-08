@@ -1,3 +1,6 @@
+// Ported from master src/components/Page.queryUndoLifecycle.test.tsx (7fcd4c98d,
+// 93ff682a3). og adaptations: the routed DTO is a `PageRead` (carries `id`), and
+// og re-reads a loaded page by path, so `getPageByPath` is mocked beside `getPage`.
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -5,20 +8,12 @@ import { clearTransientLayersForTest } from "../transientLayers";
 import { endEdit } from "../editorController";
 import type { Filter, Query } from "../editor/queryIr";
 import { initParser } from "../render/parse";
-import { backendReadsQueries, blockRunResult } from "../queryReadingsTestkit";
+import { backendReadsQueries, blockRunResult } from "../tests/queryReadingsTestkit";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import {
-  doc,
-  redo,
-  resetStore,
-  setDoc,
-  setRaw,
-  undo,
-  type FeedPage,
-  type Node as StoreNode,
-} from "../store";
+import { redo, resetStore, setRaw, undo } from "../document";
+import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import { mainPaneRouter, resetTabsToJournals } from "../router";
-import type { PageDto } from "../types";
+import type { PageRead } from "../types";
 import { PageView } from "./Page";
 
 beforeAll(async () => {
@@ -77,8 +72,9 @@ function feedPage(): FeedPage {
   };
 }
 
-function pageDto(): PageDto {
+function pageDto(): PageRead {
   return {
+    id: `pages/${PAGE}.md`,
     name: PAGE,
     kind: "page",
     title: PAGE,
@@ -168,6 +164,8 @@ function seedPage(): void {
     loaded: true,
   });
   vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+  // og: once loaded the route re-reads by the file path (loadedPage.id).
+  vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
   vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([]));
   vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
   backendReadsQueries(queryReadings());
@@ -228,6 +226,8 @@ describe("PageView query undo lifecycle", () => {
     });
 
     vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    // og: once loaded the route re-reads by the file path (loadedPage.id).
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([]));
     vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
     vi.spyOn(backend(), "printQuery").mockImplementation(async (query) => printedArgument(query));

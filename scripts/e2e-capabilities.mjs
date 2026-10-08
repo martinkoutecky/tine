@@ -1,50 +1,7 @@
 import fs from "node:fs";
-import { execFileSync, spawn, spawnSync } from "node:child_process";
-import net from "node:net";
+import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import path from "node:path";
-
-export async function freeLoopbackPort(excluded = new Set()) {
-  while (true) {
-    const port = await new Promise((resolve, reject) => {
-      const server = net.createServer();
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", () => {
-        const address = server.address();
-        server.close(() => resolve(address.port));
-      });
-    });
-    if (!excluded.has(port)) return port;
-  }
-}
-
-/**
- * The one answer to "where is tauri-driver".
- *
- * Six journeys had grown five different answers, and three of the five are
- * wrong in the place all batch work actually happens. Two derived
- * `<repo>/../.toolchain/cargo/bin/tauri-driver`, which resolves only when the
- * checkout sits directly under the workspace root -- in an agent worktree it
- * points at a directory that has never existed, and the journey dies on a bare
- * `spawn ... ENOENT` that reads like a missing toolchain rather than a wrong
- * guess. Two more hardcoded one machine's absolute path, which cannot survive
- * CI or any other host. `scripts/env.sh` already exports `CARGO_HOME` and puts
- * the binary on `PATH`; nothing needs to reconstruct the location from the
- * repository's position on disk.
- *
- * Resolution order: an explicit `TAURI_DRIVER` override, then the toolchain
- * `CARGO_HOME` when it really holds the binary, then plain `tauri-driver` for
- * `PATH`. `src/e2eTauriDriverResolution.test.ts` keeps the count of
- * journey-local answers at zero.
- */
-export function resolveTauriDriver(env = process.env, exists = fs.existsSync) {
-  if (env.TAURI_DRIVER) return env.TAURI_DRIVER;
-  if (env.CARGO_HOME) {
-    const fromCargoHome = path.join(env.CARGO_HOME, "bin", "tauri-driver");
-    if (exists(fromCargoHome)) return fromCargoHome;
-  }
-  return "tauri-driver";
-}
 
 export function tauriCapabilities(
   application,
@@ -89,8 +46,8 @@ export function tauriCapabilities(
   };
 }
 
-export function windowsUserDataFolder(session, env = process.env) {
-  const root = env.E2E_WEBVIEW_USER_DATA_ROOT;
+function windowsUserDataFolder(session) {
+  const root = process.env.E2E_WEBVIEW_USER_DATA_ROOT;
   if (!root) throw new Error("Windows WebView2 E2E requires E2E_WEBVIEW_USER_DATA_ROOT");
   const userDataFolder = path.join(root, session.replaceAll(/[^A-Za-z0-9_-]/g, "-"));
   fs.mkdirSync(userDataFolder, { recursive: true });
@@ -138,7 +95,7 @@ export async function startWebdriverApplication(
 ) {
   if (platform !== "win32") return { env, applicationProcess: undefined, debuggerAddress: undefined };
 
-  const userDataFolder = windowsUserDataFolder(session, env);
+  const userDataFolder = windowsUserDataFolder(session);
   const debuggerAddress = `127.0.0.1:${debuggerPort}`;
   const applicationEnv = {
     ...env,
@@ -150,55 +107,27 @@ export async function startWebdriverApplication(
       debuggerPort,
     ),
   };
-  const applicationLogHandles = [];
-  const openApplicationLog = (variable) => {
-    const file = applicationEnv[variable];
-    if (!file) return "ignore";
-    const handle = fs.openSync(file, "w");
-    applicationLogHandles.push(handle);
-    return handle;
-  };
-  let applicationProcess;
-  try {
-    applicationProcess = spawn(application, [], {
-      env: applicationEnv,
-      stdio: [
-        "ignore",
-        openApplicationLog("TINE_E2E_APPLICATION_STDOUT_LOG"),
-        openApplicationLog("TINE_E2E_APPLICATION_STDERR_LOG"),
-      ],
-      windowsHide: false,
-    });
-  } catch (error) {
-    for (const handle of applicationLogHandles) fs.closeSync(handle);
-    throw error;
-  }
+  const applicationProcess = spawn(application, [], {
+    env: applicationEnv,
+    stdio: "ignore",
+    windowsHide: false,
+  });
   try {
     await waitForDevTools(debuggerAddress, applicationProcess);
   } catch (error) {
     stopWebdriverApplication({ applicationProcess }, platform);
     throw error;
   }
-  return {
-    env: applicationEnv,
-    applicationProcess,
-    applicationLogHandles,
-    debuggerAddress,
-    userDataFolder,
-  };
+  return { env: applicationEnv, applicationProcess, debuggerAddress, userDataFolder };
 }
 
 export function stopWebdriverApplication(target, platform = process.platform) {
   const applicationProcess = target?.applicationProcess;
-  if (applicationProcess && applicationProcess.exitCode === null) {
-    if (platform === "win32") {
-      spawnSync("taskkill", ["/PID", String(applicationProcess.pid), "/T", "/F"], { stdio: "ignore" });
-    } else {
-      applicationProcess.kill("SIGKILL");
-    }
-  }
-  for (const handle of target?.applicationLogHandles || []) {
-    try { fs.closeSync(handle); } catch {}
+  if (!applicationProcess || applicationProcess.exitCode !== null) return;
+  if (platform === "win32") {
+    spawnSync("taskkill", ["/PID", String(applicationProcess.pid), "/T", "/F"], { stdio: "ignore" });
+  } else {
+    applicationProcess.kill("SIGKILL");
   }
 }
 
@@ -209,177 +138,6 @@ export function webdriverServerArgs(port, nativePort, nativeDriver, platform = p
     "--native-port", String(nativePort),
     "--native-driver", nativeDriver,
   ];
-}
-
-const WEBDRIVER_SESSION_ENV = "TINE_E2E_WEBDRIVER_SESSION";
-
-export function webdriverSessionToken(scenario, driverPort, nativePort) {
-  const label = String(scenario).replaceAll(/[^A-Za-z0-9_.-]/g, "-");
-  return `tine-e2e:${label}:${driverPort}:${nativePort}`;
-}
-
-export function findTaggedWebdriverProcesses(
-  token,
-  procRoot = "/proc",
-  readFile = fs.readFileSync,
-) {
-  if (!fs.existsSync(procRoot)) return [];
-  const needle = `${WEBDRIVER_SESSION_ENV}=${token}`;
-  const matches = [];
-  for (const entry of fs.readdirSync(procRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
-    const pid = Number(entry.name);
-    if (pid === process.pid) continue;
-    try {
-      const variables = readFile(path.join(procRoot, entry.name, "environ"), "utf8").split("\0");
-      if (variables.includes(needle)) matches.push(pid);
-    } catch {
-      // Processes may exit or become unreadable while /proc is enumerated.
-    }
-  }
-  return matches.sort((a, b) => a - b);
-}
-
-/**
- * Own one native WebDriver session across crashes and stalled HTTP calls.
- *
- * WebdriverIO already gives each protocol request `connectionRetryTimeout`.
- * `run()` is the second, process-owning deadline around session-level calls:
- * if WebKit ignores the request abort, its tagged process tree is killed and
- * cannot consume one of WebKitWebDriver's finite session slots indefinitely.
- */
-export function createWebdriverLifecycle({
-  scenario,
-  driverPort,
-  nativePort,
-  callTimeoutMs = 60_000,
-  cleanupGraceMs = 1_000,
-  survivorTimeoutMs = 2_000,
-  survivorPollMs = 50,
-  platform = process.platform,
-  procRoot = "/proc",
-  kill = process.kill.bind(process),
-  sleepImpl = sleep,
-} = {}) {
-  const token = webdriverSessionToken(scenario, driverPort, nativePort);
-  const evidence = { token, reaped: [], timeouts: [] };
-
-  const taggedEnvironment = (base = process.env) => ({
-    ...base,
-    [WEBDRIVER_SESSION_ENV]: token,
-  });
-
-  const taggedPids = () => platform === "linux"
-    ? findTaggedWebdriverProcesses(token, procRoot)
-    : [];
-
-  const signal = (pid, name) => {
-    try {
-      kill(pid, name);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  async function reap(reason, { graceMs = cleanupGraceMs } = {}) {
-    const initial = taggedPids();
-    const signalFailures = [];
-    for (const pid of initial) {
-      if (!signal(pid, "SIGTERM")) signalFailures.push({ pid, signal: "SIGTERM" });
-    }
-    if (initial.length && graceMs > 0) await sleepImpl(graceMs);
-    const killTargets = taggedPids();
-    for (const pid of killTargets) {
-      if (!signal(pid, "SIGKILL")) signalFailures.push({ pid, signal: "SIGKILL" });
-    }
-    const deadline = Date.now() + survivorTimeoutMs;
-    let survivors = taggedPids();
-    while (survivors.length && Date.now() < deadline) {
-      await sleepImpl(survivorPollMs);
-      survivors = taggedPids();
-    }
-    const record = { reason, term: initial, kill: killTargets, signalFailures, survivors };
-    if (initial.length || killTargets.length || signalFailures.length || survivors.length) {
-      evidence.reaped.push(record);
-    }
-    if (survivors.length) {
-      throw new Error(`WebDriver cleanup ${JSON.stringify(reason)} left exact-token survivors: ${survivors.join(", ")}`);
-    }
-    return record;
-  }
-
-  async function run(label, operation, timeoutMs = callTimeoutMs) {
-    let timer;
-    const timeout = new Promise((_, reject) => {
-      timer = setTimeout(async () => {
-        evidence.timeouts.push({ label, timeoutMs });
-        let cleanupError;
-        try { await reap(`timeout:${label}`, { graceMs: 0 }); } catch (error) { cleanupError = error; }
-        reject(new Error(
-          `WebDriver call ${JSON.stringify(label)} exceeded ${timeoutMs} ms; ${cleanupError
-            ? `owned-session cleanup failed: ${String(cleanupError)}`
-            : "its owned session was reaped"}`,
-        ));
-      }, timeoutMs);
-    });
-    try {
-      return await Promise.race([Promise.resolve().then(operation), timeout]);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  function remoteOptions() {
-    return {
-      connectionRetryCount: 0,
-      connectionRetryTimeout: callTimeoutMs,
-    };
-  }
-
-  async function stop({ browser, driver, label = "cleanup" } = {}) {
-    if (browser) {
-      try { await run(`${label}:delete-session`, () => browser.deleteSession(), 10_000); } catch {}
-    }
-    // Never signal `-driver.pid` here. deleteSession may already have exited
-    // the driver, and a recycled PID/PGID is not proof of ownership. The exact
-    // inherited environment token is the sole cleanup authority.
-    return reap(label, { graceMs: 0 });
-  }
-
-  return {
-    token,
-    evidence,
-    taggedEnvironment,
-    taggedPids,
-    remoteOptions,
-    reap,
-    run,
-    stop,
-  };
-}
-
-export async function selectWebdriverWindowWithSelector(browser, selector, timeoutMs = 30_000) {
-  const deadline = Date.now() + timeoutMs;
-  const observations = [];
-  while (Date.now() < deadline) {
-    for (const handle of await browser.getWindowHandles()) {
-      try {
-        await browser.switchToWindow(handle);
-        const title = await browser.getTitle();
-        const url = await browser.getUrl();
-        const matched = await browser.$(selector).isExisting();
-        observations.push({ handle, title, url, matched });
-        if (matched) return handle;
-      } catch (error) {
-        observations.push({ handle, error: String(error) });
-      }
-    }
-    await sleep(100);
-  }
-  throw new Error(
-    `no WebDriver window exposed ${selector}: ${JSON.stringify(observations.slice(-20))}`,
-  );
 }
 
 export function windowsWebviewProfileSnapshot(root) {
@@ -412,67 +170,4 @@ export function windowsWebviewProfileSnapshot(root) {
     return { root, error: String(error), files };
   }
   return { root, files };
-}
-
-/**
- * The one readiness wait for an E2E-launched HTTP server (vite preview today).
- * Every suite used to carry its own copy with its own attempt budget (DUP-12);
- * the attempt policy stays with the caller, the waiting shape lives here.
- */
-export async function waitForHttpServer(
-  url,
-  tries = 40,
-  intervalMs = 250,
-  fetchOrOptions = fetch,
-) {
-  const options = typeof fetchOrOptions === "function"
-    ? { fetchImpl: fetchOrOptions }
-    : fetchOrOptions;
-  const {
-    beforeAttempt,
-    ready,
-    beforeFailure,
-    failureMessage = `server did not start at ${url} after ${tries} attempts`,
-    fetchImpl = fetch,
-  } = options;
-  for (let attempt = 0; attempt < tries; attempt += 1) {
-    await beforeAttempt?.();
-    try {
-      if ((await fetchImpl(url)).ok && (await ready?.()) !== false) return;
-    } catch {
-      // The server is still starting.
-    }
-    await sleep(intervalMs);
-  }
-  await beforeFailure?.();
-  throw new Error(typeof failureMessage === "function" ? failureMessage() : failureMessage);
-}
-
-/**
- * The one parser for the `_NET_FRAME_EXTENTS` / `_GTK_FRAME_EXTENTS` xprop
- * output. The two local copies had drifted (DUP-12): one treated
- * "X property not found" as zero extents, the other as malformed. The missing
- * property case is genuinely ambiguous — an undecorated window exposes no
- * frame — so the policy is an explicit CALL-SITE choice (`strict`), with the
- * parse core shared.
- */
-export function parseFrameExtentsOutput(raw, { strict = false } = {}) {
-  const values = raw.match(/=\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)/)?.slice(1).map(Number);
-  if (values) {
-    const [left, right, top, bottom] = values;
-    return { left, right, top, bottom };
-  }
-  // Non-strict: an undecorated window has no frame, so a missing property is
-  // zero extents (e.g. the expected pre-toggle state in the titlebar suite).
-  if (/not found/i.test(raw) && !strict) return { left: 0, right: 0, top: 0, bottom: 0 };
-  throw new Error(`window manager exposed malformed frame extents: ${raw.trim()}`);
-}
-
-/** Read a window's frame extents via xprop (X11 Linux suites only). */
-export function frameExtents(id, env, { strict = false } = {}) {
-  const raw = execFileSync("xprop", ["-id", id, "_NET_FRAME_EXTENTS", "_GTK_FRAME_EXTENTS"], {
-    encoding: "utf8",
-    env,
-  });
-  return parseFrameExtentsOutput(raw, { strict });
 }

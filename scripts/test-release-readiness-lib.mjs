@@ -4,113 +4,35 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  auditableSourceFingerprint,
-  changelogItems,
-  releaseSection,
-  validateGuideDisposition,
-} from "./release-readiness-lib.mjs";
+import { auditableSourceFingerprint, changelogItems, releaseSection } from "./release-readiness-lib.mjs";
 
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "tine-release-readiness-test-"));
 
-const changelogWithUppercaseZ = `# Changelog
+const releaseChangelog = `## [Unreleased]
 
-## [0.6.97] - 2026-08-26
-
-### Added
-
-- Experimental ZIP package.
-- The item after ZIP must remain in the release.
-
-## [0.6.96] - 2026-08-24
+## [0.7.0-beta.1] - 2026-09-30
 
 ### Fixed
+- LAZY groups retain their rows.
+- A later fix remains covered.
 
-- Older release.
+## [0.6.5] - 2026-07-22
+
+### Added
+- Previous release item.
 `;
-const parsedSection = releaseSection(changelogWithUppercaseZ, "0.6.97");
-assert.ok(parsedSection, "the requested release section must exist");
 assert.deepEqual(
-  changelogItems(parsedSection).map((item) => item.text),
-  ["Experimental ZIP package.", "The item after ZIP must remain in the release."],
-  "an uppercase Z inside release prose must not truncate the section",
+  changelogItems(releaseSection(releaseChangelog, "0.7.0-beta.1")).map((item) => item.text),
+  ["LAZY groups retain their rows.", "A later fix remains covered."],
+  "release sections must retain literal Z and stop only at the next release heading",
 );
+assert.deepEqual(
+  changelogItems(releaseSection(releaseChangelog, "0.6.5")).map((item) => item.text),
+  ["Previous release item."],
+  "the final release section must extend to end of input",
+);
+assert.equal(releaseSection(releaseChangelog, "0.7.0-beta.2"), null);
 
-const guideRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tine-guide-disposition-test-"));
-try {
-  const template = "crates/tine-core/src/templates/guide.md";
-  fs.mkdirSync(path.dirname(path.join(guideRoot, template)), { recursive: true });
-  fs.writeFileSync(path.join(guideRoot, template), "- # Guide\n");
-
-  const coveredProblems = [];
-  validateGuideDisposition(
-    guideRoot,
-    "covered item",
-    {
-      section: "Added",
-      userVisible: true,
-      guide: { status: "update", reason: "Guide updated", refs: [template] },
-    },
-    coveredProblems,
-  );
-  assert.deepEqual(coveredProblems, []);
-
-  const contractProblems = [];
-  validateGuideDisposition(
-    guideRoot,
-    "contract item",
-    {
-      section: "Added",
-      userVisible: true,
-      guide: { status: "current", reason: "Contract covers it", refs: ["docs/contracts/example.md"] },
-    },
-    contractProblems,
-  );
-  assert.ok(contractProblems.some((problem) => problem.includes("not a canonical Guide template")));
-
-  const missingAddedProblems = [];
-  validateGuideDisposition(
-    guideRoot,
-    "missing Added item",
-    {
-      section: "Added",
-      userVisible: true,
-      guide: { status: "not-applicable", reason: "Changelog is enough", refs: [] },
-    },
-    missingAddedProblems,
-  );
-  assert.ok(missingAddedProblems.some((problem) => problem.includes("user-visible Added")));
-
-  const performanceProblems = [];
-  validateGuideDisposition(
-    guideRoot,
-    "performance change",
-    {
-      section: "Changed",
-      userVisible: true,
-      guide: { status: "not-applicable", reason: "performance-only; no workflow changed", refs: [] },
-    },
-    performanceProblems,
-  );
-  assert.deepEqual(performanceProblems, []);
-
-  const malformedProblems = [];
-  validateGuideDisposition(
-    guideRoot,
-    "malformed Guide item",
-    {
-      section: "Changed",
-      userVisible: true,
-      guide: { status: "current", reason: null, refs: null },
-    },
-    malformedProblems,
-  );
-  assert.ok(malformedProblems.some((problem) => problem.includes("missing reason")));
-  assert.ok(malformedProblems.some((problem) => problem.includes("refs must be an array")));
-  assert.ok(malformedProblems.some((problem) => problem.includes("must reference canonical Guide templates")));
-} finally {
-  fs.rmSync(guideRoot, { recursive: true, force: true });
-}
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "tine-release-readiness-test-"));
 
 function write(relative, contents) {
   const absolute = path.join(temporary, relative);

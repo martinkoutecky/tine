@@ -1,52 +1,41 @@
 export type SafeClosePrepareResult = "accepted" | "rejected" | "in_flight";
 
-/** Why the close is asking the user to discard their work.
- *
- *  `failed` — the flush ran to completion and did not land: an unresolved
- *  conflict, or a save the backend refused. Waiting longer cannot help.
- *  `still-saving` — the flush is STILL RUNNING and may yet succeed. The two
- *  must not be worded alike: offering to discard work that is seconds from
- *  durable, in the same sentence used for work that can never be saved, invites
- *  the user to throw away a write in progress. (Direct Files data-safety audit,
- *  2026-08-09, finding 11.) */
-export type DiscardReason = "failed" | "still-saving";
-
 export interface SafeCloseDeps {
   blurActive(): void;
   endEdit(): void;
   flushPdfWork(): Promise<boolean>;
   flushAll(): Promise<boolean>;
   confirmDiscard(reason: DiscardReason): Promise<boolean>;
-  /** The user accepted losing work. Recorded so a session that discarded drafts
-   *  does not read as an ordinary clean exit in the debug report (GH #540). */
+  /** The user accepted losing work. Recorded (fixed reason, page count) so a
+   *  run that discarded drafts is distinguishable in the diagnostic report
+   *  (GH #540). Bounded to one second; its failure never blocks the close. */
   recordDiscard?(reason: DiscardReason): Promise<void>;
+  /** The user chose to keep unsaved work: show where it is (GH #540). */
+  onDiscardDeclined?(): void;
   flushSession(): Promise<void>;
   setTransition(active: boolean): void;
   notifyPdfFailure(): void;
+  /** The page flush outlasted the soft bound and the close is waiting out the grace period. */
   notifyStillSaving(): void;
   notifyConfirmationFailure(): void;
   runBounded?<T>(operation: Promise<T>, timeoutMs: number, fallback: T): Promise<T>;
 }
-
-/** How long the close waits in silence before telling the user anything. */
-const FLUSH_SOFT_TIMEOUT_MS = 4_000;
-/** …and how much longer it keeps waiting for a save that is still running.
- *
- *  A slow or network filesystem, a large batch of dirty pages, or a fsync behind
- *  a busy disk can all exceed the soft bound with nothing wrong. On the 1,045-file
- *  anonymized corpus a save averages ~7 ms, so the soft bound is already several
- *  hundred pages' worth: exceeding it means slow, not broken. */
-const FLUSH_GRACE_TIMEOUT_MS = 26_000;
-
-/** Distinct from `false`, which means the flush finished and did not land. */
-const STILL_RUNNING = Symbol("flush-still-running");
-type FlushOutcome = boolean | typeof STILL_RUNNING;
 
 export interface SafeCloseCoordinator {
   prepare(): Promise<SafeClosePrepareResult>;
   reset(): void;
   inFlight(): boolean;
 }
+
+/** The flush fallback when saves were still running at a bound. Distinct from
+ *  `false`, which means the flush finished and did not land. */
+const STILL_RUNNING = Symbol("still-running");
+/** How long the close waits in silence before saying it is still saving. */
+const FLUSH_SOFT_TIMEOUT_MS = 4_000;
+/** How much longer it keeps waiting on the SAME flush before offering discard:
+ *  a slow or network drive, a busy fsync or many dirty pages exceed the soft
+ *  bound with nothing wrong (master fea3c314b, Direct Files audit finding 11). */
+const FLUSH_GRACE_TIMEOUT_MS = 26_000;
 
 function runBounded<T>(operation: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
   return Promise.race([
@@ -55,16 +44,22 @@ function runBounded<T>(operation: Promise<T>, timeoutMs: number, fallback: T): P
   ]);
 }
 
-/** One persistence transaction shared by desktop window-close and Android root
- * Back. A pre-safe native preparation refusal resets this transition so a
- * later Back repeats the full close; after Android reaches the native-safe
- * state, an activity-exit failure deliberately remains shielded and retries
- * only that final handoff. */
+/** Create a close coordinator. prepare blurs/ends editing, waits up to four
+ * seconds for the PDF flush and for the page flush; a page flush still running
+ * then gets notifyStillSaving and a further 26-second grace on the same promise.
+ * Only a flush that finished false, threw or outlasted the grace reaches
+ * confirmDiscard ("failed" / "still-saving"), then a best-effort one-second
+ * session flush. It returns
+ * rejected, accepted or in_flight; accepted stays in flight until native close
+ * succeeds. After native close failure the caller must reset before retrying.
+ * Work follows pending PDF, page and session bytes within those waits. */
 export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordinator {
   let closing = false;
+  const transaction = {};
   const bounded = deps.runBounded ?? runBounded;
 
   const reset = () => {
+    advanceRevision(transaction);
     closing = false;
     deps.setTransition(false);
   };
@@ -72,19 +67,23 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
   const prepare = async (): Promise<SafeClosePrepareResult> => {
     if (closing) return "in_flight";
     closing = true;
+    const owner = revisionOwner(transaction, advanceRevision(transaction));
     deps.setTransition(true);
     let accepted = false;
     try {
       deps.blurActive();
       deps.endEdit();
       await Promise.resolve();
+      if (!owner()) return "rejected";
 
       let pdfSaved = false;
       try {
         // A pending PDF view-state timer is not visible to the page persistence
         // engine until it fires. Enroll and drain it first while this window's
         // current graph binding still owns every PDF mutation.
-        pdfSaved = await bounded(deps.flushPdfWork(), FLUSH_SOFT_TIMEOUT_MS, false);
+        const result = await writeOwned(owner, bounded(deps.flushPdfWork(), FLUSH_SOFT_TIMEOUT_MS, false));
+        if (result.kind === "stale") return "rejected";
+        pdfSaved = result.value;
       } catch {
         pdfSaved = false;
       }
@@ -93,47 +92,48 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
         return "rejected";
       }
 
-      // Race the SAME promise twice rather than giving up at the soft bound: a
-      // flush that is merely slow gets a grace period and usually lands, and the
-      // user only ever sees a discard prompt that tells the truth about which
-      // situation they are in.
-      let outcome: FlushOutcome;
-      const flushing = (() => {
-        try {
-          return deps.flushAll();
-        } catch (error) {
-          return Promise.reject(error);
-        }
-      })();
+      let saved: boolean | typeof STILL_RUNNING = false;
       try {
-        outcome = await bounded<FlushOutcome>(flushing, FLUSH_SOFT_TIMEOUT_MS, STILL_RUNNING);
-        if (outcome === STILL_RUNNING) {
+        // Race the SAME flush twice: a merely slow save gets a grace period
+        // instead of a discard prompt worded as if it could never land.
+        const flushing = deps.flushAll();
+        let result = await writeOwned(owner, bounded<boolean | typeof STILL_RUNNING>(flushing, FLUSH_SOFT_TIMEOUT_MS, STILL_RUNNING));
+        if (result.kind === "stale") return "rejected";
+        if (result.value === STILL_RUNNING) {
           deps.notifyStillSaving();
-          outcome = await bounded<FlushOutcome>(flushing, FLUSH_GRACE_TIMEOUT_MS, STILL_RUNNING);
+          result = await writeOwned(owner, bounded<boolean | typeof STILL_RUNNING>(flushing, FLUSH_GRACE_TIMEOUT_MS, STILL_RUNNING));
+          if (result.kind === "stale") return "rejected";
         }
+        saved = result.value;
       } catch {
-        outcome = false;
+        saved = false;
       }
 
-      if (outcome !== true) {
+      if (saved !== true) {
+        const reason: DiscardReason = saved === STILL_RUNNING ? "still-saving" : "failed";
         let discard = false;
-        const reason: DiscardReason = outcome === STILL_RUNNING ? "still-saving" : "failed";
         try {
-          discard = await deps.confirmDiscard(reason);
+          const result = await readOwned(owner, deps.confirmDiscard(reason));
+          if (result.kind === "stale") return "rejected";
+          discard = result.value;
         } catch {
           deps.notifyConfirmationFailure();
           return "rejected";
         }
-        if (!discard) return "rejected";
+        if (!discard) {
+          deps.onDiscardDeclined?.();
+          return "rejected";
+        }
         try {
-          await bounded(deps.recordDiscard?.(reason) ?? Promise.resolve(), 1000, undefined);
+          await writeOwned(owner, bounded(deps.recordDiscard?.(reason) ?? Promise.resolve(), 1000, undefined));
         } catch {
-          // Diagnostics never block a close the user has already confirmed.
+          dbg("close discard not recorded"); // diagnostics never block a confirmed close
         }
       }
 
       try {
-        await bounded(deps.flushSession(), 1000, undefined);
+        const result = await writeOwned(owner, bounded(deps.flushSession(), 1000, undefined));
+        if (result.kind === "stale") return "rejected";
       } catch {
         // Session state is best effort after graph content was saved or the user
         // explicitly accepted discarding it; preserve the established policy.
@@ -141,9 +141,12 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
       accepted = true;
       return "accepted";
     } finally {
-      if (!accepted) reset();
+      if (!accepted && owner()) reset();
     }
   };
 
   return { prepare, reset, inFlight: () => closing };
 }
+import { advanceRevision, readOwned, revisionOwner, writeOwned } from "./owned";
+import { dbg } from "./debug";
+import type { DiscardReason } from "./backend";

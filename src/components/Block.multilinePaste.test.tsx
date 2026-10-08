@@ -2,28 +2,16 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import {
-  __setStoreMutationObserverForTest,
-  doc,
-  loadSingle,
-  pageByName,
-  resetStore,
-  undo,
-} from "../store";
+import { pageByName, resetStore, undo } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
 import { startEditing } from "../editorController";
 import type { BlockDto, PageDto } from "../types";
-import { graphBindingRuntime } from "../graphBindingRuntime";
-import { setToasts } from "../ui";
 import { Block } from "./Block";
+import { toasts, setToasts } from "../toasts";
 
 beforeAll(() => initParser());
-afterEach(() => {
-  __setStoreMutationObserverForTest(null);
-  graphBindingRuntime.clear();
-  setToasts([]);
-  resetStore();
-  document.body.innerHTML = "";
-});
+afterEach(() => { resetStore(); setToasts([]); document.body.innerHTML = ""; });
 
 function mount(node: () => JSX.Element) {
   const root = document.createElement("div");
@@ -50,7 +38,45 @@ function keydown(textarea: HTMLTextAreaElement, init: KeyboardEventInit) {
 }
 
 describe("multiline paste into editor-visible empty blocks", () => {
-
+  it("I-22: refuses pasted outlines deeper than the UI render limit", () => {
+    const block: BlockDto = { id: "aaaa1111-1111-4111-8111-111111111111", raw: "", collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const outline = Array.from({ length: 513 }, (_, depth) => `${"\t".repeat(depth)}- item ${depth}`).join("\n");
+      const event = paste(root.querySelector("textarea") as HTMLTextAreaElement, outline);
+      expect(event.defaultPrevented).toBe(true);
+      expect(toasts().some((toast) => toast.message.includes("too deep")),
+        "I-22: deep paste must report refusal; exemplar 513-level outline").toBe(true);
+      expect(pageByName("Paste")!.roots, "I-22: deep paste must refuse before insertion; exemplar 513-level outline")
+        .toEqual([block.id]);
+    } finally {
+      dispose();
+    }
+  });
+  it("retains a 128-level pasted outline", () => {
+    const block: BlockDto = { id: "aaaa2222-2222-4222-8222-222222222222", raw: "", collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      paste(root.querySelector("textarea") as HTMLTextAreaElement,
+        Array.from({ length: 128 }, (_, depth) => `${"\t".repeat(depth)}- item ${depth}`).join("\n"));
+      let current = pageByName("Paste")!.roots[0];
+      for (let depth = 0; depth < 128; depth++) {
+        expect(doc.byId[current].raw).toContain(`item ${depth}`);
+        if (depth < 127) current = doc.byId[current].children[0];
+      }
+      expect(toasts().some((toast) => toast.message.includes("too deep"))).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
   it("replaces an id-only host instead of leaving a ghost blank bullet", () => {
     const block: BlockDto = {
       id: "11111111-1111-4111-8111-111111111111",
@@ -554,5 +580,41 @@ describe("multiline paste into editor-visible empty blocks", () => {
     } finally {
       dispose();
     }
+  });
+});
+
+describe("plain-text paste classification leaves literal source whole (C5 B Block.tsx:1150,2937)", () => {
+  function pasteInto(text: string, format: "md" | "org" = "md") {
+    const block: BlockDto = { id: "aaaa3333-3333-4333-8333-333333333333", raw: "", collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, format, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      paste(root.querySelector("textarea") as HTMLTextAreaElement, text);
+      return pageByName("Paste")!.roots.map((id) => doc.byId[id].raw);
+    } finally { dispose(); }
+  }
+  it("a bullet-looking line inside a fenced payload does not make the paste an outline", () => {
+    const text = "```text\n- not a bullet\n```";
+    expect(pasteInto(text)).toEqual([text]);
+  });
+  it("a blank line inside a fenced payload does not split it into paragraphs", () => {
+    const text = "```text\na\n\nb\n```";
+    expect(pasteInto(text)).toEqual([text]);
+  });
+  it("blank lines outside the fence still separate paragraphs", () => {
+    expect(pasteInto("one\n\n```text\na\n\nb\n```\n\nthree")).toEqual(["one", "```text\na\n\nb\n```", "three"]);
+  });
+  it("a real bullet still makes an outline", () => {
+    expect(pasteInto("- a\n- b")).toEqual(["a", "b"]);
+  });
+  it("Org stars outside a source block still make an outline", () => {
+    expect(pasteInto("* a\n* b", "org")).toEqual(["a", "b"]);
+  });
+  it("Org stars inside a source block do not", () => {
+    const src = "#+BEGIN_SRC text\n* not a headline\n#+END_SRC";
+    expect(pasteInto(src, "org")).toEqual([src]);
   });
 });

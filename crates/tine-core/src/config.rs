@@ -1,32 +1,31 @@
-//! `logseq/config.edn` read AND write — one cohesive module.
+//! `logseq/config.edn` readers and the shared selectors used by its setters.
 //!
-//! We don't full-parse config.edn (it contains arbitrary Clojure/datalog forms —
-//! `(…)` lists, `fn` bodies, `:where` rules — that a small EDN model can't safely
-//! represent). Instead both reads and writes use ONE shared, string/comment/escape
-//! -aware scanner family (`find_keyword`/`edn_str_end`/`match_close_*`/
-//! `next_value_span`) to locate just the handful of keys we care about and edit
-//! values surgically — so writes preserve comments + formatting + unrelated keys,
-//! and reads are immune to whatever else the file contains.
+//! Config values are located by the root-map selector shared with graph-feature
+//! setters. Only direct entries own settings, including in nested settings maps.
+//! Surgical setters preserve unrelated bytes, comments and arbitrary forms;
+//! readers decode string tokens through `edn::parse_strict`, the same decoder
+//! used by sidecars. Missing or malformed individual values use defaults.
 
-use crate::graph_text_scope::{
-    MAX_HIDDEN_EDN_BYTES, MAX_HIDDEN_EDN_DEPTH, MAX_HIDDEN_EDN_ENTRIES, MAX_HIDDEN_EDN_FORMS,
-};
 use std::collections::HashMap;
-#[cfg(test)]
-use std::fs; // only the tests touch the filesystem directly now (writers go via atomic_update)
-#[cfg(test)]
-use std::io;
 
+/// Effective graph configuration derived from `logseq/config.edn`. Missing or
+/// unrecognized individual values use defaults.
+#[deny(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Configured journal directory, relative to the graph root.
     pub journals_dir: String,
+    /// Configured ordinary-page directory, relative to the graph root.
     pub pages_dir: String,
-    /// OG `:hidden` graph-relative string prefixes. Interpretation belongs to
-    /// the versioned graph text scope rather than individual callers.
+    /// OG `:hidden` graph-relative literal path prefixes.
     pub hidden: Vec<String>,
-    /// A malformed or over-limit `:hidden` value cannot safely be treated as an
-    /// empty exclusion list. The graph-text classifier turns this into hide-all.
+    /// A malformed or over-limit `:hidden` vector (a torn or hand-broken
+    /// `config.edn`, delivered by sync or an external editor) cannot safely
+    /// read as "nothing hidden": that would admit text the owner excluded.
+    /// Graph-text scope then hides all graph text (master
+    /// `hidden_parse_failed_closed`; docs/storage-contract.md refusal table).
     pub hidden_parse_failed_closed: bool,
+    /// Preferred task marker cycle.
     pub preferred_workflow: Workflow,
     /// User keybinding overrides from `:shortcuts {:cmd "binding"}` (string
     /// bindings only; vectors take the first binding, `false` disables).
@@ -41,19 +40,26 @@ pub struct Config {
     /// `:block-hidden-properties #{:a :b}` — extra property keys to hide from the
     /// rendered properties area, on top of the built-in internal set.
     pub block_hidden_properties: Vec<String>,
-    /// `:property/separated-by-commas #{:a :b}` — extra property keys whose plain
-    /// value OG splits on commas. One of the five inputs to [`ParseConfig`].
-    pub separated_by_commas: Vec<String>,
-    /// `:ignored-page-references-keywords #{:a :b}` — property keys whose value OG
-    /// keeps as one unparsed string. One of the five inputs to [`ParseConfig`].
-    pub ignored_page_references_keywords: Vec<String>,
     /// `:ref/linked-references-collapsed-threshold` — a page's Linked References
-    /// section starts collapsed once the TOTAL backlink count reaches this,
-    /// which is OG's `(>= total threshold)` in `components/reference.cljs`
-    /// (`6e7afa8e`). Absent or non-integer means OG's default 100. Zero is a
-    /// meaningful value, not "off": it collapses the section always, which is
-    /// what the discussion thread behind GH #479 asks for.
+    /// section starts collapsed once the TOTAL backlink count reaches this
+    /// (OG `(>= total threshold)`, `components/reference.cljs`). Absent or
+    /// non-integer means OG's default 100; zero collapses always (GH #479).
     pub linked_references_collapsed_threshold: u32,
+    /// `:property/separated-by-commas #{:a :b}` — keys added to the built-in
+    /// `alias`/`aliases`/`tags` set. Tine already comma-splits EVERY key's plain
+    /// value (Q21), so this only matters for a value that also contains refs: the
+    /// value's comma-separated plain segments are kept as atoms next to its refs
+    /// instead of being dropped. Keys are stored without the leading `:`; matched
+    /// with `property_key_norm`. Read by `query::atom::ParseConfig` (queries and
+    /// the property registry only).
+    pub separated_by_commas: Vec<String>,
+    /// `:ignored-page-references-keywords #{:a :b}` — keys whose values get no
+    /// reference parsing: `[[x]]`/`#x` stay literal text. The value is still
+    /// comma-split into plain atoms like every other key (Q21); only a
+    /// double-quoted value stays one string. Wins over `separated_by_commas` for a
+    /// key in both. Read by `query::atom::ParseConfig` (queries and the property
+    /// registry only).
+    pub ignored_page_references_keywords: Vec<String>,
     /// `:property-pages/enabled?` — OG creates a page reference from every
     /// eligible property key unless this is explicitly false. Absent defaults to
     /// true (`block.cljs`: `(contains? #{true nil} enabled?)`).
@@ -65,30 +71,34 @@ pub struct Config {
     /// `:default-templates {:journals "Name"}` — template applied to a new,
     /// empty journal page.
     pub default_journal_template: Option<String>,
-    /// `:default-home {:page "Name"}` — graph-portable startup page. Other
-    /// keys in the map belong to Logseq and are preserved by the writer.
+    /// `:default-home {:page "Name"}` — the graph's home page (OG
+    /// `state/get-default-home`). Only a string `:page` directly inside a
+    /// top-level `:default-home` map counts; blank is `None`.
     pub default_home: Option<String>,
     /// `:favorites ["Page" …]` — favorited page names (on-disk, graph-portable).
     pub favorites: Vec<String>,
-    /// `:tine/favorites-page "Name"` — the page holding Tine's Favorites
-    /// arrangement (groups and order). Tine-only; Logseq ignores unknown keys.
-    /// Identity lives here rather than in a reserved page NAME so that a user's
-    /// own page called "Favorites" is never silently treated as Tine's, and
-    /// rather than in a page property so that resolving it costs nothing on the
-    /// reference path (see `refs::ReferenceSourceExclusions`).
+    /// `:mobile {:gestures/disabled-in-block-with-tags ["kanban"]}` — OG's
+    /// opt-out of the block swipe gestures: a swipe that starts inside a block
+    /// (or a descendant of a block) whose own refs contain any entry does
+    /// nothing (`frontend.handler.block/target-disable-swipe?`). Only a vector
+    /// of strings directly inside a top-level `:mobile` map counts.
+    pub mobile_gestures_disabled_in_block_with_tags: Vec<String>,
+    /// `:tine/favorites-page "Name"` — the page holding the Favorites arrangement
+    /// (labels, nesting, order). Logseq ignores the key; `:favorites` stays the
+    /// flat membership list Logseq reads.
     pub favorites_page: Option<String>,
-    /// `:journal/file-name-format` — Logseq's journal FILENAME format (cljs-time /
-    /// Joda tokens). `None` = the default `"yyyy_MM_dd"`. Tine only synthesizes
-    /// the default format, so a non-default value here means Tine must NOT create
-    /// new journal files (it would duplicate the user's real journal for the day).
+    /// `:journal/file-name-format` — Logseq's journal filename format (cljs-time /
+    /// Joda tokens). `None` uses `"yyyy_MM_dd"`. The store compiles a configured
+    /// format and uses it to propose names for new journal files.
     pub journal_file_name_format: Option<String>,
-    /// `:journal/page-title-format` — Logseq's journal TITLE format. `None` = the
-    /// default `"MMM do, yyyy"`. See `journal_file_name_format`.
+    /// Journal TITLE format: nonempty `:journal/page-title-format`, then legacy
+    /// `:date-formatter`. Missing, malformed or empty strings use the next key,
+    /// then `"MMM do, yyyy"` for `None`; file naming is separate.
     pub journal_page_title_format: Option<String>,
     /// `:preferred-format` — the format ("Markdown"/"Org") for NEW pages and
     /// journals. Existing files keep their own format (decided per-file by
     /// extension). Default markdown.
-    pub preferred_format: crate::vocab::Format,
+    pub preferred_format: crate::model::Format,
     /// `:file/name-format` — namespace-separator encoding in page filenames.
     /// Default (absent key) is `Legacy` (`%2F`), matching OG; modern graphs pin
     /// `:triple-lowbar` (`___`). See [`FileNameFormat`].
@@ -102,6 +112,8 @@ pub struct Config {
     /// `:feature/enable-timetracking?` — OG default ON; only explicit false
     /// disables marker-driven CLOCK entries.
     pub enable_timetracking: bool,
+    /// OG `:feature/enable-search-remove-accents?`; default true.
+    pub enable_search_remove_accents: bool,
     /// `:ui/show-brackets?` — OG default ON; only explicit false hides the
     /// brackets around page references.
     pub show_brackets: bool,
@@ -114,17 +126,17 @@ pub struct Config {
     /// `:logbook/settings` — OG logbook write/display settings.
     pub logbook: LogbookSettings,
     /// Tine-owned graph-local flag for the one-time bundled Guide announcement.
-    /// Stored in `logseq/config.edn` so it survives WebKitGTK's ephemeral
-    /// localStorage and stays scoped to the graph.
+    /// Stored in `logseq/config.edn` and scoped to this graph.
+    // Graph config persists this instead of relying on WebKitGTK localStorage.
     pub guide_announced: bool,
 }
 
-/// Logseq's default journal formats (verified against
-/// `logseq/deps/common/src/logseq/common/util/date_time.cljs`). Tine recognizes
-/// and synthesizes only these.
-pub const DEFAULT_JOURNAL_FILE_FORMAT: &str = "yyyy_MM_dd";
-pub const DEFAULT_JOURNAL_TITLE_FORMAT: &str = "MMM do, yyyy";
+/// OG's default when `:ref/linked-references-collapsed-threshold` is absent;
+/// the one declaration the `Config` default and the graph-meta DTO share.
+pub const DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD: u32 = 100;
 
+/// Preferred task marker cycle.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Workflow {
     /// NOW / LATER
@@ -143,116 +155,24 @@ pub enum Workflow {
 ///
 /// Both decode percent-escapes on read; triple-lowbar additionally maps `___`↔`/`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[deny(missing_docs)]
 pub enum FileNameFormat {
+    /// Percent-encoded namespace separators.
     Legacy,
+    /// Triple-underscore namespace separators.
     TripleLowbar,
 }
 
+/// Effective logbook display and timestamp settings.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LogbookSettings {
+    /// Whether timestamps include seconds.
     pub with_second_support: bool,
+    /// Whether logbooks appear in timestamped blocks.
     pub enabled_in_timestamped_blocks: bool,
+    /// Whether logbooks appear in every block.
     pub enabled_in_all_blocks: bool,
-}
-
-/// How far a change to `config.edn` reaches.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConfigReach {
-    Unchanged,
-    /// Only settings that are read when used: the graph takes the new
-    /// configuration in place and keeps its pages and its index.
-    Settings,
-    /// A setting the graph was opened, parsed or indexed with: only a new
-    /// `Graph` can take it in.
-    Graph,
-}
-
-/// The one classification of every `Config` field. The destructure in
-/// `reach` names every field, so a new field does not compile until it is
-/// listed here. A `settings` field must be one nothing copies at open or
-/// into the index (`config_reach_tests` checks the places that do).
-macro_rules! config_reach {
-    (
-        graph: [$($g:ident),* $(,)?],
-        answers: [$($a:ident),* $(,)?],
-        settings: [$($s:ident),* $(,)?] $(,)?
-    ) => {
-        impl Config {
-            /// The fields a [`ConfigReach::Settings`] change may move.
-            pub const SETTINGS_FIELDS: &'static [&'static str] =
-                &[$(stringify!($a),)* $(stringify!($s)),*];
-
-            /// The settings a derived answer (references, queries) reads when it
-            /// runs, so a memoized answer is keyed on them.
-            pub const ANSWER_FIELDS: &'static [&'static str] = &[$(stringify!($a)),*];
-
-            /// How far the change from `self` to `new` reaches.
-            pub fn reach(&self, new: &Config) -> ConfigReach {
-                let Config { $($g,)* $($a,)* $($s,)* } = self;
-                if false $(|| *$g != new.$g)* {
-                    return ConfigReach::Graph;
-                }
-                if false $(|| *$a != new.$a)* $(|| *$s != new.$s)* {
-                    return ConfigReach::Settings;
-                }
-                ConfigReach::Unchanged
-            }
-
-            /// A digest of the [`Config::ANSWER_FIELDS`], for keying memoized
-            /// answers (in-process only).
-            pub(crate) fn answer_settings_digest(&self) -> u64 {
-                use std::hash::{Hash, Hasher};
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                $(self.$a.hash(&mut hasher);)*
-                hasher.finish()
-            }
-        }
-    };
-}
-
-config_reach! {
-    graph: [
-        // Where graph text lives and which of it is admitted.
-        journals_dir,
-        pages_dir,
-        hidden,
-        hidden_parse_failed_closed,
-        file_name_format,
-        // Parser inputs (`ParseConfig`): every parsed page depends on them.
-        block_hidden_properties,
-        separated_by_commas,
-        ignored_page_references_keywords,
-        journal_file_name_format,
-        journal_page_title_format,
-        // Decide which pages exist.
-        property_pages_enabled,
-        property_pages_excludelist,
-    ],
-    // Read when a reference or query answer is computed, so a change must
-    // not be served an answer memoized under the old value (audit R3-06).
-    answers: [
-        favorites_page,
-    ],
-    // Read by the frontend, or by an action (export, file creation) when it
-    // runs; no memoized answer depends on them.
-    settings: [
-        preferred_workflow,
-        shortcuts,
-        all_pages_public,
-        start_of_week,
-        linked_references_collapsed_threshold,
-        default_journal_template,
-        default_home,
-        favorites,
-        preferred_format,
-        macros,
-        enable_timetracking,
-        show_brackets,
-        doc_mode_enter_for_new_block,
-        logical_outdenting,
-        logbook,
-        guide_announced,
-    ],
 }
 
 impl Default for Config {
@@ -267,21 +187,23 @@ impl Default for Config {
             all_pages_public: false,
             start_of_week: 6, // Logseq's default (Sunday) — see field doc
             block_hidden_properties: Vec::new(),
+            linked_references_collapsed_threshold: DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD,
             separated_by_commas: Vec::new(),
             ignored_page_references_keywords: Vec::new(),
-            linked_references_collapsed_threshold: 100, // OG default — see field doc
             property_pages_enabled: true,
             property_pages_excludelist: Vec::new(),
             default_journal_template: None,
             default_home: None,
             favorites: Vec::new(),
             favorites_page: None,
+            mobile_gestures_disabled_in_block_with_tags: Vec::new(),
             journal_file_name_format: None,
             journal_page_title_format: None,
-            preferred_format: crate::vocab::Format::Md,
+            preferred_format: crate::model::Format::Md,
             file_name_format: FileNameFormat::Legacy,
             macros: HashMap::new(),
             enable_timetracking: true,
+            enable_search_remove_accents: true,
             show_brackets: true,
             doc_mode_enter_for_new_block: false,
             logical_outdenting: false,
@@ -302,10 +224,11 @@ impl Default for LogbookSettings {
 }
 
 impl Config {
+    /// Parse supported EDN keys independently, defaulting missing or malformed
+    /// values. This does not report a validation error for a bad format string.
     pub fn parse(edn: &str) -> Config {
-        // Each key is located independently with the comment/string-aware
-        // `find_keyword`, then its value read with the shared scanners — no
-        // up-front comment strip and no whole-file parse.
+        // Locate only direct root entries, as the graph-feature setters do.
+        // Arbitrary unrelated forms need not fit the small sidecar value model.
         let mut cfg = Config::default();
         if let Some(v) = string_value(edn, ":journals-directory") {
             cfg.journals_dir = v;
@@ -314,8 +237,8 @@ impl Config {
             cfg.pages_dir = v;
         }
         match parse_hidden_paths(edn) {
-            HiddenParse::Valid(hidden) => cfg.hidden = hidden,
-            HiddenParse::FailedClosed => cfg.hidden_parse_failed_closed = true,
+            Ok(hidden) => cfg.hidden = hidden,
+            Err(()) => cfg.hidden_parse_failed_closed = true,
         }
         if let Some(v) = keyword_value(edn, ":preferred-workflow") {
             cfg.preferred_workflow = if v == "todo" {
@@ -325,32 +248,37 @@ impl Config {
             };
         }
         cfg.shortcuts = parse_shortcuts(edn);
-        cfg.all_pages_public = bool_value(edn, ":publishing/all-pages-public?").unwrap_or(false);
+        cfg.all_pages_public =
+            bool_value(edn, ":publishing/all-pages-public?").unwrap_or(cfg.all_pages_public);
         if let Some(n) = int_value(edn, ":start-of-week") {
             if n <= 6 {
                 cfg.start_of_week = n;
             }
         }
         cfg.block_hidden_properties = parse_keyword_set(edn, ":block-hidden-properties");
-        cfg.separated_by_commas = parse_keyword_set(edn, ":property/separated-by-commas");
-        cfg.ignored_page_references_keywords =
-            parse_keyword_set(edn, ":ignored-page-references-keywords");
         if let Some(n) = int_value(edn, ":ref/linked-references-collapsed-threshold") {
             cfg.linked_references_collapsed_threshold = n;
         }
-        cfg.property_pages_enabled = bool_value(edn, ":property-pages/enabled?").unwrap_or(true);
+        cfg.separated_by_commas = parse_keyword_set(edn, ":property/separated-by-commas");
+        cfg.ignored_page_references_keywords =
+            parse_keyword_set(edn, ":ignored-page-references-keywords");
+        cfg.property_pages_enabled =
+            bool_value(edn, ":property-pages/enabled?").unwrap_or(cfg.property_pages_enabled);
         cfg.property_pages_excludelist = parse_keyword_set(edn, ":property-pages/excludelist");
         cfg.default_journal_template =
             nested_string(edn, ":default-templates", ":journals").filter(|s| !s.is_empty());
-        cfg.default_home = nested_string_in_balanced_map(edn, ":default-home", ":page")
-            .filter(|s| !s.trim().is_empty());
+        cfg.default_home =
+            nested_string(edn, ":default-home", ":page").filter(|s| !s.trim().is_empty());
         cfg.favorites = parse_string_vector(edn, ":favorites");
+        cfg.mobile_gestures_disabled_in_block_with_tags =
+            nested_string_vector(edn, ":mobile", ":gestures/disabled-in-block-with-tags");
         cfg.favorites_page =
             string_value(edn, ":tine/favorites-page").filter(|s| !s.trim().is_empty());
         cfg.journal_file_name_format =
             string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
-        cfg.journal_page_title_format =
-            string_value(edn, ":journal/page-title-format").filter(|s| !s.is_empty());
+        cfg.journal_page_title_format = string_value(edn, ":journal/page-title-format")
+            .filter(|s| !s.is_empty())
+            .or_else(|| string_value(edn, ":date-formatter").filter(|s| !s.is_empty()));
         // OG stores `:preferred-format "Markdown"|"Org"` (a capitalized string), but
         // its schema also accepts the keyword form `:preferred-format :org` — read
         // both so a keyword-configured graph isn't silently treated as markdown.
@@ -358,7 +286,7 @@ impl Config {
             .or_else(|| keyword_value(edn, ":preferred-format"))
         {
             if v.eq_ignore_ascii_case("org") {
-                cfg.preferred_format = crate::vocab::Format::Org;
+                cfg.preferred_format = crate::model::Format::Org;
             }
         }
         // `:file/name-format` is a keyword (`:triple-lowbar` | `:legacy`). Absent
@@ -368,24 +296,40 @@ impl Config {
             _ => FileNameFormat::Legacy,
         };
         cfg.macros = parse_macros(edn);
-        cfg.enable_timetracking = bool_value(edn, ":feature/enable-timetracking?").unwrap_or(true);
-        cfg.show_brackets = bool_value(edn, ":ui/show-brackets?").unwrap_or(true);
+        cfg.enable_timetracking =
+            bool_value(edn, ":feature/enable-timetracking?").unwrap_or(cfg.enable_timetracking);
+        cfg.enable_search_remove_accents =
+            read_keyword(edn, ":feature/enable-search-remove-accents?")
+                .map(|at| {
+                    let from = skip_blank(edn, at + ":feature/enable-search-remove-accents?".len());
+                    !edn[from..].strip_prefix("false").is_some_and(|rest| {
+                        rest.chars().next().is_none_or(|ch| {
+                            ch.is_whitespace() || matches!(ch, ',' | '}' | ']' | ')' | ';' | '#')
+                        })
+                    })
+                })
+                .unwrap_or(cfg.enable_search_remove_accents);
+        cfg.show_brackets = bool_value(edn, ":ui/show-brackets?").unwrap_or(cfg.show_brackets);
         cfg.doc_mode_enter_for_new_block =
-            bool_value(edn, ":shortcut/doc-mode-enter-for-new-block?").unwrap_or(false);
-        cfg.logical_outdenting = bool_value(edn, ":editor/logical-outdenting?").unwrap_or(false);
+            bool_value(edn, ":shortcut/doc-mode-enter-for-new-block?")
+                .unwrap_or(cfg.doc_mode_enter_for_new_block);
+        cfg.logical_outdenting =
+            bool_value(edn, ":editor/logical-outdenting?").unwrap_or(cfg.logical_outdenting);
+        let default = cfg.logbook;
         cfg.logbook = LogbookSettings {
             with_second_support: nested_bool(edn, ":logbook/settings", ":with-second-support?")
-                .unwrap_or(true),
+                .unwrap_or(default.with_second_support),
             enabled_in_timestamped_blocks: nested_bool(
                 edn,
                 ":logbook/settings",
                 ":enabled-in-timestamped-blocks",
             )
-            .unwrap_or(true),
+            .unwrap_or(default.enabled_in_timestamped_blocks),
             enabled_in_all_blocks: nested_bool(edn, ":logbook/settings", ":enabled-in-all-blocks")
-                .unwrap_or(false),
+                .unwrap_or(default.enabled_in_all_blocks),
         };
-        cfg.guide_announced = bool_value(edn, ":tine/guide-announced?").unwrap_or(false);
+        cfg.guide_announced =
+            bool_value(edn, ":tine/guide-announced?").unwrap_or(cfg.guide_announced);
         cfg
     }
 
@@ -398,16 +342,15 @@ impl Config {
 }
 
 // ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
 // Shared scanner family — byte-offset, string/comment/escape-aware. Used by
 // BOTH the readers above and the writers above. `;` comment handling lives in
-// `find_keyword` (so there's no separate comment-strip pass).
+// `find_keyword_at_map_level` (so there's no separate comment-strip pass).
 // ---------------------------------------------------------------------------
 
 /// Index just past the closing quote of an EDN string opening at byte `open` (a
 /// `"`), skipping `\"` / `\\`. Returns end-of-string if unterminated. (`"` is
 /// ASCII → the returned index is a char boundary.)
-pub(crate) fn edn_str_end(s: &str, open: usize) -> usize {
+pub fn edn_str_end(s: &str, open: usize) -> usize {
     let b = s.as_bytes();
     let mut i = open + 1;
     while i < b.len() {
@@ -422,12 +365,12 @@ pub(crate) fn edn_str_end(s: &str, open: usize) -> usize {
 
 /// Matching close `}` for the map whose `{` is at byte `open`, EDN-aware: skips
 /// strings, `;` comments, and nested braces. End-of-string if unbalanced.
-pub(crate) fn match_close_brace(s: &str, open: usize) -> usize {
+pub fn match_close_brace(s: &str, open: usize) -> usize {
     match_close(s, open, b'{', b'}')
 }
 
 /// Matching close `]` for the vector whose `[` is at byte `open`, EDN-aware.
-pub(crate) fn match_close_bracket(s: &str, open: usize) -> usize {
+pub fn match_close_bracket(s: &str, open: usize) -> usize {
     match_close(s, open, b'[', b']')
 }
 
@@ -460,137 +403,77 @@ fn match_close(s: &str, open: usize, openc: u8, closec: u8) -> usize {
     s.len()
 }
 
-/// Byte index of a real `key` keyword in `s`, skipping strings + `;` comments and
-/// requiring a token boundary after it. None if absent. Linear scan (always
-/// advances), so arbitrary `(…)`/`#{…}`/etc. content can't hang or mislead it.
-pub(crate) fn find_keyword(s: &str, key: &str) -> Option<usize> {
+/// Byte index of `key` as a KEY of the map whose body is `s` (the text between
+/// its braces): a direct entry, never inside a nested map/vector/list/set,
+/// string or `;` comment, and never a VALUE that happens to spell the same
+/// keyword (`{:backup :favorites :private "keep"}` has no `:favorites` key;
+/// C5 L01-S1 spliced over it and the entry after it). The body is walked form
+/// by form, so keys sit at even form positions. A `#_` discard consumes the
+/// next form without counting it; a `#tag` prefix belongs to the form after it.
+/// Linear (every step advances), so arbitrary content cannot hang or mislead it.
+pub fn find_keyword_at_map_level(s: &str, key: &str) -> Option<usize> {
     let b = s.as_bytes();
-    let mut i = 0usize;
-    while i < b.len() {
-        match b[i] {
-            b'"' => {
-                i = edn_str_end(s, i);
-                continue;
-            }
-            b';' => {
-                while i < b.len() && b[i] != b'\n' {
-                    i += 1;
-                }
-                continue;
-            }
-            _ if s[i..].starts_with(key) => {
-                let after = i + key.len();
-                let boundary = after >= b.len()
-                    || matches!(
-                        b[after],
-                        b' ' | b'\t'
-                            | b'\n'
-                            | b'\r'
-                            | b'"'
-                            | b'{'
-                            | b'}'
-                            | b'['
-                            | b']'
-                            | b'('
-                            | b')'
-                            | b'#'
-                            | b','
-                    );
-                if boundary {
-                    return Some(i);
-                }
-                i = after;
-                continue;
-            }
-            _ => {}
+    let (mut at, mut forms) = (skip_blank(s, 0), 0usize);
+    let mut discard = false;
+    let mut tagged = false;
+    while at < b.len() {
+        if b[at] == b'#' && b.get(at + 1) == Some(&b'_') {
+            discard = true;
+            at = skip_blank(s, at + 2);
+            continue;
         }
-        i += 1;
+        let end = form_end(s, at);
+        if b[at] == b'#' && !matches!(b.get(at + 1), Some(b'{' | b'#')) {
+            tagged = true; // `#inst "…"`: the tag and its value are one form
+        } else {
+            if !discard && !tagged && forms % 2 == 0 && &s[at..end] == key {
+                return Some(at);
+            }
+            if !discard {
+                forms += 1;
+            }
+            discard = false;
+            tagged = false;
+        }
+        at = skip_blank(s, end);
     }
     None
 }
 
-/// Find a keyword only among the direct entries of an already-sliced map body.
-/// Nested maps/vectors/lists may legally contain the same keyword and are not
-/// the setting being read or edited.
-pub(crate) fn find_keyword_at_map_level(s: &str, key: &str) -> Option<usize> {
-    let bytes = s.as_bytes();
-    let mut index = 0usize;
-    let mut depth = 0usize;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'"' => {
-                index = edn_str_end(s, index);
-                continue;
+/// End of the one EDN form starting at `at` (non-blank): a string, a balanced
+/// collection (`{}`/`[]`/`()`/`#{}`), or a token up to the next delimiter. A
+/// stray closer is a one-byte form so the walk always advances.
+fn form_end(s: &str, at: usize) -> usize {
+    let b = s.as_bytes();
+    let set = b[at] == b'#' && b.get(at + 1) == Some(&b'{');
+    let open = if set { at + 1 } else { at };
+    match b[open] {
+        b'"' => edn_str_end(s, open),
+        b'{' => (match_close_brace(s, open) + 1).min(s.len()),
+        b'[' => (match_close_bracket(s, open) + 1).min(s.len()),
+        b'(' => (match_close(s, open, b'(', b')') + 1).min(s.len()),
+        b'}' | b']' | b')' => open + 1,
+        _ => {
+            // `\(` and `\é`: the char after a backslash belongs to the literal.
+            let mut end = open + usize::from(b[open] == b'\\');
+            end += s[end..].chars().next().map_or(0, char::len_utf8);
+            // Compact EDN: a `#{` set may follow a token with no blank between.
+            while end < b.len()
+                && !crate::edn::is_delim(b[end])
+                && !(b[end] == b'#' && b.get(end + 1) == Some(&b'{'))
+            {
+                end += 1;
             }
-            b';' => {
-                while index < bytes.len() && bytes[index] != b'\n' {
-                    index += 1;
-                }
-                continue;
-            }
-            b'{' | b'[' | b'(' => depth += 1,
-            b'}' | b']' | b')' => depth = depth.saturating_sub(1),
-            _ if depth == 0 && s[index..].starts_with(key) => {
-                let after = index + key.len();
-                let boundary = after >= bytes.len()
-                    || matches!(
-                        bytes[after],
-                        b' ' | b'\t'
-                            | b'\n'
-                            | b'\r'
-                            | b'"'
-                            | b'{'
-                            | b'}'
-                            | b'['
-                            | b']'
-                            | b'('
-                            | b')'
-                            | b'#'
-                            | b','
-                    );
-                if boundary {
-                    return Some(index);
-                }
-            }
-            _ => {}
+            end
         }
-        index += 1;
     }
-    None
-}
-
-/// Bounds of the root EDN map. Config writers may create entries in the empty
-/// `{}` supplied for a missing file, but must not replace non-map or unbalanced
-/// bytes that may belong to a newer/partially-written configuration shape.
-pub(crate) fn root_map_bounds(s: &str) -> Option<(usize, usize)> {
-    let open = skip_blank(s, 0);
-    if s.as_bytes().get(open) != Some(&b'{') {
-        return None;
-    }
-    let close = match_close_brace(s, open);
-    (close < s.len() && s.as_bytes().get(close) == Some(&b'}')).then_some((open, close))
-}
-
-/// Locate `key` among the DIRECT entries of the root config map (byte index
-/// into the full string), never inside a nested map/vector/list. The
-/// depth-blind `find_keyword` returns the FIRST occurrence anywhere — so a
-/// `:favorites` nested inside `:default-templates` shadowed the real top-level
-/// entry, and a setter splicing its replacement over the nested hit corrupted
-/// config.edn (DUP-3, 2026-08-25 duplication audit). Every top-level SETTER
-/// must locate its key through this helper; `None` (absent at top level, or no
-/// balanced root map yet) sends callers to their ordinary insert/create path,
-/// which inserts at the root map's opening brace — BEFORE any nested shadow in
-/// byte order, so the depth-blind readers still see the top-level entry first.
-pub(crate) fn find_top_level_keyword(s: &str, key: &str) -> Option<usize> {
-    let (open, close) = root_map_bounds(s)?;
-    find_keyword_at_map_level(&s[open + 1..close], key).map(|relative| open + 1 + relative)
 }
 
 /// Span `[start, end)` of the value token following byte `from` (skipping leading
 /// whitespace/commas) within `..close`, plus whether it is an EDN string. None if
 /// there is no value before `close`. A string's end is escape-aware; a non-string
 /// token ends at the next whitespace/comma/brace/quote.
-pub(crate) fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usize, bool)> {
+pub fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usize, bool)> {
     let b = s.as_bytes();
     let mut i = from;
     loop {
@@ -624,13 +507,14 @@ pub(crate) fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usi
 }
 
 // ---------------------------------------------------------------------------
-// Readers — each finds its key with `find_keyword`, then reads the value with
+// Readers — root ownership is shared with `find_top_level_keyword`; complete
+// values before a torn suffix are still readable. Strings use the EDN decoder;
 // the shared scanners.
 // ---------------------------------------------------------------------------
 
 /// First non-blank byte at/after `from`, skipping whitespace, commas, and `;`
 /// comments (a comment can sit between a key and its value).
-pub(crate) fn skip_blank(s: &str, from: usize) -> usize {
+pub fn skip_blank(s: &str, from: usize) -> usize {
     let b = s.as_bytes();
     let mut i = from;
     loop {
@@ -648,46 +532,27 @@ pub(crate) fn skip_blank(s: &str, from: usize) -> usize {
     i
 }
 
-/// Unescape `\"`→`"` and `\\`→`\` (the inverse of the writers' escaping); other
-/// backslashes are kept literal.
-fn unescape(inner: &str) -> String {
-    let b = inner.as_bytes();
-    let mut out = String::with_capacity(inner.len());
-    let mut i = 0;
-    while i < inner.len() {
-        if b[i] == b'\\' && matches!(b.get(i + 1), Some(b'"') | Some(b'\\')) {
-            out.push(b[i + 1] as char);
-            i += 2;
-        } else {
-            let ch = inner[i..].chars().next().unwrap();
-            out.push(ch);
-            i += ch.len_utf8();
-        }
-    }
-    out
-}
-
-/// Read the (unescaped) content of the EDN string whose opening `"` is at `open`.
-fn read_string_at(s: &str, open: usize) -> String {
+/// Decode one complete string token with the shared EDN value parser.
+fn read_string_at(s: &str, open: usize) -> Option<String> {
     let end = edn_str_end(s, open);
-    let inner_end = if end > open + 1 && s.as_bytes()[end - 1] == b'"' {
-        end - 1
-    } else {
-        end
-    };
-    unescape(&s[open + 1..inner_end])
+    match crate::edn::parse_strict(s.get(open..end)?)? {
+        crate::edn::Edn::Str(value) => Some(value),
+        _ => None,
+    }
 }
 
 /// String value following `key`, e.g. `:journals-directory "journals"`.
 fn string_value(edn: &str, key: &str) -> Option<String> {
-    let start = find_keyword(edn, key)?;
+    let start = read_keyword(edn, key)?;
     let from = skip_blank(edn, start + key.len());
-    (edn.as_bytes().get(from) == Some(&b'"')).then(|| read_string_at(edn, from))
+    (edn.as_bytes().get(from) == Some(&b'"'))
+        .then(|| read_string_at(edn, from))
+        .flatten()
 }
 
 /// Keyword value (`:foo` → `foo`) following `key`.
 fn keyword_value(edn: &str, key: &str) -> Option<String> {
-    let start = find_keyword(edn, key)?;
+    let start = read_keyword(edn, key)?;
     let from = skip_blank(edn, start + key.len());
     let b = edn.as_bytes();
     if b.get(from) != Some(&b':') {
@@ -708,7 +573,7 @@ fn keyword_value(edn: &str, key: &str) -> Option<String> {
 
 /// Boolean value (`true`/`false`) following `key`.
 fn bool_value(edn: &str, key: &str) -> Option<bool> {
-    let start = find_keyword(edn, key)?;
+    let start = read_keyword(edn, key)?;
     let from = skip_blank(edn, start + key.len());
     if edn[from..].starts_with("true") {
         Some(true)
@@ -721,7 +586,7 @@ fn bool_value(edn: &str, key: &str) -> Option<bool> {
 
 /// Non-negative integer following `key`.
 fn int_value(edn: &str, key: &str) -> Option<u32> {
-    let start = find_keyword(edn, key)?;
+    let start = read_keyword(edn, key)?;
     let from = skip_blank(edn, start + key.len());
     let digits: String = edn[from..]
         .chars()
@@ -730,13 +595,112 @@ fn int_value(edn: &str, key: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
+/// Read `:hidden` as a bounded vector of strings. An invalid value hides all
+/// graph text rather than silently turning an intended exclusion into none.
+fn parse_hidden_paths(edn: &str) -> Result<Vec<String>, ()> {
+    // A torn root must still expose an authored :hidden vector to its bounded
+    // validator; a missing closing brace must not turn exclusions into none.
+    let Some(start) = read_keyword(edn, ":hidden") else {
+        return Ok(Vec::new());
+    };
+    let from = skip_blank(edn, start + ":hidden".len());
+    // OG treats a non-vector value as no configured hidden paths.
+    if edn.as_bytes().get(from) != Some(&b'[') {
+        return Ok(Vec::new());
+    }
+    let mut scan_end = from.saturating_add(64 * 1024).min(edn.len());
+    while !edn.is_char_boundary(scan_end) {
+        scan_end -= 1;
+    }
+    let close_relative = match_close_bracket(&edn[from..scan_end], 0);
+    if close_relative == scan_end - from {
+        return Err(());
+    }
+    let close = from + close_relative;
+    let bytes = edn.as_bytes();
+    let mut paths = Vec::new();
+    let mut entries = 0usize;
+    let mut i = from + 1;
+    while i < close {
+        match bytes[i] {
+            b' ' | b'\t' | b'\n' | b'\r' | b',' => i += 1,
+            b';' => {
+                while i < close && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'"' => {
+                let end = edn_str_end(&edn[..close + 1], i);
+                entries += 1;
+                if end > close || bytes.get(end - 1) != Some(&b'"') || entries > 256 {
+                    return Err(());
+                }
+                paths.push(read_string_at(edn, i).ok_or(())?);
+                i = end;
+            }
+            b'#' if bytes.get(i + 1) == Some(&b'_') => {
+                i = skip_hidden_form(edn, skip_blank(edn, i + 2), close, 0)?;
+            }
+            _ => {
+                entries += 1;
+                if entries > 256 {
+                    return Err(());
+                }
+                i = skip_hidden_form(edn, i, close, 0)?;
+            }
+        }
+    }
+    Ok(paths)
+}
+
+fn skip_hidden_form(edn: &str, start: usize, close: usize, depth: usize) -> Result<usize, ()> {
+    if depth >= 32 || start >= close {
+        return Err(());
+    }
+    let bytes = edn.as_bytes();
+    let (open, left, right) = match bytes[start] {
+        b'[' => (start, b'[', b']'),
+        b'{' => (start, b'{', b'}'),
+        b'(' => (start, b'(', b')'),
+        b'#' if bytes.get(start + 1) == Some(&b'{') => (start + 1, b'{', b'}'),
+        b'#' if bytes.get(start + 1) == Some(&b'_') => {
+            return skip_hidden_form(edn, skip_blank(edn, start + 2), close, depth + 1);
+        }
+        b'"' => {
+            let end = edn_str_end(&edn[..close + 1], start);
+            return (end <= close && bytes.get(end - 1) == Some(&b'"'))
+                .then_some(end)
+                .ok_or(());
+        }
+        _ => {
+            let mut end = start;
+            while end < close
+                && !matches!(
+                    bytes[end],
+                    b' ' | b'\t' | b'\r' | b'\n' | b',' | b']' | b'}' | b')' | b';'
+                )
+            {
+                end += 1;
+            }
+            return (end > start).then_some(end).ok_or(());
+        }
+    };
+    let end = match_close(&edn[..close + 1], open, left, right);
+    (end < close).then_some(end + 1).ok_or(())
+}
+
 /// Quoted strings in the vector following `key` (`:favorites ["a" "b"]`),
 /// string-aware so a value containing `]` doesn't end the vector early.
 fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
-    let Some(start) = find_keyword(edn, key) else {
+    let Some(start) = read_keyword(edn, key) else {
         return Vec::new();
     };
-    let from = skip_blank(edn, start + key.len());
+    string_vector_at(edn, skip_blank(edn, start + key.len()))
+}
+
+/// The quoted strings of the `[...]` vector opening at byte `from`; empty when
+/// there is no `[` there.
+fn string_vector_at(edn: &str, from: usize) -> Vec<String> {
     let b = edn.as_bytes();
     if b.get(from) != Some(&b'[') {
         return Vec::new();
@@ -747,7 +711,9 @@ fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
     while i < close {
         match b[i] {
             b'"' => {
-                out.push(read_string_at(edn, i));
+                if let Some(value) = read_string_at(edn, i) {
+                    out.push(value);
+                }
                 i = edn_str_end(edn, i);
             }
             b';' => {
@@ -761,415 +727,87 @@ fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
     out
 }
 
-/// The `:hidden` value is security-relevant input: treating a malformed value as
-/// absent can admit a file the graph owner meant to exclude. Keep its reader
-/// independent from the deliberately permissive scanners used for display
-/// preferences, and bound the encoded value, recursive form depth, total form
-/// count, and number of top-level collection entries before allocating decoded
-/// strings.
-enum HiddenParse {
-    Valid(Vec<String>),
-    FailedClosed,
+/// A vector of strings for `inner` directly inside the map following `outer`
+/// (`:mobile {:gestures/disabled-in-block-with-tags ["kanban"]}`). Nested
+/// extension maps cannot shadow either key.
+fn nested_string_vector(edn: &str, outer: &str, inner: &str) -> Vec<String> {
+    let Some(key) = read_keyword(edn, outer) else {
+        return Vec::new();
+    };
+    let Some((open, close)) = balanced_map_at(edn, skip_blank(edn, key + outer.len())) else {
+        return Vec::new();
+    };
+    let Some(irel) = find_keyword_at_map_level(&edn[open + 1..close], inner) else {
+        return Vec::new();
+    };
+    string_vector_at(edn, skip_blank(edn, open + 1 + irel + inner.len()))
 }
 
-fn parse_hidden_paths(edn: &str) -> HiddenParse {
-    parse_hidden_paths_inner(edn).unwrap_or(HiddenParse::FailedClosed)
-}
-
-fn parse_hidden_paths_inner(edn: &str) -> Result<HiddenParse, ()> {
-    let mut reader = EdnReader::new(edn);
-    reader.skip_interstitial_and_discards()?;
-    if reader.peek() != Some(b'{') {
-        return Err(());
-    }
-    reader.begin_form()?;
-    reader.pos += 1;
-    let mut hidden = None;
-    let result = (|| {
-        loop {
-            reader.skip_interstitial_and_discards()?;
-            match reader.peek() {
-                Some(b'}') => {
-                    reader.pos += 1;
-                    break;
-                }
-                None => return Err(()),
-                _ => {}
-            }
-
-            let start = reader.pos;
-            let keyword = reader.peek() == Some(b':');
-            reader.skip_form()?;
-            let key = keyword.then_some(&edn[start..reader.pos]);
-            reader.skip_interstitial_and_discards()?;
-            if matches!(reader.peek(), None | Some(b'}')) {
-                return Err(());
-            }
-            if key == Some(":hidden") {
-                hidden = Some(reader.read_hidden_value()?);
-            } else {
-                reader.skip_form()?;
-            }
-        }
-        reader.skip_interstitial_and_discards()?;
-        (reader.pos == edn.len()).then_some(()).ok_or(())
-    })();
-    reader.end_form();
-    result?;
-    Ok(HiddenParse::Valid(hidden.unwrap_or_default()))
-}
-
-struct EdnReader<'a> {
-    source: &'a str,
-    pos: usize,
-    limit: usize,
-    depth: usize,
-    forms: usize,
-}
-
-impl<'a> EdnReader<'a> {
-    fn new(source: &'a str) -> Self {
-        Self {
-            source,
-            pos: 0,
-            limit: source.len(),
-            depth: 0,
-            forms: 0,
-        }
-    }
-
-    fn bytes(&self) -> &[u8] {
-        self.source.as_bytes()
-    }
-
-    fn peek(&self) -> Option<u8> {
-        (self.pos < self.limit)
-            .then(|| self.bytes().get(self.pos).copied())
-            .flatten()
-    }
-
-    fn skip_interstitial(&mut self) -> Result<(), ()> {
-        loop {
-            while matches!(self.peek(), Some(b' ' | b'\t' | b'\n' | b'\r' | b',')) {
-                self.pos += 1;
-            }
-            if self.peek() == Some(b';') {
-                while self.peek().is_some_and(|byte| byte != b'\n') {
-                    self.pos += 1;
-                }
-                continue;
-            }
-            return Ok(());
-        }
-    }
-
-    fn skip_interstitial_and_discards(&mut self) -> Result<(), ()> {
-        loop {
-            self.skip_interstitial()?;
-            if self.peek() != Some(b'#') || self.bytes().get(self.pos + 1) != Some(&b'_') {
-                return Ok(());
-            }
-            self.begin_form()?;
-            self.pos += 2;
-            let result = self.skip_form();
-            self.end_form();
-            result?;
-        }
-    }
-
-    fn begin_form(&mut self) -> Result<(), ()> {
-        self.forms = self.forms.checked_add(1).ok_or(())?;
-        if self.forms > MAX_HIDDEN_EDN_FORMS {
-            return Err(());
-        }
-        self.depth = self.depth.checked_add(1).ok_or(())?;
-        if self.depth > MAX_HIDDEN_EDN_DEPTH {
-            return Err(());
-        }
-        Ok(())
-    }
-
-    fn end_form(&mut self) {
-        self.depth -= 1;
-    }
-
-    fn skip_form(&mut self) -> Result<(), ()> {
-        self.skip_interstitial_and_discards()?;
-        self.begin_form()?;
-        let result = self.skip_form_body();
-        self.end_form();
-        result
-    }
-
-    fn skip_form_body(&mut self) -> Result<(), ()> {
-        match self.peek().ok_or(())? {
-            b'"' => self.scan_string(false).map(|_| ()),
-            b'[' => self.skip_collection(b']', false),
-            b'{' => self.skip_collection(b'}', true),
-            b'(' => self.skip_collection(b')', false),
-            b'#' if self.bytes().get(self.pos + 1) == Some(&b'{') => {
-                self.pos += 1;
-                self.skip_collection(b'}', false)
-            }
-            b'#' if self.bytes().get(self.pos + 1) == Some(&b'(') => {
-                self.pos += 1;
-                self.skip_collection(b')', false)
-            }
-            b'#' if self.bytes().get(self.pos + 1) == Some(&b'"') => {
-                self.pos += 1;
-                self.scan_string(false).map(|_| ())
-            }
-            b'#' if self.bytes().get(self.pos + 1) == Some(&b'\'') => {
-                self.pos += 2;
-                self.skip_form()
-            }
-            b'#' if self.bytes().get(self.pos + 1) == Some(&b'#') => self.skip_atom(),
-            b'#' => {
-                self.pos += 1;
-                self.skip_atom()?;
-                self.skip_form()
-            }
-            b'\'' | b'`' | b'@' => {
-                self.pos += 1;
-                self.skip_form()
-            }
-            b'~' => {
-                self.pos += 1;
-                if self.peek() == Some(b'@') {
-                    self.pos += 1;
-                }
-                self.skip_form()
-            }
-            b'^' => {
-                self.pos += 1;
-                self.skip_form()?;
-                self.skip_form()
-            }
-            b'\\' => self.skip_character(),
-            b']' | b'}' | b')' => Err(()),
-            _ => self.skip_atom(),
-        }
-    }
-
-    fn skip_collection(&mut self, close: u8, map: bool) -> Result<(), ()> {
-        self.pos += 1;
-        let mut forms = 0usize;
-        loop {
-            self.skip_interstitial_and_discards()?;
-            match self.peek() {
-                Some(byte) if byte == close => {
-                    self.pos += 1;
-                    if map && forms % 2 != 0 {
-                        return Err(());
-                    }
-                    return Ok(());
-                }
-                None => return Err(()),
-                _ => {
-                    self.skip_form()?;
-                    forms = forms.checked_add(1).ok_or(())?;
-                }
-            }
-        }
-    }
-
-    fn skip_atom(&mut self) -> Result<(), ()> {
-        let start = self.pos;
-        while self.peek().is_some_and(|byte| {
-            !matches!(
-                byte,
-                b' ' | b'\t'
-                    | b'\n'
-                    | b'\r'
-                    | b','
-                    | b';'
-                    | b'"'
-                    | b'['
-                    | b']'
-                    | b'{'
-                    | b'}'
-                    | b'('
-                    | b')'
-            )
-        }) {
-            self.pos += 1;
-        }
-        (self.pos != start).then_some(()).ok_or(())
-    }
-
-    fn skip_character(&mut self) -> Result<(), ()> {
-        self.pos += 1;
-        let character = self.source[self.pos..].chars().next().ok_or(())?;
-        self.pos = self.pos.checked_add(character.len_utf8()).ok_or(())?;
-        while self.peek().is_some_and(|byte| {
-            !matches!(
-                byte,
-                b' ' | b'\t'
-                    | b'\n'
-                    | b'\r'
-                    | b','
-                    | b';'
-                    | b'['
-                    | b']'
-                    | b'{'
-                    | b'}'
-                    | b'('
-                    | b')'
-            )
-        }) {
-            self.pos += 1;
-        }
-        Ok(())
-    }
-
-    fn scan_string(&mut self, decode: bool) -> Result<Option<String>, ()> {
-        if self.peek() != Some(b'"') {
-            return Err(());
-        }
-        self.pos += 1;
-        let mut output = decode.then(String::new);
-        loop {
-            let byte = self.peek().ok_or(())?;
-            if byte == b'"' {
-                self.pos += 1;
-                return Ok(output);
-            }
-            if byte == b'\\' {
-                self.pos += 1;
-                let escaped = self.peek().ok_or(())?;
-                self.pos += 1;
-                let character = match escaped {
-                    b'"' => '"',
-                    b'\\' => '\\',
-                    b'n' => '\n',
-                    b'r' => '\r',
-                    b't' => '\t',
-                    b'b' => '\u{0008}',
-                    b'f' => '\u{000c}',
-                    b'u' => {
-                        let end = self.pos.checked_add(4).ok_or(())?;
-                        if end > self.limit || end > self.source.len() {
-                            return Err(());
-                        }
-                        let digits = &self.source[self.pos..end];
-                        let value = u32::from_str_radix(digits, 16).map_err(|_| ())?;
-                        self.pos = end;
-                        char::from_u32(value).ok_or(())?
-                    }
-                    _ => return Err(()),
-                };
-                if let Some(output) = output.as_mut() {
-                    output.push(character);
-                }
-                continue;
-            }
-            let character = self.source[self.pos..]
-                .chars()
-                .next()
-                .filter(|character| self.pos + character.len_utf8() <= self.limit)
-                .ok_or(())?;
-            self.pos += character.len_utf8();
-            if let Some(output) = output.as_mut() {
-                output.push(character);
-            }
-        }
-    }
-
-    fn read_hidden_value(&mut self) -> Result<Vec<String>, ()> {
-        let start = self.pos;
-        let previous_limit = self.limit;
-        self.limit = previous_limit.min(start.checked_add(MAX_HIDDEN_EDN_BYTES).ok_or(())?);
-        let result = (|| {
-            self.skip_interstitial_and_discards()?;
-            if self.peek() != Some(b'[') {
-                self.skip_form()?;
-                return Ok(Vec::new());
-            }
-            self.begin_form()?;
-            self.pos += 1;
-            let value = (|| {
-                let mut entries = 0usize;
-                let mut values = Vec::new();
-                loop {
-                    self.skip_interstitial_and_discards()?;
-                    match self.peek() {
-                        Some(b']') => {
-                            self.pos += 1;
-                            return Ok(values);
-                        }
-                        None => return Err(()),
-                        Some(b'"') => {
-                            entries = entries.checked_add(1).ok_or(())?;
-                            if entries > MAX_HIDDEN_EDN_ENTRIES {
-                                return Err(());
-                            }
-                            self.begin_form()?;
-                            let string = self.scan_string(true);
-                            self.end_form();
-                            values.push(string?.ok_or(())?);
-                        }
-                        Some(_) => {
-                            entries = entries.checked_add(1).ok_or(())?;
-                            if entries > MAX_HIDDEN_EDN_ENTRIES {
-                                return Err(());
-                            }
-                            self.skip_form()?;
-                        }
-                    }
-                }
-            })();
-            self.end_form();
-            value
-        })();
-        self.limit = previous_limit;
-        result
-    }
-}
-
-/// The quoted string for `inner` inside the map following `outer`, e.g.
-/// `:default-templates {:journals "Daily"}` → "Daily". String/brace-aware.
+/// A direct string entry in a direct root settings map. Nested extension
+/// maps cannot shadow either the outer setting or its inner entry.
 fn nested_string(edn: &str, outer: &str, inner: &str) -> Option<String> {
-    let start = find_keyword(edn, outer)?;
-    let from = skip_blank(edn, start + outer.len());
-    if edn.as_bytes().get(from) != Some(&b'{') {
-        return None;
-    }
-    let close = match_close_brace(edn, from);
-    let irel = find_keyword(&edn[from + 1..close], inner)?;
-    let vfrom = skip_blank(edn, from + 1 + irel + inner.len());
-    (edn.as_bytes().get(vfrom) == Some(&b'"')).then(|| read_string_at(edn, vfrom))
+    let key = read_keyword(edn, outer)?;
+    let (open, close) = balanced_map_at(edn, skip_blank(edn, key + outer.len()))?;
+    let irel = find_keyword_at_map_level(&edn[open + 1..close], inner)?;
+    let vfrom = skip_blank(edn, open + 1 + irel + inner.len());
+    (edn.as_bytes().get(vfrom) == Some(&b'"'))
+        .then(|| read_string_at(edn, vfrom))
+        .flatten()
 }
 
-/// Like `nested_string`, but rejects an unbalanced outer map. Preferences may
-/// fall back when malformed; a graph-owner migration must not mistake a partial
-/// form for authority and then rewrite it.
-fn nested_string_in_balanced_map(edn: &str, outer: &str, inner: &str) -> Option<String> {
-    let (root_open, root_close) = root_map_bounds(edn)?;
-    let relative = find_keyword_at_map_level(&edn[root_open + 1..root_close], outer)?;
-    let start = root_open + 1 + relative;
-    let from = skip_blank(edn, start + outer.len());
-    if edn.as_bytes().get(from) != Some(&b'{') {
+/// `(open, close)` of the balanced `{…}` map opening at byte `open`; `None`
+/// when there is no `{` there or it never closes.
+pub fn balanced_map_at(s: &str, open: usize) -> Option<(usize, usize)> {
+    if s.as_bytes().get(open) != Some(&b'{') {
         return None;
     }
-    let close = match_close_brace(edn, from);
-    if close >= edn.len() || edn.as_bytes().get(close) != Some(&b'}') {
+    let close = match_close_brace(s, open);
+    (close < s.len()).then_some((open, close))
+}
+
+/// `(open, close)` of the root map: the first form after blanks and `;`
+/// comments, when it is a balanced `{…}`.
+pub fn root_map_bounds(s: &str) -> Option<(usize, usize)> {
+    balanced_map_at(s, skip_blank(s, 0))
+}
+
+/// Byte index of `key` among the DIRECT entries of the root map, never inside
+/// a nested map, vector, comment or string. Every top-level config setter
+/// locates its key here: the depth-blind keyword search returned a nested
+/// shadow first and the setter spliced over it (master DUP-3, 4ae2f6f4f).
+/// `None` when the key is absent or there is no balanced root map.
+pub fn find_top_level_keyword(s: &str, key: &str) -> Option<usize> {
+    root_keyword(s, key, true)
+}
+
+// Readers keep complete values before a torn later form. Writers additionally
+// require a balanced root before applying any edit; both share root ownership.
+fn read_keyword(s: &str, key: &str) -> Option<usize> {
+    root_keyword(s, key, false)
+}
+
+fn root_keyword(s: &str, key: &str, require_balanced: bool) -> Option<usize> {
+    let open = skip_blank(s, 0);
+    if s.as_bytes().get(open) != Some(&b'{') {
         return None;
     }
-    let inner_relative = find_keyword_at_map_level(&edn[from + 1..close], inner)?;
-    let value_start = skip_blank(edn, from + 1 + inner_relative + inner.len());
-    (edn.as_bytes().get(value_start) == Some(&b'"')).then(|| read_string_at(edn, value_start))
+    let close = match_close_brace(s, open);
+    if require_balanced && close == s.len() {
+        return None;
+    }
+    find_keyword_at_map_level(&s[open + 1..close], key).map(|at| open + 1 + at)
 }
 
 /// Boolean value for `inner` inside the map following `outer`, e.g.
 /// `:logbook/settings {:with-second-support? false}`.
 fn nested_bool(edn: &str, outer: &str, inner: &str) -> Option<bool> {
-    let start = find_keyword(edn, outer)?;
+    let start = read_keyword(edn, outer)?;
     let from = skip_blank(edn, start + outer.len());
     if edn.as_bytes().get(from) != Some(&b'{') {
         return None;
     }
     let close = match_close_brace(edn, from);
-    let irel = find_keyword(&edn[from + 1..close], inner)?;
+    let irel = find_keyword_at_map_level(&edn[from + 1..close], inner)?;
     let vfrom = skip_blank(edn, from + 1 + irel + inner.len());
     if edn[vfrom..close].starts_with("true") {
         Some(true)
@@ -1182,7 +820,7 @@ fn nested_bool(edn: &str, outer: &str, inner: &str) -> Option<bool> {
 
 /// Keywords in the set following `key` (`:block-hidden-properties #{:a :b}`).
 fn parse_keyword_set(edn: &str, key: &str) -> Vec<String> {
-    let Some(start) = find_keyword(edn, key) else {
+    let Some(start) = read_keyword(edn, key) else {
         return Vec::new();
     };
     let from = skip_blank(edn, start + key.len());
@@ -1207,7 +845,7 @@ fn parse_keyword_set(edn: &str, key: &str) -> Vec<String> {
 /// `false` (disable) | `["b1" "b2"]` (first wins). String/brace-aware.
 fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    let Some(start) = find_keyword(edn, ":shortcuts") else {
+    let Some(start) = read_keyword(edn, ":shortcuts") else {
         return map;
     };
     let from = skip_blank(edn, start + ":shortcuts".len());
@@ -1234,7 +872,9 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
         }
         match b[vfrom] {
             b'"' => {
-                map.insert(key, read_string_at(edn, vfrom));
+                if let Some(value) = read_string_at(edn, vfrom) {
+                    map.insert(key, value);
+                }
                 i = edn_str_end(edn, vfrom);
             }
             b'[' => {
@@ -1248,7 +888,9 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
                         continue;
                     }
                     if b[k] == b'"' {
-                        map.insert(key.clone(), read_string_at(edn, k));
+                        if let Some(value) = read_string_at(edn, k) {
+                            map.insert(key.clone(), value);
+                        }
                         break;
                     }
                     k += 1;
@@ -1276,7 +918,7 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
 /// first non-string key/value rather than desyncing on unexpected EDN.
 fn parse_macros(edn: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    let Some(start) = find_keyword(edn, ":macros") else {
+    let Some(start) = read_keyword(edn, ":macros") else {
         return map;
     };
     let from = skip_blank(edn, start + ":macros".len());
@@ -1291,13 +933,17 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
         if i >= close || b[i] != b'"' {
             break; // key must be a string
         }
-        let key = read_string_at(edn, i);
+        let Some(key) = read_string_at(edn, i) else {
+            break;
+        };
         i = edn_str_end(edn, i);
         let vfrom = skip_blank(edn, i);
         if vfrom >= close || b[vfrom] != b'"' {
             break; // value must be a string
         }
-        let val = read_string_at(edn, vfrom);
+        let Some(val) = read_string_at(edn, vfrom) else {
+            break;
+        };
         i = edn_str_end(edn, vfrom);
         if !key.is_empty() {
             map.insert(key, val);
@@ -1306,724 +952,68 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
     map
 }
 
-/// The six graph-config facts that decide **projected page facts, property
-/// atomization and registry membership** (SPEC §5.8 M21, C3, B3).
-///
-/// Why exactly these six and why they travel together: `JournalFormat::new(
-/// file_name_format, title_format)` and `decode_page_name(stem, file_name_format)`
-/// decide every page's name, kind and `date_key`; the atomizer's comma-split and
-/// unparsed-key rules read the two keyword sets; and `hidden_properties` is the
-/// configured half of the registry's internal-key exclusion (§6.2 K15) — a
-/// config input exactly like the other lists (B3). Direct reconciliation
-/// compares only source revisions, so an omitted field would leave unchanged
-/// files with stale `pages` rows after a config edit — which is why
-/// [`ParseConfig::digest`] over these six is what forces a projection rebuild.
-///
-/// This is a read-only projection of [`Config`], never a second source of truth.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseConfig {
-    pub separated_by_commas: Vec<String>,
-    pub ignored_page_references_keywords: Vec<String>,
-    pub hidden_properties: Vec<String>,
-    pub journal_page_title_format: Option<String>,
-    pub journal_file_name_format: Option<String>,
-    pub file_name_format: FileNameFormat,
-}
-
-/// The domain tag of [`ParseConfig::digest`]'s canonical encoding (§5.8 H6).
-const PARSE_CONFIG_DIGEST_DOMAIN: &[u8] = b"tine.parse-config.v1\0";
-
-impl ParseConfig {
-    /// The 32-byte stamp a projection records so a config edit forces a rebuild
-    /// (§5.8 H6, D-1: rebuild, never migrate).
-    ///
-    /// The encoding is frozen and pinned by a hex constant in this module's
-    /// tests, so changing it is a deliberate edit rather than a silent drift:
-    /// the domain tag, then the three key lists in the order
-    /// `separated_by_commas`, `ignored_page_references_keywords`,
-    /// `hidden_properties` — each NFC-lowercased with the §3.3 `atom_key`
-    /// normalization, sorted bytewise, de-duplicated, written as a `u32-LE`
-    /// count followed by each key as `u32-LE` byte length + UTF-8 bytes — then
-    /// `journal_page_title_format` and `journal_file_name_format`, each a single
-    /// `0x00` when absent or `0x01` + length-prefixed UTF-8 when present, then
-    /// `file_name_format` as one byte.
-    pub fn digest(&self) -> tine_storage::ContentDigest {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(PARSE_CONFIG_DIGEST_DOMAIN);
-        for list in [
-            &self.separated_by_commas,
-            &self.ignored_page_references_keywords,
-            &self.hidden_properties,
-        ] {
-            let mut keys: Vec<String> =
-                list.iter().map(|key| crate::vocab::atom_key(key)).collect();
-            keys.sort();
-            keys.dedup();
-            bytes.extend_from_slice(&(keys.len() as u32).to_le_bytes());
-            for key in keys {
-                bytes.extend_from_slice(&(key.len() as u32).to_le_bytes());
-                bytes.extend_from_slice(key.as_bytes());
-            }
-        }
-        for format in [
-            self.journal_page_title_format.as_deref(),
-            self.journal_file_name_format.as_deref(),
-        ] {
-            match format {
-                None => bytes.push(0x00),
-                Some(text) => {
-                    bytes.push(0x01);
-                    bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
-                    bytes.extend_from_slice(text.as_bytes());
-                }
-            }
-        }
-        bytes.push(match self.file_name_format {
-            FileNameFormat::Legacy => 0x00,
-            FileNameFormat::TripleLowbar => 0x01,
-        });
-        tine_storage::ContentDigest::of(&bytes)
-    }
-}
-
-impl Default for ParseConfig {
-    fn default() -> Self {
-        Config::default().parse_config()
-    }
-}
-
-impl Config {
-    /// The parse-relevant slice of this config (SPEC §5.8).
-    pub fn parse_config(&self) -> ParseConfig {
-        ParseConfig {
-            separated_by_commas: self.separated_by_commas.clone(),
-            ignored_page_references_keywords: self.ignored_page_references_keywords.clone(),
-            hidden_properties: self.block_hidden_properties.clone(),
-            journal_page_title_format: self.journal_page_title_format.clone(),
-            journal_file_name_format: self.journal_file_name_format.clone(),
-            file_name_format: self.file_name_format,
-        }
-    }
-}
-
-#[cfg(test)]
-mod config_reach_tests {
-    use super::*;
-
-    #[test]
-    fn a_change_reaches_the_graph_only_through_a_graph_field() {
-        let base = Config::parse("{}");
-        assert_eq!(base.reach(&base.clone()), ConfigReach::Unchanged);
-        let home = Config::parse(r#"{:default-home {:page "Start"}}"#);
-        assert_eq!(base.reach(&home), ConfigReach::Settings);
-        let favorites = Config::parse(r#"{:favorites ["A"] :tine/favorites-page "F"}"#);
-        assert_eq!(base.reach(&favorites), ConfigReach::Settings);
-        let hidden = Config::parse(r#"{:hidden ["drafts"] :default-home {:page "Start"}}"#);
-        assert_eq!(base.reach(&hidden), ConfigReach::Graph);
-        let title = Config::parse(r#"{:journal/page-title-format "yyyy-MM-dd"}"#);
-        assert_eq!(base.reach(&title), ConfigReach::Graph);
-    }
-
-    /// Exports and the CLI read settings from the graph: one written through
-    /// the graph is the one they read, without reopening it. Favorites and the
-    /// workflow were read as the graph opened until the next launch.
-    #[test]
-    fn a_setting_written_through_the_graph_is_the_one_it_reads() {
-        let dir = std::env::temp_dir().join(format!("tine-config-reach-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("logseq")).unwrap();
-        std::fs::write(dir.join("logseq/config.edn"), "{}\n").unwrap();
-        let graph = crate::model::Graph::open(&dir);
-        graph.set_favorites(&["A".to_owned()]).unwrap();
-        graph.set_default_home_page(Some("Home")).unwrap();
-        graph.set_journal_page_title_format("yyyy-MM-dd").unwrap();
-        let config = graph.config();
-        let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(config.favorites, vec!["A".to_owned()]);
-        assert_eq!(config.default_home.as_deref(), Some("Home"));
-        // Reaches the graph: this instance keeps the format it parsed with.
-        assert_eq!(config.journal_page_title_format, None);
-    }
-
-    /// A `settings` field is taken in place, so nothing may copy it where a
-    /// swap cannot reach: into what the graph derives when it opens, or into
-    /// the parser input every indexed page is stored under. If this fails,
-    /// the field belongs in `graph:` in `config_reach!` (GH #543, R2-P1).
-    #[test]
-    fn a_settings_field_is_not_copied_at_open_or_into_the_index() {
-        let sources = [
-            ("model/open_graph.rs", include_str!("model/open_graph.rs")),
-            (
-                "model/projection_lifetime.rs",
-                include_str!("model/projection_lifetime.rs"),
-            ),
-            ("config.rs parse_config", {
-                let source = include_str!("config.rs");
-                let start = source.find("pub fn parse_config(&self)").unwrap();
-                &source[start..start + source[start..].find("\n    }\n").unwrap()]
-            }),
-        ];
-        let mut copied = Vec::new();
-        for field in Config::SETTINGS_FIELDS {
-            for (name, source) in sources {
-                if [
-                    format!("config.{field}"),
-                    format!("config().{field}"),
-                    format!("self.{field}"),
-                ]
-                .iter()
-                .any(|read| source.contains(read.as_str()))
-                {
-                    copied.push(format!("{name}: {field}"));
-                }
-            }
-        }
-        assert!(
-            copied.is_empty(),
-            "settings fields copied where a swap cannot reach: {copied:?}"
-        );
-    }
-
-    /// A memoized reference or query answer is keyed on the answer settings
-    /// only (`Config::answer_settings_digest`). A setting outside that list
-    /// read anywhere an answer is computed would be served stale after a
-    /// change (audit R3-06). The readers allowed here act when they run
-    /// (export, file creation) or describe the config to the frontend; to
-    /// read another setting while computing an answer, list it under
-    /// `answers:` in `config_reach!`.
-    #[test]
-    fn only_an_answer_setting_is_read_where_answers_are_computed() {
-        const ALLOWED: &[(&str, &[&str])] = &[
-            ("config.rs", &["*"]),
-            ("model/paths.rs", &["*"]),
-            ("publish.rs", &["*"]),
-            ("publish/", &["*"]),
-            ("model/pdf.rs", &["preferred_format"]),
-            ("model/pages_merge.rs", &["preferred_format"]),
-            ("model/graph_text_inventory.rs", &["preferred_format"]),
-        ];
-        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    walk(&path, out);
-                } else if path.extension().is_some_and(|ext| ext == "rs") {
-                    out.push(path);
-                }
-            }
-        }
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut files = Vec::new();
-        walk(&root, &mut files);
-        let mut readers = Vec::new();
-        for file in files {
-            let rel = file
-                .strip_prefix(&root)
-                .unwrap()
-                .to_string_lossy()
-                .replace('\\', "/");
-            if rel.contains("tests") || rel.ends_with("_test.rs") {
-                continue;
-            }
-            let source = std::fs::read_to_string(&file).unwrap();
-            for field in Config::SETTINGS_FIELDS {
-                if Config::ANSWER_FIELDS.contains(field) {
-                    continue;
-                }
-                let allowed = ALLOWED.iter().any(|(prefix, fields)| {
-                    rel.starts_with(prefix) && (fields.contains(&"*") || fields.contains(field))
-                });
-                if allowed {
-                    continue;
-                }
-                for read in [format!("config.{field}"), format!("config().{field}")] {
-                    let hit = source.match_indices(read.as_str()).any(|(at, _)| {
-                        !source[at + read.len()..]
-                            .starts_with(|c: char| c.is_alphanumeric() || c == '_')
-                    });
-                    if hit {
-                        readers.push(format!("{rel}: {field}"));
-                    }
-                }
-            }
-        }
-        assert!(
-            readers.is_empty(),
-            "settings read outside the answer list where answers may be computed; \
-             list them under `answers:` in `config_reach!` (GH #543, audit R3-06): {readers:?}"
-        );
-    }
-}
-
-#[cfg(test)]
-mod parse_config_tests {
-    use super::*;
-
-    #[test]
-    fn both_new_keyword_sets_are_read_from_config_edn() {
-        let cfg = Config::parse(
-            "{:property/separated-by-commas #{:tags :authors}\n :ignored-page-references-keywords #{:url :source}}",
-        );
-        assert_eq!(cfg.separated_by_commas, vec!["tags", "authors"]);
-        assert_eq!(cfg.ignored_page_references_keywords, vec!["url", "source"]);
-        let parse = cfg.parse_config();
-        assert_eq!(parse.separated_by_commas, vec!["tags", "authors"]);
-        assert_eq!(
-            parse.ignored_page_references_keywords,
-            vec!["url", "source"]
-        );
-    }
-
-    #[test]
-    fn absent_keyword_sets_are_empty_never_defaulted() {
-        let cfg = Config::parse("{:journals-directory \"journals\"}");
-        assert!(cfg.separated_by_commas.is_empty());
-        assert!(cfg.ignored_page_references_keywords.is_empty());
-    }
-
-    #[test]
-    fn parse_config_carries_all_six_projected_fact_inputs() {
-        let cfg = Config::parse(
-            "{:journal/page-title-format \"yyyy-MM-dd\"\n :journal/file-name-format \"yyyy_MM_dd\"\n :file/name-format :triple-lowbar\n :block-hidden-properties #{:secret}\n :property/separated-by-commas #{:authors}\n :ignored-page-references-keywords #{:url}}",
-        );
-        let parse = cfg.parse_config();
-        assert_eq!(
-            parse.journal_page_title_format.as_deref(),
-            Some("yyyy-MM-dd")
-        );
-        assert_eq!(
-            parse.journal_file_name_format.as_deref(),
-            Some("yyyy_MM_dd")
-        );
-        assert_eq!(parse.file_name_format, FileNameFormat::TripleLowbar);
-        assert_eq!(parse.separated_by_commas, vec!["authors"]);
-        assert_eq!(parse.ignored_page_references_keywords, vec!["url"]);
-        assert_eq!(
-            parse.hidden_properties, cfg.block_hidden_properties,
-            "the sixth field IS `block_hidden_properties` (B3), never a second list"
-        );
-        assert_eq!(parse.hidden_properties, vec!["secret"]);
-    }
-
-    // --- §5.8 H6: `ParseConfig::digest()` ---------------------------------
-
-    /// The on-disk encoding is frozen: this hex constant is what makes a change
-    /// to the byte layout a deliberate edit rather than a silent projection
-    /// invalidation across every user's graph.
-    #[test]
-    fn the_digest_of_one_fixed_config_is_pinned() {
-        let config = ParseConfig {
-            separated_by_commas: vec!["authors".into(), "Tags".into()],
-            ignored_page_references_keywords: vec!["url".into()],
-            hidden_properties: vec!["secret".into()],
-            journal_page_title_format: Some("MMM do, yyyy".into()),
-            journal_file_name_format: None,
-            file_name_format: FileNameFormat::TripleLowbar,
-        };
-        assert_eq!(
-            config.digest().to_string(),
-            "1cf44f4cc3319c8655e194b0feb4c50f09570995612dc79e540cf80582c26258"
-        );
-    }
-
-    #[test]
-    fn changing_only_hidden_properties_changes_the_digest() {
-        let base = ParseConfig::default();
-        let mut with_hidden = base.clone();
-        with_hidden.hidden_properties = vec!["secret".into()];
-        assert_ne!(
-            base.digest(),
-            with_hidden.digest(),
-            "the third key list is part of the stamp (B3), or a hidden-key edit \
-             would leave a stale registry behind"
-        );
-    }
-
-    #[test]
-    fn key_lists_are_normalized_sorted_and_deduplicated_before_hashing() {
-        let mut one = ParseConfig::default();
-        one.separated_by_commas = vec!["Tags".into(), "authors".into(), "tags".into()];
-        let mut two = ParseConfig::default();
-        two.separated_by_commas = vec!["authors".into(), "tags".into()];
-        assert_eq!(one.digest(), two.digest());
-    }
-
-    #[test]
-    fn the_two_journal_formats_occupy_distinct_digest_positions() {
-        let mut title = ParseConfig::default();
-        title.journal_page_title_format = Some("yyyy-MM-dd".into());
-        let mut file = ParseConfig::default();
-        file.journal_file_name_format = Some("yyyy-MM-dd".into());
-        assert_ne!(title.digest(), file.digest());
-    }
-
-    #[test]
-    fn the_file_name_format_byte_mapping_is_pinned() {
-        let mut legacy = ParseConfig::default();
-        legacy.file_name_format = FileNameFormat::Legacy;
-        let mut triple = ParseConfig::default();
-        triple.file_name_format = FileNameFormat::TripleLowbar;
-        assert_ne!(legacy.digest(), triple.digest());
-    }
-}
-
 #[cfg(test)]
 mod tests {
-
-    /// DUP-3 (2026-08-25 duplication audit): setters located their key with the
-    /// depth-blind `find_keyword`, which returns the FIRST occurrence anywhere.
-    /// With a `:favorites` nested inside `:default-templates` ahead of the real
-    /// top-level entry, `set_favorites` spliced its vector over the NESTED one,
-    /// corrupting the map. Setters must edit only direct root-map entries.
-    #[test]
-    fn setters_edit_the_top_level_key_never_a_nested_shadow() {
-        let dir = std::env::temp_dir().join(format!(
-            "tine-config-nested-shadow-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("logseq")).unwrap();
-        let path = dir.join("logseq").join("config.edn");
-        std::fs::write(
-            &path,
-            "{:default-templates {:journals \"J\" :favorites [\"nested\"]}\n :favorites [\"real\"]}\n",
-        )
-        .unwrap();
-
-        let g = crate::model::Graph::open(&dir);
-        g.set_favorites(&["Replaced".to_owned()]).unwrap();
-        let after = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            after.contains(":default-templates {:journals \"J\" :favorites [\"nested\"]}"),
-            "the nested shadow must survive byte-for-byte, got: {after}"
-        );
-        assert!(
-            after.contains(":favorites [\"Replaced\"]"),
-            "the real top-level entry must be the one replaced, got: {after}"
-        );
-        assert!(
-            !after.contains("[\"real\"]"),
-            "old top-level value gone, got: {after}"
-        );
-
-        // A key that exists ONLY nested gets a NEW top-level entry; the nested
-        // copy is not the setting and must not be edited.
-        std::fs::write(&path, "{:default-queries {:preferred-format :org}}\n").unwrap();
-        let g = crate::model::Graph::open(&dir);
-        g.set_preferred_format(crate::model::Format::Md).unwrap();
-        let after = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            after.contains(":default-queries {:preferred-format :org}"),
-            "nested copy untouched, got: {after}"
-        );
-        assert!(
-            after.contains(":preferred-format \"Markdown\""),
-            "new top-level entry inserted, got: {after}"
-        );
-    }
-
-    // :tine/favorites-page identifies the page holding the Favorites
-    // arrangement. Logseq ignores unknown keys, so the round trip must leave
-    // every other key, comment and bit of formatting exactly as it found it —
-    // a malformed favorites value once invalidated Logseq's whole config parse,
-    // and this writer runs on the user's real config.edn.
-    /// The watcher's whole economy rests on this: it may only pay for a
-    /// whole-graph reopen when the configuration on disk differs from the bytes
-    /// the running `Graph` was opened with. A settings write Tine performed
-    /// itself already refreshed the graph, so it must read as unchanged.
-    #[test]
-    fn a_graph_reports_whether_config_edn_moved_since_it_was_opened() {
-        let dir = std::env::temp_dir().join(format!(
-            "tine-config-witness-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("logseq")).unwrap();
-        std::fs::write(
-            dir.join("logseq").join("config.edn"),
-            "{:favorites [\"Alpha\"]}\n",
-        )
-        .unwrap();
-
-        let g = crate::model::Graph::open(&dir);
-        assert_eq!(
-            g.open_config_description(),
-            crate::model::config_file_description(&dir),
-            "nothing has touched the file"
-        );
-
-        // An outside write — Logseq, an editor, Syncthing delivering a peer's.
-        std::fs::write(
-            dir.join("logseq").join("config.edn"),
-            "{:favorites [\"Alpha\" \"Beta\"]}\n",
-        )
-        .unwrap();
-        assert_ne!(
-            g.open_config_description(),
-            crate::model::config_file_description(&dir),
-            "the running graph is now serving stale configuration"
-        );
-
-        // Reopening is what the watcher does about it, and settles it.
-        let reopened = crate::model::Graph::open(&dir);
-        assert_eq!(
-            reopened.open_config_description(),
-            crate::model::config_file_description(&dir)
-        );
-
-        // A graph with no configuration file at all agrees with the absence,
-        // rather than reporting a change on every single cycle.
-        let bare = std::env::temp_dir().join(format!(
-            "tine-config-witness-bare-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = std::fs::remove_dir_all(&bare);
-        std::fs::create_dir_all(&bare).unwrap();
-        let empty = crate::model::Graph::open(&bare);
-        assert_eq!(empty.open_config_description(), None);
-        assert_eq!(crate::model::config_file_description(&bare), None);
-
-        let _ = std::fs::remove_dir_all(&dir);
-        let _ = std::fs::remove_dir_all(&bare);
-    }
-
-    /// The watcher does nothing exactly when disk holds the bytes the served
-    /// configuration was taken from. Tine's own settings write is taken in, so
-    /// a star toggled in the sidebar costs no reopen; anything not taken in
-    /// must differ, or the running graph serves stale configuration.
-    #[test]
-    fn the_watcher_gate_matches_disk_only_when_disk_was_taken_in() {
-        let dir = std::env::temp_dir().join(format!(
-            "tine-config-selfwrite-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("logseq")).unwrap();
-        let config = dir.join("logseq").join("config.edn");
-        std::fs::write(&config, "{}\n").unwrap();
-        let disk = || crate::model::config_file_description(&dir);
-
-        let g = crate::model::Graph::open(&dir);
-        assert_eq!(
-            g.served_config_description(),
-            disk(),
-            "opened with these bytes"
-        );
-
-        g.set_favorites(&["Alpha".to_owned()]).unwrap();
-        assert_eq!(
-            g.served_config_description(),
-            disk(),
-            "Tine's own settings write is taken in"
-        );
-
-        // An outside edit after our own write is still an outside edit.
-        std::fs::write(&config, "{:favorites [\"Alpha\" \"AddedInLogseq\"]}\n").unwrap();
-        assert_ne!(g.served_config_description(), disk());
-
-        // An outside revert to the bytes the graph was opened with: the served
-        // configuration still has Alpha, so this is a change.
-        std::fs::write(&config, "{}\n").unwrap();
-        assert_ne!(
-            g.served_config_description(),
-            disk(),
-            "a revert to the opening bytes is a change to what is served"
-        );
-        g.take_in_config();
-        assert!(g.config().favorites.is_empty());
-        assert_eq!(g.served_config_description(), disk());
-
-        // An outside change that reaches the graph, folded into Tine's own
-        // settings write: the write cannot take it in, so disk must still
-        // differ and the watcher must reopen.
-        std::fs::write(&config, "{:pages-directory \"notes\"}\n").unwrap();
-        g.set_favorites(&["Beta".to_owned()]).unwrap();
-        assert_ne!(
-            g.served_config_description(),
-            disk(),
-            "a folded change that reaches the graph is not taken in"
-        );
-        assert_eq!(
-            g.take_in_config(),
-            crate::config::ConfigReach::Graph,
-            "and the watcher's own take-in says it needs a new graph"
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn only_the_graph_s_own_config_edn_is_recognized_as_configuration() {
-        use crate::model::is_config_file_path;
-        let root = std::path::Path::new("/graph");
-        assert!(is_config_file_path(
-            root,
-            std::path::Path::new("/graph/logseq/config.edn")
-        ));
-        // A case-folding filesystem may hand back either spelling; the open
-        // path resolves it case-insensitively, so this must too.
-        assert!(is_config_file_path(
-            root,
-            std::path::Path::new("/graph/Logseq/Config.edn")
-        ));
-        for other in [
-            "/graph/config.edn",
-            "/graph/logseq/custom.css",
-            "/graph/logseq/pages-metadata.edn",
-            "/graph/pages/logseq/config.edn",
-            "/elsewhere/logseq/config.edn",
-            "/graph",
-        ] {
-            assert!(
-                !is_config_file_path(root, std::path::Path::new(other)),
-                "{other} is not this graph's configuration"
-            );
-        }
-    }
-
-    #[test]
-    fn favorites_page_key_round_trips_and_preserves_the_rest_of_the_file() {
-        let dir = std::env::temp_dir().join(format!("tine-favpage-cfg-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("logseq")).unwrap();
-        let original =
-            "{;; a leading comment\n :favorites [\"Alpha\"]\n :journals-directory \"journals\"}\n";
-        std::fs::write(dir.join("logseq").join("config.edn"), original).unwrap();
-
-        let g = crate::model::Graph::open(&dir);
-        assert_eq!(g.config().favorites_page, None);
-        g.set_favorites_page("Favorites").unwrap();
-
-        let written = std::fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
-        assert!(written.contains(";; a leading comment"), "{written}");
-        assert!(written.contains(":favorites [\"Alpha\"]"), "{written}");
-        assert!(
-            written.contains(":journals-directory \"journals\""),
-            "{written}"
-        );
-        assert_eq!(
-            Config::parse(&written).favorites_page.as_deref(),
-            Some("Favorites")
-        );
-
-        // Rewriting replaces the value in place rather than accumulating keys.
-        let g = crate::model::Graph::open(&dir);
-        g.set_favorites_page("My Favourites").unwrap();
-        let rewritten = std::fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
-        assert_eq!(
-            rewritten.matches(":tine/favorites-page").count(),
-            1,
-            "{rewritten}"
-        );
-        assert_eq!(
-            Config::parse(&rewritten).favorites_page.as_deref(),
-            Some("My Favourites")
-        );
-        assert!(rewritten.contains(":favorites [\"Alpha\"]"), "{rewritten}");
-
-        // A quoted name containing a quote survives the round trip.
-        let g = crate::model::Graph::open(&dir);
-        g.set_favorites_page("od\"d").unwrap();
-        let odd = std::fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
-        assert_eq!(Config::parse(&odd).favorites_page.as_deref(), Some("od\"d"));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
     use super::*;
 
     #[test]
-    fn default_home_reads_only_the_page_inside_the_logseq_map() {
-        assert_eq!(
-            Config::parse(r#"{:default-home {:page "Directory" :sidebar ["Contents"]}}"#)
-                .default_home
-                .as_deref(),
-            Some("Directory")
+    fn accent_removal_defaults_on_and_only_explicit_false_disables_it() {
+        assert!(Config::parse("{}").enable_search_remove_accents);
+        assert!(
+            Config::parse("{:feature/enable-search-remove-accents? true}")
+                .enable_search_remove_accents
         );
-        assert_eq!(
-            Config::parse(r#"{:default-home "Wrong shape"}"#).default_home,
-            None
+        assert!(
+            !Config::parse("{:feature/enable-search-remove-accents? false}")
+                .enable_search_remove_accents
         );
-        assert_eq!(Config::parse("{}").default_home, None);
-        assert_eq!(
-            Config::parse(r#"{:nested {:default-home {:page "Not home"}}}"#).default_home,
-            None
+        assert!(
+            Config::parse("{:feature/enable-search-remove-accents? :false}")
+                .enable_search_remove_accents
         );
-        assert_eq!(
-            Config::parse(r#"{:default-home {:sidebar {:page "Not home"} :page "Actual home"}}"#)
-                .default_home
-                .as_deref(),
-            Some("Actual home")
+        assert!(
+            Config::parse("{:feature/enable-search-remove-accents? falsehood}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            Config::parse("{:feature/enable-search-remove-accents? \"false\"}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            !Config::parse("{:feature/enable-search-remove-accents? ; comment\nfalse}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            !Config::parse("{:feature/enable-search-remove-accents? false; comment\n}")
+                .enable_search_remove_accents
         );
     }
 
     #[test]
-    fn default_home_writer_preserves_siblings_clears_only_page_and_refuses_malformed_owner() {
-        use crate::model::Graph;
-
-        let dir = std::env::temp_dir().join(format!(
-            "tine-default-home-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("logseq")).unwrap();
-        let path = dir.join("logseq/config.edn");
-        fs::write(
-            &path,
-            "{:default-home {:sidebar [\"Contents\"] :page \"Old\"}\n ;; keep me\n :start-of-week 2}\n",
-        )
-        .unwrap();
-
-        Graph::open(&dir)
-            .set_default_home_page(Some("New \"Home\""))
-            .unwrap();
-        let written = fs::read_to_string(&path).unwrap();
-        assert!(written.contains(":page \"New \\\"Home\\\"\""), "{written}");
-        assert!(written.contains(":sidebar [\"Contents\"]"), "{written}");
-        assert!(written.contains(";; keep me"), "{written}");
-        assert!(written.contains(":start-of-week 2"), "{written}");
-        assert_eq!(
-            Graph::open(&dir).config().default_home.as_deref(),
-            Some("New \"Home\"")
+    fn hidden_vector_is_decoded_and_bad_value_fails_closed() {
+        let cfg = Config::parse(
+            r#"{:hidden ["archive\u002fprivate" ; ignored
+                                  42 #_"discard" "pages/Secret"]}"#,
         );
-
-        Graph::open(&dir).set_default_home_page(None).unwrap();
-        let cleared = fs::read_to_string(&path).unwrap();
-        assert!(!cleared.contains(":page \"New"), "{cleared}");
-        assert!(cleared.contains(":sidebar [\"Contents\"]"), "{cleared}");
-        assert_eq!(Graph::open(&dir).config().default_home, None);
-
-        fs::write(&path, "{:start-of-week 2}\n").unwrap();
-        Graph::open(&dir)
-            .set_default_home_page(Some("Inserted"))
-            .unwrap();
-        let inserted = fs::read_to_string(&path).unwrap();
-        assert!(
-            inserted.contains(":default-home {:page \"Inserted\"}"),
-            "{inserted}"
-        );
-        assert!(inserted.contains(":start-of-week 2"), "{inserted}");
-
-        let malformed = "{:default-home \"do not replace\" :start-of-week 2}\n";
-        fs::write(&path, malformed).unwrap();
-        let error = Graph::open(&dir)
-            .set_default_home_page(Some("Migration"))
-            .expect_err("a non-map owner must be left untouched");
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(fs::read_to_string(&path).unwrap(), malformed);
-
-        fs::write(&path, "[:not-a-config-map]\n").unwrap();
-        let before = fs::read(&path).unwrap();
-        let error = Graph::open(&dir)
-            .set_default_home_page(Some("Never replace the file"))
-            .expect_err("a non-map config must be left untouched");
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(fs::read(&path).unwrap(), before);
-
-        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(cfg.hidden, ["archive/private", "pages/Secret"]);
+        assert!(!cfg.hidden_parse_failed_closed);
+        for inert in [r#"{:hidden #{"archive"}}"#, r#"{:hidden [42]}"#, "{}"] {
+            let cfg = Config::parse(inert);
+            assert!(cfg.hidden.is_empty(), "{inert}");
+            assert!(!cfg.hidden_parse_failed_closed, "{inert}");
+        }
+        let oversized = format!("{{:hidden [\"{}\"]}}", "x".repeat(64 * 1024));
+        let too_many = format!("{{:hidden [{}]}}", "nil ".repeat(257));
+        for bad in [
+            "{:hidden [\"unfinished\"",
+            r#"{:hidden ["bad\q"]}"#,
+            &oversized,
+            &too_many,
+        ] {
+            let cfg = Config::parse(bad);
+            assert!(cfg.hidden.is_empty(), "{bad}");
+            assert!(cfg.hidden_parse_failed_closed, "master fails closed: {bad}");
+        }
     }
 
     #[test]
@@ -2118,62 +1108,6 @@ mod tests {
     }
 
     #[test]
-    fn set_timetracking_enabled_round_trips() {
-        use crate::model::Graph;
-        let dir = std::env::temp_dir().join(format!("tine-cfgttrack-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("logseq")).unwrap();
-        fs::write(
-            dir.join("logseq").join("config.edn"),
-            "{:preferred-format \"Markdown\"\n :start-of-week 0}\n",
-        )
-        .unwrap();
-        let g = Graph::open(&dir);
-        g.set_timetracking_enabled(false).unwrap();
-        let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
-        assert!(
-            after.contains(":feature/enable-timetracking? false"),
-            "not written: {after}"
-        );
-        assert!(after.contains(":start-of-week 0"), "other keys preserved");
-        assert!(!Graph::open(&dir).config().enable_timetracking);
-        Graph::open(&dir).set_timetracking_enabled(true).unwrap();
-        assert!(Graph::open(&dir).config().enable_timetracking);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn show_brackets_defaults_parses_and_round_trips() {
-        use crate::model::Graph;
-
-        assert!(Config::parse("{}").show_brackets);
-        assert!(!Config::parse("{:ui/show-brackets? false}").show_brackets);
-
-        let dir = std::env::temp_dir().join(format!("tine-cfgbrackets-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("logseq")).unwrap();
-        fs::write(
-            dir.join("logseq").join("config.edn"),
-            "{:preferred-format \"Markdown\"\n ;; preserve this comment\n :start-of-week 0}\n",
-        )
-        .unwrap();
-
-        Graph::open(&dir).set_show_brackets(false).unwrap();
-        let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
-        assert!(
-            after.contains(":ui/show-brackets? false"),
-            "not written: {after}"
-        );
-        assert!(after.contains(":start-of-week 0"), "other keys preserved");
-        assert!(
-            after.contains(";; preserve this comment"),
-            "comments preserved"
-        );
-        assert!(!Graph::open(&dir).config().show_brackets);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn shortcut_false_and_vector_forms() {
         let edn = r#"{:shortcuts {:go/search false
                                   :editor/indent ["tab" "mod+]"]}}"#;
@@ -2221,102 +1155,6 @@ mod tests {
     }
 
     #[test]
-    fn set_preferred_format_replaces_keyword_value() {
-        use crate::model::{Format, Graph};
-        // M3: the writer must replace a keyword value wholesale, not leave it
-        // dangling beside the new string (which would corrupt the EDN map).
-        let dir = std::env::temp_dir().join(format!("tine-cfgkw-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("logseq")).unwrap();
-        fs::write(
-            dir.join("logseq").join("config.edn"),
-            "{:preferred-format :markdown\n :start-of-week 0}\n",
-        )
-        .unwrap();
-        let g = Graph::open(&dir);
-        g.set_preferred_format(Format::Org).unwrap();
-        let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
-        assert!(
-            after.contains(":preferred-format \"Org\""),
-            "keyword not replaced: {after}"
-        );
-        assert!(
-            !after.contains(":markdown"),
-            "stale keyword left behind: {after}"
-        );
-        assert!(after.contains(":start-of-week 0"), "other keys preserved");
-        assert_eq!(Graph::open(&dir).preferred_format(), Format::Org);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn set_preferred_format_round_trips() {
-        use crate::model::{Format, Graph};
-        let dir = std::env::temp_dir().join(format!("tine-cfgfmt-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("logseq")).unwrap();
-        fs::write(
-            dir.join("logseq").join("config.edn"),
-            "{:preferred-format \"Markdown\"\n :start-of-week 0}\n",
-        )
-        .unwrap();
-        let g = Graph::open(&dir);
-        g.set_preferred_format(Format::Org).unwrap();
-        let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
-        assert!(
-            after.contains(":preferred-format \"Org\""),
-            "value flipped: {after}"
-        );
-        assert!(after.contains(":start-of-week 0"), "other keys preserved");
-        assert_eq!(Graph::open(&dir).preferred_format(), Format::Org);
-        // Inserts the key when absent.
-        fs::write(dir.join("logseq").join("config.edn"), "{}\n").unwrap();
-        Graph::open(&dir).set_preferred_format(Format::Org).unwrap();
-        assert_eq!(Graph::open(&dir).preferred_format(), Format::Org);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn set_journal_page_title_format_round_trips() {
-        use crate::model::Graph;
-        let dir = std::env::temp_dir().join(format!("tine-cfgdate-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("logseq")).unwrap();
-        fs::write(
-            dir.join("logseq").join("config.edn"),
-            "{:preferred-format \"Markdown\"\n :start-of-week 0}\n",
-        )
-        .unwrap();
-        let g = Graph::open(&dir);
-        g.set_journal_page_title_format("yyyy-MM-dd").unwrap();
-        let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
-        assert!(
-            after.contains(":journal/page-title-format \"yyyy-MM-dd\""),
-            "not written: {after}"
-        );
-        assert!(
-            after.contains(":preferred-format \"Markdown\""),
-            "other keys clobbered: {after}"
-        );
-        assert_eq!(
-            Config::parse(&after).journal_page_title_format.as_deref(),
-            Some("yyyy-MM-dd")
-        );
-        // A second set replaces the value wholesale (no stale leftover).
-        g.set_journal_page_title_format("MMMM do, yyyy").unwrap();
-        let after2 = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
-        assert!(
-            after2.contains(":journal/page-title-format \"MMMM do, yyyy\""),
-            "value not replaced: {after2}"
-        );
-        assert!(
-            !after2.contains("\"yyyy-MM-dd\""),
-            "stale value left behind: {after2}"
-        );
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn parses_file_name_format() {
         assert_eq!(
             Config::parse("{:file/name-format :triple-lowbar}").file_name_format,
@@ -2341,141 +1179,34 @@ mod tests {
     }
 
     #[test]
-    fn parses_og_hidden_string_collection_and_ignores_wrong_value_shapes() {
-        let cfg = Config::parse(
-            r#"{:other {:hidden ["nested-map"]}
-                 :predicate #(not= % \])
-                 :hidden ["/archive/private"
-                          #_ "discarded"
-                          ["nested-vector"]
-                          {:nested "map-value"}
-                          42 nil :keyword
-                          "scratch" ;; "commented"
-                          "../assets/archived"]}"#,
+    fn default_home_reads_only_the_page_inside_the_top_level_map() {
+        let home = |edn: &str| Config::parse(edn).default_home;
+        assert_eq!(
+            home(r#"{:default-home {:page "Directory" :sidebar ["Contents"]}}"#).as_deref(),
+            Some("Directory")
+        );
+        assert_eq!(home(r#"{:default-home "Wrong shape"}"#), None);
+        assert_eq!(home("{}"), None);
+        assert_eq!(home(r#"{:default-home {:page "  "}}"#), None);
+        assert_eq!(
+            home(r#"{:nested {:default-home {:page "Not home"}}}"#),
+            None
         );
         assert_eq!(
-            cfg.hidden,
-            vec![
-                "/archive/private".to_string(),
-                "scratch".to_string(),
-                "../assets/archived".to_string()
-            ]
+            home(r#"{:default-home {:sidebar {:page "Not home"} :page "Actual home"}}"#).as_deref(),
+            Some("Actual home")
         );
-        assert!(!cfg.hidden_parse_failed_closed);
-        assert!(Config::parse(r#"{:hidden #{"/not-a-vector"}}"#)
-            .hidden
-            .is_empty());
-        assert!(Config::parse(r#"{:hidden [42 :keyword]}"#)
-            .hidden
-            .is_empty());
-    }
-
-    #[test]
-    fn hidden_reader_decodes_edn_strings_and_fails_closed_on_malformed_or_over_limit_values() {
-        let decoded = Config::parse(r#"{:hidden ["archive\u002fprivate" "tab\tpath"]}"#);
         assert_eq!(
-            decoded.hidden,
-            vec!["archive/private".to_owned(), "tab\tpath".to_owned()]
+            home("{;; :default-home {:page \"Commented\"}\n :default-home {:page \"Live\"}}")
+                .as_deref(),
+            Some("Live")
         );
-        assert!(!decoded.hidden_parse_failed_closed);
-
-        for malformed in [
-            r#"{:hidden ["private"]"#,
-            r#"{:hidden ["private\q"]}"#,
-            r#"{:hidden ["private" {:odd}]}"#,
-        ] {
-            let config = Config::parse(malformed);
-            assert!(
-                config.hidden_parse_failed_closed,
-                "malformed hidden EDN must fail closed: {malformed}"
-            );
-        }
-
-        let oversized = format!("{{:hidden [\"{}\"]}}", "x".repeat(MAX_HIDDEN_EDN_BYTES));
-        assert!(Config::parse(&oversized).hidden_parse_failed_closed);
-
-        let too_many = format!(
-            "{{:hidden [{}]}}",
-            std::iter::repeat_n("nil", MAX_HIDDEN_EDN_ENTRIES + 1)
-                .collect::<Vec<_>>()
-                .join(" ")
+        assert_eq!(home(r#"{:default-home-x {:page "Prefix"}}"#), None);
+        assert_eq!(
+            home("; graph settings\n  ;; more\n{:default-home {:page \"Directory\"}}").as_deref(),
+            Some("Directory"),
+            "leading EDN comments before the root map"
         );
-        assert!(Config::parse(&too_many).hidden_parse_failed_closed);
-    }
-
-    #[test]
-    fn hidden_reader_counts_every_structured_form_kind() {
-        for (source, expected_forms) in [
-            ("nil", 1),
-            ("[nil]", 2),
-            ("(nil)", 2),
-            ("#{nil}", 2),
-            ("{:key nil}", 3),
-            ("#tag nil", 2),
-            ("'nil", 2),
-            ("^:meta nil", 3),
-            ("#_ nil kept", 3),
-        ] {
-            let mut reader = EdnReader::new(source);
-            reader.skip_form().unwrap();
-            reader.skip_interstitial_and_discards().unwrap();
-            assert_eq!(reader.pos, source.len(), "{source}");
-            assert_eq!(reader.depth, 0, "{source}");
-            assert_eq!(reader.forms, expected_forms, "{source}");
-        }
-    }
-
-    #[test]
-    fn hidden_reader_accepts_exact_depth_and_form_limits_and_rejects_plus_one() {
-        fn nested_hidden_collections(collections: usize) -> String {
-            format!(
-                "{{:hidden [{}nil{}]}}",
-                "[".repeat(collections),
-                "]".repeat(collections)
-            )
-        }
-        let exact_depth = nested_hidden_collections(MAX_HIDDEN_EDN_DEPTH - 3);
-        assert!(!Config::parse(&exact_depth).hidden_parse_failed_closed);
-        let over_depth = nested_hidden_collections(MAX_HIDDEN_EDN_DEPTH - 2);
-        assert!(Config::parse(&over_depth).hidden_parse_failed_closed);
-
-        fn hidden_nested_list(entries: usize) -> String {
-            format!(
-                "{{:hidden [({})]}}",
-                std::iter::repeat_n("x", entries)
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            )
-        }
-        let exact_forms = hidden_nested_list(MAX_HIDDEN_EDN_FORMS - 4);
-        assert!(!Config::parse(&exact_forms).hidden_parse_failed_closed);
-        let over_forms = hidden_nested_list(MAX_HIDDEN_EDN_FORMS - 3);
-        assert!(Config::parse(&over_forms).hidden_parse_failed_closed);
-    }
-
-    #[test]
-    fn hidden_reader_bounds_deep_discard_tag_and_mixed_collection_paths() {
-        let discard_depth = MAX_HIDDEN_EDN_DEPTH / 2;
-        let discarded = format!(
-            "{{:hidden [{}{}\"kept\"]}}",
-            "#_ ".repeat(discard_depth),
-            "nil ".repeat(discard_depth)
-        );
-        let config = Config::parse(&discarded);
-        assert_eq!(config.hidden, vec!["kept"]);
-        assert!(!config.hidden_parse_failed_closed);
-
-        let tagged = format!("{{:hidden [{}nil]}}", "#deep ".repeat(MAX_HIDDEN_EDN_DEPTH));
-        assert!(Config::parse(&tagged).hidden_parse_failed_closed);
-
-        let mixed = Config::parse(
-            r#"{:hidden [[(#{:leaf})]
-                         {:map ['quoted ^:meta #tag nil]}
-                         #_ [#tag {:discarded (nil)}]
-                         "visible"]}"#,
-        );
-        assert_eq!(mixed.hidden, vec!["visible"]);
-        assert!(!mixed.hidden_parse_failed_closed);
     }
 
     #[test]
@@ -2504,13 +1235,36 @@ mod tests {
     }
 
     #[test]
+    fn query_property_value_keys_are_read() {
+        let cfg = Config::parse(
+            "{:property/separated-by-commas #{:authors :Genre}\n :ignored-page-references-keywords #{:note}}",
+        );
+        assert_eq!(
+            cfg.separated_by_commas,
+            vec!["authors".to_string(), "Genre".to_string()]
+        );
+        assert_eq!(
+            cfg.ignored_page_references_keywords,
+            vec!["note".to_string()]
+        );
+        let absent = Config::parse("{}");
+        assert!(absent.separated_by_commas.is_empty());
+        assert!(absent.ignored_page_references_keywords.is_empty());
+    }
+
+    #[test]
     fn linked_references_collapsed_threshold_reads_the_og_key() {
         // GH #479. OG: `(>= total threshold)`, default 100 when the key is absent
-        // or not an integer (`state.cljs` get-linked-references-collapsed-threshold
-        // at `6e7afa8e`). Zero is a real setting — collapse always — not "unset".
+        // or not an integer. Zero is a real setting — collapse always.
         assert_eq!(
             Config::parse("{}").linked_references_collapsed_threshold,
             100
+        );
+        // The graph-meta DTO's serde default and `Config::default` share one constant.
+        assert_eq!(DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD, 100);
+        assert_eq!(
+            Config::default().linked_references_collapsed_threshold,
+            DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD
         );
         assert_eq!(
             Config::parse("{:ref/linked-references-collapsed-threshold 0}")
@@ -2522,7 +1276,6 @@ mod tests {
                 .linked_references_collapsed_threshold,
             50
         );
-        // A non-integer value keeps OG's default rather than collapsing everything.
         assert_eq!(
             Config::parse("{:ref/linked-references-collapsed-threshold \"50\"}")
                 .linked_references_collapsed_threshold,
@@ -2582,5 +1335,187 @@ mod commented_dirs_test {
         let cfg = Config::parse(edn);
         assert_eq!(cfg.journals_dir, "journals");
         assert_eq!(cfg.pages_dir, "pages");
+    }
+}
+
+#[cfg(test)]
+mod key_position_tests {
+    use super::*;
+
+    fn at(body: &str, key: &str) -> Option<usize> {
+        find_keyword_at_map_level(body, key)
+    }
+
+    /// C5 L01-S1: a keyword VALUE spelling the key is not the key, in every
+    /// shape a value (and so a key) can take.
+    #[test]
+    fn a_key_is_found_only_at_a_key_position() {
+        assert_eq!(at(":a :k 1", ":k"), None, "value of :a");
+        assert_eq!(at(":a :k :k 2", ":k"), Some(6), "key after the value");
+        assert_eq!(at(":a [1 2] :k 1", ":k"), Some(9));
+        assert_eq!(at(":a {:x :k} :b #{:k} :c (:k) :d \"k\"", ":k"), None);
+        assert_eq!(
+            at(":a #inst \"2020\" :k 1", ":k"),
+            Some(16),
+            "a tag and its value are one form"
+        );
+        assert_eq!(
+            at(":a 1 #_ :x :k 1", ":k"),
+            Some(11),
+            "a discarded form is not an entry"
+        );
+        assert_eq!(
+            at(":a #_ :k :k 1", ":k"),
+            None,
+            "the discarded :k is not the value"
+        );
+        assert_eq!(at("\"a\" :k :k 1", ":k"), Some(7), "string key");
+        assert_eq!(
+            at(":k", ":k"),
+            Some(0),
+            "a bare key without a value is still the key"
+        );
+        assert_eq!(at(":kk 1 :k 2", ":k"), Some(6), "token boundary");
+        assert_eq!(at(":a 1 ; :k 2\n :b 3", ":k"), None, "comment");
+    }
+
+    /// The readers answer through the same selector, so a keyword value never
+    /// supplies a setting.
+    #[test]
+    fn readers_ignore_a_keyword_value_that_spells_a_setting() {
+        let edn = "{:preferred-workflow :now :alias :preferred-format :preferred-format :org \
+                   :favorites-backup :favorites :favorites [\"Real\"]}";
+        let config = Config::parse(edn);
+        assert_eq!(config.favorites, ["Real"]);
+        assert_eq!(config.preferred_format, crate::model::Format::Org);
+    }
+}
+
+#[cfg(test)]
+mod defaults_tests {
+    use super::*;
+
+    /// C5 L01-B3 (Rust half; I-12): a setting's default is declared once, in
+    /// `Config::default()`/`LogbookSettings::default()`. `Config::parse` falls
+    /// back to the field it started from, never to a second literal that could
+    /// drift from it (the browser's mirror of these defaults reads them from
+    /// the graph metadata the backend serves).
+    #[test]
+    fn parse_never_restates_a_default_literal() {
+        let source = include_str!("config.rs");
+        let parse = source
+            .split("    pub fn parse(edn: &str) -> Config {")
+            .nth(1)
+            .and_then(|rest| rest.split("\n        cfg\n    }\n").next())
+            .expect("Config::parse body");
+        for literal in [".unwrap_or(true)", ".unwrap_or(false)"] {
+            assert!(
+                !parse.contains(literal),
+                "I-12: Config::parse restates a default {literal}; fall back to the field set by Config::default() (exemplar: show_brackets)"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_or_malformed_config_serves_the_declared_defaults() {
+        for edn in [
+            "",
+            "{}",
+            "{:ui/show-brackets? maybe :logbook/settings {:with-second-support? 3}}",
+        ] {
+            let cfg = Config::parse(edn);
+            let default = Config::default();
+            assert_eq!(cfg.show_brackets, default.show_brackets, "{edn}");
+            assert_eq!(
+                cfg.enable_timetracking, default.enable_timetracking,
+                "{edn}"
+            );
+            assert_eq!(cfg.logbook, default.logbook, "{edn}");
+            assert_eq!(cfg.start_of_week, default.start_of_week, "{edn}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod non_ascii_scan_tests {
+    use super::*;
+
+    /// I-22: every scanner indexes bytes, and a non-ASCII character anywhere in
+    /// config.edn (outside strings and comments too) must never panic a reader.
+    #[test]
+    fn non_ascii_anywhere_never_panics_the_scanners() {
+        let base = r#"{:journals-directory "j" :pages-directory "p" :hidden ["a"]
+ :preferred-workflow :todo :shortcuts {:a "b" :c false} :start-of-week 2
+ :block-hidden-properties #{:x} :default-templates {:journals "T"}
+ :default-home {:page "H"} :favorites ["F"] :logbook/settings {:with-second-support? false}
+ :macros {"m" "v"} :ui/show-brackets? false :file/name-format :triple-lowbar}"#;
+        let keys = [
+            ":journals-directory",
+            ":hidden",
+            ":favorites",
+            ":ui/show-brackets?",
+        ];
+        for insert in ["é", "日本", "🙂"] {
+            for at in (0..=base.len()).filter(|at| base.is_char_boundary(*at)) {
+                let edn = format!("{}{insert}{}", &base[..at], &base[at..]);
+                let _ = Config::parse(&edn);
+                for key in keys {
+                    let _ = find_keyword_at_map_level(&edn, key);
+                }
+                for from in (0..edn.len()).filter(|from| edn.is_char_boundary(*from)) {
+                    let _ = next_value_span(&edn, from, edn.len());
+                    let _ = skip_blank(&edn, from);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod mobile_gestures_tests {
+    use super::*;
+
+    fn tags(edn: &str) -> Vec<String> {
+        Config::parse(edn).mobile_gestures_disabled_in_block_with_tags
+    }
+
+    #[test]
+    fn default_is_empty() {
+        assert!(tags("{}").is_empty());
+        assert!(tags("{:mobile {}}").is_empty());
+    }
+
+    #[test]
+    fn reads_the_og_key() {
+        assert_eq!(
+            tags(r#"{:mobile {:gestures/disabled-in-block-with-tags ["kanban" "board"]}}"#),
+            ["kanban", "board"]
+        );
+    }
+
+    #[test]
+    fn a_commented_entry_is_not_a_value() {
+        let edn =
+            "{:mobile {:gestures/disabled-in-block-with-tags [\n \"kanban\"\n ;; \"example\"\n]}}";
+        assert_eq!(tags(edn), ["kanban"]);
+    }
+
+    #[test]
+    fn a_nested_map_cannot_shadow_the_key() {
+        // The key inside another setting's map is not the `:mobile` setting.
+        assert!(
+            tags(r#"{:other {:mobile {:gestures/disabled-in-block-with-tags ["x"]}}}"#).is_empty()
+        );
+        // Nor does a sibling key inside `:mobile` bleed through.
+        assert!(
+            tags(r#"{:mobile {:other {:gestures/disabled-in-block-with-tags ["x"]}}}"#).is_empty()
+        );
+    }
+
+    #[test]
+    fn a_wrong_shape_yields_nothing_and_does_not_panic() {
+        assert!(tags(r#"{:mobile {:gestures/disabled-in-block-with-tags "kanban"}}"#).is_empty());
+        assert!(tags(r#"{:mobile "kanban"}"#).is_empty());
+        assert!(tags(r#"{:mobile {:gestures/disabled-in-block-with-tags"#).is_empty());
     }
 }

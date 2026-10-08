@@ -1,21 +1,20 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore } from "../store";
+import { pageByName, resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
 import { startEditing } from "../editorController";
-import { setGraphMeta, setToasts, toasts } from "../ui";
-import { resetSaveState } from "../persistence";
-import type { BlockDto, PageDto } from "../types";
+import { dispatchFocusedEditorCommand } from "../editorCommandBridge";
+import { setToasts, toasts } from "../toasts";
+import type { BlockDto, Format, PageDto } from "../types";
 import { Block } from "./Block";
+import * as mediaEditorSettings from "../mediaEditorSettings";
 
 beforeAll(async () => {
   await initParser();
-});
-
-beforeEach(() => {
-  setGraphMeta({ root: "/graphs/A" } as never);
 });
 
 afterEach(() => {
@@ -23,7 +22,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   resetStore();
   setToasts([]);
-  setGraphMeta(null);
   document.body.innerHTML = "";
 });
 
@@ -38,7 +36,7 @@ function blk(id: string, raw: string): BlockDto {
   return { id, raw, collapsed: false, children: [] };
 }
 
-function page(name: string, blocks: BlockDto[], opts: Pick<PageDto, "path" | "format"> = {}): PageDto {
+function page(name: string, blocks: BlockDto[], opts: { id?: string; format?: Format } = {}): PageDto & { id?: string } {
   return { name, kind: "page", title: name, pre_block: null, blocks, ...opts };
 }
 
@@ -77,6 +75,145 @@ async function settle() {
 }
 
 describe("asset paste durability", () => {
+  it("binds a picked upload to the graph selected before the picker", async () => {
+    loadSingle(page("Assets", [blk("picked-switch", "")]));
+    startEditing("picked-switch", 0);
+    let generation = 1;
+    let finishPick!: (path: string) => void;
+    vi.spyOn(backend(), "graphBindingGeneration").mockImplementation(() => generation);
+    vi.spyOn(backend(), "pickFile").mockImplementation(() => new Promise((resolve) => { finishPick = resolve; }));
+    const writes: number[] = [];
+    vi.spyOn(backend(), "importAsset").mockImplementation(async (_path, _name, requested) => {
+      const target = requested ?? generation; // old TauriBackend leased the current graph
+      writes.push(target);
+      if (target !== generation) throw new Error("stale-graph-binding");
+      return "picked.png";
+    });
+    const { root, dispose } = mount(() => <Block id="picked-switch" />);
+    try {
+      root.querySelector("textarea")!.focus();
+      expect(dispatchFocusedEditorCommand("editor/upload-asset")).toBe(true);
+      generation = 2;
+      finishPick("/tmp/picked.png");
+      await settle();
+      expect(writes).toEqual([1]);
+      expect(doc.byId["picked-switch"].raw).toBe("");
+    } finally { dispose(); }
+  });
+
+  it("binds native capture before the camera returns", async () => {
+    loadSingle(page("Assets", [blk("capture-switch", "")]));
+    startEditing("capture-switch", 0);
+    let generation = 1;
+    let finishCapture!: (value: { status: "ok"; path: string; ext: string }) => void;
+    vi.spyOn(backend(), "graphBindingGeneration").mockImplementation(() => generation);
+    vi.spyOn(backend(), "capturePhoto").mockImplementation(() => new Promise((resolve) => { finishCapture = resolve; }));
+    const writes: number[] = [];
+    vi.spyOn(backend(), "importNativeCapture").mockImplementation(async (_path, _name, requested) => {
+      const target = requested ?? generation;
+      writes.push(target);
+      if (target !== generation) throw new Error("stale-graph-binding");
+      return "capture.jpg";
+    });
+    const { root, dispose } = mount(() => <Block id="capture-switch" />);
+    try {
+      root.querySelector("textarea")!.focus();
+      expect(dispatchFocusedEditorCommand("editor/capture-photo")).toBe(true);
+      generation = 2;
+      finishCapture({ status: "ok", path: "/cache/tine_photo_1.jpg", ext: "jpg" });
+      await settle();
+      expect(writes).toEqual([1]);
+      expect(doc.byId["capture-switch"].raw).toBe("");
+    } finally { dispose(); }
+  });
+
+  it("binds clipboard files before the native clipboard read", async () => {
+    loadSingle(page("Assets", [blk("clipboard-switch", "")]));
+    startEditing("clipboard-switch", 0);
+    let generation = 1;
+    let finishRead!: (value: { files: { path: string; name: string; size: number }[]; skipped: number; truncated: boolean }) => void;
+    vi.spyOn(backend(), "graphBindingGeneration").mockImplementation(() => generation);
+    vi.spyOn(backend(), "clipboardFiles").mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
+    const writes: number[] = [];
+    vi.spyOn(backend(), "importAsset").mockImplementation(async (_path, _name, requested) => {
+      const target = requested ?? generation;
+      writes.push(target);
+      if (target !== generation) throw new Error("stale-graph-binding");
+      return "clip.pdf";
+    });
+    const { root, dispose } = mount(() => <Block id="clipboard-switch" />);
+    try {
+      root.querySelector("textarea")!.dispatchEvent(filePasteEvent([
+        new File(["x"], "clip.pdf", { type: "application/pdf" }),
+      ]));
+      generation = 2;
+      finishRead({ files: [{ path: "/tmp/clip.pdf", name: "clip.pdf", size: 1 }], skipped: 0, truncated: false });
+      await settle();
+      expect(writes).toEqual([1]);
+      expect(doc.byId["clipboard-switch"].raw).toBe("");
+    } finally { dispose(); }
+  });
+
+  it("binds clipboard bytes before reading the browser file", async () => {
+    loadSingle(page("Assets", [blk("bytes-switch", "")]));
+    startEditing("bytes-switch", 0);
+    let generation = 1;
+    let finishBytes!: (bytes: ArrayBuffer) => void;
+    const arrayBuffer = vi.fn(() => new Promise<ArrayBuffer>((resolve) => { finishBytes = resolve; }));
+    const file = { name: "bytes.pdf", type: "application/pdf", size: 1, arrayBuffer } as unknown as File;
+    vi.spyOn(backend(), "graphBindingGeneration").mockImplementation(() => generation);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [], skipped: 0, truncated: false });
+    const writes: number[] = [];
+    vi.spyOn(backend(), "saveAsset").mockImplementation(async (_name, _bytes, requested) => {
+      const target = requested ?? generation;
+      writes.push(target);
+      if (target !== generation) throw new Error("stale-graph-binding");
+      return "bytes.pdf";
+    });
+    const { root, dispose } = mount(() => <Block id="bytes-switch" />);
+    try {
+      root.querySelector("textarea")!.dispatchEvent(filePasteEvent([file]));
+      await vi.waitFor(() => expect(arrayBuffer).toHaveBeenCalledOnce());
+      generation = 2;
+      finishBytes(new Uint8Array([1]).buffer);
+      await settle();
+      expect(writes).toEqual([1]);
+      expect(doc.byId["bytes-switch"].raw).toBe("");
+    } finally { dispose(); }
+  });
+
+  it("keeps the draw.io handoff on the graph that received its diagram", async () => {
+    loadSingle(page("Assets", [blk("drawio-switch", "/drawio")]));
+    startEditing("drawio-switch", 7);
+    let generation = 1;
+    let finishCommand!: (command: string) => void;
+    vi.spyOn(backend(), "graphBindingGeneration").mockImplementation(() => generation);
+    vi.spyOn(backend(), "saveAsset").mockResolvedValue("diagram.drawio.svg");
+    vi.spyOn(mediaEditorSettings, "resolveMediaEditorCommand").mockImplementation(() => new Promise((resolve) => { finishCommand = resolve; }));
+    const opened: number[] = [];
+    vi.spyOn(backend(), "editAssetExternal").mockImplementation(async (_name, _cmd, requested) => {
+      const target = requested ?? generation;
+      opened.push(target);
+      if (target !== generation) throw new Error("stale-graph-binding");
+    });
+    const { root, dispose } = mount(() => <Block id="drawio-switch" />);
+    try {
+      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
+      textarea.focus();
+      textarea.value = "/drawio";
+      textarea.setSelectionRange(7, 7);
+      textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "o" }));
+      await vi.waitFor(() => expect([...document.querySelectorAll(".autocomplete .ac-label")].map((x) => x.textContent)).toContain("Draw.io diagram"));
+      const item = [...document.querySelectorAll<HTMLElement>(".autocomplete .ac-item")]
+        .find((x) => x.querySelector(".ac-label")?.textContent === "Draw.io diagram")!;
+      item.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      await vi.waitFor(() => expect(finishCommand).toBeTypeOf("function"));
+      generation = 2;
+      finishCommand("drawio {}");
+      await settle();
+      expect(opened).toEqual([]);
+    } finally { dispose(); }
+  });
   it("does not insert an asset link if saveAsset rejects", async () => {
     loadSingle(page("Assets", [blk("asset-1", "")]));
     const id = pageByName("Assets")!.roots[0];
@@ -140,10 +277,10 @@ describe("asset paste durability", () => {
     }
   });
 
-  it("does not land a durable asset in an editor whose graph binding changed", async () => {
-    loadSingle(page("Assets", [blk("asset-stale", "")]));
-    const id = pageByName("Assets")!.roots[0];
-    startEditing(id, 0);
+  it("keeps a saved asset out of an editor that lost ownership while saving", async () => {
+    loadSingle(page("Assets", [blk("asset-stale-a", ""), blk("asset-stale-b", "")]));
+    const [first, second] = pageByName("Assets")!.roots;
+    startEditing(first, 0);
     vi.stubGlobal("URL", {
       ...URL,
       createObjectURL: vi.fn(() => "blob:asset"),
@@ -151,21 +288,58 @@ describe("asset paste durability", () => {
     });
     let finish!: (name: string) => void;
     vi.spyOn(backend(), "saveAsset").mockImplementation(
-      () => new Promise<string>((resolve) => { finish = resolve; }),
+      () => new Promise<string>((resolve) => { finish = resolve; })
+    );
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      root.querySelector("textarea")!.dispatchEvent(imagePasteEvent(
+        new File([new Uint8Array([1])], "paste.png", { type: "image/png" })
+      ));
+      await settle();
+      expect(backend().saveAsset).toHaveBeenCalledOnce();
+      startEditing(second, 0);
+      await settle();
+      finish("durable.png");
+      await settle();
+      expect(doc.byId[first].raw).toBe("");
+      expect(doc.byId[second].raw).toBe("");
+      expect(toasts().some((toast) => toast.message ===
+        "The asset was saved, but it was not inserted because the graph or block changed."
+      )).toBe(true);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps a picked upload stored when its original editor loses ownership", async () => {
+    loadSingle(page("Assets", [blk("upload-stale-a", ""), blk("upload-stale-b", "")]));
+    const [first, second] = pageByName("Assets")!.roots;
+    startEditing(first, 0);
+    vi.spyOn(backend(), "pickFile").mockResolvedValue("/tmp/upload.png");
+    let finish!: (name: string) => void;
+    vi.spyOn(backend(), "importAsset").mockImplementation(
+      () => new Promise<string>((resolve) => { finish = resolve; })
     );
     const { root, dispose } = mount(() => (
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
       const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(imagePasteEvent(new File([new Uint8Array([1])], "paste.png", { type: "image/png" })));
+      textarea.focus();
+      expect(dispatchFocusedEditorCommand("editor/upload-asset")).toBe(true);
       await settle();
-      resetSaveState();
-      setGraphMeta({ root: "/graphs/B" } as never);
-      finish("durable.png");
+      expect(backend().importAsset).toHaveBeenCalledOnce();
+      startEditing(second, 0);
       await settle();
-      expect(doc.byId[id].raw).toBe("");
-      expect(toasts().some((toast) => toast.message.includes("was not inserted"))).toBe(true);
+      finish("stored-upload.png");
+      await settle();
+      expect(doc.byId[first].raw).toBe("");
+      expect(doc.byId[second].raw).toBe("");
+      expect(toasts().some((toast) => toast.message ===
+        "The asset was saved, but it was not inserted because the graph or block changed."
+      )).toBe(true);
     } finally {
       dispose();
     }
@@ -270,7 +444,7 @@ describe("asset paste durability", () => {
 
   it("keeps the source PDF name as its label when the asset template renames it", async () => {
     loadSingle(page("Nested assets", [blk("asset-renamed-pdf", "")], {
-      path: "pages/projects/Nested assets.md",
+        id: "pages/projects/Nested assets.md",
       format: "md",
     }));
     const id = pageByName("Nested assets")!.roots[0];
@@ -302,7 +476,7 @@ describe("asset paste durability", () => {
 
   it("inserts an Org PDF link on an Org page", async () => {
     loadSingle(page("Org assets", [blk("asset-org-pdf", "")], {
-      path: "pages/Org assets.org",
+        id: "pages/Org assets.org",
       format: "org",
     }));
     const id = pageByName("Org assets")!.roots[0];
@@ -351,7 +525,7 @@ describe("asset paste durability", () => {
       await settle();
 
       expect(event.defaultPrevented).toBe(true);
-      expect(backend().importAsset).toHaveBeenCalledWith("C:\\Users\\me\\report.pdf", "report.pdf");
+      expect(backend().importAsset).toHaveBeenCalledWith("C:\\Users\\me\\report.pdf", "report.pdf", 1);
       expect(doc.byId[id].raw).toBe("![report.pdf](../assets/report.pdf)");
       expect(doc.byId[id].raw).not.toContain("C:\\Users");
     } finally {

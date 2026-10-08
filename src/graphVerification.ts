@@ -1,3 +1,22 @@
+// Compare two exact-byte graph manifests (`tine-graph-bytes`, written by the
+// backend's graph verifier). Pure; parsing is strict because the other device's
+// report is pasted text: unsafe paths, bad digests and duplicates are refused.
+/** What `createGraphVerification` returns: the report text plus its headline. */
+export interface GraphVerificationReport {
+  text: string;
+  suggestedFileName: string;
+  totalFiles: number;
+  totalBytes: number;
+  aggregateDigest?: string;
+  complete: boolean;
+}
+
+export interface GraphVerificationProgress {
+  operationId: string;
+  processed: number;
+  total: number;
+}
+
 export interface GraphVerificationFile {
   path: string;
   length: number;

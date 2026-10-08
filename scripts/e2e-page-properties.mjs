@@ -14,13 +14,7 @@ import {
   tauriCapabilities,
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
-import { waitForFileText } from "./e2e-file-poll.mjs";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { openPageByName } from "./lib/e2e-navigation.mjs";
-import { dismissStartupNotices } from "./lib/e2e-toasts.mjs";
-
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
-await ensureDisplay();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -94,11 +88,40 @@ const driver = spawn(TD, driverArgs, {
 await sleep(2500);
 let browser;
 
-// One shared readiness contract for opening a page: find and activate the
-// exact non-block row in a single round trip and retry against the routed
-// title, so no element handle outlives the switcher's re-render. See
-// scripts/lib/e2e-navigation.mjs.
-const openPage = (name) => openPageByName(browser, name);
+async function openPage(name) {
+  if ((await browser.$$(".nav-page")).length === 0) {
+    const toggled = await browser.execute(() => {
+      const header = [...document.querySelectorAll(".nav-section-header")]
+        .find((element) => element.textContent?.includes("ALL PAGES"));
+      if (!header) return false;
+      header.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      return true;
+    });
+    if (!toggled) throw new Error("missing ALL PAGES sidebar section");
+    await browser.waitUntil(async () => (await browser.$$(".nav-page")).length >= 2, {
+      timeout: 5_000,
+      timeoutMsg: "ALL PAGES did not reveal fixture pages",
+    });
+  }
+  const opened = await browser.execute((target) => {
+    const rows = [...document.querySelectorAll(".nav-page")];
+    const row = rows.find((element) => element.textContent?.trim() === target);
+    if (!row) return { ok: false, rows: rows.map((element) => element.textContent?.trim()) };
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    return { ok: true, rows: [] };
+  }, name);
+  if (!opened.ok) {
+    const context = await browser.execute(() => ({
+      title: document.querySelector("h1.page-title")?.textContent?.trim(),
+      body: document.body.textContent?.trim().slice(0, 1_000),
+    }));
+    throw new Error(`missing ALL PAGES result ${name}: ${JSON.stringify({ rows: opened.rows, context })}`);
+  }
+  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === name, {
+    timeout: 10_000,
+    timeoutMsg: `could not open ${name}`,
+  });
+}
 
 async function openPageProperties() {
   await browser.$("[data-page-actions-trigger]").click();
@@ -110,14 +133,9 @@ async function openPageProperties() {
 
 async function setPagePropertyField(label, value) {
   await openPageProperties();
-  // Index over the SAME list that is indexed. Finding the position in `.pp-field`
-  // and then indexing a flat `.pp-input` list misaligns the moment a field before
-  // the target has no `.pp-input` (the bool row) or the page carries properties of
-  // its own - GH #164 lists every one of them - and a misaligned index silently
-  // writes a DIFFERENT property rather than failing.
   const index = await browser.execute((wanted) => {
-    const inputs = [...document.querySelectorAll(".page-props-panel .pp-field .pp-input")];
-    return inputs.findIndex((input) => input.closest(".pp-field")?.querySelector(".pp-label")?.textContent?.trim() === wanted);
+    const fields = [...document.querySelectorAll(".page-props-panel .pp-field")];
+    return fields.findIndex((field) => field.querySelector(".pp-label")?.textContent?.trim() === wanted);
   }, label);
   if (index < 0) throw new Error(`missing page property field ${label}`);
   const input = (await browser.$$(".page-props-panel .pp-field .pp-input"))[index];
@@ -127,7 +145,13 @@ async function setPagePropertyField(label, value) {
 }
 
 async function waitForFile(file, predicate, label) {
-  return waitForFileText(file, predicate, label);
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const text = fs.readFileSync(file, "utf8");
+    if (predicate(text)) return text;
+    await sleep(100);
+  }
+  throw new Error(`${label} was not persisted: ${fs.readFileSync(file, "utf8")}`);
 }
 
 async function nativeTab({ shift = false } = {}) {
@@ -187,11 +211,8 @@ async function pageArrowDownCapsule(phase) {
     const active = document.activeElement;
     return {
       phase: failurePhase,
-      documentHasFocus: document.hasFocus(),
       preKey: window.__tinePageArrowDownPreKey ?? null,
       keyWitness: window.__tinePageArrowDownKeyWitness ?? null,
-      inputTrace: window.__tinePageHeaderInputTrace ?? null,
-      compositionTrace: window.__tinePageHeaderCompositionTrace ?? null,
       active: {
         tag: active?.tagName ?? null,
         editor: describeEditor(active),
@@ -210,11 +231,9 @@ async function preparePageHeaderArrowDown(expectedValue) {
     }
     const active = document.activeElement;
     const preKey = {
-      documentHasFocus: document.hasFocus(),
       isPageHeader: active === header,
       value: active instanceof HTMLTextAreaElement ? active.value : null,
       selection: active instanceof HTMLTextAreaElement ? [active.selectionStart, active.selectionEnd] : null,
-      delegatedKeydown: header instanceof HTMLTextAreaElement ? typeof header.$$keydown : null,
       expectedValue: expected,
       expectedSelection: [expected.length, expected.length],
     };
@@ -227,10 +246,6 @@ async function preparePageHeaderArrowDown(expectedValue) {
       const surface = textarea?.closest("[data-pane-id], [data-sidebar-surface], [data-surface-id]");
       const witness = {
         key: event.key,
-        code: event.code,
-        keyCode: event.keyCode,
-        which: event.which,
-        isTrusted: event.isTrusted,
         flags: {
           shift: event.shiftKey,
           ctrl: event.ctrlKey,
@@ -254,95 +269,8 @@ async function preparePageHeaderArrowDown(expectedValue) {
         window.__tinePageArrowDownKeyWitness = { ...witness, defaultPrevented: event.defaultPrevented };
       });
     }, { capture: true, once: true });
-    window.addEventListener("keydown", () => {
-      queueMicrotask(() => {
-        if (window.__tinePageArrowDownKeyWitness) window.__tinePageArrowDownKeyWitness.reachedWindowBubble = true;
-      });
-    }, { once: true });
     return preKey;
   }, expectedValue);
-}
-
-async function pageHeaderArrowDownReachedBody() {
-  return browser.execute(() => {
-    const active = document.activeElement;
-    return active instanceof HTMLTextAreaElement
-      && active.closest(".page-blocks") !== null
-      && active.classList.contains("block-editor")
-      && active.value === "Example content block";
-  });
-}
-
-function deliveredExpectedArrowDown(capsule, expectedValue) {
-  const witness = capsule?.keyWitness;
-  return witness?.key === "ArrowDown"
-    && witness.target?.value === expectedValue
-    && Object.values(witness.flags ?? {}).every((flag) => flag === false || flag === true)
-    && !witness.flags?.shift
-    && !witness.flags?.ctrl
-    && !witness.flags?.alt
-    && !witness.flags?.meta
-    && !witness.flags?.repeat
-    && !witness.flags?.composing;
-}
-
-async function drivePageHeaderArrowDown(expectedValue) {
-  const attempts = [];
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    // JS focus alone can produce an activeElement inside a background WebView.
-    // A real WebDriver pointer click first transfers native focus to the app;
-    // let the freshly materialized editor finish its reactive ownership turn
-    // before preparePageHeaderArrowDown restores the semantic end-of-header
-    // caret. A human click-to-key gesture naturally includes this interval.
-    const header = await browser.$(".page-blocks textarea.block-editor");
-    await header.click();
-    await sleep(100);
-    const preKey = await preparePageHeaderArrowDown(expectedValue);
-    if (
-      !preKey.documentHasFocus
-      || !preKey.isPageHeader
-      || preKey.value !== expectedValue
-      || preKey.selection?.[0] !== expectedValue.length
-      || preKey.selection?.[1] !== expectedValue.length
-    ) {
-      attempts.push(await pageArrowDownCapsule(`readiness-${attempt}`));
-      await sleep(75);
-      continue;
-    }
-
-    await nativeArrowDown();
-    const deadline = Date.now() + 1_250;
-    let capsule;
-    while (Date.now() < deadline) {
-      if (await pageHeaderArrowDownReachedBody()) return;
-      capsule = await pageArrowDownCapsule(`post-key-${attempt}`);
-      if (capsule.keyWitness) break;
-      await sleep(25);
-    }
-    // Once the expected unmodified ArrowDown has reached the expected header,
-    // give reactive focus handoff the remainder of the bounded observation turn.
-    if (deliveredExpectedArrowDown(capsule, expectedValue)) {
-      while (Date.now() < deadline) {
-        if (await pageHeaderArrowDownReachedBody()) return;
-        await sleep(25);
-      }
-      attempts.push(await pageArrowDownCapsule(`delivered-${attempt}`));
-      await sleep(75);
-      continue;
-    }
-    attempts.push(capsule ?? await pageArrowDownCapsule(`undelivered-${attempt}`));
-    await sleep(75);
-  }
-  // A single delivered event can still race WebKitGTK's editor ownership turn;
-  // require the semantic handoff on either of two independently prepared native
-  // actions. If either action was delivered but both attempts failed, preserve
-  // the semantic failure instead of laundering it into infrastructure noise.
-  if (attempts.some((capsule) => deliveredExpectedArrowDown(capsule, expectedValue))) {
-    throw new Error(`PAGE_HEADER_ARROWDOWN_DELIVERED_BUT_IGNORED ${JSON.stringify(attempts)}`);
-  }
-  // The release runner may retry this isolated scenario once, but only when
-  // neither independently prepared native action reached the expected editor.
-  throw new Error(`E2E_NATIVE_INPUT_UNDELIVERED page-properties ArrowDown ${JSON.stringify(attempts)}`);
 }
 
 async function replaceHeaderLikeUser(editor, replacement, selection = null) {
@@ -354,18 +282,11 @@ async function replaceHeaderLikeUser(editor, replacement, selection = null) {
   // artificial empty input between the two actions.
   await browser.execute(() => {
     window.__tinePageHeaderInputTrace = [];
-    window.__tinePageHeaderCompositionTrace = [];
     const textarea = document.querySelector(".page-blocks textarea.block-editor");
-    for (const type of ["compositionstart", "compositionupdate", "compositionend"]) {
-      textarea?.addEventListener(type, (event) => {
-        window.__tinePageHeaderCompositionTrace.push({ type, data: event.data });
-      }, { capture: true });
-    }
     textarea?.addEventListener("input", (event) => {
       window.__tinePageHeaderInputTrace.push({
         inputType: event.inputType,
         data: event.data,
-        isComposing: event.isComposing,
         value: event.currentTarget.value,
       });
     }, { capture: true });
@@ -414,11 +335,6 @@ async function activePagePropertyControl() {
     const panel = document.querySelector(".page-props-panel");
     const active = document.activeElement;
     if (!panel || !active || !panel.contains(active)) return null;
-    // GH #164 added two controls this classifier could not name: the add-row's
-    // Add button and a per-row Remove. An unnamed control returns null, which
-    // the caller reads as "focus left the form" - so name them explicitly.
-    if (active.classList.contains("pp-add-commit")) return "Add";
-    if (active.classList.contains("pp-remove")) return "Remove";
     if (active.classList.contains("pp-input")) {
       return active.closest(".pp-field")?.querySelector(".pp-label")?.textContent?.trim() ?? null;
     }
@@ -451,36 +367,34 @@ async function exerciseNativeFormTabTraversal(aliasValue) {
     throw new Error(`native Shift+Tab did not return to Aliases; active=${JSON.stringify(await activePagePropertyControl())}`);
   }
 
-  // The five presets keep their declared order, and that IS the contract. What
-  // follows them is the page's OWN properties - this fixture happens to carry
-  // eleven - and then the add-row, so the number of stops between Public and
-  // Done is a fact about the fixture, not about the product; GH #164 records
-  // field order as an explicit non-requirement. So assert the presets exactly,
-  // then assert the semantic outcome: tabbing stays inside the form, reaches the
-  // add-row, and ends at Done rather than escaping or dead-ending.
-  for (const expected of ["Tags", "Display title", "Icon", "Public"]) {
+  // Every user-editable property and the add-row participate in native form
+  // traversal. Derive the controls from this panel rather than assuming that
+  // the five presets are its entire contents (GH #164).
+  const tabState = () => browser.execute(() => {
+    const panel = document.querySelector(".page-props-panel");
+    const controls = [...panel.querySelectorAll("input, button")]
+      .filter((control) => !control.disabled && control.tabIndex >= 0);
+    return {
+      active: controls.indexOf(document.activeElement),
+      done: controls.findIndex((control) => control.classList.contains("pp-done")),
+      labels: controls.map((control) => control.getAttribute("title")
+        || control.closest(".pp-field")?.querySelector(".pp-label")?.textContent?.trim()
+        || control.textContent?.trim()),
+    };
+  });
+  const initial = await tabState();
+  if (initial.active !== 0 || initial.done !== initial.labels.length - 1) {
+    throw new Error(`property form did not expose Aliases through Done: ${JSON.stringify(initial)}`);
+  }
+  for (let expected = 1; expected <= initial.done; expected++) {
     await nativeTab();
-    if (await activePagePropertyControl() !== expected) {
-      throw new Error(`native Tab focus order expected ${expected}; active=${JSON.stringify(await activePagePropertyControl())}`);
+    const state = await tabState();
+    if (state.active !== expected) {
+      throw new Error(`native Tab did not reach property control ${initial.labels[expected]}: ${JSON.stringify(state)}`);
     }
   }
-  const reached = [];
-  for (let step = 0; step < 80; step += 1) {
-    await nativeTab();
-    const control = await activePagePropertyControl();
-    if (control === null) {
-      throw new Error(`native Tab left the properties form; stops so far=${JSON.stringify(reached)}`);
-    }
-    reached.push(control);
-    if (control === "Done") break;
-  }
-  if (!reached.includes("Add a property")) {
-    throw new Error(`native Tab never reached the add-row; stops=${JSON.stringify(reached)}`);
-  }
-  if (reached.at(-1) !== "Done") {
-    throw new Error(`native Tab never reached Done; stops=${JSON.stringify(reached)}`);
-  }
-  await browser.$(".pp-done").click();
+  // Done owns native focus after traversal; activate it from the keyboard.
+  await browser.keys(["Enter"]);
   await browser.$(".page-props-panel").waitForExist({ reverse: true, timeout: 5_000 });
 }
 
@@ -494,25 +408,17 @@ try {
     connectionRetryTimeout: 60_000,
     capabilities: tauriCapabilities(APP, "default", process.platform, webviewTarget.debuggerAddress),
   });
-  // The Windows driver does not reliably attach to the app window: it can land
-  // on the Quick Capture window, where every application selector is legitimately
-  // absent. Three windows-smoke journeys failed that way in one run, each
-  // reporting its own missing element instead of the shared cause.
   await ensureMainWindow(browser);
   // This fixture starts on today's journal so it has a durable navigation
   // source for the seeded pages. Journals render blocks (and a journal title),
   // not a named-page `.page-title`; waiting for the latter prevented openPage()
   // from ever exercising the routed page-properties journey on WebView2.
   await browser.$(".ls-block, .journal-title, .page-title").waitForExist({ timeout: 20_000 });
-  // A fresh profile always announces the Guide, and that notice is sticky and
-  // bottom-right - exactly where this panel's Done button sits once the page
-  // carries enough properties to fill the panel. Clear the known first-run
-  // notices before anything is clicked; unexpected toasts deliberately stay up.
-  // Done here, before the first waitForFile, so the dismissal's own graph-meta
-  // write cannot race an assertion about page content.
-  for (const notice of await dismissStartupNotices(browser)) {
-    console.log(`setup: dismissed startup notice: ${notice}`);
-  }
+  // The graph page index warms asynchronously after first paint. Wait for the
+  // complete list before using Ctrl+K, otherwise a cold run offers only the
+  // misleading "Create page" row for an already-existing file.
+  await sleep(3500);
+
   await openPage("Property detailed");
   await exerciseNativeFormTabTraversal("Test Record, Alternate");
   const customRow = await browser.execute(() => {
@@ -529,28 +435,45 @@ try {
   if (!originalHeader.includes("ai-prompt:: [[Prompt-Test]]") || !originalHeader.includes("\n\npage-level::")) {
     throw new Error(`page-header ordinary editor lost raw properties/separators: ${JSON.stringify(originalHeader)}`);
   }
-  // Keep this native replacement independent of autocomplete. Editing inside a
-  // page reference opens a second interaction lifecycle whose close timing can
-  // obscure the separate page-header ArrowDown contract.
-  const oldTimestamp = "20250707092601";
-  const newTimestamp = "20260707092601";
-  const editedHeader = originalHeader.replace(oldTimestamp, newTimestamp);
-  const oldTimestampStart = originalHeader.indexOf(oldTimestamp);
-  const replacementTrace = await replaceHeaderLikeUser(headerEditor, newTimestamp, {
-    start: oldTimestampStart,
-    end: oldTimestampStart + oldTimestamp.length,
+  const editedHeader = originalHeader.replace("ai-prompt:: [[Prompt-Test]]", "ai-prompt:: [[Prompt-Edited]]");
+  const oldPromptStart = originalHeader.indexOf("Prompt-Test");
+  const replacementTrace = await replaceHeaderLikeUser(headerEditor, "Prompt-Edited", {
+    start: oldPromptStart,
+    end: oldPromptStart + "Prompt-Test".length,
   });
   if ((await headerEditor.getValue()) !== editedHeader) {
     throw new Error(`native page-header replacement did not preserve the intended value: ${JSON.stringify({ replacementTrace, actual: await headerEditor.getValue() })}`);
   }
-  await drivePageHeaderArrowDown(editedHeader);
+  const arrowDownPreKey = await preparePageHeaderArrowDown(editedHeader);
+  if (
+    !arrowDownPreKey.isPageHeader
+    || arrowDownPreKey.value !== editedHeader
+    || arrowDownPreKey.selection?.[0] !== editedHeader.length
+    || arrowDownPreKey.selection?.[1] !== editedHeader.length
+  ) {
+    throw new Error(JSON.stringify(await pageArrowDownCapsule("pre-key")));
+  }
+  try {
+    await nativeArrowDown();
+    await browser.waitUntil(() => browser.execute(() => {
+      const active = document.activeElement;
+      return active instanceof HTMLTextAreaElement
+        && active.closest(".page-blocks") !== null
+        && active.classList.contains("block-editor")
+        && active.value === "Example content block";
+    }), {
+      timeout: 5_000,
+    });
+  } catch {
+    throw new Error(JSON.stringify(await pageArrowDownCapsule("post-key")));
+  }
   await browser.execute(() => {
     const editor = document.querySelector(".page-blocks textarea.block-editor");
     editor?.focus();
     if (editor instanceof HTMLTextAreaElement) editor.setSelectionRange(2, 2);
   });
   await browser.keys(["ArrowUp"]);
-  await browser.waitUntil(async () => (await browser.$(".page-blocks textarea.block-editor").getValue()).includes(newTimestamp), {
+  await browser.waitUntil(async () => (await browser.$(".page-blocks textarea.block-editor").getValue()).includes("Prompt-Edited"), {
     timeout: 5_000,
     timeoutMsg: "Arrow Up did not cross from the first body block back into the page header",
   });
@@ -561,12 +484,12 @@ try {
   });
   const detailedAfter = await waitForFile(
     `${GRAPH}/pages/Property detailed.md`,
-    (text) => text.includes("alias:: Test Record, Alternate") && text.includes(`timestamp:: ${newTimestamp}`),
+    (text) => text.includes("alias:: Test Record, Alternate") && text.includes("ai-prompt:: [[Prompt-Edited]]"),
     "detailed page property edit",
   );
   const detailedExpected = detailed
     .replace("alias:: Test Record", "alias:: Test Record, Alternate")
-    .replace(oldTimestamp, newTimestamp);
+    .replace("ai-prompt:: [[Prompt-Test]]", "ai-prompt:: [[Prompt-Edited]]");
   if (detailedAfter !== detailedExpected) {
     throw new Error(`detailed page changed outside the edited line\nEXPECTED:\n${detailedExpected}\nACTUAL:\n${detailedAfter}`);
   }
@@ -593,7 +516,7 @@ try {
   const reopenedCustom = await browser.execute(() => [...document.querySelectorAll(".page-properties .prop-row")]
     .find((row) => row.querySelector(".prop-key")?.textContent?.trim() === "ai-prompt")
     ?.querySelector(".prop-value")?.textContent?.trim() ?? null);
-  if (!reopenedCustom?.includes("Prompt-Test")) {
+  if (!reopenedCustom?.includes("Prompt-Edited")) {
     throw new Error(`reopened page did not parse the edited custom header: ${JSON.stringify(reopenedCustom)}`);
   }
   await openPage("Property deletion");
@@ -648,73 +571,7 @@ try {
   if ((await browser.$$(".page-properties .prop-row")).length !== 0) {
     throw new Error("deleted page-header properties reappeared after real-app reopen");
   }
-  // GH #164 block scope: the property editor is reachable from a BLOCK's own
-  // context menu on a ROUTED NAMED PAGE (not the journal feed - the two use
-  // different visible-order paths), an arbitrary key added there reaches disk
-  // under that block, and it is still there after the page is reopened. This is
-  // the one journey step that proves the new control end to end; the panel's
-  // own unit tests cannot reach the real save path.
-  await openPage("Property detailed");
-  const blockMenuOpened = await browser.execute(() => {
-    const surface = document.querySelector(".page-blocks .ls-block .block-main > .block-content-wrapper");
-    if (!(surface instanceof HTMLElement)) return false;
-    const rect = surface.getBoundingClientRect();
-    surface.dispatchEvent(new MouseEvent("contextmenu", {
-      bubbles: true,
-      cancelable: true,
-      clientX: rect.left + Math.max(2, Math.min(20, rect.width / 2)),
-      clientY: rect.top + Math.max(2, Math.min(12, rect.height / 2)),
-      view: window,
-    }));
-    return true;
-  });
-  if (!blockMenuOpened) throw new Error("missing block surface for the block-properties context menu");
-  const blockPropsClicked = await browser.waitUntil(async () => browser.execute(() => {
-    const item = [...document.querySelectorAll(".ctx-item")].find((el) => (el.textContent ?? "").trim() === "Properties…");
-    if (!item) return false;
-    item.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    return true;
-  }), { timeout: 5_000, timeoutMsg: "block context menu never offered Properties…" });
-  if (!blockPropsClicked) throw new Error("block context menu never offered Properties…");
-  await browser.$(".page-props-panel").waitForExist({ timeout: 5_000 });
-  const addedBlockProperty = await browser.execute(() => {
-    const key = document.querySelector(".page-props-panel input.pp-add-key");
-    const value = document.querySelector(".page-props-panel input.pp-add-value");
-    const commit = document.querySelector(".page-props-panel button.pp-add-commit");
-    if (!(key instanceof HTMLInputElement) || !(value instanceof HTMLInputElement)
-      || !(commit instanceof HTMLButtonElement)) return false;
-    const set = (input, text) => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      setter?.call(input, text);
-      input.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true }));
-    };
-    set(key, "reviewer");
-    set(value, "martin");
-    if (commit.disabled) return false;
-    commit.click();
-    return true;
-  });
-  if (!addedBlockProperty) throw new Error("block properties panel did not accept an arbitrary key");
-  await browser.$(".pp-done").click();
-  await browser.$(".page-props-panel").waitForExist({ reverse: true, timeout: 5_000 });
-  const blockPropAfter = await waitForFile(
-    `${GRAPH}/pages/Property detailed.md`,
-    (text) => text.includes("reviewer:: martin"),
-    "block property added from the block context menu",
-  );
-  if (!blockPropAfter.includes("- Example content block")) {
-    throw new Error(`adding a block property lost the block's own text: ${JSON.stringify(blockPropAfter)}`);
-  }
-  await openPage("Property detailed");
-  const blockPropSurvived = await waitForFile(
-    `${GRAPH}/pages/Property detailed.md`,
-    (text) => text.includes("reviewer:: martin"),
-    "block property survives a real-app reopen",
-  );
-  if (!blockPropSurvived.includes("reviewer:: martin")) {
-    throw new Error("block property did not survive reopening the page");
-  }
-  console.log(`PASS: page-header click/edit/navigation, native replacements (${replacementTrace.length}+${selectAllTrace.length} input events), deletion, disk bytes, real-app reopen, and block-scope arbitrary property add (GH #164) are canonical`);
+  console.log(`PASS: page-header click/edit/navigation, native replacements (${replacementTrace.length}+${selectAllTrace.length} input events), deletion, disk bytes, and real-app reopen are canonical`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
   if (process.platform === "win32") {

@@ -1,8 +1,11 @@
+// Family 24 / master af835249f + 3b908751a (GH #360), ported to og's document module.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { blockProperty, doc, loadSingle, pageByName, resetStore, setCollapsed } from "../store";
+import { blockProperty, pageByName, resetStore, setCollapsed } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
 import type { BlockDto, PageDto, RefGroup } from "../types";
 import { Block } from "./Block";
 import { For } from "solid-js";
@@ -218,6 +221,40 @@ describe("embed collapse contract (GH #360)", () => {
       await tick();
       expect(occurrenceChildrenVisible(hosts[0])).toContain("child one");
       expect(occurrenceChildrenVisible(hosts[1])).not.toContain("child one");
+    } finally {
+      dispose();
+    }
+  });
+
+  // Nested rows keep an ephemeral per-occurrence fold that records the source's
+  // collapse write epoch: it governs until the source writes again, then the
+  // source reclaims authority (including after fold/unfold round trips).
+  it("a nested row's local fold yields to the next source collapse write", async () => {
+    const target: BlockDto = {
+      id: "target", raw: "Embed target body", collapsed: false,
+      children: [{
+        id: "target-c1", raw: "child one", collapsed: false,
+        children: [{ id: "target-g1", raw: "grandchild one", collapsed: false, children: [] }],
+      }],
+    };
+    const host: BlockDto = { id: "host-1", raw: "{{embed ((target))}}", collapsed: false, children: [] };
+    const pg = page("Fixture", [target, host]);
+    mockBlocks(pg, [target]);
+    loadSingle(pg);
+    const { root, dispose } = mountPageBlocks();
+    try {
+      const embed = occurrenceHosts(root)[0];
+      await tick();
+      expect(embed.textContent).toContain("grandchild one");
+      embed.querySelector<HTMLButtonElement>(`.ls-block[data-block-id="target-c1"] .collapse-toggle`)!.click();
+      await tick();
+      expect(embed.textContent).not.toContain("grandchild one"); // local fold governs
+      expect(doc.byId["target-c1"].collapsed).toBe(false); // source untouched
+      expect(doc.byId["target-c1"].raw).not.toContain("collapsed::");
+      setCollapsed("target-c1", true);
+      setCollapsed("target-c1", false); // the source wrote again: it is authoritative
+      await tick();
+      expect(embed.textContent).toContain("grandchild one");
     } finally {
       dispose();
     }

@@ -130,13 +130,17 @@ describe("orderAcItems (autocomplete default action)", () => {
       .toEqual(["zulu", "alpha", "create"]);
   });
 
-  it("uses NFC identity without compatibility-folding fullwidth names", () => {
+  it("keeps NFC identity but compatibility-folds autocomplete ranking", () => {
     const widthDistinct = [
       { name: "\uff21", item: "fullwidth" },
       { name: "Alpha", item: "alpha" },
     ];
     expect(orderAcItems(widthDistinct, { name: "a", item: "create" }, { query: "a", policy: "adaptive" }))
-      .toEqual(["alpha", "create", "fullwidth"]);
+      .toEqual(["fullwidth", "create", "alpha"]);
+    expect(orderAcItems([{ name: "Café", item: "cafe-page" }], { name: "cafe", item: "create" }, { query: "cafe", policy: "adaptive" }))
+      .toEqual(["cafe-page", "create"]);
+    expect(orderAcItems([{ name: "Café", item: "cafe-page" }], { name: "cafe", item: "create" }, { query: "cafe", policy: "adaptive", removeAccents: false }))
+      .toEqual(["create", "cafe-page"]);
   });
 });
 
@@ -185,6 +189,15 @@ describe("detectTrigger", () => {
     expect(detectTrigger("ordinary prose ::", 17)).toBeNull();
     expect(detectTrigger("[[reference]]::", 15)).toBeNull();
     expect(detectTrigger("```\n::", 6)).toBeNull();
+  });
+
+  // C3X X6 (L13): the trigger's key alphabet was ASCII while the persisted parser's is Unicode.
+  it("opens property completion for a Unicode key, the same alphabet the parser stores", () => {
+    expect(detectTrigger("stav_úkolu::", 12)).toEqual({ kind: "property-name", query: "stav_úkolu", start: 0, end: 12 });
+    expect(detectTrigger("статус:: ", 9, "статус")).toEqual({
+      kind: "property-value", query: "", start: 9, end: 9, property: "статус",
+    });
+    expect(detectTrigger("ordinary prose ::", 17)).toBeNull();
   });
 
   it("keeps a chosen canonical property's value span separate from its key and delimiter", () => {
@@ -411,7 +424,7 @@ describe("filterCommands", () => {
     return [
       // The fixture predates this deliberately additive command; keep using it
       // to freeze all of the old command/template rankings.
-      ...COMMANDS.filter((command) => command.label !== "Heading (Auto)" && command.label !== "Embed Youtube timestamp" && command.label !== "That day").map((command) => ({
+      ...COMMANDS.filter((command) => command.label !== "Heading (Auto)" && command.label !== "Embed Youtube timestamp" && command.label !== "That day" && !["Tomorrow", "Yesterday", "Date picker"].includes(command.label)).map((command) => ({
         label: command.label,
         score: commandScore(query, command),
         index: command.matchTieOrder,
@@ -431,14 +444,10 @@ describe("filterCommands", () => {
     // snapshot.  Never regenerate it to approve a typed-ranking change.
     expect(slashFixtureManifest.source.baseRevision).toBe("15bbddc0c5596c3fa72e84c4f3ad90c722db81a0");
     expect(fixtureRows).toHaveLength(343);
-    // §7.3 unified the two query commands into one. The fixture froze the
-    // ranking of BOTH, so the retired label is dropped from the expectation
-    // rather than the fixture being regenerated — every other row of every
-    // other ranking stays exactly as it was checked.
+    // §7.3 unified the two query commands into one (master 2617ff194): the
+    // retired label is dropped from the expectation, never regenerated.
     for (const row of fixtureRows) {
-      expect(mergedRanking(row.query)).toEqual(
-        row.labels.filter((label) => label !== "Query (visual builder)"),
-      );
+      expect(mergedRanking(row.query)).toEqual(row.labels.filter((label) => label !== "Query (visual builder)"));
     }
   });
 
@@ -488,7 +497,7 @@ describe("filterCommands", () => {
     const all = filterCommands("");
     expect(all.map((command) => command.label)).toEqual([
       "Page reference", "Link", "Upload an asset", "Voice recording", "Draw.io diagram",
-      "Heading (Auto)", "Heading 1", "Heading 2", "Heading 3", "Heading 4", "Today", "That day", "Current time",
+      "Heading (Auto)", "Heading 1", "Heading 2", "Heading 3", "Heading 4", "Today", "Tomorrow", "Yesterday", "Date picker", "That day", "Current time",
       "TODO", "DOING", "LATER", "NOW", "DONE", "WAITING", "WAIT", "IN-PROGRESS", "CANCELED", "Scheduled", "Deadline",
       "Priority A", "Priority B", "Priority C", "Grid", "Table", "Board", "Code block", "Calculator", "Quote",
       "Admonition: note", "Admonition: tip", "Admonition: important", "Admonition: warning", "Admonition: caution",

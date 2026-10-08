@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { beforeAll, describe, it, expect } from "vitest";
+import { initParser } from "../render/parse";
 import {
   toggleWrap,
   insertLink,
@@ -67,6 +68,9 @@ describe("toggleInlineFormat (GH #178)", () => {
   });
 });
 
+// insertLink recognizes a selected link through the parser (I-12), so the parser must be loaded.
+beforeAll(initParser);
+
 describe("insertLink", () => {
   it("turns a selection into the label, caret in ()", () => {
     expect(insertLink("see docs", 4, 8)).toEqual({ text: "see [docs]()", start: 11, end: 11 });
@@ -80,6 +84,11 @@ describe("insertLink", () => {
     expect(formatAware("Label", 0, 5, "org")).toEqual({ text: "[[][Label]]", start: 2, end: 2 });
     expect(formatAware("https://example.com", 0, 19, "md")).toEqual({ text: "[](https://example.com)", start: 1, end: 1 });
     expect(formatAware("[[Page]]", 0, 8, "org")).toEqual({ text: "[[[[Page]]][]]", start: 12, end: 12 });
+  });
+
+  it("an image link or a selection spanning two links is a label, not a link (C5 format.ts:95)", () => {
+    expect(insertLink("![alt](a.png)", 0, 13, "md").text).toBe("[![alt](a.png)]()");
+    expect(insertLink("[[a]] [[b]]", 0, 11, "md").text).toBe("[[[a]] [[b]]]()");
   });
 
   it("preserves surrounding text and recognizes block refs and already formatted links", () => {

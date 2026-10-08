@@ -1,4 +1,4 @@
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

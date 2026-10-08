@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AndroidRootClosePhase, createAndroidRootCloseCoordinator } from "./androidBack";
-import { createSafeCloseCoordinator, type DiscardReason, type SafeCloseDeps } from "./safeClose";
+import { createSafeCloseCoordinator, type SafeCloseDeps } from "./safeClose";
+import type { DiscardReason } from "./backend";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -42,15 +43,57 @@ function androidRootClose(
 }
 
 describe("GH #161 shared safe-close transaction", () => {
-  it("flushes graph and session once before an accepted Android root exit", async () => {
-    const order: string[] = [];
-    const { deps, safeClose, transitions } = harness({
-      flushAll: vi.fn(async () => {
-        order.push("frontend");
-        return true;
-      }),
+  it("records a discard only when the user accepts losing work, and a failing record never blocks the close (GH #540)", async () => {
+    const declined = harness({ flushAll: vi.fn(async () => false), confirmDiscard: vi.fn(async () => false), recordDiscard: vi.fn(async () => {}) });
+    await expect(declined.safeClose.prepare()).resolves.toBe("rejected");
+    expect(declined.deps.recordDiscard).not.toHaveBeenCalled();
+
+    const accepted = harness({
+      flushAll: vi.fn(async () => false),
+      confirmDiscard: vi.fn(async () => true),
+      recordDiscard: vi.fn(async () => { throw new Error("backend gone"); }),
     });
-    const exit = vi.fn(async () => { order.push("activity"); });
+    await expect(accepted.safeClose.prepare()).resolves.toBe("accepted");
+    expect(accepted.deps.recordDiscard).toHaveBeenCalledExactlyOnceWith("failed");
+    expect(accepted.deps.flushSession).toHaveBeenCalledOnce();
+
+    const saved = harness({ recordDiscard: vi.fn(async () => {}) });
+    await expect(saved.safeClose.prepare()).resolves.toBe("accepted");
+    expect(saved.deps.recordDiscard).not.toHaveBeenCalled();
+  });
+
+  it("records still-saving when the page flush is still running at its bound (GH #540)", async () => {
+    const stuck = harness({
+      flushAll: vi.fn(() => new Promise<boolean>(() => {})),
+      confirmDiscard: vi.fn(async () => true),
+      recordDiscard: vi.fn(async () => {}),
+      // Both the soft bound and the grace period expire on the stuck flush.
+      runBounded: (operation, _timeoutMs, fallback) =>
+        typeof fallback === "symbol" ? Promise.resolve(fallback) : operation,
+    });
+    await expect(stuck.safeClose.prepare()).resolves.toBe("accepted");
+    expect(stuck.deps.recordDiscard).toHaveBeenCalledExactlyOnceWith("still-saving");
+  });
+
+  it("does not accept a retired close after reset starts a new transaction", async () => {
+    const oldDrain = deferred<boolean>();
+    const flushPdfWork = vi.fn()
+      .mockImplementationOnce(() => oldDrain.promise)
+      .mockResolvedValueOnce(true);
+    const { safeClose } = harness({ flushPdfWork });
+    const oldClose = safeClose.prepare();
+    await vi.waitFor(() => expect(flushPdfWork).toHaveBeenCalledOnce());
+    safeClose.reset();
+    const newClose = safeClose.prepare();
+    await vi.waitFor(() => expect(flushPdfWork).toHaveBeenCalledTimes(2));
+    oldDrain.resolve(true);
+    await expect(oldClose).resolves.toBe("rejected");
+    await expect(newClose).resolves.toBe("accepted");
+  });
+
+  it("flushes graph and session once before an accepted Android root exit", async () => {
+    const { deps, safeClose, transitions } = harness();
+    const exit = vi.fn(async () => {});
     const { rootClose } = androidRootClose(safeClose, exit);
 
     await expect(rootClose.request()).resolves.toBe("exit_requested");
@@ -61,7 +104,6 @@ describe("GH #161 shared safe-close transaction", () => {
     expect(deps.confirmDiscard).not.toHaveBeenCalled();
     expect(deps.flushSession).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledOnce();
-    expect(order).toEqual(["frontend", "activity"]);
     expect(transitions).toEqual([true]);
     expect(safeClose.inFlight()).toBe(true);
   });
@@ -97,25 +139,6 @@ describe("GH #161 shared safe-close transaction", () => {
     expect(exit).not.toHaveBeenCalled();
     expect(transitions).toEqual([true, false]);
     expect(safeClose.inFlight()).toBe(false);
-  });
-
-  it("records a discard only when the user accepts losing work, and a failing record never blocks the close (GH #540)", async () => {
-    const declined = harness({ flushAll: vi.fn(async () => false), confirmDiscard: vi.fn(async () => false), recordDiscard: vi.fn(async () => {}) });
-    await expect(declined.safeClose.prepare()).resolves.toBe("rejected");
-    expect(declined.deps.recordDiscard).not.toHaveBeenCalled();
-
-    const accepted = harness({
-      flushAll: vi.fn(async () => false),
-      confirmDiscard: vi.fn(async () => true),
-      recordDiscard: vi.fn(async () => { throw new Error("backend gone"); }),
-    });
-    await expect(accepted.safeClose.prepare()).resolves.toBe("accepted");
-    expect(accepted.deps.recordDiscard).toHaveBeenCalledExactlyOnceWith("failed");
-    expect(accepted.deps.flushSession).toHaveBeenCalledOnce();
-
-    const saved = harness({ recordDiscard: vi.fn(async () => {}) });
-    await expect(saved.safeClose.prepare()).resolves.toBe("accepted");
-    expect(saved.deps.recordDiscard).not.toHaveBeenCalled();
   });
 
   it("enrolls pending PDF state before page flush and rejects a failed PDF drain", async () => {
@@ -155,13 +178,9 @@ describe("GH #161 shared safe-close transaction", () => {
     expect(exit).toHaveBeenCalledOnce();
   });
 
-  // Direct Files data-safety audit, finding 11. This case previously shared the
-  // assertion above: a flush that had merely not finished within 4 s was
-  // reported to the user in the same words as one that could never succeed, and
-  // they were offered the same "close anyway and lose them". A slow or network
-  // filesystem, a fsync behind a busy disk, or simply many dirty pages can
-  // exceed that bound with nothing wrong — so the close now waits out a grace
-  // period first, and only then asks, in different words.
+  // Ported from master fea3c314b (Direct Files data-safety audit, finding 11):
+  // a flush that has merely not finished within 4 s is slow, not broken. The
+  // close waits out a grace period on the SAME flush before offering discard.
   it("waits out a grace period before treating a slow flush as unsaved", async () => {
     const landsLate = deferred<boolean>();
     const waited: number[] = [];
@@ -185,8 +204,8 @@ describe("GH #161 shared safe-close transaction", () => {
     landsLate.resolve(true);
 
     await expect(closing).resolves.toBe("exit_requested");
-    expect(deps.notifyStillSaving).toHaveBeenCalledOnce();
     expect(deps.confirmDiscard).not.toHaveBeenCalled();
+    expect(deps.notifyStillSaving).toHaveBeenCalledOnce();
     expect(waited.filter((ms) => ms > 4000)).not.toEqual([]);
     expect(deps.flushAll).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledOnce();
@@ -255,5 +274,22 @@ describe("GH #161 shared safe-close transaction", () => {
     expect(deps.flushAll).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledTimes(2);
     expect(transitions).toEqual([true]);
+  });
+
+  it("a second Back while the activity exit is pending never re-runs the flush or the discard prompt", async () => {
+    const { deps, safeClose } = harness();
+    const exitGate = deferred<void>();
+    const exit = vi.fn(() => exitGate.promise);
+    const { rootClose } = androidRootClose(safeClose, exit);
+
+    const first = rootClose.request();
+    await vi.waitFor(() => expect(exit).toHaveBeenCalledOnce());
+    const second = rootClose.request();
+    exitGate.resolve();
+    await expect(first).resolves.toBe("exit_requested");
+    await expect(second).resolves.toBe("exit_requested");
+    expect(deps.flushAll).toHaveBeenCalledOnce();
+    expect(deps.confirmDiscard).not.toHaveBeenCalled();
+    expect(deps.setTransition).toHaveBeenCalledTimes(1);
   });
 });

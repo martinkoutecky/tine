@@ -5,7 +5,7 @@ import { initParser } from "./parse";
 import { renderInlines } from "./inline";
 import { contextMenu, closeContextMenu } from "../ui";
 import { route, openPage } from "../router";
-import { resetStore } from "../store";
+import { resetStore } from "../document";
 import { LONG_PRESS_DELAY } from "./longPress";
 
 // GH #231: on mobile, a deliberate long-press on a page link must raise the

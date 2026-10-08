@@ -6,12 +6,8 @@ export const dispositionStatuses = new Set(["update", "current", "not-applicable
 
 export function releaseSection(changelog, version) {
   const escaped = version.replaceAll(".", "\\.");
-  const header = new RegExp(`^## \\[${escaped}\\] - \\d{4}-\\d{2}-\\d{2}\\n`, "m");
-  const match = header.exec(changelog);
-  if (!match) return null;
-  const rest = changelog.slice(match.index + match[0].length);
-  const next = /^## \[/m.exec(rest);
-  return next ? rest.slice(0, next.index) : rest;
+  const match = changelog.match(new RegExp(`^## \\[${escaped}\\] - \\d{4}-\\d{2}-\\d{2}\\n([\\s\\S]*?)(?=^## \\[|(?![\\s\\S]))`, "m"));
+  return match?.[1] ?? null;
 }
 
 export function changelogItems(section) {
@@ -49,38 +45,6 @@ export function validateDisposition(owner, value, problems) {
   if (typeof value.reason !== "string" || value.reason.length < 3) problems.push(`${owner}: missing reason`);
   if (!Array.isArray(value.refs)) problems.push(`${owner}: refs must be an array`);
   if (value.status === "update" && value.refs?.length === 0) problems.push(`${owner}: update must reference changed files`);
-}
-
-const guideNotApplicableReasons = ["performance-only", "packaging-only", "internal-only"];
-
-export function validateGuideDisposition(root, owner, item, problems) {
-  const value = item.guide;
-  validateDisposition(`${owner} Guide`, value, problems);
-  if (!value || !dispositionStatuses.has(value.status)) return;
-
-  if (value.status === "update" || value.status === "current") {
-    const refs = Array.isArray(value.refs) ? value.refs : [];
-    if (refs.length === 0) problems.push(`${owner} Guide: ${value.status} must reference canonical Guide templates`);
-    for (const ref of refs) {
-      if (!/^crates\/tine-core\/src\/templates\/[^/]+\.md$/.test(ref)) {
-        problems.push(`${owner} Guide: ${ref} is not a canonical Guide template`);
-      } else if (!fs.existsSync(path.join(root, ref))) {
-        problems.push(`${owner} Guide: missing template ${ref}`);
-      }
-    }
-  }
-
-  if (!item.userVisible || value.status !== "not-applicable") return;
-  if (item.section === "Added") {
-    problems.push(`${owner} Guide: a user-visible Added item must be update, current, or consult`);
-    return;
-  }
-  const reason = typeof value.reason === "string" ? value.reason : "";
-  if (item.section === "Changed" && !guideNotApplicableReasons.some((exception) => reason.includes(exception))) {
-    problems.push(
-      `${owner} Guide: a user-visible Changed opt-out must name performance-only, packaging-only, or internal-only`,
-    );
-  }
 }
 
 export function auditableSourceFingerprint(root) {

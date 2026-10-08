@@ -4,7 +4,7 @@
 // WebKit (the engine family Tine's WebKitGTK belongs to — reveals Inter-ligature /
 // font garble Chromium hides) and in BOTH light and dark color schemes (the PDF
 // must stay light even when the OS is dark).
-import { chromium, webkit } from "./lib/playwright.mjs";
+import { chromium, webkit } from "playwright";
 import { pathToFileURL } from "node:url";
 
 const src = process.argv[2] || "/tmp/tine-sample-export/print-sample.html";

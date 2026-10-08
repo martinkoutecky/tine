@@ -2,7 +2,7 @@
 // clicks Run, so lsdoc-wasm parses and mldoc actually loads + runs in the Web
 // Worker inside a real browser. Validates the whole runtime pipeline. Chromium is
 // a strong proxy for Tine's WebKitGTK (the exact WebKitGTK check is the app run).
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -27,7 +27,7 @@ try {
   await sleep(400);
   await page.locator('button.icon-btn[title^="Settings"]').first().click();
   await page.waitForSelector(".settings-modal", { timeout: 3000 });
-  await page.locator(".settings-nav-item", { hasText: "Help improve Tine" }).first().click();
+  await page.locator(".settings-nav-item", { hasText: "Help & diagnostics" }).first().click();
   await page.waitForSelector(".improve-tab", { timeout: 3000 });
 
   console.log("clicking Run (real lsdoc + mldoc)…");

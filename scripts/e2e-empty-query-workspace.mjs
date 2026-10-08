@@ -8,10 +8,6 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-
-await ensureDisplay();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -64,7 +60,7 @@ async function withApp(index, fn) {
   const driverPort = DRIVER_BASE + index * 2;
   const nativePort = NATIVE_BASE + index * 2;
   const log = fs.openSync(path.join(TMP, `tauri-driver-${index}.log`), "w");
-  const driver = spawn(TD, webdriverServerArgs(driverPort, nativePort, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), {
+  const driver = spawn(TD, ["--port", String(driverPort), "--native-port", String(nativePort), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
     env, stdio: ["ignore", log, log], detached: true,
   });
   let browser;
@@ -73,7 +69,7 @@ async function withApp(index, fn) {
     browser = await remote({
       hostname: "127.0.0.1", port: driverPort, path: "/", logLevel: "error",
       connectionRetryCount: 1, connectionRetryTimeout: 60_000,
-      capabilities: tauriCapabilities(APP, "empty-query-workspace"),
+      capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
     });
     // A restored session may deliberately resume directly in a virtual query
     // workspace. The first-launch scenario below separately waits for .ls-block
@@ -133,12 +129,7 @@ async function splitAndFocusOther(browser) {
 }
 
 async function openSwitcher(browser, paneId, source = "") {
-  // The pane center may be an actionable control (for example Page display).
-  // Activate its current tab through the real strip before opening Ctrl+K so
-  // pane focus does not also open an unrelated modal over later tab clicks.
-  const activeTab = await browser.$(`${paneSelector(paneId)} .tab.active .tab-title`);
-  await activeTab.waitForDisplayed({ timeout: 5_000 });
-  await activeTab.click();
+  await browser.$(paneSelector(paneId)).click();
   await browser.keys(["Control", "k"]);
   const input = await browser.$(".switcher-input");
   await input.waitForExist({ timeout: 5_000 });
@@ -397,22 +388,10 @@ await withApp(1, async (browser) => {
 
   // (10) A valid workspace still executes under the existing bounded result path.
   await setSource(browser, origin, "fixture");
-  let finalState;
-  try {
-    await browser.waitUntil(async () => {
-      finalState = await paneState(browser, origin);
-      return finalState.status !== "Enter a search to begin." && /result/.test(finalState.status ?? "");
-    }, {
-      // This is a semantic route/execution proof, not a latency budget. A loaded
-      // release run once crossed the old ten-second wall even though an immediate
-      // exact-scenario rerun completed correctly. Performance has its own gates;
-      // retain a bounded wait here and report the last semantic state on failure.
-      timeout: 30_000,
-      timeoutMsg: "valid source did not reach the bounded live query path",
-    });
-  } catch (error) {
-    throw new Error(`${error.message}; lastState=${JSON.stringify(finalState)}`);
-  }
+  await browser.waitUntil(async () => {
+    const state = await paneState(browser, origin);
+    return state.status !== "Enter a search to begin." && /result/.test(state.status ?? "");
+  }, { timeout: 10_000, timeoutMsg: "valid source did not reach the bounded live query path" });
   sameDigest(postInitializationGraph, "valid virtual query execution");
 });
 

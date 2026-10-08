@@ -1,59 +1,24 @@
+import { isLeafLike } from "./queryIr";
 // The visual builder's model — **over the IR, not over text** (SPEC §7.1, §7.4).
-//
-// ## What this file no longer does, and why that is the point
-//
-// It used to hold a second query language: a tokenizer, a `parseQuery` that read
-// the OG DSL into a private `Clause` tree, a `toDsl`/`clauseDsl` that printed it
-// back, and a `clauseToAdvanced`/`advancedToClause` pair that converted between
-// the DSL and datalog. Four of those five were TWINS of `crates/tine-core/src/
-// query/` — the same questions ("what does this text mean", "what text says
-// this") answered a second time, in a second language, by a second author. They
-// disagreed exactly where it hurt: the frontend's `(task)` meant "no markers",
-// the engine's meant "any open task"; the frontend's `sort-by` defaulted one way
-// and OG's the other. **I-12: one question, one canonical answer.** After this
-// packet exactly one implementation prints a query, and it is in Rust.
-//
-// What survives here is what was never a twin: the immutable TREE EDITS a chip
-// bar performs (add / remove / replace / wrap / unwrap / flip), the VIEW edits
-// the sort and summarize controls perform, and the human PHRASE for a leaf. Those
-// are the builder's own questions — the engine has no opinion about what happens
-// when you click "Wrap in OR".
-//
-// ## The leaf constructors
-//
-// §7.4 makes the builder responsible for the SHAPE of the leaf a picker emits
-// ("the builder's *starts with* / *contains* / *ends with* rows emit `like`
-// patterns"). The shapes below are the ones `crates/tine-core/src/query/og.rs`
-// builds for the same user intent, so a chip added here and a query typed there
-// are the same IR and print to the same text. Each constructor names the `og.rs`
-// function it matches; the round trip (add a chip → print → re-parse → same IR)
-// is what pins them.
 
 import { MARKERS as TASK_MARKERS } from "../markers";
+import { DATE_PRESETS } from "./dateExpr";
 import type {
-  AggFn,
   Anchor,
   Attr,
   Cardinality,
   CmpOp,
-  Field,
   Filter,
   Leaf,
   ObservedType,
   Quant,
   Rel,
-  SortDir,
   Value,
-  ViewSettings,
 } from "./queryIr";
 
-// ---------------------------------------------------------------------------
 // Vocabulary the pickers offer
-// ---------------------------------------------------------------------------
 
-/** Which date a `between` row tests against. The unqualified form is OG's
- *  journal-only predicate; `any` is Tine's broader extension and must stay
- *  explicit so loading and saving a query never changes its membership. */
+/** Which date a `between` row tests against. */
 export type BetweenField = "any" | "journal" | "scheduled" | "deadline";
 export const BETWEEN_FIELDS: BetweenField[] = ["journal", "scheduled", "deadline", "any"];
 
@@ -62,24 +27,22 @@ export const MARKERS: string[] = [...TASK_MARKERS];
 export const PRIORITIES = ["A", "B", "C"];
 
 /** **How many levels of the tree the builder RENDERS (SPEC §7.4).**
- *
- *  This is a presentation cap, not a language limit: the parser's
- *  `QUERY_NESTING_MAX` is still 64 and a deeper query still parses, still
- *  round-trips and still runs. What changes at this depth is only how it is
- *  DRAWN — one `⟨advanced⟩` chip whose text is the subtree's phrase, edited in
- *  the query text pane below.
- *
- *  Three, because the indented-rule rendering costs horizontal width per level
- *  and the sheet has to survive a 360 px phone. And the bound covers EVERY
- *  rendering of the tree, not only the rows: {@link filterPhrase} (and so
- *  {@link filterLabel} and the chip's own text) stops here too, so a 64-deep
- *  hostile query produces a short bounded sentence rather than a recursive dump
- *  (I-22). Relation predicates and `off` count as levels exactly as rows do. */
+*
+*  This is a presentation cap, not a language limit: the parser's
+*  `QUERY_NESTING_MAX` is 128 and a deeper query still parses, still
+*  round-trips and still runs. What changes at this depth is only how it is
+*  DRAWN — one `⟨advanced⟩` chip whose text is the subtree's phrase, edited in
+*  the query text pane below.
+*
+*  Three, because the indented-rule rendering costs horizontal width per level
+*  and the sheet has to survive a 360 px phone. And the bound covers EVERY
+*  rendering of the tree, not only the rows: {@link filterPhrase} (and so
+*  {@link filterLabel} and the chip's own text) stops here too, so a 64-deep
+*  hostile query produces a short bounded sentence rather than a recursive dump
+*  (I-22). Relation predicates and `off` count as levels exactly as rows do. */
 export const MAX_QUERY_BUILDER_DEPTH = 3;
 
-/** The filter shapes the add-picker can build and the edit popover can re-collect.
- *  A NAME for a leaf shape, not a second IR: every one maps onto the `og.rs`
- *  construction of the same name. */
+/** The filter shapes the add-picker can build and the edit popover can re-collect. */
 export type BuilderLeafKind =
   | "page"
   | "task"
@@ -96,9 +59,7 @@ export type BuilderLeafKind =
   | "content"
   | "search";
 
-// ---------------------------------------------------------------------------
 // Leaf constructors — the IR shapes `og.rs` builds for the same intent
-// ---------------------------------------------------------------------------
 
 const attr = (a: Attr, op: CmpOp, value: Value): Filter => ({
   kind: "leaf",
@@ -115,13 +76,7 @@ const textList = (items: string[]): Value => ({
 /** `og.rs::through_page`: a page-row test read through the block's owning page. */
 const throughPage = (pred: Filter): Filter => rel("page", pred);
 
-/** `og.rs::escape_like`. Transcribed (D-9) rather than shared, because the
- *  builder has to produce the pattern synchronously as the user commits a chip
- *  and there is no text to hand the parser. `%`, `_` and `\` in the user's words
- *  are DATA — an unescaped `50%` row would silently match everything after the
- *  `50`. `og::plain_like_substring` is the exact inverse the OG printer applies,
- *  so the round trip only holds while these two agree; `queryBuilder.test.ts`
- *  pins the escaping. */
+/** `og.rs::escape_like`. */
 export function escapeLike(text: string): string {
   return text.replace(/[%_\\]/g, (ch) => `\\${ch}`);
 }
@@ -131,11 +86,43 @@ export function pageRefFilter(name: string): Filter {
   return rel("refs", attr("name", "eq", { kind: "text", text: name }));
 }
 
-/** `(task …)` — `og.rs` `"task" | "todo"`. An empty pick is OG's open-task set,
- *  which is the shipped reading the corpus depends on. */
+/** `(task …)` — `og.rs` `"task" | "todo"`. */
 export function taskFilter(markers: string[]): Filter {
   const picked = markers.length ? markers : ["TODO", "DOING", "NOW", "LATER"];
   return attr("task", "in", textList(picked));
+}
+
+/** Every task status OG knows: OG `logseq.db.default/built-in-markers`
+*  (`deps/db/src/logseq/db/default.cljs`). OG's `(task …)` rule needs a
+*  non-empty marker set, so "Any status" is spelled as this list — the one
+*  spelling OG reads as "every task". Tine's own marker list also has `STARTED`,
+*  which OG does not know; it is deliberately NOT written, so the text stays
+*  exactly what OG would run (GH #619, item 2). */
+export const OG_TASK_MARKERS: readonly string[] = [
+  "NOW",
+  "LATER",
+  "DOING",
+  "DONE",
+  "CANCELED",
+  "CANCELLED",
+  "IN-PROGRESS",
+  "TODO",
+  "WAIT",
+  "WAITING",
+];
+
+/** The "Any status" condition: `(task NOW LATER …)` over every OG marker. */
+export function anyTaskFilter(): Filter {
+  return taskFilter([...OG_TASK_MARKERS]);
+}
+
+/** Whether a marker list says "Any status": exactly OG's set, or every marker
+*  Tine itself knows (a hand-written list covering both reads the same). */
+export function isAnyTaskStatus(markers: string[]): boolean {
+  const have = new Set(markers.map((m) => m.toUpperCase()));
+  const covers = (all: readonly string[]) =>
+    have.size === all.length && all.every((m) => have.has(m));
+  return covers(OG_TASK_MARKERS) || covers(TASK_MARKERS);
 }
 
 /** `(priority …)` — `og.rs` `"priority"`. */
@@ -144,25 +131,16 @@ export function priorityFilter(levels: string[]): Filter {
 }
 
 /** A typed comparison on a property's VALUE, chosen by {@link propertyOperators}
- *  from the registry's effective type for the key. The plain-string form below is the
- *  untyped `= '<text>'` this builder could always say; this is the durable half
- *  P3 inherits, which is why the operator travels with its operand rather than
- *  being reconstructed from the text at every call site. */
+*  from the registry's effective type for the key. The plain-string form below is the
+*  untyped `= '<text>'` this builder could always say; this is the durable half
+*  P3 inherits, which is why the operator travels with its operand rather than
+*  being reconstructed from the text at every call site. */
 export interface PropertyValueTest {
   op: CmpOp;
   operand: Value;
 }
 
-/** `(property k)` / `(property k v)` — `og.rs::property_leaf`, the one shape
- *  §3.3 defines.
- *
- *  `value` is the whole value predicate:
- *   - `null` or `""` → the bare key test, the picker's `(any value)` row and
- *     OG's one-argument `(property k)`, i.e. `is_set` semantics. Unchanged, and
- *     offered by every type family (§9 P2);
- *   - a string → `value = '<text>'`, the untyped equality;
- *   - a {@link PropertyValueTest} → `value <op> <operand>` for the typed
- *     operators. */
+/** `(property k)` / `(property k v)` — `og.rs::property_leaf`, the one shape §3.3 defines. */
 export function propertyFilter(
   key: string,
   value: string | PropertyValueTest | null,
@@ -186,28 +164,26 @@ export function pagePropertyFilter(
   return throughPage(propertyFilter(key, value));
 }
 
-// ---------------------------------------------------------------------------
 // Typed operators (SPEC §7.4, §9 P2)
-// ---------------------------------------------------------------------------
 
 /** **A UI operator IDENTITY — not a `CmpOp` (SPEC §7.4, design §2.4).**
- *
- *  The row's `operator ▾` offers plain-English identities: *is more than*,
- *  *does not contain*, *is not set*. Several of them are not operators at all
- *  in the IR — *is not* is `not(prop('k') = v)`, *is blank* is a test on the
- *  atom count, *is checked* is a fixed boolean — so an identity cannot be a
- *  `CmpOp` and this union is deliberately its own vocabulary. Each identity has
- *  an ENCODER ({@link encodePropertyLeaf}) and a DECODER
- *  ({@link propertyLeafTest}), and the two are inverse; nothing here widens the
- *  IR, because every encoding composes `CmpOp`s, `Value`s and `Rel` shapes P0
- *  already has.
- *
- *  `has_other_value` is REOPEN-ONLY: it is P2's atom-level `!=`, which the menu
- *  no longer offers because §3.3 makes it a different predicate from *is not*
- *  (an owner WITHOUT the property matches *is not* and does not match `!=`). A
- *  leaf that still carries it — reopened from P2 text, or typed in the pane —
- *  must still reopen with its operator intact rather than be silently
- *  rewritten, so it decodes to an identity with an honest label. */
+*
+*  The row's `operator ▾` offers plain-English identities: *is more than*,
+*  *does not contain*, *is not set*. Several of them are not operators at all
+*  in the IR — *is not* is `not(prop('k') = v)`, *is blank* is a test on the
+*  atom count, *is checked* is a fixed boolean — so an identity cannot be a
+*  `CmpOp` and this union is deliberately its own vocabulary. Each identity has
+*  an ENCODER ({@link encodePropertyLeaf}) and a DECODER
+*  ({@link propertyLeafTest}), and the two are inverse; nothing here widens the
+*  IR, because every encoding composes `CmpOp`s, `Value`s and `Rel` shapes P0
+*  already has.
+*
+*  `has_other_value` is REOPEN-ONLY: it is P2's atom-level `!=`, which the menu
+*  no longer offers because §3.3 makes it a different predicate from *is not*
+*  (an owner WITHOUT the property matches *is not* and does not match `!=`). A
+*  leaf that still carries it — reopened from P2 text, or typed in the pane —
+*  must still reopen with its operator intact rather than be silently
+*  rewritten, so it decodes to an identity with an honest label. */
 export type PropertyOperatorId =
   | "is"
   | "is_not"
@@ -238,8 +214,7 @@ export interface PropertyOperator {
   id: PropertyOperatorId;
   /** The words the row shows. Plain English, never the operator's spelling. */
   label: string;
-  /** How many value inputs the row collects. `0` for the presence identities
-   *  and for the two checkbox identities, whose value is fixed. */
+  /** How many value inputs the row collects. */
   arity: 0 | 1 | 2;
 }
 
@@ -257,9 +232,7 @@ const numberOperand = (texts: string[]): Value | null => {
   return Number.isFinite(number) ? { kind: "number", number } : null;
 };
 
-/** §4.2.3/A6: a date operand is the LITERAL the author typed (`today`, `-30d`,
- *  `2026-01-01`, a journal title). Resolution is the engine's, at execution, so
- *  a saved query means the same thing tomorrow as `dateExpr.ts` previews today. */
+/** §4.2.3/A6: a date operand is the LITERAL the author typed (`today`, `-30d`, `2026-01-01`, a journal title). */
 const dateOperand = (texts: string[]): Value | null => {
   const literal = one(texts);
   return literal ? { kind: "date", literal } : null;
@@ -276,9 +249,7 @@ const boolOperand = (texts: string[]): Value | null => {
   return null;
 };
 
-/** The scalar operand for a key of this effective type. A non-numeric "number"
- *  is a typo, not a filter, and committing it as text would silently produce a
- *  leaf that matches nothing — so it is `null` and the row does not commit. */
+/** The scalar operand for a key of this effective type. */
 function scalarOperand(texts: string[], type: ObservedType): Value | null {
   switch (type) {
     case "number":
@@ -299,7 +270,7 @@ function rangeOperand(texts: string[], type: ObservedType): Value | null {
 }
 
 /** "contains" is a `like` PATTERN, not a substring: the user's `%`, `_` and `\`
- *  are data (`escapeLike`), exactly as `contentFilter` builds it. */
+*  are data (`escapeLike`), exactly as `contentFilter` builds it. */
 const containsOperand = (texts: string[]): Value | null => {
   const text = one(texts);
   return text ? { kind: "text", text: `%${escapeLike(text)}%` } : null;
@@ -310,9 +281,7 @@ const endsWithOperand = (texts: string[]): Value | null => {
   return text ? { kind: "text", text: `%${escapeLike(text)}` } : null;
 };
 
-/** How one identity is spelled in the IR. `negate` wraps the POSITIVE leaf in
- *  `not(…)` (§3.3): the builder's *is not* is true for an owner WITHOUT the
- *  property, which an atom-level `!=` is not. */
+/** How one identity is spelled in the IR. */
 interface Encoding {
   op: CmpOp;
   arity: 0 | 1 | 2;
@@ -350,10 +319,7 @@ const NULLARY: Partial<Record<PropertyOperatorId, true>> = {
   is_unchecked: true,
 };
 
-/** The words each identity shows. `many` changes only the wording of the
- *  equality identity: `value = 'x'` on a many-valued key already means "one of
- *  this key's values is x", so the operator was right and only the label lied
- *  (§9 P2). */
+/** The words each identity shows. */
 export function propertyOperatorLabel(
   id: PropertyOperatorId,
   cardinality: Cardinality = "one",
@@ -417,8 +383,7 @@ export function propertyOperatorArity(id: PropertyOperatorId): 0 | 1 | 2 {
 
 const IDENTITIES: Record<ObservedType, PropertyOperatorId[]> = {
   number: ["is", "is_not", "gt", "ge", "lt", "le", "between", "is_set", "is_not_set", "is_blank"],
-  // No "is not": a date atom has no honest negation short of `not(…)`, which
-  // the design table does not list (§7.4, design §2.4).
+  // No "is not": a date atom has no honest negation short of `not(…)`, which the design table does not list …
   date: ["is", "before", "on_or_before", "after", "on_or_after", "between", "is_set", "is_not_set"],
   text: [
     "contains",
@@ -436,25 +401,29 @@ const IDENTITIES: Record<ObservedType, PropertyOperatorId[]> = {
 };
 
 /**
- * **The operator menu for a property key, from the registry's effective type
- * (SPEC §7.4, design §2.4).**
- *
- * Pure, and the ONE producer of this question: the row renders exactly this
- * list. Three rules it encodes:
- *
- *  - **It chooses among operators the IR already has.** `CmpOp`, `Value` and
- *    the three §3.3 presence shapes are P0's; nothing here widens any of them.
- *  - **`is set` / `is not set` / `is blank` are three different identities**,
- *    because conflating them is a bug users report: absent, present-with-no-
- *    value and present-with-any-value are three different questions, and the
- *    registry knows which is which.
- *  - **Every negative identity wraps the POSITIVE leaf in `not(…)`** (§3.3), so
- *    an owner that lacks the property matches *is not*. The atom-level `!=` is
- *    a different predicate and is no longer offered.
- *
+* **The operator menu for a property key, from the registry's effective type
+* (SPEC §7.4, design §2.4).**
+*
+* Pure, and the ONE producer of this question: the row renders exactly this
+* list. Three rules it encodes:
+*
+*  - **It chooses among operators the IR already has.** `CmpOp`, `Value` and
+*    the three §3.3 presence shapes are P0's; nothing here widens any of them.
+*  - **`is set` / `is not set` / `is blank` are three different identities**,
+*    because conflating them is a bug users report: absent, present-with-no-
+*    value and present-with-any-value are three different questions, and the
+*    registry knows which is which.
+*  - **Every negative identity wraps the POSITIVE leaf in `not(…)`** (§3.3), so
+*    an owner that lacks the property matches *is not*. The atom-level `!=` is
+*    a different predicate and is no longer offered.
+*
  * The design table's `enum` row (≤ N distinct values) is deliberately absent:
  * the registry has no enum type, so there is nothing to read it from.
- */
+ * Number offers comparisons and between; date offers before/after and between;
+ * text offers substring and prefix/suffix checks. Ref offers references and its
+ * negation; checkbox offers checked, unchecked and not set. `has_other_value`
+ * is read back from IR but never offered in the menu.
+*/
 export function propertyOperators(effective: {
   type: ObservedType;
   cardinality: Cardinality;
@@ -479,8 +448,7 @@ const propsLeaf = (key: string, quant: Quant, atom: Filter | null): Filter => {
   };
 };
 
-/** What a row of the sheet holds: the identity, the key it tests, and the text
- *  in its value inputs. */
+/** What a row of the sheet holds: the identity, the key it tests, and the text in its value inputs. */
 export interface PropertyLeafTest {
   id: PropertyOperatorId;
   key: string;
@@ -491,12 +459,12 @@ export interface PropertyLeafTest {
 }
 
 /**
- * **An identity → the IR leaf it means.** The inverse of
- * {@link propertyLeafTest} on every row of the §7.4 table.
- *
- * `null` when the text in the value inputs is not a value of this type — the
- * row simply does not commit, rather than saving a leaf that matches nothing.
- */
+* **An identity → the IR leaf it means.** The inverse of
+* {@link propertyLeafTest} on every row of the §7.4 table.
+*
+* `null` when the text in the value inputs is not a value of this type — the
+* row simply does not commit, rather than saving a leaf that matches nothing.
+*/
 export function encodePropertyLeaf(spec: {
   id: PropertyOperatorId;
   key: string;
@@ -570,15 +538,15 @@ function likeTokens(pattern: string): LikeToken[] | null {
 }
 
 /**
- * **The inverse of {@link escapeLike}, told apart by SHAPE.**
- *
- * `%x%` is *contains*, `%x` is *ends with* and `x%` is *starts with* — three
- * different identities, so reading a pattern back has to distinguish them
- * rather than answer "some substring". The literal body is unescaped, so a
- * value the user typed with `%`, `_` or `\` in it round-trips; an escaped
- * wildcard is data, while an unescaped one in the middle is a pattern this
- * builder did not write and has no identity for.
- */
+* **The inverse of {@link escapeLike}, told apart by SHAPE.**
+*
+* `%x%` is *contains*, `%x` is *ends with* and `x%` is *starts with* — three
+* different identities, so reading a pattern back has to distinguish them
+* rather than answer "some substring". The literal body is unescaped, so a
+* value the user typed with `%`, `_` or `\` in it round-trips; an escaped
+* wildcard is data, while an unescaped one in the middle is a pattern this
+* builder did not write and has no identity for.
+*/
 export function readLikePattern(
   pattern: string,
 ): { shape: "contains" | "ends_with" | "starts_with" | "exact"; text: string } | null {
@@ -597,15 +565,15 @@ export function readLikePattern(
 }
 
 /**
- * **An IR leaf → the row that edits it.** The inverse of
- * {@link encodePropertyLeaf}, reading the WHOLE filter including a `not(…)`
- * wrapper, so every property leaf the builder can construct reopens with its
- * operator instead of silently losing it (the P2 follow-up this closes).
- *
- * `effective` disambiguates the ONE pair of identities with the same IR
- * spelling: `prop('k') = 'x'` is *is* for a text key and *references* for a ref
- * key. Everything else is told apart by the operator and the operand's kind.
- */
+* **An IR leaf → the row that edits it.** The inverse of
+* {@link encodePropertyLeaf}, reading the WHOLE filter including a `not(…)`
+* wrapper, so every property leaf the builder can construct reopens with its
+* operator instead of silently losing it (the P2 follow-up this closes).
+*
+* `effective` disambiguates the ONE pair of identities with the same IR
+* spelling: `prop('k') = 'x'` is *is* for a text key and *references* for a ref
+* key. Everything else is told apart by the operator and the operand's kind.
+*/
 export function propertyLeafTest(
   filter: Filter,
   effective?: { type: ObservedType; cardinality?: Cardinality },
@@ -689,8 +657,7 @@ export function propertyLeafTest(
   }
 }
 
-/** `(page-tags …)` — `og.rs` `"page-tags" | "tags"`: the page's `tags` property
- *  with a set test on its atoms. */
+/** `(page-tags …)` — `og.rs` `"page-tags" | "tags"`: the page's `tags` property with a set test on its atoms. */
 export function pageTagsFilter(tags: string[]): Filter {
   return throughPage(
     rel("props", {
@@ -705,9 +672,30 @@ export function planningFilter(which: "scheduled" | "deadline"): Filter {
   return attr(which, "is_set", { kind: "none" });
 }
 
-/** `(journal)` — `og.rs` `"journal"`. */
+/** The range "In a journal page" writes: wider than any journal date, in OG's
+*  own relative-date spelling (`->journal-day-int` accepts a signed count and a
+*  `y` unit; `(t/years -2000)` is year 26, `(t/years 2000)` year 4026). */
+export const JOURNAL_ANY_RANGE: readonly [string, string] = ["-2000y", "+2000y"];
+
+/** "In a journal page" — `(between -2000y +2000y)`. OG has no `(journal)`
+*  filter; its `between` rule (`deps/db/src/logseq/db/rules.cljc`) requires the
+*  block's page to be a journal, so a range wider than every journal date IS
+*  "is on a journal page", and OG reads the text the same way Tine does
+*  (GH #619, item 3). The legacy `(journal)` text Tine used to write still
+*  reads as this condition ({@link builderLeafKind}). */
 export function journalFilter(): Filter {
-  return throughPage(attr("journal", "eq", { kind: "bool", bool: true }));
+  return throughPage(boundedFilter("day", JOURNAL_ANY_RANGE[0], JOURNAL_ANY_RANGE[1]));
+}
+
+/** Whether `pred` (a page-row predicate) is the wide journal range. */
+function isJournalAnyRange(pred: Filter): boolean {
+  const leaf = asAttrLeaf(pred);
+  if (leaf?.attr !== "day" || leaf.op !== "between") return false;
+  if (leaf.value.kind !== "list" || leaf.value.items.length !== 2) return false;
+  return (
+    dateOf(leaf.value.items[0]) === JOURNAL_ANY_RANGE[0] &&
+    dateOf(leaf.value.items[1]) === JOURNAL_ANY_RANGE[1]
+  );
 }
 
 /** `(page x)` — `og.rs` `"page"`. */
@@ -716,13 +704,12 @@ export function onPageFilter(name: string): Filter {
 }
 
 /** `(namespace x)` — recursive membership: the normalized page name starts with
- *  `x/` (§3.2 M20), `og.rs` `"namespace"`. */
+*  `x/` (§3.2 M20), `og.rs` `"namespace"`. */
 export function namespaceFilter(ns: string): Filter {
   return throughPage(attr("name", "starts_with", { kind: "text", text: `${ns}/` }));
 }
 
-/** `og.rs::bounded`: two bounds are a `between`, one bound is the one-sided
- *  comparison, none is plain presence. Bounds stay UNRESOLVED in the IR. */
+/** `og.rs::bounded`: two bounds are a `between`, one bound is the one-sided comparison, none is plain presence. */
 function boundedFilter(which: Attr, start: string, end: string): Filter {
   const low = start.trim();
   const high = end.trim();
@@ -740,8 +727,7 @@ function boundedFilter(which: Attr, start: string, end: string): Filter {
   return attr(which, "is_set", { kind: "none" });
 }
 
-/** `(between [field] start end)` — `og.rs::between`. `any` expands to the
- *  faithful three-way `or`, exactly as the parser does. */
+/** `(between [field] start end)` — `og.rs::between`. */
 export function betweenFilter(field: BetweenField, start: string, end: string): Filter {
   switch (field) {
     case "journal":
@@ -763,7 +749,7 @@ export function betweenFilter(field: BetweenField, start: string, end: string): 
 }
 
 /** A bare quoted string — `og.rs::content_like`: a case-insensitive substring
- *  test on the block's visible content. */
+*  test on the block's visible content. */
 export function contentFilter(text: string): Filter {
   return attr("content", "like", { kind: "text", text: `%${escapeLike(text)}%` });
 }
@@ -773,9 +759,7 @@ export function searchFilter(source: string): Filter {
   return attr("content", "match", { kind: "text", text: source });
 }
 
-// ---------------------------------------------------------------------------
 // Recognizers — which builder shape, if any, an IR node is
-// ---------------------------------------------------------------------------
 
 function asAttrLeaf(filter: Filter): (Leaf & { kind: "attr" }) | null {
   return filter.kind === "leaf" && filter.leaf.kind === "attr" ? filter.leaf : null;
@@ -802,12 +786,14 @@ function dateOf(value: Value): string | null {
   return value.kind === "date" ? value.literal : null;
 }
 
-/** The `props` predicate's key and optional single atom test, mirroring
- *  `Filter::props_key` / `props_atom_test` on the Rust side. */
-function propsParts(pred: Filter): { key: string; atom: Filter | null } | null {
+/** The `props` predicate's key and its atom test, mirroring `Filter::props_key` /
+*  `props_atom_test` on the Rust side (one shared golden pins both): the key is
+*  the ONE direct key-equality item; everything else is the atom test, an `and`
+*  when there are several. Two keys is no property predicate. */
+export function propsParts(pred: Filter): { key: string; atom: Filter | null } | null {
   const items = pred.kind === "and" ? pred.items : [pred];
   let key: string | null = null;
-  let atom: Filter | null = null;
+  const atoms: Filter[] = [];
   for (const item of items) {
     const leaf = asAttrLeaf(item);
     if (leaf && leaf.attr === "key" && leaf.op === "eq") {
@@ -816,17 +802,13 @@ function propsParts(pred: Filter): { key: string; atom: Filter | null } | null {
       key = text;
       continue;
     }
-    if (atom != null) return null;
-    atom = item;
+    atoms.push(item);
   }
-  return key == null ? null : { key, atom };
+  if (key == null) return null;
+  return { key, atom: atoms.length === 0 ? null : atoms.length === 1 ? atoms[0] : { kind: "and", items: atoms } };
 }
 
-/** The property key a `props`/`page_prop` leaf tests, or `null` for any other
- *  shape. Read by the type surface (§6.3) so a chip's own menu can say what the
- *  key's type is; it deliberately does NOT require the value test to be a shape
- *  the pickers can re-collect, because a key's type is worth knowing for a
- *  typed comparison too. */
+/** The property key a `props`/`page_prop` leaf tests, or `null` for any other shape. */
 export function propertyLeafKey(filter: Filter): string | null {
   const page = asRelLeaf(filter, "page");
   if (page) return propertyLeafKey(page.pred);
@@ -836,9 +818,18 @@ export function propertyLeafKey(filter: Filter): string | null {
   return parts && parts.key !== "tags" ? parts.key : null;
 }
 
-/** Which builder shape this filter is, or `null` for anything the pickers cannot
- *  re-collect. `null` is not an error: an unrecognised subtree still RENDERS
- *  (see {@link filterLabel}) — it just has no "Edit…" affordance. */
+/** Which date a `between`-kind row ranges over, so the row can say "Scheduled" or "Deadline" instead of
+ *  the generic "Between dates" (GH #619 item 5). `null` for any other shape. */
+export function betweenRowField(filter: Filter): BetweenField | null {
+  if (builderLeafKind(filter) !== "between") return null;
+  const page = asRelLeaf(filter, "page");
+  const leaf = asAttrLeaf(page ? page.pred : filter);
+  if (!leaf) return null;
+  if (leaf.attr === "scheduled" || leaf.attr === "deadline") return leaf.attr;
+  return leaf.attr === "day" ? "journal" : null;
+}
+
+/** Which builder shape this filter is, or `null` for anything the pickers cannot re-collect. */
 export function builderLeafKind(filter: Filter): BuilderLeafKind | null {
   const page = asRelLeaf(filter, "page");
   if (page) {
@@ -849,6 +840,7 @@ export function builderLeafKind(filter: Filter): BuilderLeafKind | null {
     if (leaf?.attr === "journal") return "journal";
     if (leaf?.attr === "name" && leaf.op === "eq") return "onPage";
     if (leaf?.attr === "name" && leaf.op === "starts_with") return "namespace";
+    if (isJournalAnyRange(page.pred)) return "journal";
     if (leaf?.attr === "day") return "between";
     return null;
   }
@@ -885,9 +877,7 @@ export function builderLeafKind(filter: Filter): BuilderLeafKind | null {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Human-readable chip labels
-// ---------------------------------------------------------------------------
 
 const ATTR_PHRASE: Record<Attr, string> = {
   content: "text",
@@ -895,10 +885,13 @@ const ATTR_PHRASE: Record<Attr, string> = {
   priority: "priority",
   scheduled: "scheduled",
   deadline: "deadline",
+  created_at: "created",
+  last_modified_at: "last modified",
   name: "name",
   journal: "journal",
   day: "date",
   namespace: "namespace",
+  used_as_tag: "used as a tag",
   key: "key",
   value: "value",
   atom_count: "values",
@@ -939,19 +932,51 @@ function valuePhrase(value: Value): string {
   }
 }
 
-function betweenPhrase(value: Value): string {
-  if (value.kind !== "list" || value.items.length !== 2) return valuePhrase(value);
-  return `${dateOf(value.items[0]) ?? valuePhrase(value.items[0])} ~ ${dateOf(value.items[1]) ?? valuePhrase(value.items[1])}`;
+/** A relative-date bound in plain words (`-7d` → "7 days ago"); anything else — an
+ *  ISO date, a journal title — is shown as typed. Pure display: the stored token
+ *  is never rewritten. */
+function boundWords(token: string): string {
+  const t = token.trim();
+  switch (t.toLowerCase()) {
+    case "today":
+    case "now":
+      return "today";
+    case "yesterday":
+    case "tomorrow":
+      return t.toLowerCase();
+  }
+  const rel = /^([+-]?)(\d+)([dwmy])$/i.exec(t);
+  if (!rel) return t;
+  const unit = { d: "day", w: "week", m: "month", y: "year" }[rel[3].toLowerCase() as "d" | "w" | "m" | "y"];
+  const n = parseInt(rel[2], 10);
+  if (n === 0) return "today";
+  return `${n} ${unit}${n === 1 ? "" : "s"} ${rel[1] === "-" ? "ago" : "ahead"}`;
 }
 
-/** One piece of a rendered phrase (SPEC §7.2).
- *
- *  The resting sentence is typography, not a control panel, so the only thing
- *  the renderer needs to know about a piece of it is whether it is ordinary
- *  prose, a VALUE (drawn as a soft chip), a FIELD name, or the one bounded
- *  `advanced` segment that stands for a subtree too deep to draw. `title` is the
- *  hover text a retained `Raw` leaf carries — its diagnostic message — because
- *  the decoded payload is what the user reads and the message is why it is red. */
+/** The plain-words reading of a `between` pair: a preset's own name
+ *  ("next 7 days"), else "7 days ago to 7 days ahead". */
+function rangeWords(low: string, high: string): string {
+  const preset = DATE_PRESETS.find((p) => p.start === low.trim() && p.end === high.trim());
+  if (preset) return preset.label.toLowerCase();
+  return `${boundWords(low)} to ${boundWords(high)}`;
+}
+
+/** What a date condition on `attr` says — shared by the sentence, the row and the
+ *  value cell, so "scheduled: next 7 days" is spelled one way everywhere (GH #619). */
+function datePhrase(attr: Attr, leaf: Leaf & { kind: "attr" }): PhraseSegment[] | null {
+  const field = attr === "day" ? "journal date" : ATTR_PHRASE[attr];
+  if (leaf.op === "between" && leaf.value.kind === "list" && leaf.value.items.length === 2) {
+    const [low, high] = leaf.value.items.map((item) => dateOf(item) ?? valuePhrase(item));
+    return [words(`${field}: `), chip(rangeWords(low, high))];
+  }
+  if ((leaf.op === "ge" || leaf.op === "le") && leaf.value.kind === "date") {
+    const when = boundWords(leaf.value.literal);
+    return [words(`${field}: `), chip(leaf.op === "ge" ? `from ${when}` : `until ${when}`)];
+  }
+  return null;
+}
+
+/** One piece of a rendered phrase (SPEC §7.2). */
 export interface PhraseSegment {
   kind: "text" | "value" | "field" | "advanced";
   text: string;
@@ -964,23 +989,21 @@ const words = (text: string): PhraseSegment => seg("text", text);
 const chip = (text: string, title?: string): PhraseSegment => seg("value", text, title);
 const named = (text: string): PhraseSegment => seg("field", text);
 
-/** The one bounded segment a subtree past {@link MAX_QUERY_BUILDER_DEPTH}
- *  collapses to. A 64-deep hostile query must produce a short sentence and a
- *  short sheet, never a recursive dump (I-22). */
+/** The one bounded segment a subtree past {@link MAX_QUERY_BUILDER_DEPTH} collapses to. */
 export const ADVANCED_PHRASE = "⟨advanced⟩";
 
 /** **The phrase for one filter node — the ONE producer (§7.2).**
- *
- *  `filterLabel` is exactly this, joined; the sentence, the row and the
- *  `⟨advanced⟩` chip all read the same segments. Splitting the phrase into
- *  segments rather than a string is what lets the sentence draw values as chips
- *  without a second phrasing function that would drift from this one (I-12).
- *
- *  **Total by construction (the anti-Jira property, §7.5):** every query the
- *  parser accepts renders in the builder, invalid ones included — so this never
- *  returns "unsupported" and never throws. **Bounded by construction (I-22):**
- *  relation predicates and `off` are levels, and past the cap the answer is one
- *  `advanced` segment. */
+*
+*  `filterLabel` is exactly this, joined; the sentence, the row and the
+*  `⟨advanced⟩` chip all read the same segments. Splitting the phrase into
+*  segments rather than a string is what lets the sentence draw values as chips
+*  without a second phrasing function that would drift from this one (I-12).
+*
+*  **Total by construction (the anti-Jira property, §7.5):** every query the
+*  parser accepts renders in the builder, invalid ones included — so this never
+*  returns "unsupported" and never throws. **Bounded by construction (I-22):**
+*  relation predicates and `off` are levels, and past the cap the answer is one
+*  `advanced` segment. */
 export function filterPhrase(filter: Filter, depth = 0): PhraseSegment[] {
   if (depth >= MAX_QUERY_BUILDER_DEPTH) return [seg("advanced", ADVANCED_PHRASE)];
   switch (filter.kind) {
@@ -1002,10 +1025,7 @@ export function filterPhrase(filter: Filter, depth = 0): PhraseSegment[] {
   }
 }
 
-/** The phrase for one filter node, as a plain string.
- *
- *  Kept as its own export because it is what a chip's text, a `title` and every
- *  existing assertion are: `filterPhrase` joined, and nothing else. */
+/** The phrase for one filter node, as a plain string. */
 export function filterLabel(filter: Filter): string {
   return filterPhrase(filter)
     .map((segment) => segment.text)
@@ -1013,14 +1033,14 @@ export function filterLabel(filter: Filter): string {
 }
 
 /** **What the row's VALUE cell says: the operands, without the prose.**
- *
- *  A row already names its field and its operator in its own two cells, so the
- *  value cell must not repeat them — `Task marker ▾ | is any of ▾ | task: TODO
- *  | DOING` says "task" three times. This is not a second labeller (D-14): it
- *  is the SAME {@link filterPhrase} segments with the prose dropped, so a value
- *  can never drift from the sentence that quotes it. A leaf with no operands at
- *  all (`on journal page`) keeps its whole phrase, because an empty cell would
- *  be nothing to click. */
+*
+*  A row already names its field and its operator in its own two cells, so the
+*  value cell must not repeat them — `Task marker ▾ | is any of ▾ | task: TODO
+*  | DOING` says "task" three times. This is not a second labeller (D-14): it
+*  is the SAME {@link filterPhrase} segments with the prose dropped, so a value
+*  can never drift from the sentence that quotes it. A leaf with no operands at
+*  all (`on journal page`) keeps its whole phrase, because an empty cell would
+*  be nothing to click. */
 export function filterValueLabel(filter: Filter): string {
   const segments = filterPhrase(filter);
   const values = segments.filter((segment) => segment.kind === "value");
@@ -1045,7 +1065,9 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
         break;
     }
     if (leaf.rel === "page") {
-      const inner = filterPhrase(leaf.pred, depth + 1);
+      // A shape the builder itself writes is ONE condition, however deep its group sits:
+      // only a predicate the builder cannot re-collect is a nested level (GH #619).
+      const inner = filterPhrase(leaf.pred, kind ? depth : depth + 1);
       return kind === "pageProperty" ? [words("page "), ...inner] : inner;
     }
     if (leaf.rel === "props") {
@@ -1060,9 +1082,7 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
           return [named(parts.key), words(": "), chip(valuePhrase(atom.value))];
         }
       }
-      // A typed comparison. Reading it back through the same decoder the row
-      // uses keeps the sentence and the row saying the same thing; the generic
-      // `any props: AND` this used to fall through to said nothing at all.
+      // A typed comparison.
       const test = propertyLeafTest(filter);
       if (test) return propertyTestPhrase(test);
     }
@@ -1070,8 +1090,10 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
   }
   // An attribute leaf.
   switch (kind) {
-    case "task":
-      return [words("task: "), chip((listOf(leaf.value) ?? []).join(" | ") || "any")];
+    case "task": {
+      const markers = listOf(leaf.value) ?? [];
+      return [words("task: "), chip(isAnyTaskStatus(markers) ? "Any status" : markers.join(" | ") || "any")];
+    }
     case "priority":
       return [words("priority: "), chip((listOf(leaf.value) ?? []).join(" | ") || "any")];
     case "scheduled":
@@ -1089,9 +1111,9 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
     default:
       break;
   }
-  if (leaf.op === "between") {
-    const field = leaf.attr === "day" ? "" : `${ATTR_PHRASE[leaf.attr]} `;
-    return [words(`${field}between: `), chip(betweenPhrase(leaf.value))];
+  if (leaf.attr === "day" || leaf.attr === "scheduled" || leaf.attr === "deadline") {
+    const phrase = datePhrase(leaf.attr, leaf);
+    if (phrase) return phrase;
   }
   if (leaf.op === "is_set" || leaf.op === "is_not_set" || leaf.op === "is_blank") {
     return [named(ATTR_PHRASE[leaf.attr]), words(` ${OP_PHRASE[leaf.op]}`)];
@@ -1110,23 +1132,11 @@ function propertyTestPhrase(test: PropertyLeafTest): PhraseSegment[] {
   return [named(test.key), words(` ${label} `), chip(test.values.join(" ~ "))];
 }
 
-/** Whether a node is a single condition rather than a group — the unit that
- *  renders as ONE row, and the unit a `not`/`off` wrapper can decorate without
- *  costing a level of indentation. */
-function isLeafLike(filter: Filter): boolean {
-  return (
-    filter.kind === "leaf" ||
-    filter.kind === "raw" ||
-    filter.kind === "true" ||
-    filter.kind === "false"
-  );
-}
-
-/** Whether a filter says nothing — the empty query, whose sentence is
- *  "All blocks" rather than "Blocks where …". */
+/** Whether the filter places no condition: true or an empty and. An empty or
+ *  is false in the engine and matches nothing. */
 export function isEmptyFilter(filter: Filter): boolean {
   if (filter.kind === "true") return true;
-  return (filter.kind === "and" || filter.kind === "or") && filter.items.length === 0;
+  return filter.kind === "and" && filter.items.length === 0;
 }
 
 function joinPhrases(parts: PhraseSegment[][], connector: "and" | "or"): PhraseSegment[] {
@@ -1136,8 +1146,7 @@ function joinPhrases(parts: PhraseSegment[][], connector: "and" | "or"): PhraseS
   parts.forEach((part, index) => {
     if (index > 0) {
       const last = index === parts.length - 1;
-      // A list reads as a list: "a, b, and c" — commas between, the connector
-      // once, before the last. Two operands need no comma.
+      // A list reads as a list: "a, b, and c" — commas between, the connector once, before the last.
       if (connector === "and") out.push(words(last ? (parts.length > 2 ? ", and " : " and ") : ", "));
       else out.push(words(last ? " or " : ", "));
     }
@@ -1152,9 +1161,7 @@ function clausePhrase(filter: Filter, depth: number, isRoot: boolean): PhraseSeg
     case "and":
     case "or": {
       if (filter.items.length === 0) return filterPhrase(filter, depth);
-      // A one-item group needs no parentheses, but it is still a LEVEL: a chain
-      // of them is exactly what a hostile 64-deep query is, and descending it
-      // for free would make the sentence as deep as the tree (I-22).
+      // A one-item group needs no parentheses, but it is still a LEVEL: a chain of them is exactly what a hostile …
       if (filter.items.length === 1) return clausePhrase(filter.items[0], depth + 1, isRoot);
       const parts = filter.items.map((item) => clausePhrase(item, depth + 1, false));
       const joined = joinPhrases(parts, filter.kind === "or" ? "or" : "and");
@@ -1178,29 +1185,31 @@ function clausePhrase(filter: Filter, depth: number, isRoot: boolean): PhraseSeg
 }
 
 /**
- * **The resting sentence for a whole query (SPEC §7.2, design §2.1).**
- *
- * One plain-English line whose subject is the anchor — "Blocks where …" /
- * "Pages where …" — and whose predicate is the filter read as prose, values as
- * soft chips. It says "where" because the sheet's anchor line says "Find
- * blocks where …": the resting line and the editing line are one sentence.
- * An empty filter reads "All blocks" / "All pages": the honest
- * answer, and not a menu.
- *
- * It composes {@link filterPhrase} rather than re-phrasing anything, so the row
- * a user edits and the sentence they read are the same words, and it is bounded
- * by the same cap (I-22).
- */
-export function querySentence(query: { anchor: Anchor; filter: Filter }): PhraseSegment[] {
-  const plural = query.anchor === "page" ? "pages" : "blocks";
+* **The resting sentence for a whole query (SPEC §7.2, design §2.1).**
+*
+* One plain-English line whose subject is the anchor — "Blocks where …" /
+* "Pages where …" ("Pages and blocks where …" in both-families mode) — and whose predicate is the filter read as prose, values as
+* soft chips. It says "where" because the sheet's anchor line says "Find
+* blocks where …": the resting line and the editing line are one sentence.
+* An empty filter reads "All blocks" / "All pages": the honest
+* answer, and not a menu.
+*
+* It composes {@link filterPhrase} rather than re-phrasing anything, so the row
+* a user edits and the sentence they read are the same words, and it is bounded
+* by the same cap (I-22).
+*/
+export function querySentence(query: { anchor: Anchor; filter: Filter; both?: boolean }): PhraseSegment[] {
+  // GH #619 item 9: in "Pages and blocks" mode the subject is both families — never "Blocks where …"
+  // for a query that also lists pages.
+  const plural = query.both ? "pages and blocks" : query.anchor === "page" ? "pages" : "blocks";
   if (isEmptyFilter(query.filter)) return [words("All "), named(plural)];
-  const subject = plural === "pages" ? "Pages" : "Blocks";
+  const subject = query.both ? "Pages and blocks" : plural === "pages" ? "Pages" : "Blocks";
   return [named(subject), words(" where "), ...clausePhrase(query.filter, 0, true)];
 }
 
 /** The inverse of {@link escapeLike} for a pattern that is exactly `%<literal>%`
- *  — `og::plain_like_substring`, so a `contains` chip shows the words the user
- *  typed rather than the pattern the engine runs. */
+*  — `og::plain_like_substring`, so a `contains` chip shows the words the user
+*  typed rather than the pattern the engine runs. */
 export function plainLikeSubstring(pattern: string): string | null {
   if (!pattern.startsWith("%") || !pattern.endsWith("%") || pattern.length < 2) return null;
   const inner = pattern.slice(1, -1);
@@ -1219,479 +1228,23 @@ export function plainLikeSubstring(pattern: string): string | null {
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Sort presets — the one-click sort options in the bar
-// ---------------------------------------------------------------------------
-
-export interface SortPreset {
-  field: string;
-  dir: SortDir;
-  label: string;
-  hint: string;
-}
-export const SORT_PRESETS: SortPreset[] = [
-  { field: "modified", dir: "desc", label: "Newest first", hint: "Most recent first — journal pages by their date, others by when the file was last modified" },
-  { field: "modified", dir: "asc", label: "Oldest first", hint: "Oldest first — journal pages by their date, others by file modified time" },
-  { field: "priority", dir: "asc", label: "Priority A→C", hint: "Highest priority ([#A]) first; unprioritized last" },
-  { field: "page", dir: "asc", label: "Page A→Z", hint: "Alphabetically by the page each result lives on" },
-  { field: "deadline", dir: "asc", label: "Deadline", hint: "Soonest DEADLINE first; blocks without a deadline last" },
-  { field: "scheduled", dir: "asc", label: "Scheduled", hint: "Soonest SCHEDULED first; blocks without one last" },
-];
-
-/** Friendly text for a sort — a matching preset's label, else `field ↑/↓`. */
-export function sortLabel(field: string, dir: SortDir): string {
-  const preset = SORT_PRESETS.find((p) => p.field === field && p.dir === dir);
-  if (preset) return preset.label.toLowerCase();
-  return `${field} ${dir === "desc" ? "↓" : "↑"}`;
-}
-
-// ---------------------------------------------------------------------------
-// View settings edits (§7.6 in its P0 form)
-//
-// `sort-by`, `aggregate`, `group-by` and `sample` are PRESENTATION, never part of
-// the filter (§3.1, Q15). They used to ride in the clause tree as fake filter
-// children — which is why wrapping one in an OR silently disabled it. Here they
-// are edits on `ViewSettings`, and the printers re-emit them.
-// ---------------------------------------------------------------------------
-
-export function currentSort(view: ViewSettings): { field: Field; dir: SortDir } | null {
-  const first = view.sort?.[0];
-  return first ? { field: first[0], dir: first[1] } : null;
-}
-
-export function withSort(view: ViewSettings, sort: { field: Field; dir: SortDir } | null): ViewSettings {
-  const next = { ...view };
-  if (sort && sort.field.trim()) next.sort = [[sort.field.trim(), sort.dir]];
-  else delete next.sort;
-  return next;
-}
-
-export type AggState = { agg: AggFn; field: Field | null };
-
-export function currentAgg(view: ViewSettings): AggState | null {
-  const first = view.aggregates?.[0];
-  if (!first) return null;
-  const [field, agg] = first;
-  return { agg, field: field === "" ? null : field };
-}
-
-export function withAgg(view: ViewSettings, agg: AggState | null): ViewSettings {
-  const next = { ...view };
-  // `["", "count"]` is the whole-result count — today's fieldless
-  // `(aggregate count)` (X3). The empty field is the IR's own spelling for it,
-  // not a missing value.
-  if (agg) next.aggregates = [[agg.agg === "count" ? "" : (agg.field ?? ""), agg.agg]];
-  else delete next.aggregates;
-  return next;
-}
-
-export function currentGroup(view: ViewSettings): Field | null {
-  return view.group_by ?? null;
-}
-
-export function withGroup(view: ViewSettings, field: Field | null): ViewSettings {
-  const next = { ...view };
-  if (field && field.trim()) next.group_by = field.trim();
-  else delete next.group_by;
-  return next;
-}
-
-// ---------------------------------------------------------------------------
-// Immutable tree edits. `loc` is a path of child indices from the root.
-// `[]` denotes the root itself.
-//
-// The IR spells a boolean node two ways — `and`/`or` carry `items`, `not`/`off`
-// carry a single `inner` — so every edit goes through the one children accessor
-// below rather than reaching into a field name. A second accessor is how a
-// wrap-in-NOT would come to work on `and` and silently no-op on `not`.
-// ---------------------------------------------------------------------------
-
-/** The child list of a boolean node, or `null` for a leaf/raw/true/false. */
-export function filterChildren(filter: Filter): Filter[] | null {
-  switch (filter.kind) {
-    case "and":
-    case "or":
-      return filter.items;
-    case "not":
-    case "off":
-      return [filter.inner];
-    default:
-      return null;
-  }
-}
-
-function withChildren(filter: Filter, children: Filter[]): Filter {
-  switch (filter.kind) {
-    case "and":
-      return { kind: "and", items: children };
-    case "or":
-      return { kind: "or", items: children };
-    case "not":
-      return children[0] ? { kind: "not", inner: children[0] } : { kind: "and", items: [] };
-    case "off":
-      return children[0] ? { kind: "off", inner: children[0] } : { kind: "and", items: [] };
-    default:
-      return filter;
-  }
-}
-
-/** The root the bar edits: always an `and`/`or` node, so "add a filter here" has
- *  somewhere to add. A `true` filter is the empty query; anything else is
- *  adopted as the single child of an `and`, which the OG printer collapses back
- *  to the bare child (`og_form`'s single-child rule). */
-export function builderRoot(filter: Filter): Filter {
-  if (filter.kind === "and" || filter.kind === "or") return filter;
-  if (filter.kind === "true") return { kind: "and", items: [] };
-  return { kind: "and", items: [filter] };
-}
-
-function clone(filter: Filter): Filter {
-  return structuredClone(filter);
-}
-
-/** Resolve `loc` to the node that CONTAINS the addressed child, plus the index
- *  within it. `null` for the root or an invalid path. */
-function locate(root: Filter, loc: number[]): { parent: Filter; children: Filter[]; idx: number } | null {
-  if (loc.length === 0) return null;
-  let node = root;
-  for (let i = 0; i < loc.length - 1; i++) {
-    const kids = filterChildren(node);
-    if (!kids) return null;
-    const next = kids[loc[i]];
-    if (!next) return null;
-    node = next;
-  }
-  const children = filterChildren(node);
-  if (!children) return null;
-  return { parent: node, children, idx: loc[loc.length - 1] };
-}
-
-/** Resolve `loc` to the node it addresses (`[]` = root). */
-function nodeAt(root: Filter, loc: number[]): Filter | null {
-  let node = root;
-  for (const i of loc) {
-    const kids = filterChildren(node);
-    if (!kids) return null;
-    const next = kids[i];
-    if (!next) return null;
-    node = next;
-  }
-  return node;
-}
-
-/** Drop empty `and`/`or` nodes anywhere except the root, so an edit never leaves
- *  a vacuous `and([])` behind that would match everything. */
-function prune(filter: Filter): Filter | null {
-  const children = filterChildren(filter);
-  if (!children) return filter;
-  if (filter.kind === "not" || filter.kind === "off") {
-    const inner = prune(children[0]);
-    return inner ? withChildren(filter, [inner]) : null;
-  }
-  const kids = children.map(prune).filter((x): x is Filter => x != null);
-  if (kids.length === 0) return null;
-  return withChildren(filter, kids);
-}
-
-function normalize(root: Filter): Filter {
-  const children = filterChildren(root);
-  if (!children) return root;
-  const kids = children.map(prune).filter((x): x is Filter => x != null);
-  // A `not`/`off` root has no enclosing position, so it becomes an `and` root
-  // holding what survived — the same rule the old `Clause` normalizer used.
-  if (root.kind === "not" || root.kind === "off") return { kind: "and", items: kids };
-  return withChildren(root, kids);
-}
-
-/** **Put `next` where `loc` points, whatever kind of node holds that place.**
- *
- *  `locate` above answers a LIST question — it hands back the child array a
- *  splice needs — and `filterChildren` synthesizes a fresh one-element array for
- *  the unary `not`/`off`. That is right for a splice (you cannot splice two
- *  children into a `not`) and silently wrong for an assignment: writing into the
- *  synthesized array wrote into a copy, so every edit addressed at a child of a
- *  unary wrapper did nothing and STILL returned a new tree, which the sheet
- *  saved. The three group actions that address the `and`/`or` inside its
- *  wrapper — the all/any header, "None of" and "Ungroup" — were therefore dead
- *  clicks that wrote the block and pushed an empty step onto the undo stack, on
- *  every `none of` group and (since P6 let a group be switched off) on every
- *  disabled one. Assignment goes through here instead. */
-function assignAt(draft: Filter, loc: number[], next: Filter): boolean {
-  if (loc.length === 0) return false;
-  let node = draft;
-  for (let i = 0; i < loc.length - 1; i++) {
-    const kids = filterChildren(node);
-    const child = kids?.[loc[i]];
-    if (!child) return false;
-    node = child;
-  }
-  const index = loc[loc.length - 1];
-  if (node.kind === "and" || node.kind === "or") {
-    if (!node.items[index]) return false;
-    node.items[index] = next;
-    return true;
-  }
-  if (node.kind === "not" || node.kind === "off") {
-    if (index !== 0) return false;
-    node.inner = next;
-    return true;
-  }
-  return false;
-}
-
-/** Mutating a node the path does not address is a no-op that returns the input
- *  unchanged, so a stale `loc` from a popover that outlived its tree cannot
- *  corrupt the query. */
-function edit(root: Filter, apply: (draft: Filter) => boolean): Filter {
-  const draft = clone(root);
-  return apply(draft) ? normalize(draft) : root;
-}
-
-/** Append `filter` to the boolean node addressed by `opLoc` (`[]` = root). */
-export function addChild(root: Filter, opLoc: number[], filter: Filter): Filter {
-  return edit(root, (draft) => {
-    const node = nodeAt(draft, opLoc);
-    const children = node ? filterChildren(node) : null;
-    if (!node || !children || node.kind === "not" || node.kind === "off") return false;
-    children.push(filter);
-    return true;
-  });
-}
-
-export function removeAt(root: Filter, loc: number[]): Filter {
-  return edit(root, (draft) => {
-    const at = locate(draft, loc);
-    if (!at || !at.children[at.idx]) return false;
-    at.children.splice(at.idx, 1);
-    return true;
-  });
-}
-
-export function replaceAt(root: Filter, loc: number[], filter: Filter): Filter {
-  return edit(root, (draft) => assignAt(draft, loc, filter));
-}
-
-/** Wrap the node at `loc` in a new boolean node.
- *
- *  `off` is here for the same reason `not` is: the row's enabled control and the
- *  row's negative operator are both ONE wrapper around the node the user is
- *  looking at, and giving disabling its own wrap helper is how the two would
- *  come to disagree about what "the node at `loc`" means. */
-export function wrapAt(root: Filter, loc: number[], op: "and" | "or" | "not" | "off"): Filter {
-  return edit(root, (draft) => {
-    const current = nodeAt(draft, loc);
-    if (!current) return false;
-    return assignAt(
-      draft,
-      loc,
-      op === "not"
-        ? { kind: "not", inner: current }
-        : op === "off"
-          ? { kind: "off", inner: current }
-          : { kind: op, items: [current] },
-    );
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Grouping, reordering and disabling (SPEC §7.4 remainder, P6)
-// ---------------------------------------------------------------------------
-
-/** The three group headers the sheet offers, in the sheet's own words.
- *
- *  They are NOT three boolean node kinds: `none of` is `not(or(…))`, the shape
- *  the group header already reads back as "none of". §3.5 forbids De Morgan
- *  rewriting in the stored form, so the header the user picked is the shape that
- *  gets stored — the builder never restates a query as its dual. */
-export type GroupChoice = "all" | "any" | "none";
-
-const groupNode = (choice: GroupChoice, items: Filter[]): Filter =>
-  choice === "any"
-    ? { kind: "or", items }
-    : choice === "none"
-      ? { kind: "not", inner: { kind: "or", items } }
-      : { kind: "and", items };
-
-/** **Group the selected siblings into one group (§7.4, design §2.5).**
- *
- *  The ONE grouping operation: multi-select grouping, "group with the row
- *  above" and any future gesture all come through here, so the answer to "which
- *  rows end up where" is written once.
- *
- *  Three rules, and each of them is a way a selection can be quietly betrayed:
- *
- *   - **Selected items keep their original relative order.** Grouping is not a
- *     sort, and the order of an `and`/`or` list is the order the author typed
- *     (§3.5 keeps child order in the editable form).
- *   - **The group is inserted at the FIRST selected position**, and the
- *     unselected siblings keep their own order around it. A non-contiguous
- *     selection follows the same rule rather than a second one: the group lands
- *     where the topmost selected row was.
- *   - **Anything that is not a set of siblings is REFUSED**, not repaired. Locs
- *     from two different lists, a loc and its own descendant, a duplicate, an
- *     index past the end, a stale path from a menu that outlived its tree —
- *     each returns the tree unchanged, exactly as every other edit here does.
- *     Sibling-ness is what makes ancestor/descendant selection impossible: two
- *     locs with the same parent path can never nest.
- *
- *  Fewer than two locs is a refusal too: "group" of one row is a wrapper the
- *  user did not ask for. */
-export function groupSelected(root: Filter, locs: number[][], choice: GroupChoice): Filter {
-  if (locs.length < 2) return root;
-  const parent = locs[0].slice(0, -1);
-  const sibling = (loc: number[]) =>
-    loc.length === parent.length + 1 && parent.every((step, i) => loc[i] === step);
-  if (!locs.every(sibling)) return root;
-  const indices = [...new Set(locs.map((loc) => loc[loc.length - 1]))].sort((a, b) => a - b);
-  if (indices.length !== locs.length) return root;
-  return edit(root, (draft) => {
-    const node = nodeAt(draft, parent);
-    if (!node || (node.kind !== "and" && node.kind !== "or")) return false;
-    const children = node.items;
-    if (indices.some((index) => !Number.isInteger(index) || index < 0 || index >= children.length)) {
-      return false;
-    }
-    const picked = indices.map((index) => children[index]);
-    const chosen = new Set(indices);
-    const kept = children.filter((_, index) => !chosen.has(index));
-    // Where the group goes among what is LEFT: as many unselected siblings
-    // precede it as preceded the first selected row.
-    const before = children.slice(0, indices[0]).filter((_, index) => !chosen.has(index)).length;
-    kept.splice(before, 0, groupNode(choice, picked));
-    node.items = kept;
-    return true;
-  });
-}
-
-/** **"Group with the row above" (§7.4, design §2.5).**
- *
- *  The addressed row and the sibling immediately before it, in place. It is
- *  {@link groupSelected} with the selection the menu implies rather than a
- *  second implementation of the same question — which is why it offers the same
- *  all/any/none choices and lands in the same place. The first row of a list has
- *  nothing above it, so it is a no-op, as is a stale `loc`. */
-export function groupWithPrevious(root: Filter, loc: number[], choice: GroupChoice = "all"): Filter {
-  if (loc.length === 0) return root;
-  const previous = [...loc.slice(0, -1), loc[loc.length - 1] - 1];
-  return groupSelected(root, [previous, loc], choice);
-}
-
-/** **Move a row or group among its own siblings (§7.4, P6).**
- *
- *  `to` is the index the node ends up at in the SAME list — the drop position a
- *  drag reports and the one step "move up"/"move down" ask for, which is why
- *  keyboard and pointer produce the same tree.
- *
- *  **Atomic against the original tree.** Removing the node and inserting it
- *  again are one edit over one draft, so the destination is computed against the
- *  list the user was looking at. A remove-then-insert built out of `removeAt`
- *  and `addChild` would normalize in between: `removeAt` PRUNES an `and`/`or`
- *  its last child just left, so moving the only row out of a group would delete
- *  the group and shift every path after it — including the one holding the
- *  destination. Boundary destinations are refused rather than clamped: a clamp
- *  turns "I pressed up on the first row" into a silent save of an unchanged
- *  tree. */
-export function moveSibling(root: Filter, loc: number[], to: number): Filter {
-  return edit(root, (draft) => {
-    const at = locate(draft, loc);
-    if (!at) return false;
-    const node = at.children[at.idx];
-    if (!node) return false;
-    if (!Number.isInteger(to) || to < 0 || to >= at.children.length || to === at.idx) return false;
-    at.children.splice(at.idx, 1);
-    at.children.splice(to, 0, node);
-    return true;
-  });
-}
-
-/** The path of the node's OWN `off` wrapper, relative to the node, or `null`
- *  when it has none.
- *
- *  It mirrors the sheet's peel exactly: a row wears at most one `not` and one
- *  `off`, in either order (`off(not(x))` and `not(off(x))` both draw as one
- *  negated, disabled row, and §3.5 removes both the same way). The wrapper this
- *  finds is the row's own; an `off` deeper inside — on a relation's predicate,
- *  or on a child of a group — belongs to that node and is never touched here. */
-function ownOffPath(node: Filter): number[] | null {
-  if (node.kind === "off") return [];
-  if (node.kind === "not" && node.inner.kind === "off") return [0];
-  return null;
-}
-
-/** Whether the node at `loc` carries its OWN `off` wrapper. An ancestor's `off`
- *  is a different fact, and the sheet renders it as one (P6). */
-export function isDisabledAt(root: Filter, loc: number[]): boolean {
-  const node = nodeAt(root, loc);
-  return !!node && ownOffPath(node) !== null;
-}
-
-/** **The enabled control: add or remove this node's own `Off` (§3.5, §7.4).**
- *
- *  Disabling WRAPS the addressed node whole, so the `not` that spells the row's
- *  negative operator, the `raw` payload of a condition the parser could not
- *  read, an opaque advanced subtree past the rendering cap, and any `off` a
- *  DESCENDANT carries all travel inside it untouched. Enabling removes exactly
- *  the one wrapper the row draws as its greyed state and nothing else, so a
- *  disabled group full of individually disabled rows comes back as it went in.
- *
- *  Nothing is deleted, coerced or re-read: `Off` is structural omission, and a
- *  re-enabled `Raw` is the same bytes with the same diagnostic it always had
- *  (§4.3.2). */
-export function toggleDisabledAt(root: Filter, loc: number[]): Filter {
-  if (loc.length === 0) return root;
-  const node = nodeAt(root, loc);
-  if (!node) return root;
-  const off = ownOffPath(node);
-  if (off === null) return wrapAt(root, loc, "off");
-  // Enabling REBUILDS the row's whole node rather than addressing the `off`
-  // inside it. Both spellings — `off(not(x))` and `not(off(x))` — have to come
-  // back as `not(x)`, and stating that here keeps the answer next to
-  // `ownOffPath`, which is the only place that knows where the row's own `off`
-  // can be. The `not` and the payload under it are carried across untouched.
-  const inner = off.length === 0
-    ? (node as Filter & { kind: "off" }).inner
-    : { kind: "not" as const, inner: ((node as Filter & { kind: "not" }).inner as Filter & { kind: "off" }).inner };
-  return replaceAt(root, loc, clone(inner));
-}
-
-/** Replace the boolean node at `loc` with its children spliced into the parent.
- *
- *  Lossless: whatever the group held comes out exactly as it went in, `not` and
- *  `off` wrappers on the CHILDREN included — the sheet never normalizes a
- *  wrapper away to make its own rendering simpler (§3.5).
- *
- *  A group inside a unary wrapper (`not(or(a, b))`, `off(and(a, b))`) has no
- *  list to splice into. One child can still be lifted, which is exactly what
- *  unwrapping means there; several cannot, because the only ways to place them
- *  are a De Morgan rewrite or a distribution of the wrapper, and §3.5 forbids
- *  the stored form from being restated either way. So that case is REFUSED — the
- *  caller offers the action only where it can be performed — rather than
- *  half-done or silently saved as an unchanged tree. */
-export function unwrapAt(root: Filter, loc: number[]): Filter {
-  const current = nodeAt(root, loc);
-  const kids = current ? filterChildren(current) : null;
-  if (!current || !kids || kids.length === 0) return root;
-  const parent = loc.length > 1 ? nodeAt(root, loc.slice(0, -1)) : root;
-  if (parent && (parent.kind === "not" || parent.kind === "off")) {
-    return kids.length === 1 ? replaceAt(root, loc, clone(kids[0])) : root;
-  }
-  return edit(root, (draft) => {
-    const at = locate(draft, loc);
-    if (!at || !at.children[at.idx]) return false;
-    at.children.splice(at.idx, 1, ...(filterChildren(at.children[at.idx]) ?? []));
-    return true;
-  });
-}
-
-/** Change `and` ↔ `or` on the node addressed by `loc` (`[]` = root). */
-export function setOp(root: Filter, loc: number[], op: "and" | "or"): Filter {
-  if (loc.length === 0) {
-    if (root.kind !== "and" && root.kind !== "or") return root;
-    return normalize({ kind: op, items: structuredClone(filterChildren(root) ?? []) });
-  }
-  return edit(root, (draft) => {
-    const current = nodeAt(draft, loc);
-    if (!current || (current.kind !== "and" && current.kind !== "or")) return false;
-    return assignAt(draft, loc, { kind: op, items: current.items });
-  });
-}
+export { SORT_PRESETS, sortLabel, currentSort, withSort, currentAgg, withAgg, currentGroup, withGroup } from "./queryViewSettings";
+export type { SortPreset, AggState } from "./queryViewSettings";
+// Immutable tree edits live in ./queryTree (re-exported here: one import site).
+export {
+  filterChildren,
+  builderRoot,
+  addChild,
+  removeAt,
+  replaceAt,
+  wrapAt,
+  groupSelected,
+  groupWithPrevious,
+  moveSibling,
+  moveAcross,
+  isDisabledAt,
+  toggleDisabledAt,
+  unwrapAt,
+  setOp,
+} from "./queryTree";
+export type { GroupChoice } from "./queryTree";

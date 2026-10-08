@@ -1,18 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const backendMock = vi.hoisted(() => ({
-  getPage: vi.fn(),
-  getPageByPath: vi.fn(),
-  activateEditor: vi.fn(),
-  activateAbsentEditor: vi.fn(),
-  retireEditorActivation: vi.fn(),
-}));
+const backendMock = vi.hoisted(() => ({ getPage: vi.fn(), getPageByPath: vi.fn(), graphBindingGeneration: () => 1 }));
 vi.mock("../backend", () => ({ backend: () => backendMock }));
 
-import { loadSingle, pageByName, resetStore } from "../store";
+import { pageByName, resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
 import type { PageDto, PageKind, RefGroup } from "../types";
-import { bumpGraphEpoch, setGraphMeta } from "../ui";
-import { notifyGraphRebound } from "../modeHooks";
+import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
+import { setToasts, toasts } from "../toasts";
 import {
   hydrateVisibleQueryPages,
   queryHydrationCircuitStatus,
@@ -32,12 +27,10 @@ function page(name: string, kind: PageKind): PageDto {
 }
 
 beforeEach(() => {
+  setToasts([]);
   resetStore();
   backendMock.getPage.mockReset();
   backendMock.getPageByPath.mockReset();
-  backendMock.activateEditor.mockReset();
-  backendMock.activateAbsentEditor.mockReset();
-  backendMock.retireEditorActivation.mockReset();
   backendMock.getPage.mockImplementation(async (name: string, kind: PageKind) => ({
     name,
     kind,
@@ -45,21 +38,55 @@ beforeEach(() => {
     pre_block: null,
     blocks: [],
   }));
-  backendMock.activateEditor.mockImplementation(async (path: string) => ({
-    activation: 1,
-    target: path,
-    prospective: false,
-  }));
-  backendMock.activateAbsentEditor.mockImplementation(async (name: string, kind: PageKind) => ({
-    activation: 1,
-    target: `${kind === "journal" ? "journals" : "pages"}/${name}.md`,
-    prospective: true,
-  }));
-  backendMock.retireEditorActivation.mockResolvedValue(true);
   setGraphMeta({ root: "/graph" } as any);
 });
 
 describe("query sheet hydration identity", () => {
+  it("never replaces a loaded physical twin, even when both are ordinary pages", async () => {
+    loadSingle({ ...page("Twin", "page"), id: "pages/Twin.md" });
+    backendMock.getPageByPath.mockResolvedValue({ ...page("Twin", "page"), id: "pages/other.md" });
+    const source = { ...group("Twin", "page", "other-row"), path: "pages/other.md" };
+    await hydrateVisibleQueryPages([{ id: "other-row", page: "Twin" }], [source]);
+    expect(pageByName("Twin")?.id).toBe("pages/Twin.md");
+    expect(backendMock.getPageByPath).not.toHaveBeenCalled();
+  });
+
+  it("preserves a physical twin installed while a path read is pending", async () => {
+    let finish!: (dto: PageDto) => void;
+    backendMock.getPageByPath.mockImplementation(() => new Promise<PageDto>((resolve) => { finish = resolve; }));
+    const source = { ...group("Twin", "page", "other-row"), path: "pages/other.md" };
+    const pending = hydrateVisibleQueryPages([{ id: "other-row", page: "Twin" }], [source]);
+    loadSingle({ ...page("Twin", "page"), id: "pages/Twin.md" });
+    const dto = { ...page("Twin", "page"), id: "pages/other.md" };
+    finish(dto);
+    await pending;
+    expect(pageByName("Twin")?.id).toBe("pages/Twin.md");
+  });
+
+  it("leaves same-kind path twins DTO-only when both are visible", async () => {
+    const groups = [
+      { ...group("Twin", "page", "a"), path: "pages/a.md" },
+      { ...group("Twin", "page", "b"), path: "pages/b.md" },
+    ];
+    await hydrateVisibleQueryPages([{ id: "a", page: "Twin" }, { id: "b", page: "Twin" }], groups);
+    expect(backendMock.getPageByPath).not.toHaveBeenCalled();
+    expect(pageByName("Twin")).toBeUndefined();
+  });
+
+  it("loads the exact path into an empty name slot", async () => {
+    backendMock.getPageByPath.mockResolvedValue({ ...page("Twin", "page"), id: "pages/exact.md" });
+    const source = { ...group("Twin", "page", "exact"), path: "pages/exact.md" };
+    await hydrateVisibleQueryPages([{ id: "exact", page: "Twin" }], [source]);
+    expect(backendMock.getPageByPath).toHaveBeenCalledWith("pages/exact.md");
+    expect(pageByName("Twin")?.id).toBe("pages/exact.md");
+  });
+
+  it("reports a failed visible-page hydration with fixed text", async () => {
+    backendMock.getPage.mockRejectedValueOnce(new Error("private graph path"));
+    await hydrateVisibleQueryPages([{ id: "missing", page: "Missing" }], [group("Missing", "page", "missing")]);
+    expect(toasts().map((toast) => toast.message)).toContain("Couldn't load this query page for editing.");
+    expect(toasts().map((toast) => toast.message).join(" ")).not.toContain("private graph path");
+  });
   it("hydrates the visible block's kind when a page and journal share a name", async () => {
     const groups = [group("Twin", "page", "page-block"), group("Twin", "journal", "journal-block")];
 
@@ -137,26 +164,6 @@ describe("query sheet hydration identity", () => {
     expect(requestedNames).not.toContain("Old5");
     expect(pageByName("Fresh")?.kind).toBe("page");
     expect(pageByName("Old0")).toBeUndefined();
-  });
-
-  it("does not install a DTO read before a same-root graph rebound", async () => {
-    let resolve!: (dto: PageDto) => void;
-    backendMock.getPage.mockReturnValueOnce(new Promise<PageDto>((done) => {
-      resolve = done;
-    }));
-    const visible = group("Rebound", "page", "rebound-block");
-    const hydration = hydrateVisibleQueryPages(
-      [{ id: "rebound-block", page: "Rebound" }],
-      [visible],
-    );
-
-    await vi.waitFor(() => expect(backendMock.getPage).toHaveBeenCalledWith("Rebound", "page"));
-    notifyGraphRebound();
-    resolve(page("Rebound", "page"));
-    await hydration;
-
-    expect(pageByName("Rebound")).toBeUndefined();
-    expect(backendMock.activateEditor).not.toHaveBeenCalled();
   });
 
   it("bounds physical IPC concurrency across repeated graph switches", async () => {

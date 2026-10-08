@@ -16,10 +16,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-
-await ensureDisplay();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -77,7 +73,11 @@ const env = {
 const log = fs.openSync(path.join(TMP, "tauri-driver.log"), "w");
 const td = spawn(
   TAURI_DRIVER,
-  webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"),
+  [
+    "--port", String(DRIVER_PORT),
+    "--native-port", String(NATIVE_PORT),
+    "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
+  ],
   { env, stdio: ["ignore", log, log], detached: true },
 );
 
@@ -92,7 +92,11 @@ try {
     logLevel: "error",
     connectionRetryCount: 1,
     connectionRetryTimeout: 60_000,
-    capabilities: tauriCapabilities(APP, "clipboard-roundtrip"),
+    capabilities: {
+      browserName: "wry",
+      "wdio:enforceWebDriverClassic": true,
+      "tauri:options": { application: APP },
+    },
   });
 
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });

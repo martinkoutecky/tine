@@ -4,8 +4,8 @@ import { render } from "solid-js/web";
 
 const { setRawSpy } = vi.hoisted(() => ({ setRawSpy: vi.fn() }));
 
-vi.mock("../store", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../store")>();
+vi.mock("../document", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../document")>();
   return {
     ...actual,
     setRaw: (...args: Parameters<typeof actual.setRaw>) => {
@@ -16,10 +16,11 @@ vi.mock("../store", async (importOriginal) => {
 });
 
 import { backend } from "../backend";
-import { endEdit, startEditing } from "../editorController";
+import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
-import { flushPage } from "../persistence";
-import { doc, hasEditorLease, isDirty, loadSingle, pageByName, resetStore } from "../store";
+import { isDirty, pageByName, resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
 import type { BlockDto, PageDto, PageEntry } from "../types";
 import { Block } from "./Block";
 
@@ -93,40 +94,31 @@ function legacyImeEnter(textarea: HTMLTextAreaElement) {
 }
 
 describe("IME composition", () => {
-  it("releases each composition lease at end or unmount so a later replacement is not wedged", async () => {
-    const incumbent = { ...page("incumbent"), path: "pages/IME composition.md", rev: "baseline" };
-    loadSingle(incumbent);
+  it("enters the composition transaction from a composing input when compositionstart never fired", () => {
+    loadSingle(page(""));
     startEditing("ime-composition", 0);
     const { root, dispose } = mount(() => (
       <For each={pageByName("IME composition")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      setRawSpy.mockClear();
 
-    const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-    compositionStart(textarea);
-    expect(hasEditorLease("IME composition")).toBe(true);
-    composingInput(textarea, "first composition");
-    compositionEnd(textarea);
-    expect(hasEditorLease("IME composition")).toBe(false);
+      // No compositionstart: the composing flag on the input is the only signal.
+      composingInput(textarea, "n");
+      composingInput(textarea, "ni");
+      // The engine may interleave a plain input before compositionend; the
+      // transaction is still open, so it must not commit half a composition.
+      input(textarea, "ni");
+      expect(doc.byId["ime-composition"].raw).toBe("");
+      expect(setRawSpy).not.toHaveBeenCalled();
 
-    // Chromium-family engines may follow compositionend with this duplicate.
-    // It must neither recommit nor retain/release some older transaction's lease.
-    input(textarea, "first composition");
-    expect(hasEditorLease("IME composition")).toBe(false);
-
-    compositionStart(textarea);
-    expect(hasEditorLease("IME composition")).toBe(true);
-    composingInput(textarea, "second composition");
-    dispose();
-    expect(hasEditorLease("IME composition")).toBe(false);
-
-    expect(await flushPage("IME composition")).toBe(true);
-    endEdit("page-navigation");
-    expect(loadSingle({
-      ...page("replacement"),
-      path: "pages/other/IME composition.md",
-      rev: "replacement-rev",
-    })).toBe(true);
-    expect(doc.byId[pageByName("IME composition")!.roots[0]].raw).toBe("replacement");
+      compositionEnd(textarea);
+      expect(doc.byId["ime-composition"].raw).toBe("ni");
+      expect(setRawSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+    }
   });
 
   it("keeps intermediate page-reference input transaction-local, commits once on end, and ignores the trailing duplicate input", async () => {

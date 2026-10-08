@@ -7,11 +7,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-import { openPageByName } from "./lib/e2e-navigation.mjs";
-
-await ensureDisplay();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -44,7 +39,7 @@ const env = {
 };
 
 const log = fs.openSync(`${TMP}/tauri-driver.log`, "w");
-const td = spawn(TD, webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), {
+const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
   env, stdio: ["ignore", log, log], detached: true,
 });
 await sleep(2500);
@@ -53,7 +48,7 @@ let browser;
 try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
-    capabilities: tauriCapabilities(APP, "split-history"),
+    capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
 
@@ -78,13 +73,20 @@ try {
       .filter(Boolean),
   );
   const openPageViaSwitcher = async (paneId, name) => {
-    // Focusing the pane is this journey's own gesture — which pane a switcher
-    // opens into is the product behaviour under test. The selection itself uses
-    // the shared contract, with the readiness predicate scoped to this pane's
-    // own title rather than the window-level one. See
-    // scripts/lib/e2e-navigation.mjs.
     await focusPaneByPointer(paneId);
-    await openPageByName(browser, name, { pane: paneId, timeout: 10_000 });
+    await browser.keys(["Control", "k"]);
+    const input = await browser.$(".switcher-input");
+    await input.waitForExist({ timeout: 5_000 });
+    await input.setValue(name);
+    await browser.waitUntil(async () => browser.execute((label) => {
+      const active = document.querySelector(".switcher-row.active");
+      return active?.querySelector(".switcher-kind")?.textContent?.trim() === "page"
+        && active.querySelector(".switcher-name")?.textContent?.trim() === label;
+    }, name), { timeout: 10_000, timeoutMsg: `${name} did not become the active page result in the switcher` });
+    await browser.keys("Enter");
+    await browser.waitUntil(async () => browser.execute((id, expected) =>
+      document.querySelector(`[data-pane-id="${id}"] .page-title`)?.textContent?.trim() === expected,
+    paneId, name), { timeout: 10_000, timeoutMsg: `${paneId} did not open ${name}` });
   };
 
   await openPageViaSwitcher("main", "Page 1");

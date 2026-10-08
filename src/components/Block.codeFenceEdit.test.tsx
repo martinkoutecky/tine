@@ -1,11 +1,11 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { For, type JSX } from "solid-js";
-import { render } from "solid-js/web";
-import { initParser } from "../render/parse";
-import { loadSingle, pageByName, resetStore, setRaw } from "../store";
+import { describe, expect, it } from "vitest";
+import { For } from "solid-js";
+import { pageByName, setRaw } from "../document";
+import { loadSingle } from "../document/workingSet";
 import { startEditing } from "../editorController";
-import type { BlockDto, PageDto } from "../types";
+import type { PageDto } from "../types";
 import { Block } from "./Block";
+import { installBlockEditorLifecycle, mount, blk, page } from "../tests/blockEditorTestkit";
 import { Editor } from "./Block";
 
 // GH #357: rendered fenced code blocks are a mono, no-wrap, padded card
@@ -20,29 +20,7 @@ import { Editor } from "./Block";
 // earlier "raw text, fences editable" assertion below is intentionally
 // replaced by that contract; the card presentation (mono, no-wrap) is not.
 
-beforeAll(async () => {
-  await initParser();
-});
-
-afterEach(() => {
-  resetStore();
-  document.body.innerHTML = "";
-});
-
-function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => void } {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  const dispose = render(node, root);
-  return { root, dispose };
-}
-
-function blk(id: string, raw: string): BlockDto {
-  return { id, raw, collapsed: false, children: [] };
-}
-
-function page(name: string, blocks: BlockDto[]): PageDto {
-  return { name, kind: "page", title: name, pre_block: null, blocks };
-}
+installBlockEditorLifecycle();
 
 describe("code-fence editor presentation", () => {
   it("presents the editor of a code-only fenced block as the same code card", () => {
@@ -55,12 +33,13 @@ describe("code-fence editor presentation", () => {
     try {
       const ta = root.querySelector("textarea")!;
       expect(ta.classList.contains("code-edit")).toBe(true);
-      // Hard requirement: no soft wrapping — long code lines scroll
-      // horizontally exactly like the rendered white-space:pre card.
+      // Default is horizontal scrolling, shared with the rendered code card.
       expect(ta.getAttribute("wrap")).toBe("off");
       // Body-only code view (GH #412/#413): the payload, without the fences;
       // the wrapper bytes are preserved on commit (see codeBodyEdit tests).
       expect(ta.value).toBe("const x = 1;\nconsole.log(x);");
+      expect.soft(root.querySelector(".code-language")?.textContent).toBe("js");
+      expect.soft([...root.querySelectorAll(".calc-lineno")].map(el => el.textContent)).toEqual(["1", "2"]);
     } finally {
       dispose();
     }
@@ -110,6 +89,8 @@ describe("code-fence editor presentation", () => {
       const ta = root.querySelector("textarea")!;
       expect(ta.classList.contains("code-edit")).toBe(true);
       expect(ta.getAttribute("wrap")).toBe("off");
+      expect(root.querySelector(".code-language")?.textContent).toBe("python");
+      expect(root.querySelector(".calc-lineno")?.textContent).toBe("1");
     } finally {
       dispose();
     }

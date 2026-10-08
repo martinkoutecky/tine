@@ -12,6 +12,13 @@ const forest: ExportNode[] = [
 ];
 
 describe("exportHtml", () => {
+  it("keeps body drawer lookalikes in Org exports", () => {
+    const raw = "* Heading\nBody\n:PROPERTIES:\n:note: prose\n:END:";
+    const html = exportHtml([{ raw, format: "org", children: [] }], {
+      stripLinks: false, removeEmphasis: false, removeTags: false,
+    });
+    expect(html, "Org drawer rule: exportHtml keeps the body drawer exemplar").toContain(":note: prose");
+  });
   it("serializes an escaped nested HTML fragment and omits properties", () => {
     const result = exportHtml(forest, {
       stripLinks: false,
@@ -42,4 +49,19 @@ describe("exportHtml", () => {
     expect(result).not.toContain("#tag");
     expect(result).not.toContain("Child");
   });
+});
+
+it("keeps fenced property-shaped literals during HTML export (OG-B-FRONT pending)", () => {
+  expect(exportHtml([{raw: "```\nid:: literal\n```", children: []}], {
+    stripLinks: false, removeEmphasis: false, removeTags: false,
+  })).toContain("id:: literal");
+});
+
+it("D16 HTML and OPML preserve literal syntax while cleaning real markup", () => {
+  const raw = "`[[literal]] #tag **code**` [[Page]] #real **bold**";
+  const opts = {stripLinks:true, removeTags:true, removeEmphasis:false};
+  const html = exportHtml([{raw, children: []}], opts);
+  expect(html).toContain("[[literal]] #tag **code**");
+  expect(html).toContain("<strong>bold</strong>");
+  expect(html).not.toContain("#real");
 });

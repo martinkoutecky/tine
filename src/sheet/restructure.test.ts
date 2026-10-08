@@ -1,16 +1,15 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { __setBackendForTest } from "../backend";
-import { graphBindingRuntime } from "../graphBindingRuntime";
 import { initParser } from "../render/parse";
-import { doc, pageToDto, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../store";
+import { resetStore, undo } from "../document";
+import { pageToDto } from "../document/convert";
+import { type FeedPage, type Node as StoreNode } from "../document/model";
+import { doc, setDoc } from "../document/model";
 import { flatten, hierarchify } from "./restructure";
 
 beforeAll(() => initParser());
 
 beforeEach(() => {
   resetStore();
-  graphBindingRuntime.bind(1, { binding_generation: 1 });
-  __setBackendForTest(null);
 });
 
 function page(roots: string[]): FeedPage {
@@ -104,3 +103,33 @@ describe("sheet restructure", () => {
     expect(pageToDto("Sheet")).toEqual(before);
   });
 });
+
+it("flatten retains grouping rows that carry authored continuation bytes", () => {
+  setDoc({ byId: {
+    table: node("table", "Table\ntine.view:: table", null, ["g"]),
+    g: node("g", "TODO\nKEEP THIS NOTE\nowner:: me", "table", ["r"]),
+    r: node("r", "TODO Task", "g"),
+  }, pages: [page(["table"])], feed: ["Sheet"], loaded: true });
+  const before = pageToDto("Sheet");
+  expect(flatten("table")).toBe(true);
+  expect(doc.byId.g?.raw).toBe("TODO\nKEEP THIS NOTE\nowner:: me");
+  expect(doc.byId.table.children).toEqual(["g", "r"]);
+  expect(doc.byId.g.children).toEqual([]);
+  undo();
+  expect(pageToDto("Sheet")).toEqual(before);
+});
+
+
+it.each([" TODO ", "Arbitrary label", "TODO\n", "TODO\ncollapsed:: true"])(
+  "flatten preserves group bytes beyond a represented field: %s", (raw) => {
+    setDoc({ byId: {
+      table: node("table", "Table\ntine.view:: table", null, ["g"]),
+      g: node("g", raw, "table", ["r"]), r: node("r", "Task", "g"),
+    }, pages: [page(["table"])], feed: ["Sheet"], loaded: true });
+    const projected = pageToDto("Sheet")!.blocks[0].children[0].raw;
+    expect(flatten("table")).toBe(true);
+    expect(doc.byId.g.raw).toBe(raw);
+    expect(doc.byId.g.children).toEqual([]);
+    expect(pageToDto("Sheet")!.blocks[0].children[0].raw).toBe(projected);
+  },
+);

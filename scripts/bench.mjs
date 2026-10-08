@@ -27,7 +27,7 @@
 // Orphan-vite note: run this node script DIRECTLY (no `timeout` wrapper); the
 // try/finally SIGKILLs the vite child by PID.
 
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -63,14 +63,14 @@ const min = (xs) => xs.reduce((a, b) => (b < a ? b : a), Infinity);
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
 const round = (x) => Math.round(x * 10) / 10;
 
-// In-page: resolve with performance.now()-t0 once `.ls-block` count is large and
+// In-page: resolve with performance.now()-t0 once the routed Big page is usable and
 // has been stable for 3 animation frames (render settled). `t0` is a window global
 // set right before the triggering action.
 const WAIT_STABLE = () => new Promise((res) => {
   let last = -1, stable = 0;
   const tick = () => {
     const n = document.querySelectorAll(".ls-block").length;
-    if (n > 1000 && n === last) { if (++stable >= 3) return res(performance.now() - window.__t0); }
+    if (document.querySelector(".page-title")?.textContent?.trim() === "Big" && n > 0 && n === last) { if (++stable >= 3) return res(performance.now() - window.__t0); }
     else { last = n; stable = 0; }
     requestAnimationFrame(tick);
   };

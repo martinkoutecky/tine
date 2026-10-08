@@ -1,24 +1,6 @@
 import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-function rustModuleSource(root) {
-  const files = [root];
-  const visit = (directory) => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const child = path.join(directory, entry.name);
-      if (entry.isDirectory()) visit(child);
-      else if (entry.isFile() && entry.name.endsWith(".rs")) files.push(child);
-    }
-  };
-  const moduleDirectory = root.replace(/\.rs$/, "");
-  if (fs.existsSync(moduleDirectory)) visit(moduleDirectory);
-  return files.sort().map((file) => fs.readFileSync(file, "utf8")).join("\n");
-}
-
-const source = rustModuleSource(
-  fileURLToPath(new URL("../src-tauri/src/commands.rs", import.meta.url)),
-);
+const source = fs.readFileSync(new URL("../src-tauri/src/commands.rs", import.meta.url), "utf8");
 const start = source.indexOf("pub(crate) fn tine_open_devtools");
 const end = source.indexOf("\n#[tauri::command]", start + 1);
 if (start < 0 || end < 0) throw new Error("could not locate tine_open_devtools");

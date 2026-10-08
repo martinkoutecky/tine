@@ -13,11 +13,13 @@
 
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { pushToast } from "./toasts";
 
 const KEY = "asset_name_format";
 
 /** Tine's default: the plain original filename (closest to OG for imported files).
- *  Collisions are still de-duplicated by the backend (`reserve_asset` → `_N`). */
+ *  Collisions are still de-duplicated by the backend (`assets::save_asset` → `_N`). */
 export const DEFAULT_ASSET_NAME_FORMAT = "%assetname.%ext";
 /** The previous Tine default — a sortable timestamp prefix — offered as a preset. */
 export const STAMPED_ASSET_NAME_FORMAT = "%yyyymmdd-%hhmmss-%assetname.%ext";
@@ -27,19 +29,25 @@ const [fmt, setFmtSig] = createSignal(DEFAULT_ASSET_NAME_FORMAT);
 /** Reactive: the asset-filename format template (read at insert time). */
 export const assetNameFormat = fmt;
 
-/** Set + persist the template. Blank reverts to the default. */
+/** Trim and apply this device-local template immediately; whitespace selects
+ * the default. Queue a settings write. Failure restores the last confirmed
+ * value and toasts; return does not confirm persistence. O(1) plus write. */
 export function setAssetNameFormat(s: string): void {
   const v = s.trim() || DEFAULT_ASSET_NAME_FORMAT;
-  setFmtSig(v);
-  void backend().setAppString(KEY, v).catch(() => {});
+  writePreference(fmt, setFmtSig, v, (next) => backend().setAppString(KEY, next), "asset filename format");
 }
 
-/** Load the persisted template at startup (default = plain original name). */
+/** Load the device template at startup (default = plain name); read failure
+ * toasts and resolves, and a later user write wins. */
 export async function initAssetSettings(): Promise<void> {
+  const revision = preferenceRevision(fmt);
   try {
     const v = await backend().getAppString(KEY, DEFAULT_ASSET_NAME_FORMAT);
-    setFmtSig(v || DEFAULT_ASSET_NAME_FORMAT);
+    if (preferenceReadCurrent(fmt, revision)) {
+      setFmtSig(v || DEFAULT_ASSET_NAME_FORMAT);
+      seedPreference(fmt);
+    }
   } catch {
-    /* keep the default */
+    pushToast("Could not load asset filename format.", "error");
   }
 }

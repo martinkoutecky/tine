@@ -1,24 +1,10 @@
+import { BlockList } from "./BlockList";
+import { resizeSidebar, commitSidebarWidth } from "../sidebarSizing";
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
-import {
-  rightSidebar,
-  rightSidebarOpen,
-  toggleRightSidebar,
-  closeRightSidebarItem,
-  closeAllRightSidebarItems,
-  setRightSidebarItemCollapsed,
-  setAllRightSidebarItemsCollapsed,
-  rightSidebarWidth,
-  setRightSidebarWidth,
-  persistRightSidebarWidth,
-  graphEpoch,
-  sidebarItemKey,
-  renamePageInNavigation,
-  registerRightSidebarClosePreparation,
-  moveRightSidebarItem,
-  pushToast,
-  type SidebarItem,
-} from "../ui";
+import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, type SidebarBlock, type SidebarItem } from "../ui";
 import { beginRowReorderDrag, rowReorderClickSuppressed, type RowDropTarget } from "./rowReorder";
+import "../styles/rightSidebarReorder.css";
+import { graphEpoch } from "../graphSession";
 import { mobileDrawerMode } from "../mobileDrawers";
 import { registerTransientLayer } from "../transientLayers";
 import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell";
@@ -27,14 +13,14 @@ import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
-import { doc, ensurePageLoaded, onPageBecameReplaceable, pageByName, resolveBlockRef } from "../store";
+import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, node as docNode } from "../document";
 import { visibleBody } from "../render/block";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
+import { TaggedPages } from "./TaggedPages";
 import { LinkedReferences } from "./LinkedReferences";
 import { PageTypingTarget } from "./Page";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { endEditForSurface } from "../editorController";
-import { graphBinding } from "../persistence";
 import { FailureBoundary } from "./FailureBoundary";
 
 function surfaceKey(item: SidebarItem): string {
@@ -44,11 +30,21 @@ function surfaceKey(item: SidebarItem): string {
 // Live drop target while a row reorder drag is in progress (GH #211).
 const [rsDropTarget, setRsDropTarget] = createSignal<RowDropTarget | null>(null);
 /** Pointerdown on a row head starts a reorder drag, unless it landed on an
- *  interactive child (toggle/close button, title link). */
-function startRowDrag(index: number, event: PointerEvent) {
+ *  interactive child (toggle/close button, title link). The drop lands before
+ *  or after the target row, within the list only. */
+function startRowDrag(from: number, event: PointerEvent) {
   if ((event.target as HTMLElement | null)?.closest("button, a, input, textarea, [contenteditable=\"true\"]")) return;
-  beginRowReorderDrag(event, index, ".right-sidebar-body .rs-item", setRsDropTarget, moveRightSidebarItem);
+  beginRowReorderDrag(event, ".right-sidebar-body .rs-item", setRsDropTarget, ({ index, before }) => {
+    const at = index + (before ? 0 : 1);
+    moveRightSidebarItem(from, at > from ? at - 1 : at);
+  });
 }
+/** The reorder attributes every sidebar row carries. */
+function rowAttrs(index: number) {
+  const drop = () => rsDropTarget()?.index === index ? rsDropTarget() : null;
+  return { index, before: () => drop()?.before === true, after: () => drop()?.before === false };
+}
+type Row = ReturnType<typeof rowAttrs>;
 
 /** Commit the active textarea synchronously through its blur handler before a
  * disclosure removes the owning surface. Then clear any remaining edit owner
@@ -70,11 +66,10 @@ function restoreDisclosureFocus(key: string) {
   });
 }
 
-// Right sidebar: a stack of pages/blocks opened for reference. Each item is a
-// LIVE reference — it loads its page into the shared working set and renders the
-// same editable <Block> the main view uses, so edits here are edits to the one
-// underlying node and propagate everywhere (OG's model, kept lazy). A parked
-// {{query}} also stays live, since it's the real block.
+/** Render open sidebar pages and blocks as live editable surfaces. Opening an
+ * item may load its page into the shared working set; edits change the same
+ * nodes as the main pane. Hidden state renders nothing. O(visible sidebar
+ * blocks) plus page-load latency. */
 export function RightSidebar(): JSX.Element {
   const [actionsOpen, setActionsOpen] = createSignal(false);
   let actionsButton: HTMLButtonElement | undefined;
@@ -134,11 +129,11 @@ export function RightSidebar(): JSX.Element {
           onMouseDown={(e) => {
             e.preventDefault();
             const onMove = (ev: MouseEvent) =>
-              setRightSidebarWidth(Math.min(800, Math.max(220, window.innerWidth - ev.clientX)));
+              resizeSidebar("right", window.innerWidth - ev.clientX);
             const onUp = () => {
               window.removeEventListener("mousemove", onMove);
               window.removeEventListener("mouseup", onUp);
-              persistRightSidebarWidth();
+              commitSidebarWidth("right");
             };
             window.addEventListener("mousemove", onMove);
             window.addEventListener("mouseup", onUp);
@@ -198,7 +193,7 @@ export function RightSidebar(): JSX.Element {
                 // Each sidebar item is its own editing surface, so a block that
                 // also shows in the main pane doesn't fight it for the caret.
                 <SurfaceContext.Provider value={key}>
-                  <SidebarItemView item={item} surfaceKey={key} collapsed={!!item.collapsed} onToggle={collapse} onClose={close} rowIndex={i()} onHeadPointerDown={(e) => startRowDrag(i(), e)} />
+                  <FailureBoundary region="This sidebar item"><SidebarItemView item={item} surfaceKey={key} collapsed={!!item.collapsed} onToggle={collapse} onClose={close} row={rowAttrs(i())} /></FailureBoundary>
                 </SurfaceContext.Provider>
                 );
               }}
@@ -210,125 +205,57 @@ export function RightSidebar(): JSX.Element {
   );
 }
 
-// Ensure the item's page is loaded into the working set. Fire-and-forget side
-// effect (NOT a resource whose error state could gate rendering): the body
-// renders off actual store presence, so a failed early attempt is harmless.
+// Ensure the item's page is loaded into the working set. Return an error signal
+// so a failed load is visible while the item stays available for retry.
 // Re-runs on graphEpoch so a sidebar restored *before* the graph is open
-// retries once it opens.
+// retries once it opens. A load refused because another file holding the name
+// has unsaved work says so and re-runs once that page is replaceable, instead
+// of leaving an empty body observing nothing (GH #254 family, master 7bd793bd0).
 function useEnsurePage(
   name: () => string,
   kind: () => "journal" | "page",
   path: () => string | undefined,
   enabled: () => boolean,
 ) {
+  const uid = createUniqueId();
+  const [loadError, setLoadError] = createSignal<string | null>(null);
+  const [retry, setRetry] = createSignal(0);
   createEffect(() => {
     if (!enabled()) return;
+    retry();
+    setLoadError(null);
     const epoch = graphEpoch();
-    const binding = graphBinding();
     const n = name();
     const k = kind();
     const p = path();
     const loaded = pageByName(n);
-    if (n && (!loaded || (p && loaded.path !== p))) {
+    if (n && (!loaded || (p && loaded.id !== p))) {
       let active = true;
-      // Registered from the SYNCHRONOUS effect body, never from an awaited
-      // `.then`: an `onCleanup` created outside the Solid owner never runs, so a
-      // disposed refusal would leak a permanently inactive listener.
-      let stopRetry: (() => void) | null = null;
-      onCleanup(() => {
-        active = false;
-        stopRetry?.();
-      });
-      // DURABLE, not one-shot: the retry can itself be refused again — a lease
-      // taken during its awaited read is enough — and a listener that
-      // unsubscribed before that read would strand the item on an empty body.
-      // One read at a time. Two sweeps landing while a retry read is pending
-      // otherwise fan out into several reads of the same target; the refusal gate
-      // still keeps them SAFE, but they are wasted work on a path that can be
-      // driven by any unrelated save.
-      let retryInFlight = false;
-      const retryWhenFreed = (pageName: string) => {
-        stopRetry?.();
-        stopRetry = onPageBecameReplaceable(pageName, () => {
-          if (!active || epoch !== graphEpoch() || binding !== graphBinding()) {
-            stopRetry?.();
-            stopRetry = null;
-            return;
-          }
-          if (retryInFlight) return;
-          retryInFlight = true;
-          void (p ? backend().getPageByPath(p) : backend().getPage(n, k))
-            .then(async (fresh) => {
-              if (!active || epoch !== graphEpoch() || binding !== graphBinding() || !fresh) return;
-              if (!(await ensurePageLoaded(fresh, {
-                expectedGraphBinding: binding,
-                isRequestLive: () => active
-                  && epoch === graphEpoch()
-                  && binding === graphBinding(),
-              }))) {
-                stopRetry?.();
-                stopRetry = null;
-              }
-            })
-            .catch(() => {})
-            .finally(() => {
-              retryInFlight = false;
-            });
-        });
-      };
+      let stopWaiting: (() => void) | undefined;
+      onCleanup(() => { active = false; stopWaiting?.(); });
       const request = p ? backend().getPageByPath(p) : backend().getPage(n, k);
       void request
-        .then(async (dto) => {
+        .then((dto) => {
           // Drop a load that resolved after a graph switch — otherwise it would
           // insert an old-graph page into the new graph's working set.
-          if (!active || epoch !== graphEpoch() || binding !== graphBinding()) return;
+          if (!active || epoch !== graphEpoch()) return;
           if (dto) {
             // Alias-map warmup usually canonicalizes before the item is created.
             // A restored/early mixed-case item can race it; adopt the backend's
             // canonical page name before the exact-keyed store renders the body.
-            if (!p && k === "page" && dto.name !== n) renamePageInNavigation(n, dto.name);
-            // A refusal must not leave this item on an empty loading body with
-            // nothing observing the incumbent's save lifecycle — collapsing and
-            // re-expanding happening to retrigger it is not a contract. Say what
-            // is holding the file, so the user can resolve it and re-open.
-            // (GH #254 increment 3.)
-            const refusal = await ensurePageLoaded(dto, {
-              expectedGraphBinding: binding,
-              isRequestLive: () => active
-                && epoch === graphEpoch()
-                && binding === graphBinding(),
-            });
-            if (refusal) {
-              // Say why, AND resume automatically. Relying on the user collapsing
-              // and re-expanding happened to work but was never a contract; the
-              // item otherwise sits on an empty loading body observing nothing.
-              // (GH #254 increment 3, acceptance row E2.)
-              if (refusal.reason === "unsaved-changes") {
-                pushToast(
-                  `“${refusal.page}” has unsaved changes, so the other file with that name ` +
-                    `can't be shown in the sidebar yet. It will appear once that is resolved.`,
-                  "error",
-                );
-              } else if (refusal.reason === "activation-failed") {
-                pushToast(
-                  `“${refusal.page}” could not be activated for editing in the sidebar. ` +
-                    `Close and reopen it to retry.`,
-                  "error",
-                );
-              }
-              // DURABLE, not one-shot: the retry can itself be refused again —
-              // a lease taken during its awaited read is enough — and a listener
-              // that unsubscribed before that read would strand the item on an
-              // empty body. It stops only when the load actually succeeds.
-              if (refusal.reason === "unsaved-changes") retryWhenFreed(refusal.page);
-            }
+            if (!p && k === "page" && dto.name !== n) adoptResolvedPageName(n, dto.name);
+            const refusal = ensurePageLoaded(dto);
+            if (!refusal) return;
+            setLoadError(pageLoadRefusalMessage(refusal));
+            stopWaiting = whenPageReplaceable(refusal.page, `sidebar:${uid}`, () => setRetry((count) => count + 1));
           }
         })
         .catch(() => {
-          // graph not open yet / page missing — retried on graphEpoch.
+          if (active && epoch === graphEpoch()) setLoadError("Could not load this sidebar page. Collapse and expand to retry.");
         });
     }
   });
+  return loadError;
 }
 
 function SidebarItemView(props: {
@@ -337,15 +264,14 @@ function SidebarItemView(props: {
   collapsed: boolean;
   onToggle: (control: HTMLButtonElement) => void;
   onClose: () => void;
-  rowIndex: number;
-  onHeadPointerDown: (event: PointerEvent) => void;
+  row: Row;
 }): JSX.Element {
   return (
     <Show
       when={props.item.kind === "page"}
-      fallback={<BlockItem item={props.item as Extract<SidebarItem, { kind: "block" }>} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onToggle={props.onToggle} onClose={props.onClose} rowIndex={props.rowIndex} onHeadPointerDown={props.onHeadPointerDown} />}
+      fallback={<BlockItem item={props.item as Extract<SidebarItem, { kind: "block" }>} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onToggle={props.onToggle} onClose={props.onClose} row={props.row} />}
     >
-      <PageItem item={props.item as Extract<SidebarItem, { kind: "page" }>} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onToggle={props.onToggle} onClose={props.onClose} rowIndex={props.rowIndex} onHeadPointerDown={props.onHeadPointerDown} />
+      <PageItem item={props.item as Extract<SidebarItem, { kind: "page" }>} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onToggle={props.onToggle} onClose={props.onClose} row={props.row} />
     </Show>
   );
 }
@@ -356,10 +282,9 @@ function PageItem(props: {
   collapsed: boolean;
   onToggle: (control: HTMLButtonElement) => void;
   onClose: () => void;
-  rowIndex: number;
-  onHeadPointerDown: (event: PointerEvent) => void;
+  row: Row;
 }): JSX.Element {
-  useEnsurePage(
+  const loadError = useEnsurePage(
     () => props.item.name,
     () => props.item.pageKind,
     () => props.item.path,
@@ -367,37 +292,26 @@ function PageItem(props: {
   );
   const page = () => {
     const loaded = pageByName(props.item.name);
-    return props.item.path && loaded?.path !== props.item.path ? undefined : loaded;
+    return props.item.path && loaded?.id !== props.item.path ? undefined : loaded;
   };
   const bodyId = `rs-item-body-${createUniqueId()}`;
   return (
-    <div
-      class="rs-item"
-      data-sidebar-surface={props.surfaceKey}
-      data-row-index={props.rowIndex}
-      classList={{ collapsed: props.collapsed, "row-drop-before": rsDropTarget()?.index === props.rowIndex && rsDropTarget()!.before, "row-drop-after": rsDropTarget()?.index === props.rowIndex && !rsDropTarget()!.before }}
-    >
-      <div class="rs-item-head" onPointerDown={props.onHeadPointerDown}>
+    <div class="rs-item" data-sidebar-surface={props.surfaceKey} data-row-index={props.row.index} classList={{ collapsed: props.collapsed, "row-drop-before": props.row.before(), "row-drop-after": props.row.after() }}>
+      <div class="rs-item-head" onPointerDown={(event) => startRowDrag(props.row.index, event)}>
         <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? "Expand sidebar item" : "Collapse sidebar item"} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
           <span aria-hidden="true">▸</span>
         </button>
-        <a
-          class="rs-item-title"
-          onMouseDown={internalLinkMouseDown}
-          onClick={(e) => {
-            if (rowReorderClickSuppressed()) return;
-            const target = { name: props.item.name, pageKind: props.item.pageKind, path: props.item.path };
-            // The shift destination (right sidebar) is meaningless for a title
-            // already IN the sidebar, so it keeps the ordinary navigation.
-            const dest = internalLinkDest(e);
-            if (dest === "background") openPageTargetInNewTab(target);
-            else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target });
-            else openPageTarget(target);
-          }}
-          onAuxClick={(e) => internalLinkAuxClick(e, () =>
-            openPageTargetInNewTab({ name: props.item.name, pageKind: props.item.pageKind, path: props.item.path })
-          )}
-        >
+        <a class="rs-item-title" onMouseDown={internalLinkMouseDown} onClick={(e) => {
+          if (rowReorderClickSuppressed()) return;
+          const target = { name: props.item.name, pageKind: props.item.pageKind, path: props.item.path };
+          // The shift destination (right sidebar) is meaningless for a title
+          // already IN the sidebar, so it keeps the ordinary navigation.
+          const dest = internalLinkDest(e);
+          if (dest === "background") openPageTargetInNewTab(target);
+          else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target });
+          else openPageTarget(target);
+        }} onAuxClick={(e) => internalLinkAuxClick(e, () =>
+          openPageTargetInNewTab({ name: props.item.name, pageKind: props.item.pageKind, path: props.item.path }))}>
           <EmojiText text={props.item.name} />
         </a>
         <button class="rs-close" onClick={props.onClose} title="Close">
@@ -405,15 +319,17 @@ function PageItem(props: {
         </button>
       </div>
       <Show when={!props.collapsed}>
-        <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading" />}>
+        <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ?? ""}</div>}>
           <div id={bodyId} class="rs-item-body">
-            <For each={page()!.roots}>{(id) => <Block id={id} />}</For>
+            <BlockList ids={page()!.roots} />
             {/* The same producer the main pane uses: a page opened only here still
-                gets its phantom empty bullet and a trailing target, so a page with
-                no body is editable without visiting it first (GH #483). */}
+                gets its phantom empty bullet and a trailing target (GH #483). */}
             <PageTypingTarget page={page} surface={props.surfaceKey} />
             {/* OG shows a page's Linked/Unlinked References in the sidebar view too,
                 not just the main pane. Same lazy components, so this stays cheap. */}
+            <Show when={props.item.pageKind !== "journal"}>
+              <FailureBoundary region="Tagged Pages"><TaggedPages name={props.item.name} /></FailureBoundary>
+            </Show>
             <FailureBoundary region="Linked References">
               <LinkedReferences name={props.item.name} />
             </FailureBoundary>
@@ -428,15 +344,14 @@ function PageItem(props: {
 }
 
 function BlockItem(props: {
-  item: { uuid: string; page: string; pageKind: "journal" | "page"; path?: string };
+  item: { uuid: string; page: string; pageKind: "journal" | "page"; path?: string; blockPos?: number[] };
   surfaceKey: string;
   collapsed: boolean;
   onToggle: (control: HTMLButtonElement) => void;
   onClose: () => void;
-  rowIndex: number;
-  onHeadPointerDown: (event: PointerEvent) => void;
+  row: Row;
 }): JSX.Element {
-  useEnsurePage(
+  const loadError = useEnsurePage(
     () => props.item.page,
     () => props.item.pageKind,
     () => props.item.path,
@@ -445,12 +360,22 @@ function BlockItem(props: {
   // Resolve the durable sidebar identity back to the current live store node so
   // edits stay propagated even while its store key is still transient.
   const node = () => {
-    const id = resolveBlockRef(props.item);
-    return id ? doc.byId[id] : undefined;
+    const id = resolveBlockRef(props.item, { navigation: true });
+    return id ? docNode(id) : undefined;
   };
+  // A restored item names its ID-less block by position (navigation never writes an
+  // `id::`); once its page loads, swap the position for the block's live key.
+  createEffect(() => {
+    const item = props.item;
+    if (!item.blockPos) return;
+    const settled = settleBlockRef(item);
+    if (!settled || settled.blockPos) return;
+    const { blockPos: _drop, ...rest } = item;
+    replaceSidebarBlock(item as SidebarBlock, { ...rest, kind: "block", uuid: settled.uuid } as SidebarBlock);
+  });
   const pageLoaded = () => {
     const loaded = pageByName(props.item.page);
-    return !!loaded && (!props.item.path || loaded.path === props.item.path);
+    return !!loaded && (!props.item.path || loaded.id === props.item.path);
   };
   const title = () => {
     const n = node();
@@ -458,27 +383,19 @@ function BlockItem(props: {
   };
   const bodyId = `rs-item-body-${createUniqueId()}`;
   return (
-    <div
-      class="rs-item"
-      data-sidebar-surface={props.surfaceKey}
-      data-row-index={props.rowIndex}
-      classList={{ collapsed: props.collapsed, "row-drop-before": rsDropTarget()?.index === props.rowIndex && rsDropTarget()!.before, "row-drop-after": rsDropTarget()?.index === props.rowIndex && !rsDropTarget()!.before }}
-    >
-      <div class="rs-item-head" onPointerDown={props.onHeadPointerDown}>
+    <div class="rs-item" data-sidebar-surface={props.surfaceKey} data-row-index={props.row.index} classList={{ collapsed: props.collapsed, "row-drop-before": props.row.before(), "row-drop-after": props.row.after() }}>
+      <div class="rs-item-head" onPointerDown={(event) => startRowDrag(props.row.index, event)}>
         <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? "Expand sidebar item" : "Collapse sidebar item"} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
           <span aria-hidden="true">▸</span>
         </button>
         <a
           class="rs-item-title"
-          onClick={() => {
-            if (rowReorderClickSuppressed()) return;
-            openPageAtBlock({
-              name: props.item.page,
-              pageKind: props.item.pageKind,
-              block: props.item.uuid,
-              path: props.item.path,
-            });
-          }}
+          onClick={() => rowReorderClickSuppressed() || openPageAtBlock({
+            name: props.item.page,
+            pageKind: props.item.pageKind,
+            block: props.item.uuid,
+            path: props.item.path,
+          })}
           title={`On ${props.item.page}`}
         >
           {title()}
@@ -493,7 +410,7 @@ function BlockItem(props: {
           fallback={
             <Show
               when={pageLoaded()}
-              fallback={<div id={bodyId} class="rs-item-body rs-item-loading" />}
+              fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ?? ""}</div>}
             >
               <div id={bodyId} class="rs-item-body rs-item-missing">This block is no longer available.</div>
             </Show>
@@ -501,10 +418,10 @@ function BlockItem(props: {
         >
           {(n) => (
             <div id={bodyId} class="rs-item-body">
-              {/* GH #358: a block parked here is the ROOT of this view — reuse
-                  the zoomed view's outline-scope contract so its children
-                  render regardless of the source outline's collapsed flag.
-                  Descendant collapse states stay respected. */}
+              {/* GH #358: a block parked here is the root of this view, like a
+                  zoom root: its children render regardless of the source
+                  outline's collapsed flag (collapsed:: is not mutated), while
+                  descendants keep their own collapse state. */}
               <OutlineScopeContext.Provider value={{ roots: [n().id], forceExpandedRoot: n().id }}>
                 <Block id={n().id} forceExpanded />
               </OutlineScopeContext.Provider>

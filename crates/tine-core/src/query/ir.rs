@@ -10,10 +10,10 @@
 //!
 //! **The wire format is fixed by SPEC §3.1 and is not a lane's choice.** Every
 //! enum is internally tagged on `kind` with `snake_case` names and every struct
-//! field is `snake_case`, because the frontend mirror in
-//! `src/editor/queryIr.ts` is hand-written against it and pinned by the
-//! golden fixtures in `crates/tine-core/tests/fixtures/query-ir/` (read from
-//! both sides).
+//! field is `snake_case`, because a hand-written frontend mirror
+//! (`src/editor/queryIr.ts`) is pinned
+//! against it by the golden fixtures in
+//! `crates/tine-core/src/query/fixtures/query-ir/`.
 //!
 //! [`Span`] offsets are **UTF-16 code units** into the original source text: the
 //! consumer is JavaScript, so the conversion from the byte offsets the parsers
@@ -21,24 +21,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// **The macro names a query can be spelled with — the ONE list (SPEC §7.9, Y1).**
-///
-/// Two spellings, one meaning: `{{query …}}` is the legacy OG DSL macro every
-/// existing graph already contains, and `{{tine-query …}}` is the TQL macro the
-/// printer writes when a filter is not OG-expressible (Q3). Both are queries and
-/// every neighbour that RECOGNISES or WRITES one must read this list rather than
-/// spelling a name inline: a packet may not write a macro name its own tree
-/// cannot render, re-edit or export (Y1), and the way that used to happen was a
-/// second `/\{\{query\b/` regex somewhere the first author never looked.
-///
-/// The TypeScript twin is `QUERY_MACRO_NAMES` in `src/editor/queryMacroName.ts`,
-/// and `src/queryMacroNameConsistency.test.ts` compares the two literals by
-/// reading THIS file, so the pair cannot drift silently (I-12).
-///
-/// **Order is not semantics.** Readers must match the LONGEST candidate rather
-/// than the first, so that reordering this array can never change which macro a
-/// document scan recognises (`macro_text::macro_at`).
-pub const QUERY_MACRO_NAMES: [&str; 2] = ["query", "tine-query"];
+pub use super::macro_names::QUERY_MACRO_NAMES;
 
 /// A source span, in UTF-16 code units into the ORIGINAL source text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,11 +76,22 @@ pub enum Attr {
     Priority,
     Scheduled,
     Deadline,
+    /// The block's `created-at` / `created_at` property, epoch milliseconds:
+    /// OG's `(between created-at START END)` (query_dsl.cljs:214-229). Bounds
+    /// are timestamp tokens ([`resolve_timestamp_token`](crate::query::resolve_timestamp_token)).
+    CreatedAt,
+    /// The block's `last-modified-at` / `last_modified_at` property.
+    LastModifiedAt,
     // page row
     Name,
     Journal,
     Day,
     Namespace,
+    /// Some page's `tags::` names this page: OG `rules.cljc:96-98`
+    /// `[_ :block/tags ?p]`, the `(all-page-tags)` rule. A GRAPH-wide
+    /// relation, answered from the query's tag-target set rather than from the
+    /// page row alone (`Plan::tag_targets`).
+    UsedAsTag,
     // property element
     Key,
     Value,
@@ -127,23 +121,6 @@ impl ValueType {
 }
 
 impl Attr {
-    /// The fixed type of an attribute. `Value` (a property atom) has no fixed
-    /// type — it is the property's effective type (§6) and is `None` here.
-    pub fn fixed_type(self) -> Option<ValueType> {
-        match self {
-            Attr::Content
-            | Attr::Task
-            | Attr::Priority
-            | Attr::Name
-            | Attr::Namespace
-            | Attr::Key => Some(ValueType::Text),
-            Attr::Scheduled | Attr::Deadline | Attr::Day => Some(ValueType::Date),
-            Attr::Journal => Some(ValueType::Checkbox),
-            Attr::AtomCount => Some(ValueType::Number),
-            Attr::Value => None,
-        }
-    }
-
     /// The TQL spelling of this attribute on the row it belongs to.
     pub fn tql_name(self) -> &'static str {
         match self {
@@ -152,10 +129,13 @@ impl Attr {
             Attr::Priority => "priority",
             Attr::Scheduled => "scheduled",
             Attr::Deadline => "deadline",
+            Attr::CreatedAt => "created_at",
+            Attr::LastModifiedAt => "last_modified_at",
             Attr::Name => "name",
             Attr::Journal => "journal",
             Attr::Day => "day",
             Attr::Namespace => "namespace",
+            Attr::UsedAsTag => "used_as_tag",
             Attr::Key => "key",
             Attr::Value => "value",
             Attr::AtomCount => "atom_count",
@@ -163,37 +143,7 @@ impl Attr {
     }
 }
 
-/// One relation of the anchor row. Bare identifiers inside a relation predicate
-/// bind to the ELEMENT, never to the outer row (SPEC §3.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Rel {
-    /// OG `:block/path-refs`: this block's refs, every ancestor's, and its page.
-    Refs,
-    /// The block's own inline `#tag` / Org headline tags (Tine-only leaf, Q2).
-    Tags,
-    /// Property elements of the owner (block or page).
-    Props,
-    /// Direct children of a block (A1).
-    Children,
-    /// Every block of a page (`@page` anchor).
-    Blocks,
-    /// The owning page of a block (to-one).
-    Page,
-}
-
-impl Rel {
-    pub fn tql_name(self) -> &'static str {
-        match self {
-            Rel::Refs => "refs",
-            Rel::Tags => "tags",
-            Rel::Props => "props",
-            Rel::Children => "children",
-            Rel::Blocks => "blocks",
-            Rel::Page => "page",
-        }
-    }
-}
+pub use super::relations::Rel;
 
 /// OData §5.1.1.13 quantifiers: `Any` is false and `Every` true on an empty
 /// collection (Q5).
@@ -465,34 +415,52 @@ impl Filter {
 
     /// Depth-first existential over every leaf of the tree.
     pub fn any_leaf(&self, test: &mut impl FnMut(&Leaf) -> bool) -> bool {
+        self.visit_leaves(&mut |leaf| {
+            if test(leaf) {
+                std::ops::ControlFlow::Break(())
+            } else {
+                std::ops::ControlFlow::Continue(())
+            }
+        })
+        .is_break()
+    }
+
+    // One structural walk, including relation predicates and disabled nodes.
+    // ControlFlow preserves allocation-free early exit for any_leaf.
+    fn visit_leaves<'a>(
+        &'a self,
+        visit: &mut impl FnMut(&'a Leaf) -> std::ops::ControlFlow<()>,
+    ) -> std::ops::ControlFlow<()> {
         match self {
             Filter::Leaf { leaf } => {
-                if test(leaf) {
-                    return true;
-                }
-                match leaf {
-                    Leaf::Rel { pred, .. } => pred.any_leaf(test),
-                    Leaf::Attr { .. } => false,
+                visit(leaf)?;
+                if let Leaf::Rel { pred, .. } = leaf {
+                    pred.visit_leaves(visit)?;
                 }
             }
             Filter::And { items } | Filter::Or { items } => {
-                items.iter().any(|item| item.any_leaf(test))
+                for item in items {
+                    item.visit_leaves(visit)?;
+                }
             }
-            Filter::Not { inner } | Filter::Off { inner } => inner.any_leaf(test),
-            Filter::Raw { .. } | Filter::True | Filter::False => false,
+            Filter::Not { inner } | Filter::Off { inner } => {
+                inner.visit_leaves(visit)?;
+            }
+            Filter::Raw { .. } | Filter::True | Filter::False => {}
         }
+        std::ops::ControlFlow::Continue(())
     }
 
-    /// Every `content match` payload in this tree, in depth-first order
-    /// (SPEC §5.10, R3).
+    /// Every `content match` payload (see [`Leaf::match_source`]) in this tree,
+    /// in depth-first order (SPEC §5.10, R3), INCLUDING leaves inside `Off`
+    /// subtrees. Call it on [`Query::evaluable_filter`]'s result to get only the
+    /// payloads that execute.
     ///
-    /// **The Match leaf's payload is the SEARCH QUERY, and it is parsed exactly
-    /// once per execution.** This is the one place the tree is asked which of
-    /// its leaves carry one; the walk (`compiled::CompiledLeaves::for_query`) and
-    /// P1's SQL compiler both read it and both consume the SAME parsed
-    /// `search_query::Matcher` that the parse produces, so neither can end up
-    /// with its own idea of what `foo -draft OR "a b"` means (I-12). Raw FTS
-    /// token syntax is NOT this language.
+    /// A match payload is `crate::search_query` syntax, not raw FTS token
+    /// syntax. This is the one place the tree is asked which of its leaves carry
+    /// one, so an executor should parse each payload once and share the parsed
+    /// matcher rather than re-deriving what `foo -draft OR "a b"` means (I-12).
+    /// The store executor consumes these payloads. O(tree size).
     pub fn match_sources(&self) -> Vec<&str> {
         let mut out: Vec<&str> = Vec::new();
         self.for_each_leaf(&mut |leaf| {
@@ -505,28 +473,36 @@ impl Filter {
 
     /// Depth-first visit of every leaf of the tree.
     pub fn for_each_leaf<'a>(&'a self, visit: &mut impl FnMut(&'a Leaf)) {
-        match self {
-            Filter::Leaf { leaf } => {
-                visit(leaf);
-                if let Leaf::Rel { pred, .. } = leaf {
-                    pred.for_each_leaf(visit);
-                }
-            }
-            Filter::And { items } | Filter::Or { items } => {
-                for item in items {
-                    item.for_each_leaf(visit);
-                }
-            }
-            Filter::Not { inner } | Filter::Off { inner } => inner.for_each_leaf(visit),
-            Filter::Raw { .. } | Filter::True | Filter::False => {}
-        }
+        let _ = self.visit_leaves(&mut |leaf| {
+            visit(leaf);
+            std::ops::ControlFlow::Continue(())
+        });
     }
 
     /// The key a `props` relation predicate selects. §3.3 writes every property
     /// form as `key = 'k'` conjoined with at most one atom test, so the key
     /// equality is what scopes the quantifier — this is the ONE reader of that
     /// convention (the walk, the candidate planner and both printers use it).
+    ///
+    /// Only the DIRECT shape is a property predicate: the predicate itself is
+    /// the key equality, or an `And` with exactly one direct key-equality item.
+    /// A second key, or a key buried in a nested `And`, is not a shape §3.3
+    /// writes; reading it anyway silently dropped the other key or the buried
+    /// atom test, so it answers `None` and the printers/evaluator treat the
+    /// predicate as the general one they already handle.
     pub fn props_key(&self) -> Option<String> {
+        match self {
+            Filter::And { items } => {
+                let mut keys = items.iter().filter_map(Filter::key_equality);
+                let key = keys.next()?;
+                keys.next().is_none().then_some(key)
+            }
+            other => other.key_equality(),
+        }
+    }
+
+    /// `key = 'k'` as a direct leaf.
+    fn key_equality(&self) -> Option<String> {
         match self {
             Filter::Leaf {
                 leaf:
@@ -536,7 +512,6 @@ impl Filter {
                         value: Value::Text { text },
                     },
             } => Some(text.clone()),
-            Filter::And { items } => items.iter().find_map(Filter::props_key),
             _ => None,
         }
     }
@@ -548,7 +523,7 @@ impl Filter {
             Filter::And { items } => {
                 let rest: Vec<Filter> = items
                     .iter()
-                    .filter(|item| item.props_key().is_none())
+                    .filter(|item| item.key_equality().is_none())
                     .cloned()
                     .collect();
                 match rest.len() {
@@ -557,7 +532,7 @@ impl Filter {
                     _ => Some(Filter::And { items: rest }),
                 }
             }
-            other if other.props_key().is_some() => None,
+            other if other.key_equality().is_some() => None,
             other => Some(other.clone()),
         }
     }
@@ -980,9 +955,9 @@ impl Bounds {
     }
 }
 
-/// One query. The TypeScript mirror of this JSON lives in
-/// `src/editor/queryIr.ts` and is pinned by the golden fixtures under
-/// `crates/tine-core/tests/fixtures/query-ir/`.
+/// One query. Its JSON is pinned by the golden fixtures under
+/// `crates/tine-core/src/query/fixtures/query-ir/` (the TypeScript mirror,
+/// `src/editor/queryIr.ts`, validates the wire variants).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Query {
     pub anchor: Anchor,
@@ -1009,9 +984,14 @@ impl Query {
         self.diagnostics.iter().any(|d| !d.disabled)
     }
 
-    /// **Semantic equality** (§3.5). Drops `source`, spans and diagnostic text;
-    /// flattens nested `And`/`Or` of the same kind; removes identity elements;
-    /// keeps child order and `Off` nodes. Round-trip tests compare these.
+    /// **Semantic equality** (§3.5): the stored, editable form round-trip tests
+    /// compare. Sets `source` to `Builder`; drops diagnostic spans, messages and
+    /// suggestions (keeping each diagnostic's `kind` and `disabled`) and `Raw`
+    /// spans. Tree rule: an originally empty `And`/`Or` becomes `True`/`False`;
+    /// nested same-kind `And`/`Or` flatten; single-child groups collapse;
+    /// `Off(Off(x))` becomes `Off(x)`. It does NOT remove identity elements,
+    /// absorb, or fold constants (`And(a, True)` keeps `True`), and it keeps
+    /// child order and `Off` nodes. O(tree size); allocates a copy.
     pub fn normalized(&self) -> Query {
         Query {
             anchor: self.anchor,
@@ -1044,7 +1024,7 @@ pub struct PageRow {
     /// Physical graph-relative owner path. Display names are not unique.
     pub path: String,
     pub name: String,
-    pub kind: crate::vocab::PageKind,
+    pub kind: crate::model::PageKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub journal_day: Option<i64>,
     /// Authored page properties, in source order and original spelling.
@@ -1067,7 +1047,7 @@ pub struct QueryReport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "anchor", rename_all = "snake_case")]
 pub enum QueryRows {
-    Block { groups: Vec<crate::vocab::RefGroup> },
+    Block { groups: Vec<crate::model::RefGroup> },
     Page { pages: Vec<PageRow> },
 }
 
@@ -1449,5 +1429,34 @@ mod tests {
         ));
         assert!(filter.has_props_leaf());
         assert!(!Filter::off(leaf_a()).has_props_leaf());
+    }
+    #[test]
+    fn leaf_walk_order_and_short_circuit_share_disabled_relation_traversal() {
+        let filter = Filter::off(Filter::rel(
+            Rel::Children,
+            Quant::Any,
+            Filter::And {
+                items: vec![leaf_a(), leaf_a()],
+            },
+        ));
+        let mut visited = Vec::new();
+        filter.for_each_leaf(&mut |leaf| visited.push(leaf));
+        assert_eq!(visited.len(), 5);
+        let mut calls = 0;
+        assert!(filter.any_leaf(&mut |leaf| {
+            assert!(std::ptr::eq(leaf, visited[calls]));
+            calls += 1;
+            calls == 2
+        }));
+        assert_eq!(
+            calls, 2,
+            "I-12: Filter::visit_leaves must retain allocation-free early exit"
+        );
+        calls = 0;
+        assert!(!filter.any_leaf(&mut |_| {
+            calls += 1;
+            false
+        }));
+        assert_eq!(calls, 5);
     }
 }

@@ -1,8 +1,7 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Headless render smoke test against the mock backend. Catches runtime crashes
 // in the live sidebar/query paths (circular-import TDZ, render throws, etc.).
 // Usage: node scripts/smoke.mjs   (requires `npm run build` first)
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -17,35 +16,25 @@ const fail = (m) => {
   process.exit(1);
 };
 
+async function waitForServer(url, tries = 60) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) return;
+    } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 const errors = [];
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 60, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch();
   const page = await browser.newPage();
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
   page.on("pageerror", (e) => errors.push(String(e)));
 
-  // The mock has no engine: without a fixture every query reads back as ONE raw
-  // row. Install a canned parse/print through the mock-only seam
-  // (`src/mockQueryFixture.guard.test.ts` keeps it out of production) so the
-  // sentence and the sheet below are exercised over real rows.
-  await page.addInitScript(() => {
-    const text = (t) => ({ kind: "text", text: t });
-    const attr = (a, op, value) => ({ kind: "leaf", leaf: { kind: "attr", attr: a, op, value } });
-    globalThis.__tineMockQueryFixture = {
-      print: "@block and task in ('TODO', 'DOING')",
-      parse: {
-        query: {
-          anchor: "block",
-          filter: attr("task", "in", { kind: "list", items: [text("TODO"), text("DOING")] }),
-          diagnostics: [],
-          source: { kind: "tql", original: "@block and task in ('TODO', 'DOING')" },
-        },
-        view: {},
-      },
-    };
-  });
   await page.goto(`http://localhost:${PORT}/`);
   await page.waitForSelector(".ls-block, .page-loading", { timeout: 5000 });
   await sleep(800); // let the feed + queries render
@@ -60,44 +49,21 @@ try {
   await page.locator(".query-collapse").first().click();
   await sleep(150);
 
-  // 2b) The standalone query block rests as ONE sentence; opening it gives a
-  //     sheet of rows, and the add-condition chooser opens and takes a pick
-  //     without a runtime error. What the pick WRITES is not asserted here: the
-  //     browser mock has no engine, so every save re-parses to the same canned
-  //     reading (the fixture below); the real add → save → reopen round trip is
-  //     `scripts/e2e-query-sheet.mjs` on the native app. (Before the fixture
-  //     seam existed this step was red at the base commit — the mock refused
-  //     every print — so it proved nothing; now it proves the sheet's plumbing
-  //     does not throw.)
-  const sentence = await page.locator(".qs-sentence").count();
-  if (sentence === 0) fail("the query sentence did not render");
-  const sentenceText = await page.locator(".qs-sentence").first().innerText();
-  if (!/^(All|Blocks|Pages)\b/.test(sentenceText.trim()))
-    fail(`the sentence does not read as one: ${JSON.stringify(sentenceText)}`);
-  await page.locator(".qs-gear").first().click();
-  await page.waitForSelector(".qs-sheet", { timeout: 2000 });
-  const rowsBefore = await page.locator(".qs-sheet .qs-row").count();
-  if (rowsBefore === 0) fail("the sheet drew no rows for the existing query");
-  await page.locator(".qs-add").first().click();
-  await page.waitForSelector(".qs-menu", { timeout: 2000 });
-  const scheduledOption = await page.locator(".qs-menu .qs-option", { hasText: "Scheduled" }).count();
-  if (scheduledOption === 0) fail("the add-condition chooser does not offer 'Scheduled'");
-  await page.locator(".qs-menu .qs-option", { hasText: "Scheduled" }).first().click();
+  // 2b) The query builder bar renders on the standalone query block, parsing the
+  //     existing DSL into chips, and the add-filter picker works end to end:
+  //     "+" -> pick "Scheduled" -> a new chip appears (the DSL was rewritten).
+  const qbBar = await page.locator(".qb-bar").count();
+  if (qbBar === 0) fail("query builder bar did not render");
+  const chipsBefore = await page.locator(".qb-bar .qb-chip").count();
+  if (chipsBefore === 0) fail("builder parsed no chips from the existing query DSL");
+  await page.locator(".qb-add").first().click();
+  await page.waitForSelector(".qb-picker", { timeout: 2000 });
+  await page.locator(".qb-picker .qb-menu-item", { hasText: "Scheduled" }).first().click();
   await sleep(250);
-  if (errors.length) fail(`adding a condition threw: ${errors.join(" | ")}`);
-  const rowsAfter = await page.locator(".qs-sheet .qs-row").count();
-  if (rowsAfter === 0) fail("the sheet lost its rows after a pick");
-  // Back to rest: Escape peels the chooser, then the sheet, leaving the sentence.
-  await page.keyboard.press("Escape");
-  await sleep(150);
-  if ((await page.locator(".qs-sheet").count()) > 0) {
-    await page.keyboard.press("Escape");
-    await sleep(150);
-  }
-  if ((await page.locator(".qs-sheet").count()) > 0) fail("Escape did not close the sheet");
-  const restingAfter = await page.locator(".qs-sentence").first().innerText();
-  if (!/^(All|Blocks|Pages)\b/.test(restingAfter.trim()))
-    fail(`the resting sentence did not survive the sheet: ${JSON.stringify(restingAfter)}`);
+  const chipsAfter = await page.locator(".qb-bar .qb-chip").count();
+  if (chipsAfter <= chipsBefore) fail(`add-filter did not add a chip (${chipsBefore} -> ${chipsAfter})`);
+  const hasScheduled = await page.locator(".qb-bar .qb-chip", { hasText: "scheduled" }).count();
+  if (hasScheduled === 0) fail("the added 'scheduled' chip is not present");
 
   // 3) Shift-click a bullet opens that block LIVE in the right sidebar — i.e.
   //    the editable <Block> (with a .block-content-wrapper + collapse toggle),
@@ -122,7 +88,7 @@ try {
     console.error("SMOKE FAIL: console/page errors:\n" + errors.join("\n"));
     process.exit(1);
   }
-  console.log(`SMOKE OK: feed=${blocks} blocks, query rendered+collapsible, query sentence + sheet + add-condition chooser work, sidebar renders live editable <Block>`);
+  console.log(`SMOKE OK: feed=${blocks} blocks, query rendered+collapsible, builder bar add-filter works, sidebar renders live editable <Block>`);
   process.exit(0);
 } catch (e) {
   fail(String(e));

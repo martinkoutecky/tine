@@ -1,7 +1,9 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { resetStore } from "../document";
+import { type FeedPage, type Node as StoreNode } from "../document/model";
+import { setDoc } from "../document/model";
 import { closeDatePicker, datePicker } from "../ui";
 import { Block } from "./Block";
 

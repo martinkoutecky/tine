@@ -33,8 +33,6 @@ describe("platform identity (GH #446)", () => {
   it("believes the build, not the desktop-class user agent iPadOS serves", async () => {
     const m = await loadPlatform("ios", IPAD_DESKTOP_CLASS_UA);
     expect(m.platformKind).toBe("ios");
-    // Both of these were wrong before the injected identity existed, which is
-    // why the iPad rendered as a Mac and showed no mobile editing toolbar.
     expect(m.isMobilePlatform).toBe(true);
     expect(m.isMac).toBe(false);
     expect(m.osDrawsWindowControls()).toBe(true);
@@ -56,9 +54,6 @@ describe("platform identity (GH #446)", () => {
     expect(m.isMobilePlatform).toBe(true);
   });
 
-  // Panes are gated on the SHELL, never on the OS: making isMobilePlatform
-  // truthful must not take split panes away from an iPad. See panes.ts /
-  // session.ts, which import isSinglePaneShell for exactly this reason.
   it("keeps the split-pane shell on a tablet and the single-pane shell on a phone", async () => {
     const m = await loadPlatform("ios", IPAD_DESKTOP_CLASS_UA);
     expect(m.isTabletViewport(820, 1180)).toBe(true); // iPad portrait
@@ -114,5 +109,51 @@ describe("native window frame preference", () => {
     await expect(module.setNativeFrame(true)).rejects.toThrow("disk full");
     expect(module.nativeFrameEnabled()).toBe(false);
     expect(module.osDrawsWindowControls()).toBe(false);
+  });
+
+  it("I-20: writes reach the backend in call order and the switch shows the newest choice", async () => {
+    vi.resetModules();
+    globalThis.__TINE_NATIVE_FRAME__ = false;
+    const started: boolean[] = [];
+    const finish: Array<() => void> = [];
+    vi.doMock("./backend", () => ({
+      backend: () => ({
+        getAppBool: vi.fn(async () => false),
+        setAppBool: vi.fn((_key: string, on: boolean) => new Promise<void>((resolve) => { started.push(on); finish.push(resolve); })),
+      }),
+    }));
+    const module = await import("./nativeChrome");
+    const first = module.setNativeFrame(true);
+    const second = module.setNativeFrame(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(started).toEqual([true]);
+    finish[0]();
+    await first;
+    // The first call is no longer the newest choice, so it does not repaint.
+    expect(module.nativeFrameEnabled()).toBe(false);
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    expect(started).toEqual([true, false]);
+    finish[1]();
+    await second;
+    expect(module.nativeFrameEnabled()).toBe(false);
+  });
+
+  it("I-20: a startup read that lands after the user's choice does not overwrite it", async () => {
+    vi.resetModules();
+    globalThis.__TINE_NATIVE_FRAME__ = false;
+    let land!: (saved: boolean) => void;
+    vi.doMock("./backend", () => ({
+      backend: () => ({
+        getAppBool: vi.fn(() => new Promise<boolean>((resolve) => { land = resolve; })),
+        setAppBool: vi.fn(async () => {}),
+      }),
+    }));
+    const module = await import("./nativeChrome");
+    const init = module.initNativeChrome();
+    await module.setNativeFrame(true);
+    land(false);
+    await init;
+    expect(module.nativeFrameEnabled()).toBe(true);
   });
 });

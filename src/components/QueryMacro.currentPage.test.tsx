@@ -1,17 +1,22 @@
+// Ported from master src/components/QueryMacro.currentPage.test.tsx.
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
+import { QueryMacro } from "./Macro";
 import { initParser } from "../render/parse";
-import { backend, QueryUnavailableError } from "../backend";
+import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { doc, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { resetStore } from "../document";
+import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import { openPage, route } from "../router";
 import { resetPaneLayoutToSingle } from "../panes";
 import type { QueryExecution, RefGroup } from "../types";
 import { queryMacroExtent } from "../editor/queryMacro";
-import { backendReadsQueries, blockRunResult } from "../queryReadingsTestkit";
-import type { ParsedQuery, Query, QueryResult } from "../editor/queryIr";
+import { backendReadsQueries, blockRunResult } from "../tests/queryReadingsTestkit";
+import type { Query, QueryResult } from "../editor/queryIr";
+import { setGraphMeta } from "../graphSession";
+import { journalTitle } from "../journal";
 
 // GH #301 (approved): a query whose text explicitly carries `<% current page %>`
 // binds that marker to the FOCUSED pane's route page and re-runs when that page
@@ -30,20 +35,12 @@ afterEach(() => {
   vi.restoreAllMocks();
   resetSharedQueryResultsForTests();
   resetStore();
+  setGraphMeta(null);
   resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
   localStorage.clear();
   document.body.innerHTML = "";
   document.head.querySelector('meta[name="tine-published"]')?.remove();
 });
-
-/** Mark the document as a published query export (Stage 2) the way the
- *  export's `index.html` does: the one presentation flag `Macro.tsx` reads. */
-function markPublished(): void {
-  const meta = document.createElement("meta");
-  meta.setAttribute("name", "tine-published");
-  meta.setAttribute("content", "snapshot.json");
-  document.head.appendChild(meta);
-}
 
 function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => void } {
   const root = document.createElement("div");
@@ -135,6 +132,17 @@ async function settle(): Promise<void> {
 }
 
 describe("query `<% current page %>` dispatch to the focused pane (GH #301)", () => {
+  it("binds a read-only query to the currentPage supplied by BEGIN_QUERY", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groupsFor("todo")));
+    const { dispose } = mount(() => <QueryMacro body="query (task TODO)" currentPage="Embedded" />);
+    try {
+      await vi.waitFor(() => expect(run).toHaveBeenCalled());
+      expect(run.mock.calls[0][2]).toEqual({ current_page: "Embedded" });
+    } finally {
+      dispose();
+    }
+  });
   it("substitutes the focused page at execution time, keeps the authored text literal, and re-runs on navigation — coalescing identical transitions", async () => {
     loadQueryDoc("{{query (and (page <% current page %>) (task TODO))}}");
     const runQuery = vi
@@ -234,6 +242,19 @@ describe("query `<% current page %>` dispatch to the focused pane (GH #301)", ()
     }
   });
 
+  it("binds a typed current-page input to home, then today, when the focused route is journals", async () => {
+    loadQueryDoc("{{query [:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p]] :inputs [:current-page]}}", "advanced");
+    setGraphMeta({ root: "/tmp/current-page-home", default_home: "Home" } as Parameters<typeof setGraphMeta>[0]);
+    const runQuery = vi.spyOn(backend(), "queryRun")
+      .mockResolvedValue(blockRunResult(groupsFor("todo"), { ran: ["current-page-ref"] }));
+    const { dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(runQuery.mock.calls.at(-1)?.[2]).toEqual({ current_page: "Home" }));
+      setGraphMeta({ root: "/tmp/current-page-home", default_home: null } as Parameters<typeof setGraphMeta>[0]);
+      await vi.waitFor(() => expect(runQuery.mock.calls.at(-1)?.[2]).toEqual({ current_page: journalTitle(new Date()) }));
+    } finally { dispose(); }
+  });
+
   it("keeps an advanced query without the live keyword owner-bound and navigation-independent", async () => {
     loadQueryDoc('{{query {:query [:find (pull ?b [*]) :where (task ?b "TODO")] :inputs ["example :current-page"]}}}', "advanced");
     const runQuery = vi
@@ -275,6 +296,28 @@ describe("query `<% current page %>` dispatch to the focused pane (GH #301)", ()
       await settle();
       expect(root.textContent).toContain("RowB-Presented");
       expect(root.textContent).not.toContain("RowA-Presented");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("hides the previous page's landed rows while the new page's answer is pending", async () => {
+    loadQueryDoc("{{query (and (page <% current page %>) (task TODO))}}");
+    let landB: ((result: QueryResult) => void) | undefined;
+    const runQuery = vi.spyOn(backend(), "queryRun").mockImplementation(async (query: Query) => {
+      if (ranText([query]).includes("Focus A")) return blockRunResult(groupsFor("rowA"));
+      return new Promise<QueryResult>((resolve) => { landB = resolve; });
+    });
+    openPage("Focus A", "page");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("RowA-Presented"));
+      openPage("Focus B", "page");
+      await vi.waitFor(() => expect(runQuery).toHaveBeenCalledTimes(2));
+      expect(root.textContent).not.toContain("RowA-Presented");
+      expect(root.textContent).toContain("Loading query results");
+      landB!(blockRunResult(groupsFor("rowB")));
+      await vi.waitFor(() => expect(root.textContent).toContain("RowB-Presented"));
     } finally {
       dispose();
     }
@@ -326,78 +369,9 @@ describe("query `<% current page %>` dispatch to the focused pane (GH #301)", ()
     }
   });
 
-  it("in a published export, a substituted argument the export never baked is a message, not a blank page", async () => {
-    // The macro shown in another page's Linked References substitutes THAT
-    // page; the export baked only its host page's run, so the execution-side
-    // parse is refused. `executionParsed.latest` throws once the fetcher
-    // rejected, and with no error boundary in the app that throw would take
-    // the page down; instead the refusal is shown where the rows would be.
-    markPublished();
-    const raw = "{{query (and (page <% current page %>) (task TODO))}}";
-    loadQueryDoc(raw);
-    const authored = queryMacroExtent(raw)?.argument ?? "";
-    const refusal = "This export answers only the queries it was made with.";
-    // The authored text was baked (the export's own parse); the substituted
-    // execution text was not.
-    vi.spyOn(backend(), "parseQuery").mockImplementation(async (text: string): Promise<ParsedQuery> => {
-      if (text !== authored) throw new QueryUnavailableError("published_export_static", refusal);
-      return {
-        query: {
-          anchor: "block",
-          filter: { kind: "raw", text, diagnostic_kind: "not_applicable" },
-          diagnostics: [],
-          source: { kind: "og", original: text, og_options: "" },
-        },
-        view: {},
-      };
-    });
-    const runQuery = vi.spyOn(backend(), "queryRun").mockImplementation(async () => blockRunResult(groupsFor("todo")));
-    openPage("Focus A", "page");
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await settle();
-      await vi.waitFor(() => expect(root.textContent).toContain(refusal));
-      expect(runQuery).not.toHaveBeenCalled();
-      expect(root.querySelector(".query-empty, .query-macro, .query")).not.toBeNull();
-    } finally {
-      dispose();
-    }
-  });
 
-  it("in a published export, a sampled query says so beside its count — under the view the run used", async () => {
-    // The note reads the anchored section's EFFECTIVE view, the one the
-    // execution ran under: a scoped `tine.block-sample::` (invisible in the
-    // singular view) is announced, and a present-but-empty block draft that
-    // cleared a singular sample is not.
-    const cases: { reading: Parameters<typeof backendReadsQueries>[0][string]; note: string | null }[] = [
-      { reading: { form: "", view: { view: "list", sample: 1 } }, note: "sample of 1" },
-      { reading: { form: "", view: { view: "list" }, block_display: { sample: 2 } }, note: "sample of 2" },
-      { reading: { form: "", view: { view: "list", sample: 7 }, block_display: { sample: 2 } }, note: "sample of 2" },
-      { reading: { form: "", view: { view: "list", sample: 7 }, block_display: {} }, note: null },
-    ];
-    for (const { reading, note } of cases) {
-      markPublished();
-      loadQueryDoc("{{query (task TODO)}}");
-      const argument = queryMacroExtent("{{query (task TODO)}}")?.argument ?? "";
-      backendReadsQueries({ [argument]: { ...reading, form: argument } });
-      vi.spyOn(backend(), "queryRun").mockImplementation(async () => blockRunResult(groupsFor("todo")));
-      openPage("Focus A", "page");
-      const { root, dispose } = mount(() => <Block id="query" />);
-      try {
-        await vi.waitFor(() => expect(root.querySelector(".query-count")?.textContent).toBe("1"));
-        const rendered = root.querySelector(".query-sample-note")?.textContent ?? null;
-        if (note === null) expect(rendered, JSON.stringify(reading)).toBeNull();
-        else expect(rendered, JSON.stringify(reading)).toContain(note);
-      } finally {
-        dispose();
-        vi.restoreAllMocks();
-        resetSharedQueryResultsForTests();
-        resetStore();
-        document.body.innerHTML = "";
-        document.head.querySelector('meta[name="tine-published"]')?.remove();
-      }
-    }
-  });
+  // master's two "in a published export" tests are n/a: og has no published
+  // query export (publish-query Stage 2 / ADR 0065 is master-only).
 
   it("outside an export, the sample note is not rendered (the builder sentence carries the sample)", async () => {
     loadQueryDoc("{{query (task TODO)}}");
@@ -415,24 +389,5 @@ describe("query `<% current page %>` dispatch to the focused pane (GH #301)", ()
   });
 });
 
-// GH #594 (index liveness L4): a query whose index failed says so, with the
-// code and a way out, instead of a generic "unavailable" line.
-describe("a query block over a failed index (GH #594)", () => {
-  it("shows the failure code, Retry and the diagnostic report", async () => {
-    loadQueryDoc("{{query (task TODO)}}");
-    vi.spyOn(backend(), "queryRun").mockRejectedValue(
-      new QueryUnavailableError("index_failed", "The index couldn't be built.", "permission_denied")
-    );
-    const retry = vi.spyOn(backend(), "retryIndex").mockResolvedValue();
-    const { root, dispose } = mount(() => <Block id="query" />);
-    try {
-      await settle();
-      await vi.waitFor(() => expect(root.textContent).toContain("code: permission_denied"));
-      expect(root.querySelector(".index-failed-report")?.textContent).toBe("Create diagnostic report");
-      root.querySelector<HTMLButtonElement>(".index-failed-retry")!.click();
-      expect(retry).toHaveBeenCalledTimes(1);
-    } finally {
-      dispose();
-    }
-  });
-});
+// master's "a query block over a failed index (GH #594)" is X-class: og has no
+// query index to fail.

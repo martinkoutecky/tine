@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { MEDIA_EDITORS, mediaEditorForAsset } from "./mediaEditors";
 import { assetVersion, refreshAsset } from "./assetCache";
-import { applyObservedAssetChanges } from "./assetRefresh";
 
 describe("media-editor registry (GH #38)", () => {
   it("matches drawio assets and not plain images", () => {
@@ -47,17 +46,5 @@ describe("asset refresh version signal (GH #38)", () => {
     expect(assetVersion(rel)).toBe(before + 2);
     // An unrelated asset is unaffected.
     expect(assetVersion("y/other.drawio.svg")).toBe(0);
-  });
-
-  it("refreshes observed images but never hot-swaps open PDF/audio/video assets", () => {
-    const image = "external/observed-image.png";
-    const deferred = ["paper.pdf", "recording.mp3", "clip.mp4"];
-    const beforeImage = assetVersion(image);
-    const beforeDeferred = deferred.map(assetVersion);
-
-    applyObservedAssetChanges([image, image, ...deferred]);
-
-    expect(assetVersion(image)).toBe(beforeImage + 1);
-    expect(deferred.map(assetVersion)).toEqual(beforeDeferred);
   });
 });

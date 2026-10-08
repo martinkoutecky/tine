@@ -11,8 +11,6 @@ controls. Search indexes both levels.
 | Appearance | Accent color | Basic | Common appearance choice. |
 | Appearance | Interface size | Basic | Accessibility and readability. |
 | Appearance | Wide mode | Basic | Common reading-layout choice. |
-| Appearance | Standard page width | Advanced | Device-local reading-column maximum; theme default remains the ordinary path. |
-| Appearance | Wide page width | Advanced | Device-local choice between filling the pane and a custom maximum. |
 | Appearance | Document mode | Basic | Common prose/outliner choice. |
 | Appearance | Typographic replacements | Basic | Visible text-rendering behavior. |
 | Appearance | Auto-pair brackets & quotes | Basic | Core typing convention with reasonable preferences both ways. |

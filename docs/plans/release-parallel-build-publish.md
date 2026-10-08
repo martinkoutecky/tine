@@ -1,12 +1,33 @@
 # Plan — parallel release builds, single publisher
 
-**Status:** implemented on `master` in `dd6e0e0` (2026-07-11), then amended in
-2026-08 to separate product identity from proof identity. Manual release
+**Status:** implemented on `master` in `dd6e0e0` (2026-07-11). Manual release
 run [29165451611](https://github.com/martinkoutecky/tine/actions/runs/29165451611)
 proved the original five desktop builds + Android overlap, the real Flatpak build passes,
 and candidate assembly produced the then-current exact inventory without
-touching GitHub Releases. Release publication is now an explicit manual
-promotion; pushing a tag alone does not start a build or mutate a release.
+touching GitHub Releases. The first real tagged publisher run is intentionally
+the next explicitly authorized release; no dummy public version was cut.
+
+## Current Beta contract (PV1, 2026-09-30)
+
+PV1 covers Linux, Windows NSIS, macOS and Android. Flatpak, Flathub,
+F-Droid and iOS are outside this preview: `release.yml` does not require Flatpak
+builds or its manifest checks. Flatpak's separate CI workflow remains available.
+This overrides the historical Flatpak prerequisites below for Beta releases.
+
+`src-tauri/app-identity.json` selects the product. `releaseLayout(version)`
+derives all 22 platform asset names and the 12 updater entries from it; `latest.json`
+is the 23rd asset. Stable filenames stay unchanged. Product whitespace becomes
+`-` in published names; Tauri source filenames retain the original product name.
+Staging translates source names once and updates zsync Filename/URL headers while
+preserving checksum payload and signed bundle bytes. `release-workflow-inputs.mjs`
+provides workflow filenames and the AppImage update pattern from that layout.
+Linux release runners install `faketime` for the blocking journal-rollover journey;
+an absent clock shim is a failed proof, not a reason to skip that journey.
+
+Beta assembly and publication use only `/releases/download/beta/` updater URLs,
+and `publish=false` performs no remote mutation. No versioned tag or stable
+release is created by this workflow. See [app identity](../app-identity.md) for
+the Android namespace/applicationId distinction and the tests for both ships.
 
 ## Outcome
 
@@ -28,17 +49,15 @@ remote draft, and makes it public.
 
 As of the release-only CI policy, this packaging workflow begins only after a
 manually dispatched full `ci.yml` run succeeded on the exact frozen candidate
-SHA. Release preflight queries Actions and verifies all required stable full-job
+SHA. Release preflight queries Actions and verifies all four stable full-job
 conclusions; PR, focused, skipped, stale-SHA, and failed runs are rejected before
 toolchain setup or packaging. This preserves one full test/performance pass plus
 one necessary platform packaging pass instead of rebuilding ordinary CI inside
 the release workflow.
 
-Expected effect: candidate wall time becomes approximately the slowest platform
-build plus a short assembly step, rather than the sum of five desktop build
-times. Once a no-publication candidate is green, normal same-commit publication
-reuses it. A narrowly accepted proof-only correction reruns only its registered
-proofs against the retained exact binary and also reuses the candidate.
+Expected effect: tagged release wall time becomes approximately the slowest
+platform build plus a short publication step, rather than the sum of five
+desktop build times.
 
 ## Why the old workflow serialized
 
@@ -119,8 +138,8 @@ After compilation, a staging script copies/renames outputs into a stable layout:
 ```text
 candidate/<lane>/
   release-fragment.json
-  Tine_<version>_<platform file>
-  Tine_<version>_<platform file>.sig   # where updater signing applies
+  <product-without-spaces>_<version>_<platform file>
+  <product-without-spaces>_<version>_<platform file>.sig   # where updater signing applies
 ```
 
 Each `release-fragment.json` records:
@@ -150,25 +169,13 @@ An `assemble` job downloads all build artifacts and:
 5. creates `latest.json` once from the shared contract and fragments;
 6. runs the same exact-inventory/12-platform verifier used after upload.
 
-For `workflow_dispatch` in `mode=build`, stop here unless `publish=true` was
-explicitly requested on a tag. Upload `release-candidate` plus a content-addressed
-candidate receipt and the exact Linux/Windows binary/frontend inputs needed by
-registered promotion proofs. This exercises the complete build and assembly
-path without creating or modifying a GitHub Release. The reusable inputs have a
-short three-day retention window.
+For `workflow_dispatch`, stop here and upload a `release-candidate` workflow
+artifact. This exercises the complete build and assembly path without creating
+or modifying a GitHub Release.
 
 ### 4. One idempotent publisher owns GitHub Release state
 
-Only an explicit manual run on a version tag may reach the publisher. Ordinarily
-the release manager dispatches `mode=promote` with the successful no-publication
-source run ID. Exact same-commit promotion verifies the candidate receipt and
-needs no rerun proof. A descendant proof-only promotion must first pass the
-narrow registry/product-identity classifier and every registered blocking proof
-against the retained exact source binary. Its promotion receipt names both
-commits, the product digest, retained run/artifacts, proof results, and
-authorizing actor.
-
-After that verification, the publisher:
+On a version tag only, the publisher:
 
 1. looks up the release by tag;
 2. creates a draft if none exists;
@@ -183,14 +190,6 @@ After that verification, the publisher:
 If any step fails, the draft remains private. If a release for the tag is already
 public, the publisher fails without mutation. Add workflow concurrency keyed by
 the tag so two publishers cannot run for the same version.
-
-Exact-SHA remains the default. Product source, dependencies/lockfiles, generated
-runtime assets, build or packaging inputs, workflow recipes, manifests,
-add/delete/rename operations, unrelated history, and anything unclassified all
-require fresh full CI and `mode=build`. `scripts/release-proof-only.json` starts
-with one exact real-app scenario path; broad path globs are intentionally
-forbidden. Expanding that registry is itself a product change and requires
-explicit fail-closed contract fixtures.
 
 ## Migration sequence
 
@@ -212,14 +211,11 @@ explicit fail-closed contract fixtures.
 
 ## Acceptance criteria
 
-- All desktop build jobs begin concurrently in manual `mode=build` runs.
+- All five desktop build jobs begin concurrently on tagged and manual runs.
 - No build job calls `gh release`, supplies a `releaseId`, or writes
   `latest.json` to GitHub.
-- Manual build dispatch produces a verified release-candidate artifact and
-  receipt without touching GitHub Releases.
-- Manual promotion rejects changed product identity and reruns every registered
-  affected proof against the exact retained source binary before publication.
-- Pushing a tag alone never builds or publishes a release.
+- Manual dispatch produces a verified release-candidate artifact without
+  touching GitHub Releases.
 - The publisher is the sole job with release-write permissions.
 - Forced loss of any required artifact/signature/platform fails before publish.
 - A failed publisher rerun is safe and idempotent.

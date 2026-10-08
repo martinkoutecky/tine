@@ -7,57 +7,8 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <title>Tine</title>
-    <style id="tine-startup-style">
-      html,
-      body,
-      #root {
-        width: 100%;
-        height: 100%;
-        margin: 0;
-      }
-      html,
-      body {
-        background: var(--bg-primary, #ffffff);
-        color: var(--text-primary, #374151);
-      }
-      html[data-theme="dark"],
-      html[data-theme="dark"] body {
-        background: var(--bg-primary, #1a1b1e);
-        color: var(--text-primary, #d1d5db);
-      }
-      .startup-shell {
-        display: flex;
-        height: 100%;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        font: 500 14px/1.4 system-ui, sans-serif;
-      }
-      .startup-shell-mark {
-        width: 15px;
-        height: 15px;
-        border: 2px solid currentColor;
-        border-right-color: transparent;
-        border-radius: 50%;
-        animation: tine-startup-spin 0.8s linear infinite;
-      }
-      @keyframes tine-startup-spin {
-        to { transform: rotate(360deg); }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .startup-shell-mark { animation: none; }
-      }
-    </style>
-    <script>
-      try {
-        const preference = localStorage.getItem("logseq-claude.theme");
-        const dark = preference === "dark" ||
-          (preference === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
-        document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
-      } catch (_) {
-        // The deterministic light default on <html> remains usable.
-      }
-    </script>
+    <link rel="stylesheet" href="/src/styles/startup.css" />
+    <script src="/assets/startup-theme.js"></script>
   </head>
   <body>
     <div id="root">
@@ -93,7 +44,7 @@
           "<strong>This system's web engine is too old for Tine.</strong>" +
           "<span>Tine needs the engine of Safari 15.4 or later.</span>" +
           "<span>" + (apple
-            ? "On a Mac, Tine needs macOS 12.3 (Monterey) or later: apps use the web engine that came with macOS, and updating the Safari app alone does not update it. On iPhone or iPad, update to iOS 15.4 or later."
+            ? "On a Mac, Tine needs macOS 12.3 (Monterey) or later: apps use the web engine that came with macOS, and updating the Safari app alone does not update it."
             : "Update your system's web view and restart Tine.") + "</span>" +
           "</div>";
       })();

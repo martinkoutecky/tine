@@ -1,4 +1,3 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // GH #369 — useless pane scrollbars: reproduce the reporter's "dashboard"
 // (multiple short split panes) in headless Chromium against `vite preview`,
 // measure each pane's scroll geometry, and screenshot it. jsdom cannot prove
@@ -15,7 +14,7 @@ import { waitForHttpServer } from "./e2e-capabilities.mjs";
 //     the editing slack must be proportional to the PANE, not the window.
 //
 // Usage: npm run build && source scripts/env.sh && node scripts/shot-pane-slack.mjs
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import path from "node:path";
@@ -30,6 +29,17 @@ const server = spawn(
   { stdio: "ignore" },
 );
 
+async function waitForServer(url, tries = 80) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      if ((await fetch(url)).ok) return;
+    } catch {
+      // not up yet
+    }
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 async function openPageInFocusedPane(page, name) {
   await page.keyboard.press("Control+k");
@@ -142,7 +152,7 @@ async function measureFocusedPageWidth(page) {
 }
 
 try {
-  await waitForHttpServer(`http://127.0.0.1:${PORT}/`, 80, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://127.0.0.1:${PORT}/`);
   const browser = await chromium.launch({
     args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
   });
@@ -283,7 +293,7 @@ try {
     // reporter's Windows dashboard and absent from the original repro.
     { quad: "TR", rect: TRr, name: "Lines", lines: 6 },
     { quad: "BL", rect: BLr, name: "GRID", lines: 8 },
-    { quad: "BR", rect: BRr, name: "Project Plan" }, // 64+ blocks: the long pane
+    { quad: "BR", rect: BRr, name: "kitchen-sink" }, // og mock: the long pane
   ];
   for (const t of targets) {
     await focusQuadrant(t.rect);
@@ -336,7 +346,7 @@ try {
   // proof — proportional to the pane, not the window.
   const longPane = panes.reduce((best, p) => (p.contentH > (best?.contentH ?? 0) ? p : best), null);
   if (!longPane) {
-    failures.push("no overflowing pane found — the Project Plan (long) pane did not overflow");
+    failures.push("no overflowing pane found — the kitchen-sink (long) pane did not overflow");
   } else {
     // End slack is an editing affordance, not permanent dashboard overflow.
     // Activate the final block before measuring that separate contract.
@@ -364,9 +374,14 @@ try {
         document.querySelector(".main-content");
       return scroller?.scrollHeight ?? null;
     });
-    editStability.push({ state: "read", height: await measureFocusedScrollHeight() });
-    const stableTarget = page.locator(".pane-leaf.pane-focused .ls-block").nth(8);
+    // og mock: a one-line plain-text kitchen-sink block, so only slack (not the
+    // raw-vs-rendered form of rich content) could change the height.
+    const stableTarget = page.locator(".pane-leaf.pane-focused .ls-block").nth(17);
+    // Scroll first and let lazily sized content near the target (og mock's
+    // video/audio/embeds) settle, so "read" measures the same content as "edit".
     await stableTarget.scrollIntoViewIfNeeded();
+    await sleep(500);
+    editStability.push({ state: "read", height: await measureFocusedScrollHeight() });
     await stableTarget.locator(".block-content").first().click();
     await page.locator(".pane-leaf.pane-focused .block-editor").waitFor({ timeout: 4000 });
     await sleep(100);

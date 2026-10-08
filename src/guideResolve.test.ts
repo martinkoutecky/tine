@@ -1,12 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  doc,
-  loadFeed,
-  loadGuidePages,
-  resetStore,
-  resolveGuideBlockRef,
-  resolveGuidePageDto,
-} from "./store";
+import { loadFeed, loadGuidePages, resetStore, resolveGuideBlockRef, resolveGuidePageDto } from "./document";
+import { doc } from "./document/model";
 import type { BlockDto, PageDto } from "./types";
 
 // F2: the in-app Guide is virtual (never on disk), so the backend `((uuid))` /
@@ -53,8 +47,8 @@ describe("virtual-guide resolution (F2)", () => {
     expect(g?.blocks[0].raw).toContain("The roadmap bullet.");
   });
 
-  it("returns null for an unknown id and for a non-guide page's block", async () => {
-    await loadFeed([
+  it("returns null for an unknown id and for a non-guide page's block", () => {
+    loadFeed([
       // A NORMAL (non-guide) page with an id:: block: the disk resolver owns it,
       // so the guide fallback must NOT claim it.
       guidePage("Real page", "Real page", [
@@ -77,8 +71,8 @@ describe("virtual-guide resolution (F2)", () => {
     expect(resolveGuidePageDto("Unknown page")).toBeNull();
   });
 
-  it("page-embed fallback stays null for a non-guide page of the same title", async () => {
-    await loadFeed([guidePage("Features/Tips & shortcuts", "Features/Tips & shortcuts", [block("x", "real")])]);
+  it("page-embed fallback stays null for a non-guide page of the same title", () => {
+    loadFeed([guidePage("Features/Tips & shortcuts", "Features/Tips & shortcuts", [block("x", "real")])]);
     expect(resolveGuidePageDto("Features/Tips & shortcuts")).toBeNull();
     // sanity: the page did load as a real (non-guide) page
     expect(doc.pages.some((p) => p.title === "Features/Tips & shortcuts" && !p.guide)).toBe(true);

@@ -1,8 +1,7 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Guide screenshots for visual review.
 // Serves built dist over vite preview (http, not file://) against the mock backend.
 // Usage: npm run build && node scripts/shot-guide.mjs
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -13,9 +12,21 @@ mkdirSync(OUT, { recursive: true });
 
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 
+async function waitForServer(url, tries = 50) {
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) return;
+    } catch {
+      // not up yet
+    }
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
 
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 50, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   const page = await browser.newPage({ viewport: { width: 1280, height: 860 }, deviceScaleFactor: 2 });
   const errors = [];

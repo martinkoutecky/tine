@@ -1,0 +1,81 @@
+/* A region that could not be rendered (GH #490/#332).
+   Its own file, so app.css (over the size cap) does not grow. See src/components/FailureBoundary.tsx. */
+
+/* A region that failed to render says so in place, with a way forward. Sized to
+   sit inside whatever region it replaces (a pane body, a sidebar, one reference
+   panel), so an unrelated failure never costs the user the whole window. */
+.region-failure {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-left: 3px solid #b91c1c;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  max-width: 640px;
+}
+
+.region-failure-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+/* --text-secondary, not --text-muted: this is the line the user is asked to
+   quote in a report, so it must not be the faintest text in the box. */
+.region-failure-message {
+  color: var(--text-secondary, var(--text-muted));
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.region-failure-slow {
+  margin-top: 8px;
+  color: var(--text-secondary, var(--text-muted));
+}
+
+.region-failure-actions {
+  margin-top: 10px;
+}
+
+.region-failure-retry {
+  font: inherit;
+  padding: 4px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.region-failure-retry:hover,
+.region-failure-retry:focus-visible {
+  border-color: var(--link-color);
+  color: var(--link-color);
+}
+
+/* A panel whose own resource failed: one line, inside the panel, where the rows
+   would have been. Quieter than .region-failure on purpose — the panel and its
+   controls are still there, so this is a note, not a replacement. */
+.resource-failure {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px;
+  color: var(--text-secondary, var(--text-muted));
+}
+
+.resource-failure-retry {
+  font: inherit;
+  padding: 1px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.resource-failure-retry:hover,
+.resource-failure-retry:focus-visible {
+  border-color: var(--link-color);
+  color: var(--link-color);
+}

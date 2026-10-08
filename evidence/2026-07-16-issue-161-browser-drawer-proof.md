@@ -1,7 +1,7 @@
 # GH #161 E1 browser drawer proof
 
 Date: 2026-07-16  
-Worktree: `/aux/koutecky/logseq/tine-agent-worktrees/batch-reference-and-polish-v0510`  
+Worktree: the isolated `batch-reference-and-polish-v0510` worktree<br>
 Scope: manager checklist row E1 only  
 Status: deterministic Chromium acceptance green; no commit created
 

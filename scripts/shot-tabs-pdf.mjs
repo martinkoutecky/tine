@@ -2,7 +2,7 @@
 // via middle-click on page-ref links, pin one) and PDF highlights (text + area).
 // Each runs in its own fresh page so state can't leak. Usage (after env.sh + build):
 //   node scripts/shot-tabs-pdf.mjs
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";

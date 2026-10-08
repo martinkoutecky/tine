@@ -3,7 +3,7 @@
 // context. Headless Chromium over the mock backend. Curated → docs/img/settings.png.
 // Usage (after `source scripts/env.sh && npm run build`):
 //   node scripts/shot-settings.mjs
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";

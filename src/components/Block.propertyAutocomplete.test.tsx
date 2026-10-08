@@ -4,7 +4,9 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore } from "../store";
+import { pageByName, resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
 
@@ -152,6 +154,33 @@ describe("property name/value autocomplete", () => {
       expect(document.body.querySelector(".autocomplete")).toBeNull();
       expect(facets).not.toHaveBeenCalled();
     } finally {
+      dispose();
+    }
+  });
+
+  it("a failed facet query leaves the editor usable: no rejection, no toast, no popup", async () => {
+    const facets = vi.spyOn(backend(), "queryFacets").mockRejectedValue(new Error("facet index unavailable"));
+    const rejected: unknown[] = [];
+    const onRejection = (event: PromiseRejectionEvent) => { rejected.push(event.reason); event.preventDefault(); };
+    window.addEventListener("unhandledrejection", onRejection);
+    loadSingle(page(""));
+    startEditing("property-authoring", 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Property authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, "alp::", 3);
+      await vi.waitFor(() => expect(facets).toHaveBeenCalled());
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(rejected).toEqual([]);
+      expect(document.body.querySelector(".toast")).toBeNull();
+      expect(document.body.querySelector(".autocomplete .ac-item")).toBeNull();
+      // The typed text is untouched and still editable.
+      expect(textarea.value).toBe("alp::");
+    } finally {
+      window.removeEventListener("unhandledrejection", onRejection);
       dispose();
     }
   });

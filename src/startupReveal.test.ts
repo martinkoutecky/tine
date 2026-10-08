@@ -5,48 +5,10 @@ import { describe, expect, it } from "vitest";
 const root = path.resolve(import.meta.dirname, "..");
 const config = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8"));
 const capability = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/capabilities/default.json"), "utf8"));
-const index = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const main = fs.readFileSync(path.join(root, "src/main.tsx"), "utf8");
 const native = fs.readFileSync(path.join(root, "src-tauri/src/lib.rs"), "utf8");
-const app = fs.readFileSync(path.join(root, "src/App.tsx"), "utf8");
 
 describe("stable desktop startup reveal (GH #132)", () => {
-  it("paints a themed readiness shell before the application modules load", () => {
-    const shell = index.indexOf('class="startup-shell"');
-    const module = index.indexOf('type="module"');
-
-    expect(index).toContain('id="tine-startup-style"');
-    expect(index).toContain('localStorage.getItem("logseq-claude.theme")');
-    expect(index).toContain('matchMedia("(prefers-color-scheme: dark)")');
-    expect(index).toContain("background: var(--bg-primary, #ffffff);");
-    expect(index).toContain("background: var(--bg-primary, #1a1b1e);");
-    expect(index).toContain("color: var(--text-primary, #d1d5db);");
-    expect(shell).toBeGreaterThanOrEqual(0);
-    expect(module).toBeGreaterThan(shell);
-    expect(main).toContain("root.replaceChildren();");
-    expect(main.indexOf("root.replaceChildren();")).toBeLessThan(main.indexOf("render(() => <App />"));
-  });
-
-  it("does not bypass cached plugin revocation checks to mount sooner", () => {
-    const startup = main.indexOf("const communityExtensionsReady = startCommunityExtensions()");
-    const readinessGate = main.indexOf("communityExtensionsReady,", startup);
-    const mount = main.indexOf("]).then(mount, mount)", readinessGate);
-
-    expect(startup).toBeGreaterThanOrEqual(0);
-    expect(readinessGate).toBeGreaterThan(startup);
-    expect(mount).toBeGreaterThan(readinessGate);
-  });
-
-  it("keeps the complete Settings implementation out of the initial page bundle", () => {
-    expect(app).not.toContain('import { Settings } from "./components/Settings"');
-    expect(app).toContain('import("./components/Settings")');
-    expect(app).toContain("<Show when={settingsOpen()}>");
-
-    const conflict = fs.readFileSync(path.join(root, "src/components/ConflictResolution.tsx"), "utf8");
-    expect(conflict).toContain('from "./JournalConflictFileRow"');
-    expect(conflict).not.toContain('from "./Settings"');
-  });
-
   it("starts the main window hidden and reveals it after a stable themed frame", () => {
     expect(config.app.windows.find((window: { label: string }) => window.label === "main")?.visible).toBe(false);
     expect(capability.permissions).toContain("core:window:allow-show");
@@ -61,28 +23,22 @@ describe("stable desktop startup reveal (GH #132)", () => {
     expect(native).toContain("window.show()");
   });
 
-  it("lets the themed window paint before a configured graph opens", () => {
-    const setupStart = native.indexOf(".setup(|app|");
+  // I-22 (og C3 L08): Tauri 2 panics on an error returned from `.setup`, so a
+  // remembered graph that resolves but fails to open (synced dangling `assets`
+  // link, unsafe synced `:pages-directory`, disk error) crashed every launch.
+  // The webview opens the startup graph through `load_graph` and shows the
+  // Welcome open-failure card instead. Exemplar: master lib.rs setup.
+  it("never opens a graph or propagates an error out of Tauri setup (I-22)", () => {
+    // Matched by shape, so a `move` closure cannot silently disable this guard.
+    const setupStart = native.search(/\.setup\((move\s+)?\|app\|/);
     const setupEnd = native.indexOf(".invoke_handler", setupStart);
-    const setup = native.slice(setupStart, setupEnd);
-
     expect(setupStart).toBeGreaterThanOrEqual(0);
     expect(setupEnd).toBeGreaterThan(setupStart);
-    expect(setup).not.toContain("load_graph_for_label");
+    const setup = native.slice(setupStart, setupEnd).replace(/\/\/.*$/gm, "");
+    for (const opener of ["load_graph_for_label", "open_graph_for_load", "Store::open"]) {
+      expect(setup, `setup must defer ${opener} to the webview (I-22)`).not.toContain(opener);
+    }
+    expect(setup, "an error returned from setup panics Tauri at every launch (I-22)").not.toMatch(/\?\s*;/);
     expect(setup).toContain("defers graph open to the visible webview");
-    expect(app).toContain("Opening graph storage…");
-  });
-
-  it("keeps frontend-triggered graph recovery off the native command thread", () => {
-    const graph = fs.readFileSync(path.join(root, "src-tauri/src/graph.rs"), "utf8");
-    const loadStart = graph.indexOf("pub(crate) async fn load_graph(");
-    const loadEnd = graph.indexOf("pub(crate) fn load_graph_for_label", loadStart);
-    const load = graph.slice(loadStart, loadEnd);
-
-    expect(loadStart).toBeGreaterThanOrEqual(0);
-    expect(loadEnd).toBeGreaterThan(loadStart);
-    expect(load).toContain("tauri::async_runtime::spawn_blocking");
-    expect(load).toContain("get_webview_window(&label).is_none()");
-    expect(load).toContain("slot.binding_generation == binding_generation");
   });
 });

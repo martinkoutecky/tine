@@ -1,30 +1,20 @@
-//! Shared storage adapter over lsdoc's source-oriented outline API.
+//! The page-outline authority: which physical lines of a Markdown or Org page
+//! open a block, and at which structural level.
 //!
-//! This module owns no Markdown or Org recognition. It validates parser-owned
-//! source events, maps their exact ranges into Tine's existing document model,
-//! and refuses event shapes that that model cannot represent without assigning
-//! two semantic blocks to the same physical source line.
+//! lsdoc owns the recognition (`lsdoc::parse_outline`, reached through the
+//! bounded boundary `crates/lsdoc-block-parse.rs`), exactly as mldoc decides it
+//! for OG: dash bullets, unbulleted ATX headings, Org headlines, and every
+//! literal region (fences, `#+BEGIN_…` blocks) that hides a look-alike line.
+//! This module owns no Markdown or Org grammar. It checks the parser's events
+//! against the page's physical lines and maps each one onto Tine's model of
+//! one block per header line. `doc::parse` and `org::parse_org` build every
+//! [`Document`](crate::doc::Document) from [`headers`]; nothing else decides
+//! where a block starts (I-12).
+//!
+//! Cost: one lsdoc block parse of the page, O(page bytes), plus O(lines).
 
-use crate::doc::{DocBlock, Document, ParsedDocument, PromotedHeadingLayout};
-use lsdoc::{OutlineHeader, OutlineHeaderKind};
-use std::fmt;
-use std::ops::Range;
-
-#[cfg(test)]
-thread_local! {
-    static OUTLINE_PARSE_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-pub(crate) fn reset_parse_attempts() {
-    OUTLINE_PARSE_ATTEMPTS.with(|attempts| attempts.set(0));
-    OUTLINE_PARSE_CACHE.with(|cache| cache.borrow_mut().clear());
-}
-
-#[cfg(test)]
-pub(crate) fn parse_attempts() -> usize {
-    OUTLINE_PARSE_ATTEMPTS.with(std::cell::Cell::get)
-}
+use crate::doc::DocBlock;
+use lsdoc::OutlineHeaderKind;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OutlineFormat {
@@ -33,13 +23,6 @@ pub(crate) enum OutlineFormat {
 }
 
 impl OutlineFormat {
-    fn lsdoc_name(self) -> &'static str {
-        match self {
-            Self::Markdown => "md",
-            Self::Org => "org",
-        }
-    }
-
     fn accepts(self, kind: OutlineHeaderKind) -> bool {
         matches!(
             (self, kind),
@@ -52,842 +35,167 @@ impl OutlineFormat {
     }
 }
 
-const OUTLINE_PARSE_CACHE_ENTRIES: usize = 3;
-const MAX_OUTLINE_PARSE_CACHE_SOURCE_BYTES: usize = 2 * 1024 * 1024;
-
-struct OutlineParseCacheEntry {
-    source: String,
-    format: OutlineFormat,
-    parsed: ParsedDocument,
+/// One block-opening line of a page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Header {
+    /// Index of the header's physical line in `text.split('\n')`.
+    pub(crate) line: usize,
+    /// lsdoc's structural level: a later header nests under the nearest
+    /// earlier one of a smaller level.
+    pub(crate) level: u32,
+    /// Leading bytes of the header line that are structure, not block text:
+    /// indentation plus `-` (and one space) for a dash bullet, the star run
+    /// (and one space) for an Org headline, nothing for an unbulleted heading.
+    pub(crate) prefix_len: usize,
+    /// Leading tabs/spaces the block's continuation lines are dedented by:
+    /// the bullet's content column for a Markdown dash bullet, else 0.
+    pub(crate) content_indent: usize,
 }
 
-thread_local! {
-    /// A save repeatedly asks the canonical serializer to inspect the same
-    /// accepted base, target, and clean manifest render base. Retain only the
-    /// three most recent bounded exact sources on that worker thread; equality
-    /// is byte-for-byte, so this adds no semantic authority and parser failures
-    /// are never cached.
-    static OUTLINE_PARSE_CACHE:
-        std::cell::RefCell<std::collections::VecDeque<OutlineParseCacheEntry>> =
-            const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+/// Why the page has no representable outline. Each makes `doc::parse` /
+/// `org::parse_org` show the whole page as its unparsed preamble text, which a
+/// save writes back verbatim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Refusal {
+    /// lsdoc did not take ownership of the text, or its quote staircase is
+    /// deeper than the bounded boundary admits (malformed imported content).
+    Unowned,
+    /// Event `event` does not start its own physical line, or shares one
+    /// with an earlier event (malformed imported content). Accepting it would
+    /// give two blocks the same line, and a save would duplicate or drop text.
+    NotOnePerLine { event: usize },
+    /// Event `event` has ranges, kind or level outside the parser's contract.
+    Invalid { event: usize },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum OutlineAdapterError {
-    ParserOwnership,
-    InvalidSourceRange { event: usize },
-    WrongFormatKind { event: usize },
-    ZeroLevel { event: usize },
-    NonPhysicalLineHeader { event: usize },
-    OverlappingPhysicalLines { first: usize, second: usize },
-}
-
-impl fmt::Display for OutlineAdapterError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ParserOwnership => f.write_str("lsdoc did not take ownership of the source"),
-            Self::InvalidSourceRange { event } => {
-                write!(f, "lsdoc outline event {event} has invalid source ranges")
-            }
-            Self::WrongFormatKind { event } => {
-                write!(f, "lsdoc outline event {event} has the wrong format kind")
-            }
-            Self::ZeroLevel { event } => {
-                write!(f, "lsdoc outline event {event} has structural level zero")
-            }
-            Self::NonPhysicalLineHeader { event } => write!(
-                f,
-                "lsdoc outline event {event} starts inside a physical line"
-            ),
-            Self::OverlappingPhysicalLines { first, second } => write!(
-                f,
-                "lsdoc outline events {first} and {second} occupy the same or overlapping physical lines"
-            ),
+/// The block-opening lines of `text`, in source order. `text` must use `\n`
+/// line breaks (a CRLF's `\r` may stay in the line; a lone `\r` must already
+/// be a `\n`). `Err` names why no outline is representable.
+pub(crate) fn headers(text: &str, format: OutlineFormat) -> Result<Vec<Header>, Refusal> {
+    let events = crate::render::parse_outline_bounded(text, format == OutlineFormat::Org)
+        .ok_or(Refusal::Unowned)?;
+    let mut line_starts = vec![0usize];
+    line_starts.extend(text.match_indices('\n').map(|(at, _)| at + 1));
+    let mut out: Vec<Header> = Vec::with_capacity(events.len());
+    for (event, header) in events.iter().enumerate() {
+        let prefix = header.structural_prefix;
+        let valid = format.accepts(header.kind)
+            && header.level > 0
+            && header.line_content.slice(text).is_some()
+            && prefix.slice(text).is_some()
+            && prefix.start == header.line.start
+            && prefix.end <= header.line_content.end
+            && header.line_content.start == header.line.start;
+        if !valid {
+            return Err(Refusal::Invalid { event });
         }
-    }
-}
-
-impl std::error::Error for OutlineAdapterError {}
-
-#[derive(Clone, Debug)]
-struct PhysicalLine {
-    content: Range<usize>,
-    full: Range<usize>,
-}
-
-fn physical_lines(source: &str) -> Vec<PhysicalLine> {
-    let bytes = source.as_bytes();
-    let mut lines = Vec::new();
-    let mut start = 0_usize;
-    while start < bytes.len() {
-        let mut end = start;
-        while end < bytes.len() && !matches!(bytes[end], b'\r' | b'\n') {
-            end += 1;
-        }
-        let mut full_end = end;
-        if full_end < bytes.len() {
-            if bytes[full_end] == b'\r' && bytes.get(full_end.saturating_add(1)) == Some(&b'\n') {
-                full_end = full_end.saturating_add(2);
-            } else {
-                full_end = full_end.saturating_add(1);
-            }
-        }
-        lines.push(PhysicalLine {
-            content: start..end,
-            full: start..full_end,
-        });
-        start = full_end;
-    }
-    lines
-}
-
-fn normalized_lines(source: &str, lines: &[PhysicalLine]) -> String {
-    lines
-        .iter()
-        .map(|line| &source[line.content.clone()])
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn whitespace_only(source: &str, line: &PhysicalLine) -> bool {
-    source[line.content.clone()]
-        .bytes()
-        .all(|byte| byte.is_ascii_whitespace())
-}
-
-fn strip_leading_layout_whitespace(line: &str, count: usize) -> &str {
-    let bytes = line.as_bytes();
-    let mut offset = 0_usize;
-    while offset < count && offset < bytes.len() && matches!(bytes[offset], b' ' | b'\t' | 0x0c) {
-        offset += 1;
-    }
-    &line[offset..]
-}
-
-fn validate_events(
-    source: &str,
-    format: OutlineFormat,
-    headers: &[OutlineHeader],
-    lines: &[PhysicalLine],
-) -> Result<Vec<usize>, OutlineAdapterError> {
-    let mut line_indexes = Vec::with_capacity(headers.len());
-    let mut line_cursor = 0_usize;
-    for (event, header) in headers.iter().enumerate() {
-        if !format.accepts(header.kind) {
-            return Err(OutlineAdapterError::WrongFormatKind { event });
-        }
-        if header.level == 0 {
-            return Err(OutlineAdapterError::ZeroLevel { event });
-        }
-        let ranges_are_valid = header.structural_prefix.slice(source).is_some()
-            && header.line_content.slice(source).is_some()
-            && header.line.slice(source).is_some()
-            && header.line_content.start == header.line.start
-            && header.line_content.end <= header.line.end
-            && header.structural_prefix.start == header.line.start
-            && header.structural_prefix.end <= header.line_content.end
-            && header.line.end <= source.len();
-        if !ranges_are_valid {
-            return Err(OutlineAdapterError::InvalidSourceRange { event });
-        }
-        while lines
-            .get(line_cursor)
-            .is_some_and(|line| line.full.start < header.line.start)
-        {
-            line_cursor = line_cursor.saturating_add(1);
-        }
-        let Some(line) = lines
-            .get(line_cursor)
-            .filter(|line| line.full.start == header.line.start)
-        else {
-            return Err(OutlineAdapterError::InvalidSourceRange { event });
+        let Ok(line) = line_starts.binary_search(&header.line.start) else {
+            return Err(Refusal::Invalid { event });
         };
-        if line.content != header.line_content.as_range() || line.full != header.line.as_range() {
-            return Err(OutlineAdapterError::InvalidSourceRange { event });
+        if header.header_start != header.line.start || out.last().is_some_and(|h| h.line >= line) {
+            return Err(Refusal::NotOnePerLine { event });
         }
-        // A later parser event can legitimately begin in a suffix of a line
-        // already owned by another AST block. Tine's Document model has one
-        // structural block per physical header line, so accepting that shape
-        // would overlap receipts and source spans.
-        if header.header_start != header.line.start {
-            return Err(OutlineAdapterError::NonPhysicalLineHeader { event });
-        }
-        if let Some(previous_line) = line_indexes.last().copied() {
-            if previous_line >= line_cursor {
-                return Err(OutlineAdapterError::OverlappingPhysicalLines {
-                    first: event.saturating_sub(1),
-                    second: event,
-                });
+        let prefix_len = prefix.end - prefix.start;
+        let content_indent = match header.kind {
+            OutlineHeaderKind::MarkdownDashBullet if text[..prefix.end].ends_with("- ") => {
+                prefix_len
             }
+            OutlineHeaderKind::MarkdownDashBullet => prefix_len + 1,
+            _ => 0,
+        };
+        out.push(Header {
+            line,
+            level: header.level,
+            prefix_len,
+            content_indent,
+        });
+    }
+    Ok(out)
+}
+
+/// Byte offset of the first block-opening line of `text` (same line-break
+/// contract as [`headers`]), or `None` when there is none or the outline is
+/// not representable: `doc::parse`/`org::parse_org` then read the whole text
+/// as the preamble. Silent (the page parse reports refusals).
+pub(crate) fn first_header_start(text: &str, format: OutlineFormat) -> Option<usize> {
+    let line = headers(text, format).ok()?.first()?.line;
+    Some(text.split_inclusive('\n').take(line).map(str::len).sum())
+}
+
+/// Headers, or none (with a diagnostic) when the outline is not representable.
+pub(crate) fn headers_or_none(text: &str, format: OutlineFormat) -> Vec<Header> {
+    headers(text, format).unwrap_or_else(|refusal| {
+        crate::diag_line::diagnostic_line(match refusal {
+            Refusal::Unowned => "page outline not owned by lsdoc; shown as page text",
+            Refusal::NotOnePerLine { .. } => {
+                "page outline has two blocks on one line; shown as page text"
+            }
+            Refusal::Invalid { .. } => "page outline events invalid; shown as page text",
+        });
+        Vec::new()
+    })
+}
+
+/// The blocks of `lines` (the page's physical lines), one per header: the
+/// header line after its prefix, then each following line up to the next
+/// header, dedented by the header's `content_indent`, nested by level.
+pub(crate) fn blocks(lines: &[&str], headers: &[Header], is_org: bool) -> Vec<DocBlock> {
+    let mut flat = Vec::with_capacity(headers.len());
+    for (n, header) in headers.iter().enumerate() {
+        let end = headers.get(n + 1).map_or(lines.len(), |next| next.line);
+        let mut raw = lines[header.line][header.prefix_len..].to_string();
+        for line in &lines[header.line + 1..end] {
+            raw.push('\n');
+            raw.push_str(strip_layout_ws(line, header.content_indent));
         }
-        line_indexes.push(line_cursor);
+        let mut block = DocBlock::new(raw);
+        block.is_org = is_org;
+        flat.push((header.level, block));
     }
-    Ok(line_indexes)
+    build_tree(flat)
 }
 
-fn attach(stack: &mut Vec<(u32, usize, DocBlock)>, roots: &mut Vec<DocBlock>, block: DocBlock) {
-    match stack.last_mut() {
-        Some((_, _, parent)) => parent.children.push(block),
-        None => roots.push(block),
-    }
+/// Remove up to `n` leading tabs, spaces or form feeds (mldoc's layout
+/// whitespace; master `strip_leading_layout_whitespace`).
+pub(crate) fn strip_layout_ws(line: &str, n: usize) -> &str {
+    let skip = line
+        .bytes()
+        .take(n)
+        .take_while(|b| matches!(b, b' ' | b'\t' | 0x0c))
+        .count();
+    &line[skip..]
 }
 
+/// Nest a source-order `(level, block)` list: each block goes under the
+/// nearest earlier block of a smaller level. Iterative, O(blocks).
 fn build_tree(flat: Vec<(u32, DocBlock)>) -> Vec<DocBlock> {
+    fn attach(stack: &mut [(u32, DocBlock)], roots: &mut Vec<DocBlock>, done: DocBlock) {
+        match stack.last_mut() {
+            Some((_, parent)) => parent.children.push(done),
+            None => roots.push(done),
+        }
+    }
     let mut roots = Vec::new();
-    let mut stack: Vec<(u32, usize, DocBlock)> = Vec::new();
+    let mut stack: Vec<(u32, DocBlock)> = Vec::new();
     for (level, block) in flat {
-        while stack.last().is_some_and(|(open, _, _)| *open >= level) {
-            let (_, _, done) = stack.pop().expect("checked nonempty");
+        while stack.last().is_some_and(|(open, _)| *open >= level) {
+            let (_, done) = stack.pop().expect("checked nonempty");
             attach(&mut stack, &mut roots, done);
         }
-        let depth = stack.len().saturating_add(1);
-        stack.push((level, depth, block));
+        stack.push((level, block));
     }
-    while let Some((_, _, done)) = stack.pop() {
+    while let Some((_, done)) = stack.pop() {
         attach(&mut stack, &mut roots, done);
     }
     roots
 }
 
-fn markdown_preamble(
-    source: &str,
-    lines: &[PhysicalLine],
-    first_header_line: usize,
-) -> (Option<String>, usize, usize) {
-    let pre_lines = &lines[..first_header_line];
-    let mut semantic_end = pre_lines.len();
-    while semantic_end > 0 && whitespace_only(source, &pre_lines[semantic_end - 1]) {
-        semantic_end -= 1;
-    }
-    let pre_block =
-        (semantic_end > 0).then(|| normalized_lines(source, &pre_lines[..semantic_end]));
-    let separators = pre_lines.len().saturating_sub(semantic_end);
-    if pre_block.is_some() {
-        (pre_block, separators, 0)
-    } else {
-        (None, 1, separators)
-    }
-}
-
-fn no_header_preamble(source: &str, lines: &[PhysicalLine]) -> Option<String> {
-    let mut semantic_end = lines.len();
-    while semantic_end > 0
-        && lines[semantic_end - 1].content.is_empty()
-        && lines[semantic_end - 1].full.end > lines[semantic_end - 1].content.end
-    {
-        semantic_end -= 1;
-    }
-    (semantic_end > 0).then(|| normalized_lines(source, &lines[..semantic_end]))
-}
-
-pub(crate) fn parse_document(
-    source: &str,
-    format: OutlineFormat,
-) -> Result<ParsedDocument, OutlineAdapterError> {
-    if source.len() <= MAX_OUTLINE_PARSE_CACHE_SOURCE_BYTES {
-        if let Some(parsed) = OUTLINE_PARSE_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            let position = cache
-                .iter()
-                .position(|entry| entry.format == format && entry.source == source)?;
-            let entry = cache.remove(position).expect("located parse cache entry");
-            let parsed = entry.parsed.clone();
-            cache.push_back(entry);
-            Some(parsed)
-        }) {
-            return Ok(parsed);
-        }
-    }
-
-    let parsed = parse_document_uncached(source, format)?;
-    if source.len() <= MAX_OUTLINE_PARSE_CACHE_SOURCE_BYTES {
-        OUTLINE_PARSE_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            if cache.len() == OUTLINE_PARSE_CACHE_ENTRIES {
-                cache.pop_front();
-            }
-            cache.push_back(OutlineParseCacheEntry {
-                source: source.to_owned(),
-                format,
-                parsed: parsed.clone(),
-            });
-        });
-    }
-    Ok(parsed)
-}
-
-fn parse_document_uncached(
-    source: &str,
-    format: OutlineFormat,
-) -> Result<ParsedDocument, OutlineAdapterError> {
-    #[cfg(test)]
-    {
-        OUTLINE_PARSE_ATTEMPTS.with(|attempts| attempts.set(attempts.get().saturating_add(1)));
-    }
-    let outline = lsdoc::parse_outline(source, format.lsdoc_name())
-        .map_err(|_| OutlineAdapterError::ParserOwnership)?;
-    let lines = physical_lines(source);
-    let line_indexes = validate_events(source, format, &outline.headers, &lines)?;
-
-    if outline.headers.is_empty() {
-        return Ok(ParsedDocument {
-            document: Document {
-                pre_block: no_header_preamble(source, &lines),
-                roots: Vec::new(),
-            },
-            block_spans: Vec::new(),
-            unbulleted_markdown_headings: Vec::new(),
-            blank_lines_before_blocks: Vec::new(),
-            blank_lines_after_preamble: 0,
-            leading_blank_lines: 0,
-            promoted_heading_layout: None,
-        });
-    }
-
-    let first_header_line = line_indexes[0];
-    let (pre_block, blank_lines_after_preamble, leading_blank_lines) = match format {
-        OutlineFormat::Markdown => markdown_preamble(source, &lines, first_header_line),
-        OutlineFormat::Org => (
-            (first_header_line > 0).then(|| normalized_lines(source, &lines[..first_header_line])),
-            0,
-            0,
-        ),
-    };
-
-    let mut flat = Vec::with_capacity(outline.headers.len());
-    let mut blank_lines_before_blocks = vec![0; outline.headers.len()];
-    let mut block_spans = Vec::with_capacity(outline.headers.len());
-    let unbulleted_markdown_headings = outline
-        .headers
-        .iter()
-        .map(|header| header.kind == OutlineHeaderKind::MarkdownUnbulletedAtxHeading)
-        .collect();
-    for (event, header) in outline.headers.iter().enumerate() {
-        let header_line = line_indexes[event];
-        let next_header_line = line_indexes
-            .get(event.saturating_add(1))
-            .copied()
-            .unwrap_or(lines.len());
-        let mut body_end_line = next_header_line;
-        let before_next_header = event.saturating_add(1) < outline.headers.len();
-        while body_end_line > header_line.saturating_add(1) {
-            let trailing = &lines[body_end_line - 1];
-            let structural_blank = if before_next_header || format == OutlineFormat::Markdown {
-                whitespace_only(source, trailing)
-            } else {
-                // Org retains whitespace-bearing terminal body lines, but a
-                // pure final newline run belongs to the serializer's existing
-                // trailing-newline counter.
-                trailing.content.is_empty()
-            };
-            if !structural_blank {
-                break;
-            }
-            body_end_line -= 1;
-        }
-        let separators = next_header_line.saturating_sub(body_end_line);
-        if let Some(next_blank_lines) = blank_lines_before_blocks.get_mut(event.saturating_add(1)) {
-            *next_blank_lines = separators;
-        }
-
-        let mut raw = source[header.structural_prefix.end..header.line_content.end].to_owned();
-        let markdown_content_indent = match (format, header.kind) {
-            (OutlineFormat::Markdown, OutlineHeaderKind::MarkdownDashBullet) => {
-                let prefix_len = header
-                    .structural_prefix
-                    .end
-                    .saturating_sub(header.line.start);
-                if header
-                    .structural_prefix
-                    .slice(source)
-                    .is_some_and(|prefix| prefix.ends_with("- "))
-                {
-                    prefix_len
-                } else {
-                    prefix_len.saturating_add(1)
-                }
-            }
-            _ => 0,
-        };
-        for line in &lines[header_line.saturating_add(1)..body_end_line] {
-            raw.push('\n');
-            let content = &source[line.content.clone()];
-            if format == OutlineFormat::Markdown {
-                raw.push_str(strip_leading_layout_whitespace(
-                    content,
-                    markdown_content_indent,
-                ));
-            } else {
-                raw.push_str(content);
-            }
-        }
-        let mut block = DocBlock::new(raw);
-        block.is_org = format == OutlineFormat::Org;
-        flat.push((header.level, block));
-        block_spans.push(
-            header.line.start
-                ..outline
-                    .headers
-                    .get(event.saturating_add(1))
-                    .map_or(source.len(), |next| next.line.start),
-        );
-    }
-
-    let promoted_heading_layout = match (format, outline.headers.first()) {
-        (OutlineFormat::Markdown, Some(first))
-            if first.kind == OutlineHeaderKind::MarkdownUnbulletedAtxHeading =>
-        {
-            if outline
-                .headers
-                .get(1)
-                .is_some_and(|second| second.level > first.level)
-            {
-                Some(PromotedHeadingLayout::NestedChildren)
-            } else {
-                Some(PromotedHeadingLayout::UnbulletedRoot)
-            }
-        }
-        _ => None,
-    };
-    let roots = build_tree(flat);
-    Ok(ParsedDocument {
-        document: Document { pre_block, roots },
-        block_spans,
-        unbulleted_markdown_headings,
-        blank_lines_before_blocks,
-        blank_lines_after_preamble,
-        leading_blank_lines,
-        promoted_heading_layout,
-    })
-}
-
-/// Return the insertion point for a canonical semantic ATX heading without
-/// invoking the whole-document outline parser per block. Source-layout
-/// retention itself is admitted by `unbulleted_markdown_headings`, captured
-/// from lsdoc's page parse above; this helper only checks that an edited or
-/// generated block still has lsdoc's accepted Markdown heading-marker shape.
-pub(crate) fn markdown_atx_heading_line_end(raw: &str) -> Option<usize> {
-    let line_end = raw.find(['\r', '\n']).unwrap_or(raw.len());
-    let first_line = &raw[..line_end];
-    let leading_spaces = first_line
-        .bytes()
-        .take_while(|byte| matches!(byte, b' ' | b'\t' | 0x1a | 0x0c))
-        .count();
-    let after_spaces = &first_line[leading_spaces..];
-    let hashes = after_spaces
-        .bytes()
-        .take_while(|byte| *byte == b'#')
-        .count();
-    let boundary = &after_spaces[hashes..];
-    (hashes > 0 && (boundary.is_empty() || matches!(boundary.as_bytes()[0], b' ' | b'\t' | 0x0c)))
-        .then_some(line_end)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::doc::{self, DocBlock};
-    use serde::Deserialize;
-
-    #[derive(Deserialize)]
-    struct Corpus {
-        schema: u32,
-        provenance: Provenance,
-        cases: Vec<CorpusCase>,
-    }
-
-    #[derive(Deserialize)]
-    struct Provenance {
-        repository: String,
-        revision: String,
-        sources: Vec<String>,
-        selection: String,
-    }
-
-    #[derive(Deserialize)]
-    struct CorpusCase {
-        source: String,
-        id: String,
-        format: String,
-        input: String,
-    }
-
-    fn semantic_blocks<'a>(document: &'a Document) -> Vec<(Vec<u32>, &'a DocBlock)> {
-        fn visit<'a>(
-            blocks: &'a [DocBlock],
-            locator: &mut Vec<u32>,
-            output: &mut Vec<(Vec<u32>, &'a DocBlock)>,
-        ) {
-            for (position, block) in blocks.iter().enumerate() {
-                locator.push(position as u32);
-                output.push((locator.clone(), block));
-                visit(&block.children, locator, output);
-                locator.pop();
-            }
-        }
-        let mut output = Vec::new();
-        visit(&document.roots, &mut Vec::new(), &mut output);
-        output
-    }
-
-    fn event_locators(headers: &[OutlineHeader]) -> Vec<Vec<u32>> {
-        let mut roots = 0_u32;
-        let mut stack: Vec<(u32, Vec<u32>, u32)> = Vec::new();
-        let mut locators = Vec::with_capacity(headers.len());
-        for header in headers {
-            while stack
-                .last()
-                .is_some_and(|(level, _, _)| *level >= header.level)
-            {
-                stack.pop();
-            }
-            let locator = match stack.last_mut() {
-                Some((_, parent, child_count)) => {
-                    let mut locator = parent.clone();
-                    locator.push(*child_count);
-                    *child_count = child_count.saturating_add(1);
-                    locator
-                }
-                None => {
-                    let locator = vec![roots];
-                    roots = roots.saturating_add(1);
-                    locator
-                }
-            };
-            locators.push(locator.clone());
-            stack.push((header.level, locator, 0));
-        }
-        locators
-    }
-
-    fn is_expected_refusal(headers: &[OutlineHeader]) -> bool {
-        headers
-            .iter()
-            .any(|header| header.header_start != header.line.start)
-            || headers
-                .windows(2)
-                .any(|pair| pair[0].line.start >= pair[1].line.start)
-    }
-
-    /// Markdown inputs whose format-preserving canonical save reshapes the
-    /// outline. Direct Files has no Markdown read-only gate: that refusal was
-    /// Managed Storage's import admission, removed with it (ADR 0066). So each
-    /// entry is a page that an edit elsewhere restructures on save. A new entry
-    /// is a serializer regression and a vanished one is a fix; update the list
-    /// deliberately either way.
-    const MARKDOWN_SAVE_RESHAPES: &[&str] = &[];
-    /// Generated layouts: the three indented lone-CR variants reshape on
-    /// canonical save, the shape minimized in
-    /// `lone_cr_fence_reclassification_reshapes_the_outline_on_canonical_save`.
-    /// No file of the anonymized real graph changes structure on save.
-    const GENERATED_MARKDOWN_SAVE_RESHAPES: &[&str] = &[
-        "generated-md-\"    \"-cr",
-        "generated-md-\"  \"-cr",
-        "generated-md-\"\\t\"-cr",
-    ];
-
-    /// Runs the parser differential for one input and reports whether the
-    /// format-preserving canonical save would reshape a Markdown outline. An
-    /// Org mismatch must be refused by the production read-only gate
-    /// (`org::org_editable`); Markdown has no such gate, so the caller pins
-    /// the exact set instead of excusing it with a predicate nothing consults.
-    fn assert_differential(label: &str, input: &str, format: OutlineFormat) -> bool {
-        let direct = lsdoc::parse_outline(input, format.lsdoc_name())
-            .unwrap_or_else(|error| panic!("{label}: lsdoc ownership failure: {error}"));
-        let parsed = match parse_document(input, format) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                assert!(
-                    is_expected_refusal(&direct.headers),
-                    "{label}: unexpected adapter refusal {error}; events={:?}",
-                    direct.headers
-                );
-                return false;
-            }
-        };
-        assert!(
-            !is_expected_refusal(&direct.headers),
-            "{label}: adapter accepted an overlapping/non-physical event shape"
-        );
-
-        let blocks = semantic_blocks(&parsed.document);
-        assert_eq!(
-            blocks.len(),
-            direct.headers.len(),
-            "{label}: event/node count"
-        );
-        assert_eq!(
-            blocks
-                .iter()
-                .map(|(locator, _)| locator.clone())
-                .collect::<Vec<_>>(),
-            event_locators(&direct.headers),
-            "{label}: parser-level topology"
-        );
-
-        for (index, ((_, block), header)) in blocks.iter().zip(direct.headers.iter()).enumerate() {
-            let expected_first_line = &input[header.structural_prefix.end..header.line_content.end];
-            assert_eq!(
-                block.raw.split('\n').next().unwrap_or(""),
-                expected_first_line,
-                "{label}: event {index} kind/prefix mapping for {:?}",
-                header.kind
-            );
-            assert_eq!(
-                parsed.block_spans[index],
-                header.line.start
-                    ..direct
-                        .headers
-                        .get(index.saturating_add(1))
-                        .map_or(input.len(), |next| next.line.start),
-                "{label}: event {index} exact source span"
-            );
-        }
-
-        let canonical = match format {
-            OutlineFormat::Markdown => {
-                doc::serialize_with(&parsed.document, &doc::SerializeOpts::detect(Some(input)))
-            }
-            OutlineFormat::Org => crate::org::serialize_org_detect(&parsed.document, Some(input)),
-        };
-        let reparsed = parse_document(&canonical, format)
-            .unwrap_or_else(|error| panic!("{label}: canonical output refused: {error}"));
-        if reparsed.document == parsed.document {
-            return false;
-        }
-        match format {
-            OutlineFormat::Markdown => true,
-            OutlineFormat::Org => {
-                assert!(
-                    !crate::org::org_editable(input),
-                    "{label}: Org canonicalization mismatch was not refused by the read-only gate"
-                );
-                false
-            }
-        }
-    }
-
-    fn assert_pinned_reshapes(mut reshaped: Vec<String>, pinned: &[&str]) {
-        reshaped.sort();
-        assert_eq!(
-            reshaped, pinned,
-            "the set of Markdown inputs whose canonical save reshapes the outline changed; \
-             a new entry is a serializer regression (Direct Files saves it), a missing one is a fix"
-        );
-    }
-
-    #[test]
-    fn public_lsdoc_fixed_harness_is_a_permanent_outline_differential() {
-        let corpus: Corpus = serde_json::from_str(include_str!(
-            "../tests/fixtures/lsdoc-outline/public-harness.json"
-        ))
-        .expect("vendored public lsdoc outline corpus");
-        assert_eq!(corpus.schema, 1);
-        assert_eq!(
-            corpus.provenance.repository,
-            "https://github.com/martinkoutecky/lsdoc"
-        );
-        assert_eq!(
-            corpus.provenance.sources,
-            [
-                "harness/corpus.json",
-                "harness/corpus.blockgate.json",
-                "harness/corpus.blocks.json",
-                "harness/corpus.inline.json",
-                "harness/corpus.mined.json",
-                "harness/corpus.org.json",
-                "harness/corpus.org.mined.json",
-                "harness/reported-divergences.json",
-            ]
-        );
-        assert_eq!(
-            corpus.provenance.revision,
-            "74b9e62e04d6c4645bed1d68d97be1464ef101b7"
-        );
-        assert!(corpus.provenance.selection.contains("tracked public cases"));
-        assert_eq!(corpus.cases.len(), 1_895);
-
-        let mut reshaped = Vec::new();
-        for case in corpus.cases {
-            assert!(
-                corpus.provenance.sources.contains(&case.source),
-                "{} has unrecorded provenance",
-                case.id
-            );
-            let format = if case.format == "org" {
-                OutlineFormat::Org
-            } else {
-                OutlineFormat::Markdown
-            };
-            let label = format!("{}:{}", case.source, case.id);
-            if assert_differential(&label, &case.input, format) {
-                reshaped.push(label);
-            }
-        }
-        assert_pinned_reshapes(reshaped, MARKDOWN_SAVE_RESHAPES);
-    }
-
-    #[test]
-    fn large_flat_outline_keeps_semantic_source_order() {
-        const BLOCKS: usize = 100_000;
-        let mut source = String::with_capacity(BLOCKS.saturating_mul(16));
-        for index in 0..BLOCKS {
-            use std::fmt::Write as _;
-            writeln!(&mut source, "- block {index}").expect("write to String");
-        }
-
-        let parsed = parse_document(&source, OutlineFormat::Markdown)
-            .expect("large flat parser-owned outline");
-        assert_eq!(parsed.document.roots.len(), BLOCKS);
-        assert_eq!(parsed.document.roots[0].raw, "block 0");
-        assert_eq!(
-            parsed.document.roots[BLOCKS - 1].raw,
-            format!("block {}", BLOCKS - 1)
-        );
-        assert!(parsed
-            .document
-            .roots
-            .iter()
-            .all(|block| block.children.is_empty()));
-    }
-
-    fn with_line_endings(source: &str, ending: &str) -> String {
-        source.split('\n').collect::<Vec<_>>().join(ending)
-    }
-
-    #[test]
-    fn generated_layout_mutations_preserve_topology_or_are_pinned() {
-        let markdown = concat!(
-            "title:: café Ω\n",
-            "\n",
-            "# Project\n",
-            "{i}- child α\n",
-            "{i}  wrapped line\n",
-            "{i}  \n",
-            "{i}  final paragraph\n",
-            "- fence owner\n",
-            "  ```md\n",
-            "  - fenced fake\n",
-            "  ```\n",
-            "- malformed owned container\n",
-            "  #+BEGIN_NOTE\n",
-            "  - parser decides this\n",
-        );
-        let org = concat!(
-            "#+TITLE: café Ω\n",
-            "\n",
-            "* root\n",
-            "wrapped line\n",
-            "   \n",
-            "*** indentation jump\n",
-            "#+BEGIN_SRC text\n",
-            "* literal fake\n",
-            "#+END_SRC\n",
-            "** recovered child\n",
-            "* malformed owned tail\n",
-            "#+BEGIN_NOTE\n",
-            "* parser decides this\n",
-        );
-        let mut reshaped = Vec::new();
-        for indent in ["\t", "  ", "    "] {
-            let markdown = markdown.replace("{i}", indent);
-            for (ending_name, ending) in [("lf", "\n"), ("crlf", "\r\n"), ("cr", "\r")] {
-                let label = format!("generated-md-{indent:?}-{ending_name}");
-                if assert_differential(
-                    &label,
-                    &with_line_endings(&markdown, ending),
-                    OutlineFormat::Markdown,
-                ) {
-                    reshaped.push(label);
-                }
-                assert!(!assert_differential(
-                    &format!("generated-org-{indent:?}-{ending_name}"),
-                    &with_line_endings(org, ending),
-                    OutlineFormat::Org,
-                ));
-            }
-        }
-        assert_pinned_reshapes(reshaped, GENERATED_MARKDOWN_SAVE_RESHAPES);
-    }
-
-    #[test]
-    fn overlapping_same_physical_line_events_are_a_safe_refusal() {
-        let input = "- $$x$$ # #+BEGIN_NOTE\r\nx\r\n#+END_NOTE";
-        let direct = lsdoc::parse_outline(input, "md").expect("lsdoc owns regression");
-        assert_eq!(direct.headers.len(), 2);
-        assert_eq!(direct.headers[0].line, direct.headers[1].line);
-        assert!(matches!(
-            parse_document(input, OutlineFormat::Markdown),
-            Err(OutlineAdapterError::NonPhysicalLineHeader { event: 1 })
-                | Err(OutlineAdapterError::OverlappingPhysicalLines {
-                    first: 0,
-                    second: 1
-                })
-        ));
-    }
-
-    #[test]
-    fn lone_cr_fence_reclassification_reshapes_the_outline_on_canonical_save() {
-        let input = "- root\r  ```\r  - fake\r  ```";
-        let parsed = parse_document(input, OutlineFormat::Markdown)
-            .expect("source events are representable");
-        assert_eq!(parsed.document.roots.len(), 1);
-        assert_eq!(parsed.document.roots[0].children.len(), 1);
-
-        let canonical =
-            doc::serialize_with(&parsed.document, &doc::SerializeOpts::detect(Some(input)));
-        let reparsed =
-            parse_document(&canonical, OutlineFormat::Markdown).expect("canonical Markdown");
-        assert!(reparsed.document.roots[0].children.is_empty());
-        assert!(!doc::markdown_structurally_round_trips(input));
-    }
-
-    #[test]
-    fn exact_source_parse_cache_is_three_entry_format_keyed_and_never_caches_refusals() {
-        reset_parse_attempts();
-        for source in ["- alpha\n", "- beta\n", "- gamma\n"] {
-            parse_document(source, OutlineFormat::Markdown).unwrap();
-        }
-        assert_eq!(parse_attempts(), 3);
-        parse_document("- alpha\n", OutlineFormat::Markdown).unwrap();
-        assert_eq!(
-            parse_attempts(),
-            3,
-            "all three exact save sources remain hot"
-        );
-
-        parse_document("- delta\n", OutlineFormat::Markdown).unwrap();
-        assert_eq!(parse_attempts(), 4);
-        parse_document("- beta\n", OutlineFormat::Markdown).unwrap();
-        assert_eq!(
-            parse_attempts(),
-            5,
-            "the least-recently-used source was evicted"
-        );
-
-        parse_document("- beta\n", OutlineFormat::Org).unwrap();
-        assert_eq!(parse_attempts(), 6, "format is part of the exact cache key");
-
-        let invalid = "- $$x$$ # #+BEGIN_NOTE\r\nx\r\n#+END_NOTE";
-        assert!(parse_document(invalid, OutlineFormat::Markdown).is_err());
-        assert!(parse_document(invalid, OutlineFormat::Markdown).is_err());
-        assert_eq!(parse_attempts(), 8, "parser refusals must never be cached");
-    }
-
-    #[test]
-    fn atx_heading_line_end_matches_lsdoc_marker_boundaries() {
-        assert_eq!(markdown_atx_heading_line_end("# Heading"), Some(9));
-        assert_eq!(markdown_atx_heading_line_end("###### H\nbody"), Some(8));
-        assert_eq!(
-            markdown_atx_heading_line_end("## Heading\r\nbody"),
-            Some(10)
-        );
-        assert_eq!(markdown_atx_heading_line_end("####### Heading"), Some(15));
-        assert_eq!(markdown_atx_heading_line_end("###"), Some(3));
-        assert_eq!(markdown_atx_heading_line_end("  ## Heading"), Some(12));
-        assert_eq!(markdown_atx_heading_line_end("\u{1a}# Heading"), Some(10));
-        assert_eq!(markdown_atx_heading_line_end("#\u{0c}Heading"), Some(9));
-        assert_eq!(markdown_atx_heading_line_end("#Heading"), None);
-        assert_eq!(markdown_atx_heading_line_end(" - # Heading"), None);
-    }
+/// Whether lsdoc reads `line`, alone, as an unbulleted Markdown heading.
+pub(crate) fn is_unbulleted_heading_line(line: &str) -> bool {
+    !line.contains(['\n', '\r'])
+        && crate::render::parse_outline_bounded(line, false).is_some_and(|events| {
+            matches!(events.as_slice(), [only]
+                if only.kind == OutlineHeaderKind::MarkdownUnbulletedAtxHeading
+                    && only.header_start == 0)
+        })
 }

@@ -1,11 +1,5 @@
 import { Show, createEffect, onCleanup, onMount, type JSX } from "solid-js";
-import {
-  activeDrawer,
-  dismissMobileDrawer,
-  normalizeSidebarDrawers,
-  rightSidebarOpen,
-  sidebarOpen,
-} from "../ui";
+import { activeDrawer, dismissMobileDrawer, normalizeSidebarDrawers, rightSidebarOpen, sidebarOpen } from "../ui";
 import {
   containDrawerFocus,
   focusDrawer,

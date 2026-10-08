@@ -1,9 +1,8 @@
+import { revealOutlineBlock } from "./outlineViewport";
 import { captureEditorScrollAnchor } from "./editor/scrollAnchor";
 import { batch, createSignal } from "solid-js";
 import { renderedBlocks } from "./lazyObserve";
-import { clearSelection, sweepReplaceable } from "./store";
-import { notifyEditingStarted } from "./modeHooks";
-import { deferEditorStartUntilFresh } from "./freshnessBarrier";
+import { notifyClearOutlineSelection, notifyEditingStarted } from "./modeHooks";
 
 // Where to put the caret when a block starts editing. Either a concrete offset
 // (clicks, splits, most callers) OR a column descriptor for cross-block Up/Down
@@ -12,7 +11,7 @@ import { deferEditorStartUntilFresh } from "./freshnessBarrier";
 // so hidden props, calc/annotation blocks, and soft-wrapped lines land correctly.
 // Where layout is unavailable, Up falls back to the last source line.
 // Structural edits keep the same editor projection, so a selection is expressed
-// in textarea coordinates (unlike numeric raw-block targets).
+// in textarea coordinates (unlike numeric raw-block targets) (#519).
 export type EditorSelection = { start: number; end: number; direction: "forward" | "backward" | "none" };
 export type CaretPos = number | { col: number; edge: "first" | "last" } | EditorSelection;
 
@@ -21,6 +20,7 @@ export type EndEditReason =
   | "delete-block"
   | "delete-selection"
   | "drag-start"
+  | "external-reload"
   | "graph-switch"
   | "page-navigation"
   | "query-builder"
@@ -87,7 +87,10 @@ export function registerHistoryEditorTarget(target: HistoryEditorTarget): () => 
 }
 
 /** Raw history replaces the textarea; retain only the same focused block/surface
- * across that replay, with the usual user-scroll and focus-owner guards. */
+ * across that replay, with the usual user-scroll and focus-owner guards. Returns
+ * undefined when no focused registered editor of `blockId` exposes a viewport;
+ * otherwise a callback that, one animation frame later, restores the scroll
+ * offset against the focused editor of the same block and surface. O(targets). */
 export function captureRawHistoryViewport(blockId: string): (() => void) | undefined {
   const target = [...historyEditorTargets].find((candidate) =>
     candidate.blockId === blockId && candidate.focused?.());
@@ -206,9 +209,7 @@ export function startEditing(
   surface: string | null = null,
   preserveHistoryRestore = false,
 ) {
-  if (deferEditorStartUntilFresh(() =>
-    startEditing(id, offset, owner, surface, preserveHistoryRestore)
-  )) return;
+  revealOutlineBlock(id);
   if (!preserveHistoryRestore) setPendingHistoryEditorRestore(null);
   notifyEditingStarted(id, owner);
   // Latch the block so that when editing ends its body renders eagerly (no
@@ -217,7 +218,7 @@ export function startEditing(
   // this it would briefly show its raw text on blur while the IntersectionObserver
   // catches up. See AstBody / src/lazyObserve.ts (P1 lazy body).
   renderedBlocks.add(id);
-  clearSelection();
+  notifyClearOutlineSelection();
 
   // Set the editing signals atomically. `editing()` (Block.tsx) depends on BOTH
   // editingId AND editingOwner; without batching, an unscoped nav (owner=null) from a
@@ -253,12 +254,6 @@ export function endEdit(_reason: EndEditReason) {
     setEditingOwner(null);
     setEditingSurface(null);
   });
-  // Ending an edit can make a page replaceable — `reloadDisposition` returns
-  // "skip" while a block of it is being edited — and produces no save, so nothing
-  // else announces it. Swept rather than named, because this module does not know
-  // which page was being edited by the time the signals are cleared.
-  // (GH #254 increment 3.)
-  sweepReplaceable();
 }
 
 export function endEditForSurface(reason: EndEditReason, surfaceKey: string) {

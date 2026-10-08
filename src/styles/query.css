@@ -1,0 +1,996 @@
+/* Query block: resting sentence, editing sheet, text pane, crossing notice,
+   why-empty and page answers. Ported from master src/styles/app/20-namespace-query.css
+   (the query-sheet section), trimmed to the classes og renders (batch 14q4a). */
+/* ------------------------------------------- query sheet (sentence ↔ rows)
+   The two states of the visual builder (SPEC §7.2–§7.4). At rest: ONE line of
+   plain English with the result count and a ⚙. While editing: a sheet of rows,
+   portalled over the following blocks because `.query-block`'s translateZ(0)
+   makes it a containing block for fixed descendants (see the comment there). */
+.qs-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* --- resting sentence --- */
+.qs-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  min-width: 0;
+}
+.qs-sentence {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Bounded on purpose: outside content picks the query's length, not us
+     (I-22). The depth cap bounds the phrase; this bounds the line. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 2px;
+}
+.qs-sentence:hover,
+.qs-sentence:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  outline: none;
+}
+.qs-seg-field {
+  color: var(--text-secondary);
+}
+.qs-seg-value {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.qs-seg-advanced {
+  font-family: var(--ls-font-mono);
+  color: var(--text-muted);
+  border-bottom: 1px dotted var(--border-color);
+}
+.qs-count-slot {
+  flex: 0 0 auto;
+}
+.qs-gear {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.qs-gear:hover,
+.qs-gear[aria-expanded="true"] {
+  color: var(--link-color);
+  background: var(--bg-tertiary);
+}
+.qs-preview-error {
+  font-size: 12px;
+  color: var(--danger-color, #c0392b);
+}
+/* --- the editing sheet --- */
+.qs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(0, 0, 0, 0.08);
+}
+.qs-sheet-anchor {
+  position: fixed;
+  z-index: 71;
+  min-width: 320px;
+}
+.qs-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.22);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+/* Deliberately NOT a scroll container on the wide layout: the row menus are
+   absolutely positioned children and a scrolling ancestor would clip them. */
+/* **The stale mark greys the READING, never the controls.** A whole-sheet
+   `opacity` also made the sheet translucent — the page showed through the
+   panel — and, since P4 made the query text pane a permanent part of the
+   sheet, it faded the very box the reader is typing in to repair the query.
+   So the anchor line and the rows go grey (they are the last reading that
+   actually ran), and the footer — sort, summarize, the text pane, its
+   diagnostics — stays at full strength. */
+.qs-sheet-stale .qs-anchor,
+.qs-sheet-stale .qs-rows,
+.qs-sheet-stale > .qs-row,
+.qs-sheet-stale .qs-try {
+  opacity: 0.55;
+}
+/* --- anchor line --- */
+.qs-anchor {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+.qs-anchor-lead,
+.qs-anchor-tail {
+  color: var(--text-muted);
+}
+.qs-anchor-wrap,
+.qs-menu-wrap,
+.qs-add-wrap,
+.qs-cell {
+  position: relative;
+  display: inline-flex;
+}
+.qs-anchor-button {
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.qs-anchor-button:hover {
+  border-color: var(--link-color);
+}
+.qs-anchor-prompt {
+  border: 1px solid var(--link-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.qs-anchor-prompt:focus {
+  outline: none;
+}
+.qs-anchor-prompt-text {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.qs-anchor-prompt-text code {
+  font-family: var(--ls-font-mono);
+  font-size: 11px;
+}
+.qs-anchor-prompt-actions {
+  display: flex;
+  gap: 6px;
+}
+.qs-anchor-prompt-actions .qs-commit,
+.qs-anchor-prompt-actions .qs-conn {
+  margin-top: 0;
+  flex: 0 0 auto;
+}
+/* --- rows and groups --- */
+.qs-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.qs-listitem {
+  display: block;
+}
+.qs-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0;
+}
+.qs-cell-value {
+  flex: 1 1 8em;
+  min-width: 0;
+}
+/* The property row carries a type badge and a value input in one cell, and both
+   want to be wide. They wrap INSIDE the cell; letting them push the row's own
+   wrap instead put that row's ⋮ and × on a line of their own, which reads as an
+   empty fourth condition. */
+.qs-property-value .qs-input {
+  flex: 1 1 8em;
+  width: auto;
+  min-width: 5em;
+}
+.qs-field,
+.qs-op,
+.qs-value {
+  border: 1px solid transparent;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qs-field {
+  color: var(--text-secondary);
+  min-width: 6em;
+}
+.qs-op {
+  color: var(--text-secondary);
+}
+.qs-value {
+  background: var(--bg-primary);
+  border-color: var(--border-color);
+  width: 100%;
+}
+.qs-field:hover,
+.qs-op:hover,
+.qs-value:hover {
+  border-color: var(--link-color);
+}
+.qs-field:disabled,
+.qs-op:disabled,
+.qs-value:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.qs-property-value {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+  /* Wrap INSIDE the value cell. Letting the cell push the row's own wrap put a
+     row's ⋮ and × on a line of their own, which reads as a second row. */
+  flex: 1 1 auto;
+}
+.qs-property-key {
+  font-family: var(--ls-font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.qs-row-menu,
+.qs-row-remove {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.qs-row-menu:hover {
+  color: var(--link-color);
+  background: var(--bg-tertiary);
+}
+.qs-row-remove:hover {
+  color: #b91c1c;
+  background: var(--bg-tertiary);
+}
+/* A retained leaf the builder cannot draw as a row: its own text, red, with the
+   diagnostic beside it. Greyed instead of red when disabled — a disabled broken
+   condition does not invalidate the query (§3.5). */
+.qs-row-raw .qs-raw-text {
+  font-family: var(--ls-font-mono);
+  font-size: 12px;
+  color: #b91c1c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+.qs-raw-message {
+  font-size: 11px;
+  color: #b91c1c;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.qs-off {
+  opacity: 0.5;
+}
+.qs-off .qs-raw-text,
+.qs-off .qs-raw-message {
+  color: var(--text-muted);
+}
+.qs-off-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* --- selecting, disabling and reordering a condition (SPEC §7.4, P6) ---
+   Every one of these is ALWAYS drawn, never revealed on hover: a phone has no
+   hover, and the sheet has to be operable at 390px. They are small and they sit
+   at the two ends of the row, so the field/operator/value cells keep the width.
+   The row itself is `flex-wrap: wrap`, so a narrow viewport wraps the cells
+   rather than overflowing sideways. */
+.qs-drag-handle {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: -1px;
+  padding: 4px 3px;
+  border-radius: 4px;
+  cursor: grab;
+  /* The handle owns the gesture: without this the browser claims a touch drag
+     as a scroll and the pointer stream stops mid-reorder. Confined to the
+     handle, so the sheet still scrolls under a finger anywhere else. */
+  touch-action: none;
+}
+.qs-drag-handle:hover {
+  color: var(--link-color);
+  background: var(--bg-tertiary);
+}
+.qs-drag-handle:active {
+  cursor: grabbing;
+}
+.qs-select-target {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.qs-select {
+  flex: 0 0 auto;
+  margin: 0;
+  /* The surrounding label supplies the larger mobile hit area. */
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+.qs-enabled {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.qs-enabled[aria-checked="true"] {
+  color: var(--link-color);
+}
+.qs-enabled:hover {
+  background: var(--bg-tertiary);
+}
+@media (max-width: 600px) {
+  .qs-select-target,
+  .qs-enabled,
+  .qs-drag-handle,
+  .qs-group-selected,
+  .qs-selection-clear {
+    min-width: 44px;
+    min-height: 44px;
+    box-sizing: border-box;
+  }
+}
+/* Where the drop would land. A shadow rather than a border, so the indicator
+   never changes the height of the row it is drawn on and the list does not
+   shuffle under the pointer. */
+.qs-drop-before {
+  box-shadow: inset 0 2px 0 0 var(--link-color);
+}
+.qs-drop-after {
+  box-shadow: inset 0 -2px 0 0 var(--link-color);
+}
+/* The selection's own bar: what is selected, and the one grouping control. */
+.qs-selection {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+.qs-selection-count {
+  color: var(--text-muted);
+}
+.qs-group-selected {
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.qs-group-selected:hover:enabled {
+  color: var(--link-color);
+  border-color: var(--link-color);
+}
+.qs-group-selected:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.qs-selection-clear {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.qs-selection-clear:hover {
+  color: var(--link-color);
+  background: var(--bg-tertiary);
+}
+.qs-row-advanced .qs-advanced {
+  font-family: var(--ls-font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The advanced chip opens the text pane, so it is a button and reads like one
+   (§7.8): the part the sheet cannot draw is still reachable, never a dead end. */
+.qs-row-advanced .qs-advanced-open {
+  text-align: left;
+  border: 1px dashed var(--border-color);
+  border-radius: 5px;
+  background: transparent;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.qs-row-advanced .qs-advanced-open:hover {
+  border-color: var(--link-color);
+  color: var(--text-primary);
+}
+/* An unparsed row keeps the engine's own repair list and a way into the text. */
+.qs-raw-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.qs-raw-suggestions code {
+  font-family: var(--ls-font-mono);
+}
+.qs-raw-edit {
+  border: none;
+  background: transparent;
+  color: var(--link-color);
+  padding: 0;
+  font-size: 12px;
+  cursor: pointer;
+}
+.qs-raw-edit:hover {
+  text-decoration: underline;
+}
+.qs-group {
+  border-left: 2px solid var(--border-color);
+  padding-left: 8px;
+  margin-left: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.qs-group-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.qs-group-op {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.qs-group-op:hover {
+  color: var(--link-color);
+  background: var(--bg-tertiary);
+}
+/* --- add a condition --- */
+.qs-add {
+  border: 1px dashed var(--border-color);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.qs-add:hover {
+  color: var(--link-color);
+  border-color: var(--link-color);
+}
+.qs-try {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+.qs-try-label {
+  color: var(--text-muted);
+}
+.qs-try-item {
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-family: var(--ls-font-mono);
+  cursor: pointer;
+}
+.qs-try-item:hover {
+  border-color: var(--link-color);
+  color: var(--text-primary);
+}
+.qs-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+}
+/* --- menus (one listbox pattern, QuickSwitcher's) --- */
+.qs-menu {
+  /* GH #619: a popover is a bounded scroll surface. `popoverFit.ts` clamps `max-height` to the room the
+     viewport leaves; whatever does not fit scrolls INSIDE it (the list below shrinks first), and wheel/touch
+     scrolling stays in the popover rather than chaining to the fixed page. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 60;
+  min-width: 200px;
+  max-width: 320px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Operator choices inside the add editor participate in its layout. */
+.qs-menu.qs-inline-list {
+  position: static;
+  min-width: 0;
+  margin-top: 0;
+  box-shadow: none;
+}
+.qs-menu-title {
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.qs-menu > * { flex: none; }
+.qs-menu > .qs-options { flex: 0 1 auto; min-height: 0; }
+.qs-menu-filter,
+.qs-input {
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.qs-menu-filter:focus,
+.qs-input:focus {
+  outline: none;
+  border-color: var(--link-color);
+}
+.qs-options {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+/* GH #619: rows in a scrolling list NEVER shrink. A flex item with `overflow:hidden` has min-height 0, so
+   without this a 20-row list was squeezed to 5px rows instead of scrolling. */
+.qs-options > * { flex: none; }
+.qs-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 5px 10px;
+  border-radius: 5px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.qs-option:hover,
+.qs-option.active {
+  background: var(--bg-tertiary);
+}
+.qs-option.current {
+  font-weight: 700;
+}
+.qs-option-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.qs-option-section {
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* --- value editors --- */
+.qs-value-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px;
+  min-width: 0;
+}
+.qs-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.qs-commit {
+  margin-top: 2px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.qs-commit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.qs-conn {
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.qs-conn:hover {
+  border-color: var(--link-color);
+}
+.qs-conn.active {
+  background: var(--link-color);
+  color: #fff;
+  border-color: var(--link-color);
+}
+.qs-between {
+  min-width: 260px;
+}
+.qs-between-field,
+.qs-between-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.qs-between-field .qs-conn {
+  flex: 1 1 auto;
+}
+.qs-preset {
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.qs-preset:hover {
+  border-color: var(--link-color);
+  color: var(--text-primary);
+}
+.qs-bound {
+  display: flex;
+  flex-direction: column;
+}
+.qs-bound-preview {
+  min-height: 14px;
+  padding: 0 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+/* --- narrow screens: the sheet is a bottom sheet (§7.7) --------------------
+   Below ~600px there is no room beside the block for a popover anchored to the
+   sentence, so the sheet leaves the sentence's rect entirely and docks to the
+   bottom edge. The
+   inline `top`/`left`/`width` the host sets are overridden here, so the sheet
+   does not have to know which layout it is in. */
+@media (max-width: 600px) {
+  .qs-overlay {
+    background: rgba(0, 0, 0, 0.28);
+  }
+  .qs-sheet-anchor {
+    top: auto !important;
+    left: 0 !important;
+    right: 0;
+    bottom: 0;
+    width: auto !important;
+    min-width: 0;
+  }
+  .qs-sheet {
+    border-radius: 12px 12px 0 0;
+    border-bottom: none;
+    /* One system token, never `env()` at the call site (mobileSafeArea). */
+    padding: 12px 14px calc(12px + var(--overlay-inset-bottom));
+    /* A bottom sheet is expected to scroll; menus inside it scroll with it. */
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+  .qs-menu {
+    max-width: none;
+    right: 0;
+  }
+}
+/* The §7.5 crossing notice: an inline region under the block (P4 hosts the same
+   component inside its pane), not a toast — the bytes already changed and the
+   way back must still be there when the reader looks up. */
+.query-crossing-notice {
+  margin: 4px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary, var(--bg));
+  font-size: 13px;
+}
+.query-crossing-notice:focus-visible {
+  outline: 2px solid var(--accent, #4a90d9);
+  outline-offset: 1px;
+}
+.query-crossing-notice-text {
+  margin: 0 0 6px;
+  color: var(--text-primary);
+}
+.query-crossing-notice-changed {
+  margin: 0 0 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.query-crossing-notice-changed code {
+  font-family: var(--ls-font-mono);
+  word-break: break-word;
+}
+.query-crossing-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.query-crossing-notice-dismiss {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+/* The query text pane (TQL in a block, the OG DSL in the workspace). The rows
+   stay on screen while the text is invalid, greyed, because they are the last
+   reading that actually ran — blanking them would report a typo as an empty
+   graph. */
+.query-text-pane {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.query-text-pane-input {
+  width: 100%;
+  font-family: var(--font-mono, monospace);
+  resize: vertical;
+}
+.query-text-pane-input.query-text-pane-invalid {
+  border-color: var(--danger-color, #c0392b);
+}
+.query-text-pane-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.query-text-pane-error {
+  color: var(--danger-color, #c0392b);
+  font-size: 12px;
+}
+.query-text-pane-pending {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.query-text-pane-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* The structured diagnostics the engine returned, one block per item. Each one
+   keeps its own "Show me" (which selects the span) and its own suggestions, so
+   a two-error query is two repairs and not one wall of prose. */
+.query-text-pane-diagnostics {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.query-text-pane-diagnostic {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 2px solid var(--danger-color, #c0392b);
+  padding-left: 8px;
+}
+.query-text-pane-diagnostic-message {
+  color: var(--text-primary);
+}
+.query-text-pane-diagnostic-off {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.query-text-pane-locate {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: var(--link-color);
+  padding: 0;
+  font-size: 12px;
+  cursor: pointer;
+}
+.query-text-pane-locate:hover {
+  text-decoration: underline;
+}
+.query-text-pane-diagnostic-alts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-muted);
+}
+.query-text-pane-diagnostic-alts code {
+  font-family: var(--ls-font-mono);
+  font-size: 11px;
+}
+/* "Why is this empty?" (Q14, N19): asked only once a run has come back empty. */
+.query-why-empty {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-left: 6px;
+  color: var(--link-color);
+  font-size: 12px;
+  cursor: pointer;
+}
+.query-why-empty-panel {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.query-why-empty-notice,
+.query-why-empty-pending {
+  color: var(--text-muted);
+}
+.query-why-empty-table {
+  font-size: 12px;
+}
+/* The run's own diagnostics, distinct from a failed command. */
+.query-diagnostics {
+  color: var(--danger-color, #c0392b);
+}
+/* One entry per requested aggregate, laid out on one line. */
+.query-summary .qs-entry + .qs-entry {
+  margin-left: 12px;
+}
+/* Every aggregate column is a number; only the group key is a label. Anchored
+   on :not(:first-child) rather than :last-child, which right-aligned exactly one
+   column back when a summary could only show one. */
+.query-summary-table td:not(:first-child),
+.query-summary-table th:not(:first-child) {
+  text-align: right;
+}
+.query-summary-note {
+  margin: -4px 0 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.qd-root { position: relative; margin: .5rem 0; }
+.query-result-section-header { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.query-result-section-header h3 { margin: 0; }
+.query-result-section-header .qd-root { margin-left: auto; }
+.qd-trigger { border: 1px solid var(--border-color, #777); border-radius: 6px; padding: .25rem .55rem; background: transparent; color: inherit; }
+.qd-panel { position: relative; z-index: 4; max-height: min(65vh, 34rem); overflow: auto; padding: .75rem; border: 1px solid var(--border-color, #777); border-radius: 8px; background: var(--bg-primary, #222); box-shadow: 0 8px 24px #0004; min-width: min(32rem, 90vw); }
+.qd-panel section { margin: .4rem 0 .8rem; border-bottom: 1px solid var(--border-color, #777); padding-bottom: .5rem; }
+.qd-panel h4 { font-size: .85rem; margin: 0 0 .3rem; }
+.qd-panel button { margin: .12rem; }
+.qd-panel button.active { font-weight: bold; outline: 1px solid currentColor; }
+.qd-row { display: flex; gap: .3rem; align-items: center; margin: .2rem 0; }
+.qd-row > span:first-child { flex: 1; overflow-wrap: anywhere; }
+.qd-panel input[aria-label="Sample size"] { width: 9rem; }
+.qs-vocab-options { max-height: 16rem; overflow-y: auto; }
+.qs-vocab-spacer { flex: none; }
+.qs-vocab-detail { display: block; padding: 0 10px; opacity: .8; font-size: .75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qs-vocab-options .qs-option { width: 100%; text-align: left; }
+/* One-line label + one-line detail inside the fixed 48px slot: long text is ellipsised, never wrapped (a wrapped
+   detail overflowed the slot and was clipped). */
+.qs-vocab-row > .qs-option { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qs-vocab-row { height: 48px; min-height: 48px; flex: none; overflow: hidden; }
+.qb-prop-type { position: relative; display: inline-flex; gap: .25rem; align-items: center; flex-wrap: wrap; }
+.qb-prop-type-badge { font-size: .75rem; opacity: .8; }
+.qb-prop-type-mismatch { font-size: .75rem; color: var(--color-warning, #c80); }
+.qb-prop-type-menu { position: absolute; z-index: 5; top: 100%; left: 0; min-width: 9rem; display: flex; flex-direction: column; padding: .3rem; background: var(--bg-primary, #222); border: 1px solid var(--border-color, #777); }
+/* GH #619 item 4: the query text sits behind a toggle. */
+.qs-text-toggle {
+  align-self: flex-start;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.85em;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.qs-text-toggle[aria-expanded="true"] {
+  color: var(--text-primary);
+  border-color: var(--link-color);
+}
+.qs-text-toggle:hover {
+  border-color: var(--link-color);
+}
+/* GH #619 item 7: live results inside the sheet. Bounded height; the page behind it is covered. */
+.qs-live { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--border-color); padding-top: 6px; }
+.qs-live-pending .qs-live-rows { opacity: 0.55; }
+.qs-live-count, .qs-live-empty, .qs-live-diagnostics { margin: 0; font-size: 0.85em; color: var(--text-secondary); }
+.qs-live-diagnostics { color: var(--color-warning, #c80); }
+.qs-live-rows { list-style: none; margin: 0; padding: 0; max-height: 14em; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.qs-live-row { display: flex; gap: 6px; align-items: baseline; font-size: 0.9em; user-select: text; }

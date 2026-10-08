@@ -1,14 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createSignal } from "solid-js";
+import { createResource, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { FailureBoundary } from "./FailureBoundary";
-import { resetSlowBackendStateForTests } from "../backend";
-import { setToasts, toasts } from "../ui";
+import { markCommandSlow, resetSlowBackendStateForTests } from "../slowBackend";
+import { setToasts, toasts } from "../toasts";
+
+const { recordDiagnostic, copyDetails } = vi.hoisted(() => ({ recordDiagnostic: vi.fn(async () => {}), copyDetails: vi.fn(async (_text: string) => {}) }));
+vi.mock("../clipboard", () => ({ writeClipboardText: copyDetails }));
+vi.mock("../debug", () => ({ dbg: () => {}, recordDiagnostic }));
 
 beforeEach(() => {
   setToasts([]);
   resetSlowBackendStateForTests();
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  recordDiagnostic.mockClear();
+  copyDetails.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -85,7 +90,7 @@ describe("FailureBoundary (GH #490/#332: a throw must not blank the app silently
     expect(host.querySelector(".survivor")?.textContent).toBe("content");
   });
 
-  it("says so out loud, once, without putting the message in the always-on log", () => {
+  it("says so out loud, once, and records only a fixed kind in the always-on recorder", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);
     render(
@@ -98,11 +103,77 @@ describe("FailureBoundary (GH #490/#332: a throw must not blank the app silently
     );
     expect(toasts().map((toast) => toast.kind)).toEqual(["error"]);
     expect(toasts()[0].message).toContain("Linked References");
+    expect(recordDiagnostic).toHaveBeenCalledTimes(1);
+    expect(recordDiagnostic).toHaveBeenCalledWith("uncaught_error");
+  });
 
-    const logged = vi.mocked(console.error).mock.calls[0];
-    expect(logged[0]).toBe("tine.region-failed");
-    expect(JSON.stringify(logged[1])).not.toContain("list_pages");
-    expect(logged[1]).toMatchObject({ region: "Linked References", kind: "Error" });
+  it("names the backend's outstanding slow operations when it is the likely cause (GH #332)", () => {
+    const settle = markCommandSlow(performance.now() - 37_000);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    render(
+      () => (
+        <FailureBoundary region="This page">
+          <Boom when={() => true} />
+        </FailureBoundary>
+      ),
+      host,
+    );
+    const slow = host.querySelector(".region-failure-slow")!;
+    expect(slow.textContent).toContain("an operation");
+    expect(slow.textContent).toMatch(/over 3[67]s/);
+    expect(slow.textContent).toContain("notes on disk are not affected");
+    settle();
+  });
+
+  it("stays quiet about the backend when nothing is slow", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    render(
+      () => (
+        <FailureBoundary region="This page">
+          <Boom when={() => true} />
+        </FailureBoundary>
+      ),
+      host,
+    );
+    expect(host.querySelector(".region-failure-slow")).toBeNull();
+  });
+
+  it("copies the region and original error details and reports clipboard failure", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <FailureBoundary region="This page"><Boom when={() => true} /></FailureBoundary>, host);
+    const copy = [...host.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Copy details");
+    expect(copy).toBeDefined();
+    copy!.click();
+    await Promise.resolve();
+    expect(copyDetails).toHaveBeenCalledWith(expect.stringContaining("This page"));
+    expect(copyDetails.mock.calls[0][0]).toContain("list_pages failed: backend is busy");
+    copyDetails.mockRejectedValueOnce(new Error("clipboard denied"));
+    copy!.click();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(toasts().some(toast => toast.kind === "error" && toast.sticky && toast.message.includes("copy"))).toBe(true);
+    dispose();
+  });
+
+  it("contains a rejected resource read and Retry creates a fresh request", async () => {
+    const load = vi.fn().mockRejectedValueOnce(new Error("panel read failed")).mockResolvedValue("loaded after retry");
+    function Panel() {
+      const [data] = createResource(load);
+      return <div class="loaded-panel">{data()}</div>;
+    }
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <><FailureBoundary region="Panel"><Panel /></FailureBoundary><button class="healthy">Navigation</button></>, host);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(host.querySelector(".region-failure")?.textContent).toContain("panel read failed");
+    expect(host.querySelector(".healthy")?.textContent).toBe("Navigation");
+    host.querySelector<HTMLButtonElement>(".region-failure-retry")!.click();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(host.querySelector(".loaded-panel")?.textContent).toBe("loaded after retry");
+    expect(load).toHaveBeenCalledTimes(2);
+    dispose();
   });
 
   // Control arm, kept deliberately: this is what Tine shipped before the

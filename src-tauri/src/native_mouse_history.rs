@@ -93,7 +93,7 @@ mod platform {
     const HISTORY_SUBCLASS_ID: usize = 0x5449_4e45; // "TINE"
 
     #[link(name = "comctl32")]
-    unsafe extern "system" {
+    extern "system" {
         fn SetWindowSubclass(
             hwnd: Hwnd,
             callback: SubclassProc,

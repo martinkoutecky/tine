@@ -1,7 +1,7 @@
 # GH #161 responsive shell workstream receipt (W2 / S1 / S2)
 
 Date: 2026-07-16  
-Worktree: `/aux/koutecky/logseq/tine-agent-worktrees/batch-reference-and-polish-v0510`  
+Worktree: the isolated `batch-reference-and-polish-v0510` worktree<br>
 Status: implementation complete for the responsive-shell workstream; final
 browser/native geometry evidence remains owned by E1/E2.
 

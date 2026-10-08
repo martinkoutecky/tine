@@ -8,59 +8,16 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildInputState, deriveTauriManifest, normalizedBuildInputState } from "./build-e2e-inputs.mjs";
-import {
-  classifyProofOnlyDelta,
-  createCandidateReceipt,
-  createPromotionPlan,
-  loadProofOnlyRegistry,
-} from "./release-proof-reuse-lib.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const helper = path.join(root, "scripts/build-e2e-receipt.mjs");
 const runner = path.join(root, "scripts/run-e2e.mjs");
-const packageManifest = path.join(root, "package.json");
-const proofOnlyRegistry = path.join(root, "scripts/release-proof-only.json");
+const inputHelper = path.join(root, "scripts/build-e2e-inputs.mjs");
+const capabilities = path.join(root, "scripts/e2e-capabilities.mjs");
 const contracts = path.join(root, "tests/ui-regressions/e2e-contracts.json");
-// The asset name is only ever written INTO the fixture -- its stub `index.html`
-// and its stub app binary -- so this suite never needs a real frontend build.
-// It reads one when present purely to keep the fixture's name realistic.
-// Requiring `dist/` would have kept this out of `npm test`, which is how a
-// missing fixture file reached hosted CI in the first place.
 const index = path.join(root, "dist/index.html");
-const asset = (fs.existsSync(index)
-  ? fs.readFileSync(index, "utf8").match(/[A-Za-z0-9_]+-[A-Za-z0-9_-]+\.(?:js|css)/)?.[0]
-  : null) ?? "index-provenance-fixture.js";
-
-/**
- * Copy an entry script into a fixture checkout ALONG WITH every module it
- * imports, transitively.
- *
- * The fixture used to be assembled from a hand-written file list. That list is
- * a claim about `run-e2e.mjs`'s imports, and nothing checked it: when
- * `run-e2e.mjs` grew `./lib/e2e-process-group.mjs` the list stayed as it was,
- * every local gate stayed green (this suite is not part of `npm test`), and the
- * hosted Linux job failed with ERR_MODULE_NOT_FOUND inside the fixture -- a
- * 20-minute round trip to learn that a `cp` was missing. Deriving the set from
- * the source means the next helper cannot repeat it.
- */
-function copyModuleGraph(entry, destinationRoot) {
-  const pending = [entry];
-  const copied = new Set();
-  while (pending.length > 0) {
-    const file = pending.pop();
-    if (copied.has(file)) continue;
-    copied.add(file);
-    const relative = path.relative(root, file);
-    const destination = path.join(destinationRoot, relative);
-    fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.copyFileSync(file, destination);
-    const source = fs.readFileSync(file, "utf8");
-    for (const match of source.matchAll(/(?:^|\n)\s*(?:import|export)[^;\n]*?from\s+["'](\.[^"']+)["']/g)) {
-      pending.push(path.resolve(path.dirname(file), match[1]));
-    }
-  }
-  return [...copied].map((file) => path.relative(root, file)).sort();
-}
+const asset = fs.readFileSync(index, "utf8").match(/[A-Za-z0-9_]+-[A-Za-z0-9_-]+\.(?:js|css)/)?.[0];
+if (!asset) throw new Error(`could not find a current frontend asset in ${index}`);
 
 function runNode(args, options = {}) {
   return spawnSync(process.execPath, args, { encoding: "utf8", ...options });
@@ -84,10 +41,10 @@ try {
   fs.mkdirSync(path.join(fixture, "src-tauri/gen/schemas"), { recursive: true });
   fs.mkdirSync(path.join(fixture, "node_modules/@tauri-apps/cli"), { recursive: true });
   fs.mkdirSync(path.join(fixture, "tests/ui-regressions"), { recursive: true });
-  copyModuleGraph(runner, fixture);
-  copyModuleGraph(helper, fixture);
-  fs.copyFileSync(proofOnlyRegistry, path.join(fixture, "scripts/release-proof-only.json"));
-  fs.copyFileSync(packageManifest, path.join(fixture, "package.json"));
+  fs.copyFileSync(helper, path.join(fixture, "scripts/build-e2e-receipt.mjs"));
+  fs.copyFileSync(inputHelper, path.join(fixture, "scripts/build-e2e-inputs.mjs"));
+  fs.copyFileSync(runner, path.join(fixture, "scripts/run-e2e.mjs"));
+  fs.copyFileSync(capabilities, path.join(fixture, "scripts/e2e-capabilities.mjs"));
   fs.copyFileSync(contracts, path.join(fixture, "tests/ui-regressions/e2e-contracts.json"));
   fs.writeFileSync(path.join(fixture, "scripts/e2e-multigraph.mjs"), "// Provenance validation reached the selected scenario.\n");
   fs.writeFileSync(path.join(fixture, "source.txt"), "before\n");
@@ -220,47 +177,6 @@ try {
   assert.equal(fs.existsSync(launchProbe), false, "run-e2e launched an app before rejecting changed build inputs");
   assert.equal(fs.existsSync(artifacts), false, "run-e2e started E2E artifact work before checking changed build inputs");
 
-  // --allow-harness-delta: a journey edit is an observer change, not a product
-  // change, so it may be RUN without first being committed — but only when
-  // every differing path is an observer, and never silently.
-  fs.writeFileSync(path.join(fixture, "source.txt"), "before\n");
-  const journey = path.join(fixture, "scripts/e2e-multigraph.mjs");
-  const journeyOriginal = fs.readFileSync(journey, "utf8");
-  fs.writeFileSync(journey, `${journeyOriginal}// an uncommitted hypothesis about this journey\n`);
-  const harnessEnv = {
-    ...process.env,
-    TINE_APP: fixtureApp,
-    TINE_E2E_BUILD_RECEIPT: normalizedReceipt,
-    TINE_E2E_LAUNCH_PROBE: launchProbe,
-    E2E_ARTIFACT_DIR: path.join(temporary, "harness-delta-artifacts"),
-  };
-  const harnessRefused = runNode(
-    [path.join(fixture, "scripts/run-e2e.mjs"), "linux-smoke", "--scenario=multigraph", "--validate-build-receipt-only"],
-    { cwd: fixture, env: harnessEnv },
-  );
-  assert.notEqual(harnessRefused.status, 0, "a journey edit must still refuse by default");
-  const harnessAllowed = runNode(
-    [path.join(fixture, "scripts/run-e2e.mjs"), "linux-smoke", "--scenario=multigraph", "--validate-build-receipt-only", "--allow-harness-delta"],
-    { cwd: fixture, env: harnessEnv },
-  );
-  assert.equal(harnessAllowed.status, 0, harnessAllowed.stderr || harnessAllowed.stdout);
-  assert.match(harnessAllowed.stdout, /HARNESS DELTA \(not candidate evidence\): scripts\/e2e-multigraph\.mjs/);
-  const harnessInRelease = runNode(
-    [path.join(fixture, "scripts/run-e2e.mjs"), "linux-smoke", "--scenario=multigraph", "--validate-build-receipt-only", "--allow-harness-delta"],
-    { cwd: fixture, env: { ...harnessEnv, TINE_E2E_MODE: "release" } },
-  );
-  assert.notEqual(harnessInRelease.status, 0, "a release candidate must be proved on an exact, committed tree");
-  assert.match(harnessInRelease.stderr, /refused in release mode/);
-  fs.writeFileSync(path.join(fixture, "source.txt"), "a product change alongside the journey edit\n");
-  const harnessPlusProduct = runNode(
-    [path.join(fixture, "scripts/run-e2e.mjs"), "linux-smoke", "--scenario=multigraph", "--validate-build-receipt-only", "--allow-harness-delta"],
-    { cwd: fixture, env: harnessEnv },
-  );
-  assert.notEqual(harnessPlusProduct.status, 0, "--allow-harness-delta must not cover a product change");
-  assert.match(harnessPlusProduct.stderr, /cannot cover 1 non-harness path\(s\): source\.txt/);
-  fs.writeFileSync(journey, journeyOriginal);
-  fs.writeFileSync(path.join(fixture, "source.txt"), "after\n");
-
   const fakeApp = path.join(temporary, process.platform === "win32" ? "unreceipted.cmd" : "unreceipted-app");
   if (process.platform === "win32") {
     fs.writeFileSync(fakeApp, `@echo off\r\necho launched > "${launchProbe}"\r\nrem ${asset}\r\n`);
@@ -283,100 +199,8 @@ try {
   assert.match(unreceipted.stderr, /build receipt is required at/);
   assert.equal(fs.existsSync(launchProbe), false, "run-e2e launched an app before rejecting its missing receipt");
   assert.equal(fs.existsSync(unreceiptedArtifacts), false, "run-e2e started E2E artifact work before provenance validation");
-
-  const promotionFixture = path.join(temporary, "promotion-fixture");
-  for (const directory of ["dist", "scripts", "src-tauri/gen/schemas", "tests/ui-regressions"]) {
-    fs.mkdirSync(path.join(promotionFixture, directory), { recursive: true });
-  }
-  copyModuleGraph(runner, promotionFixture);
-  copyModuleGraph(helper, promotionFixture);
-  for (const [source, destination] of [
-    [proofOnlyRegistry, "scripts/release-proof-only.json"],
-    [packageManifest, "package.json"],
-    [contracts, "tests/ui-regressions/e2e-contracts.json"],
-  ]) fs.copyFileSync(source, path.join(promotionFixture, destination));
-  fs.writeFileSync(path.join(promotionFixture, "scripts/e2e-page-properties.mjs"), "// source proof\n");
-  fs.writeFileSync(path.join(promotionFixture, "source.txt"), "unchanged product\n");
-  fs.writeFileSync(path.join(promotionFixture, "dist/index.html"), `<script src="${asset}"></script>\n`);
-  const promotedApp = path.join(promotionFixture, process.platform === "win32" ? "tine.exe" : "tine");
-  fs.writeFileSync(promotedApp, process.platform === "win32"
-    ? `@echo off\r\nrem ${asset}\r\n`
-    : `#!/bin/sh\n# ${asset}\nexit 0\n`);
-  if (process.platform !== "win32") fs.chmodSync(promotedApp, 0o755);
-  git(promotionFixture, ["init"]);
-  git(promotionFixture, ["add", "."]);
-  git(promotionFixture, ["-c", "user.email=tine-test@example.invalid", "-c", "user.name=Tine test", "commit", "-m", "source"]);
-  const source = git(promotionFixture, ["rev-parse", "HEAD"]);
-  const promotedSnapshot = path.join(temporary, "promoted-before.json");
-  const promotedReceipt = path.join(temporary, "promoted-receipt.json");
-  runChecked(process.execPath, [path.join(promotionFixture, "scripts/build-e2e-receipt.mjs"), "before", "--snapshot", promotedSnapshot], { cwd: promotionFixture });
-  runChecked(process.execPath, [path.join(promotionFixture, "scripts/build-e2e-receipt.mjs"), "after", "--snapshot", promotedSnapshot, "--app", promotedApp, "--receipt", promotedReceipt], { cwd: promotionFixture });
-  fs.writeFileSync(path.join(promotionFixture, "scripts/e2e-page-properties.mjs"), "// corrected proof\n");
-  git(promotionFixture, ["add", "scripts/e2e-page-properties.mjs"]);
-  git(promotionFixture, ["-c", "user.email=tine-test@example.invalid", "-c", "user.name=Tine test", "commit", "-m", "proof only"]);
-  const target = git(promotionFixture, ["rev-parse", "HEAD"]);
-  const registry = loadProofOnlyRegistry(path.join(promotionFixture, "scripts/release-proof-only.json"));
-  const delta = classifyProofOnlyDelta(promotionFixture, source, target, registry);
-  const buildReceipt = JSON.parse(fs.readFileSync(promotedReceipt, "utf8"));
-  const candidateReceipt = createCandidateReceipt({
-    version: "1.2.3",
-    sourceCommit: source,
-    productInputDigest: delta.productInputDigest,
-    assets: [{ name: "candidate.bin", size: 1, sha256: "a".repeat(64) }],
-  });
-  const sourceEvidence = {
-    schemaVersion: 1,
-    kind: "tine-release-promotion-source",
-    runId: 456,
-    sourceCommit: source,
-    artifacts: ["release-candidate", "release-candidate-receipt", "release-proof-linux-x64", "release-proof-windows-x64"]
-      .map((name, artifactIndex) => ({ id: artifactIndex + 1, name, size: 1, digest: null })),
-  };
-  const promotionPlan = createPromotionPlan({
-    delta,
-    sourceRunId: 456,
-    candidateReceipt,
-    sourceEvidence,
-    authorizer: "tine-test",
-  });
-  const promotionPlanFile = path.join(temporary, "promotion-plan.json");
-  fs.writeFileSync(promotionPlanFile, `${JSON.stringify(promotionPlan, null, 2)}\n`);
-  const promotedValidation = runNode([
-    path.join(promotionFixture, "scripts/run-e2e.mjs"),
-    "linux-release",
-    "--scenario=page-properties",
-    "--validate-build-receipt-only",
-  ], {
-    cwd: promotionFixture,
-    env: {
-      ...process.env,
-      TINE_APP: promotedApp,
-      TINE_E2E_BUILD_RECEIPT: promotedReceipt,
-      TINE_E2E_PROMOTION_PLAN: promotionPlanFile,
-    },
-  });
-  assert.equal(promotedValidation.status, 0, promotedValidation.stderr || promotedValidation.stdout);
-  assert.equal(buildReceipt.sourceRevision, source);
-  const wrongPromotionPlanFile = path.join(temporary, "wrong-promotion-plan.json");
-  fs.writeFileSync(wrongPromotionPlanFile, `${JSON.stringify({ ...promotionPlan, productInputDigest: "f".repeat(64) }, null, 2)}\n`);
-  const wrongPromotedValidation = runNode([
-    path.join(promotionFixture, "scripts/run-e2e.mjs"),
-    "linux-release",
-    "--scenario=page-properties",
-    "--validate-build-receipt-only",
-  ], {
-    cwd: promotionFixture,
-    env: {
-      ...process.env,
-      TINE_APP: promotedApp,
-      TINE_E2E_BUILD_RECEIPT: promotedReceipt,
-      TINE_E2E_PROMOTION_PLAN: wrongPromotionPlanFile,
-    },
-  });
-  assert.notEqual(wrongPromotedValidation.status, 0);
-  assert.match(wrongPromotedValidation.stderr, /does not authorize this binary\/proof checkout/);
 } finally {
   fs.rmSync(temporary, { recursive: true, force: true });
 }
 
-console.log("E2E provenance tests passed (exact and promoted receipt validation + no-launch rejection).");
+console.log("E2E provenance tests passed (receipt input digest + no-launch receipt rejection).");

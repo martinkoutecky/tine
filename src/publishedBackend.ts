@@ -13,10 +13,16 @@
  *  Classification of every method is pinned by `publishedBackend.guard.test.ts`.
  */
 import type { Backend, LoadGraphResult } from "./backend";
-import type { ExecutionContext, GraphSearchConsumer, GraphSearchDisplayOptions, ParsedQuery, Query, QueryResult, QueryTextDialect, ViewSettings } from "./editor/queryIr";
-import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, MatchEvidence, PageDto, PageEntry, QueryExecution, QueryHit, QueryPageScope, RefGroup } from "./types";
-import { backlinkFilterFacets } from "./lib/backlinkFilterFacets";
-import { searchFold, searchFoldMap, searchMatchBatch } from "./render/parse";
+import type { ExecutionContext, ParsedQuery, Query, QueryResult, QueryTextDialect, ViewSettings } from "./editor/queryIr";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, MatchEvidence, PageDto, PageEntry, PageRead, QueryExecution, QueryHit, QueryPageScope, RefGroup } from "./types";
+import { previewDtoSubtree } from "./previewProjection";
+import { pageIdentityKey } from "./pageIdentity";
+import { blockRegions } from "./render/parse";
+import { blockRefsInText } from "./render/pageRefs";
+import { searchSubstringSpans } from "./editor/searchQuery";
+import { searchFold } from "./editor/searchFold";
+
+type PublishedPage = PageDto & { path: string };
 
 /** `<meta name="tine-published" content="snapshot.json">` in the exported shell. */
 export const PUBLISHED_META_NAME = "tine-published";
@@ -50,7 +56,7 @@ export interface PublishedSnapshot {
   name: string;
   exported_at: string;
   home: string;
-  pages: PageDto[];
+  pages: PublishedPage[];
   entries: PageEntry[];
   backlinks: Record<string, RefGroup[]>;
   block_ref_counts: Record<string, number>;
@@ -73,6 +79,51 @@ export function isPublishedExport(): boolean {
 
 let snapshotPromise: Promise<PublishedSnapshot> | null = null;
 
+/** Largest snapshot document a viewer will read (I-22). Far above any real export;
+ *  a larger body is a wrong or hostile file and refuses visibly. */
+export const PUBLISHED_SNAPSHOT_MAX_BYTES = 512 * 1024 * 1024;
+/** Largest asset `readAsset` buffers when the caller names no cap of its own (I-22). */
+export const PUBLISHED_ASSET_MAX_BYTES = 256 * 1024 * 1024;
+
+/** Read a response body of at most `max` bytes: a declared length over the cap refuses
+ *  before any byte is read, and a body that outgrows it (no or wrong length) is cancelled
+ *  as soon as the running total passes the cap. O(max) memory at worst. */
+export async function readBounded(response: Response, max: number, label: string): Promise<Uint8Array> {
+  const tooLarge = () => new Error(`${label}: larger than ${max} bytes`);
+  const declared = Number(response.headers?.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > max) throw tooLarge();
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const whole = new Uint8Array(await response.arrayBuffer());
+    if (whole.byteLength > max) throw tooLarge();
+    return whole;
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      // The oversize refusal is the answer; a failed cancel is attached, not dropped.
+      try {
+        await reader.cancel();
+      } catch (cancelError) {
+        throw new Error(tooLarge().message, { cause: cancelError });
+      }
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return out;
+}
+
 /** The one shared, memoized fetch of the snapshot. `main.tsx` awaits it before
  *  mounting; every backend method awaits it too, so the backend can be
  *  installed before any snapshot bytes exist. */
@@ -81,7 +132,9 @@ export function loadPublishedSnapshot(url = publishedSnapshotUrl() ?? "snapshot.
     snapshotPromise = (async () => {
       const response = await fetch(url, { cache: "no-store" });
       if (!response.ok) throw new Error(`snapshot ${url}: HTTP ${response.status}`);
-      const snapshot = (await response.json()) as PublishedSnapshot;
+      // I-22: bound the served bytes before they become a string and an object graph.
+      const bytes = await readBounded(response, PUBLISHED_SNAPSHOT_MAX_BYTES, `snapshot ${url}`);
+      const snapshot = JSON.parse(new TextDecoder().decode(bytes)) as PublishedSnapshot;
       validateSnapshot(snapshot);
       return snapshot;
     })();
@@ -94,7 +147,9 @@ export function __resetPublishedSnapshotForTest(): void {
   snapshotPromise = null;
 }
 
+/** Refuse snapshots without the expected schema and required read-only data. */
 export function validateSnapshot(snapshot: PublishedSnapshot): void {
+  assertSnapshotDepth(snapshot);
   if (snapshot.schema !== PUBLISHED_SNAPSHOT_SCHEMA) {
     throw new Error(`snapshot schema ${String(snapshot.schema)} is not ${PUBLISHED_SNAPSHOT_SCHEMA}`);
   }
@@ -103,11 +158,25 @@ export function validateSnapshot(snapshot: PublishedSnapshot): void {
   }
 }
 
+/** Admission bound for served JSON and query keys. Iterative O(JSON nodes),
+ * including query/result trees and backlinks, before any recursive reader or
+ * clone. Excessive depth and cycles refuse with a visible snapshot error. */
+function assertSnapshotDepth(value: unknown): void {
+  const pending = [{ value, depth: 0 }];
+  while (pending.length) {
+    const { value: node, depth } = pending.pop()!;
+    if (!node || typeof node !== "object") continue;
+    if (depth > 512) throw new Error("snapshot depth exceeds 512");
+    for (const child of Object.values(node)) pending.push({ value: child, depth: depth + 1 });
+  }
+}
+
 // ---- key parity with the engine -------------------------------------------
 
 /** JSON with object keys sorted at every depth: two IR values are the same
  *  query exactly when their stable text is. */
 export function stableJson(value: unknown): string {
+  assertSnapshotDepth(value);
   return JSON.stringify(sortKeys(value));
 }
 
@@ -150,10 +219,6 @@ function propertiesEqual(a: [string, string][], b: [string, string][]): boolean 
   return left.every((entry, index) => entry === right[index]);
 }
 
-function identityFold(name: string): string {
-  return name.trim().toLowerCase();
-}
-
 function literalNeedle(query: string): { empty: boolean; folded: string } {
   const raw = query.trim();
   return { empty: raw === "", folded: raw === "" ? "" : searchFold(raw) };
@@ -165,20 +230,7 @@ function includesFolded(text: string, needle: string): boolean {
 
 function firstMappedSpan(text: string, needle: string): { start: number; end: number } | null {
   if (!needle) return null;
-  const mapped = searchFoldMap(text);
-  const startCodeUnit = mapped.text.indexOf(needle);
-  if (startCodeUnit < 0) return null;
-  const startScalar = Array.from(mapped.text.slice(0, startCodeUnit)).length;
-  const endScalar = startScalar + Array.from(needle).length;
-  const sources = mapped.sources.slice(startScalar, endScalar);
-  if (sources.length === 0) return null;
-  return sources.reduce(
-    (span, source) => ({
-      start: Math.min(span.start, source.start),
-      end: Math.max(span.end, source.end),
-    }),
-    { start: sources[0].start, end: sources[0].end },
-  );
+  return searchSubstringSpans(text, needle, 1)[0] ?? null;
 }
 
 // ---- the backend --------------------------------------------------------------
@@ -186,11 +238,11 @@ function firstMappedSpan(text: string, needle: string): { start: number; end: nu
 /** Methods declared optional on `Backend`; a published export leaves them
  *  absent so the browser fallbacks in `backend.ts` take over. */
 const OPTIONAL_METHODS = new Set([
-  "loadConflictCapsules",
-  "storeConflictCapsule",
-  "retireConflictCapsule",
-  "conflictCapsuleDiff",
-  "resolveConflictCapsule",
+  "loadDrafts",
+  "storeDraft",
+  "retireDraft",
+  // GH #181: external Tine links need the native URL handler; a published guide has none.
+  "tineLinks",
 ]);
 
 /** Build the snapshot backend. `load` is awaited lazily by every method. */
@@ -198,44 +250,41 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
   const appBools = new Map<string, boolean>();
   const appStrings = new Map<string, string>();
   let session: string | null = null;
-  let workspaces = "";
+  let workspaces = JSON.stringify({ version: 1, activeId: "published", workspaces: [{
+    id: "published", name: "Published", blob: {
+      tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0,
+      leftSidebar: true, rightSidebar: false, rightSidebarItems: [],
+      favoritesSectionExpanded: true, recentSectionExpanded: true,
+      layout: { kind: "pane", paneId: "main", tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 },
+      focusedPaneId: "main", recentPages: [],
+    },
+  }] });
   let notices = '{"dismissed":[]}';
   let smoothScroll = false;
   let activationSeq = 0;
   const unsubscribed = async () => () => {};
 
-  const pageByName = (snapshot: PublishedSnapshot, name: string): PageDto | null => {
-    const wanted = identityFold(name);
-    const direct = snapshot.pages.find((page) => identityFold(page.name) === wanted);
+  const pageByName = (snapshot: PublishedSnapshot, name: string): PublishedPage | null => {
+    const wanted = pageIdentityKey(name);
+    const direct = snapshot.pages.find((page) => pageIdentityKey(page.name) === wanted);
     if (direct) return direct;
-    const alias = snapshot.aliases.find(([from]) => identityFold(from) === wanted);
-    return alias ? snapshot.pages.find((page) => identityFold(page.name) === identityFold(alias[1])) ?? null : null;
+    const alias = snapshot.aliases.find(([from]) => pageIdentityKey(from) === wanted);
+    return alias ? snapshot.pages.find((page) => pageIdentityKey(page.name) === pageIdentityKey(alias[1])) ?? null : null;
   };
-  const emptyReadOnlyPage = (name: string, kind: "journal" | "page"): PageDto => ({
-    name,
-    kind,
-    title: name,
-    pre_block: null,
-    blocks: [],
-    rev: null,
-    format: "md",
-    read_only: true,
-    path: "",
-  });
   const walk = (blocks: BlockDto[], visit: (block: BlockDto, ancestors: string[]) => void, ancestors: string[] = []) => {
     for (const block of blocks) {
       visit(block, ancestors);
       walk(block.children, visit, [...ancestors, block.raw.split("\n")[0] ?? ""]);
     }
   };
-  const collect = (snapshot: PublishedSnapshot, keep: (block: BlockDto) => boolean, limit = Infinity): RefGroup[] => {
+  const collect = (snapshot: PublishedSnapshot, keep: (block: BlockDto, page: PublishedPage) => boolean, limit = Infinity): RefGroup[] => {
     const groups: RefGroup[] = [];
     let budget = limit;
     for (const page of snapshot.pages) {
       if (budget <= 0) break;
       const matched: BlockDto[] = [];
       walk(page.blocks, (block, ancestors) => {
-        if (budget > 0 && keep(block)) {
+        if (budget > 0 && keep(block, page)) {
           matched.push({ ...structuredClone(block), breadcrumb: ancestors });
           budget--;
         }
@@ -244,24 +293,18 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     }
     return groups;
   };
-  const findBlock = (snapshot: PublishedSnapshot, uuid: string): { page: PageDto; block: BlockDto } | null => {
+  const findBlock = (snapshot: PublishedSnapshot, uuid: string): { page: PublishedPage; block: BlockDto } | null => {
     for (const page of snapshot.pages) {
       let found: BlockDto | null = null;
       walk(page.blocks, (block) => {
-        if (!found && (block.id === uuid || block.raw.includes(`id:: ${uuid}`))) found = block;
+        if (!found && ((blockRegions(block.raw, page.format ?? "md").id?.value.trim() ?? block.id) === uuid)) found = block;
       });
       if (found) return { page, block: found };
     }
     return null;
   };
-  const staticQueryRefusal = async () => {
-    const { QueryUnavailableError } = await import("./backend");
-    return new QueryUnavailableError(PUBLISHED_QUERY_REASON, PUBLISHED_QUERY_MESSAGE);
-  };
-  const readOnlyRefusal = async () => {
-    const { PublishedExportReadOnlyError } = await import("./backend");
-    return new PublishedExportReadOnlyError();
-  };
+  const staticQueryRefusal = async () => Object.assign(new Error(PUBLISHED_QUERY_MESSAGE), { reasonCode: PUBLISHED_QUERY_REASON });
+  const readOnlyRefusal = async () => new Error(PUBLISHED_READ_ONLY_MESSAGE);
   const resolveBlock = async (uuid: string): Promise<RefGroup | null> => {
     const snapshot = await load();
     const found = findBlock(snapshot, uuid);
@@ -285,13 +328,13 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
   const backlinkGroups = (snapshot: PublishedSnapshot, name: string): RefGroup[] => {
     const exact = snapshot.backlinks[name];
     if (exact) return exact;
-    const wanted = identityFold(name);
-    const key = Object.keys(snapshot.backlinks).find((candidate) => identityFold(candidate) === wanted);
+    const wanted = pageIdentityKey(name);
+    const key = Object.keys(snapshot.backlinks).find((candidate) => pageIdentityKey(candidate) === wanted);
     return key ? snapshot.backlinks[key] : [];
   };
   const backlinkRoot = (groups: RefGroup[], target: BacklinkFilterTarget): { group: RefGroup; block: BlockDto } | null => {
     for (const group of groups) {
-      if (group.kind !== target.kind || identityFold(group.page) !== identityFold(target.page)) continue;
+      if (group.kind !== target.kind || pageIdentityKey(group.page) !== pageIdentityKey(target.page)) continue;
       let found: BlockDto | null = null;
       walk(group.blocks, (block) => {
         if (!found && block.id === target.block_id) found = block;
@@ -331,7 +374,6 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return {
         kind: "loaded",
         binding_generation: 1,
-        application_page_admission: { binding_generation: 1 },
         meta: {
           root: snapshot.name,
           journals_dir: "journals",
@@ -339,8 +381,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
           preferred_workflow: "todo",
           shortcuts: {},
           start_of_week: 6,
-          block_hidden_properties: [],
-          linked_references_collapsed_threshold: 100,
+          block_hidden_properties: [], linked_references_collapsed_threshold: 100,
           default_journal_template: null,
           default_home: snapshot.home,
           favorites: [],
@@ -355,7 +396,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
           logbook_with_second_support: true,
           logbook_enabled_in_timestamped_blocks: true,
           logbook_enabled_in_all_blocks: false,
-          guide_announced: true,
+          guide_announced: true, mobile_gestures_disabled_in_block_with_tags: [],
         },
       };
     },
@@ -367,18 +408,31 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return (await load()).name;
     },
     // ---- pages ----
-    async listPages() {
-      return structuredClone((await load()).entries);
+    async pageInventory() {
+      const entries = (await load()).entries.map((entry) => ({
+        key: pageIdentityKey(entry.name), name: entry.name,
+        is_journal: entry.kind === "journal", day: entry.date_key,
+        target: { kind: "existing" as const, id: entry.path, others: [] },
+      }));
+      return { rev: "0", entries, unreadable: [] };
+    },
+    async resolvePage(name: string, kind: "journal" | "page") {
+      const snapshot = await load();
+      const page = pageByName(snapshot, name);
+      return page && page.kind === kind
+        ? { kind: "existing" as const, id: page.path, others: [] }
+        : { kind: "absent" as const, id: "" };
     },
     async getPage(name: string, kind: "journal" | "page") {
       const snapshot = await load();
       const page = pageByName(snapshot, name);
-      return page ? structuredClone(page) : emptyReadOnlyPage(name, kind);
+      if (!page || page.kind !== kind) return null;
+      return { ...structuredClone(page), id: page.path } satisfies PageRead;
     },
     async getPageByPath(path: string) {
       const snapshot = await load();
       const page = snapshot.pages.find((candidate) => candidate.path === path);
-      return page ? structuredClone(page) : null;
+      return page ? { ...structuredClone(page), id: page.path } satisfies PageRead : null;
     },
     async journalFeedPage(limit: number, beforeDay: number | null) {
       const snapshot = await load();
@@ -391,8 +445,8 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const rows = candidates.slice(0, limit);
       const pages = rows
         .map((entry) => pageByName(snapshot, entry.name))
-        .filter((page): page is PageDto => page !== null)
-        .map((page) => structuredClone(page));
+        .filter((page): page is PublishedPage => page !== null)
+        .map((page) => ({ ...structuredClone(page), id: page.path } satisfies PageRead));
       const done = rows.length === candidates.length;
       return {
         pages,
@@ -406,18 +460,6 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return snapshot.entries
         .filter((entry) => entry.kind === "journal" && entry.date_key !== null)
         .map((entry) => entry.date_key as number);
-    },
-    async existingPageNames(names: string[]) {
-      const snapshot = await load();
-      return names.filter((name) => pageByName(snapshot, name) !== null);
-    },
-    async referencedPageNames(knownDigest?: number | null) {
-      await load();
-      // Nothing exists "only through references" in a closed export.
-      return { digest: 0, names: knownDigest === 0 ? null : [] };
-    },
-    async pageAliases() {
-      return structuredClone((await load()).aliases);
     },
     async pageIcons(names: string[]) {
       const snapshot = await load();
@@ -433,31 +475,26 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const snapshot = await load();
       return structuredClone(backlinkGroups(snapshot, name));
     },
-    async getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[], search: string): Promise<BacklinkFilterContext> {
+    async getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[]): Promise<BacklinkFilterContext> {
       const snapshot = await load();
       const groups = backlinkGroups(snapshot, name);
       const roots: { group: RefGroup; block: BlockDto; text: string }[] = [];
       const requested = new Set<string>();
       for (const target of targets) {
-        const key = `${target.kind}\0${identityFold(target.page)}\0${target.block_id}`;
+        const key = `${target.kind}\0${pageIdentityKey(target.page)}\0${target.block_id}`;
         if (requested.has(key)) continue;
         requested.add(key);
         const root = backlinkRoot(groups, target);
         if (root) roots.push({ ...root, text: backlinkText(root.block) });
       }
-      const matched = searchMatchBatch(search, roots.map((root) => root.text));
-      if (matched.matches.length !== roots.length) {
-        throw new Error(`lsdoc-wasm search batch returned ${matched.matches.length} matches for ${roots.length} texts`);
-      }
       return {
-        entries: roots.map((root, index) => ({
+        entries: roots.map((root) => ({
           page: root.group.page,
           kind: root.group.kind,
           block_id: root.block.id,
-          facets: backlinkFilterFacets(root.block),
-          text_matches: matched.matches[index],
+          text: root.text,
+          facets: [...(root.block.tags ?? []), ...(root.block.marker ? [root.block.marker] : [])],
         })),
-        ...(matched.search_error === null ? {} : { search_error: matched.search_error }),
         truncated: roots.length < requested.size,
       };
     },
@@ -470,7 +507,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     },
     async getBlockReferrers(uuid: string) {
       const snapshot = await load();
-      return collect(snapshot, (block) => block.raw.includes(`((${uuid}))`));
+      // Admission by substring, decision by the parser: a `((uuid))` inside code is not a reference.
+      return collect(snapshot, (block, page) =>
+        block.raw.includes(uuid) && blockRefsInText(block.raw, page.format ?? "md").some((v) => v.trim() === uuid));
     },
     resolveBlock,
     async resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]> {
@@ -480,23 +519,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const snapshot = await load();
       const found = findBlock(snapshot, uuid);
       if (!found) return null;
-      let emitted = 0;
-      let truncated = 0;
-      const count = (blocks: BlockDto[]): number => blocks.reduce((n, b) => n + 1 + count(b.children), 0);
-      const copy = (blocks: BlockDto[]): BlockDto[] => {
-        const out: BlockDto[] = [];
-        for (const block of blocks) {
-          if (emitted >= Math.max(1, maxNodes)) {
-            truncated += count([block]);
-            continue;
-          }
-          emitted++;
-          out.push({ ...block, children: copy(block.children) });
-        }
-        return out;
-      };
+      const { blocks, truncated } = previewDtoSubtree(found.block, maxNodes, "owned");
       return {
-        group: { page: found.page.name, kind: found.page.kind, path: found.page.path, blocks: copy([structuredClone(found.block)]) },
+        group: { page: found.page.name, kind: found.page.kind, path: found.page.path, blocks },
         truncated,
       };
     },
@@ -536,10 +561,11 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const snapshot = await load();
       const wanted = stableJson(query);
       const wantedView = viewKey(view);
-      const page = context?.current_page ?? undefined;
+      const page = context?.current_page == null ? undefined : pageIdentityKey(context.current_page);
       const candidates = snapshot.queries.filter((record) =>
         stableJson(record.parsed.query) === wanted || (record.execution && stableJson(record.execution.parsed.query) === wanted));
-      const inContext = candidates.filter((record) => (record.context.current_page ?? undefined) === page);
+      const inContext = candidates.filter((record) =>
+        (record.context.current_page == null ? undefined : pageIdentityKey(record.context.current_page)) === page);
       const hit = inContext.find((record) => viewKey(record.view) === wantedView)
         ?? inContext[0]
         ?? (page === undefined ? candidates[0] : undefined);
@@ -550,9 +576,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
      *  aliases and block text from the snapshot — navigation, not a query. A
      *  query-language search (any other consumer) is refused: the export holds
      *  answers, not an index. */
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, _explain?: boolean, scope?: QueryPageScope, _options?: GraphSearchDisplayOptions, consumer: GraphSearchConsumer = "non_interactive"): Promise<QueryExecution> {
+    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane?: string, _explain?: boolean, scope?: QueryPageScope, _pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, _views?: { page: ViewSettings; block: ViewSettings }): Promise<QueryExecution> {
       const snapshot = await load();
-      if (consumer !== "ctrl_k") throw await staticQueryRefusal();
+      if (lane !== "quick-switch" && lane !== "quick-switch:current-page") throw await staticQueryRefusal();
       const wanted = literalNeedle(source);
       const hits: QueryHit[] = [];
       const empty = { hits, diagnostics: [], explanation: { branches: [] }, has_more: { pages: false, blocks: false }, cancelled: false };
@@ -565,7 +591,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       if (!scope) {
         for (const entry of snapshot.entries) {
           const alias = snapshot.aliases.find(([from, to]) =>
-            identityFold(to) === identityFold(entry.name) && includesFolded(from.trim(), wanted.folded)
+            pageIdentityKey(to) === pageIdentityKey(entry.name) && includesFolded(from.trim(), wanted.folded)
           )?.[0];
           const name = searchFold(entry.name.trim());
           if (!name.includes(wanted.folded) && !alias) continue;
@@ -577,7 +603,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       }
       const blockHits: QueryHit[] = [];
       for (const page of snapshot.pages) {
-        if (scope && (scope.path ? page.path !== scope.path : identityFold(page.name) !== identityFold(scope.name))) continue;
+        if (scope && (scope.path ? page.path !== scope.path : pageIdentityKey(page.name) !== pageIdentityKey(scope.name))) continue;
         walk(page.blocks, (block) => {
           const text = block.raw.split("\n")[0] ?? "";
           if (!includesFolded(block.raw, wanted.folded)) return;
@@ -588,17 +614,21 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return { ...empty, has_more: { pages: pageHits.length > pageLimit, blocks: blockHits.length > blockLimit } };
     },
     // ---- assets and the browser ----
-    async readAsset(name: string) {
+    // A refused or missing asset rejects (I-9): an empty byte array reads as a valid empty
+    // file and blanks a PDF or image with no cause. The live backend rejects the same way.
+    async readAsset(name: string, maxBytes?: number) {
       await load();
       const url = assetUrl(name);
-      if (!url) return new Uint8Array();
+      if (!url) throw new Error(`asset ${name}: not a file inside the published assets`);
       const response = await fetch(url);
-      if (!response.ok) return new Uint8Array();
-      return new Uint8Array(await response.arrayBuffer());
+      if (!response.ok) throw new Error(`asset ${name}: HTTP ${response.status}`);
+      return readBounded(response, maxBytes ?? PUBLISHED_ASSET_MAX_BYTES, `asset ${name}`);
     },
     async streamAsset(name: string) {
       await load();
-      return assetUrl(name) ?? "";
+      const url = assetUrl(name);
+      if (!url) throw new Error(`asset ${name}: not a file inside the published assets`);
+      return url;
     },
     async openExternal(url: string) {
       window.open(url, "_blank", "noopener");
@@ -618,19 +648,12 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async confirm(message: string) {
       return window.confirm(message);
     },
-  } satisfies Partial<Backend>;
+  };
 
   const constant = {
+    graphBindingGeneration: () => 1,
     async appPlatform(): Promise<"android" | "ios" | "desktop"> {
       return "desktop";
-    },
-    async appArchitecture() {
-      return "web";
-    },
-    // A published export has no backend clock; the browser's is the authority.
-    async localClock() {
-      const now = Date.now();
-      return { offset_minutes: -new Date(now).getTimezoneOffset(), unix_ms: now };
     },
     async listKnownGraphs() {
       return [];
@@ -638,11 +661,23 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async gpuEnv() {
       return { software_forced: false, appimage: false };
     },
+    // A published export has no backend clock; the browser's is the authority.
+    async localClock() {
+      const now = Date.now();
+      return { offset_minutes: -new Date(now).getTimezoneOffset(), unix_ms: now };
+    },
+    async appArchitecture() {
+      return "unknown";
+    },
+    async watcherLatencyRecent() {
+      return [];
+    },
     async debugInfo() {
       return { enabled: false, path: "", recorderActive: false, previousExitUnclean: false };
     },
     async debugLog() {},
     async diagnosticFrontendEvent() {},
+    async diagnosticTimingEvent() {},
     async diagnosticSessionActive() {},
     async getAppBool(key: string, fallback: boolean) {
       return appBools.get(key) ?? fallback;
@@ -667,6 +702,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     },
     async saveWorkspaces(data: string) {
       workspaces = data;
+      return "durable" as const;
     },
     async loadNotices() {
       return notices;
@@ -769,12 +805,15 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return "";
     },
     async graphSourceFiles() {
-      return [];
+      return { files: [], skipped: [] };
     },
     async conflictInventory() {
       return { sync_conflicts: [], vcs_markers: [], queue: [] };
     },
     async listJournalConflicts() {
+      return [];
+    },
+    async listSyncConflicts() {
       return [];
     },
     async listJournalFilenameMigrations() {
@@ -792,9 +831,6 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async detectMediaEditor() {
       return "";
     },
-    async pasteImage() {
-      return null;
-    },
     async readClipboardImage() {
       return null;
     },
@@ -805,6 +841,11 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return false;
     },
     async clearDiagnostics() {},
+    // Windows Defender is the native app's concern; a published export never shows the hint.
+    async defenderHint() {
+      return { show: false };
+    },
+    async dismissDefenderHint() {},
     onStorageTransition: unsubscribed,
     onGraphRescanComplete: unsubscribed,
     onConflictsChanged: unsubscribed,
@@ -814,10 +855,10 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     onGraphConfigChanged: unsubscribed,
     onGraphReopened: unsubscribed,
     onQueryProjectionChanged: unsubscribed,
-    onGraphWatchError: unsubscribed,
+    onGraphWatchStatus: unsubscribed,
     onGraphUnreadablePages: unsubscribed,
     onGraphVerificationProgress: unsubscribed,
-  } satisfies Partial<Backend>;
+  };
 
   const explicit: Record<string, unknown> = { ...answered, ...constant };
   return new Proxy(explicit, {
@@ -839,6 +880,8 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
 /** The method classes §5 pins. `publishedBackend.guard.test.ts` requires every
  *  `Backend` method to be in exactly one. */
 export const PUBLISHED_ANSWERED_METHODS = [
+  "pageInventory",
+  "resolvePage",
   "loadGraph",
   "inspectGraphAccess",
   "startupGraphPath",
@@ -876,14 +919,17 @@ export const PUBLISHED_ANSWERED_METHODS = [
 ] as const;
 
 export const PUBLISHED_CONSTANT_METHODS = [
+  "graphBindingGeneration",
   "appPlatform",
   "localClock",
   "appArchitecture",
+  "watcherLatencyRecent",
   "listKnownGraphs",
   "gpuEnv",
   "debugInfo",
   "debugLog",
   "diagnosticFrontendEvent",
+  "diagnosticTimingEvent",
   "diagnosticSessionActive",
   "getAppBool",
   "setAppBool",
@@ -933,16 +979,18 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "graphSourceFiles",
   "conflictInventory",
   "listJournalConflicts",
+  "listSyncConflicts",
   "listJournalFilenameMigrations",
   "listOrphanAssets",
   "assetTrashStats",
   "clipboardFiles",
   "detectMediaEditor",
-  "pasteImage",
   "readClipboardImage",
   "diagnosticReport",
   "saveDiagnosticReport",
   "clearDiagnostics",
+  "defenderHint",
+  "dismissDefenderHint",
   "onStorageTransition",
   "onGraphRescanComplete",
   "onConflictsChanged",
@@ -952,7 +1000,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "onGraphConfigChanged",
   "onGraphReopened",
   "onQueryProjectionChanged",
-  "onGraphWatchError",
+  "onGraphWatchStatus",
   "onGraphUnreadablePages",
   "onGraphVerificationProgress",
 ] as const;
@@ -961,6 +1009,10 @@ export const PUBLISHED_CONSTANT_METHODS = [
  *  capture, native UI, OS. Pinned here so a new `Backend` method must be
  *  classified deliberately. */
 export const PUBLISHED_REFUSED_METHODS = [
+  "addDefenderExclusion",
+  "savePages",
+  "publishLive",
+  "sheetExportInputs",
   "approveExternalAssets",
   "openGraphWindow",
   "forgetKnownGraph",
@@ -1014,11 +1066,8 @@ export const PUBLISHED_REFUSED_METHODS = [
   "syncConflictDiff",
   "textBlockDiff",
   "textBlockDiff3",
-  "liveSaveConflictDiff",
-  "captureLiveSaveConflict",
-  "durableLiveSaveConflictDiff",
-  "resolveDurableLiveSaveConflict",
-  "resolveLiveSaveConflict",
+  "liveConflictDiff",
+  "resolveLiveConflict",
   "vcsMarkerConflictDiff",
   "resolveVcsMarkerConflict",
   "resolveSyncConflict",
@@ -1037,12 +1086,10 @@ export const PUBLISHED_REFUSED_METHODS = [
   "cancelRecording",
   "copyImageToClipboard",
   "writeHighlights",
-  "writePdfViewState",
   "savePdfAreaImage",
   "rollbackPdfAreaImage",
   "setBackupKeep",
   "setCaptureEnterFiles",
-  "setLinkFirstMatch",
   "setWatchMode",
   "restoreBackup",
   "retryIndex",

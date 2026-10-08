@@ -1,21 +1,7 @@
-import {
-  applyPageMutationPlan,
-  createPageMutationPlan,
-  doc,
-  formatForBlock,
-  blockPageReadOnly,
-  type PageMutationDraft,
-} from "../store";
+import { deleteBlock, formatForBlock, insertEmptyChildBlock, replaceChildOrders, setRaw, withUndoUnit, blockPageReadOnly, node as docNode } from "../document";
 import { visibleBody } from "../render/block";
 import { MARKERS } from "../markers";
-import {
-  fieldIdsForBlocks,
-  groupKeyForBlock,
-  isFieldId,
-  readField,
-  writeGroupingFieldToDraft,
-  type FieldId,
-} from "./fields";
+import { fieldIdsForBlocks, groupKeyForBlock, isFieldId, readField, writeField, type FieldId } from "./fields";
 import { sheetConfigFromRaw } from "./config";
 
 const NONE_LABEL = "(none)";
@@ -32,6 +18,7 @@ interface FlattenGroup {
   id: string;
   label: string;
   rows: string[];
+  retain: boolean;
 }
 
 function groupLabel(field: FieldId, key: string | null, sampleId: string): string {
@@ -45,7 +32,14 @@ function writable(field: FieldId): field is WritableGroupField {
 }
 
 function firstVisibleLine(id: string): string {
-  return (visibleBody(doc.byId[id]?.raw ?? "")[0] ?? "").trim();
+  const raw = docNode(id)?.raw ?? "";
+  // Marker/priority-only labels have no visible body. Read their existing
+  // parsed field rather than interpreting their source syntax again.
+  const state = readField(id, "state")?.text;
+  if (raw === state) return state;
+  const priority = readField(id, "priority")?.text;
+  if (priority && raw === `[#${priority}]`) return raw;
+  return (visibleBody(raw)[0] ?? "").trim();
 }
 
 function parseLabel(field: WritableGroupField, label: string): string | null | undefined {
@@ -64,7 +58,7 @@ function candidateFields(parentId: string, groups: readonly FlattenGroup[], chil
   const add = (field: FieldId | null | undefined) => {
     if (field && writable(field) && !out.includes(field)) out.push(field);
   };
-  const parent = doc.byId[parentId];
+  const parent = docNode(parentId);
   if (parent) {
     const configured = sheetConfigFromRaw(parent.raw, formatForBlock(parentId)).groupBy;
     if (configured && isFieldId(configured)) add(configured);
@@ -99,36 +93,26 @@ function inferFlattenField(parentId: string, groups: readonly FlattenGroup[], ch
       }
       if (!valid) break;
     }
-    const configured = doc.byId[parentId]
-      ? sheetConfigFromRaw(doc.byId[parentId].raw, formatForBlock(parentId)).groupBy === field
+    const configured = docNode(parentId)
+      ? sheetConfigFromRaw(docNode(parentId).raw, formatForBlock(parentId)).groupBy === field
       : false;
     if (valid && (sawExisting || configured || (field !== "state" && field !== "priority" ? false : sawValueLabel))) return field;
   }
   return null;
 }
 
-function runRestructurePlan(
-  page: string,
-  tag: string,
-  build: (draft: PageMutationDraft) => boolean | null,
-): boolean {
-  const plan = createPageMutationPlan(page, tag, build);
-  if (!plan) return false;
-  return applyPageMutationPlan(plan).kind !== "refused";
-}
-
 export function canFlatten(parentId: string): boolean {
-  return (doc.byId[parentId]?.children ?? []).some((id) => (doc.byId[id]?.children.length ?? 0) > 0);
+  return (docNode(parentId)?.children ?? []).some((id) => (docNode(id)?.children.length ?? 0) > 0);
 }
 
 export function hierarchify(parentId: string, field: FieldId): boolean {
   if (blockPageReadOnly(parentId)) return false; // org round-trip gate (review finding)
-  const parent = doc.byId[parentId];
+  const parent = docNode(parentId);
   if (!parent || !parent.children.length) return false;
   const buckets: GroupBucket[] = [];
   const byKey = new Map<string, GroupBucket>();
   for (const row of parent.children) {
-    if (!doc.byId[row] || doc.byId[row].page !== parent.page) return false;
+    if (!docNode(row) || docNode(row).page !== parent.page) return false;
     const key = groupKeyForBlock(row, field);
     const mapKey = key ?? "\0";
     let bucket = byKey.get(mapKey);
@@ -141,62 +125,68 @@ export function hierarchify(parentId: string, field: FieldId): boolean {
   }
   if (!buckets.length) return false;
 
-  return runRestructurePlan(parent.page, "sheet:hierarchify", (draft) => {
+  return withUndoUnit("sheet:hierarchify", [parent.page], () => {
     const groupIds: string[] = [];
+    const nextOrders: Record<string, readonly string[]> = {};
     for (const bucket of buckets) {
-      const groupId = draft.createChild(parentId, draft.node(parentId)?.children.length ?? -1, bucket.label);
-      if (!groupId) return null;
+      const groupId = insertEmptyChildBlock(parentId, docNode(parentId)?.children.length ?? 0);
+      if (!groupId) throw new Error("failed to create group block");
+      setRaw(groupId, bucket.label, { timetracking: false });
       groupIds.push(groupId);
-      if (!draft.replaceChildren(groupId, bucket.rows)) return null;
+      nextOrders[groupId] = bucket.rows;
     }
-    return draft.replaceChildren(parentId, groupIds) ? true : null;
+    nextOrders[parentId] = groupIds;
+    if (!replaceChildOrders(nextOrders)) throw new Error("failed to reparent grouped rows");
+    return true;
   });
 }
 
 export function flatten(parentId: string): boolean {
   if (blockPageReadOnly(parentId)) return false; // org round-trip gate (review finding)
-  const parent = doc.byId[parentId];
+  const parent = docNode(parentId);
   if (!parent || !parent.children.length) return false;
 
   const groups: FlattenGroup[] = [];
   const childless: string[] = [];
-  const nextParentOrder: string[] = [];
   for (const childId of parent.children) {
-    const child = doc.byId[childId];
+    const child = docNode(childId);
     if (!child || child.page !== parent.page) return false;
     if (!child.children.length) {
       childless.push(childId);
-      nextParentOrder.push(childId);
       continue;
     }
     const rows = [...child.children];
-    groups.push({ id: childId, label: firstVisibleLine(childId), rows });
-    nextParentOrder.push(...rows);
+    const label = firstVisibleLine(childId);
+    // Only a bare grouping label is disposable. Notes, properties, wrappers
+    // and authored whitespace remain as a row with the exact original raw.
+    const retain = child.raw !== label;
+    groups.push({ id: childId, label, rows, retain });
   }
   if (!groups.length) return false;
 
   const field = inferFlattenField(parentId, groups, childless);
-  const missingValues = field
-    ? groups.flatMap((group) => {
-        const value = parseLabel(field, group.label);
-        if (value == null) return [];
-        return group.rows.filter((row) => !readField(row, field)).map((row) => [row, value] as const);
-      })
-    : [];
+  // A label that cannot become a row field is authored content too.
+  for (const group of groups) group.retain ||= field === null;
+  const byId = new Map(groups.map((group) => [group.id, group]));
+  const order = parent.children.flatMap((id) => {
+    const group = byId.get(id);
+    return group ? [...(group.retain ? [id] : []), ...group.rows] : [id];
+  });
 
-  return runRestructurePlan(parent.page, "sheet:flatten", (draft) => {
+  return withUndoUnit("sheet:flatten", [parent.page], () => {
     if (field) {
-      for (const [row, value] of missingValues) {
-        if (!writeGroupingFieldToDraft(draft, row, field, value)) return null;
+      for (const group of groups) {
+        const value = parseLabel(field, group.label);
+        if (value == null) continue;
+        for (const row of group.rows) {
+          if (!readField(row, field)) writeField(row, field, value);
+        }
       }
     }
-    // Empty each group while it is still attached, then delete the now-empty
-    // group. This keeps every effect independently replayable; moved rows are
-    // finally reparented and ordered by the parent replacement below.
-    for (const group of groups) {
-      if (!draft.replaceChildren(group.id, [])) return null;
-      if (!draft.deleteSubtree(group.id)) return null;
-    }
-    return draft.replaceChildren(parentId, nextParentOrder) ? true : null;
+    const orders: Record<string, readonly string[]> = { [parentId]: order };
+    for (const group of groups) orders[group.id] = [];
+    if (!replaceChildOrders(orders)) throw new Error("failed to flatten rows");
+    for (const group of groups) if (!group.retain) deleteBlock(group.id);
+    return true;
   });
 }

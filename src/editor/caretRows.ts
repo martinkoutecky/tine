@@ -51,18 +51,18 @@ function buildMirror(ta: HTMLTextAreaElement): HTMLDivElement {
   div.style.top = "0";
   div.style.left = "-9999px";
   div.style.visibility = "hidden";
-  // In particular, a body-only code editor is wrap=off: wrapping its mirror
-  // invents extra rows that do not exist under the user's pointer.
-  div.style.whiteSpace = cs.whiteSpace || (ta.wrap === "off" ? "pre" : "pre-wrap");
+  if (ta.wrap === "off") {
+    div.style.whiteSpace = "pre";
+    div.style.overflowWrap = "normal";
+  }
   return div;
 }
 
-/** Map a viewport point to the nearest caret offset in a textarea. Used only
- *  after a rendered-block mousedown has already swapped in the editor and the
- *  user continues dragging: the original rendered DOM no longer exists, so the
- *  browser cannot extend its native selection. One mirror pass preserves the
- *  same wrapping/font metrics and gives the gesture a raw-editor selection.
- *  Returns null in no-layout environments. */
+/** Return one content-coordinate point for each UTF-16 caret offset, including
+ *  end-of-text, using the textarea's value, computed styles and browser layout.
+ *  The drag caller maps its pointer to these points after swapping in the editor.
+ *  Cost O(value length) Range measurements in one shared style mirror; returns
+ *  null when layout or a required caret rectangle is unavailable. */
 export function textareaCaretPoints(ta: HTMLTextAreaElement): Array<{ x: number; y: number }> | null {
   if (typeof document === "undefined") return null;
   const div = buildMirror(ta);
@@ -201,9 +201,8 @@ export function caretAtLastRow(ta: HTMLTextAreaElement, offset: number): boolean
  *  card's editor). Used to reveal the caret horizontally; returns null where
  *  there is no layout (jsdom), so callers simply leave the scroll alone.
  *
- *  The shared mirror wraps at the textarea's width, which is exactly wrong
- *  here — a `wrap="off"` textarea puts the whole logical line on one visual
- *  row — so this builds its own with `white-space: pre` and no width. */
+ *  Use the shared style mirror without a width constraint to measure the
+ *  whole logical line, including portions outside the textarea viewport. */
 export function textareaCaretLeft(ta: HTMLTextAreaElement, offset: number): number | null {
   if (typeof document === "undefined") return null;
   const div = buildMirror(ta);

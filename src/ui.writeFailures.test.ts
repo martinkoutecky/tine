@@ -1,0 +1,138 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { backend } from "./backend";
+import { graphMeta, setGraphMeta } from "./graphSession";
+import { changeWorkflow, workflow, setWorkflow, changeShowBrackets, pruneSidebarBlocks, setRightSidebar, rightSidebar, toggleWideMode, wideMode, setFavorites, favorites, toggleFavorite, persistSidebarWidth, refreshJournalConflicts, setShortcutOverride, setShortcutOverrides, shortcutOverrides } from "./ui";
+import { toasts, setToasts } from "./toasts";
+
+const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); setGraphMeta(null); setToasts([]); setRightSidebar([]); setFavorites([]); });
+
+it("reports a failed graph preference and restores the previous value", async () => {
+  const loaded = await backend().loadGraph("");
+  if (loaded.kind === "focused_existing") throw new Error("missing graph");
+  setGraphMeta({ ...loaded.meta, root: "/test", show_brackets: true });
+  setWorkflow("now");
+  vi.spyOn(backend(), "setPreferredWorkflow").mockRejectedValueOnce(new Error("disk full"));
+  vi.spyOn(backend(), "setShowBrackets").mockRejectedValueOnce(new Error("disk full"));
+  changeWorkflow("todo");
+  changeShowBrackets(false);
+  await flush();
+  expect(workflow()).toBe("now");
+  expect(graphMeta()?.show_brackets).toBe(true);
+  expect(toasts().filter((toast) => toast.kind === "error")).toHaveLength(2);
+});
+
+it("keeps the persisted local display preference when storage refuses a write", () => {
+  const old = wideMode();
+  vi.stubGlobal("localStorage", { setItem: () => { throw new Error("quota"); }, removeItem: () => { throw new Error("quota"); } });
+  toggleWideMode();
+  expect(wideMode()).toBe(old);
+  expect(toasts().some((toast) => toast.kind === "error")).toBe(true);
+  vi.unstubAllGlobals();
+});
+
+it("reports a failed sidebar width preference write", () => {
+  vi.stubGlobal("localStorage", { setItem: () => { throw new Error("quota"); } });
+  persistSidebarWidth();
+  expect(toasts().some((toast) => toast.kind === "error")).toBe(true);
+});
+
+it("keeps a sidebar block when resolution fails", async () => {
+  setRightSidebar([{ kind: "block", uuid: "live", page: "A", pageKind: "page" }]);
+  vi.spyOn(backend(), "resolveBlock").mockRejectedValueOnce(new Error("I/O"));
+  await pruneSidebarBlocks();
+  expect(rightSidebar()).toHaveLength(1);
+  expect(toasts().some((toast) => toast.kind === "error")).toBe(true);
+});
+
+it("does not prune a block restored by a different graph while resolution is pending", async () => {
+  const loaded = await backend().loadGraph("");
+  if (loaded.kind === "focused_existing") throw new Error("missing graph");
+  setGraphMeta({ ...loaded.meta, root: "/graph-a" });
+  setRightSidebar([{ kind: "block", uuid: "shared", page: "A", pageKind: "page" }]);
+  let finish!: (value: null) => void;
+  vi.spyOn(backend(), "resolveBlock").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const pruning = pruneSidebarBlocks();
+  setGraphMeta({ ...loaded.meta, root: "/graph-b" });
+  setRightSidebar([{ kind: "block", uuid: "shared", page: "B", pageKind: "page" }]);
+  finish(null);
+  await pruning;
+  expect(rightSidebar()).toEqual([{ kind: "block", uuid: "shared", page: "B", pageKind: "page" }]);
+});
+
+it("does not prune a newly pinned sidebar item with the old block's UUID", async () => {
+  setRightSidebar([{ kind: "block", uuid: "shared", page: "Old", pageKind: "page" }]);
+  let finish!: (value: null) => void;
+  vi.spyOn(backend(), "resolveBlock").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const pruning = pruneSidebarBlocks();
+  setRightSidebar([{ kind: "block", uuid: "shared", page: "New", pageKind: "page" }]);
+  finish(null);
+  await pruning;
+  expect(rightSidebar()).toEqual([{ kind: "block", uuid: "shared", page: "New", pageKind: "page" }]);
+});
+
+it("restores confirmed favorites after two queued failures", async () => {
+  setFavorites([]);
+  vi.spyOn(backend(), "setFavorites").mockRejectedValue(new Error("disk full"));
+  toggleFavorite("A");
+  toggleFavorite("B");
+  await flush();
+  await flush();
+  expect(favorites()).toEqual([]);
+  // Each failure is announced: identical sticky errors share one toast whose
+  // count is the number of failures (OG-TOAST).
+  const errors = toasts().filter((toast) => toast.kind === "error");
+  expect(errors.reduce((sum, toast) => sum + (toast.count ?? 1), 0)).toBe(2);
+});
+
+it("does not restore another graph's workflow after a rejected write", async () => {
+  const loaded = await backend().loadGraph("");
+  if (loaded.kind === "focused_existing") throw new Error("missing graph");
+  setGraphMeta({ ...loaded.meta, root: "/old" });
+  setWorkflow("now");
+  vi.spyOn(backend(), "setPreferredWorkflow").mockResolvedValueOnce();
+  changeWorkflow("todo");
+  await flush();
+  setGraphMeta({ ...loaded.meta, root: "/new" });
+  setWorkflow("now");
+  vi.spyOn(backend(), "setPreferredWorkflow").mockRejectedValueOnce(new Error("disk full"));
+  changeWorkflow("todo");
+  await flush();
+  expect(workflow()).toBe("now");
+});
+
+it("does not dispatch a queued config write into the next graph", async () => {
+  const loaded = await backend().loadGraph("");
+  if (loaded.kind === "focused_existing") throw new Error("missing graph");
+  setGraphMeta({ ...loaded.meta, root: "/queued-old" });
+  setWorkflow("now");
+  let finish!: () => void;
+  const write = vi.spyOn(backend(), "setPreferredWorkflow")
+    .mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }))
+    .mockResolvedValue();
+  changeWorkflow("todo");
+  await flush();
+  changeWorkflow("now");
+  setGraphMeta({ ...loaded.meta, root: "/queued-new" });
+  setWorkflow("todo");
+  finish();
+  await flush();
+  await flush();
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(workflow()).toBe("todo");
+});
+
+// C3X X6 (L13): both of these used to swallow the failure silently.
+it("says so when the duplicate-journal listing fails instead of showing no duplicates", async () => {
+  vi.spyOn(backend(), "listJournalConflicts").mockRejectedValueOnce(new Error("I/O"));
+  await refreshJournalConflicts();
+  expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("duplicate journal days"))).toBe(true);
+});
+
+it("announces a refused shortcut write and keeps the shortcut that is really stored", () => {
+  setShortcutOverrides({});
+  vi.stubGlobal("localStorage", { setItem: () => { throw new Error("quota"); }, getItem: () => null, removeItem: () => {} });
+  setShortcutOverride("toggle-sidebar", "mod+shift+k");
+  expect(shortcutOverrides()).toEqual({});
+  expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("keyboard shortcuts"))).toBe(true);
+});

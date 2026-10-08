@@ -1,12 +1,14 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
+import { TableV2, tableColumnCount } from "./tableV2";
 import { AstBody } from "./body";
 import { clearSeededFacets } from "./facets";
 import { initParser } from "./parse";
 import { Block } from "../components/Block";
-import { loadSingle, resetStore } from "../store";
+import { resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
 import type { PageDto } from "../types";
-import { setGraphMeta } from "../ui";
+import { setGraphMeta } from "../graphSession";
 
 const TABLE = "| Fruit | Count |\n| --- | ---: |\n| apple | 2 |";
 
@@ -118,4 +120,26 @@ describe("property-configured table v2", () => {
       mounted.dispose();
     }
   });
+});
+
+
+it("renders a broad table without an argument spread (OG-B-FRONT)", () => {
+  const root = document.createElement("div");
+  const dispose = render(() => <TableV2
+    table={{kind: "table", header: [[{k: "plain", text: "Header"}]], aligns: [], rows: Array.from({length: 150000}, () => [])}}
+    options={{version: 2, compact: false, headers: "none"}}
+    renderCell={cell => cell[0].k === "plain" ? cell[0].text : ""}
+  />, root);
+  try {
+    expect(root.querySelector('[role="columnheader"]')?.textContent).toBe("Header");
+    expect(root.querySelector<HTMLElement>('[role="grid"]')?.style.gridTemplateColumns).toContain("repeat(1,");
+  } finally { dispose(); }
+});
+
+
+it.each([2000, 150000])("answers width for %i valid populated rows without an argument spread", count => {
+  const table = {kind: "table" as const, header: null, aligns: [], rows: Array.from({length: count}, () => [[{k: "plain" as const, text: "cell"}]])};
+  expect(tableColumnCount(table)).toBe(1);
+  table.rows[count - 1].push([{k: "plain", text: "second column"}]);
+  expect(tableColumnCount(table)).toBe(2);
 });

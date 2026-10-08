@@ -1,171 +1,135 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import { ConflictOverview } from "./ConflictOverview";
-import { __setBackendForTest, type Backend } from "../backend";
-import * as ui from "../ui";
-import { setConflictQueue, setSyncConflicts, setToasts } from "../ui";
+import type { JSX } from "solid-js";
+import { backend } from "../backend";
+import { resetStore } from "../document";
+import { setToasts } from "../toasts";
 import type { PaneRouter } from "../router";
-import type { ConflictObject, SyncConflict } from "../types";
+import type { ConflictInventory, ConflictObject, SyncConflict } from "../types";
+import { ConflictOverview } from "./ConflictOverview";
+import { ConflictQueueBadge } from "./Sidebar";
+import { setConflictInventory } from "../conflictQueue";
 
-// GH #536: the `N conflicts` badge opens one overview of every page that needs
-// a decision, rendered from the live queue and never written to the graph.
+// og 8c: the Conflicts overview (the inventory, never a write surface except
+// the recoverable Discard copy) and the sidebar badge that opens it.
 
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+const settle = async () => { for (let i = 0; i < 5; i++) await tick(); };
+
+const copy: SyncConflict = {
+  path: "pages/Plan.sync-conflict-20260705-141233-ABCDEFG.md", base_name: "Plan", base_path: "pages/Plan.md",
+  kind: "page", tag: "sync-conflict-20260705-141233-ABCDEFG", preview: "copy",
+};
+const orphan: SyncConflict = {
+  path: "pages/Gone.sync-conflict-20260705-141233-ABCDEFG.md", base_name: "Gone", base_path: null,
+  kind: "page", tag: "sync-conflict-20260705-141233-ABCDEFG", preview: "orphan",
+};
+const copyObject: ConflictObject = {
+  id: `copy:${copy.path}`, source: "sync-copy", page_name: "Plan", page_path: "pages/Plan.md", kind: "page",
+  sides: [{ role: "mine", label: "This device", path: "pages/Plan.md" }, { role: "theirs", label: copy.tag, path: copy.path }],
+  block_conflicts: 3,
+};
+const markerObject: ConflictObject = {
+  id: "markers:pages/Merged.md", source: "vcs-markers", page_name: "Merged", page_path: "pages/Merged.md", kind: "page",
+  sides: [{ role: "mine", label: "HEAD" }, { role: "theirs", label: "feature" }],
+  block_conflicts: null, markers: ["<<<<<<<", ">>>>>>>"],
+};
+const inventory: ConflictInventory = {
+  sync_conflicts: [copy, orphan],
+  vcs_markers: [{ path: "pages/Merged.md", name: "Merged", kind: "page", markers: ["<<<<<<<", ">>>>>>>"] }],
+  queue: [copyObject, markerObject],
+};
+
+function mount(node: () => JSX.Element) {
+  const host = document.createElement("div");
+  document.body.append(host);
+  return { host, dispose: render(node, host) };
+}
 
 afterEach(() => {
-  document.body.innerHTML = "";
-  __setBackendForTest(null);
-  setConflictQueue([]);
-  setSyncConflicts([]);
+  setConflictInventory({ sync_conflicts: [], vcs_markers: [], queue: [] });
   setToasts([]);
+  document.body.innerHTML = "";
   vi.restoreAllMocks();
 });
 
-const syncCopy: ConflictObject = {
-  id: "copy:pages/Alpha.sync-conflict-20260920-LAPTOP.md",
-  source: "sync-copy",
-  page_name: "Alpha",
-  page_path: "pages/Alpha.md",
-  kind: "page",
-  sides: [
-    { role: "mine", label: "This device", path: "pages/Alpha.md" },
-    { role: "theirs", label: "LAPTOP", path: "pages/Alpha.sync-conflict-20260920-LAPTOP.md" },
-  ],
-  block_conflicts: 3,
-};
-const markers: ConflictObject = {
-  id: "markers:journals/2026_09_20.md",
-  source: "vcs-markers",
-  page_name: "Sep 20th, 2026",
-  page_path: "journals/2026_09_20.md",
-  kind: "journal",
-  sides: [
-    { role: "mine", label: "HEAD" },
-    { role: "theirs", label: "feature/x" },
-  ],
-  block_conflicts: null,
-};
-const orphan: SyncConflict = {
-  path: "pages/Gone.sync-conflict-20260919-PHONE.md",
-  base_name: "Gone",
-  base_path: null,
-  kind: "page",
-  tag: "PHONE",
-  preview: "- orphaned",
-};
-
-function mount(queue: ConflictObject[], copies: SyncConflict[], extra: Partial<Backend> = {}) {
-  __setBackendForTest({
-    conflictInventory: async () => ({
-      sync_conflicts: copies,
-      vcs_markers: [],
-      queue,
-    }),
-    ...extra,
-  } as unknown as Backend);
-  setConflictQueue(queue);
-  setSyncConflicts(copies);
-  const router = { openPageTarget: vi.fn() } as unknown as PaneRouter;
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  const dispose = render(() => <ConflictOverview router={router} />, host);
-  return { host, router, dispose };
-}
-
-const rowFor = (host: HTMLElement, name: string) =>
-  [...host.querySelectorAll<HTMLElement>(".conflict-overview-row")].find((row) =>
-    row.querySelector(".conflict-overview-open")?.textContent === name,
-  )!;
-
 describe("the conflict overview", () => {
   it("lists every conflicted page by source with its block count, absent shown as —", async () => {
-    const { host, dispose } = mount([syncCopy, markers], [orphan]);
-    try {
-      await flush();
-      const groups = [...host.querySelectorAll("section.conflict-overview-group")].map((g) =>
-        g.getAttribute("aria-label"),
-      );
-      expect(groups).toEqual(["Sync conflict copies", "Version-control merge markers"]);
-
-      const alpha = rowFor(host, "Alpha");
-      expect(alpha.querySelector(".conflict-overview-source")?.textContent).toBe("sync copy · LAPTOP");
-      expect(alpha.querySelector(".conflict-overview-count")?.textContent).toBe("3 blocks");
-
-      const day = rowFor(host, "Sep 20th, 2026");
-      expect(day.querySelector(".conflict-overview-source")?.textContent).toBe("merge markers · HEAD vs feature/x");
-      // Not computed is not zero.
-      expect(day.querySelector(".conflict-overview-count")?.textContent).toBe("—");
-
-      // A copy whose page is gone is not in the queue, but it still needs a
-      // decision, and only this inventory can offer to discard it.
-      const gone = rowFor(host, "Gone");
-      expect(gone.textContent).toContain("its page no longer exists");
-      expect(gone.querySelector("button")?.textContent).toContain("Discard copy");
-    } finally {
-      dispose();
-    }
-  });
-
-  it("opens the exact conflicted file, or the right sidebar on shift-click", async () => {
-    const sidebar = vi.spyOn(ui, "openPageInSidebar").mockImplementation(() => {});
-    const { host, router, dispose } = mount([syncCopy, markers], []);
-    try {
-      await flush();
-      rowFor(host, "Sep 20th, 2026").querySelector<HTMLButtonElement>(".conflict-overview-open")!.click();
-      expect(router.openPageTarget).toHaveBeenCalledWith({
-        name: "Sep 20th, 2026", pageKind: "journal", path: "journals/2026_09_20.md",
-      });
-
-      rowFor(host, "Alpha").querySelector(".conflict-overview-open")!
-        .dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
-      expect(sidebar).toHaveBeenCalledWith({ name: "Alpha", pageKind: "page", path: "pages/Alpha.md" });
-      expect(router.openPageTarget).toHaveBeenCalledTimes(1);
-    } finally {
-      dispose();
-    }
+    vi.spyOn(backend(), "conflictInventory").mockResolvedValue(inventory);
+    const router = { openPageTarget: vi.fn() } as unknown as PaneRouter;
+    const { host, dispose } = mount(() => <ConflictOverview router={router} />);
+    await settle();
+    const groups = [...host.querySelectorAll("section")].map((s) => s.getAttribute("aria-label"));
+    expect(groups).toEqual(["Sync conflict copies", "Version-control merge markers"]);
+    const rows = [...host.querySelectorAll(".conflict-overview-row")].map((r) =>
+      [r.querySelector(".conflict-overview-open")!.textContent, r.querySelector(".conflict-overview-count")!.textContent]);
+    expect(rows).toEqual([["Plan", "3 blocks"], ["Gone", "—"], ["Merged", "—"]]);
+    expect(host.textContent).toContain("its page no longer exists");
+    (host.querySelector("button.conflict-overview-open") as HTMLButtonElement).click();
+    expect(router.openPageTarget).toHaveBeenCalledWith({ name: "Plan", pageKind: "page", path: "pages/Plan.md" });
+    dispose();
   });
 
   it("discards a sync copy by its own file, after confirmation", async () => {
-    const trashed: string[] = [];
-    const { host, dispose } = mount([syncCopy], [], {
-      confirm: async () => true,
-      trashSyncConflict: async (path: string) => { trashed.push(path); },
-    });
+    const list = vi.spyOn(backend(), "conflictInventory").mockResolvedValue(inventory);
+    vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    const trash = vi.spyOn(backend(), "trashSyncConflict").mockResolvedValue();
+    const { host, dispose } = mount(() => <ConflictOverview router={{} as PaneRouter} />);
+    await settle();
+    (host.querySelector(".settings-btn-danger") as HTMLButtonElement).click();
+    await settle();
+    expect(trash).toHaveBeenCalledWith(copy.path, "delete-page");
+    expect(list).toHaveBeenCalledTimes(2);
+    dispose();
+  });
+
+  // Moved from the retired Settings sync-conflict panel (I-20): a confirmation
+  // answered after a graph switch must not trash a same-named file in the new graph.
+  it("does not discard a sync conflict after its confirmation outlives the graph", async () => {
+    vi.spyOn(backend(), "conflictInventory").mockResolvedValue(inventory);
+    let finish!: (confirmed: boolean) => void;
+    vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const trash = vi.spyOn(backend(), "trashSyncConflict").mockResolvedValue();
+    const { host, dispose } = mount(() => <ConflictOverview router={{} as PaneRouter} />);
     try {
-      await flush();
-      const discard = [...rowFor(host, "Alpha").querySelectorAll("button")]
-        .find((b) => b.textContent?.includes("Discard copy"))!;
-      discard.click();
-      await flush();
-      await flush();
-      expect(trashed).toEqual(["pages/Alpha.sync-conflict-20260920-LAPTOP.md"]);
-    } finally {
-      dispose();
-    }
+      await settle();
+      (host.querySelector(".settings-btn-danger") as HTMLButtonElement).click();
+      resetStore();
+      finish(true);
+      await tick();
+      expect(trash).not.toHaveBeenCalled();
+    } finally { dispose(); }
   });
 
   it("stays a valid page when nothing is left", async () => {
-    const { host, dispose } = mount([], []);
-    try {
-      await flush();
-      expect(host.querySelector(".conflict-overview-empty")?.textContent).toContain("No conflicts");
-      expect(host.querySelector(".conflict-overview-row")).toBeNull();
-    } finally {
-      dispose();
-    }
+    vi.spyOn(backend(), "conflictInventory").mockResolvedValue({ sync_conflicts: [], vcs_markers: [], queue: [] });
+    const { host, dispose } = mount(() => <ConflictOverview router={{} as PaneRouter} />);
+    await settle();
+    expect(host.querySelector(".conflict-overview-empty")!.textContent).toContain("No conflicts");
+    dispose();
+  });
+});
+
+describe("the sidebar conflict badge", () => {
+  it("counts queued pages plus copies whose page is gone, and hides at zero", async () => {
+    const { host, dispose } = mount(() => <ConflictQueueBadge />);
+    expect(host.querySelector(".conflict-queue-badge")).toBeNull();
+    setConflictInventory(inventory);
+    await tick();
+    expect(host.querySelector(".conflict-queue-badge")!.textContent).toBe("3 conflicts");
+    setConflictInventory({ ...inventory, sync_conflicts: [copy], queue: [markerObject] });
+    await tick();
+    expect(host.querySelector(".conflict-queue-badge")!.textContent).toBe("1 conflict");
+    dispose();
   });
 
-  it("drops a row as soon as the queue re-derives without it", async () => {
-    const { host, dispose } = mount([syncCopy, markers], []);
-    try {
-      await flush();
-      expect(rowFor(host, "Alpha")).toBeTruthy();
-      setConflictQueue([markers]);
-      await flush();
-      expect(rowFor(host, "Alpha")).toBeUndefined();
-      expect(rowFor(host, "Sep 20th, 2026")).toBeTruthy();
-    } finally {
-      dispose();
-    }
+  it("closes the mobile navigation drawer when it opens the overview", async () => {
+    const done = vi.fn();
+    const { host, dispose } = mount(() => <ConflictQueueBadge onActiveNavigationComplete={done} />);
+    setConflictInventory(inventory);
+    await tick();
+    (host.querySelector(".conflict-queue-badge") as HTMLElement).click();
+    expect(done).toHaveBeenCalledTimes(1);
+    dispose();
   });
 });

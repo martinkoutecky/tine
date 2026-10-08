@@ -1,8 +1,9 @@
+import { installTineLinks } from "./deepLinkNavigation";
+import { DeepLinkGraphChoice } from "./components/DeepLinkGraphChoice";
+import { resizeSidebar, commitSidebarWidth } from "./sidebarSizing";
 import { Match, Show, Suspense, Switch, createEffect, createSignal, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
-import { listenHere } from "./windowEvents";
 import { Sidebar } from "./components/Sidebar";
-import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
-import { PageView, reloadJournalsFeedFromStart, toLoadablePage, type JournalsFeedOwner } from "./components/Page";
+import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { ConflictOverview } from "./components/ConflictOverview";
 import { QuickSwitcher } from "./components/QuickSwitcher";
@@ -16,17 +17,13 @@ import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { TopbarOverflowMenu } from "./components/TopbarOverflowMenu";
 import { ContextMenu } from "./components/ContextMenu";
 import { Toasts, Lightbox } from "./components/Toasts";
-import { unreadablePagesMessage } from "./lib/unreadablePages";
 import { AudioOverlay } from "./components/AudioOverlay";
 import { CalendarJump } from "./components/CalendarJump";
-import { IndexingProgressBar } from "./components/IndexingProgressBar";
+import { ConflictBar } from "./components/ConflictBar";
+import { installReloadOnFocus, refreshingFromDisk, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
+import { subscribeAssetChanges } from "./assetRefresh";
+import { initConflictPolicy } from "./conflictPolicy";
 import { RightSidebar } from "./components/RightSidebar";
-// Settings pulls in the plugin/theme catalogues, backup controls, and every
-// settings tab. Most launches never open it, so keep that work out of the
-// startup bundle and fetch it only when the settings surface is requested.
-const Settings = lazy(() =>
-  import("./components/Settings").then((m) => ({ default: m.Settings }))
-);
 import { HelpPopup } from "./components/HelpShortcuts";
 import { DatePicker } from "./components/DatePicker";
 import { FormulaEditor } from "./components/FormulaEditor";
@@ -41,88 +38,33 @@ import { PageProps } from "./components/PageProps";
 import { ExportModal } from "./components/ExportModal";
 import { PdfExportDialog } from "./components/PdfExportDialog";
 import { QueryExportDialog } from "./components/QueryExportDialog";
-import { StartupRecoveryLayer } from "./components/StartupRecovery";
+import { queryExportRequest } from "./ui";
 import { InPageFind } from "./components/InPageFind";
 import { installKeybindings } from "./keybindings";
 import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
-import { applyGraphConfigChange, applyGraphReopened, loadGraphPath, persistedGraphPath, refreshAliases, refreshPageIdentities, switchGraph } from "./graph";
-import { applyObservedAssetChanges } from "./assetRefresh";
-import { favoritesPageChanged } from "./favoritesStore";
-import { checkForUpdate } from "./update";
+import { applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./graph";
+import { installPageIndex } from "./pageIndex";
+import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
-import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute, type Route } from "./router";
-import {
-  theme,
-  toggleTheme,
-  sidebarOpen,
-  toggleSidebar,
-  rightSidebarOpen,
-  toggleRightSidebar,
-  openSwitcher,
-  sidebarWidth,
-  setSidebarWidth,
-  persistSidebarWidth,
-  graphMeta,
-  firstLoadDone,
-  setFirstLoadDone,
-  openSettings,
-  settingsOpen,
-  welcomeOpen,
-  closeWelcome,
-  shortcutOverrides,
-  wideMode,
-  documentMode,
-  focusMode,
-  dimInactiveBlocks,
-  exitFocusMode,
-  dataRev,
-  bumpDataRev,
-  pageInventoryRev,
-  bumpPageInventoryRev,
-  correctLaunchAnswers,
-  installPaneTracker,
-  isConflicted,
-  pushToast,
-  refreshSyncConflicts,
-  refreshConflictQueueIfTouched,
-  graphEpoch,
-  graphTransitioning,
-  setGraphTransitioning,
-  activeDrawer,
-  completeActiveLeftNavigation,
-  dismissMobileDrawer,
-} from "./ui";
+import { FailureBoundary } from "./components/FailureBoundary";
+import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
+import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
+import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
+import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
+
+installAliasDraftRouteHandler((name, kind) => openPage(name, kind));
+import { pushToast } from "./toasts";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
-import { dismissTopTransient } from "./transientLayers";
+import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import {
-  doc,
-  flushAll,
-  appendToTodayJournal,
-  captureToPage,
-  deferExternalReload,
-  installExternalReloadReplayHandler,
-  pageByName,
-  focusFreshnessPageNames,
-  reloadDisposition,
-  reloadPageIfStillSafe,
-  restoreTodayJournalInFeed,
-} from "./store";
-import {
-  applyDivergenceVerdict,
-  graphBinding,
-  isSaving,
-  reconcileExternalChange,
-  saveBaselineFor,
-} from "./persistence";
+import { flushAll, appendToTodayJournal, captureToPage, unsavedDrafts, unsavedPageCount } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
-import {
-  backend,
-  isTauri,
-  type GraphChange,
-  type GraphChangedBulk,
-} from "./backend";
+import { backend, isTauri } from "./backend";
+import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
+import { openPublishedPermalink, publishedPermalinkForWorkspace, replacePublishedPermalink } from "./publishedPermalink";
+import { maybeShowDefenderHint } from "./defenderHint";
+import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner, type WriteOwner } from "./owned";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -130,22 +72,13 @@ import { initCopySettings } from "./copySettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
 import { initNavSettings } from "./navSettings";
 import { initLocalFileSettings } from "./localFileSettings";
-import { initSettingsLayout } from "./settingsLayout";
-import { initQueryExportBudget } from "./queryExportBudget";
-import {
-  conflictPolicyAlwaysAsk,
-  holdExternalChange,
-  initConflictPolicy,
-  installHeldExternalChangeApplier,
-  setConflictPolicyAlwaysAskForTest,
-} from "./conflictPolicy";
 import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
-import { dbg, initDebug } from "./debug";
+import { initDebug, dbg, recordDiagnostic, recordSessionActive } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
-import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls } from "./nativeChrome";
+import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls, touchGesturePlatform } from "./nativeChrome";
 import {
   PaneContext,
   closePane,
@@ -153,39 +86,33 @@ import {
   focusedPaneId,
   layoutHasMultiplePanes,
   layoutRoot,
+  visibleLayoutNode,
   paneRouter,
   openPdfNotes,
   layoutPaneIds,
   setSplitRatio,
-  visibleLayoutNode,
   type LayoutNode,
 } from "./panes";
 import { paneSel, samePaneTarget } from "./paneSelect";
 import { SurfaceContext } from "./components/Block";
 import { endEdit } from "./editorController";
+import { createAndroidRootCloseCoordinator, exitAndroidActivity, installAndroidBackHandler } from "./androidBack";
+import { appBackAvailable, dispatchAppBack } from "./appBack";
+import { installEdgeSwipe } from "./edgeSwipe";
+import { createSafeCloseCoordinator } from "./safeClose";
+import { openUnsavedRecovery } from "./unsavedRecovery";
+import { UnsavedRecovery } from "./components/UnsavedRecovery";
+import { installDraftStore, writeAtRisk } from "./draftStore";
+import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
+import { hlsPageName } from "./pdf";
+import type { InvalidRoute } from "./routeTypes";
 import { installBackgroundFlush } from "./backgroundFlush";
 import { installSessionActivity } from "./sessionActivity";
-import {
-  installFocusFreshnessVerifier,
-  installReloadOnFocus,
-  trackGraphChangeApplication,
-} from "./reloadOnFocus";
-import { freshnessVisible } from "./freshnessBarrier";
-import { createAndroidRootCloseCoordinator, exitAndroidActivity, installAndroidBackHandler } from "./androidBack";
-import { createSafeCloseCoordinator } from "./safeClose";
-import { openUnsavedRecovery, unsavedRecoveryPages } from "./unsavedRecovery";
-import { UnsavedRecovery } from "./components/UnsavedRecovery";
-import { drainPdfWork } from "./pdfOwnership";
-import { currentPdfOwnership } from "./pdfOwnership";
-import { hlsPageName } from "./pdf";
-import { createStartupRecoveryController } from "./startupRecovery";
-import { writeClipboardTextResilient } from "./clipboard";
-import { FailureBoundary } from "./components/FailureBoundary";
-import {
-  openPublishedPermalink,
-  publishedPermalinkForWorkspace,
-  replacePublishedPermalink,
-} from "./publishedPermalink";
+import { initSettingsLayout } from "./settingsLayout";
+import { initCodeDisplay } from "./codeDisplay";
+import { initContentWidths } from "./contentWidth";
+
+const Settings = lazy(() => import("./components/Settings").then((module) => ({ default: module.Settings })));
 
 /** The single persistence transaction used by both desktop close and Android
  * root Back.  Callers choose only the final platform action. */
@@ -199,24 +126,21 @@ export const safeClose = createSafeCloseCoordinator({
   },
   flushPdfWork: drainPdfWork,
   flushAll,
-  confirmDiscard: async (reason) => {
-    const pages = unsavedRecoveryPages();
+  // GH #540: name the pages at risk; "No" opens the recovery panel.
+  confirmDiscard: (reason) => {
     const explanation = reason === "still-saving"
-      ? "Tine is still writing your changes and is taking longer than expected — a slow or network drive can do this.\n\nClosing now would lose whatever hasn't been written yet."
-      : "Tine has changes that could not be saved. Closing now can lose them.";
-    const inventory = pages.map((p) => `• ${p.name} — ${p.state}`).join("\n");
-    const discard = await backend().confirm(
-      `${explanation}\n\n${pages.length} affected pages:\n${inventory || "Pending attachments or storage work; no page draft identified."}\n\nChoose No to review, retry saving, or copy your drafts. Close anyway?`,
+      ? "Tine is still writing your changes and is taking longer than expected — a slow or network drive can do this."
+      : "Tine has changes that could not be saved (a conflict or a stuck save).";
+    const inventory = unsavedDrafts().map((p) => `• ${p.name} — ${p.state}`).join("\n") || "Pending attachments or storage work; no page draft identified.";
+    return backend().confirm(
+      `${explanation}\n\n${inventory}\n\nChoose No to review, retry saving, or copy your drafts. Close this window anyway and lose them?`,
       "Unsaved changes",
     );
-    if (!discard) openUnsavedRecovery();
-    return discard;
   },
-  recordDiscard: (reason) => backend().diagnosticFrontendEvent(
-    "close_discarded_unsaved", undefined, undefined, undefined, undefined, undefined,
-    reason, unsavedRecoveryPages().length,
-  ),
-  flushSession,
+  onDiscardDeclined: openUnsavedRecovery,
+  recordDiscard: (reason) => recordDiagnostic("close_discarded_unsaved", { closeReason: reason, pages: unsavedPageCount() }),
+  // A close that keeps unsaved pages leaves their newest drafts in app data first.
+  flushSession: () => writeAtRisk().then(flushSession),
   setTransition: setGraphTransitioning,
   notifyPdfFailure: () => {
     pushToast("Couldn't save pending PDF changes. The graph remains open.", "error");
@@ -229,6 +153,11 @@ export const safeClose = createSafeCloseCoordinator({
   },
 });
 
+setUpdateExitGuard(safeClose);
+
+// Master parity (AndroidRootClosePhase): once the frontend close is accepted the
+// graph is durable, a failed activity exit keeps the transition shield, and the
+// next Back retries only the exit, never the flush.
 const androidRootClose = createAndroidRootCloseCoordinator(safeClose, {
   finishActivity: exitAndroidActivity,
   finishActivityFailed: () => pushToast(
@@ -248,12 +177,10 @@ function journalsFeedOwner(
   routes: Array<{ paneId: string; route: ReturnType<PaneRouter["route"]> }>
 ): JournalsFeedOwner | null {
   const epoch = graphEpoch();
-  const binding = graphBinding();
   const owners = routes.filter((p) => p.route.kind === "journals");
   if (!owners.length) return null;
   return {
     graphEpoch: epoch,
-    graphBinding: binding,
     isLive: () =>
       graphEpoch() === epoch && owners.some((p) =>
         layoutPaneIds().includes(p.paneId) && sameRoute(paneRouter(p.paneId).route(), p.route)
@@ -268,254 +195,22 @@ function requestJournalFeedWatcherRestart(
   if (owner) void reloadJournalsFeedFromStart(owner);
 }
 
-// A skip/decline below records the change for deferred replay; the replay
-// re-enters this same handler so the disposition is re-evaluated with whatever
-// state holds at that moment (it may have become "conflict", which then takes
-// the divergence path exactly like a live event).
-installExternalReloadReplayHandler((change) => void handleGraphChange(change));
-
-// Native rescan completion means the backend cache is current, but event
-// callbacks cross the Tauri bridge independently. Verify the bounded set of
-// pages the user can immediately interact with against that cache before the
-// focus input barrier opens. This is intentionally O(active pages), not
-// O(graph), and reuses the ordinary external-change policy below.
-installFocusFreshnessVerifier(async () => {
-  const binding = graphBinding();
-  const changes: GraphChange[] = [];
-  for (const name of focusFreshnessPageNames()) {
-    const loaded = pageByName(name);
-    if (!loaded) continue;
-    const current = loaded.path
-      ? await backend().getPageByPath(loaded.path)
-      : await backend().getPage(loaded.name, loaded.kind);
-    if (binding !== graphBinding()) return;
-    const baseline = saveBaselineFor(name);
-    const currentRev = current?.rev ?? null;
-    if (currentRev === baseline) continue;
-    changes.push({
-      name,
-      kind: loaded.kind,
-      created: baseline === null && current !== null,
-      removed: current === null,
-    });
-  }
-  if (!changes.length || binding !== graphBinding()) return;
-  bumpDataRev();
-  if (changes.some((change) => change.created || change.removed)) {
-    bumpPageInventoryRev();
-  }
-  for (const change of changes) {
-    if (binding !== graphBinding()) return;
-    await applyExternalChange(change, binding);
-  }
-});
-
-// Concord L0's reload-on-focus fallback. Returning to the window replays
-// anything already deferred and asks the backend watcher for one full stat diff,
-// for the filesystems and sync clients that give us no event at all. Both halves
-// funnel into the machinery above; neither applies anything by itself.
-installReloadOnFocus();
-
-// Read BEFORE the router normalizes the URL on load (the mock reads `?conflicts`
-// at call time instead, which is why that gate needs no snapshot).
-const ALWAYS_ASK_DEMO =
-  typeof location !== "undefined" && /[?&]alwaysask\b/.test(location.search);
-
-// Concord P5 policy toggle: "Reload from disk" on a held change re-enters the
-// ordinary external-change path with the policy bypassed for that one change, so
-// every other gate (disposition, editor leases, deferred replay) still applies.
-installHeldExternalChangeApplier((change, binding) => {
-  void applyExternalChange(change, binding, { bypassPolicy: true });
-});
-
-// Console-only diagnostic for external-change latency reports (GH #337; see
-// docs/concord.md). Release builds ship the devtools but not `withGlobalTauri`,
-// so a reporter needs one named callable to reach the backend's receipt ring.
-// No UI beyond this.
-if (isTauri()) {
-  (window as unknown as {
-    __tineWatcherLatency?: () => Promise<unknown>;
-  }).__tineWatcherLatency = async () => {
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("watcher_latency_recent");
-  };
-}
-
-export async function handleGraphChange(c: GraphChange) {
-  const binding = graphBinding();
-  // The backend watcher has already landed this transaction in its graph cache.
-  // Invalidate every derived visible-entity view even when the changed page is
-  // outside the bounded frontend working set (#166); loaded pages are refreshed
-  // below, while unloaded block references re-resolve by UUID from dataRev.
-  bumpDataRev();
-  if (c.created || c.removed) bumpPageInventoryRev();
-  // The favorites arrangement page is an ordinary page, so an outside edit to
-  // it arrives here like any other — and the sidebar has to follow it.
-  void favoritesPageChanged([c.name]);
-  await applyExternalChange(c, binding);
-  // A merge finished outside Tine (git resolving the markers, a sync tool
-  // removing a copy) must not leave a stale item in the conflict queue.
-  await refreshConflictQueueIfTouched([c]);
-}
-
-/** The per-page half of `handleGraphChange`: everything except the dataRev /
- *  inventory bumps, which a bulk revision performs once for its whole epoch.
- *  `suppressFeedRestart` lets that bulk path restart a live Journals feed once
- *  at the end instead of once per changed journal. */
-async function applyExternalChange(
-  c: GraphChange,
-  binding: number,
-  opts: { suppressFeedRestart?: boolean; bypassPolicy?: boolean } = {},
-) {
+installExternalChangeUiHandler(() => {
   const routes = layoutPaneIds().map((paneId) => ({ paneId, router: paneRouter(paneId), route: paneRouter(paneId).route() }));
-  const requestJournalFeedRestart = (
-    owned: Array<{ paneId: string; route: ReturnType<PaneRouter["route"]> }>
-  ) => {
-    if (!opts.suppressFeedRestart) requestJournalFeedWatcherRestart(owned);
+  return {
+    pageOpen: (name: string) => routes.some((p) => p.route.kind === "page" && p.route.name === name),
+    journalsOpen: routes.some((p) => p.route.kind === "journals"),
+    leaveRemovedPage: (name: string) => {
+      for (const p of routes) {
+        if (p.route.kind === "page" && p.route.name === name) {
+          if (p.router.canGoBack()) p.router.goBack();
+          else if (!closePane(p.paneId)) p.router.openJournals({ inPlace: true });
+        }
+      }
+    },
+    restartJournalFeed: () => requestJournalFeedWatcherRestart(routes),
   };
-  if (c.removed) {
-    const disp = reloadDisposition(c.name);
-    if (disp === "conflict") {
-      // The file is gone under an unsaved edit. Let the guarded save decide and
-      // raise the banner: only its refusal carries the authority "Keep mine"
-      // must present (see `reconcileExternalChange`).
-      await reconcileExternalChange(c.name);
-      if (c.kind === "journal") requestJournalFeedRestart(routes);
-      return;
-    }
-    if (disp === "skip") {
-      deferExternalReload(c, binding);
-      if (c.kind === "journal") requestJournalFeedRestart(routes);
-      return;
-    }
-    for (const p of routes) {
-      if (p.route.kind === "page" && p.route.name === c.name) {
-        if (p.router.canGoBack()) p.router.goBack();
-        else if (!closePane(p.paneId)) p.router.openJournals({ inPlace: true });
-      }
-    }
-    if (c.kind === "journal" && routes.some((p) => p.route.kind === "journals")) {
-      await restoreTodayJournalInFeed();
-      requestJournalFeedRestart(routes);
-    }
-    return;
-  }
-
-  const disp = reloadDisposition(c.name);
-  if (disp === "skip") {
-    deferExternalReload(c, binding);
-    if (c.kind === "journal") requestJournalFeedRestart(routes);
-    return;
-  }
-  // Concord P5 — "always ask". Reached only AFTER the skip/conflict branches, so
-  // it converts the one SILENT case (a loaded, clean page) into an asked one and
-  // changes nothing that already asked or deferred. A page Tine does not hold has
-  // nothing to ask about: navigation refetches from the backend anyway.
-  if (!opts.bypassPolicy && conflictPolicyAlwaysAsk() && disp === "reload" && pageByName(c.name)) {
-    holdExternalChange(c, binding);
-    return;
-  }
-  if (disp === "conflict") {
-    // The page has an unsaved edit. A watcher event proves this page's FILE was
-    // written, not that it was written to anything other than what we already
-    // hold: Tine's own save normally suppresses its echo, but a synced/polled
-    // graph or a self-write-marker gap still surfaces one (see store.upsertPage).
-    // Require a per-page divergence proof — a false conflict here blocks every
-    // subsequent save of the very edit it warns about.
-    if (!isSaving(c.name)) {
-      const current = await backend().getPage(c.name, c.kind);
-      if (binding !== graphBinding()) return;
-      await applyDivergenceVerdict(c.name, { exists: !!current, rev: current?.rev ?? null });
-    }
-    if (c.kind === "journal") requestJournalFeedRestart(routes);
-    return;
-  }
-  if (routes.some((p) => p.route.kind === "page" && p.route.name === c.name)) {
-    const dto = await backend().getPage(c.name, c.kind);
-    // A decline here (an editor lease took hold, or the page turned dirty during
-    // the await) is the same dropped-reload hole as "skip": defer, don't drop.
-    if (dto && !(await reloadPageIfStillSafe(c.name, toLoadablePage(dto, c.name), binding))) {
-      deferExternalReload(c, binding);
-    }
-    // A page surface may have the same journal loaded while another live pane
-    // shows Journals.  Reloading that DTO is not feed reconciliation: always
-    // give the live feed owner its authoritative null-cursor restart too.
-    if (c.kind === "journal") requestJournalFeedRestart(routes);
-    return;
-  }
-  if (c.kind === "journal" && routes.some((p) => p.route.kind === "journals")) {
-    if (pageByName(c.name)) {
-      const dto = await backend().getPage(c.name, c.kind);
-      if (dto && !(await reloadPageIfStillSafe(c.name, dto, binding))) {
-        deferExternalReload(c, binding);
-      }
-      requestJournalFeedRestart(routes);
-      return;
-    }
-    // The feed owner performs the page-scoped dirty/save/conflict/move gate.
-    // Calling it even while unsafe records a pending restart instead of losing
-    // this watcher update until another unrelated file changes.
-    requestJournalFeedRestart(routes);
-    return;
-  }
-  if (pageByName(c.name) && !doc.feed.includes(c.name)) {
-    const dto = await backend().getPage(c.name, c.kind);
-    if (dto && !(await reloadPageIfStillSafe(c.name, dto, binding))) {
-      deferExternalReload(c, binding);
-    }
-  }
-}
-
-/** An external bulk revision — a VCS checkout, branch switch, or big sync that
- *  the watcher coalesced into one `graph-changed-bulk` epoch (Concord P2).
- *
- *  One epoch, one invalidation: dataRev and the page inventory bump once for
- *  the whole batch. Only pages that need active handling are touched — visible
- *  (routed) pages reload through the existing safe path, and pages with unsaved
- *  state run exactly the same divergence/defer machinery as a single watcher
- *  event (a bulk change while a page is being edited defers that page's reload
- *  like any other). Everything else is left for lazy reload: navigation always
- *  refetches from the backend, whose cache the watcher has already updated.
- *  The user sees one calm summary toast — never a dialog. */
-export async function handleGraphChangedBulk(bulk: GraphChangedBulk) {
-  const binding = graphBinding();
-  const changes = bulk.changes;
-  if (!changes.length) return;
-  bumpDataRev();
-  if (changes.some((c) => c.created || c.removed)) bumpPageInventoryRev();
-  // Outside the per-page loop below, which deliberately skips pages nothing is
-  // showing: the arrangement page is normally one of those.
-  void favoritesPageChanged(changes.map((c) => c.name));
-  const routedNames = new Set<string>();
-  for (const paneId of layoutPaneIds()) {
-    const route = paneRouter(paneId).route();
-    if (route.kind === "page") routedNames.add(route.name);
-  }
-  let conflicts = 0;
-  for (const c of changes) {
-    if (binding !== graphBinding()) return;
-    const active = routedNames.has(c.name) || reloadDisposition(c.name) !== "reload";
-    if (!active) continue;
-    // Journal-feed restarts are suppressed per page and issued once below.
-    await applyExternalChange(c, binding, { suppressFeedRestart: true });
-    if (isConflicted(c.name)) conflicts += 1;
-  }
-  if (binding !== graphBinding()) return;
-  if (changes.some((c) => c.kind === "journal")) {
-    requestJournalFeedWatcherRestart(
-      layoutPaneIds().map((paneId) => ({ paneId, route: paneRouter(paneId).route() }))
-    );
-  }
-  // A bulk revision is exactly the shape that resolves marker conflicts (a
-  // `git merge --continue`, a branch switch): re-derive the queue if it touched
-  // anything queued.
-  await refreshConflictQueueIfTouched(changes);
-  const summary = `${changes.length} page${changes.length === 1 ? "" : "s"} updated externally`;
-  const conflictSuffix = conflicts
-    ? ` · ${conflicts} conflict${conflicts === 1 ? "" : "s"} to review`
-    : "";
-  pushToast(summary + conflictSuffix, "info");
-}
+});
 
 export function PaneTree(props: { node: LayoutNode; path: number[] }): JSX.Element {
   const n = () => props.node;
@@ -610,75 +305,13 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
   );
 }
 
-function PaneRouteBody(props: {
-  paneId: string;
-  router: PaneRouter;
-  scrollerClass?: string;
-  identifyPane?: boolean;
-}): JSX.Element {
-  const route = () => props.router.route();
-  createEffect(() => {
-    if (route().kind === "pdf" || route().kind === "invalid") {
-      props.router.setScrollerElement(null);
-    }
-  });
-  return (
-    <Switch
-      fallback={
-        <PaneScroller
-          paneId={props.paneId}
-          router={props.router}
-          class={props.scrollerClass}
-          identifyPane={props.identifyPane}
-        >
-          <FailureBoundary region="This page">
-            <PaneContent router={props.router} />
-          </FailureBoundary>
-        </PaneScroller>
-      }
-    >
-      <Match when={route().kind === "pdf" ? route() : null}>
-        {(pdfRoute) => (
-          <div
-            class="pdf-pane pdf-route-pane"
-            classList={{ "pdf-pane-mobile": isMobilePlatform }}
-            data-pane-id={props.identifyPane === false ? undefined : props.paneId}
-            data-pdf-view-id={(pdfRoute() as PdfRoute).viewId}
-          >
-            <Suspense fallback={<div class="pdf-loading" />}>
-              <KeyedPdfViewer
-                route={() => pdfRoute() as Extract<ReturnType<PaneRouter["route"]>, { kind: "pdf" }>}
-                owner={currentPdfOwnership}
-                focused={() => focusedPaneId() === props.paneId}
-                onClose={() => { void props.router.closePdf(); }}
-                onOpenNotes={(block?: string) => {
-                  const current = props.router.route();
-                  if (current.kind === "pdf") openPdfNotes(props.paneId, hlsPageName(current.filename), block);
-                }}
-                onViewState={(state) => props.router.updateActivePdfViewState(state)}
-              />
-            </Suspense>
-          </div>
-        )}
-      </Match>
-      <Match when={route().kind === "invalid" ? route() : null} keyed>
-        {(invalidRoute) => (
-          <div class="pane-route-error" role="alert">
-            <h2>{invalidRoute.kind === "invalid" ? invalidRoute.title : "Unavailable tab"}</h2>
-            <p>{invalidRoute.kind === "invalid" ? invalidRoute.message : "This tab could not be restored."}</p>
-            <button type="button" onClick={() => { void props.router.closeTab(props.router.activeId()); }}>Close tab</button>
-          </div>
-        )}
-      </Match>
-    </Switch>
-  );
-}
-
-/** A page pane's end slack is a property of its natural content geometry, not
- *  of whether a textarea happens to be mounted.  Long pages keep the same
- *  breathing room in read and edit mode; fitting dashboard panes keep none.
- *  This makes click/edit transitions height-stable (GH #390) while retaining
- *  the pane-relative tail affordance from GH #369. */
+/** A pane's `.main-content` scroller and its page column.
+ *  Contract: `natural-content-overflow` is set exactly while the column's
+ *  natural height exceeds the scroller's, re-measured on either one resizing.
+ *  The end-of-page slack keys off that (app.css), so long pages keep 40% tail
+ *  room through read/edit transitions and fitting panes never scroll (GH #369,
+ *  #390). `identifyPane: false` omits `data-pane-id` (the multi-pane leaf
+ *  carries it on its wrapper). */
 function PaneScroller(props: {
   paneId: string;
   router: PaneRouter;
@@ -689,12 +322,10 @@ function PaneScroller(props: {
   let scroller!: HTMLElement;
   let inner!: HTMLDivElement;
   const [naturalOverflow, setNaturalOverflow] = createSignal(false);
-
   const measure = () => {
     if (!scroller?.isConnected || !inner?.isConnected) return;
     setNaturalOverflow(inner.scrollHeight > scroller.clientHeight + 1);
   };
-
   onMount(() => {
     measure();
     const frame = requestAnimationFrame(measure);
@@ -710,7 +341,6 @@ function PaneScroller(props: {
       observer.disconnect();
     });
   });
-
   return (
     <main
       class={`main-content${props.class ? ` ${props.class}` : ""}`}
@@ -724,6 +354,45 @@ function PaneScroller(props: {
     >
       <div class="main-content-inner" ref={inner}>{props.children}</div>
     </main>
+  );
+}
+
+function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClass?: string }): JSX.Element {
+  const route = () => props.router.route();
+  createEffect(() => {
+    if (route().kind === "pdf" || route().kind === "invalid") props.router.setScrollerElement(null);
+  });
+  return (
+    <Show when={route().kind === "pdf" ? route() as PdfRoute : null} fallback={
+      <Show when={route().kind === "invalid" ? route() as InvalidRoute : null} fallback={
+        <PaneScroller paneId={props.paneId} router={props.router} class={props.scrollerClass}
+          identifyPane={!props.scrollerClass}>
+          <FailureBoundary region="This page">
+            <PaneContent router={props.router} />
+          </FailureBoundary>
+        </PaneScroller>
+      }>
+        {(invalid) => <div class="pane-route-error" role="alert">
+          <h2>{invalid().title}</h2>
+          <p>{invalid().message}</p>
+          <button type="button" onClick={() => { void props.router.closeTab(props.router.activeId()); }}>Close tab</button>
+        </div>}
+      </Show>
+    }>
+      {(pdf) => <div class="pdf-pane pdf-route-pane" classList={{ "pdf-pane-mobile": isMobilePlatform }}
+        data-pane-id={props.scrollerClass ? undefined : props.paneId} data-pdf-view-id={pdf().viewId}>
+        <FailureBoundary region="This PDF"><Suspense fallback={<div class="pdf-loading" />}>
+          <KeyedPdfViewer route={() => props.router.route() as PdfRoute} owner={currentPdfOwnership}
+            focused={() => focusedPaneId() === props.paneId}
+            onClose={() => { void props.router.closePdf(); }}
+            onOpenNotes={(block) => {
+              const current = props.router.route();
+              if (current.kind === "pdf") openPdfNotes(props.paneId, hlsPageName(current.filename), block);
+            }}
+            onViewState={(state) => props.router.updateActivePdfViewState(state)} />
+        </Suspense></FailureBoundary>
+      </div>}
+    </Show>
   );
 }
 
@@ -771,13 +440,13 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
           >
             <PaneTabSplitPreview paneId={props.paneId} />
             <PaneEdgeSegHighlight paneId={props.paneId} />
-            <TabBar
+            <FailureBoundary region="The tabs"><TabBar
               router={router}
               dragRegion={false}
               paneStrip
               focused={focusedPaneId() === props.paneId}
-            />
-            <PaneRouteBody paneId={props.paneId} router={router} scrollerClass="pane-main-content" identifyPane={false} />
+            /></FailureBoundary>
+            <PaneRouteBody paneId={props.paneId} router={router} scrollerClass="pane-main-content" />
           </div>
         </Show>
       </SurfaceContext.Provider>
@@ -851,70 +520,136 @@ export function PaneEdgeHighlights(): JSX.Element {
   );
 }
 
-export async function installMobileExternalLinkHandler(): Promise<() => void> {
-  if ((await backend().appPlatform()) === "desktop") return () => {};
+/** Read the platform and install click delegation on iOS/Android while owner
+ * is current; desktop or retired ownership returns inert cleanup. Clicks on
+ * http, https and mailto anchors are intercepted and sent to the native
+ * external opener; any other explicit scheme only loses its default navigation. The opener is fire-and-forget; its failure does not reject
+ * installation. Platform-read failure rejects. Click work follows DOM
+ * ancestor depth; cleanup removes the listener. */
+export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen()): Promise<() => void> {
+  const platform = await readOwned(owner, backend().appPlatform());
+  if (platform.kind === "stale" || platform.value === "desktop") return () => {};
 
   const onClick = (e: MouseEvent) => {
     const target = e.target;
     const el = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
     const a = el?.closest?.("a[href]") as HTMLAnchorElement | null;
     const href = a?.getAttribute("href")?.trim() ?? "";
-    if (!a) return;
-    const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(href)?.[1]?.toLowerCase();
-    if (!scheme) return; // graph-internal relative/hash navigation
-
+    const scheme = a ? /^([a-z][a-z0-9+.-]*):/i.exec(href)?.[1]?.toLowerCase() : undefined;
+    if (!a || !scheme) return; // graph-internal relative/hash navigation
+    // I-22 (master b61bb9d25303): an anchor in shared or imported content with
+    // any other explicit scheme (intent:, javascript:, tel:, …) must not
+    // navigate the WebView; its own handler (e.g. a file: asset link) still runs.
     e.preventDefault();
+    if (scheme !== "http" && scheme !== "https" && scheme !== "mailto") return;
     e.stopPropagation();
-    if (scheme === "file" || scheme === "http" || scheme === "https" || scheme === "mailto") {
-      void backend().openExternal(a.href);
-    }
+    void backend().openExternal(a.href);
   };
 
   document.addEventListener("click", onClick, true);
   return () => document.removeEventListener("click", onClick, true);
 }
 
+/** Install the graph window's capture receiver. Each request is deduplicated
+ * by id (100 completed ids retained); writes use the document capture door.
+ * Work is O(captured blocks + destination page). Transport setup failures reject;
+ * Requests must carry the native capture-show binding generation; stale or
+ * missing generations acknowledge false. The surface owner covers registration
+ * and callbacks; writes capture graphOwner before starting. Save failure
+ * acknowledges false and preserves the sender's scratch. Dispose
+ * the returned listener when the app surface retires. */
+export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen(() => true)): Promise<() => void> {
+  const owner = ownedWhen(live);
+  const inFlight = new Map<string, Promise<boolean>>();
+  const completed = new Map<string, boolean>();
+  const completedOrder: string[] = [];
+  const rememberCompleted = (id: string, ok: boolean) => {
+    completed.set(id, ok);
+    completedOrder.push(id);
+    while (completedOrder.length > 100) {
+      const old = completedOrder.shift();
+      if (old) completed.delete(old);
+    }
+  };
+  const { emitTo, listen } = await import("@tauri-apps/api/event");
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  const windowLabel = getCurrentWindow().label;
+  const ack = (id: string | undefined, ok: boolean) => {
+    if (id) void emitTo("capture", "quick-capture-ack", { id, ok } satisfies QuickCaptureAck);
+  };
+  if (!owner()) return () => {};
+  const registration = await readOwnedResource(owner, listen<QuickCaptureRequest & { bindingGeneration: number }>("quick-capture", async (e) => {
+    // WebKitGTK currently exposes targeted Tauri events to every graph
+    // listener in this process. Treat the payload label as the authority so
+    // only the selected graph can ever perform the write.
+    if (!owner() || e.payload?.target !== windowLabel) return;
+    const id = e.payload?.id;
+    if (id && completed.has(id)) {
+      ack(id, completed.get(id) ?? false);
+      return;
+    }
+    const existing = id ? inFlight.get(id) : undefined;
+    if (existing) {
+      ack(id, await existing);
+      return;
+    }
+    if (!Number.isSafeInteger(e.payload.bindingGeneration) || e.payload.bindingGeneration <= 0
+        || e.payload.bindingGeneration !== backend().graphBindingGeneration()) {
+      ack(id, false);
+      return;
+    }
+    const saveOwner = bindingOwner(owner);
+    const text = e.payload?.text ?? "";
+    if (!text.trim()) {
+      ack(id, false);
+      return;
+    }
+    // A title routes the capture to a NEW (or existing) page; empty → today.
+    const title = (e.payload?.title ?? "").trim();
+    const save = async () => {
+      let ok = false;
+      try {
+        const result = await writeOwned(saveOwner, title ? captureToPage(title, text) : appendToTodayJournal(text));
+        ok = result.kind === "current" && result.value;
+      } catch {
+        ok = false;
+      }
+      if (saveOwner()) pushToast(
+        ok
+          ? title
+            ? `Captured to “${title}”`
+            : "Captured to today's journal"
+          : "Capture couldn't be saved — its text is kept in the capture window",
+        ok ? "info" : "error"
+      );
+      return ok;
+    };
+    const promise = save();
+    if (id) inFlight.set(id, promise);
+    const ok = await promise;
+    if (id) {
+      inFlight.delete(id);
+      rememberCompleted(id, ok);
+    }
+    ack(id, ok);
+  }), (unlisten) => unlisten());
+  return registration.kind === "current" ? registration.value : () => {};
+}
+
 export function App(): JSX.Element {
-  const published = isPublishedExport();
-  const initialPublishedHash = published ? window.location.hash : "";
-  const [publishedPermalinkReady, setPublishedPermalinkReady] = createSignal(!published);
-  let initialPublishedPermalinkHandled = false;
-  let revealedPublishedBlock: { route: Route; block: string } | null = null;
-
-  const syncPublishedPermalink = () => {
-    if (!published || !publishedPermalinkReady()) return;
-    const paneIds = layoutPaneIds();
-    const router = paneRouter(paneIds[0] ?? focusedPaneId());
-    const current = router.route();
-    if (revealedPublishedBlock && revealedPublishedBlock.route !== current) {
-      revealedPublishedBlock = null;
-    }
-    const target = publishedPermalinkForWorkspace(
-      paneIds.length,
-      router.tabs().length,
-      current,
-      revealedPublishedBlock?.block,
-    );
-    if (target !== undefined) replacePublishedPermalink(target);
-  };
-
-  const applyPublishedHash = async (hash: string) => {
-    const result = openPublishedPermalink(
-      await loadPublishedSnapshot(),
-      hash,
-      paneRouter(focusedPaneId()),
-    );
-    revealedPublishedBlock = result.status === "opened" && result.target.kind === "block"
-      ? { route: result.route, block: result.target.block }
-      : null;
-    if (result.status === "invalid") {
-      pushToast("This published link isn't valid.", "error");
-    } else if (result.status === "missing") {
-      pushToast("This published link no longer exists in this export.", "error");
-    }
-    return result.status;
-  };
-
+  installDraftStore();
+  // Every graph window mounts App and owns its own save engine. Split panes
+  // share it; the capture mini-window owns only an unsaved scratch page.
+  onMount(() => onCleanup(installBackgroundFlush({
+    endEdit: () => endEdit("graph-switch"),
+    flushAll,
+    closeInFlight: safeClose.inFlight,
+  })));
+  // GH #426: on mobile an OS reap of a hidden app is not an unclean exit.
+  onMount(() => onCleanup(installSessionActivity({
+    isMobile: isMobilePlatform,
+    setActive: (active) => void recordSessionActive(active),
+  })));
   let openCalendarJump = () => {};
   const topbarActions = {
     calendar: () => openCalendarJump(),
@@ -924,150 +659,136 @@ export function App(): JSX.Element {
     back: () => goBack(),
     forward: () => goForward(),
   };
-  const startupRecovery = createStartupRecoveryController({
-    lookupGraphPath: () => backend().startupGraphPath(),
-    injectedGraphPath: () => (window as any).__GRAPH_PATH__ ?? "",
-    persistedGraphPath,
-    openGraph: (path, supersedeCurrent) => loadGraphPath(path, { supersedeCurrent }),
-    pickGraph: switchGraph,
-    copyText: writeClipboardTextResilient,
-    notify: (message, kind) => pushToast(message, kind, kind === "error" ? { sticky: true } : undefined),
-    completeFirstLoad: () => {
-      if (!published || initialPublishedPermalinkHandled) {
-        setFirstLoadDone(true);
-        return;
-      }
-      initialPublishedPermalinkHandled = true;
-      void applyPublishedHash(initialPublishedHash).finally(() => {
-        setPublishedPermalinkReady(true);
-        setFirstLoadDone(true);
-      });
-    },
-  });
-  createEffect(syncPublishedPermalink);
-  onMount(() => {
-    if (!published) return;
-    const onHashChange = () => {
-      if (!publishedPermalinkReady()) return;
-      void applyPublishedHash(window.location.hash).finally(syncPublishedPermalink);
-    };
-    window.addEventListener("hashchange", onHashChange);
-    onCleanup(() => window.removeEventListener("hashchange", onHashChange));
-  });
   // Startup debug trace (TINE_DEBUG=1 / --debug): forward UI milestones + errors
   // into the backend log so a remote "bad startup" is diagnosable in one file.
   onMount(() => void initDebug());
 
-  // SafeBackPlugin is the single Android native Back owner. A drawer/transient
-  // is never represented by synthetic history; route history remains the JS
-  // dispatch fallback once the native listener is explicitly ready.
+  // ONE Back ladder (src/appBack.ts) serves both Back gestures: Android's
+  // native SafeBack listener (below) and the iOS left-edge swipe (installed
+  // after it).  A drawer/transient is never represented by synthetic history;
+  // route history remains the fallback.
+  const backDeps = {
+    dismissTransient: () => dismissTopTransient("back"),
+    dismissDrawer: () => dismissMobileDrawer("back"),
+    restoreDrawerFocus: () => restoreDrawerFocus("back"),
+    historyBack: () => {
+      if (!canGoBack()) return false;
+      goBack();
+      return true;
+    },
+    closeRoot: () => { void closeAndroidRootSafely(); },
+  };
   onMount(() => {
     if (!isTauri()) return;
     const uninstall = installAndroidBackHandler({
       platform: () => backend().appPlatform(),
+      // The permanent native owner (MainActivity's OnBackPressedCallback +
+      // SafeBackPlugin) forwards Back here.  AppPlugin's own listener is NOT
+      // used: with none registered Tauri falls back to WebView.goBack()/finish,
+      // which bypasses the ladder (master 61a663291 and successors).
       subscribe: async (handler) => {
         const { addPluginListener } = await import("@tauri-apps/api/core");
         return addPluginListener("safe-back", "android-safe-back", handler);
       },
-      dismissTransient: () => dismissTopTransient("back"),
-      dismissDrawer: () => dismissMobileDrawer("back"),
-      restoreDrawerFocus: () => restoreDrawerFocus("back"),
-      // The router's own back, not the WebView's: it knows whether Tine has an
-      // entry to pop, and it is what every other Back affordance already uses.
-      historyBack: () => {
-        if (!canGoBack()) return false;
-        goBack();
-        return true;
-      },
-      closeRoot: () => { void closeAndroidRootSafely(); },
-      // Listener absence/rejection remains owned by the native SafeBackPlugin,
-      // which consumes Back rather than delegating to AppPlugin's unsafe
-      // WebView/activity fallback.
-      setupFailed: (error) => console.warn("Android SafeBack listener unavailable; native owner remains blocking", error),
+      ...backDeps,
+      // No JS listener: the native owner stays registered and blocks Back
+      // (with a throttled notice) rather than letting the WebView navigate.
+      setupFailed: () => console.warn("Android SafeBack listener unavailable; native owner remains blocking"),
     });
     onCleanup(uninstall);
   });
 
-  // One-time notice after the desktop identifier rename chain
-  // dev.tine.app / page.tine.app -> page.tine.Tine: the backend moved
-  // settings/session/backups to the new app-data dir, but some app-level prefs
-  // (window geometry, possibly shortcuts) may have reset. Sticky so the user
-  // actually sees it; the backend flag self-clears after this one read.
-  onMount(async () => {
-    try {
-      if (await backend().takeIdentifierMigrationNotice()) {
-        pushToast(
-          "Tine was renamed under the hood, so we moved your settings and backups across. A few app-level preferences (e.g. keyboard shortcuts) might need setting again — sorry about that!",
-          "info",
-          { sticky: true }
-        );
-      }
-    } catch {
-      // Non-Tauri/mock or an older backend without the command: nothing to notify.
-    }
-  });
-
-  // The normal app-data home was not writable, so this launch put settings, the
-  // session and the WebView store somewhere else rather than crashing on the way
-  // up. Sticky: the relocation lasts only as long as the permissions problem, so
-  // the user needs to know where their state went and why.
-  onMount(async () => {
-    try {
-      const fallback = await backend().takeDataHomeFallbackNotice();
-      if (fallback) {
-        pushToast(
-          `Tine could not write its usual application-data folder, so this session is keeping settings and backups in ${fallback} instead. Fixing the permissions on that folder restores the normal location.`,
-          "warn",
-          { sticky: true }
-        );
-      }
-    } catch {
-      // Non-Tauri/mock or an older backend without the command: nothing to notify.
-    }
-  });
-
+  // iOS Back and the left-drawer pull share ONE left-edge recognizer
+  // (src/edgeSwipe.ts); the ladder it runs on commit is the same `backDeps`.
   onMount(() => {
+    if (!isTauri()) return;
     let disposed = false;
-    let started = false;
-    let unlistenStorage = () => {};
-    let unlistenAssets = () => {};
-    const start = () => {
-      if (disposed || started) return;
-      started = true;
-      startupRecovery.start();
-    };
-    // Install both observation bridges before opening the graph. Native
-    // open phases can begin synchronously with the graph-open command, while
-    // an image may render before the watcher has finished binding its
-    // approved external-assets root. Starting after both listeners settle
-    // prevents either early event from falling into a WebView subscription gap.
-    void Promise.allSettled([
-      backend().onStorageTransition((event) => {
-        startupRecovery.receiveTransition(event);
-      }),
-      backend().onAssetChanged((batch) => {
-        dbg(`asset-changed paths=${batch.paths.length}`);
-        applyObservedAssetChanges(batch.paths);
-      }),
-    ]).then(([storage, assets]) => {
-      if (storage.status === "fulfilled") unlistenStorage = storage.value;
-      if (assets.status === "fulfilled") unlistenAssets = assets.value;
-      if (disposed) {
-        unlistenStorage();
-        unlistenAssets();
+    let uninstall: () => void = () => {};
+    void (async () => {
+      let native: Owned<"android" | "ios" | "desktop">;
+      try {
+        native = await readOwned(ownedWhen(() => !disposed), backend().appPlatform());
+      } catch {
+        console.warn("edge swipe: platform unavailable, left-edge gestures stay off");
         return;
       }
-      // If either event bridge is unavailable, startup still attempts the
-      // native command; command failure remains actionable without inventing a
-      // timeout-based storage outcome.
-      start();
-    });
-    onCleanup(() => {
-      disposed = true;
-      unlistenStorage();
-      unlistenAssets();
-      startupRecovery.dispose();
-    });
+      if (native.kind === "stale") return;
+      // touchGesturePlatform() is the real mobile platform, or - only under the
+      // TINE_E2E_TOUCH_GESTURES harness hook - the platform the journey asks for.
+      const platform = touchGesturePlatform() ?? native.value;
+      if (disposed || platform === "desktop") return;
+      uninstall = installEdgeSwipe({
+        platform,
+        backAvailable: () => appBackAvailable({
+          hasTransient: () => topTransientLayer() !== undefined,
+          hasDrawer: () => activeDrawer() !== null,
+          canGoBack,
+        }),
+        drawerOpenable: () => mobileDrawerMode() && activeDrawer() === null,
+        // The edge swipe never closes the app: iOS has no root rung.
+        back: () => { dispatchAppBack({ ...backDeps, closeRoot() {} }); },
+        openDrawer: () => setLeftSidebarOpen(true),
+        surface: () => document.querySelector<HTMLElement>(".app-container > .main-container"),
+      });
+    })();
+    onCleanup(() => { disposed = true; uninstall(); });
+  });
+
+  onMount(async () => {
+    let alive = true;
+    let disposeLinks = () => {};
+    onCleanup(() => { alive = false; disposeLinks(); });
+    const owner = graphOwner(() => alive);
+    const injected = (window as any).__GRAPH_PATH__ ?? "";
+    let startup = "";
+    try {
+      const result = await readOwned(owner, backend().startupGraphPath());
+      if (result.kind === "stale") return;
+      startup = result.value ?? "";
+    } catch {
+      startup = "";
+    }
+    const graphPath = injected || startup || persistedGraphPath();
+    dbg(`loading graph: ${graphPath || "(default/configured)"}`);
+    try {
+      if (!(window as any).__TINE_LINK_LAUNCH__ || injected) await loadGraphPath(graphPath);
+      dbg("graph load call returned");
+    } catch (e) {
+      // No graph configured (fresh install), or it failed to open. Fall through to
+      // the onboarding Welcome screen instead of leaving a blank app; don't toast
+      // on first run (the empty/`""` path legitimately has no graph yet).
+      dbg(`graph load failed: ${String(e)}`);
+      if (graphPath) setStartupOpenFailure({ path: graphPath, message: String(e) });
+    } finally {
+      if (isPublishedExport() && window.location.hash) {
+        try {
+          openPublishedPermalink(await loadPublishedSnapshot(), window.location.hash, paneRouter(focusedPaneId()));
+        } catch { console.error("published permalink unavailable"); }
+      }
+      // The load above retires `owner` (opening a graph moves the binding), so the
+      // VIEW, not the graph binding, owns this completion.
+      if (alive) setFirstLoadDone(true);
+      if (!isPublishedExport() && alive) {
+        disposeLinks = await installTineLinks(() => alive);
+        if (!alive) disposeLinks();
+      }
+    }
+  });
+
+  createEffect(() => {
+    if (!isPublishedExport() || !firstLoadDone() || !graphMeta()) return;
+    const panes = layoutPaneIds();
+    const router = paneRouter(panes[0] ?? focusedPaneId());
+    const target = publishedPermalinkForWorkspace(panes.length, router.tabs().length, router.route());
+    if (target !== undefined) replacePublishedPermalink(target);
+  });
+  onMount(() => {
+    if (!isPublishedExport()) return;
+    const onHash = () => { void loadPublishedSnapshot().then((snapshot) => {
+      openPublishedPermalink(snapshot, window.location.hash, paneRouter(focusedPaneId()));
+    }); };
+    window.addEventListener("hashchange", onHash);
+    onCleanup(() => window.removeEventListener("hashchange", onHash));
   });
 
   // Warn (loudly) if the webview is painting on the CPU — Tine's whole pitch is
@@ -1075,13 +796,52 @@ export function App(): JSX.Element {
   // slow". Fire-and-forget; the probe is Tauri-gated and never throws.
   onMount(() => void warnIfSoftwareRendering());
 
-  // Once per launch, a few seconds after startup (so it never competes with the
-  // first paint or the graph load), check GitHub for a newer release and toast if
-  // there is one. Best-effort + silent on failure (see update.ts).
-  onMount(() => {
-    const t = setTimeout(() => void checkForUpdate(), 3000);
-    onCleanup(() => clearTimeout(t));
+  // Native startup owns the one-shot migration flag; this view owns its toast.
+  onMount(async () => {
+    let alive = true;
+    onCleanup(() => { alive = false; });
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      if (!alive) return;
+      const result = await readOwned(ownedWhen(() => alive), invoke<boolean>("take_identifier_migration_notice"));
+      if (result.kind === "stale" || !result.value) return;
+      pushToast(
+        "Tine was renamed under the hood, so we moved your settings and backups across. A few app-level preferences (e.g. keyboard shortcuts) might need setting again — sorry about that!",
+        "info",
+        { sticky: true },
+      );
+    } catch {
+      dbg("identifier migration notice unavailable");
+    }
   });
+
+  // An unwritable app-data folder was relocated for this launch (data_home.rs):
+  // say where settings and backups went, stickily — a silent relocation would
+  // be its own defect (I-9).
+  onMount(async () => {
+    let alive = true;
+    onCleanup(() => { alive = false; });
+    try {
+      const result = await readOwned(ownedWhen(() => alive), backend().takeDataHomeFallbackNotice());
+      if (result.kind === "stale" || !result.value) return;
+      pushToast(
+        `Tine could not write its usual application-data folder, so this session is keeping settings and backups in ${result.value} instead. Fixing the permissions on that folder restores the normal location.`,
+        "warn",
+        { sticky: true },
+      );
+    } catch {
+      dbg("data-home notice unavailable");
+    }
+  });
+
+  // GH #623: once per opened graph, ask whether Windows Defender is the likely
+  // reason the cold load was slow. The backend answers false everywhere else.
+  createEffect(on(() => graphMeta()?.root, (root) => {
+    if (root) void maybeShowDefenderHint();
+  }));
+
+  // The updater owns preference loading, automatic scheduling and cancellation.
+  onMount(() => onCleanup(scheduleAutomaticUpdateCheck()));
 
   // Re-install experimental smooth scrolling (Lenis) if it was left on. The feed
   // (`.main-content`) is mounted by now (onMount runs after first render).
@@ -1089,114 +849,44 @@ export function App(): JSX.Element {
   onMount(() => void initCopySettings());
   onMount(() => void initRefCompletionSettings());
   onMount(() => void initNavSettings());
+  onMount(() => void initSettingsLayout());
+  onMount(() => { void initContentWidths(); void initCodeDisplay(); });
   // Load the local-file images opt-in (Settings → Editing). Default off.
   onMount(() => void initLocalFileSettings());
-  onMount(() => void initSettingsLayout());
-  onMount(() => void initQueryExportBudget());
-  onMount(() => void initConflictPolicy());
-  // Demo gate for the screenshot harness (mirrors `?conflicts`): turn the
-  // always-ask policy on and hold one external change, so the bar is visible
-  // without a real second writer. Browser mock only — never in the app.
-  onMount(() => {
-    if (isTauri() || !ALWAYS_ASK_DEMO) return;
-    setConflictPolicyAlwaysAskForTest(true);
-    (window as unknown as { __tineHoldExternalChange?: (name: string) => void })
-      .__tineHoldExternalChange = (name: string) => {
-      holdExternalChange(
-        {
-          name,
-          kind: doc.pages.find((p) => p.name === name)?.kind ?? "page",
-          created: false,
-          removed: false,
-        },
-        graphBinding()
-      );
-    };
-  });
   // A conflict copy appearing/vanishing on disk (watcher) refreshes the list.
   onMount(() => {
     let unsub = () => {};
-    void backend()
-      .onConflictsChanged(() => trackGraphChangeApplication(refreshSyncConflicts("new")))
-      .then((u) => (unsub = u));
-    onCleanup(() => unsub());
+    let alive = true;
+    const owner = ownedWhen(() => alive);
+    void readOwnedResource(owner, backend().onConflictsChanged(() => void refreshSyncConflicts("new")), (u) => u())
+      .then((result) => { if (result.kind === "current") unsub = result.value; });
+    onCleanup(() => { alive = false; unsub(); });
+  });
+  onMount(() => {
+    let unsub = () => {};
+    let alive = true;
+    const owner = ownedWhen(() => alive);
+    void readOwnedResource(owner, backend().onGraphConfigChanged(applyGraphConfigChange), (u) => u())
+      .then((result) => { if (result.kind === "current") unsub = result.value; });
+    onCleanup(() => { alive = false; unsub(); });
   });
   // One graph-file watcher for every pane. PageView instances render pane
   // content; they do not each own a backend subscription.
   onMount(() => {
     let unsub = () => {};
-    void backend()
-      .onGraphChanged((c) => trackGraphChangeApplication(handleGraphChange(c)))
-      .then((u) => (unsub = u));
-    onCleanup(() => unsub());
+    let alive = true;
+    const owner = ownedWhen(() => alive);
+    void readOwnedResource(owner, backend().onGraphChanged((c) => trackGraphChangeApplication(applyGraphChange(c))), (u) => u())
+      .then((result) => { if (result.kind === "current") unsub = result.value; });
+    onCleanup(() => { alive = false; unsub(); });
   });
-  // Coalesced external bulk revisions (VCS checkout / big sync): one aggregate
-  // event above the backend's bulk threshold instead of per-page events.
+  // Family 10: checkout-sized batches, a refused OS watch, reload on focus,
+  // and the "always ask" preference.
   onMount(() => {
-    let unsub = () => {};
-    void backend()
-      .onGraphChangedBulk((bulk) => trackGraphChangeApplication(handleGraphChangedBulk(bulk)))
-      .then((u) => (unsub = u));
-    onCleanup(() => unsub());
-  });
-  // `logseq/config.edn` was rewritten outside Tine (Logseq, an editor, a sync
-  // service) and the backend re-read it. Only settings changes arrive here; a
-  // rewrite that moved nothing we surface emits nothing.
-  onMount(() => {
-    let unsub = () => {};
-    void backend()
-      .onGraphConfigChanged((meta) => applyGraphConfigChange(meta))
-      .then((u) => (unsub = u));
-    onCleanup(() => unsub());
-  });
-  onMount(() => {
-    let unsub = () => {};
-    void backend().onGraphReopened(applyGraphReopened).then((u) => (unsub = u));
-    onCleanup(() => unsub());
-  });
-  onMount(() => {
-    let disposed = false;
-    let unsub = () => {};
-    void backend().onQueryProjectionChanged(bumpDataRev).then((u) => {
-      if (disposed) u();
-      else unsub = u;
-    });
-    onCleanup(() => { disposed = true; unsub(); });
-  });
-  // Answers shown during the launch check may come from the index as the last
-  // session left it; once the check lands, every surface asks again (GH #550).
-  onMount(() => {
-    let disposed = false;
-    let unsub = () => {};
-    void listenHere("warm-cache-done", () => correctLaunchAnswers()).then((u) => {
-      if (disposed) u();
-      else unsub = u;
-    }).catch(() => {
-      // A published export has no native events; nothing is ever corrected there.
-    });
-    onCleanup(() => { disposed = true; unsub(); });
-  });
-  // A plain Markdown graph whose folder watch failed a reconcile cycle. Says
-  // only what is known: Tine may miss outside changes until it recovers. It
-  // deliberately makes no claim about whether saving still works — the guarded
-  // write path has its own failure modes and this event does not measure them.
-  onMount(() => {
-    let unsub = () => {};
-    void backend()
-      .onGraphWatchError(() =>
-        pushToast("Tine couldn't finish checking the graph folder for outside changes. It will keep retrying.", "error"),
-      )
-      .then((u) => (unsub = u));
-    onCleanup(() => unsub());
-  });
-  // A page Tine could not read or parse. The rest of the graph is indexed
-  // around it and the file is left as it is, so say which page and what to do.
-  onMount(() => {
-    let unsub = () => {};
-    void backend()
-      .onGraphUnreadablePages((paths) => pushToast(unreadablePagesMessage(paths), "error"))
-      .then((u) => (unsub = u));
-    onCleanup(() => unsub());
+    onCleanup(subscribeWatcherFreshness());
+    onCleanup(subscribeAssetChanges());
+    installReloadOnFocus();
+    void initConflictPolicy();
   });
   // Load the asset-filename format template (Settings → Backups → Asset names).
   onMount(() => void initAssetSettings());
@@ -1211,7 +901,7 @@ export function App(): JSX.Element {
   onMount(() => {
     let uninstall = () => {};
     let disposed = false;
-    void installMobileExternalLinkHandler().then((u) => {
+    void installMobileExternalLinkHandler(ownedWhen(() => !disposed)).then((u) => {
       if (disposed) u();
       else uninstall = u;
     });
@@ -1225,25 +915,6 @@ export function App(): JSX.Element {
   // would otherwise drop the last keystrokes typed right before quitting.
   // Hardened so it can NEVER wedge the window open: a re-entry guard, a timeout
   // cap on the flush, and a destroy()→close() fallback.
-  // GH #255: the OS can reclaim a backgrounded app without ever sending a close
-  // request, and everything inside the 400 ms save debounce is RAM-only until
-  // then. This is the only durability barrier on Android/iOS, and it also covers
-  // the desktop paths that skip a clean close. Installed unconditionally — it is
-  // a DOM listener, so it works in the browser dev shell too.
-  onMount(() => onCleanup(installBackgroundFlush({
-    endEdit: () => endEdit("graph-switch"),
-    flushAll,
-    closeInFlight: () => safeClose.inFlight(),
-  })));
-
-  // GH #426: the same lifecycle edge, read for a different question — on mobile
-  // the OS reaps a backgrounded app routinely, and the next launch must not
-  // call that an unclean exit. Mobile only; see sessionActivity.ts.
-  onMount(() => onCleanup(installSessionActivity({
-    isMobile: isMobilePlatform,
-    setActive: (active) => { void backend().diagnosticSessionActive(active).catch(() => {}); },
-  })));
-
   onMount(() => {
     if (!isTauri()) return;
     let unlisten = () => {};
@@ -1262,11 +933,10 @@ export function App(): JSX.Element {
         // Close only this graph window. The backend exits the process (including
         // Linux WebKit cleanup) only when this is the final graph window.
         try {
-          await backend().closeGraphWindow();
+          await writeOwned(bindingOwner(), backend().closeGraphWindow());
           return;
         } catch {
-          // Native window failures retain the established direct close
-          // fallback below.
+          // fall through to the direct close below
         }
         try {
           await w.destroy();
@@ -1293,75 +963,10 @@ export function App(): JSX.Element {
   // capture from racing a main-view edit of today's journal into a conflict.
   onMount(() => {
     if (!isTauri()) return;
-    let unlisten = () => {};
-    const inFlight = new Map<string, Promise<boolean>>();
-    const completed = new Map<string, boolean>();
-    const completedOrder: string[] = [];
-    const rememberCompleted = (id: string, ok: boolean) => {
-      completed.set(id, ok);
-      completedOrder.push(id);
-      while (completedOrder.length > 100) {
-        const old = completedOrder.shift();
-        if (old) completed.delete(old);
-      }
-    };
-    void (async () => {
-      const { emitTo, listen } = await import("@tauri-apps/api/event");
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      const windowLabel = getCurrentWindow().label;
-      const ack = (id: string | undefined, ok: boolean) => {
-        if (id) void emitTo("capture", "quick-capture-ack", { id, ok } satisfies QuickCaptureAck);
-      };
-      unlisten = await listen<QuickCaptureRequest>("quick-capture", async (e) => {
-        // WebKitGTK currently exposes targeted Tauri events to every graph
-        // listener in this process. Treat the payload label as the authority so
-        // only the selected graph can ever perform the write.
-        if (e.payload?.target !== windowLabel) return;
-        const id = e.payload?.id;
-        if (id && completed.has(id)) {
-          ack(id, completed.get(id) ?? false);
-          return;
-        }
-        const existing = id ? inFlight.get(id) : undefined;
-        if (existing) {
-          ack(id, await existing);
-          return;
-        }
-        const text = e.payload?.text ?? "";
-        if (!text.trim()) {
-          ack(id, false);
-          return;
-        }
-        // A title routes the capture to a NEW (or existing) page; empty → today.
-        const title = (e.payload?.title ?? "").trim();
-        const save = async () => {
-          let ok = false;
-          try {
-            ok = title ? await captureToPage(title, text) : await appendToTodayJournal(text);
-          } catch {
-            ok = false;
-          }
-          pushToast(
-            ok
-              ? title
-                ? `Captured to “${title}”`
-                : "Captured to today's journal"
-              : "Capture couldn't be saved",
-            ok ? "info" : "error"
-          );
-          return ok;
-        };
-        const promise = save();
-        if (id) inFlight.set(id, promise);
-        const ok = await promise;
-        if (id) {
-          inFlight.delete(id);
-          rememberCompleted(id, ok);
-        }
-        ack(id, ok);
-      });
-    })();
-    onCleanup(() => unlisten());
+    let alive = true, unlisten = () => {};
+    onCleanup(() => { alive = false; unlisten(); });
+    void installQuickCaptureReceiver(ownedWhen(() => alive)).then((dispose) => { if (alive) unlisten = dispose; else dispose(); })
+      .catch(() => { if (alive) pushToast("Quick Capture could not connect to this graph window.", "error"); });
   });
 
   // Tell the quick-capture mini-window our theme. It can't read the main
@@ -1393,11 +998,13 @@ export function App(): JSX.Element {
   createEffect(() => {
     const t = theme();
     if (!isTauri()) return;
+    const owner = graphOwner();
     void (async () => {
       try {
         const { emitTo } = await import("@tauri-apps/api/event");
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        if ((await backend().captureTarget()) === getCurrentWindow().label) {
+        const target = await readOwned(owner, backend().captureTarget());
+        if (target.kind === "current" && target.value === getCurrentWindow().label) {
           await emitTo("capture", "capture-apply-theme", { theme: t });
         }
       } catch {
@@ -1406,13 +1013,10 @@ export function App(): JSX.Element {
     })();
   });
 
-  // After edits settle (dataRev bumps), refresh the alias map so changing an
-  // alias:: doesn't leave navigation resolving to the old canonical page. The
-  // Rust side caches aliases, so this is cheap unless a save actually changed them.
-  createEffect(on(dataRev, () => void refreshAliases(), { defer: true }));
-  // Page creation/deletion has its own rare invalidation lane: canonical-name
-  // precedence stays current without listing every page after ordinary saves.
-  createEffect(on(pageInventoryRev, () => void refreshPageIdentities(), { defer: true }));
+  // The page index refetches `page_inventory` on graph bind, after edits settle
+  // (dataRev: an alias:: edit must not leave navigation on the old page), and on
+  // create/delete/rename (pageInventoryRev); one IPC per trigger tick.
+  installPageIndex();
 
   // (Re)install keybindings whenever config or the user's local overrides change
   // (precedence: defaults < config.edn :shortcuts < Settings overrides). We also
@@ -1420,13 +1024,16 @@ export function App(): JSX.Element {
   // editor/quick-capture-file (or any editor shortcut) is honored there too — it
   // can't read this window's localStorage overrides on its own.
   let latestShortcuts: Record<string, string> = {};
+  const captureBroadcastScope = {};
   const broadcastShortcuts = () => {
     if (!isTauri()) return;
+    const owner = latestOwner(captureBroadcastScope, "shortcuts", graphOwner());
     void (async () => {
       try {
         const { emitTo } = await import("@tauri-apps/api/event");
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        if ((await backend().captureTarget()) === getCurrentWindow().label) {
+        const target = await readOwned(owner, backend().captureTarget());
+        if (target.kind === "current" && target.value === getCurrentWindow().label) {
           await emitTo("capture", "capture-apply-shortcuts", latestShortcuts);
         }
       } catch {
@@ -1510,7 +1117,7 @@ export function App(): JSX.Element {
       </Show>
       <Show when={graphTransitioning()}>
         <DrawerBackground class="graph-transition-shield" blockedBy="any" role="status" ariaLive="polite">
-          {firstLoadDone() ? "Finishing graph operation…" : "Opening graph storage…"}
+          Finishing graph operation…
         </DrawerBackground>
       </Show>
       <Show when={sidebarOpen()}>
@@ -1526,7 +1133,7 @@ export function App(): JSX.Element {
         >
           <div class="left-sidebar-scroll">
             <div class="sidebar-header workspace-sidebar-header" data-workspace-switcher-sidebar>
-              <WorkspaceSwitcher />
+              <Show when={!isPublishedExport()}><FailureBoundary region="The workspace switcher"><WorkspaceSwitcher /></FailureBoundary></Show>
             </div>
             <Show when={mobileDrawerMode()}>
               <button class="mobile-drawer-close" type="button" aria-label="Close navigation sidebar" onClick={() => dismissDrawerAndRestore("explicit")}>Close</button>
@@ -1540,11 +1147,11 @@ export function App(): JSX.Element {
             onMouseDown={(e) => {
               e.preventDefault();
               const onMove = (ev: MouseEvent) =>
-                setSidebarWidth(Math.min(500, Math.max(180, ev.clientX)));
+                resizeSidebar("left", ev.clientX);
               const onUp = () => {
                 window.removeEventListener("mousemove", onMove);
                 window.removeEventListener("mouseup", onUp);
-                persistSidebarWidth();
+                commitSidebarWidth("left");
               };
               window.addEventListener("mousemove", onMove);
               window.addEventListener("mouseup", onUp);
@@ -1613,8 +1220,8 @@ export function App(): JSX.Element {
           {/* A collapsed sidebar has no mounted sidebar header. Keep a compact
               one-tap workspace path in the toolbar without putting its full
               non-shrinking label back in this no-wrap row. */}
-          <Show when={!sidebarOpen()}>
-            <WorkspaceSwitcher compact />
+          <Show when={!sidebarOpen() && !isPublishedExport()}>
+            <FailureBoundary region="The workspace switcher"><WorkspaceSwitcher compact /></FailureBoundary>
           </Show>
           {/* The tab strip is a desktop feature; on a phone it only crowds the
               single-row toolbar (and its pill clips). Hide it there, keeping a
@@ -1623,12 +1230,11 @@ export function App(): JSX.Element {
             {/* Keyed on the SOLE pane's id: after closing panes the survivor
                 need not be "main", and TabBar freezes its router at mount. */}
             <Show when={firstPaneId(layoutRoot()) ?? "main"} keyed>
-              {(soloId) => <TabBar router={paneRouter(soloId)} />}
+              {(soloId) => <FailureBoundary region="The tabs"><TabBar router={paneRouter(soloId)} /></FailureBoundary>}
             </Show>
           </Show>
           <div class="topbar-right">
-            <IndexingProgressBar />
-            <CalendarJump triggerClass="topbar-optional-action" onOpenReady={(open) => { openCalendarJump = open; }} />
+            <FailureBoundary region="The calendar"><CalendarJump triggerClass="topbar-optional-action" onOpenReady={(open) => { openCalendarJump = open; }} /></FailureBoundary>
             <button class="icon-btn topbar-optional-action" title="Journals" data-pane-focus-neutral onClick={topbarActions.journals}>
               <svg viewBox="0 0 24 24" class="nav-icon">
                 <path d="M4 5h11a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
@@ -1671,7 +1277,7 @@ export function App(): JSX.Element {
                 <line x1="15" y1="4" x2="15" y2="20" stroke="currentColor" stroke-width="1.7" />
               </svg>
             </button>
-            <TopbarOverflowMenu
+            <FailureBoundary region="The toolbar menu"><TopbarOverflowMenu
               onCalendar={topbarActions.calendar}
               onJournals={topbarActions.journals}
               onToggleTheme={topbarActions.theme}
@@ -1680,11 +1286,10 @@ export function App(): JSX.Element {
               onForward={topbarActions.forward}
               canGoBack={canGoBack}
               canGoForward={canGoForward}
-            />
+            /></FailureBoundary>
             {/* Settings sits apart at the far right (separated by a divider) so
                 it reads as app-level config, not another content control. */}
-            <Show when={!isPublishedExport()}>
-            <span class="topbar-sep" />
+            <Show when={!isPublishedExport()}><span class="topbar-sep" />
             <button class="icon-btn" title="Settings (t s)" onClick={() => openSettings()}>
               <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
                 <path
@@ -1692,20 +1297,22 @@ export function App(): JSX.Element {
                   d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
                 />
               </svg>
-            </button>
-            </Show>
+            </button></Show>
             {/* Frameless-window controls live at the very right, where the native
                 title bar's buttons used to be. Hidden when the OS draws its own
                 (macOS Overlay always; Linux/Windows when the native-frame toggle
                 is on). */}
             <Show when={isTauri() && !osDrawsWindowControls()}>
               <span class="topbar-sep" />
-              <WindowControls />
+              <FailureBoundary region="Window controls"><WindowControls /></FailureBoundary>
             </Show>
           </div>
         </header>
-        {/* Direct Files conflicts are Concord objects rendered in-page. */}
-        <InPageFind />
+        <FailureBoundary region="The conflict notice"><ConflictBar /></FailureBoundary>
+        <Show when={refreshingFromDisk()}>
+          <div class="focus-refresh-status" role="status" aria-live="polite">Refreshing changes from disk…</div>
+        </Show>
+        <FailureBoundary region="Find in page"><InPageFind /></FailureBoundary>
         </DrawerBackground>
         {/* Everything below the topbar lives in this row, so the topbar (and its
             window controls at the far right) spans the full window width and the
@@ -1716,7 +1323,7 @@ export function App(): JSX.Element {
           <PaneSelectHint />
           <PaneTree node={visibleLayoutNode()} path={[]} />
           </DrawerBackground>
-          <RightSidebar />
+          <FailureBoundary region="The reference sidebar"><RightSidebar /></FailureBoundary>
         </div>
       </DrawerBackground>
       <MobileDrawerController />
@@ -1732,42 +1339,37 @@ export function App(): JSX.Element {
           <ResizeGrips />
         </Show>
       </DrawerBackground>
-      <QuickSwitcher />
-      <ContextMenu />
-      <DatePicker />
-      <FormulaEditor />
+      <FailureBoundary region="Search"><QuickSwitcher /></FailureBoundary>
+      <FailureBoundary region="The graph chooser"><DeepLinkGraphChoice /></FailureBoundary>
+      <FailureBoundary region="The context menu"><ContextMenu /></FailureBoundary>
+      <FailureBoundary region="The date picker"><DatePicker /></FailureBoundary>
+      <FailureBoundary region="The formula editor"><FormulaEditor /></FailureBoundary>
       <DrawerBackground class="drawer-floating-background" blockedBy="any">
-        <MobileKeyboardToolbar />
+        <FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar /></FailureBoundary>
       </DrawerBackground>
-      <PageProps />
-      <ExportModal />
-      <UnsavedRecovery />
-      <PdfExportDialog />
-      <QueryExportDialog />
+      <FailureBoundary region="Page properties"><PageProps /></FailureBoundary>
+      <FailureBoundary region="Export"><ExportModal /></FailureBoundary>
+      <FailureBoundary region="Unsaved recovery"><UnsavedRecovery /></FailureBoundary>
+      <FailureBoundary region="PDF export"><PdfExportDialog /></FailureBoundary>
+      <FailureBoundary region="Query export"><QueryExportDialog request={queryExportRequest} /></FailureBoundary>
       <Show when={settingsOpen()}>
         <Suspense>
-          <Settings />
+          <FailureBoundary region="Settings"><Settings /></FailureBoundary>
         </Suspense>
       </Show>
-      <HelpPopup />
+      <FailureBoundary region="Help"><HelpPopup /></FailureBoundary>
       {/* First-run onboarding: covers the (empty) app when no graph is configured.
           Rendered before Toasts so a "couldn't create graph" toast still shows on top. */}
-      <WelcomeLayer
+      <FailureBoundary region="Welcome"><WelcomeLayer
         mandatory={(globalThis as any).__FORCE_WELCOME__ === true || (firstLoadDone() && !graphMeta())}
         optionalOpen={welcomeOpen()}
         onClose={closeWelcome}
-      />
-      <StartupRecoveryLayer controller={startupRecovery} />
-      <Show when={freshnessVisible()}>
-        <div class="focus-freshness-barrier" role="status" aria-live="polite">
-          Refreshing changes from disk…
-        </div>
-      </Show>
+      /></FailureBoundary>
       <DrawerBackground class="drawer-floating-background" blockedBy="any">
         <Toasts />
       </DrawerBackground>
-      <Lightbox />
-      <AudioOverlay />
+      <FailureBoundary region="This image"><Lightbox /></FailureBoundary>
+      <FailureBoundary region="This audio"><AudioOverlay /></FailureBoundary>
     </div>
   );
 }

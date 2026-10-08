@@ -1,4 +1,4 @@
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { readFileSync } from "node:fs";
 const svg = readFileSync("docs/app-icon.svg", "utf8");
 const b = await chromium.launch();

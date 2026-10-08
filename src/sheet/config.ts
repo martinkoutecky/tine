@@ -1,6 +1,6 @@
 import { facetsOf } from "../render/facets";
 import type { Format } from "../render/ast";
-import { isAggregateFn, type AggregateFn } from "./aggregate";
+import { decodeAggregateSegment, isAggregateFn, type AggregateFn } from "./aggregate";
 import type { FieldId } from "./fields";
 import { decodeFormulaExpr } from "./formula";
 
@@ -25,19 +25,75 @@ export interface SheetConfig {
   groupBy: string | null;
   header: boolean;
   colWidths: ReadonlyMap<number, number>;
-  tableColumnWidths: ReadonlyMap<string, number>;
   colAggregates: ReadonlyMap<string, AggregateFn>;
   fields: readonly FieldSpec[];
   filter: string | null;
 }
 
 const VIEWS = new Set<SheetView>(["table", "grid", "board"]);
-const BUILTIN_FIELDS = new Set<FieldId>(["state", "priority", "scheduled", "deadline", "tags", "page"]);
-const PROP_FIELD_TYPES = new Set<FieldType>(["text", "number", "date", "datetime", "checkbox", "list", "ref"]);
-export const TABLE_COLUMN_MIN_WIDTH = 64;
 export const TABLE_COLUMN_MAX_WIDTH = 1600;
+const TABLE_COLUMN_MIN_WIDTH = 64;
 const TABLE_COLUMN_WIDTH_LIMIT = 256;
 const TABLE_COLUMN_KEY_LIMIT = 512;
+const tableColumnKeyValid = (key: string) => key.length > 0 && key.length <= TABLE_COLUMN_KEY_LIMIT && !/[\0-\x1f\x7f]/.test(key);
+
+/** Parse identity-keyed table widths from `tine.table-widths`; invalid entries
+ * are ignored and work is bounded to 256 accepted columns. */
+export function parseTableColumnWidths(value: string): ReadonlyMap<string, number> {
+  const out = new Map<string, number>();
+  for (const part of value.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0 || part.indexOf("=", eq + 1) >= 0) continue;
+    const token = part.slice(eq + 1).trim();
+    if (!/^\d+$/.test(token)) continue;
+    const width = Number(token);
+    if (!Number.isSafeInteger(width) || width < TABLE_COLUMN_MIN_WIDTH || width > TABLE_COLUMN_MAX_WIDTH) continue;
+    try {
+      const key = decodeURIComponent(part.slice(0, eq).trim());
+      if (!tableColumnKeyValid(key)) continue;
+      out.set(key, width);
+      if (out.size >= TABLE_COLUMN_WIDTH_LIMIT) break;
+    } catch { /* malformed URI escapes are isolated to one entry */ }
+  }
+  return out;
+}
+
+/** Serialize valid identity-keyed table widths deterministically. Work is
+ * bounded to 256 columns; callers publish through the document edit door. */
+export function serializeTableColumnWidths(widths: ReadonlyMap<string, number>): string {
+  return [...widths.entries()]
+    .filter(([key, width]) => tableColumnKeyValid(key) && Number.isFinite(width))
+    .map(([key, width]) => [encodeURIComponent(key), Math.min(TABLE_COLUMN_MAX_WIDTH, Math.max(TABLE_COLUMN_MIN_WIDTH, Math.round(width)))] as const)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .slice(0, TABLE_COLUMN_WIDTH_LIMIT)
+    .map(([key, width]) => `${key}=${width}`).join(";");
+}
+export const SHEET_BUILTIN_FIELDS = ["state", "priority", "scheduled", "deadline", "tags", "page"] as const;
+export const SCHEMA_PROP_TYPES = ["text", "number", "date", "datetime", "checkbox", "list", "ref"] as const;
+function isSchemaPropType(value: string): value is typeof SCHEMA_PROP_TYPES[number] {
+  return (SCHEMA_PROP_TYPES as readonly string[]).includes(value);
+}
+
+export function isSheetBuiltinField(name: string): boolean {
+  return (SHEET_BUILTIN_FIELDS as readonly string[]).includes(name);
+}
+
+/** Visit stored schema entries, including unsupported types, O(value bytes).
+ * An already split value avoids resplitting for lossless writers.
+ * Key offsets are UTF-16 within each segment; callbacks can preserve every byte
+ * during rename. No entry objects are allocated. Type admission is parseFields'
+ * policy; malformed/unknown entries remain available to a lossless writer. */
+export function visitFieldSchema(value: string | readonly string[], visit: (segment: string, index: number, name: string, keyStart: number, valueStart: number) => void): void {
+  const segments = typeof value === "string" ? value.split(";") : value;
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index];
+    const eq = segment.indexOf("=");
+    if (eq < 0) continue;
+    const left = segment.slice(0, eq);
+    const name = left.trim();
+    visit(segment, index, name, left.indexOf(name), eq + 1);
+  }
+}
 
 function scalarSafe(value: string): boolean {
   return value.trim() !== "" && !/(\[\[|\(\(|\{\{|#|`|[=;\n\r])/.test(value);
@@ -53,44 +109,11 @@ function parseColWidths(value: string): ReadonlyMap<number, number> {
   return out;
 }
 
-function validTableColumnKey(key: string): boolean {
-  return key.length > 0 && key.length <= TABLE_COLUMN_KEY_LIMIT && !/[\0-\x1f\x7f]/.test(key);
-}
-
-/** Table-only width grammar. Stable column identities are URI encoded so
- * property/formula field IDs cannot collide with the `;` / `=` delimiters.
- * Coordinate-grid widths deliberately remain on the positional tine.col-widths
- * grammar above. */
-export function parseTableColumnWidths(value: string): ReadonlyMap<string, number> {
-  const out = new Map<string, number>();
-  for (const part of value.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq <= 0 || part.indexOf("=", eq + 1) >= 0) continue;
-    const encoded = part.slice(0, eq).trim();
-    const widthToken = part.slice(eq + 1).trim();
-    if (!/^\d+$/.test(widthToken)) continue;
-    const width = Number(widthToken);
-    if (!Number.isSafeInteger(width) || width < TABLE_COLUMN_MIN_WIDTH || width > TABLE_COLUMN_MAX_WIDTH) continue;
-    try {
-      const key = decodeURIComponent(encoded);
-      if (!validTableColumnKey(key)) continue;
-      out.set(key, width);
-      if (out.size >= TABLE_COLUMN_WIDTH_LIMIT) break;
-    } catch {
-      // A malformed percent escape is just one invalid entry, not a bad sheet.
-    }
-  }
-  return out;
-}
-
 function parseColAggregates(value: string): ReadonlyMap<string, AggregateFn> {
   const out = new Map<string, AggregateFn>();
   for (const part of value.split(";")) {
-    const m = /^\s*([^=;\s][^=;]*)\s*=\s*([a-z-]+)\s*$/.exec(part);
-    if (!m) continue;
-    const key = m[1].trim();
-    const fn = m[2].toLowerCase();
-    if (key && isAggregateFn(fn)) out.set(key, fn);
+    const segment = decodeAggregateSegment(part, "sheet");
+    if (segment) out.set(part.slice(segment.keyStart, segment.keyEnd), segment.fn as AggregateFn);
   }
   return out;
 }
@@ -98,22 +121,19 @@ function parseColAggregates(value: string): ReadonlyMap<string, AggregateFn> {
 export function parseFields(value: string): readonly FieldSpec[] {
   const out: FieldSpec[] = [];
   const seen = new Set<string>();
-  for (const part of value.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq < 0) continue;
-    const name = part.slice(0, eq).trim();
-    const token = part.slice(eq + 1).trim();
-    if (!scalarSafe(name) || seen.has(name)) continue;
+  visitFieldSchema(value, (segment, _index, name, _keyStart, valueStart) => {
+    if (!scalarSafe(name) || seen.has(name)) return;
+    const token = segment.slice(valueStart).trim();
 
-    if (BUILTIN_FIELDS.has(name as FieldId)) {
-      if (token !== name) continue;
+    if (isSheetBuiltinField(name)) {
+      if (token !== name) return;
       seen.add(name);
       out.push({ field: name as FieldId, type: "builtin" });
-      continue;
+      return;
     }
 
     let type: FieldType | null = null;
-    if (PROP_FIELD_TYPES.has(token as FieldType)) {
+    if (isSchemaPropType(token)) {
       type = token as FieldType;
     } else if (token.startsWith("enum:")) {
       const values = token
@@ -123,10 +143,10 @@ export function parseFields(value: string): readonly FieldSpec[] {
         .filter(Boolean);
       if (values.length > 0 && values.every(scalarSafe)) type = { enum: values };
     }
-    if (!type) continue;
+    if (!type) return;
     seen.add(name);
     out.push({ field: `prop:${name}`, type });
-  }
+  });
   return out;
 }
 
@@ -135,19 +155,6 @@ export function serializeColWidths(widths: ReadonlyMap<number, number>): string 
     .filter(([col, px]) => Number.isInteger(col) && col >= 0 && Number.isFinite(px) && px >= 0)
     .sort(([a], [b]) => a - b)
     .map(([col, px]) => `${col}=${Math.round(px)}`)
-    .join(";");
-}
-
-export function serializeTableColumnWidths(widths: ReadonlyMap<string, number>): string {
-  return [...widths.entries()]
-    .filter(([key, width]) => validTableColumnKey(key) && Number.isFinite(width))
-    .map(([key, width]) => [encodeURIComponent(key), Math.min(
-      TABLE_COLUMN_MAX_WIDTH,
-      Math.max(TABLE_COLUMN_MIN_WIDTH, Math.round(width)),
-    )] as const)
-    .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-    .slice(0, TABLE_COLUMN_WIDTH_LIMIT)
-    .map(([key, width]) => `${key}=${width}`)
     .join(";");
 }
 
@@ -170,7 +177,7 @@ export function serializeFields(fields: readonly FieldSpec[]): string {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const spec of fields) {
-    if (BUILTIN_FIELDS.has(spec.field)) {
+    if (isSheetBuiltinField(spec.field)) {
       if (spec.type !== "builtin" || seen.has(spec.field)) continue;
       seen.add(spec.field);
       out.push(`${spec.field}=${spec.field}`);
@@ -181,7 +188,7 @@ export function serializeFields(fields: readonly FieldSpec[]): string {
     if (!scalarSafe(name) || seen.has(name)) continue;
     let token: string | null = null;
     if (typeof spec.type === "string") {
-      if (spec.type !== "builtin" && PROP_FIELD_TYPES.has(spec.type)) token = spec.type;
+      if (spec.type !== "builtin" && isSchemaPropType(spec.type)) token = spec.type;
     } else {
       const values = spec.type.enum.map((v) => v.trim()).filter(Boolean);
       if (values.length > 0 && values.every(scalarSafe)) token = `enum:${values.join(",")}`;
@@ -198,7 +205,6 @@ export function sheetConfig(props: readonly [string, string][]): SheetConfig {
   let groupBy: string | null = null;
   let header = false;
   let colWidths: ReadonlyMap<number, number> = new Map();
-  let tableColumnWidths: ReadonlyMap<string, number> = new Map();
   let colAggregates: ReadonlyMap<string, AggregateFn> = new Map();
   let fields: readonly FieldSpec[] = [];
   let filter: string | null = null;
@@ -215,8 +221,6 @@ export function sheetConfig(props: readonly [string, string][]): SheetConfig {
       header = value.toLowerCase() === "true";
     } else if (key === "tine.col-widths") {
       colWidths = parseColWidths(value);
-    } else if (key === "tine.table-widths") {
-      tableColumnWidths = parseTableColumnWidths(value);
     } else if (key === "tine.col-aggregates") {
       colAggregates = parseColAggregates(value);
     } else if (key === "tine.fields") {
@@ -226,7 +230,7 @@ export function sheetConfig(props: readonly [string, string][]): SheetConfig {
     }
   }
 
-  return { view, groupBy, header, colWidths, tableColumnWidths, colAggregates, fields, filter };
+  return { view, groupBy, header, colWidths, colAggregates, fields, filter };
 }
 
 /** Sheet config straight from a block's raw text, through the ONE block-property

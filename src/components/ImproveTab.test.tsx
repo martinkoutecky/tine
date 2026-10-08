@@ -1,14 +1,31 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { IDENTITY } from "../../scripts/lib/app-identity.mjs";
 import { backend } from "../backend";
 import { clearClipboardSlot, copyBlockOutline, peekClipboardSlot } from "../clipboard";
 import { ImproveTab } from "./ImproveTab";
+import { resetStore } from "../document";
 
 async function flush() {
   for (let i = 0; i < 12; i += 1) await Promise.resolve();
 }
 
 describe("Help improve Tine privacy boundary", () => {
+  it("does not publish a comparison after its graph retires", async () => {
+    Object.assign(globalThis, { __tineDiffFixture: {
+      tineVersion: "test", lsdocVersion: "test", stats: { files: 1, totalBytes: 1 },
+      lsdocAvailable: false, findings: [],
+    } });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <ImproveTab />, host);
+    (host.querySelector(".improve-run button") as HTMLButtonElement).click();
+    resetStore();
+    await flush();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(host.querySelector(".improve-report")).toBeNull();
+    dispose();
+  });
   afterEach(() => {
     Reflect.deleteProperty(globalThis, "__tineDiffFixture");
     clearClipboardSlot();
@@ -77,6 +94,7 @@ describe("Help improve Tine privacy boundary", () => {
       copyButtons[0].click();
       await flush();
       expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining("Divergence found but not auto-anonymizable — omitted."));
+      expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining(`${IDENTITY.productName} version: 0.5.9`));
       expect(writeText).toHaveBeenLastCalledWith(expect.not.stringContaining("safe to share"));
     } finally {
       dispose();
@@ -124,7 +142,6 @@ describe("Help improve Tine privacy boundary", () => {
       dispose();
     }
   });
-
   it("does not offer intentional nested-dollar math differences as reportable bugs", async () => {
     Object.assign(globalThis, {
       __tineDiffFixture: {

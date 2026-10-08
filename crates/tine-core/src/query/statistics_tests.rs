@@ -68,10 +68,8 @@ fn advanced_transforms_do_not_request_statistics_or_implicit_board_groups() {
 
 #[test]
 fn shared_arithmetic_fixtures_match_the_javascript_oracle() {
-    let cases: serde_json::Value = serde_json::from_str(include_str!(
-        "../../tests/fixtures/query-statistics/semantics.json"
-    ))
-    .unwrap();
+    let cases: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/query-statistics/semantics.json")).unwrap();
     for case in cases.as_array().unwrap() {
         let view = ViewSettings {
             aggregates: vec![

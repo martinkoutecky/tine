@@ -1,41 +1,37 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { For, type JSX } from "solid-js";
-import { render } from "solid-js/web";
-import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore } from "../store";
+import { describe, expect, it, vi } from "vitest";
+import { For } from "solid-js";
+import { pageByName } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
 import { startEditing } from "../editorController";
 import { calcSource } from "../editor/calc";
-import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
+import { installBlockEditorLifecycle, mount, blk, page } from "../tests/blockEditorTestkit";
 
-beforeAll(async () => {
-  await initParser();
-});
-
-afterEach(() => {
-  resetStore();
-  document.body.innerHTML = "";
-});
-
-function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => void } {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  const dispose = render(node, root);
-  return { root, dispose };
-}
-
-function blk(id: string, raw: string): BlockDto {
-  return { id, raw, collapsed: false, children: [] };
-}
-
-function page(name: string, blocks: BlockDto[]): PageDto {
-  return { name, kind: "page", title: name, pre_block: null, blocks };
-}
+installBlockEditorLifecycle();
 
 // GH #57: a ```calc block must survive clicking outside (blur), and its exit
 // commit must NOT run planning-normalization over the calc expressions (which
 // would reorder a SCHEDULED:-looking line and mangle the block).
 describe("calc block persistence on blur", () => {
+  it("retains ordinary block text after the calc fence when an expression changes", () => {
+    const original = "```calc\n1 + 1\n```\nordinary text";
+    loadSingle(page("Calc suffix", [blk("calc-suffix", original)]));
+    const id = pageByName("Calc suffix")!.roots[0];
+    startEditing(id, 0);
+    const { root, dispose } = mount(() => <Block id={id} />);
+    try {
+      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
+      expect(ta.value).toBe("1 + 1");
+      ta.focus();
+      ta.value = "2 + 2";
+      ta.dispatchEvent(new FocusEvent("blur"));
+      expect(doc.byId[id].raw, "calc exit rule: Block keeps text after the closing fence").toBe("```calc\n2 + 2\n```\nordinary text");
+    } finally {
+      dispose();
+    }
+  });
+
   it("stays a calc block on blur and preserves expression order", () => {
     loadSingle(page("Calc", [blk("calc-1", "```calc\n1 + 1\n```")]));
     const id = pageByName("Calc")!.roots[0];

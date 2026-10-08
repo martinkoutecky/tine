@@ -1,11 +1,14 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 const PORT = 5196;
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+async function waitForServer(url, tries = 60) {
+  for (let i = 0; i < tries; i++) { try { if ((await fetch(url)).ok) return; } catch {} await sleep(250); }
+  throw new Error("server did not start");
+}
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 60, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 760, height: 640 } });
   const errs = [];

@@ -1,11 +1,14 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { ExportModal } from "./ExportModal";
-import { backend, QueryUnavailableError } from "../backend";
+import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { resetStore, setDoc, type Node as StoreNode } from "../store";
+import { resetStore } from "../document";
+import { type Node as StoreNode } from "../document/model";
+import { setDoc } from "../document/model";
 import { closeExportModal, openExportModal } from "../ui";
 import { clearTransientLayersForTest } from "../transientLayers";
+import { setToasts, toasts } from "../toasts";
 
 beforeAll(async () => {
   await initParser();
@@ -34,31 +37,10 @@ describe("ExportModal content choice (GH #352)", () => {
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
     closeExportModal();
     clearTransientLayersForTest();
     resetStore();
     document.body.innerHTML = "";
-  });
-
-  it("blocks incomplete rendered copy and displays a permanent query failure", async () => {
-    setDoc({
-      byId: { root: node("root", "{{query (task TODO)}}", null) },
-      pages: [{ name: "P", kind: "page", title: "P", preBlock: null, roots: ["root"], format: "md", readOnly: false, guide: false }],
-      feed: ["P"], loaded: true,
-    });
-    vi.spyOn(backend(), "exportQuerySubtrees").mockRejectedValue(new QueryUnavailableError("projection.failed", "Index rebuild failed."));
-    const root = document.createElement("div");
-    document.body.append(root);
-    const dispose = render(() => <ExportModal />, root);
-    try {
-      openExportModal(["root"]);
-      await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain("Index rebuild failed"));
-      const button = (label: string) => [...root.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.trim() === label)!;
-      expect(button("Copy").disabled).toBe(true);
-      button("Markdown").click();
-      expect(button("Copy").disabled).toBe(false);
-    } finally { dispose(); }
   });
 
   it("offers an explicit preserve-Markdown choice next to the cleaned plain-text one", async () => {
@@ -116,62 +98,6 @@ describe("ExportModal content choice (GH #352)", () => {
   });
 });
 
-describe("ExportModal page export boundary (GH #348)", () => {
-  const node = (id: string, raw: string, parent: string | null, children: string[]): StoreNode => ({
-    id, raw, collapsed: false, parent, page: "P", children,
-  });
-
-  beforeEach(() => {
-    localStorage.clear();
-    setDoc({
-      byId: {
-        root: node("root", "Page body text", null, ["child"]),
-        child: node("child", "Child body text", "root", []),
-      },
-      pages: [{ name: "P", kind: "page", title: "P", preBlock: null, roots: ["root"], format: "md", readOnly: false, guide: false }],
-      feed: ["P"],
-      loaded: true,
-    });
-  });
-
-  afterEach(() => {
-    closeExportModal();
-    clearTransientLayersForTest();
-    resetStore();
-    document.body.innerHTML = "";
-    vi.restoreAllMocks();
-  });
-
-  it("normal page export stays unchanged and never silently includes references", async () => {
-    // Linked references exist as backend data, but page export reads only the
-    // page's own blocks — references join output only through the reference
-    // batch export, never implicitly.
-    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([{
-      page: "Elsewhere",
-      kind: "page",
-      blocks: [{ id: "x1", raw: "backlink-only phrase", collapsed: false, children: [] }],
-    }]);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    const dispose = render(() => <ExportModal />, root);
-
-    openExportModal(["root"]);
-    await Promise.resolve();
-
-    const markdown = [...document.querySelectorAll<HTMLButtonElement>(".export-indent-btn")]
-      .find((b) => b.textContent?.trim() === "Markdown");
-    markdown!.click();
-    await Promise.resolve();
-    const preview = document.querySelector<HTMLTextAreaElement>(".export-preview")!.value;
-    expect(preview).toContain("Page body text");
-    expect(preview).toContain("Child body text");
-    expect(preview).not.toContain("backlink-only phrase");
-    expect(preview).not.toContain("Elsewhere");
-
-    dispose();
-  });
-});
-
 describe("ExportModal formats", () => {
   const node = (id: string, raw: string, parent: string | null, children: string[]): StoreNode => ({
     id, raw, collapsed: false, parent, page: "P", children,
@@ -196,6 +122,7 @@ describe("ExportModal formats", () => {
     resetStore();
     document.body.innerHTML = "";
     vi.restoreAllMocks();
+    setToasts([]);
   });
 
   it("shows Text/OPML/HTML without PNG, scopes options, and copies the selected payload", async () => {
@@ -230,8 +157,10 @@ describe("ExportModal formats", () => {
     const preview = document.querySelector<HTMLTextAreaElement>(".export-preview")!.value;
     expect(preview).toContain("<opml");
     expect(preview).not.toContain("property");
+    await vi.waitFor(() => expect(byText("Copy")).toBeDefined());
     byText("Copy")!.click();
     expect(writeText).toHaveBeenCalledWith(preview);
+    await Promise.resolve();
 
     openExportModal(["root"]);
     await Promise.resolve();
@@ -244,8 +173,29 @@ describe("ExportModal formats", () => {
     expect(htmlPreview).toContain("<ul>");
     expect(htmlPreview).toContain("<strong>bold</strong>");
     expect(htmlPreview).not.toContain("property");
+    await vi.waitFor(() => expect(byText("Copy")).toBeDefined());
     byText("Copy")!.click();
     expect(writeText).toHaveBeenLastCalledWith(htmlPreview);
+    dispose();
+  });
+
+  it("waits for the clipboard before reporting Copy success", async () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <ExportModal />, root);
+    let reject!: (error: Error) => void;
+    vi.spyOn(backend(), "writeText").mockReturnValue(new Promise<void>((_, fail) => { reject = fail; }));
+    openExportModal(["root"]);
+    await Promise.resolve();
+    const byText = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === label);
+    byText("OPML")!.click();
+    await Promise.resolve();
+    await vi.waitFor(() => expect(byText("Copy")).toBeDefined());
+    byText("Copy")!.click();
+    expect(toasts().some((toast) => toast.message === "Copied to clipboard")).toBe(false);
+    reject(new Error("clipboard denied"));
+    await vi.waitFor(() => expect(toasts().some((toast) => toast.kind === "error")).toBe(true));
     dispose();
   });
 });

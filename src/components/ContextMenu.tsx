@@ -1,112 +1,38 @@
+import { boardGroupField as groupFieldForToken, formulaReferenceName } from "../sheet/boardColumns";
+import { reportUiFailure } from "../uiFailure";
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
-import {
-  contextMenu,
-  closeContextMenu,
-  zoomInto,
-  openBlockInSidebar,
-  openPageInSidebar,
-  isFavorite,
-  toggleFavorite,
-  pushToast,
-  isConflicted,
-  graphMeta,
-  setJournalTemplate,
-  openPageProps,
-  openBlockProps,
-  openExportModal,
-  openPdfExport,
-  openFormulaEditor,
-  type ContextMenuAction,
-  type SheetCellRemoveCtx,
-} from "../ui";
-import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, openInNewTab, pageTargetMatchesLoaded, type PageTarget } from "../router";
-import { activePaneRoutes, removePageTargetAcrossPanes } from "../panes";
-import { prepareRename, refreshAfterRename, renameOrMergePage } from "../graph";
-import { backend } from "../backend";
+import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openBlockProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
 import { isMobilePlatform } from "../nativeChrome";
+import { pushToast } from "../toasts";
+import { bindingOwner, graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
+import { isConflicted } from "../document";
+import { graphMeta, setJournalTemplate } from "../graphSession";
+import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
+import { focusedRouter, removePageTargetAcrossPanes } from "../panes";
+import "../graph"; // installs the document rename's navigation refresh handler
+import { backend } from "../backend";
 import { carryDay } from "../carry";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import {
-  doc,
-  ensureBlockId,
-  persistentBlockRef,
-  blockSubtreeMarkdown,
-  blockIsGridView,
-  deleteBlock,
-  setBlockProperty,
-  toggleBlockProperty,
-  toggleOwnNumberedList,
-  blockProperty,
-  setSelectionHeading,
-  setCollapsedDeep,
-  dtoSubtreeMarkdown,
-  flushPage,
-  isDirty,
-  deletePage,
-  restoreTodayJournalInFeed,
-  selectedIds,
-  blockPageReadOnly,
-  blockWritable,
-  pageByName,
-  buildClipboardPayload,
-  insertOutlineBefore,
-} from "../store";
+import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
+import { renameOrMergePage, renameOutcomeMessage } from "../graph";
+import { openDurableBlock } from "../blockRefActions";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
-import { appendSheetCellChild, deleteColumn, deleteRow as deleteSheetRow, setBoardGroupBy } from "../sheet/mutations";
-import {
-  captureSheetMutationAuthority,
-  cellBlockId,
-  cellForBlockId,
-  cellOwner,
-  cellSel,
-  focusCell,
-  setCellSel,
-} from "../sheet/selection";
-import {
-  boardGroupByOptions,
-  fieldIdsForBlocks,
-  fieldLabel,
-  formulaReferenceName,
-  isFieldId,
-  type FieldId,
-  type QueryGroupingControl,
-} from "../sheet/fields";
+import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";
+import { cellBlockId, cellForBlockId, cellOwner, cellSel, focusCell, setCellSel } from "../sheet/selection";
+import { boardGroupByOptions, fieldIdsForBlocks, fieldLabel, isFieldId, type FieldId } from "../sheet/fields";
 import { startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
 import { copyBlockOutline, writeClipboardText } from "../clipboard";
+import { cutBlocks } from "../cut";
+import { copyBlockLink, copyTineLink } from "./blockLinkCopy";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
-import { beginPageDeleteTrace } from "../pageDeleteTrace";
-import { isPublishedExport } from "../publishedBackend";
-import { publishedPermalinkUrl } from "../publishedPermalink";
 
-// Copy a block reference/embed — but only after the block's id:: is durably on
-// disk. ensureBlockId returns null if the save couldn't land (conflict/error), in
-// which case we must NOT copy a ref that would dangle after a restart.
-async function copyBlockRef(id: string, fmt: (uuid: string) => string, okMsg: string) {
-  const uuid = await ensureBlockId(id);
-  if (!uuid) {
-    pushToast("Couldn't save the block id — reference not copied (resolve the conflict first).", "error");
-    return;
-  }
-  await writeClipboardText(fmt(uuid));
-  pushToast(okMsg, "success");
-}
-
-// Open the block's own page in a new background tab, pre-zoomed to the block —
-// same destination as middle-clicking its bullet (Block.tsx). persistentBlockRef
-// pins the uuid (writes id:: once) so the new tab survives a reload/restart.
-function openBlockInNewTab(id: string) {
-  const ref = persistentBlockRef(id);
-  openInNewTab({
-    kind: "page",
-    name: ref.page,
-    pageKind: ref.pageKind,
-    block: ref.uuid,
-    ...(ref.path ? { path: ref.path } : {}),
-  });
+function reportCopy(write: Promise<void>, okMsg: string): void {
+  void write.then(() => pushToast(okMsg, "success"))
+    .catch(() => pushToast("Couldn't copy: clipboard write failed.", "error"));
 }
 
 // Right-click context menu. Universal over its target: a block (full editing
@@ -135,13 +61,9 @@ export function placeContextMenu(
 }
 
 /** Which side a submenu opens on, once the parent menu itself has been placed.
- *
- *  Submenus used to be pure CSS at `left: 100%`, with no idea where the window
- *  ended, so a menu opened over the rightmost column of a table pushed its
- *  submenu off the screen entirely (GH #471). Right stays the default; left is
- *  the mirror when the right side would overflow; `over` is the last resort for
- *  a viewport too narrow for the pair, where the submenu overlays its own menu
- *  instead of leaving the screen. Pure, because jsdom cannot lay out. */
+ *  Right by default; left when the right side would leave the window; `over`
+ *  (overlaying its own menu) when the viewport is too narrow for the pair, the
+ *  phone case (GH #471). Pure, because jsdom cannot lay out. */
 export function placeSubmenu(
   menuLeft: number,
   menuWidth: number,
@@ -188,13 +110,11 @@ export function ContextMenu(): JSX.Element {
       const placed = placeContextMenu(x, y, r.width, r.height, window.innerWidth, window.innerHeight);
       setPlace(placed);
       // Submenus are laid out but hidden by `visibility`, so they are measurable
-      // here (GH #471). One side for the whole menu: two sibling submenus opening
+      // here (GH #471). One side for the whole menu: sibling submenus opening
       // opposite ways would be worse than either.
       const widest = Math.max(
         0,
-        ...[...el.querySelectorAll<HTMLElement>(".ctx-submenu-menu")].map((sub) =>
-          sub.getBoundingClientRect().width,
-        ),
+        ...[...el.querySelectorAll<HTMLElement>(".ctx-submenu-menu")].map((sub) => sub.getBoundingClientRect().width),
       );
       setSubmenuSide(placeSubmenu(placed.left, r.width, widest, window.innerWidth));
       if (cm.kind === "page") {
@@ -236,7 +156,10 @@ export function ContextMenu(): JSX.Element {
             }}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
-              if (m().kind !== "page" || !menuEl) return;
+              // Read the live signal, not `m()`: an inline field's Enter can
+              // close the menu before this bubbled keydown arrives, and the
+              // disposed <Show> accessor then throws a stale read.
+              if (contextMenu()?.kind !== "page" || !menuEl) return;
               handlePageMenuKeyDown(e, menuEl, () => close());
             }}
           >
@@ -261,14 +184,17 @@ export function ContextMenu(): JSX.Element {
                 />
               </Match>
               <Match when={m().kind === "page"}>
-                <PageMenu
-                  name={(m() as { name: string }).name}
-                  pageKind={(m() as { pageKind: "journal" | "page" }).pageKind}
-                  fileActions={(m() as { fileActions?: boolean }).fileActions ?? false}
-                  x={m().x}
-                  y={m().y}
-                  close={close}
-                />
+                <Show when={m()} keyed>
+                  {(page) => <PageMenu
+                    name={(page as { name: string }).name}
+                    pageKind={(page as { pageKind: "journal" | "page" }).pageKind}
+                    path={(page as { path?: string }).path}
+                    fileActions={(page as { fileActions?: boolean }).fileActions ?? false}
+                    x={page.x}
+                    y={page.y}
+                    close={close}
+                  />}
+                </Show>
               </Match>
               <Match when={m().kind === "sheet"}>
                 <SheetMenu
@@ -280,7 +206,6 @@ export function ContextMenu(): JSX.Element {
                   fields={(m() as { fields?: readonly string[] }).fields}
                   formulas={(m() as { formulas?: readonly [string, string][] }).formulas}
                   filter={(m() as { filter?: string | null }).filter}
-                  queryGrouping={(m() as { queryGrouping?: QueryGroupingControl }).queryGrouping}
                   x={m().x}
                   y={m().y}
                   close={close}
@@ -396,8 +321,9 @@ function ShowChildrenAsSubmenu(props: { id: string; close: () => void }): JSX.El
 }
 
 function BlockMenu(props: { id: string; x: number; y: number; close: () => void }): JSX.Element {
-  const hasChildren = () => (doc.byId[props.id]?.children.length ?? 0) > 0;
+  const hasChildren = () => (docNode(props.id)?.children.length ?? 0) > 0;
   const readOnly = () => blockPageReadOnly(props.id);
+  // A heading command applies to the active selection when there is one (GH #240).
   const headingTargets = () => {
     const selected = selectedIds();
     return selected.length ? selected : [props.id];
@@ -481,35 +407,18 @@ function ColorPalette(props: { id: string; close: () => void }): JSX.Element {
 }
 
 function SheetCellMenu(props: { id: string; remove?: SheetCellRemoveCtx; close: () => void }): JSX.Element {
-  const canDeleteRow = () => !!props.remove?.rowId && !!doc.byId[props.remove.rowId];
+  const canDeleteRow = () => !!props.remove?.rowId && !!docNode(props.remove.rowId);
   const canDeleteColumn = () =>
-    props.remove?.gridId != null && props.remove?.col != null && !!doc.byId[props.remove.gridId];
+    props.remove?.gridId != null && props.remove?.col != null && !!docNode(props.remove.gridId);
   const deleteRow = () => {
-    const { rowId, gridId, surfaceId } = props.remove ?? {};
-    const row = gridId && rowId ? doc.byId[gridId]?.children.indexOf(rowId) ?? -1 : -1;
-    const active = cellSel();
-    const directGridRow = !!gridId
-      && !!rowId
-      && row >= 0
-      && doc.byId[rowId]?.parent === gridId
-      && blockIsGridView(gridId);
-    if (directGridRow) {
-      if (active && active.gridId === gridId && active.surfaceId === surfaceId) {
-        deleteSheetRow(gridId, row, props.close, captureSheetMutationAuthority(active));
-      } else {
-        props.close();
-      }
-      return;
-    }
-    if (rowId && doc.byId[rowId]) deleteBlock(rowId);
+    const rowId = props.remove?.rowId;
+    if (rowId && docNode(rowId)) deleteBlock(rowId);
     props.close();
   };
   const deleteColumnHere = () => {
     const { gridId, col } = props.remove ?? {};
-    const active = cellSel();
-    if (gridId != null && col != null && active && active.gridId === gridId) {
-      deleteColumn(gridId, col, props.close, captureSheetMutationAuthority(active));
-    }
+    if (gridId != null && col != null) deleteColumn(gridId, col);
+    props.close();
   };
   const addChild = () => {
     const active = cellSel();
@@ -565,7 +474,7 @@ function SheetCellMenu(props: { id: string; remove?: SheetCellRemoveCtx; close: 
 }
 
 function sheetFields(ownerId: string): FieldId[] {
-  return fieldIdsForBlocks(doc.byId[ownerId]?.children ?? []).filter(
+  return fieldIdsForBlocks(docNode(ownerId)?.children ?? []).filter(
     (field): field is FieldId => field === "state" || field === "priority" || field.startsWith("prop:")
   );
 }
@@ -579,7 +488,6 @@ function SheetMenu(props: {
   fields?: readonly string[];
   formulas?: readonly [string, string][];
   filter?: string | null;
-  queryGrouping?: QueryGroupingControl;
   x: number;
   y: number;
   close: () => void;
@@ -596,26 +504,10 @@ function SheetMenu(props: {
     props.close();
   };
   const boardField = () => (props.groupBy && isFieldId(props.groupBy) ? props.groupBy : null);
-  const boardGroupField = (): FieldId => {
-    const raw = props.groupBy || "state";
-    const normalized = raw.startsWith("formula.") ? `formula:${raw.slice("formula.".length)}` : raw;
-    return isFieldId(normalized) ? normalized : "state";
-  };
-  // A query board's grouping is the QUERY's to write: the same control its own
-  // toolbar uses, so the two surfaces cannot state it two different ways.
-  const groupOptions = (): readonly FieldId[] =>
-    props.queryGrouping?.options ?? boardGroupByOptions(props.ownerId);
-  /** The grouping the board beside this menu is ACTUALLY showing, so the tick
-   *  marks the column set on screen. A query that states nothing is drawn with
-   *  the task-marker default (ADR 0030); only an explicit clear is ungrouped. */
-  const currentGroupField = (): FieldId | null => {
-    const control = props.queryGrouping;
-    if (!control) return boardGroupField();
-    return control.cleared ? null : control.field ?? "state";
-  };
-  const doGroupBy = (field: FieldId | null) => {
-    if (props.queryGrouping) props.queryGrouping.set(field);
-    else if (field) setBoardGroupBy(props.ownerId, field);
+  const boardGroupField = () => groupFieldForToken(props.groupBy);
+  const noGrouping = () => props.rowSource === "query" && props.groupBy === "";
+  const doGroupBy = (field: FieldId | "") => {
+    setBoardGroupBy(props.ownerId, field);
     props.close();
   };
 
@@ -674,29 +566,23 @@ function SheetMenu(props: {
         <div class="ctx-item ctx-submenu">
           <span>Group by →</span>
           <div class="ctx-submenu-menu">
-            {/* Only a query can be ungrouped, and only a query offers to be. */}
-            <Show when={props.queryGrouping}>
-              <div
-                class="ctx-item"
-                classList={{ "ctx-active": currentGroupField() === null }}
-                onClick={() => doGroupBy(null)}
-              >
-                {currentGroupField() === null ? "✓ " : ""}
-                No grouping
-              </div>
-            </Show>
-            <For each={groupOptions()}>
+            <For each={boardGroupByOptions(props.ownerId)}>
               {(field) => (
                 <div
                   class="ctx-item"
-                  classList={{ "ctx-active": field === currentGroupField() }}
+                  classList={{ "ctx-active": !noGrouping() && field === boardGroupField() }}
                   onClick={() => doGroupBy(field)}
                 >
-                  {field === currentGroupField() ? "✓ " : ""}
+                  {!noGrouping() && field === boardGroupField() ? "✓ " : ""}
                   {fieldLabel(field)}
                 </div>
               )}
             </For>
+            <Show when={props.rowSource === "query"}>
+              <div class="ctx-item" classList={{ "ctx-active": noGrouping() }} onClick={() => doGroupBy("")}>
+                {noGrouping() ? "✓ " : ""}No grouping
+              </div>
+            </Show>
           </div>
         </div>
         <div class="ctx-sep" />
@@ -752,6 +638,8 @@ function SheetMenu(props: {
   );
 }
 
+
+
 // Right-click menu for an INLINE block ref `((uuid))` — acts on the referenced
 // (target) block: open it in the sidebar, jump to it, or copy a ref/embed. (OG's
 // menu also has delete/replace, which edit the containing block's text — those are
@@ -769,13 +657,14 @@ function BlockRefMenu(props: {
       run: () => openBlockInSidebar({ uuid: props.uuid, page: props.page, pageKind: props.pageKind, path: props.path }),
     },
     { label: "Go to block", run: () => openPageAtBlock({ name: props.page, pageKind: props.pageKind, block: props.uuid, path: props.path }) },
+    { label: "Copy link", run: () => void copyTineLink({ blockUuid: props.uuid }) },
     {
       label: "Copy block ref",
-      run: () => { void writeClipboardText(`((${props.uuid}))`); pushToast("Copied block ref", "success"); },
+      run: () => reportCopy(writeClipboardText(`((${props.uuid}))`), "Copied block ref"),
     },
     {
       label: "Copy block embed",
-      run: () => { void writeClipboardText(`{{embed ((${props.uuid}))}}`); pushToast("Copied block embed", "success"); },
+      run: () => reportCopy(writeClipboardText(`{{embed ((${props.uuid}))}}`), "Copied block embed"),
     },
   ];
   return (
@@ -800,22 +689,41 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
   // block is inserted together with its children. Off → `template-including-parent::
   // false` (only the children are inserted; the block is just the template's label).
   const [includeParent, setIncludeParent] = createSignal(true);
-  const hasChildren = () => (doc.byId[props.id]?.children.length ?? 0) > 0;
+  const hasChildren = () => (docNode(props.id)?.children.length ?? 0) > 0;
 
   const submit = async () => {
     const title = name().trim();
     if (!title) return;
-    const existing = await backend().listTemplates().catch(() => []);
-    if (existing.some((t) => t.name.toLowerCase() === title.toLowerCase())) {
+    // The menu can close or be replaced while the name inventory is read, and
+    // `props` then reads through a retired `Match` accessor (it throws, or names
+    // another block). Everything the submission needs is captured here (I-20).
+    const id = props.id;
+    const close = props.close;
+    const asksToOmitParent = hasChildren() && !includeParent();
+    const owner = bindingOwner();
+    let existing;
+    try {
+      existing = await readOwned(owner, backend().listTemplates());
+    } catch (error) {
+      if (owner()) reportUiFailure("template-read", error);
+      return;
+    }
+    if (existing.kind === "stale") return;
+    if (existing.value.some((t) => t.name.toLowerCase() === title.toLowerCase())) {
       pushToast(`A template named “${title}” already exists.`, "error");
       return;
     }
-    setBlockProperty(props.id, "template", title);
-    if (hasChildren() && !includeParent()) {
-      setBlockProperty(props.id, "template-including-parent", "false");
+    // A permission/read-only change can land while the name read is pending.
+    if (!blockWritable(id)) {
+      reportUiFailure("template-write", "read-only");
+      return;
+    }
+    setBlockProperty(id, "template", title);
+    if (asksToOmitParent) {
+      setBlockProperty(id, "template-including-parent", "false");
     }
     pushToast(`Template “${title}” created.`, "success");
-    props.close();
+    close();
   };
 
   return (
@@ -872,13 +780,17 @@ function PageMenu(props: {
   y: number;
   close: (restoreFocus?: boolean) => void;
 }): JSX.Element {
-  const target = (): PageTarget => ({ name: props.name, pageKind: props.pageKind, ...(props.path ? { path: props.path } : {}) });
-  const fav = () => isFavorite(props.name);
+  // A name-only caller still pins the loaded file when the menu opens.
+  const openedPage = pageByName(props.name);
+  const path = props.path ?? openedPage?.id;
+  const target = (): PageTarget => ({ name: props.name, pageKind: props.pageKind, ...(path ? { path } : {}) });
+  const fav = () => isFavorite(props.name, props.pageKind);
   const readOnly = () => {
     const page = pageByName(props.name);
     return !pageTargetMatchesLoaded(target(), page) || !!page?.readOnly;
   };
   const runFileAction = async (reveal: boolean) => {
+    const owner = graphOwner();
     const name = props.name;
     const kind = props.pageKind;
     const captured = target();
@@ -887,107 +799,80 @@ function PageMenu(props: {
       pushToast("This page target changed; reopen the page actions menu.", "error");
       return;
     }
-    // A conflicted page is never flushed here — an unsavable draft is exactly
-    // what the conflict IS — but opening or revealing the file on disk is not
-    // refused either. It is the recovery path a stuck conflict needs, and
-    // refusing it defended nothing: the file is untouched whether or not Tine
-    // shows it, and blocking the only way to inspect it turned one stuck page
-    // into an inaccessible one (GH #490). The user is told what they are
-    // looking at instead.
+    // A conflicted page is not flushed (its unsavable draft is what the
+    // conflict is) but its file is opened as it stands: opening or revealing
+    // changes nothing on disk and is the recovery path a stuck conflict needs
+    // (og I1d, master 6f8531344, GH #490).
     let conflicted = isConflicted(name);
     if (!conflicted && !page!.readOnly && !(await flushPage(name))) {
-      pushToast(`Couldn't save “${name}”; its on-disk file was not opened.`, "error");
+      if (owner()) pushToast(`Couldn't save “${name}”; its on-disk file was not opened.`, "error");
       return;
     }
+    if (!owner()) return;
     conflicted = conflicted || isConflicted(name);
     try {
       if (!pageTargetMatchesLoaded(captured, pageByName(name))) {
         pushToast("This page target changed; reopen the page actions menu.", "error");
         return;
       }
-      await backend().openPageFile(name, kind, captured.path ?? page!.path, reveal);
-      if (conflicted) {
-        pushToast(
-          `“${name}” has an unresolved save conflict — this is the file as it stands on disk. ` +
-            `Your unsaved changes stay in Tine until you resolve it.`,
-          "info",
-        );
+      const opened = await readOwned(owner, backend().openPageFile(name, kind, captured.path ?? page!.id, reveal));
+      if (opened.kind !== "stale" && conflicted) {
+        pushToast(`“${name}” has an unresolved save conflict — this is the file as it stands on disk. Your unsaved changes stay in Tine until you resolve it.`, "info");
       }
     } catch (error) {
-      const message = page!.path
+      const message = page!.id
         ? `Couldn't ${reveal ? "show" : "open"} the page file. (${String(error)})`
         : "This page has no on-disk file yet. Type something and let Tine save it first.";
       pushToast(message, "error");
     }
   };
   const remove = async () => {
+    const owner = bindingOwner();
     // Snapshot props BEFORE any await/close: the menu's <Show> disposes this
     // component the instant props.close() runs, after which reading props.* warns
     // "stale read from <Show>".
     const name = props.name;
     const kind = props.pageKind;
     const captured = target();
-    const trace = beginPageDeleteTrace(kind);
     // Native GTK confirm — window.confirm silently returns true here, which would
     // delete the page with no prompt.
-    if (!(await backend().confirm(deletePageConfirmText(name)))) {
-      trace.finish("confirm-cancelled");
+    const confirmed = await readOwned(owner, backend().confirm(`Delete "${name}"? The file moves to the graph's .tine-trash folder.`));
+    if (confirmed.kind === "stale" || !confirmed.value) return;
+    if (!captured.path && (pageByName(name) !== openedPage || pageByName(name)?.id !== path)) {
+      pushToast("This page target changed; reopen the page actions menu.", "error");
       return;
     }
-    trace.phase("confirm-accepted");
-    let awaitsFallbackPaint = false;
     // Route through the store (not backend directly) so it tombstones the page and
     // cancels any pending save — otherwise a just-typed, never-saved page could be
     // recreated by a queued save right after we delete it.
-    void deletePage(name, kind, captured.path, {
-      phase: (phase) => trace.phase(phase),
-      retireDurableRoute: () => {
-        trace.phase("route-retirement-start");
-        awaitsFallbackPaint = activePaneRoutes().some((route) =>
-          route.kind === "page"
-          && route.name === captured.name
-          && route.pageKind === captured.pageKind
-          && route.path === captured.path
-        );
-        if (awaitsFallbackPaint) trace.armFallback();
-        removePageTargetAcrossPanes(captured);
-        trace.phase("route-retirement-complete");
-      },
-    })
-      .then((ok) => {
+    // Pane routes are retired inside the durable delete, before the page leaves
+    // the working set, so no pane renders a route to a purged page (GH #376).
+    void writeOwned(owner, deletePage(name, kind, captured.path, () => removePageTargetAcrossPanes(captured)))
+      .then((result) => {
+        if (result.kind === "stale") return;
+        const ok = result.value;
         if (!ok) {
-          trace.finish("delete-refused");
           pushToast("Delete failed", "error");
           return;
         }
         // Deleted a day IN the journals feed (in place, no navigation) → the feed
         // loader's withToday didn't re-run, so restore today's empty placeholder
         // here if it was the one deleted (#17). No-op for an older day.
-        if (kind === "journal") void restoreTodayJournalInFeed();
+        if (kind === "journal") {
+          const refused = restoreTodayJournalInFeed();
+          if (refused) reportPageLoadRefusal(refused);
+        }
         pushToast(`Deleted “${name}”`, "success");
-        if (!awaitsFallbackPaint) trace.finish("complete-no-fallback");
       })
-      .catch(() => {
-        trace.finish("delete-error");
-        pushToast("Delete failed", "error");
-      });
+      .catch(() => { pushToast("Delete failed", "error"); });
   };
   const items: { id: string; label: string; run: () => void; danger?: boolean }[] = [
     { id: "open", label: "Open", run: () => openPageTarget(target()) },
     { id: "open-sidebar", label: "Open in sidebar", run: () => openPageInSidebar(target()) },
     { id: "open-new-tab", label: "Open in new tab", run: () => openPageTargetInNewTab(target()) },
     { id: "favorite-toggle", label: fav() ? "Remove from favorites" : "Add to favorites", run: () => toggleFavorite(props.name, props.pageKind) },
-    { id: "copy-page-ref", label: "Copy page ref", run: () => { void writeClipboardText(`[[${props.name}]]`); pushToast("Copied page ref", "success"); } },
-    ...(isPublishedExport()
-      ? [{
-          id: "copy-page-link",
-          label: "Copy page link",
-          run: () => {
-            void writeClipboardText(publishedPermalinkUrl({ kind: "page", page: props.name }));
-            pushToast("Copied page link", "success");
-          },
-        }]
-      : []),
+    { id: "copy-link", label: "Copy link", run: () => void copyTineLink({ page: props.name }) },
+    { id: "copy-page-ref", label: "Copy page ref", run: () => reportCopy(writeClipboardText(`[[${props.name}]]`), "Copied page ref") },
     {
       id: "copy-export",
       label: "Copy / export as…",
@@ -1007,20 +892,20 @@ function PageMenu(props: {
       id: "copy-page-markdown",
       label: "Copy page as Markdown",
       run: () => {
-        const request = props.path
-          ? backend().getPageByPath(props.path)
+        const owner = graphOwner();
+        const request = path
+          ? backend().getPageByPath(path)
           : backend().getPage(props.name, props.pageKind);
-        void request
-          .then((p) => {
-            if (p) void writeClipboardText(p.blocks.map((b) => dtoSubtreeMarkdown(b)).join("\n"));
-            pushToast("Copied page as Markdown", "success");
-          });
+        void readOwned(owner, request).then((result) => {
+          if (result.kind === "stale") return;
+          const p = result.value;
+          if (!p) throw new Error("Page unavailable");
+          return writeClipboardText(p.blocks.map((b) => dtoSubtreeMarkdown(b)).join("\n"));
+        }).then(() => { if (owner()) pushToast("Copied page as Markdown", "success"); })
+          .catch(() => { if (owner()) pushToast("Couldn't copy page as Markdown.", "error"); });
       },
     },
-    // Not offered on mobile: no mobile WebView can print (GH #560, see openPdfExport).
-    ...(isMobilePlatform
-      ? []
-      : [{ id: "export-pdf", label: "Export to PDF…", run: () => openPdfExport(props.name) }]),
+    ...(!isMobilePlatform ? [{ id: "export-pdf", label: "Export to PDF…", run: () => openPdfExport(props.name) }] : []),
     ...(props.fileActions && !pageByName(props.name)?.guide
       ? [
           { id: "show-in-folder", label: "Show in folder", run: () => void runFileAction(true) },
@@ -1053,7 +938,7 @@ function PageMenu(props: {
       {/* Rename is page-only. It expands into an inline input (like MakeTemplate)
           because window.prompt is a silent no-op in WebKitGTK. */}
       <Show when={!readOnly() && pageMenuAvailability(props.pageKind).rename}>
-        <RenamePage name={props.name} pageKind={props.pageKind} path={props.path} close={props.close} />
+        <RenamePage name={props.name} pageKind={props.pageKind} path={path} close={props.close} />
       </Show>
       <Show when={!readOnly() && pageMenuAvailability(props.pageKind).delete}>
         <button
@@ -1077,22 +962,6 @@ export function pageMenuAvailability(pageKind: PageKind): { rename: boolean; del
 
 export function deletePageMenuLabel(pageKind: PageKind): string {
   return pageKind === "journal" ? "Delete journal" : "Delete page";
-}
-
-/** What the delete confirmation actually promises.
- *
- *  "Moves to .tine-trash" reads as fully recoverable, and for a saved page it
- *  is. But the trash receives the FILE, and a page with unsaved edits has work
- *  that is not in that file: a dirty page's latest keystrokes, or — provably —
- *  every edit on a conflicted page, whose saves are refused by design until the
- *  conflict is resolved. Deleting throws that away with nothing to recover from,
- *  so the prompt has to say so while the user can still answer no. (Direct Files
- *  data-safety audit, 2026-08-09, finding 18.) */
-export function deletePageConfirmText(name: string): string {
-  const trashed = `Delete "${name}"? The file moves to the graph's .tine-trash folder.`;
-  return isDirty(name) || isConflicted(name)
-    ? `${trashed}\n\nThis page has unsaved changes. They were never written to the file, so they are NOT in the trash copy and cannot be recovered.`
-    : trashed;
 }
 
 // Inline page rename: a context-menu item that expands into a name field (mirrors
@@ -1130,31 +999,33 @@ function RenamePage(props: {
     // props.* afterward warns "stale read from <Show>".
     const from = props.name;
     const kind = props.pageKind;
+    const path = props.path;
     const next = value().trim();
+    const root = graphMeta()?.root;
+    const router = focusedRouter();
+    const tabId = router.activeId();
+    const intentRevision = router.routeIntentRevision();
+    const live = () => graphMeta()?.root === root && router.activeId() === tabId
+      && router.routeIntentRevision() === intentRevision;
+    // The rename's refresh retires this owner; it hands back its successor.
+    let current = graphOwner(live);
     props.close(false);
     if (!next || next === from) return;
     try {
-      // Save every pending edit first: the rename reads referring pages from
-      // disk to rewrite their `[[refs]]`. An edit that cannot be saved blocks
-      // the rename only if the rename would touch it (GH #535).
-      const prepared = await prepareRename(from);
-      if (!prepared.ok) {
-        pushToast(prepared.message, "error", { sticky: true });
+      const target = { name: from, pageKind: kind, ...(path ? { path } : {}) };
+      const renamed = await renameOrMergePage(from, next, target, (refreshed) => { current = ownedWhen(refreshed, live); });
+      if (renamed === "cancelled") return;
+      const message = renameOutcomeMessage(renamed, from, next);
+      if (message) {
+        // `uncertain` follows a reset that retired `current`; on the same graph
+        // the user must still learn the rename may have happened.
+        const show = renamed === "uncertain" ? graphMeta()?.root === root : current();
+        if (show) pushToast(message, renamed === "unchanged" ? "info" : "error");
         return;
       }
-      const result = await renameOrMergePage(from, next, props.path, prepared.unsavedPaths);
-      if (result.status === "cancelled") return;
-      // The backend rewrote refs through the self-write guard (no watcher
-      // reload): refresh the pages it touched so a stale save can't revert the
-      // rename.
-      void refreshAfterRename(
-        from,
-        next,
-        { name: from, pageKind: kind, ...(props.path ? { path: props.path } : {}) },
-        result.status === "renamed" ? result.touched : null,
-      );
+      if (!current()) return;
       openPage(next, kind);
-      pushToast(result.status === "merged" ? `Merged into “${next}”` : `Renamed to “${next}”`, "success");
+      pushToast(renamed === "merged" ? `Merged into “${next}”` : `Renamed to “${next}”`, "success");
     } catch (e) {
       pushToast(`Rename failed: ${String(e)}`, "error");
     }
@@ -1199,87 +1070,81 @@ function RenamePage(props: {
 }
 
 function blockActions(id: string, x: number, y: number): { label: string; run: () => void; danger?: boolean }[] {
-  const numbered = blockProperty(id, "logseq.order-list-type") === "number";
+  const selected = selectedIds();
+  const multi = selected.length > 1 && selected.includes(id);
+  const ids = multi ? selected : [id];
+  const noun = multi ? "blocks" : "block";
+  const sameSelection = () => JSON.stringify(selectedIds()) === JSON.stringify(ids);
+  const text = (cut = false) => multi ? selectionMarkdown(cut || undefined) : blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
+  const copy = () => reportCopy(copyBlockOutline("copy", text(), buildClipboardPayload(ids)), `Copied ${noun}`);
+  const writable = ids.every(blockWritable);
+  const mutate = (tag: string, action: (target: string) => void) => {
+    if (ids.some((target) => !blockWritable(target))) return;
+    withUndoUnit(tag, [...new Set(ids.map((target) => docNode(target)!.page))], () => ids.forEach(action));
+  };
+  const numbered = ids.every((target) => blockProperty(target, "logseq.order-list-type") === "number");
   // If this block is itself a template (`template:: name`), offer to set it as the
   // new-journal default (or clear it if it already is) — right where templates live.
   const tmplName = blockProperty(id, "template");
   const isJournalTmpl = !!tmplName && graphMeta()?.default_journal_template === tmplName;
-  if (blockPageReadOnly(id)) {
+  if (!writable) {
     return [
-      { label: "Open in sidebar", run: () => openBlockInSidebar(persistentBlockRef(id)) },
+      { label: "Open in sidebar", run: () => { openDurableBlock(id, "sidebar"); } },
       { label: "Zoom into block", run: () => zoomInto(id) },
-      { label: "Open in new tab", run: () => openBlockInNewTab(id) },
-      ...(isPublishedExport()
-        ? [{
-            label: "Copy block link",
-            run: () => {
-              const ref = persistentBlockRef(id);
-              void writeClipboardText(publishedPermalinkUrl({ kind: "block", block: ref.uuid }));
-              pushToast("Copied block link", "success");
-            },
-          }]
-        : []),
-      { label: "Copy block", run: () => { const text = blockSubtreeMarkdown(id, 0, true, copyStripCollapsed()); void copyBlockOutline("copy", text, buildClipboardPayload([id])); pushToast("Copied block", "success"); } },
+      { label: "Open in new tab", run: () => { openDurableBlock(id, "tab"); } },
+      { label: `Copy ${noun}`, run: copy },
       {
         label: "Copy / export as…",
         run: () => {
-          const sel = selectedIds();
-          openExportModal(sel.length > 1 && sel.includes(id) ? sel : [id]);
+          openExportModal(ids);
         },
       },
     ];
   }
   return [
-    { label: "Open in sidebar", run: () => openBlockInSidebar(persistentBlockRef(id)) },
+    { label: "Open in sidebar", run: () => { openDurableBlock(id, "sidebar"); } },
     { label: "Zoom into block", run: () => zoomInto(id) },
-    { label: "Open in new tab", run: () => openBlockInNewTab(id) },
-    // Editing this block's properties (GH #164). Deliberately in the WRITABLE
-    // arm: the read-only arm above returns early, so a read-only block offers no
-    // property editing at all, and the panel fails closed again on its own.
+    { label: "Open in new tab", run: () => { openDurableBlock(id, "tab"); } },
+    // GH #164: in the WRITABLE arm only; the read-only arm returned above.
     { label: "Properties…", run: () => openBlockProps(id, x, y) },
     // The keyboard route to "a block above this one" is Enter at offset 0, which
-    // splits. A block that owns its own Enter key — a code block, where Enter
-    // inserts a newline — therefore has no keyboard route, and when it is the
-    // FIRST block of a page there is no earlier block to insert after either, so
-    // the top of the page was unreachable (GH #480). This item is the route, and
-    // it is offered on every block rather than only that case: the same dead end
-    // exists for the first child of any subtree whose first block is a code block.
+    // splits; a code block owns its Enter key, so a code block first on a page
+    // (or first in any subtree) left the top unreachable (GH #480).
     {
       label: "Insert block above",
       run: () => {
         const inserted = insertOutlineBefore(id, [{ raw: "", children: [] }]);
-        if (inserted !== id) startEditing(inserted, 0);
+        if (inserted) startEditing(inserted, 0);
       },
     },
-    { label: "Copy block ref", run: () => void copyBlockRef(id, (u) => `((${u}))`, "Copied block ref") },
-    { label: "Copy block embed", run: () => void copyBlockRef(id, (u) => `{{embed ((${u}))}}`, "Copied block embed") },
-    { label: "Copy block", run: () => { const text = blockSubtreeMarkdown(id, 0, true, copyStripCollapsed()); void copyBlockOutline("copy", text, buildClipboardPayload([id])); pushToast("Copied block", "success"); } },
+    { label: "Copy link", run: () => void copyTineLink({ blocks: ids }) },
+    { label: multi ? "Copy block refs" : "Copy block ref", run: () => void copyBlockLink(ids, "ref") },
+    { label: multi ? "Copy block embeds" : "Copy block embed", run: () => void copyBlockLink(ids, "embed") },
+    { label: `Copy ${noun}`, run: copy },
     // Open the export modal for the whole selection (if this block is part of a
     // multi-selection) or just this block's subtree — preview + indent/remove opts.
     {
       label: "Copy / export as…",
       run: () => {
-        const sel = selectedIds();
-        openExportModal(sel.length > 1 && sel.includes(id) ? sel : [id]);
+        openExportModal(ids);
       },
     },
     ...(canConvertPipeTableToGrid(id)
       ? [{ label: "Convert to grid", run: () => { convertPipeTableToGrid(id); } }]
       : []),
     {
-      label: "Cut block",
+      label: `Cut ${noun}`,
       run: () => {
-        const text = blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
-        void copyBlockOutline("cut", text, buildClipboardPayload([id]));
-        deleteBlock(id);
+        void cutBlocks(ids, text(true), () => !multi || sameSelection() ? text(true) : "", () => multi ? deleteSelection() : deleteBlock(id))
+          .catch(() => pushToast(`Couldn't cut ${noun}: clipboard write failed.`, "error"));
       },
     },
     {
       label: numbered ? "Remove numbered list" : "Numbered list",
-      run: () => toggleOwnNumberedList(id),
+      run: () => mutate("number-selection", toggleOwnNumberedList),
     },
-    { label: "Collapse all", run: () => setCollapsedDeep(id, true) },
-    { label: "Expand all", run: () => setCollapsedDeep(id, false) },
+    { label: "Collapse all", run: () => mutate("collapse-selection", (target) => setCollapsedDeep(target, true)) },
+    { label: "Expand all", run: () => mutate("expand-selection", (target) => setCollapsedDeep(target, false)) },
     ...(tmplName
       ? [
           {
@@ -1288,6 +1153,6 @@ function blockActions(id: string, x: number, y: number): { label: string; run: (
           },
         ]
       : []),
-    { label: "Delete block", run: () => deleteBlock(id), danger: true },
+    { label: `Delete ${noun}`, run: () => { if (multi ? sameSelection() : blockWritable(id)) multi ? deleteSelection() : deleteBlock(id); }, danger: true },
   ];
 }

@@ -32,22 +32,36 @@ function evalExpr(src: string, fields: Record<string, FormulaValue> = {}, formul
   });
 }
 
+it("evaluates a benign 5000-term formula without stack overflow", () => {
+  expect(evalExpr(Array(5000).fill("1").join("+"))).toEqual(numberValue(5000));
+});
+
+it("bounds hostile nested formula references", () => {
+  const formulas: Record<string, Ast> = {};
+  for (let i = 0; i < 5000; i++) formulas[`f${i}`] = { kind: "formulaRef", name: `f${i + 1}` };
+  expect(evalExpr("formula.f0", {}, formulas)).toMatchObject({ kind: "error" });
+});
+
+it("I-22: hostile deep formulas chained by reference return an error value instead of overflowing the stack", () => {
+  const formulas: Record<string, Ast> = { f120: parseOk("1") };
+  for (let i = 0; i < 120; i++) formulas[`f${i}`] = parseOk("-".repeat(900) + `formula.f${i + 1}`);
+  expect(evalExpr("formula.f0", {}, formulas)).toEqual(errorValue("Formula depth exceeds 128"));
+});
+
+it("I-22: the deepest formula the parser accepts fails closed at master's 128 bound; ordinary nesting evaluates", () => {
+  expect(evalExpr("formula.deep", {}, { deep: parseOk("-".repeat(1024) + "7") })).toEqual(errorValue("Formula depth exceeds 128"));
+  expect(evalExpr("-".repeat(100) + "7")).toEqual(numberValue(7));
+  expect(evalExpr("1+(".repeat(60) + "1" + ")".repeat(60))).toEqual(numberValue(61));
+  const chain: Record<string, Ast> = { f20: parseOk("2") };
+  for (let i = 0; i < 20; i++) chain[`f${i}`] = parseOk(`formula.f${i + 1} + 0`);
+  expect(evalExpr("formula.f0", {}, chain)).toEqual(numberValue(2));
+});
+
 function binaryAst(op: BinaryOp): Ast {
   return { kind: "binary", op, left: { kind: "field", name: "left" }, right: { kind: "field", name: "right" } };
 }
 
 describe("formula evaluator", () => {
-  it("fails closed before evaluating an expression deeper than the hostile-content cap", () => {
-    let ast: Ast = { kind: "literal", value: 1 };
-    for (let depth = 0; depth <= 128; depth++) ast = { kind: "unary", op: "-", expr: ast };
-    const result = evaluate(ast, {
-      field: () => nullValue(),
-      formulaAst: () => null,
-      now: new Date(Date.UTC(2026, 0, 15)),
-    });
-    expect(result).toEqual(errorValue("Formula depth exceeds 128"));
-  });
-
   it("covers the binary coercion matrix", () => {
     const values: Record<string, FormulaValue> = {
       text: textValue("b"),
@@ -189,4 +203,20 @@ describe("formula evaluator", () => {
     expect(evalExpr('now().format("YYYY-MM-DD HH:mm")', {}, {}, new Date(Date.UTC(2030, 5, 1, 1, 2)))).toEqual(textValue("2030-06-01 01:02"));
     expect(evalExpr('today().format("YYYY-MM-DD HH:mm")', {}, {}, new Date(Date.UTC(2030, 5, 1, 23, 59)))).toEqual(textValue("2030-06-01 00:00"));
   });
+});
+
+// I-22: evaluation costs unique references, not their fan-out (eval.ts).
+it("memoizes an acyclic formula DAG per evaluation and forgets it between rows", () => {
+  const formulas: Record<string, Ast> = { f0: parseOk("qty") };
+  for (let i = 1; i <= 16; i++) formulas[`f${i}`] = parseOk(`formula.f${i - 1} + formula.f${i - 1}`);
+  let reads = 0, qty = 2;
+  const ctx = { field: () => { reads++; return numberValue(qty); }, formulaAst: (name: string) => formulas[name] ?? null, now: new Date() };
+  expect(evaluate(parseOk("formula.f16"), ctx)).toEqual(numberValue(131072));
+  expect(reads).toBe(1);
+  qty = 3;
+  expect(evaluate(parseOk("formula.f16"), ctx)).toEqual(numberValue(196608));
+  expect(reads).toBe(2);
+});
+it.each(["__proto__", "constructor", "hasOwnProperty", "toString"])("rejects inherited formula member %s as a cell error", (member) => {
+  expect(evalExpr(`'x'.${member}()`)).toMatchObject({ kind: "error" });
 });

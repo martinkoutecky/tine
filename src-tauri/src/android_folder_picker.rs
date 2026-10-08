@@ -21,12 +21,10 @@ pub(crate) struct AndroidFolderPicker<R: Runtime>(PluginHandle<R>);
 
 #[cfg(target_os = "android")]
 impl<R: Runtime> AndroidFolderPicker<R> {
-    fn pick_graph_folder(
-        &self,
-    ) -> Result<GraphFolderPickResult, crate::command_error::CommandError> {
+    fn pick_graph_folder(&self) -> Result<GraphFolderPickResult, String> {
         self.0
             .run_mobile_plugin("pickGraphFolder", ())
-            .map_err(crate::command_error::CommandError::platform)
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -35,22 +33,14 @@ impl<R: Runtime> AndroidFolderPicker<R> {
 pub(crate) async fn pick_graph_folder<R: Runtime>(
     _app: AppHandle<R>,
     picker: State<'_, AndroidFolderPicker<R>>,
-) -> Result<GraphFolderPickResult, crate::command_error::CommandError> {
+) -> Result<GraphFolderPickResult, String> {
     picker.pick_graph_folder()
 }
 
-// iOS must be excluded here, not just at the registration site in lib.rs:
-// `#[tauri::command]` emits crate-root `__cmd__*` / `__tauri_command_name_*`
-// macros at the point of DEFINITION, so an iOS-compiled stub here collides with
-// `ios_folder_picker::pick_graph_folder` (E0428) even though only one of them is
-// ever registered.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
-pub(crate) async fn pick_graph_folder(
-) -> Result<GraphFolderPickResult, crate::command_error::CommandError> {
-    Err(crate::command_error::CommandError::prose(
-        "Android folder picker is unsupported on this platform",
-    ))
+pub(crate) async fn pick_graph_folder() -> Result<GraphFolderPickResult, String> {
+    Err("Android folder picker is unsupported on this platform".to_string())
 }
 
 #[cfg(target_os = "android")]

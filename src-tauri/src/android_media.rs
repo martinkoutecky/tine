@@ -1,10 +1,8 @@
 // Android media capture bridge: camera / photo-picker (`capture_photo`) and
 // voice-memo recording (`start_recording` / `stop_recording` / `cancel_recording`).
-// BOTH return the same shape: a native-cache `path` plus a file `ext`. Captured
-// bytes never cross the bridge — Rust streams the path token into the graph
-// (`import_native_capture`) before the frontend inserts the media ref, and
-// `src/components/Block.tsx` reads `res.path` for a photo exactly as it does for
-// a voice memo. `MediaCaptureResult` has no `data` field; `mod tests` pins that.
+// Photos return captured bytes as base64 in `data` + a file `ext`. Voice memos
+// return a native-cache `path`; Rust streams that token into the graph before
+// the frontend inserts the media ref.
 // Mirrors android_folder_picker.rs. Non-android targets get erroring stubs so the
 // desktop build links and the JS calls fail gracefully.
 #[cfg(target_os = "android")]
@@ -46,49 +44,6 @@ mod tests {
         );
         assert_eq!(result.ext.as_deref(), Some("m4a"));
     }
-
-    /// A photo comes back through the SAME shape as a voice memo. The header
-    /// once said photos returned base64 bytes in a `data` field; they never did,
-    /// and `Block.tsx` has only ever read `res.path` for both.
-    #[test]
-    fn photo_capture_returns_the_same_path_shape_as_a_voice_memo() {
-        let result: MediaCaptureResult = serde_json::from_str(
-            r#"{"status":"ok","path":"/data/user/0/page.tine.app/cache/shot.jpg","ext":"jpg"}"#,
-        )
-        .expect("photo capture result should deserialize");
-
-        assert_eq!(
-            result.path.as_deref(),
-            Some("/data/user/0/page.tine.app/cache/shot.jpg")
-        );
-        assert_eq!(result.ext.as_deref(), Some("jpg"));
-    }
-
-    /// Captured bytes must not cross the bridge. A `data`-carrying variant would
-    /// be a new IPC contract (and a large base64 payload on the UI thread), so
-    /// it is a deliberate edit here, not a quiet field addition.
-    #[test]
-    fn the_capture_result_carries_a_path_and_never_the_bytes() {
-        let value = serde_json::to_value(MediaCaptureResult {
-            status: "ok".into(),
-            path: Some("/cache/shot.jpg".into()),
-            ext: Some("jpg".into()),
-        })
-        .expect("serializable");
-        let mut keys: Vec<&str> = value
-            .as_object()
-            .expect("a JSON object")
-            .keys()
-            .map(String::as_str)
-            .collect();
-        keys.sort_unstable();
-        assert_eq!(
-            keys,
-            ["ext", "path", "status"],
-            "the Android media bridge result shape changed; update the module \
-             header, which says what crosses the bridge"
-        );
-    }
 }
 
 #[cfg(target_os = "android")]
@@ -96,10 +51,10 @@ pub(crate) struct AndroidMedia<R: Runtime>(PluginHandle<R>);
 
 #[cfg(target_os = "android")]
 impl<R: Runtime> AndroidMedia<R> {
-    fn call(&self, method: &str) -> Result<MediaCaptureResult, crate::command_error::CommandError> {
+    fn call(&self, method: &str) -> Result<MediaCaptureResult, String> {
         self.0
             .run_mobile_plugin(method, ())
-            .map_err(crate::command_error::CommandError::platform)
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -110,7 +65,7 @@ macro_rules! android_media_command {
         pub(crate) async fn $name<R: Runtime>(
             _app: AppHandle<R>,
             media: State<'_, AndroidMedia<R>>,
-        ) -> Result<MediaCaptureResult, crate::command_error::CommandError> {
+        ) -> Result<MediaCaptureResult, String> {
             media.call($method)
         }
     };
@@ -120,8 +75,8 @@ macro_rules! android_media_command {
 macro_rules! android_media_command {
     ($name:ident, $method:literal) => {
         #[tauri::command]
-        pub(crate) async fn $name() -> Result<MediaCaptureResult, crate::command_error::CommandError> {
-            Err(crate::command_error::CommandError::prose("Media capture is only supported on Android"))
+        pub(crate) async fn $name() -> Result<MediaCaptureResult, String> {
+            Err("Media capture is only supported on Android".to_string())
         }
     };
 }

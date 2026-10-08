@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { copyGuideIntoGraph, maybeShowGuideAnnouncement } from "./guide";
-import { dismissToast, graphMeta, pageInventoryRev, setGraphMeta, setToasts, toasts } from "./ui";
+import { copyGuideIntoGraph, ensureGuidePagesLoaded, maybeShowGuideAnnouncement, openGuide } from "./guide";
+import * as router from "./router";
+import { dismissToast, setToasts, toasts } from "./toasts";
+import { graphMeta, pageInventoryRev, setGraphMeta } from "./graphSession";
+import { resetStore } from "./document";
+import type { GuidePage } from "./types";
 
 async function seedMeta(root: string) {
   const meta = await backend().loadGraph("");
@@ -17,6 +21,35 @@ afterEach(() => {
 });
 
 describe("guide announcement", () => {
+  it("starts a fresh Guide read when the old graph's pending read is retired", async () => {
+    let finish!: (pages: GuidePage[]) => void;
+    const read = vi.spyOn(backend(), "guidePages")
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+      .mockResolvedValueOnce([]);
+    await seedMeta("/mock/guide-read-old");
+    const first = ensureGuidePagesLoaded(true);
+    const oldMeta = graphMeta()!;
+    resetStore();
+    setGraphMeta({ ...oldMeta, root: "/mock/guide-read-new" });
+    const second = ensureGuidePagesLoaded();
+    expect(read).toHaveBeenCalledTimes(2);
+    finish([]);
+    await Promise.all([first, second]);
+  });
+
+  it("does not announce the new graph when an old graph toast is dismissed", async () => {
+    const setFlag = vi.spyOn(backend(), "setGuideAnnounced").mockResolvedValue();
+    await seedMeta("/mock/guide-old");
+    maybeShowGuideAnnouncement();
+    const oldToast = toasts()[0];
+    const oldMeta = graphMeta()!;
+    resetStore();
+    setGraphMeta({ ...oldMeta, root: "/mock/guide-new", guide_announced: false });
+    dismissToast(oldToast.id);
+    expect(graphMeta()?.guide_announced).toBe(false);
+    expect(setFlag).not.toHaveBeenCalled();
+  });
+
   it("shows once when guide_announced is unset and Dismiss persists the flag", async () => {
     const setFlag = vi.spyOn(backend(), "setGuideAnnounced").mockResolvedValue();
     await seedMeta("/mock/guide-dismiss");
@@ -42,9 +75,34 @@ describe("guide announcement", () => {
     expect(setFlag).toHaveBeenCalledWith(true);
     expect(graphMeta()?.guide_announced).toBe(true);
   });
+
+  it("reports a failed announcement write and restores the flag", async () => {
+    vi.spyOn(backend(), "setGuideAnnounced").mockRejectedValue(new Error("disk full"));
+    await seedMeta("/mock/guide-failed-write");
+    maybeShowGuideAnnouncement();
+    dismissToast(toasts()[0].id);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(graphMeta()?.guide_announced).toBe(false);
+    expect(toasts().some((toast) => toast.kind === "error")).toBe(true);
+  });
 });
 
 describe("guide copy inventory", () => {
+  it("does not navigate when a Guide copy from the old graph completes", async () => {
+    let finish!: (value: { name: string; created: boolean; created_pages: string[] }) => void;
+    vi.spyOn(backend(), "copyGuideIntoGraph").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await seedMeta("/mock/guide-copy-old");
+    const pending = copyGuideIntoGraph("Tine-guide/Tine Guide");
+    const oldMeta = graphMeta()!;
+    resetStore();
+    setGraphMeta({ ...oldMeta, root: "/mock/guide-copy-new" });
+    const before = pageInventoryRev();
+    finish({ name: "tine-guide/Tine Guide", created: true, created_pages: ["tine-guide/Tine Guide"] });
+    await pending;
+    expect(pageInventoryRev()).toBe(before);
+  });
+
   it("refreshes canonical page inventory when the backend creates guide pages", async () => {
     const copy = vi.spyOn(backend(), "copyGuideIntoGraph").mockResolvedValue({
       name: "tine-guide/Tine Guide",
@@ -53,7 +111,7 @@ describe("guide copy inventory", () => {
     });
     const before = pageInventoryRev();
     await copyGuideIntoGraph("Tine-guide/Tine Guide");
-    expect(copy).toHaveBeenCalledWith("Tine Guide");
+    expect(copy).toHaveBeenCalledWith("Tine Guide", "replace-page");
     expect(pageInventoryRev()).toBeGreaterThan(before);
   });
 
@@ -67,5 +125,42 @@ describe("guide copy inventory", () => {
     const before = pageInventoryRev();
     await copyGuideIntoGraph("Tine-guide/Tine Guide");
     expect(pageInventoryRev()).toBe(before);
+  });
+});
+
+describe("I-20: Guide navigation belongs to the surface that asked", () => {
+  it("opens the Guide in a new tab when nothing moved", async () => {
+    vi.spyOn(backend(), "guidePages").mockResolvedValue([]);
+    const open = vi.spyOn(router, "openPageInNewTab").mockImplementation(() => {});
+    await seedMeta("/mock/guide-open-same");
+    await openGuide();
+    expect(open).toHaveBeenCalledOnce();
+  });
+  it("does not open a Guide tab after the user moved to another route while it loaded", async () => {
+    let finish!: (pages: GuidePage[]) => void;
+    vi.spyOn(backend(), "guidePages").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const open = vi.spyOn(router, "openPageInNewTab").mockImplementation(() => {});
+    await seedMeta("/mock/guide-open-moved");
+    const pending = openGuide();
+    router.openPage("Elsewhere (open test)");
+    finish([]);
+    await pending;
+    expect(open).not.toHaveBeenCalled();
+  });
+  it("keeps the copy's bookkeeping and toast but does not navigate after the route moved", async () => {
+    let finish!: (value: { name: string; created: boolean; created_pages: string[] }) => void;
+    vi.spyOn(backend(), "copyGuideIntoGraph").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const nav = vi.spyOn(router, "openPage");
+    await seedMeta("/mock/guide-copy-moved");
+    const pending = copyGuideIntoGraph("Tine-guide/Tine Guide");
+    router.openPage("Elsewhere (copy test)");
+    nav.mockClear();
+    nav.mockImplementation(() => {});
+    const before = pageInventoryRev();
+    finish({ name: "tine-guide/Tine Guide", created: true, created_pages: ["tine-guide/Tine Guide"] });
+    await pending;
+    expect(pageInventoryRev()).toBeGreaterThan(before);
+    expect(toasts().some((t) => t.kind === "success")).toBe(true);
+    expect(nav).not.toHaveBeenCalled();
   });
 });

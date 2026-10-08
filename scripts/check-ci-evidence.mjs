@@ -5,7 +5,6 @@
 // the same workflow but cannot satisfy this gate because their full jobs are
 // absent or skipped.
 
-import { spawnSync } from "node:child_process";
 import { collectGithubPages, selectExactCiEvidence } from "./ci-evidence-lib.mjs";
 
 function option(name) {
@@ -13,48 +12,18 @@ function option(name) {
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
-// Every input this gate needs is already sitting in the checkout, yet all three
-// used to be typed by hand on every invocation — and a mistyped --sha does not
-// fail loudly, it reports "no exact-SHA evidence", which reads exactly like a
-// red CI run. Derive them, and say which value came from where, so a wrong
-// answer is visible in the output instead of inferred.
-function capture(command, args) {
-  const result = spawnSync(command, args, { encoding: "utf8" });
-  return result.status === 0 ? result.stdout.trim() : undefined;
-}
-
-function derivedRepository() {
-  const urls = capture("git", ["config", "--get-all", "remote.origin.url"])?.split(/\r?\n/) ?? [];
-  for (const url of urls) {
-    const match = /github\.com[:/]([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/.exec(url.trim());
-    if (match) return `${match[1]}/${match[2]}`;
-  }
-  return undefined;
-}
-
-const shaSource = option("--sha") ? "--sha"
-  : process.env.CI_EVIDENCE_SHA ? "CI_EVIDENCE_SHA"
-  : process.env.GITHUB_SHA ? "GITHUB_SHA" : "git rev-parse HEAD";
-const sha = (option("--sha") ?? process.env.CI_EVIDENCE_SHA ?? process.env.GITHUB_SHA
-  ?? capture("git", ["rev-parse", "HEAD"]))?.trim().toLowerCase();
-const repositorySource = option("--repo") ? "--repo"
-  : process.env.CI_EVIDENCE_REPOSITORY ? "CI_EVIDENCE_REPOSITORY"
-  : process.env.GITHUB_REPOSITORY ? "GITHUB_REPOSITORY" : "remote.origin.url";
-const repository = option("--repo") ?? process.env.CI_EVIDENCE_REPOSITORY ?? process.env.GITHUB_REPOSITORY
-  ?? derivedRepository();
+const sha = (option("--sha") ?? process.env.CI_EVIDENCE_SHA ?? process.env.GITHUB_SHA)?.trim().toLowerCase();
+const repository = option("--repo") ?? process.env.CI_EVIDENCE_REPOSITORY ?? process.env.GITHUB_REPOSITORY;
 const workflow = option("--workflow") ?? "ci.yml";
-const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? capture("gh", ["auth", "token"]);
+const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
 const apiBase = process.env.GITHUB_API_URL ?? "https://api.github.com";
 
-if (!sha) throw new Error("No candidate SHA: pass --sha, set CI_EVIDENCE_SHA/GITHUB_SHA, or run this from a git checkout.");
+if (!sha) throw new Error("Missing candidate SHA; pass --sha or set CI_EVIDENCE_SHA/GITHUB_SHA.");
 if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error(`Candidate SHA must be a full 40-character commit: ${sha}`);
 if (!repository || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
-  throw new Error("No GitHub repository: pass --repo owner/name, set GITHUB_REPOSITORY, or add a github.com remote.origin.url.");
+  throw new Error("Missing or invalid repository; pass --repo owner/name or set GITHUB_REPOSITORY.");
 }
-if (!token) {
-  throw new Error("No GitHub token: run `gh auth login`, or set GH_TOKEN/GITHUB_TOKEN with Actions read permission.");
-}
-console.log(`Checking ${repository} (${repositorySource}) at ${sha} (${shaSource}) for a dispatched ${workflow} run.`);
+if (!token) throw new Error("Missing GitHub token; set GH_TOKEN or GITHUB_TOKEN with Actions read permission.");
 
 async function github(path) {
   const response = await fetch(`${apiBase}${path}`, {

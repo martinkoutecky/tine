@@ -1,9 +1,8 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // GH #471: a context submenu must stay inside the window. Opened over the right
 // edge it used to be drawn at `left: 100%` with no idea where the window ended.
 // jsdom applies no layout, so this measures the REAL engine over the built app.
 // Usage: source scripts/env.sh && npm run build && node scripts/shot-submenu-onscreen.mjs
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -13,9 +12,19 @@ const OUT = "screenshots";
 mkdirSync(OUT, { recursive: true });
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 
+async function waitForServer(url) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      if ((await fetch(url)).ok) return;
+    } catch {}
+    await sleep(250);
+  }
+  throw new Error("server did not start");
+}
+
 let failed = false;
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/`, 40, 250, { failureMessage: "server did not start" });
+  await waitForServer(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
 
   // The reporter's shape: a menu opened at the far right of a row, which is the

@@ -8,7 +8,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { loadSingle, pageByName, resetStore } from "../store";
+import { pageByName, resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
 import { layoutPaneIds, paneRouter, resetPaneLayoutToSingle } from "../panes";
 import { rightSidebar, setRightSidebar } from "../ui";
 import type { BlockDto, PageDto } from "../types";
@@ -71,15 +72,16 @@ function mouseDownPrevented(el: HTMLElement, init: MouseEventInit): boolean {
 }
 
 describe("outline bullet modified clicks (GH #456)", () => {
-  it("opens a background tab on Ctrl/Cmd+click instead of zooming in place", () => {
+  it("opens a background tab on Ctrl/Cmd+click instead of zooming in place", async () => {
     for (const mod of [{ ctrlKey: true }, { metaKey: true }]) {
       resetPaneLayoutToSingle(bulletsSnapshot());
       const { bullet, dispose } = mountBullet();
       try {
         const before = paneRouter("main").tabs().length;
         click(bullet, mod);
+        // og opens block destinations only once the target id has reached disk.
+        await vi.waitFor(() => expect(paneRouter("main").tabs().length).toBe(before + 1));
         const tabs = paneRouter("main").tabs();
-        expect(tabs.length).toBe(before + 1);
         expect(tabs.some((t) => {
           const r = t.history[t.pos];
           return r.kind === "page" && r.name === "Bullets" && !!r.block;
@@ -95,12 +97,12 @@ describe("outline bullet modified clicks (GH #456)", () => {
     }
   });
 
-  it("opens the other pane on Alt+click", () => {
+  it("opens the other pane on Alt+click", async () => {
     const { bullet, dispose } = mountBullet();
     try {
       expect(layoutPaneIds()).toEqual(["main"]);
       click(bullet, { altKey: true });
-      expect(layoutPaneIds().length).toBe(2);
+      await vi.waitFor(() => expect(layoutPaneIds().length).toBe(2));
     } finally {
       dispose();
     }
@@ -118,17 +120,17 @@ describe("outline bullet modified clicks (GH #456)", () => {
     }
   });
 
-  it("keeps Shift+click on the sidebar and a plain click on the in-place zoom", () => {
+  it("keeps Shift+click on the sidebar and a plain click on the in-place zoom", async () => {
     const { bullet, dispose } = mountBullet();
     try {
       click(bullet, { shiftKey: true });
-      expect(rightSidebar()).toHaveLength(1);
+      await vi.waitFor(() => expect(rightSidebar()).toHaveLength(1));
       expect(rightSidebar()[0]).toMatchObject({ kind: "block", page: "Bullets" });
 
       const before = paneRouter("main").tabs().length;
       click(bullet, {});
       expect(paneRouter("main").tabs().length).toBe(before);
-      expect((paneRouter("main").route() as { block?: string }).block).toBeTruthy();
+      await vi.waitFor(() => expect((paneRouter("main").route() as { block?: string }).block).toBeTruthy());
     } finally {
       dispose();
     }

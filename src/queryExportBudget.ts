@@ -1,54 +1,35 @@
-// The byte budget one query export may spend on copied assets.
-//
-// A query export is a movable folder, so every referenced local asset is
-// copied into it. Without a ceiling one stray video turns "export this
-// reading list" into a multi-gigabyte write; with a silent ceiling the folder
-// is quietly incomplete. So the export FAILS when it would pass the budget and
-// names this setting (Martin, 2026-09-14: "export failed because it went over
-// budget, adjust here" — one click to the setting). Device-local, persisted in
-// the same app-string store as the other remembered preferences.
-
+/** Device-local asset allowance. A null override delegates the 1 GiB default
+ * to Rust's query publisher, the single answerer for that default. Preferences
+ * use the shared revision/queued-write door; failed writes roll back and toast. */
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { preferenceRevision, preferenceReadCurrent, seedPreference, writePreference } from "./preferenceWrites";
+import { readOwned, revisionOwner } from "./owned";
+import { pushToast } from "./toasts";
 
 const KEY = "query_export_asset_budget_mib";
-export const DEFAULT_QUERY_EXPORT_BUDGET_MIB = 1024;
-export const MIN_QUERY_EXPORT_BUDGET_MIB = 1;
-export const MAX_QUERY_EXPORT_BUDGET_MIB = 1024 * 1024;
-
-const [budgetMiB, setBudgetMiBSignal] = createSignal(DEFAULT_QUERY_EXPORT_BUDGET_MIB);
-
-/** Reactive: the current limit in MiB. */
-export const queryExportBudgetMiB = budgetMiB;
-
-/** The limit as the byte count the export request carries. */
-export function queryExportBudgetBytes(): number {
-  return budgetMiB() * 1024 * 1024;
+const [budget, applyBudget] = createSignal<number | null>(null);
+export const queryExportBudgetMiB = budget;
+export const queryExportBudgetBytes = () => budget() === null ? undefined : budget()! * 1024 * 1024;
+function normalize(value: number): number { return Math.min(1024 * 1024, Math.max(1, Math.round(value))); }
+export function changeQueryExportBudgetMiB(value: number | null): void {
+  if (value !== null && !Number.isFinite(value)) return;
+  const next = value === null ? null : normalize(value);
+  writePreference(budget, applyBudget, next, (n) => backend().setAppString(KEY, n === null ? "" : String(n)), "query export size limit");
 }
-
-export function normalizeQueryExportBudgetMiB(value: number): number {
-  if (!Number.isFinite(value)) return DEFAULT_QUERY_EXPORT_BUDGET_MIB;
-  return Math.min(MAX_QUERY_EXPORT_BUDGET_MIB, Math.max(MIN_QUERY_EXPORT_BUDGET_MIB, Math.round(value)));
-}
-
-export function changeQueryExportBudgetMiB(value: number): void {
-  if (!Number.isFinite(value)) return;
-  const next = normalizeQueryExportBudgetMiB(value);
-  setBudgetMiBSignal(next);
-  void backend().setAppString(KEY, String(next)).catch(() => {});
-}
-
-export function resetQueryExportBudget(): void {
-  changeQueryExportBudgetMiB(DEFAULT_QUERY_EXPORT_BUDGET_MIB);
-}
-
-/** Load the remembered limit at startup. Default: 1 GiB. */
-export async function initQueryExportBudget(): Promise<void> {
-  try {
-    const stored = await backend().getAppString(KEY, "");
-    const parsed = Number.parseInt(stored, 10);
-    if (Number.isFinite(parsed)) setBudgetMiBSignal(normalizeQueryExportBudgetMiB(parsed));
-  } catch {
-    /* keep the default */
-  }
+let loaded: Promise<void> | undefined;
+/** Load once before using the setting; a concurrent preference write wins. */
+export function initQueryExportBudget(): Promise<void> {
+  return loaded ??= (async () => {
+    const revision = preferenceRevision(budget);
+    try {
+      const result = await readOwned(revisionOwner(budget, revision, () => preferenceReadCurrent(budget, revision)), backend().getAppString(KEY, ""));
+      if (result.kind === "current") {
+        const stored = result.value;
+        const parsed = Number(stored);
+        applyBudget(stored.trim() && Number.isFinite(parsed) ? normalize(parsed) : null);
+        seedPreference(budget);
+      }
+    } catch { if (preferenceReadCurrent(budget, revision)) pushToast("Could not load query export size limit.", "error"); }
+  })();
 }

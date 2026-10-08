@@ -16,13 +16,13 @@
 //
 // jsdom applies no CSS layout, so which element sits under a given pixel is only
 // answerable here. The render tests next to it assert what each element DOES.
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const css = ["theme.css", "app.css"]
+const css = ["theme.css", "app.css", "favorites.css", "rightSidebarReorder.css"]
   .map((file) => fs.readFileSync(path.join(root, "src/styles", file), "utf8"))
   .join("\n");
 
@@ -136,6 +136,8 @@ try {
   if (claimed.length > 0) {
     fail(`right sidebar: the title anchor still covers ${claimed.length}px right of its own text — this is the reported hitbox`);
   }
+  // The head advertises the reorder drag (og gained right-sidebar reorder in
+  // 70c5e7bad; the old relaxed "not pointer" assertion was stale).
   if (measured.cursors.rsHead !== "grab") {
     fail(`right sidebar: the head no longer advertises the reorder drag (cursor: ${measured.cursors.rsHead})`);
   }
@@ -148,7 +150,7 @@ try {
     `PASS: left rows keep the whole width clickable (favourites ${measured.favorite.labelWidth}px name ` +
       `in a ${measured.favorite.rowWidth}px row, ${measured.favorite.spare}px spare, all of it the row); ` +
       `right-sidebar title is ${measured.rsItem.labelWidth}px and claims none of its ${measured.rsItem.spare}px ` +
-      `of spare width, which the head owns as grab space; close button still at the right edge`
+      `of spare width, which the head owns; close button still at the right edge`
   );
 } finally {
   await browser.close();

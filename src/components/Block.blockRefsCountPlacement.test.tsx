@@ -3,7 +3,8 @@ import { For } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
 import { clearSeededFacets } from "../render/facets";
-import { loadSingle, pageByName, resetStore } from "../store";
+import { pageByName, resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
 import type { BlockDto, PageDto } from "../types";
 
 // Every block in this file is "referenced three times", so the badge renders

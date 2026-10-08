@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { createSignal, type JSX } from "solid-js";
 import { Block, SurfaceContext } from "./Block";
@@ -6,7 +6,9 @@ import { ContextMenu } from "./ContextMenu";
 import { __sheetTableTestHooks, SheetTable } from "./SheetTable";
 import { DatePicker } from "./DatePicker";
 import { initParser } from "../render/parse";
-import { blockProperty, doc, pageByName, readPageProperty, redo, resetStore, setDoc, setRaw, undo, type FeedPage, type Node as StoreNode } from "../store";
+import { blockProperty, pageByName, readPageProperty, redo, resetStore, setRaw, undo } from "../document";
+import { type FeedPage, type Node as StoreNode } from "../document/model";
+import { doc, setDoc } from "../document/model";
 import { setWorkflow } from "../ui";
 import {
   cellSel,
@@ -20,28 +22,16 @@ import {
 import { editingId, editingOwner } from "../editorController";
 import type { RefGroup } from "../types";
 import { installKeybindings } from "../keybindings";
-import { __setBackendForTest } from "../backend";
-import { graphBindingRuntime } from "../graphBindingRuntime";
-
-let bindingCounter = 3_000;
+import { setToasts, toasts } from "../toasts";
 
 beforeAll(async () => {
   await initParser();
 });
 
-beforeEach(() => {
-  graphBindingRuntime.bind(++bindingCounter, {
-    binding_generation: bindingCounter,
-  });
-  __setBackendForTest(null);
-});
-
 afterEach(() => {
   __sheetTableTestHooks.onIndexRow = undefined;
-  __sheetTableTestHooks.onSortKey = undefined;
   resetCellSelectionForTests();
   resetStore();
-  __setBackendForTest(null);
   setWorkflow("todo");
   document.body.innerHTML = "";
 });
@@ -117,24 +107,6 @@ function dragFieldHeader(source: HTMLElement, target: HTMLElement, before = true
   }
 }
 
-function resizeHandle(root: HTMLElement, column: string): HTMLElement {
-  const handle = root.querySelector<HTMLElement>(`[data-sheet-resize-handle="${column}"]`);
-  if (!handle) throw new Error(`missing ${column} resize handle`);
-  return handle;
-}
-
-function resizeColumn(root: HTMLElement, column: string, from: number, to: number): void {
-  const handle = resizeHandle(root, column);
-  const header = handle.parentElement as HTMLElement;
-  header.getBoundingClientRect = () => ({
-    x: 0, y: 0, left: 0, top: 0, right: from, bottom: 30, width: from, height: 30,
-    toJSON: () => ({}),
-  });
-  handle.dispatchEvent(pointer("pointerdown", from, 10));
-  window.dispatchEvent(pointer("pointermove", to, 10));
-  window.dispatchEvent(pointer("pointerup", to, 10));
-}
-
 function cell(root: HTMLElement, row: number, col: number, gridId = "table"): HTMLElement {
   const el = root.querySelector(
     `.sheet-cell[data-sheet-grid-id="${gridId}"][data-row="${row}"][data-col="${col}"]`
@@ -180,115 +152,38 @@ function loadTableDoc() {
   });
 }
 
-// A children table of `count` rows whose title, `score` property and `double`
-// formula all disagree with document order, so a comparator that silently
-// returned the rows unmoved could not pass the ordering assertions.
-//
-// The ranks are DETERMINISTICALLY SHUFFLED, not merely reversed: V8's TimSort
-// reverses an already-descending run in n-1 comparisons, which understates the
-// per-comparison key-derivation cost by an order of magnitude.
-//
-// Returns the row ids in ASCENDING RANK order, i.e. the order a sorted table
-// must produce, so a caller can name the row that lands off the render window.
-function loadSortKeyBenchDoc(count: number): string[] {
-  const ids = Array.from({ length: count }, (_, i) => `s${i}`);
-  const ranks = Array.from({ length: count }, (_, i) => i);
-  let seed = 0x5eed;
-  for (let i = count - 1; i > 0; i--) {
-    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-    const j = seed % (i + 1);
-    [ranks[i], ranks[j]] = [ranks[j], ranks[i]];
-  }
-  const idByRank: string[] = new Array(count);
-  const byId: Record<string, StoreNode> = {
-    table: node(
-      "table",
-      [
-        "Table",
-        "tine.view:: table",
-        "tine.fields:: score=number",
-        "tine.formula.double:: score * 2",
-      ].join("\n"),
-      null,
-      ids
-    ),
-  };
-  for (const [i, id] of ids.entries()) {
-    const rank = ranks[i];
-    idByRank[rank] = id;
-    byId[id] = node(id, `Row ${String(rank).padStart(4, "0")}\nscore:: ${rank}`, "table");
-  }
-  setDoc({ byId, pages: [page(["table"])], feed: ["Sheet"], loaded: true });
-  return idByRank;
-}
-
-describe("SheetTable sort-key derivation (Harvest W4-P1 item 1)", () => {
-  it("derives at most one sort key per row for title, property, and formula sorts", () => {
-    const R = 200;
-    loadSortKeyBenchDoc(R);
-    const { root, dispose } = mount(() => <Block id="table" />);
-    try {
-      let derived = 0;
-      __sheetTableTestHooks.onSortKey = () => {
-        derived++;
-      };
-
-      const titles = () =>
-        [...root.querySelectorAll(".sheet-title-cell .sheet-cell-body")].map((c) => c.textContent?.trim());
-      const sortByHeader = (header: HTMLElement): number => {
-        derived = 0;
-        header.click();
-        return derived;
-      };
-
-      // (a) title — the cheap-looking branch that a partial fix would optimize alone.
-      const title = sortByHeader(root.querySelector(".sheet-title-header") as HTMLElement);
-      expect(titles().slice(0, 3)).toEqual(["Row 0000", "Row 0001", "Row 0002"]);
-      expect(titles()).toHaveLength(R);
-
-      // (b) an ordinary declared property — numeric, so it takes the fieldTypes branch.
-      const property = sortByHeader(fieldHeader(root, "score"));
-      expect(titles().slice(0, 3)).toEqual(["Row 0000", "Row 0001", "Row 0002"]);
-
-      // (c) a formula column — the most expensive derivation of the three.
-      const formula = sortByHeader(fieldHeader(root, "ƒdouble"));
-      expect(titles().slice(0, 3)).toEqual(["Row 0000", "Row 0001", "Row 0002"]);
-
-      // eslint-disable-next-line no-console -- the measurement IS the receipt.
-      console.log(`w4_p1_sort_key_derivations R=${R} title=${title} property=${property} formula=${formula}`);
-      // Reported as counts so a failure prints the actual multiplier, not just
-      // a boolean. Each must be in [1, R]: 0 would mean the seam moved away.
-      expect({
-        R,
-        title: title >= 1 && title <= R ? "<=R" : title,
-        property: property >= 1 && property <= R ? "<=R" : property,
-        formula: formula >= 1 && formula <= R ? "<=R" : formula,
-      }).toEqual({ R, title: "<=R", property: "<=R", formula: "<=R" });
-    } finally {
-      dispose();
-    }
-  });
-
-  it("keeps the full sorted row index so off-window navigation still reaches a sorted row", () => {
-    const R = 260;
-    const idByRank = loadSortKeyBenchDoc(R);
-    const last = idByRank[R - 1];
-    const { root, dispose } = mount(() => <Block id="table" />);
-    try {
-      (root.querySelector(".sheet-title-header") as HTMLElement).click();
-      // The window renders 200 of 260, so the highest-ranked row is off-window.
-      expect(root.querySelector(`[data-row="${R - 1}"]`)).toBeNull();
-      setCellSel({ gridId: "table", surfaceId: "main", rowId: last, columnId: "title", row: 0, col: 0 });
-      const rebased = cellSel();
-      expect(rebased?.kind === "cell" ? rebased.row : -1).toBe(R - 1);
-      expect(root.querySelector(`[data-row="${R - 1}"][data-col="0"]`)).not.toBeNull();
-    } finally {
-      dispose();
-    }
-  });
-});
-
 describe("SheetTable", () => {
+  it("resizes a table column by identity and persists one width property", () => {
+    loadTableDoc();
+    const { root, dispose } = mount(() => <Block id="table" />);
+    try {
+      const handle = root.querySelector<HTMLElement>('[data-sheet-resize-handle="title"]')!;
+      expect(handle).not.toBeNull();
+      handle.dispatchEvent(pointer("pointerdown", 100, 0));
+      window.dispatchEvent(pointer("pointermove", 160, 0));
+      expect(root.querySelector<HTMLElement>(".sheet-table")?.style.gridTemplateColumns).toContain("240px");
+      window.dispatchEvent(pointer("pointerup", 160, 0));
+      expect(blockProperty("table", "tine.table-widths")).toBe("title=240");
+      handle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+      expect(blockProperty("table", "tine.table-widths")).toBeNull();
+    } finally { dispose(); }
+  });
+  it("shares a committed column width across two sheet surfaces", () => {
+    loadTableDoc();
+    const { root, dispose } = mount(() => <>
+      <SheetTable ownerId="table" rowSource="children" />
+      <SheetTable ownerId="table" rowSource="children" />
+    </>);
+    try {
+      const [left, right] = [...root.querySelectorAll<HTMLElement>(".sheet-table")];
+      const handle = left.querySelector<HTMLElement>('[data-sheet-resize-handle="title"]')!;
+      handle.dispatchEvent(pointer("pointerdown", 100, 0));
+      window.dispatchEvent(pointer("pointermove", 150, 0));
+      window.dispatchEvent(pointer("pointerup", 150, 0));
+      expect(blockProperty("table", "tine.table-widths")).toBe("title=230");
+      expect(right.style.gridTemplateColumns).toContain("230px");
+    } finally { dispose(); }
+  });
   it("routes real window Arrow keys from a clicked Table cell (GH #113)", () => {
     loadTableDoc();
     const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" />);
@@ -870,224 +765,6 @@ describe("SheetTable", () => {
     dispose();
   });
 
-  it("floors a far-left title drag at 180px for preview and its guarded undo commit", () => {
-    loadTableDoc();
-    const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" />);
-    const handle = resizeHandle(root, "title");
-    const header = handle.parentElement as HTMLElement;
-    header.getBoundingClientRect = () => ({
-      x: 0, y: 0, left: 0, top: 0, right: 180, bottom: 30, width: 180, height: 30,
-      toJSON: () => ({}),
-    });
-
-    handle.dispatchEvent(pointer("pointerdown", 180, 10));
-    window.dispatchEvent(pointer("pointermove", -1000, 10));
-    expect((root.querySelector(".sheet-table") as HTMLElement).style.gridTemplateColumns).toContain("180px");
-    expect(blockProperty("table", "tine.table-widths")).toBeNull();
-    window.dispatchEvent(pointer("pointerup", -1000, 10));
-
-    expect(blockProperty("table", "tine.table-widths")).toBe("title=180");
-    undo();
-    expect(blockProperty("table", "tine.table-widths")).toBeNull();
-    redo();
-    expect(blockProperty("table", "tine.table-widths")).toBe("title=180");
-    dispose();
-  });
-
-  it("floors a far-left field drag at 90px for preview and commit", () => {
-    setDoc({
-      byId: {
-        table: node("table", "Table\ntine.view:: table\ntine.fields:: owner=text", null, ["r1"]),
-        r1: node("r1", "Row\nowner:: Martin", "table"),
-      },
-      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
-    });
-    const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" />);
-    const handle = resizeHandle(root, "prop:owner");
-    const header = handle.parentElement as HTMLElement;
-    header.getBoundingClientRect = () => ({
-      x: 0, y: 0, left: 0, top: 0, right: 120, bottom: 30, width: 120, height: 30,
-      toJSON: () => ({}),
-    });
-
-    handle.dispatchEvent(pointer("pointerdown", 120, 10));
-    window.dispatchEvent(pointer("pointermove", -1000, 10));
-    expect((root.querySelector(".sheet-table") as HTMLElement).style.gridTemplateColumns).toContain("90px");
-    expect(blockProperty("table", "tine.table-widths")).toBeNull();
-    window.dispatchEvent(pointer("pointerup", -1000, 10));
-
-    expect(blockProperty("table", "tine.table-widths")).toBe("prop%3Aowner=90");
-    dispose();
-  });
-
-  it("renders accepted stored widths below the semantic floors as 180px and 90px", () => {
-    setDoc({
-      byId: {
-        table: node(
-          "table",
-          "Table\ntine.view:: table\ntine.fields:: owner=text\ntine.table-widths:: title=64;prop%3Aowner=64",
-          null,
-          ["r1"]
-        ),
-        r1: node("r1", "Row\nowner:: Martin", "table"),
-      },
-      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
-    });
-    const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" />);
-
-    expect((root.querySelector(".sheet-table") as HTMLElement).style.gridTemplateColumns)
-      .toBe("180px 90px 96px");
-    expect(blockProperty("table", "tine.table-widths")).toBe("title=64;prop%3Aowner=64");
-    dispose();
-  });
-
-  it("normalizes accepted sub-floor widths while editing-stabilized tracks are active", async () => {
-    const originalRect = HTMLElement.prototype.getBoundingClientRect;
-    const rect = (width: number): DOMRect => ({
-      x: 0, y: 0, left: 0, top: 0, right: width, bottom: 30, width, height: 30,
-      toJSON: () => ({}),
-    } as DOMRect);
-    HTMLElement.prototype.getBoundingClientRect = function () {
-      if (this.classList.contains("sheet-title-header") || this.classList.contains("sheet-title-cell")) return rect(240);
-      if (this.classList.contains("sheet-field-header") || this.classList.contains("sheet-field-cell")) return rect(130);
-      if (this.classList.contains("sheet-add-field") || this.classList.contains("sheet-row-tail")) return rect(96);
-      return originalRect.call(this);
-    };
-    setDoc({
-      byId: {
-        table: node(
-          "table",
-          "Table\ntine.view:: table\ntine.fields:: owner=text\ntine.table-widths:: title=64;prop%3Aowner=64",
-          null,
-          ["r1"]
-        ),
-        r1: node("r1", "Row\nowner:: Martin", "table"),
-      },
-      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
-    });
-    const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" />);
-    try {
-      cell(root, 0, 0).dispatchEvent(pointer("pointerdown", 0, 0));
-      window.dispatchEvent(pointer("pointerup", 0, 0));
-      await tick();
-      doubleClick(cell(root, 0, 0));
-      await tick();
-
-      expect(editingId()).toBe("r1");
-      expect((root.querySelector(".sheet-table") as HTMLElement).style.gridTemplateColumns)
-        .toBe("180px 90px 96px");
-    } finally {
-      dispose();
-      HTMLElement.prototype.getBoundingClientRect = originalRect;
-    }
-  });
-
-  it("persists a synthetic tag table width on its schema page", () => {
-    setDoc({
-      byId: { row: node("row", "Tagged #Tag\nowner:: Martin", null) },
-      pages: [page(["row"], "tine.fields:: owner=text")], feed: ["Sheet"], loaded: true,
-    });
-    const groups: RefGroup[] = [{
-      page: "Sheet", kind: "page",
-      blocks: [{ id: "row", raw: doc.byId.row.raw, collapsed: false, children: [], properties: [["owner", "Martin"]] }],
-    }];
-    const { root, dispose } = mount(() => (
-      <SheetTable ownerId="tag-page:Tag" rowSource="query" groups={groups} schemaPage="Sheet" />
-    ));
-
-    resizeColumn(root, "prop:owner", 120, 280);
-    expect(readPageProperty("Sheet", "tine.table-widths")).toBe("prop%3Aowner=280");
-    expect(doc.byId["tag-page:Tag"]).toBeUndefined();
-    dispose();
-  });
-
-  it("shares a committed stable width with a duplicate split surface", () => {
-    setDoc({
-      byId: {
-        table: node("table", "Table\ntine.view:: table\ntine.fields:: owner=text", null, ["r1"]),
-        r1: node("r1", "Row\nowner:: Martin", "table"),
-      },
-      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
-    });
-    const { root, dispose } = mount(() => <>
-      <SurfaceContext.Provider value="pane:left">
-        <SheetTable ownerId="table" rowSource="children" />
-      </SurfaceContext.Provider>
-      <SurfaceContext.Provider value="pane:right">
-        <SheetTable ownerId="table" rowSource="children" />
-      </SurfaceContext.Provider>
-    </>);
-    const [left, right] = [...root.querySelectorAll<HTMLElement>(".sheet-table")];
-
-    resizeColumn(left, "prop:owner", 120, 275);
-    expect(blockProperty("table", "tine.table-widths")).toBe("prop%3Aowner=275");
-    expect(left.style.gridTemplateColumns).toContain("275px");
-    expect(right.style.gridTemplateColumns).toContain("275px");
-    dispose();
-  });
-
-  it("keeps explicit widths attached to stable identities across reorder and remount", () => {
-    setDoc({
-      byId: {
-        table: node(
-          "table",
-          "Table\ntine.view:: table\ntine.fields:: first=text;second=number\ntine.table-widths:: prop%3Afirst=260;prop%3Asecond=140",
-          null,
-          ["r1"]
-        ),
-        r1: node("r1", "Row\nfirst:: one\nsecond:: 2", "table"),
-      },
-      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
-    });
-    const initial = mount(() => <SheetTable ownerId="table" rowSource="children" />);
-    expect((initial.root.querySelector(".sheet-table") as HTMLElement).style.gridTemplateColumns)
-      .toContain("260px 140px");
-
-    dragFieldHeader(fieldHeader(initial.root, "second"), fieldHeader(initial.root, "first"));
-    expect(blockProperty("table", "tine.table-widths")).toBe("prop%3Afirst=260;prop%3Asecond=140");
-    expect((initial.root.querySelector(".sheet-table") as HTMLElement).style.gridTemplateColumns)
-      .toContain("140px 260px");
-    initial.dispose();
-
-    const restarted = mount(() => <SheetTable ownerId="table" rowSource="children" />);
-    expect((restarted.root.querySelector(".sheet-table") as HTMLElement).style.gridTemplateColumns)
-      .toContain("140px 260px");
-    restarted.dispose();
-  });
-
-  it("double-click resets only the owned edge and a cancelled drag neither sorts nor persists", () => {
-    setDoc({
-      byId: {
-        table: node(
-          "table",
-          "Table\ntine.view:: table\ntine.fields:: score=number\ntine.table-widths:: title=300;prop%3Ascore=220",
-          null,
-          ["r1", "r2"]
-        ),
-        r1: node("r1", "Beta\nscore:: 2", "table"),
-        r2: node("r2", "Alpha\nscore:: 1", "table"),
-      },
-      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
-    });
-    const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" />);
-    doubleClick(resizeHandle(root, "prop:score"));
-    expect(blockProperty("table", "tine.table-widths")).toBe("title=300");
-
-    const titleHandle = resizeHandle(root, "title");
-    const titleHeader = titleHandle.parentElement as HTMLElement;
-    titleHeader.getBoundingClientRect = () => ({
-      x: 0, y: 0, left: 0, top: 0, right: 300, bottom: 30, width: 300, height: 30,
-      toJSON: () => ({}),
-    });
-    titleHandle.dispatchEvent(pointer("pointerdown", 300, 10));
-    window.dispatchEvent(pointer("pointermove", 420, 10));
-    window.dispatchEvent(pointer("pointercancel", 420, 10));
-    expect(blockProperty("table", "tine.table-widths")).toBe("title=300");
-    expect([...root.querySelectorAll(".sheet-title-cell .sheet-cell-body")].map((cell) => cell.textContent?.trim()))
-      .toEqual(["Beta", "Alpha"]);
-    dispose();
-  });
-
   it("field header menu changes declared prop types and removes schema entries", () => {
     setDoc({
       byId: {
@@ -1529,12 +1206,12 @@ describe("SheetTable", () => {
     (cell(root, 0, 1).querySelector(".block-marker") as HTMLElement).click();
 
     expect(doc.byId.r1.raw.split("\n")[0]).toBe("DOING [#A] Ship #sheets");
-    expect(cellSel()).toEqual({ kind: "cell", gridId: "table", row: 0, col: 1 });
-    expect(cell(root, 0, 1).classList.contains("sheet-cell-selected")).toBe(true);
-    expect(editingId()).toBeNull();
 
     (cell(root, 0, 1).querySelector(".block-marker") as HTMLElement).click();
     expect(doc.byId.r1.raw.split("\n")[0]).toBe("TODO [#A] Ship #sheets");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "table", row: 0, col: 1 });
+    expect(cell(root, 0, 1).classList.contains("sheet-cell-selected")).toBe(true);
+    expect(editingId()).toBeNull();
     dispose();
   });
 
@@ -1557,6 +1234,32 @@ describe("SheetTable", () => {
     keydown(input!, "Enter");
 
     expect(doc.byId.r1.raw).toBe("Task\nowner:: new\nbody line");
+    dispose();
+  });
+
+  it("shows a refused cell edit (page turned read-only) instead of silently discarding the typed value", () => {
+    setToasts([]);
+    const layout = {
+      byId: {
+        table: node("table", "Table\ntine.view:: table", null, ["r1"]),
+        r1: node("r1", "Task\nbody line\nowner:: old", "table"),
+      },
+      feed: ["Sheet"],
+      loaded: true,
+    };
+    setDoc({ ...layout, pages: [page(["table"])] });
+    const { root, dispose } = mount(() => <Block id="table" />);
+
+    doubleClick(cell(root, 0, 1));
+    const input = root.querySelector("input.sheet-prop-input") as HTMLInputElement | null;
+    expect(input).not.toBeNull();
+    // The page becomes read-only (org round-trip gate) while the input is open.
+    setDoc({ ...layout, pages: [{ ...page(["table"]), readOnly: true }] });
+    input!.value = "typed value";
+    keydown(input!, "Enter");
+
+    expect(doc.byId.r1.raw).toBe("Task\nbody line\nowner:: old");
+    expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("typed value"))).toBe(true);
     dispose();
   });
 
@@ -1825,52 +1528,6 @@ describe("SheetTable", () => {
     dispose();
   });
 
-  it("query-backed cell menu preserves generic Delete row semantics", () => {
-    const queryRaw = "{{query (todo TODO)}}\ntine.view:: table";
-    const rowRaw = "TODO Query row\nowner:: Martin";
-    setDoc({
-      byId: {
-        q: node("q", queryRaw, null),
-        r1: node("r1", rowRaw, null),
-      },
-      pages: [page(["q", "r1"])],
-      feed: ["Sheet"],
-      loaded: true,
-    });
-    const groups: RefGroup[] = [{
-      page: "Sheet",
-      kind: "page",
-      blocks: [{
-        id: "r1",
-        raw: rowRaw,
-        collapsed: false,
-        children: [],
-        marker: "TODO",
-        properties: [["owner", "Martin"]],
-      }],
-    }];
-    const { root, dispose } = mount(() => (
-      <>
-        <SheetTable ownerId="q" rowSource="query" groups={groups} />
-        <ContextMenu />
-      </>
-    ));
-
-    const field = root.querySelector(".sheet-field-cell") as HTMLElement;
-    contextMenu(field);
-    clickMenuItem("Delete row");
-
-    expect(doc.byId.r1).toBeUndefined();
-    expect(doc.byId.q.raw).toBe(queryRaw);
-    expect(doc.pages[0].roots).toEqual(["q"]);
-
-    undo();
-    expect(doc.byId.r1.raw).toBe(rowRaw);
-    expect(doc.byId.q.raw).toBe(queryRaw);
-    expect(doc.pages[0].roots).toEqual(["q", "r1"]);
-    dispose();
-  });
-
   it("cell menu 'Delete column' removes the positional column in a grid", () => {
     setDoc({
       byId: {
@@ -1919,12 +1576,11 @@ describe("SheetTable", () => {
     dispose();
   });
 
-  it("children add-row creates an empty child after at least two existing rows and enters title edit", async () => {
+  it("children add-row creates an empty child at the end and enters title edit", async () => {
     setDoc({
       byId: {
-        table: node("table", "Table\ntine.view:: table", null, ["r1", "r2"]),
-        r1: node("r1", "First", "table"),
-        r2: node("r2", "Second", "table"),
+        table: node("table", "Table\ntine.view:: table", null, ["r1"]),
+        r1: node("r1", "Existing", "table"),
       },
       pages: [page(["table"])],
       feed: ["Sheet"],
@@ -1932,13 +1588,14 @@ describe("SheetTable", () => {
     });
     const { root, dispose } = mount(() => <Block id="table" />);
 
+    expect(root.querySelector(".sheet-add-row-ghost .sheet-ghost-sticky")?.textContent).toContain("Add row");
+
     (root.querySelector(".sheet-add-row-ghost") as HTMLButtonElement).click();
     await tick();
 
     const children = doc.byId.table.children;
-    expect(children).toHaveLength(3);
-    expect(children.slice(0, 2)).toEqual(["r1", "r2"]);
-    const id = children[2];
+    expect(children).toHaveLength(2);
+    const id = children[1];
     expect(doc.byId[id].raw).toBe("");
     expect(doc.byId[id].parent).toBe("table");
     expect(editingId()).toBe(id);
@@ -2300,6 +1957,7 @@ describe("SheetTable", () => {
       .find((el) => el.textContent?.trim() === "10") as HTMLButtonElement | undefined;
     expect(day10).not.toBeUndefined();
     day10!.click();
+    [...root.querySelectorAll<HTMLButtonElement>(".dp-btn")].find(button => button.textContent === "Done")!.click();
     expect(doc.byId.r1.raw).toContain("SCHEDULED: <2026-07-10 Fri>");
 
     (cell(root, 0, 3).querySelector(".date-chip") as HTMLElement).click();

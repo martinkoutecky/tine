@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { loadSingle, resetStore } from "../store";
+import { resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
 import { AstBody } from "./body";
 import { initParser, parseBlock } from "./parse";
 import { visibleBody } from "./block";

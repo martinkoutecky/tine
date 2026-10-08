@@ -1,11 +1,13 @@
+import { stepMonth } from "./primitives";
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openPage } from "../router";
 import { journalTitle, appNow } from "../journal";
-import { dataRev, firstDayOfWeek } from "../ui";
+import { dataRev, graphEpoch } from "../graphSession";
+import { firstDayOfWeek } from "../ui";
 import { backend } from "../backend";
+import { graphOwner, readOwned } from "../owned";
 import { registerTransientLayer } from "../transientLayers";
 import { readOr } from "../resourceRead";
-import { readLane } from "../readLane";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -51,10 +53,7 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
     for (let d = 1; d <= days; d++) cells.push(d);
     return cells;
   });
-  const step = (delta: number) => {
-    const total = view().y * 12 + view().m + delta;
-    setView({ y: Math.floor(total / 12), m: ((total % 12) + 12) % 12 });
-  };
+  const step = (delta: number) => setView(stepMonth(view(), delta));
   const pick = (d: number) => {
     openPage(journalTitle(new Date(view().y, view().m, d)), "journal");
     setOpen(false);
@@ -64,15 +63,19 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
 
   // Journal days that have content, fetched while the popup is open (re-fetched
   // on dataRev so adding content updates the dots). yyyymmdd keys, month 1-based.
-  const contentDaysLane = readLane();
-  const contentDaysKey = () => (open() ? dataRev() : null);
-  const [contentDaysResource] = createResource(contentDaysKey, (key) =>
-    contentDaysLane(() => contentDaysKey() === key, () => backend().journalContentDays())
+  const [contentDaysResource] = createResource(
+    () => (open() ? { rev: dataRev(), epoch: graphEpoch() } : null),
+    async () => {
+      const owner = graphOwner();
+      const epoch = graphEpoch();
+      const result = await readOwned(owner, backend().journalContentDays());
+      return { epoch, days: result.kind === "current" ? result.value : [] };
+    }
   );
   // No dots rather than no calendar: the popup's job is jumping to a day, and
   // the content dots are a hint on top of it.
   const contentDays = () => readOr(contentDaysResource, undefined, "journal content days");
-  const haveContent = createMemo(() => new Set(contentDays() ?? []));
+  const haveContent = createMemo(() => new Set(contentDays()?.epoch === graphEpoch() ? contentDays()?.days : []));
   const hasContent = (d: number) =>
     haveContent().has(view().y * 10000 + (view().m + 1) * 100 + d);
 

@@ -1,8 +1,9 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { loadSingle, resetStore, setRaw } from "../store";
-import { bumpDataRev } from "../ui";
+import { resetStore, setRaw } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { bumpDataRev } from "../graphSession";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 
@@ -111,9 +112,9 @@ describe("live inline block references (GH #166)", () => {
   });
 });
 
-// GH #589: OG resolves a block reference only when its id is a UUID and shows
-// an unresolved one as its source text. `(((uuid)))` parses (mldoc and lsdoc
-// alike) as the id `(uuid` plus a plain `)`.
+// GH #589 (master 34272cf6b): OG resolves a block reference only when its id is
+// a UUID and shows an unresolved one as its source text. `(((uuid)))` parses
+// (mldoc and lsdoc alike) as the id `(uuid` plus a plain `)`.
 describe("unresolved inline block references (GH #589)", () => {
   it("shows the full source text, and does not look up an id that is not a UUID", async () => {
     const id = "58900000-0000-4000-8000-000000000001";
@@ -123,6 +124,7 @@ describe("unresolved inline block references (GH #589)", () => {
     const dispose = render(() => <AstBody raw={`a ((${id})) b (((${id}))) c`} />, host);
     try {
       await vi.waitFor(() => expect(host.querySelectorAll(".block-ref-missing")).toHaveLength(2));
+      await vi.waitFor(() => expect(resolveBlocks).toHaveBeenCalled());
       const refs = [...host.querySelectorAll(".block-ref")].map((element) => element.textContent);
       expect(refs).toEqual([`((${id}))`, `(((${id}))`]);
       expect(host.textContent).toContain(`(((${id})))`);

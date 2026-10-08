@@ -1,7 +1,6 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Screenshot the Sheets formula builder popup against the built mock frontend.
 // Usage: npm run build && node scripts/shot-formula-builder.mjs
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
@@ -13,6 +12,15 @@ const PORT = 5231;
 
 fs.mkdirSync(OUT, { recursive: true });
 
+async function waitForServer(url) {
+  for (let i = 0; i < 60; i++) {
+    try {
+      if ((await fetch(url)).ok) return;
+    } catch {}
+    await sleep(250);
+  }
+  throw new Error("vite preview did not start");
+}
 
 async function openBuilder(page, url) {
   await page.goto(url);
@@ -45,7 +53,7 @@ async function openBuilder(page, url) {
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 try {
   const url = `http://localhost:${PORT}/`;
-  await waitForHttpServer(url, 60, 250, { failureMessage: "vite preview did not start" });
+  await waitForServer(url);
   const browser = await chromium.launch({
     args: [
       "--no-sandbox",

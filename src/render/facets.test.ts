@@ -42,12 +42,6 @@ describe("facet cache (audit P2)", () => {
     expect(facetsFromDto({ priority: "X" }).priority).toBe(null);
     expect(facetsFromDto({}).marker).toBe(null);
   });
-
-  it("memoizes DTO facets by DTO identity", () => {
-    const dto = { marker: "TODO", priority: "A" };
-    expect(facetsFromDto(dto)).toBe(facetsFromDto(dto));
-    expect(facetsFromDto({ ...dto })).not.toBe(facetsFromDto(dto));
-  });
 });
 
 describe("planning facets", () => {

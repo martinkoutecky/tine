@@ -12,14 +12,21 @@
 
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { pushToast } from "./toasts";
 
 const KEY_SUBTREE = "copy_include_subtree";
 const KEY_COLLAPSED = "copy_strip_collapsed";
 const KEY_REF_ZOOM = "ref_click_zoom";
 
-const [includeSubtree, setIncludeSubtreeSig] = createSignal(false);
-const [stripCollapsed, setStripCollapsedSig] = createSignal(true);
-const [refZoom, setRefZoomSig] = createSignal(false);
+// Each default is spelled once: the initial signal and the startup read share it.
+const DEFAULT_INCLUDE_SUBTREE = false;
+const DEFAULT_STRIP_COLLAPSED = true;
+const DEFAULT_REF_ZOOM = false;
+
+const [includeSubtree, setIncludeSubtreeSig] = createSignal(DEFAULT_INCLUDE_SUBTREE);
+const [stripCollapsed, setStripCollapsedSig] = createSignal(DEFAULT_STRIP_COLLAPSED);
+const [refZoom, setRefZoomSig] = createSignal(DEFAULT_REF_ZOOM);
 
 /** Reactive: when copying a parent, also include its sub-blocks? OFF = Tine default
  *  (only the selected blocks); ON = Logseq behavior (whole sub-tree). */
@@ -31,36 +38,45 @@ export const copyStripCollapsed = stripCollapsed;
  *  in context (Tine default OFF). */
 export const refClickZoom = refZoom;
 
+/** Apply now and queue a device-local write. Failure rolls back and toasts;
+ * return does not confirm persistence. O(1) plus backend write. */
 export function setRefClickZoom(on: boolean): void {
-  setRefZoomSig(on);
-  void backend().setAppBool(KEY_REF_ZOOM, on).catch(() => {});
+  writePreference(refZoom, setRefZoomSig, on, (next) => backend().setAppBool(KEY_REF_ZOOM, next), "block reference click behavior");
 }
 
+/** Apply now and queue a device-local write. Failure rolls back and toasts;
+ * return does not confirm persistence. O(1) plus backend write. */
 export function setCopyIncludeSubtree(on: boolean): void {
-  setIncludeSubtreeSig(on);
-  void backend().setAppBool(KEY_SUBTREE, on).catch(() => {});
+  writePreference(includeSubtree, setIncludeSubtreeSig, on, (next) => backend().setAppBool(KEY_SUBTREE, next), "copy subtree preference");
 }
+/** Apply now and queue a device-local write. Failure rolls back and toasts;
+ * return does not confirm persistence. O(1) plus backend write. */
 export function setCopyStripCollapsed(on: boolean): void {
-  setStripCollapsedSig(on);
-  void backend().setAppBool(KEY_COLLAPSED, on).catch(() => {});
+  writePreference(stripCollapsed, setStripCollapsedSig, on, (next) => backend().setAppBool(KEY_COLLAPSED, next), "copy collapsed preference");
 }
 
-/** Load the persisted preferences at startup. Tine defaults: include-subtree OFF,
- *  strip-collapsed ON (both differ from Logseq; revertible in Settings). */
+/** Load device preferences at startup: include-subtree and ref-click zoom OFF,
+ * strip-collapsed ON. Failed reads toast and resolve. */
 export async function initCopySettings(): Promise<void> {
+  const subtreeRevision = preferenceRevision(includeSubtree);
+  const collapsedRevision = preferenceRevision(stripCollapsed);
+  const zoomRevision = preferenceRevision(refZoom);
   try {
-    setIncludeSubtreeSig(await backend().getAppBool(KEY_SUBTREE, false));
+    const value = await backend().getAppBool(KEY_SUBTREE, DEFAULT_INCLUDE_SUBTREE);
+    if (preferenceReadCurrent(includeSubtree, subtreeRevision)) { setIncludeSubtreeSig(value); seedPreference(includeSubtree); }
   } catch {
-    /* default off */
+    pushToast("Could not load copy subtree preference.", "error");
   }
   try {
-    setStripCollapsedSig(await backend().getAppBool(KEY_COLLAPSED, true));
+    const value = await backend().getAppBool(KEY_COLLAPSED, DEFAULT_STRIP_COLLAPSED);
+    if (preferenceReadCurrent(stripCollapsed, collapsedRevision)) { setStripCollapsedSig(value); seedPreference(stripCollapsed); }
   } catch {
-    /* default on */
+    pushToast("Could not load collapsed copy preference.", "error");
   }
   try {
-    setRefZoomSig(await backend().getAppBool(KEY_REF_ZOOM, false));
+    const value = await backend().getAppBool(KEY_REF_ZOOM, DEFAULT_REF_ZOOM);
+    if (preferenceReadCurrent(refZoom, zoomRevision)) { setRefZoomSig(value); seedPreference(refZoom); }
   } catch {
-    /* default off */
+    pushToast("Could not load block reference preference.", "error");
   }
 }

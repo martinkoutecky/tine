@@ -1,5 +1,6 @@
 import type { FieldValue } from "./fields";
-import { isoDatePrefix } from "./typed";
+import { isoDatePrefix, sheetNumber } from "./typed";
+import type { QueryAggFn } from "../editor/queryAggregate";
 
 export type AggregateFn =
   | "sum"
@@ -60,6 +61,46 @@ export function isAggregateFn(value: string): value is AggregateFn {
   return AGGREGATE_SET.has(value);
 }
 
+export interface AggregateSegment { readonly keyStart: number; readonly keyEnd: number; readonly fn: string }
+const BARE_QUERY_COUNT: AggregateSegment = { keyStart: 0, keyEnd: 0, fn: "count" };
+const SPACE = /\s/;
+const QUERY_AGGREGATE_FNS: readonly string[] = ["count", "sum", "avg"];
+
+export function isQueryAggregateFn(value: string): value is QueryAggFn {
+  return QUERY_AGGREGATE_FNS.includes(value);
+}
+
+/** Decode one stored aggregate segment, O(segment bytes), retaining spelling
+ * and key spans for lossless rename. Sheet maps accept lowercase sheet functions;
+ * query lists accept count/sum/avg and bare count, preserving duplicates. Rename
+ * owns the union (case-insensitive) and leaves unreadable segments to its caller.
+ * These are codecs for property VALUES, never readers of Logseq structure. */
+export function decodeAggregateSegment(segment: string, policy: "sheet" | "query" | "rename"): AggregateSegment | null {
+  if (policy === "query" && segment.trim().toLowerCase() === "count")
+    return BARE_QUERY_COUNT;
+  const eq = segment.indexOf("=");
+  if (eq < 0 || segment.indexOf("=", eq + 1) >= 0 || segment.includes(";")) return null;
+  let keyStart = 0, keyEnd = eq, fnStart = eq + 1, fnEnd = segment.length;
+  while (keyStart < keyEnd && SPACE.test(segment[keyStart])) keyStart++;
+  while (keyEnd > keyStart && SPACE.test(segment[keyEnd - 1])) keyEnd--;
+  while (fnStart < fnEnd && SPACE.test(segment[fnStart])) fnStart++;
+  while (fnEnd > fnStart && SPACE.test(segment[fnEnd - 1])) fnEnd--;
+  const fn = segment.slice(fnStart, fnEnd);
+  const normalized = fn.toLowerCase();
+  if (policy === "query") {
+    // Rust `parse_col_aggregate_segment` trims both sides of '='; the shared
+    // golden tests/fixtures/i12-col-aggregates-golden.json pins this policy.
+    if (!isQueryAggregateFn(normalized)) return null;
+  } else if (keyStart === keyEnd || (!isAggregateFn(normalized) && !(policy === "rename" && normalized === "avg"))
+    || (policy === "sheet" && fn !== normalized)) return null;
+  return { keyStart, keyEnd, fn };
+}
+
+/** Query aggregate spelling; ordered entries are never reduced to a map. */
+export function encodeQueryAggregate([field, fn]: readonly [string, QueryAggFn]): string {
+  return field ? `${field}=${fn}` : fn;
+}
+
 function textOf(value: FieldValue | string | null | undefined): string {
   if (value == null) return "";
   return typeof value === "string" ? value : value.raw ?? value.text;
@@ -81,8 +122,8 @@ function numericValues(values: readonly (FieldValue | string | null | undefined)
   let skipped = 0;
   for (const value of values) {
     const text = textOf(value).trim();
-    const n = parseFloat(text);
-    if (Number.isFinite(n)) nums.push(n);
+    const n = sheetNumber(text, "aggregate-prefix");
+    if (n !== null) nums.push(n);
     else skipped++;
   }
   return { nums, skipped };
@@ -98,7 +139,7 @@ function dateValues(values: readonly (FieldValue | string | null | undefined)[])
     if (iso) {
       dates.push(iso);
     } else {
-      if (Number.isFinite(parseFloat(text))) numericNonDates++;
+      if (sheetNumber(text, "aggregate-prefix") !== null) numericNonDates++;
       skipped++;
     }
   }

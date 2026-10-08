@@ -1,15 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
-import { makePdfRoute, type PaneSnapshot } from "./router";
-import { buildPersistedSession } from "./session";
+import type { PaneSnapshot } from "./router";
+import { buildPersistedSession, restoreSession } from "./session";
+import { resetStore } from "./document";
 import { applySidebarSession, rightSidebar } from "./ui";
-import {
-  activatePdfOwnership,
-  registerPdfParticipant,
-  resetPdfOwnershipForTest,
-  type PdfOwnership,
-} from "./pdfOwnership";
+import { setToasts, toasts } from "./toasts";
 import {
   activeWorkspaceId,
   createWorkspace,
@@ -44,98 +40,163 @@ function registryFromCurrent() {
   });
 }
 
-let pdfOwner: PdfOwnership;
-
 beforeEach(() => {
   resetPaneLayoutToSingle(journals());
   applySidebarSession({ right: false, items: [] });
   resetWorkspacesForTest();
-  resetPdfOwnershipForTest();
-  pdfOwner = activatePdfOwnership("/test/workspace-graph");
   vi.restoreAllMocks();
 });
 
-afterEach(() => {
-  resetPdfOwnershipForTest();
-});
-
 describe("named workspace switching", () => {
-  it("drains PDF work before replacing a layout", async () => {
-    const current = buildPersistedSession();
-    const target = { ...current, focusedPaneId: "main" };
-    const events: string[] = [];
+  it("restores the registry's active workspace after a crash between registry and session saves", async () => {
+    resetPaneLayoutToSingle(pages(["Old session"]));
+    const oldSession = { ...buildPersistedSession(), workspaceId: "old" };
+    resetPaneLayoutToSingle(pages(["Target workspace"]));
+    const targetSession = { ...buildPersistedSession(), workspaceId: "target" };
+    resetPaneLayoutToSingle(journals());
+    vi.spyOn(backend(), "loadSession").mockResolvedValue(JSON.stringify(oldSession));
     vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(JSON.stringify({
       version: 1,
-      activeId: "default",
+      activeId: "target",
       workspaces: [
-        { id: "default", name: "", blob: current },
-        { id: "target", name: "Target", blob: target },
+        { id: "old", name: "Old", blob: oldSession },
+        { id: "target", name: "Target", blob: targetSession },
       ],
     }));
-    vi.spyOn(backend(), "saveSession").mockImplementation(async () => { events.push("session"); });
-    vi.spyOn(backend(), "saveWorkspaces").mockImplementation(async () => { events.push("registry"); });
-    registerPdfParticipant(pdfOwner, {
-      flush: async () => { events.push("pdf"); return true; },
-      cancel: vi.fn(),
-    });
-
-    await initializeWorkspaces();
-    await switchWorkspace("target");
-
-    expect(events).toEqual(["session", "pdf", "registry"]);
+    await restoreSession();
+    expect(activeWorkspaceId()).toBe("target");
+    expect(paneRouter("main").route()).toEqual({ kind: "page", name: "Target workspace", pageKind: "page" });
   });
-
-  it("aborts switch, create, and active deletion before registry or layout mutation when PDF drain fails", async () => {
-    const current = buildPersistedSession();
-    const target = { ...current };
-    const saveRegistry = vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
-    vi.spyOn(backend(), "saveSession").mockResolvedValue();
+  it("uses the active workspace snapshot when the live session file is missing", async () => {
+    resetPaneLayoutToSingle(pages(["Parked page"]));
+    const parked = buildPersistedSession();
+    resetPaneLayoutToSingle(journals());
+    vi.spyOn(backend(), "loadSession").mockResolvedValue(null);
     vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(JSON.stringify({
-      version: 1,
-      activeId: "default",
-      workspaces: [
-        { id: "default", name: "", blob: current },
-        { id: "target", name: "Target", blob: target },
+      version: 1, activeId: "default",
+      workspaces: [{ id: "default", name: "", blob: parked }],
+    }));
+    await restoreSession();
+    expect(paneRouter("main").route()).toEqual({ kind: "page", name: "Parked page", pageKind: "page" });
+  });
+  it("keeps an interphase live edit made after the session read before registry initialization", async () => {
+    resetPaneLayoutToSingle(pages(["Old session"]));
+    const old = { ...buildPersistedSession(), workspaceId: "old" };
+    resetPaneLayoutToSingle(pages(["Parked target"]));
+    const parked = { ...buildPersistedSession(), workspaceId: "target" };
+    resetPaneLayoutToSingle(journals());
+    vi.spyOn(backend(), "loadSession").mockResolvedValue(JSON.stringify(old));
+    let finishRegistry!: (raw: string) => void;
+    const loadRegistry = vi.spyOn(backend(), "loadWorkspaces").mockImplementation(() => new Promise((resolve) => { finishRegistry = resolve; }));
+    const registry = JSON.stringify({
+      version: 1, activeId: "target", workspaces: [
+        { id: "old", name: "Old", blob: old },
+        { id: "target", name: "Target", blob: parked },
+      ],
+    });
+    const pending = restoreSession();
+    await vi.waitFor(() => expect(loadRegistry).toHaveBeenCalledOnce());
+    expect(paneRouter("main").route()).toEqual({ kind: "page", name: "Old session", pageKind: "page" });
+    paneRouter("main").openPage("Live edit", "page");
+    finishRegistry(registry);
+    await pending;
+    expect(loadRegistry).toHaveBeenCalled();
+    expect(paneRouter("main").route()).toEqual({ kind: "page", name: "Live edit", pageKind: "page" });
+    expect(toasts().some((toast) => toast.message.includes("workspace recovery"))).toBe(true);
+    setToasts([]);
+  });
+  it("does not replace an edit between session application and registry initialization", async () => {
+    resetPaneLayoutToSingle(pages(["Old session"]));
+    const old = { ...buildPersistedSession(), workspaceId: "old" };
+    resetPaneLayoutToSingle(pages(["Parked target"]));
+    const parked = { ...buildPersistedSession(), workspaceId: "target" };
+    resetPaneLayoutToSingle(journals());
+    let finishSession!: (raw: string) => void;
+    vi.spyOn(backend(), "loadSession").mockImplementation(() => new Promise((resolve) => { finishSession = resolve; }));
+    const loadRegistry = vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(JSON.stringify({
+      version: 1, activeId: "target", workspaces: [
+        { id: "old", name: "Old", blob: old },
+        { id: "target", name: "Target", blob: parked },
       ],
     }));
+    const pending = restoreSession();
+    finishSession(JSON.stringify(old));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(paneRouter("main").route()).toEqual({ kind: "page", name: "Old session", pageKind: "page" });
+    expect(loadRegistry).not.toHaveBeenCalled();
+    paneRouter("main").openPage("Interphase edit", "page");
+    await pending;
+    expect(paneRouter("main").route()).toEqual({ kind: "page", name: "Interphase edit", pageKind: "page" });
+    expect(toasts().some((toast) => toast.message.includes("workspace recovery"))).toBe(true);
+    setToasts([]);
+  });
+  it("does not publish a workspace when the live session save fails", async () => {
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
+    const saveRegistry = vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
+    vi.spyOn(backend(), "saveSession").mockRejectedValue(new Error("session disk full"));
     await initializeWorkspaces();
-    const beforeRegistry = workspaces();
-    const beforeLayout = layoutRoot();
-    registerPdfParticipant(pdfOwner, {
-      flush: async () => false,
-      cancel: vi.fn(),
-    });
-
-    await expect(switchWorkspace("target")).rejects.toThrow("pending PDF changes");
-    await expect(createWorkspace("Blocked")).rejects.toThrow("pending PDF changes");
-    await expect(deleteWorkspace("default")).rejects.toThrow("pending PDF changes");
-
+    await expect(createWorkspace("Second")).rejects.toThrow("session disk full");
     expect(saveRegistry).not.toHaveBeenCalled();
     expect(activeWorkspaceId()).toBe("default");
-    expect(workspaces()).toEqual(beforeRegistry);
-    expect(layoutRoot()).toEqual(beforeLayout);
+  });
+  it("reloads a published registry after a post-rename sync failure before the next write", async () => {
+    let disk = registryFromCurrent();
+    let failOnce = true;
+    vi.spyOn(backend(), "loadWorkspaces").mockImplementation(async () => disk);
+    vi.spyOn(backend(), "saveWorkspaces").mockImplementation(async (raw) => {
+      disk = raw;
+      if (failOnce && JSON.parse(raw).workspaces[0].name === "First") {
+        failOnce = false;
+        throw new Error("injected directory sync I/O failure");
+      }
+      return "durable";
+    });
+    await initializeWorkspaces();
+    await expect(renameWorkspace("default", "First")).rejects.toThrow("injected directory sync");
+    await createWorkspace("Second");
+    expect(JSON.parse(disk).workspaces.map((workspace: { name: string }) => workspace.name)).toEqual(["First", "Second"]);
+  });
+  it("installs a visible registry even when its directory sync failed", async () => {
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
+    const save = vi.spyOn(backend(), "saveWorkspaces")
+      .mockResolvedValueOnce("published-unsynced")
+      .mockResolvedValue("durable");
+    await initializeWorkspaces();
+    await renameWorkspace("default", "First");
+    expect(workspaces()[0].name).toBe("First");
+    await createWorkspace("Second");
+    expect(JSON.parse(save.mock.calls[1][0]).workspaces.map((workspace: { name: string }) => workspace.name)).toEqual(["First", "Second"]);
+  });
+  it("does not install an old graph registry after its read finishes on another graph", async () => {
+    let finish!: (raw: string) => void;
+    vi.spyOn(backend(), "loadWorkspaces").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = initializeWorkspaces();
+    await Promise.resolve();
+    resetStore();
+    finish(registryFromCurrent());
+    await expect(pending).rejects.toThrow(/graph/i);
+    expect(workspaces()).toEqual([]);
   });
 
-  it("keeps independent PDF open/closed identity in each named workspace", async () => {
-    paneRouter("main").replaceActiveRoute(makePdfRoute("assets/alpha.pdf", "Alpha", { page: 8 }));
-    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
-    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
-    vi.spyOn(backend(), "saveSession").mockResolvedValue();
-
+  it("clears the old registry when the new graph registry cannot be read", async () => {
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValueOnce(registryFromCurrent()).mockRejectedValueOnce(new Error("unreadable"));
     await initializeWorkspaces();
-    const beta = await createWorkspace("Beta");
-    expect(paneRouter("main").route().kind).toBe("journals");
+    resetStore();
+    await expect(initializeWorkspaces()).rejects.toThrow("unreadable");
+    expect(workspaces()).toEqual([]);
+    expect(activeWorkspaceId()).toBe("");
+    expect(buildPersistedSession().workspaceId).toBeUndefined();
+  });
 
-    paneRouter("main").replaceActiveRoute(makePdfRoute("assets/beta.pdf", "Beta"));
-    await switchWorkspace("default");
-    expect(paneRouter("main").route()).toMatchObject({
-      kind: "pdf", filename: "assets/alpha.pdf", label: "Alpha", page: 8,
-    });
-
-    await switchWorkspace(beta);
-    expect(paneRouter("main").route()).toMatchObject({
-      kind: "pdf", filename: "assets/beta.pdf", label: "Beta",
-    });
+  it("does not persist a workspace switch queued before a graph reset", async () => {
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
+    const save = vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
+    await initializeWorkspaces();
+    const pending = switchWorkspace("default");
+    resetStore();
+    await expect(pending).rejects.toThrow(/graph/i);
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("restores the first workspace's routed tabs and split layout after creating and using a second", async () => {
@@ -156,7 +217,7 @@ describe("named workspace switching", () => {
       "research"
     );
     vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
-    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
+    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
     vi.spyOn(backend(), "saveSession").mockResolvedValue();
 
     await initializeWorkspaces();
@@ -196,9 +257,9 @@ describe("named workspace switching", () => {
   it("never calls a graph writer across save, switch, new, rename, and delete", async () => {
     resetPaneLayoutToSingle(pages(["Byte-identical page"]));
     vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
-    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
+    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
     vi.spyOn(backend(), "saveSession").mockResolvedValue();
-    const savePage = vi.spyOn(backend(), "savePage");
+    const savePages = vi.spyOn(backend(), "savePages");
 
     await initializeWorkspaces();
     await saveActiveWorkspace();
@@ -208,7 +269,7 @@ describe("named workspace switching", () => {
     await switchWorkspace(secondId);
     await deleteWorkspace(secondId);
 
-    expect(savePage).not.toHaveBeenCalled();
+    expect(savePages).not.toHaveBeenCalled();
     expect(workspaces()).toHaveLength(1);
     expect(activeWorkspaceId()).toBe("default");
 
@@ -238,14 +299,36 @@ describe("named workspace switching", () => {
         { id: "parked", name: "Parked", blob: parked },
       ],
     }));
-    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
+    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
     vi.spyOn(backend(), "saveSession").mockResolvedValue();
-    const savePage = vi.spyOn(backend(), "savePage");
+    const savePages = vi.spyOn(backend(), "savePages");
 
     await initializeWorkspaces();
     await switchWorkspace("parked");
 
     expect(rightSidebar()).toEqual(parked.rightSidebarItems);
-    expect(savePage).not.toHaveBeenCalled();
+    expect(savePages).not.toHaveBeenCalled();
+  });
+
+  it("carries a registry entry this build cannot parse through every write instead of dropping it", async () => {
+    const newer = { id: "newer", name: "From a newer Tine", blob: { futureShape: true, tabs: "??" } };
+    vi.spyOn(backend(), "loadSession").mockResolvedValue(null);
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(JSON.stringify({
+      version: 1,
+      activeId: "default",
+      workspaces: [{ id: "default", name: "", blob: buildPersistedSession() }, newer],
+    }));
+    const save = vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
+    await initializeWorkspaces();
+    expect(workspaces().map((workspace) => workspace.id)).toEqual(["default"]);
+
+    await renameWorkspace("default", "Renamed");
+    const written = JSON.parse(save.mock.calls[0][0]) as { workspaces: Array<{ id: string }> };
+    expect(written.workspaces).toContainEqual(newer);
+    expect(written.workspaces.map((workspace) => workspace.id)).toEqual(["default", "newer"]);
+
+    await deleteWorkspace("default");
+    const afterDelete = JSON.parse(save.mock.calls[1][0]) as { workspaces: Array<{ id: string }> };
+    expect(afterDelete.workspaces).toContainEqual(newer);
   });
 });

@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { PaneTree } from "../App";
 import { installKeybindings } from "../keybindings";
 import { layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "../panes";
-import { resetStore } from "../store";
+import { resetStore } from "../document";
 import { clearTransientLayersForTest, registerTransientLayer } from "../transientLayers";
 import { tabRoute, type PaneSnapshot } from "../router";
 import { TabBar, tabDragState } from "./TabBar";
@@ -94,6 +94,29 @@ afterEach(() => {
   document.body.innerHTML = "";
   resetStore();
   resetPaneLayoutToSingle(journalsSnapshot());
+});
+
+describe("TabBar close control (GH #340)", () => {
+  it("is a real button with its own Close tab name, not the tab's pin tooltip", () => {
+    resetPaneLayoutToSingle(pageSnapshot(["A", "B"]));
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <TabBar router={paneRouter("main")} />, root);
+    const first = root.querySelector<HTMLElement>(".tab")!;
+    const close = first.querySelector<HTMLElement>(".tab-close")!;
+
+    // A hover tooltip is inherited from the tab's title attribute unless the
+    // close control carries an explicit one of its own.
+    expect(first.title).toContain("pin");
+    expect(close.tagName).toBe("BUTTON");
+    expect(close.getAttribute("type")).toBe("button");
+    expect(close.title).toBe("Close tab");
+    expect(close.getAttribute("aria-label")).toBe("Close tab");
+
+    close.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    expect(namesForPane("main")).toEqual(["B"]);
+    dispose();
+  });
 });
 
 describe("TabBar pointer tab drag", () => {
@@ -305,29 +328,6 @@ describe("TabBar pointer tab drag", () => {
 
     document.elementFromPoint = prevElementFromPoint;
     uninstall();
-    dispose();
-  });
-});
-
-describe("TabBar close control (GH #340)", () => {
-  it("is a real button with its own Close tab name, not the tab's pin tooltip", () => {
-    resetPaneLayoutToSingle(pageSnapshot(["A", "B"]));
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    const dispose = render(() => <TabBar router={paneRouter("main")} />, root);
-    const first = root.querySelector<HTMLElement>(".tab")!;
-    const close = first.querySelector<HTMLElement>(".tab-close")!;
-
-    // A hover tooltip is inherited from the tab's title attribute unless the
-    // close control carries an explicit one of its own.
-    expect(first.title).toContain("pin");
-    expect(close.tagName).toBe("BUTTON");
-    expect(close.getAttribute("type")).toBe("button");
-    expect(close.title).toBe("Close tab");
-    expect(close.getAttribute("aria-label")).toBe("Close tab");
-
-    close.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-    expect(namesForPane("main")).toEqual(["B"]);
     dispose();
   });
 });

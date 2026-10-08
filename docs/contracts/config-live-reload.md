@@ -1,119 +1,100 @@
-# Contract — live `logseq/config.edn` reload
+# Contract — live `logseq/config.edn` (og)
 
-What happens when `logseq/config.edn` changes while Tine is running. Kept true
-by same-commit updates and by the tests named below.
+What happens when `logseq/config.edn` changes while Tine is running, and how
+Tine writes it. Kept true by same-commit updates and by the tests listed at the
+end, which a doc-code test checks exist. Master's contract of the same name is
+the oracle for behaviour; the mechanism here is og's.
 
-Before this existed, Tine read the file **once per graph open**. An edit made in
-Logseq, in a text editor, or delivered by Syncthing was invisible for the rest of
-the session, and the next settings write from Tine was computed from the stale
-copy.
+## 1. One answer, one door
 
-## 1. Configuration is not graph text
+- **Answer (I-12).** `Store::config()` is the only answer to "the current
+  configuration" in the backend. The frontend's is the `graphMeta` signal, and
+  `applyConfigDerivedState` (src/graph.ts) is the one producer of state derived
+  from it that is not read reactively (workflow, journal title format,
+  favorites); graph open calls it with `null` ("apply everything").
+- **Door (I-1).** Every settings write goes through
+  `tine_graph_features::config::update`: one read of the file, a pure text
+  edit, and a `Transaction::replace` (or `create`) guarded by the revision just
+  read. An outside write between the read and the commit is a conflict, and
+  the edit is re-applied to the new bytes (at most four attempts). A page
+  rename that moves the home page carries the same kind of guarded replace as
+  the last step of its own `RenamePage` transaction.
+- Config writes carry no page edit kind: the Rule 8 vocabulary covers page
+  content, and a Meta replace is not page content.
 
-`logseq/config.edn` is a **plain filesystem file**: never in `GraphTextScope`
-and never saved through the page path. That is stated as a capability contract
-at `Graph::ensure_config_write_target`.
+## 2. Taking in an outside edit
 
-The mechanism therefore has one file, one parser, and one write authority.
+The store watcher (`crates/tine-store/src/watch.rs`) marks a batch that names
+`logseq/config.edn` (case-insensitively) and reconciles it with configuration
+included; poll mode (every 3 s) always includes it. The file is re-read only
+when its bytes differ from the ones served (a `FileRev` byte-identity gate), so
+Logseq rewriting identical bytes, or Syncthing redelivering them, costs one
+read and publishes nothing. A config seen
+mid-removal (metadata read, bytes already gone) is looked at again, so the
+removal is published as a removal, not a modification that hides it. A real change reloads the configuration, discards
+parsed pages (the pages directory or name format may have moved) and publishes
+an External change naming `logseq/config.edn`. The desktop shell turns that
+into `graph-config-changed` with the fresh `GraphMeta`.
 
-## 2. Why the watcher used to drop it
+Master 0.6.985 also avoided re-indexing on a settings-only change. That half is
+X-class (SQLite index); og has no index to spare, and the byte-identity gate
+plus "reload only when the bytes changed" is its replacement.
 
-The OS watcher subscribes recursively to each graph root, so the file was always
-*watched*. Three filters then discarded it, the decisive one being
-`incremental_page_paths`: `.edn` is not an eligible page extension, so an exact
-event on it returned "no paths" and the batch forgot it.
+## 3. Writing it
 
-`Pending::config_paths` is a separate queue for exactly this reason. The
-filename gate (`path_is_config_file_name`) is cheap and rough; the decision is
-`tine_core::model::is_config_file_path`, made per graph root when the batch
-drains, case-insensitively — a case-folding filesystem may spell it
-`Logseq/Config.edn`, and the open path already resolves it that way.
+A setter changes only its own **top-level** key: the key is found among the
+root map's direct entries, never inside a nested map (master DUP-3), and only
+at a key position: a keyword that is an earlier entry's VALUE and spells the key
+is not the key (`{:backup :favorites :private "keep"}` has no `:favorites`). The
+readers and every setter share that one selector
+(`config::find_keyword_at_map_level`). A
+scalar setter replaces only the value token. Comments, unknown keys, nested
+maps and spacing elsewhere survive byte for byte. A missing, empty or
+comment-only file gets a new map after its comments.
 
-Tested by `watcher::tests::a_config_edn_write_is_queued_even_though_it_is_not_graph_text`
-(in-place write, temp+rename, and create — every shape a writer produces) and
-`watcher::tests::an_ordinary_page_write_queues_no_configuration_work`.
+Renaming the page `:default-home` names, or a namespace parent of it, rewrites
+`:default-home {:page …}` to the new name (OG `rename-page-aux`). A merge does
+not (OG `merge-pages!`). A case-only rename updates `:default-home :page` to the new spelling too.
 
-## 3. What makes it cheap
+## 4. Refusals
 
-A refresh discards the entire page cache, and Logseq rewrites `config.edn` on
-many ordinary UI actions while Syncthing redelivers it on every peer change. A
-byte-identity gate is therefore **mandatory, not an optimization**.
-
-`Graph::served_config_description()` is a digest of the bytes the served
-configuration was taken from: the bytes the instance was opened with, then
-whatever `Graph::take_in_config` last took in. `model::config_file_description(root)`
-digests what is on disk now. One decider, `state::take_in_config_change`, acts
-on them: nothing when they are equal, and otherwise it asks `take_in_config`,
-whose `ConfigReach` decides: `Unchanged` and `Settings` are taken in by the
-running graph, `Graph` reopens it. It asks again under the storage transition
-lane, on the graph bound then, so a second caller for the same change finds it
-taken in: one change, one reopen.
-
-Both the watcher and every settings command call it. A settings command goes
-through `state::apply_config_write` (the only way a command writes
-configuration; `GraphSlot::apply_config_write` is private to `state.rs`), which
-calls the decider off the main thread when its write left a change the graph
-must reopen for. The command does not leave that to the watcher, which may not
-be running (GH #543, audit R10-07).
-
-Every hand-over of a graph to a window asks too: a reopen's swap, an open's
-bind, and a same-root load that answers with the slot it already has
-(`AlreadyCurrent`) each call `state::serve_disk_config` before the meta they
-hand the frontend is read. A graph reads its configuration when it is opened,
-and a change arriving before the window holds it is taken in by the graph the
-window held then: a settings command writes through the slot being replaced,
-and the watcher takes an outside edit into it. The replacement then served the
-older value, and the frontend, which writes `:favorites` as a whole list,
-dropped a favorite from disk at its next toggle (GH #543, audit R11-03).
-
-`Graph::write_config` is therefore the single funnel every setter publishes
-through, and it takes in what it wrote, so a star toggled in the sidebar costs
-no reopen. A change that reaches the graph is never taken in, so it leaves the
-digest behind: an outside change folded into Tine's own read-modify-write still
-reopens, and an outside revert to the opening bytes still reads as a change.
-(Two earlier digests — the open-time bytes and the last bytes written — each
-missed one of those.)
-
-Tested by `config::tests::a_graph_reports_whether_config_edn_moved_since_it_was_opened`,
-`config::tests::the_watcher_gate_matches_disk_only_when_disk_was_taken_in`,
-`config::tests::only_the_graph_s_own_config_edn_is_recognized_as_configuration`
-`state::tests::a_settings_write_decides_its_own_reopen`,
-`state::tests::a_settings_write_during_a_reopen_reaches_the_replacement` and
-`state::tests::every_graph_handover_serves_the_config_on_disk`.
-
-## 4. What reaches the frontend
-
-`graph-config-changed`, carrying the fresh `GraphMeta` — and **only when the
-meta actually moved**. `GraphMeta` derives `PartialEq` for this purpose: a
-rewrite that changed no setting Tine surfaces announces nothing.
-
-On the frontend, `graphMeta` is a Solid signal that ~22 modules read reactively,
-so most settings update for free (keybindings already re-install on change).
-`applyConfigDerivedState` re-applies only the state that is **not** read from
-that signal — workflow, journal title format, favorites and the arrangement —
-and takes the previous meta so an unrelated settings write does not re-seed
-favorites and re-fetch the arrangement page for nothing. A graph open passes
-`null`, meaning "apply everything", so there is exactly **one** producer of
-config-derived frontend state.
-
-## 5. Refusals and deferrals
-
-| Situation | Behaviour | Why |
+| Situation | Behaviour | In-scope scenario |
 |---|---|---|
-| Storage transition lane busy | `RefreshOutcome::Deferred`; the window is remembered in `config_recheck` and retried next cycle | Blocking the watcher thread would stall reconciliation for **every** graph behind one graph's load or storage promotion. The file is still on disk, so nothing is lost by waiting |
-| Kernel rescan, notify error, or poll mode | Every graph re-checks | Those cycles carry no usable paths; poll mode has none at all. One file read and one digest per graph, against a stat scan already being paid |
-| No OS watcher can be created | `graph-watch-error` is emitted once, and each cycle polls until one can | A swallowed creation error left every external change, and every outside configuration change, unseen for the session (GH #543, audit R10-07) |
-| Refresh fails | `graph-watch-error` is emitted | Until it succeeds the window serves stale configuration, which is the failure this whole mechanism exists to prevent. Not silent |
-| Journal filename migrations | **Never** run on a refresh | Concord invariant 4: a refresh re-reads configuration, it does not rewrite the tree. An outside config edit must not rename the user's files as a side effect |
+| A delivered config is unsafe (a pages directory escaping the graph) | Watcher keeps serving the last good configuration and keeps observing pages | Sync delivery / external-editor race |
+| A settings write finds a config whose first form is not a balanced map (truncated, half-saved, not a map) | `InvalidData`; the bytes are left exactly as they are | Sync delivery / external-editor race |
+| An edit would produce a config without a balanced root map | `InvalidData`; nothing is written | Same: never make a malformed file out of a good one |
+| A key's value has a shape Tine does not edit (`(…)`, reader tags, a collection where a scalar belongs) | `InvalidData`; nothing is written | Hand-edited or newer-Logseq config |
+| A rename finds config.edn unreadable or malformed | The rename proceeds; home is not updated | Sync delivery / external-editor race; a bad config must not block page work |
 
-## 6. What this does NOT close
+A malformed config never blocks opening the graph: the reader is lenient and
+pages open as usual.
 
-`:favorites` is the only list-valued setting Tine writes **wholesale**, from a
-list the frontend holds. Live re-reading shrinks the window in which a favorite
-added in Logseq is overwritten by the next star toggled in Tine; it does not
-close it. Closing it needs a three-way merge inside `set_favorites`' own
-`atomic_update` closure, against the disk baseline it already reads.
+## 5. What this does not close
 
-Every other setter writes a scalar the user just chose, where last-writer-wins
-is the expected semantics, and `atomic_update`'s key-local compare-and-swap
-already guarantees that an external edit to a *different* key is never lost.
+`:favorites` is written wholesale from the list the frontend holds. Live
+reload shrinks, but does not close, the window in which a favorite added
+elsewhere is overwritten by the next star toggled in Tine (master §6).
+
+A crash between a rename's last page step and its config step leaves home
+naming the old page; the user re-picks it in Settings. No page content is at
+risk.
+
+## Tests
+
+- crates/tine-store/tests/config_live_reload.rs::an_outside_config_edit_is_taken_in_by_the_notify_watcher
+- crates/tine-store/tests/config_live_reload.rs::an_outside_config_edit_is_taken_in_by_the_poll_watcher
+- crates/tine-store/tests/config_live_reload.rs::an_identical_config_rewrite_publishes_nothing
+- crates/tine-store/tests/config_live_reload.rs::an_unsafe_delivered_config_keeps_the_served_one_and_pages_stay_observed
+- crates/tine-store/tests/config_live_reload.rs::a_removed_then_restored_config_is_followed
+- crates/tine-graph-features/tests/config_writes.rs::every_setter_edits_the_top_level_key_never_a_nested_shadow
+- crates/tine-graph-features/tests/config_writes.rs::every_setter_leaves_a_keyword_value_that_spells_its_key_alone
+- crates/tine-graph-features/tests/config_writes.rs::a_real_key_after_a_keyword_value_is_the_one_replaced
+- crates/tine-graph-features/tests/config_writes.rs::every_setter_refuses_a_config_that_is_not_a_balanced_map
+- crates/tine-graph-features/tests/config_writes.rs::a_malformed_config_never_blocks_open
+- crates/tine-graph-features/tests/config_writes.rs::a_config_write_killed_after_its_step_reopens_whole
+- crates/tine-graph-features/tests/config_writes.rs::every_config_setter_goes_through_the_one_guarded_update
+- crates/tine-graph-features/tests/client.rs::config_retry_reapplies_edit_over_external_write
+- crates/tine-graph-features/tests/home_rename.rs::renaming_the_home_page_moves_default_home_with_it
+- crates/tine-graph-features/tests/home_rename.rs::merging_the_home_page_into_another_keeps_default_home
+- crates/tine-graph-features/tests/home_rename.rs::a_malformed_config_neither_blocks_the_rename_nor_is_rewritten
+- crates/tine-graph-features/tests/home_rename.rs::a_home_rename_killed_at_each_step_reopens_whole

@@ -1,36 +1,21 @@
+import { reportUiFailure } from "./uiFailure";
 import { backend } from "./backend";
+import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
+import { parseBlockPos, type QueryRoute } from "./routeTypes";
+import { blockPositionRef } from "./document";
+import { bindingOwner, readOwned, writeOwned, type WriteOwner } from "./owned";
+import { dismissToast, pushToastUnique } from "./toasts";
 import { isSinglePaneShell } from "./nativeChrome";
-import {
-  normalizeFriendlyPageMatchScope,
-  normalizeQueryDisplayDraft,
-} from "./editor/queryDisplayDraft";
 import {
   installSessionPersistence,
   mintPdfViewId,
   normalizeQueryPresentation,
   sameRoute,
   type PaneSnapshot,
-  type PdfRoute,
-  type QueryRoute,
   type Route,
   type SerializedTab,
 } from "./router";
-import {
-  applySidebarSession,
-  favoritesSectionExpanded,
-  clearLegacyRecentSource,
-  legacyRecentPages,
-  recentSectionExpanded,
-  recentPages,
-  rightSidebar,
-  rightSidebarOpen,
-  sidebarOpen,
-  type SidebarItem,
-  type RecentItem,
-  type SidebarSessionState,
-  sanitizeRecent,
-  setRecentPages,
-} from "./ui";
+import { applySidebarSession, favoritesSectionExpanded, clearLegacyRecentSource, legacyRecentPages, recentSectionExpanded, recentPages, rightSidebar, rightSidebarOpen, sidebarOpen, type SidebarItem, type RecentItem, type SidebarSessionState, sanitizeRecent, setRecentPages } from "./ui";
 import {
   feedPaneId,
   focusedPaneId,
@@ -42,7 +27,6 @@ import {
   restorePaneLayout,
   type LayoutNode,
 } from "./panes";
-import { parsePersistedPdfTarget, type PersistedPdfTarget } from "./uiStateRegistry";
 
 export type PersistedLayoutNode =
   | {
@@ -56,7 +40,11 @@ export type PersistedLayoutNode =
       paneId: string;
     } & PaneSnapshot);
 
+/** Saved pane and sidebar state. workspaceId names the workspace that produced
+ * this session; a different registry active ID can select its parked snapshot
+ * during startup recovery. Missing fields retain legacy defaults. */
 export interface PersistedSession extends PaneSnapshot {
+  workspaceId?: string;
   leftSidebar?: boolean;
   rightSidebar?: boolean;
   rightSidebarItems?: SidebarItem[];
@@ -65,55 +53,53 @@ export interface PersistedSession extends PaneSnapshot {
   layout?: PersistedLayoutNode;
   focusedPaneId?: string;
   recentPages?: RecentItem[];
-  /** Legacy dedicated-pane input only. New sessions never write this field. */
-  pdfTarget?: PersistedPdfTarget | null;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
+let currentWorkspaceId: string | null = null;
+let restoredWorkspaceId: string | null = null;
+let restoredSessionPresent: boolean | null = null;
+let sessionIntentRevision = 0;
+let restoreEvidence: { owner: WriteOwner; snapshot: string; intent: string; present: boolean | null; workspaceId: string | null } | null = null;
 
-function invalidPersistedPdf(message: string): Route {
-  return { kind: "invalid", title: "Unavailable PDF", message };
+function intentToken(): string {
+  return JSON.stringify([sessionIntentRevision, ...layoutPaneIds().map((id) => [id, paneRouter(id).routeIntentRevision()])]);
 }
 
-/** The display draft of a query route, in the ONE form both directions of the
- *  session agree on (P5C).
- *
- *  Read and write share this helper deliberately. Restoring runs it over
- *  whatever the session document happened to contain, and serializing runs it
- *  again over the live route — so a draft that cannot be read back is dropped
- *  before it is ever written, and the fresh copy `normalizeQueryDisplayDraft`
- *  returns also means a persisted snapshot never aliases a live route's arrays.
- *
- *  An unreadable draft costs ONLY the draft. The workspace is still a valid
- *  route with a valid source and presentation, and losing a tab (or a whole
- *  pane's layout) over a display choice would be the disproportionate refusal
- *  D-3 rules out — a draft is disposable, the route is not. */
-type QueryDisplayRouteKey = "display" | "pageDisplay" | "blockDisplay";
+export function setSessionWorkspaceId(id: string | null): void { currentWorkspaceId = id; }
+export function discardWorkspaceRestoreEvidence(): void { restoreEvidence = null; restoredWorkspaceId = null; restoredSessionPresent = null; }
 
-function persistableQueryDisplay<K extends QueryDisplayRouteKey>(
-  key: K,
-  display: unknown,
-): Partial<Pick<QueryRoute, K>> {
-  if (display === undefined) return {};
-  const normalized = normalizeQueryDisplayDraft(display);
-  return normalized ? { [key]: normalized } as Pick<QueryRoute, K> : {};
-}
-
-type QueryPresentationRouteKey = "pagePresentation" | "blockPresentation";
-
-function persistableQueryPresentation<K extends QueryPresentationRouteKey>(
-  key: K,
-  value: unknown,
-): Partial<Pick<QueryRoute, K>> {
-  if (value === undefined) return {};
-  const normalized = normalizeQueryPresentation(value);
-  return normalized ? { [key]: normalized } as Pick<QueryRoute, K> : {};
-}
-
-function persistablePageMatchScope(value: unknown): Pick<QueryRoute, "pageMatchScope"> | {} {
-  if (value === undefined) return {};
-  const normalized = normalizeFriendlyPageMatchScope(value);
-  return normalized ? { pageMatchScope: normalized } : {};
+/** Capture one startup recovery decision before the registry read and clear the
+ * session's workspace ID until a registry is installed. On landing,
+ * a live route or session intent always wins over a parked workspace, including
+ * when its serialized snapshot has returned to the same value. A refused parked
+ * recovery is shown to the user. Cost is one session snapshot at each boundary;
+ * malformed parked sessions reject. */
+export function prepareWorkspaceRecovery(): (activeId: string, parked: PersistedSession) => PersistedSession {
+  const evidence = restoreEvidence;
+  restoreEvidence = null;
+  const beforeClear = JSON.stringify(buildPersistedSession());
+  const beforeClearIntent = intentToken();
+  const intervened = !!evidence && (!evidence.owner() || evidence.snapshot !== beforeClear || evidence.intent !== beforeClearIntent);
+  setSessionWorkspaceId(null);
+  const startSnapshot = JSON.stringify(buildPersistedSession());
+  const startIntent = intentToken();
+  return (activeId, parked) => {
+    const changed = JSON.stringify(buildPersistedSession()) !== startSnapshot || intentToken() !== startIntent
+      || intervened;
+    const wantsParked = !!evidence && (evidence.present === false || !!evidence.workspaceId && evidence.workspaceId !== activeId);
+    if (changed && wantsParked) {
+      pushToastUnique("Live changes were kept; workspace recovery was skipped.", "warn"); // a decision, not a failure
+      return buildPersistedSession();
+    }
+    if (wantsParked) {
+      const parsed = parsePersistedSession(JSON.stringify(parked));
+      if (!parsed) throw new Error("The active workspace snapshot is invalid");
+      applyParsedSession(parsed);
+      scheduleSessionSave();
+    }
+    return buildPersistedSession();
+  };
 }
 
 function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
@@ -127,50 +113,53 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
       && (o.sourceKind === "search" || o.sourceKind === "dsl")
       && typeof o.source === "string" && o.source.length <= 65_536
       && presentation)) return null;
-    return {
-      kind: "query", id: o.id, sourceKind: o.sourceKind,
-      source: o.source, presentation,
-      ...persistableQueryDisplay("display", o.display),
-      ...persistableQueryPresentation("pagePresentation", o.pagePresentation),
-      ...persistableQueryDisplay("pageDisplay", o.pageDisplay),
-      ...persistableQueryPresentation("blockPresentation", o.blockPresentation),
-      ...persistableQueryDisplay("blockDisplay", o.blockDisplay),
-      ...persistablePageMatchScope(o.pageMatchScope),
-    };
+    // A malformed OPTIONAL field costs only that field: the tab (and its history
+    // entry) survives, and a bad membership mode is dropped, never widened.
+    const optional: Partial<QueryRoute> = {};
+    const scope = o.pageMatchScope === undefined ? null : normalizeFriendlyPageMatchScope(o.pageMatchScope);
+    if (scope) optional.pageMatchScope = scope;
+    for (const key of ["pagePresentation", "blockPresentation"] as const) {
+      const value = o[key] === undefined ? null : normalizeQueryPresentation(o[key]);
+      if (value) optional[key] = value;
+    }
+    for (const key of ["pageDisplay", "blockDisplay"] as const) {
+      const value = o[key] === undefined ? null : normalizeQueryDisplayDraft(o[key]);
+      if (value) optional[key] = value;
+    }
+    return { kind: "query", id: o.id, sourceKind: o.sourceKind, source: o.source, presentation, ...optional };
   }
   if (o.kind === "invalid") {
+    const detail = o.message;
     if (typeof o.title !== "string" || !o.title || o.title.length > 256
-      || typeof o.message !== "string" || !o.message || o.message.length > 4096) return null;
-    return { kind: "invalid", title: o.title, message: o.message };
+      || typeof detail !== "string" || !detail || detail.length > 4096) return null;
+    return { kind: "invalid", title: o.title, message: detail };
   }
   if (o.kind === "pdf") {
-    if (!(typeof o.viewId === "string" && o.viewId.length > 0 && o.viewId.length <= 128
+    const malformed = !(typeof o.viewId === "string" && o.viewId.length > 0 && o.viewId.length <= 128
       && typeof o.filename === "string" && o.filename.length > 0 && o.filename.length <= 4096
       && typeof o.label === "string" && o.label.length <= 4096
-      && (o.page === undefined || (Number.isSafeInteger(o.page) && Number(o.page) > 0 && Number(o.page) <= 5_000))
+      && (o.page === undefined || (Number.isSafeInteger(o.page) && Number(o.page) > 0 && Number(o.page) <= 5000))
       && (o.scale === undefined || (typeof o.scale === "number" && Number.isFinite(o.scale)
-        && o.scale >= 0.05 && o.scale <= 20)))) {
-      return invalidPersistedPdf("This saved PDF tab is malformed and was not opened.");
-    }
-    const viewId = seenViewIds.has(o.viewId) ? mintPdfViewId(seenViewIds) : o.viewId;
+        && o.scale >= 0.05 && o.scale <= 20)));
+    if (malformed) return { kind: "invalid", title: "Unavailable PDF",
+      message: "This saved PDF tab is malformed and was not opened." };
+    const viewId = seenViewIds.has(o.viewId as string) ? mintPdfViewId(seenViewIds) : o.viewId as string;
     seenViewIds.add(viewId);
-    return {
-      kind: "pdf",
-      viewId,
-      filename: o.filename,
-      label: o.label,
+    return { kind: "pdf", viewId, filename: o.filename as string, label: o.label as string,
       ...(o.page !== undefined ? { page: Number(o.page) } : {}),
-      ...(o.scale !== undefined ? { scale: o.scale } : {}),
-    };
+      ...(o.scale !== undefined ? { scale: Number(o.scale) } : {}) };
   }
   if (o.kind !== "page" || typeof o.name !== "string" || o.name.length > 4096
     || (o.pageKind !== "journal" && o.pageKind !== "page")) return null;
   if (o.path !== undefined && (typeof o.path !== "string" || o.path.length > 4096)) return null;
   if (o.block !== undefined && (typeof o.block !== "string" || o.block.length > 4096)) return null;
+  const blockPos = parseBlockPos(o.blockPos);
+  if (o.blockPos !== undefined && !blockPos) return null;
   return {
     kind: "page", name: o.name, pageKind: o.pageKind,
     ...(o.path ? { path: o.path } : {}),
     ...(o.block ? { block: o.block } : {}),
+    ...(o.block && blockPos ? { blockPos } : {}),
   };
 }
 
@@ -202,13 +191,13 @@ function currentRoute(t: SerializedTab): Route {
   return t.history[Math.min(Math.max(0, t.pos | 0), t.history.length - 1)];
 }
 
-function previousNonJournalsRoute(t: SerializedTab): Route | null {
+function previousPageRoute(t: SerializedTab): Route | null {
   for (let i = t.pos - 1; i >= 0; i--) {
     const r = t.history[i];
-    if (r?.kind !== "journals") return r;
+    if (r?.kind === "page") return r;
   }
   for (const r of t.history) {
-    if (r?.kind !== "journals") return r;
+    if (r?.kind === "page") return r;
   }
   return null;
 }
@@ -222,7 +211,7 @@ function sanitizeJournals(snapshot: PaneSnapshot, journalsSeen: { value: boolean
     let next = tab;
     if (active.kind === "journals") {
       if (journalsSeen.value) {
-        const repl = previousNonJournalsRoute(tab);
+        const repl = previousPageRoute(tab);
         if (!repl) return;
         const history = [...tab.history];
         history[tab.pos] = repl;
@@ -239,13 +228,25 @@ function sanitizeJournals(snapshot: PaneSnapshot, journalsSeen: { value: boolean
   return { tabs, activeIndex: Math.min(activeIndex, tabs.length - 1), scrolls };
 }
 
+/** Restore bounds for a persisted pane layout (og C, I-22). A session or
+ * workspace blob is device input that another build or a sync tool may have
+ * written; a split nested past the depth bound, or any node past the node budget
+ * (a full binary layout of 64 panes), is dropped like any other malformed node,
+ * so the shallow panes still restore and the recursion depth and snapshot work
+ * stay bounded whatever the input. */
+const MAX_LAYOUT_DEPTH = 32;
+const MAX_LAYOUT_NODES = 2 * 64 - 1;
+
 function parseLayoutNode(
   raw: unknown,
   snapshots: Map<string, PaneSnapshot>,
   journalsSeen: { value: boolean },
   seenViewIds: Set<string>,
+  depth = 0,
+  visited = { nodes: 0 },
 ): LayoutNode | null {
   if (!raw || typeof raw !== "object") return null;
+  if (depth > MAX_LAYOUT_DEPTH || ++visited.nodes > MAX_LAYOUT_NODES) return null;
   const o = raw as Record<string, unknown>;
   if (o.kind === "pane") {
     const paneId = typeof o.paneId === "string" && o.paneId ? o.paneId : null;
@@ -260,8 +261,8 @@ function parseLayoutNode(
   if (o.kind === "split") {
     if (o.dir !== "row" && o.dir !== "col") return null;
     const children = Array.isArray(o.children) ? o.children : [];
-    const a = parseLayoutNode(children[0], snapshots, journalsSeen, seenViewIds);
-    const b = parseLayoutNode(children[1], snapshots, journalsSeen, seenViewIds);
+    const a = parseLayoutNode(children[0], snapshots, journalsSeen, seenViewIds, depth + 1, visited);
+    const b = parseLayoutNode(children[1], snapshots, journalsSeen, seenViewIds, depth + 1, visited);
     if (a && b) {
       const ratio = typeof o.ratio === "number" ? Math.min(0.85, Math.max(0.15, o.ratio)) : 0.5;
       return { kind: "split", dir: o.dir, ratio, children: [a, b] };
@@ -271,53 +272,40 @@ function parseLayoutNode(
   return null;
 }
 
-function serializeRoute(route: Route): Route {
-  if (route.kind === "journals") return { kind: "journals" };
-  if (route.kind === "conflicts") return { kind: "conflicts" };
-  if (route.kind === "query") {
-    return {
-      kind: "query", id: route.id, sourceKind: route.sourceKind,
-      source: route.source, presentation: route.presentation,
-      ...persistableQueryDisplay("display", route.display),
-      ...persistableQueryPresentation("pagePresentation", route.pagePresentation),
-      ...persistableQueryDisplay("pageDisplay", route.pageDisplay),
-      ...persistableQueryPresentation("blockPresentation", route.blockPresentation),
-      ...persistableQueryDisplay("blockDisplay", route.blockDisplay),
-      ...persistablePageMatchScope(route.pageMatchScope),
-    };
-  }
-  if (route.kind === "pdf") {
-    return {
-      kind: "pdf", viewId: route.viewId, filename: route.filename, label: route.label,
-      ...(route.page !== undefined ? { page: route.page } : {}),
-      ...(route.scale !== undefined ? { scale: route.scale } : {}),
-    };
-  }
-  if (route.kind === "invalid") {
-    return { kind: "invalid", title: route.title, message: route.message };
-  }
-  return {
-    kind: "page", name: route.name, pageKind: route.pageKind,
-    ...(route.path ? { path: route.path } : {}),
-    ...(route.block ? { block: route.block } : {}),
-  };
+/** A route as a session stores it. A zoomed ID-less block is saved by position
+ * (its runtime key is only a locator and may denote another block after a
+ * restart); navigation never writes an `id::` to make it durable. */
+function persistedRoute(r: Route): Route {
+  if (r.kind !== "page" || !r.block) return r;
+  const ref = blockPositionRef({
+    uuid: r.block, page: r.name, pageKind: r.pageKind,
+    ...(r.path ? { path: r.path } : {}),
+    ...(r.blockPos ? { blockPos: r.blockPos } : {}),
+  });
+  if (ref.uuid === r.block && ref.blockPos === r.blockPos) return r;
+  const { blockPos: _drop, ...rest } = r;
+  return { ...rest, block: ref.uuid, ...(ref.blockPos ? { blockPos: [...ref.blockPos] } : {}) };
 }
 
-function serializeSnapshot(snapshot: PaneSnapshot): PaneSnapshot {
-  return {
-    tabs: snapshot.tabs.map((tab) => ({
-      history: tab.history.map(serializeRoute),
-      pos: tab.pos,
-      pinned: tab.pinned,
-    })),
-    activeIndex: snapshot.activeIndex,
-    ...(snapshot.scrolls ? { scrolls: [...snapshot.scrolls] } : {}),
-  };
+function persistedSnapshot(snapshot: PaneSnapshot): PaneSnapshot {
+  return { ...snapshot, tabs: snapshot.tabs.map((tab) => ({ ...tab, history: tab.history.map(persistedRoute) })) };
+}
+
+function persistedSidebarItem(item: SidebarItem): SidebarItem {
+  if (item.kind !== "block") return item;
+  const ref = blockPositionRef({
+    uuid: item.uuid, page: item.page, pageKind: item.pageKind,
+    ...(item.path ? { path: item.path } : {}),
+    ...(item.blockPos ? { blockPos: item.blockPos } : {}),
+  });
+  if (ref.uuid === item.uuid && ref.blockPos === item.blockPos) return item;
+  const { blockPos: _drop, ...rest } = item;
+  return { ...rest, uuid: ref.uuid, ...(ref.blockPos ? { blockPos: [...ref.blockPos] } : {}) };
 }
 
 function serializeLayout(node: LayoutNode): PersistedLayoutNode {
   if (node.kind === "pane") {
-    return { kind: "pane", paneId: node.paneId, ...serializeSnapshot(paneRouter(node.paneId).snapshot()) };
+    return { kind: "pane", paneId: node.paneId, ...persistedSnapshot(paneRouter(node.paneId).snapshot()) };
   }
   return {
     kind: "split",
@@ -330,12 +318,13 @@ function serializeLayout(node: LayoutNode): PersistedLayoutNode {
 export function buildPersistedSession(): PersistedSession {
   const ids = layoutPaneIds();
   const mirrorId = feedPaneId() ?? (ids.includes(focusedPaneId()) ? focusedPaneId() : ids[0]) ?? "main";
-  const mirror = serializeSnapshot(paneRouter(mirrorId).snapshot());
+  const mirror = persistedSnapshot(paneRouter(mirrorId).snapshot());
   return {
     ...mirror,
+    ...(currentWorkspaceId ? { workspaceId: currentWorkspaceId } : {}),
     leftSidebar: sidebarOpen(),
     rightSidebar: rightSidebarOpen(),
-    rightSidebarItems: rightSidebar(),
+    rightSidebarItems: rightSidebar().map(persistedSidebarItem),
     favoritesSectionExpanded: favoritesSectionExpanded(),
     recentSectionExpanded: recentSectionExpanded(),
     layout: serializeLayout(layoutRoot()),
@@ -344,64 +333,7 @@ export function buildPersistedSession(): PersistedSession {
   };
 }
 
-export interface SessionMigrationEnvironment {
-  mobile?: boolean;
-  legacyPdfWidth?: number;
-  viewportWidth?: number;
-}
-
-function containsEquivalentPdf(snapshots: Map<string, PaneSnapshot>, filename: string): boolean {
-  for (const snapshot of snapshots.values()) {
-    for (const tab of snapshot.tabs) {
-      if (tab.history.some((route) => route.kind === "pdf" && route.filename === filename)) return true;
-    }
-  }
-  return false;
-}
-
-function migratedPdfRoute(target: PersistedPdfTarget, seenViewIds: Set<string>): PdfRoute {
-  const viewId = mintPdfViewId(seenViewIds);
-  seenViewIds.add(viewId);
-  return { kind: "pdf", viewId, filename: target.filename, label: target.label };
-}
-
-function migrateLegacyPdf(
-  parsed: { layout: LayoutNode; snapshots: Map<string, PaneSnapshot>; focusedPaneId: string },
-  target: PersistedPdfTarget | null,
-  environment: SessionMigrationEnvironment,
-  seenViewIds: Set<string>,
-): void {
-  if (!target || containsEquivalentPdf(parsed.snapshots, target.filename)) return;
-  const route = migratedPdfRoute(target, seenViewIds);
-  if (environment.mobile ?? isSinglePaneShell()) {
-    const snapshot = parsed.snapshots.get(parsed.focusedPaneId) ?? parsed.snapshots.values().next().value;
-    if (!snapshot) return;
-    const tab = snapshot.tabs[snapshot.activeIndex];
-    tab.history = [...tab.history.slice(0, tab.pos + 1), route];
-    tab.pos = tab.history.length - 1;
-    return;
-  }
-  const used = new Set(parsed.snapshots.keys());
-  let paneId = "pdf-migrated";
-  let suffix = 1;
-  while (used.has(paneId)) paneId = `pdf-migrated-${suffix++}`;
-  parsed.snapshots.set(paneId, {
-    tabs: [{ history: [route], pos: 0, pinned: false }],
-    activeIndex: 0,
-    scrolls: [null],
-  });
-  const viewport = environment.viewportWidth;
-  const width = environment.legacyPdfWidth;
-  const ratio = typeof viewport === "number" && viewport > 0 && typeof width === "number" && width > 0
-    ? Math.min(0.85, Math.max(0.15, (viewport - width) / viewport))
-    : 0.65;
-  parsed.layout = {
-    kind: "split", dir: "row", ratio,
-    children: [parsed.layout, { kind: "pane", paneId }],
-  };
-}
-
-export function parsePersistedSession(raw: string, environment: SessionMigrationEnvironment = {}): {
+export function parsePersistedSession(raw: string): {
   layout: LayoutNode;
   snapshots: Map<string, PaneSnapshot>;
   focusedPaneId: string;
@@ -418,66 +350,47 @@ export function parsePersistedSession(raw: string, environment: SessionMigration
       recentExpanded: s.recentSectionExpanded,
     };
     const recent = s.recentPages === undefined ? legacyRecentPages() : sanitizeRecent(s.recentPages);
-    const restoredPdfTarget = parsePersistedPdfTarget(s.pdfTarget);
-    const mobile = environment.mobile ?? isSinglePaneShell();
+    const singlePane = isSinglePaneShell();
     const seenViewIds = new Set<string>();
-    if (s.layout && !mobile) {
+    if (s.layout && !singlePane) {
       const snapshots = new Map<string, PaneSnapshot>();
       const layout = parseLayoutNode(s.layout, snapshots, { value: false }, seenViewIds);
       if (layout && snapshots.size) {
-        const parsed = {
+        return {
           layout,
           snapshots,
           focusedPaneId: typeof s.focusedPaneId === "string" ? s.focusedPaneId : "main",
           sidebar,
           recent,
         };
-        migrateLegacyPdf(parsed, restoredPdfTarget, environment, seenViewIds);
-        return parsed;
       }
     }
-    if (s.layout && mobile) {
+    if (s.layout && singlePane) {
       const snapshots = new Map<string, PaneSnapshot>();
-      const parsedLayout = parseLayoutNode(s.layout, snapshots, { value: false }, seenViewIds);
-      if (parsedLayout && snapshots.size) {
+      const parsed = parseLayoutNode(s.layout, snapshots, { value: false }, seenViewIds);
+      if (parsed && snapshots.size) {
         const feedId =
           [...snapshots].find(([, snap]) =>
             sameRoute(currentRoute(snap.tabs[snap.activeIndex]), { kind: "journals" })
           )?.[0] ?? [...snapshots.keys()][0];
-        const parsed: {
-          layout: LayoutNode;
-          snapshots: Map<string, PaneSnapshot>;
-          focusedPaneId: string;
-          sidebar: SidebarSessionState;
-          recent: RecentItem[];
-        } = {
+        return {
           layout: { kind: "pane", paneId: "main" },
           snapshots: new Map([["main", snapshots.get(feedId)!]]),
           focusedPaneId: "main",
           sidebar,
           recent,
         };
-        migrateLegacyPdf(parsed, restoredPdfTarget, { ...environment, mobile: true }, seenViewIds);
-        return parsed;
       }
     }
     const legacy = parseSnapshotValue(s, seenViewIds);
     if (!legacy) return null;
-    const parsed: {
-      layout: LayoutNode;
-      snapshots: Map<string, PaneSnapshot>;
-      focusedPaneId: string;
-      sidebar: SidebarSessionState;
-      recent: RecentItem[];
-    } = {
+    return {
       layout: { kind: "pane", paneId: "main" },
       snapshots: new Map([["main", legacy]]),
       focusedPaneId: "main",
       sidebar,
       recent,
     };
-    migrateLegacyPdf(parsed, restoredPdfTarget, environment, seenViewIds);
-    return parsed;
   } catch {
     return null;
   }
@@ -500,41 +413,100 @@ export function applyParsedSession(parsed: NonNullable<ReturnType<typeof parsePe
   }
 }
 
+let sessionSaveFailure: { id: number; message: string } | null = null;
+
+/** A window whose graph binding does not exist yet (Welcome screen, or the
+ *  launch load still running) has no session file to write: `save_session`
+ *  would refuse with `no graph loaded for window …`/`missing-graph-binding`,
+ *  a transient startup state rather than a failure (OG-TOAST T2 sweep). The
+ *  bound graph's first save carries the live state. */
+const windowUnbound = () => backend().graphBindingGeneration() === 0;
+
+function reportSessionSaveFailure(error: unknown): void {
+  const message = `Could not save session: ${String(error)}`;
+  const priorMessage = sessionSaveFailure?.message;
+  if (sessionSaveFailure && priorMessage !== message) dismissToast(sessionSaveFailure.id);
+  sessionSaveFailure = {
+    id: pushToastUnique(message, "error", { sticky: true, action: { label: "Retry", run: () => { void flushSession().catch(() => console.error("Session retry failed")); } } }),
+    message,
+  };
+}
+
+function clearSessionSaveFailure(): void {
+  if (sessionSaveFailure) dismissToast(sessionSaveFailure.id);
+  sessionSaveFailure = null;
+}
+
+/** Cancel a scheduled save and write the current session. A write failure shows
+ * one Retry toast and rejects; stale graph ownership also rejects. Completion
+ * certifies persistence for the current graph. Cost follows session bytes and backend latency. */
 export async function flushSession(): Promise<void> {
+  sessionIntentRevision++;
+  const owner = bindingOwner();
   clearTimeout(saveTimer);
+  if (windowUnbound()) return;
   try {
-    await backend().saveSession(JSON.stringify(buildPersistedSession()));
-    clearLegacyRecentSource();
-  } catch {
-    // best-effort
+    const result = await writeOwned(owner, backend().saveSession(JSON.stringify(buildPersistedSession())));
+    if (result.kind !== "current") throw new Error("Graph changed during session save");
+    clearLegacyRecentSource(); clearSessionSaveFailure();
+  } catch (error) {
+    if (owner()) reportSessionSaveFailure(error);
+    throw error;
   }
 }
 
 export function scheduleSessionSave() {
+  sessionIntentRevision++;
+  const owner = bindingOwner();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    void backend().saveSession(JSON.stringify(buildPersistedSession()))
-      .then(clearLegacyRecentSource)
-      .catch(() => {});
+    if (!owner() || windowUnbound()) return;
+    void writeOwned(owner, backend().saveSession(JSON.stringify(buildPersistedSession())))
+      .then((result) => { if (result.kind === "current") { clearLegacyRecentSource(); clearSessionSaveFailure(); } })
+      .catch(reportSessionSaveFailure);
   }, 150);
 }
 
+/** Best-effort load of this graph's saved session; never rejects. Saved tabs,
+ * layout, sidebar and recents apply together only while the UI is the pristine
+ * one-pane Journals default and no route or session intent changed during the
+ * read. A missing file restores legacy recents; invalid or unreadable data
+ * leaves the live UI. Load failure, graph change, or a live change skips registry
+ * initialization. Otherwise registry initialization may apply its parked active
+ * workspace and schedule a save; a refused recovery or registry error shows a
+ * toast. Backend loads may migrate legacy session/registry files. Cost follows
+ * session and registry bytes; recovery may write the session file. */
 export async function restoreSession(): Promise<void> {
+  const owner = bindingOwner();
+  discardWorkspaceRestoreEvidence();
+  const initialSession = JSON.stringify(buildPersistedSession());
+  const initialIntent = intentToken();
+  const mayApply = () => owner() && JSON.stringify(buildPersistedSession()) === initialSession && intentToken() === initialIntent;
+  let initializeRegistry = true;
   try {
     let raw: string | null = null;
     try {
-      raw = await backend().loadSession();
-    } catch {
+      const result = await readOwned(owner, backend().loadSession());
+      if (result.kind === "stale") return;
+      raw = result.value;
+    } catch (error) {
+      if (owner()) reportUiFailure("session-read", error);
+      initializeRegistry = false;
       return;
     }
+    if (!mayApply()) { initializeRegistry = false; return; }
     if (!raw) {
+      restoredSessionPresent = false;
       setRecentPages(legacyRecentPages());
       return;
     }
+    restoredSessionPresent = true;
+    try {
+      const id = (JSON.parse(raw) as PersistedSession).workspaceId;
+      restoredWorkspaceId = typeof id === "string" && id.length > 0 && id.length <= 128 ? id : null;
+    } catch { /* invalid session is handled below */ }
     const parsed = parsePersistedSession(raw);
     if (!parsed) return;
-    applySidebarSession(parsed.sidebar);
-    setRecentPages(parsed.recent);
     if (!pristineDefault()) return;
     applyParsedSession(parsed);
   } finally {
@@ -542,10 +514,13 @@ export async function restoreSession(): Promise<void> {
     // the post-bind restore in graph.ts retries it. Keep startup best-effort just
     // like the existing session restore; a bad registry must not block the app.
     try {
+      if (!initializeRegistry) return;
+      restoreEvidence = { owner, snapshot: JSON.stringify(buildPersistedSession()), intent: intentToken(), present: restoredSessionPresent, workspaceId: restoredWorkspaceId };
       const { initializeWorkspaces } = await import("./workspaces");
+      if (!owner()) return;
       await initializeWorkspaces();
-    } catch {
-      // unavailable before graph binding, older backend, or invalid registry
+    } catch (error) {
+      if (owner()) pushToastUnique(`Could not restore workspaces: ${String(error)}`, "error");
     }
   }
 }

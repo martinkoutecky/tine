@@ -1,0 +1,53 @@
+{
+  "comment": "Friendly-search saved DSL golden (I-12). TS: editor/searchQuery.ts friendlySearchToSavedDsl / savedDslToFriendlySearch. Rust: the og query parser reads (search \"...\") as a Content/Match filter whose text is the trimmed friendly source. Each case: [friendly source, saved DSL].",
+  "cases": [
+    [
+      "foo",
+      "(search \"foo\")"
+    ],
+    [
+      "foo bar",
+      "(search \"foo bar\")"
+    ],
+    [
+      "foo \"bar\"",
+      "(search \"foo \\\"bar\\\"\")"
+    ],
+    [
+      "C:\\tmp",
+      "(search \"C:\\\\tmp\")"
+    ],
+    [
+      "trailing\\",
+      "(search \"trailing\\\\\")"
+    ],
+    [
+      "\\\"",
+      "(search \"\\\\\\\"\")"
+    ],
+    [
+      "a\\\\b",
+      "(search \"a\\\\\\\\b\")"
+    ],
+    [
+      "  padded  ",
+      "(search \"padded\")"
+    ],
+    [
+      "a\nb",
+      "(search \"a\nb\")"
+    ],
+    [
+      "café ☕ 日本",
+      "(search \"café ☕ 日本\")"
+    ],
+    [
+      "(and \"x\")",
+      "(search \"(and \\\"x\\\")\")"
+    ],
+    [
+      "say \"a\\\"b\"",
+      "(search \"say \\\"a\\\\\\\"b\\\"\")"
+    ]
+  ]
+}

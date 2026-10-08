@@ -3,14 +3,10 @@ import { For } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
 import { clearSeededFacets } from "../render/facets";
-import {
-  blockProperty,
-  doc,
-  loadSingle,
-  pageByName,
-  pageToDto,
-  resetStore,
-} from "../store";
+import { blockProperty, pageByName, resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { pageToDto } from "../document/convert";
+import { doc } from "../document/model";
 import { editingId, startEditing } from "../editorController";
 import type { BlockDto, Format, PageDto } from "../types";
 import { Block } from "./Block";

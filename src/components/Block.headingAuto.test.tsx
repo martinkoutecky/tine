@@ -2,16 +2,10 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import {
-  doc,
-  indentBlock,
-  loadSingle,
-  outdentBlock,
-  pageByName,
-  pageToDto,
-  resetStore,
-  setHeading,
-} from "../store";
+import { indentBlock, outdentBlock, pageByName, resetStore, setHeading } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { pageToDto } from "../document/convert";
+import { doc } from "../document/model";
 import { endEdit } from "../editorController";
 import type { BlockDto, Format, PageDto } from "../types";
 import { Block } from "./Block";

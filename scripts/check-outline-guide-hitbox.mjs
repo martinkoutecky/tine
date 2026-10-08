@@ -8,7 +8,7 @@
 // can see it. The assertions are the user-visible contract, not the constants:
 // the guide covers no pixel of the controls beside it, stays centred on the
 // line it draws, and is no larger than the per-block control it sits next to.
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

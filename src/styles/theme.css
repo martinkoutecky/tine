@@ -66,11 +66,9 @@ html[data-theme="light"] {
   --code-bg: #f1f1f1;
   --mark-bg: #fef3ac;
   --mark-text: #262626;
-  /* Search-MATCH marking, distinct from `--mark-bg` (which is the user's own
-     ^^highlight^^ markup). One token, because Tine had three different answers
-     to "how do we mark a match": the quick switcher and search results used
-     this value, while the reference excerpt used a 22% accent tint that a
-     reporter could not see at all on an iPad (GH #200). */
+  /* Search-MATCH marking, distinct from `--mark-bg` (the user's own ^^highlight^^
+     markup): one token for the quick switcher, search results and reference
+     excerpts (master GH #200). */
   --match-mark-bg: rgba(251, 230, 158, 0.55);
   --marker-color: #b8b8b8;
   --done-color: #9b9b9b;

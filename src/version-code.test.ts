@@ -1,14 +1,8 @@
-// Guard: the Android versionCode in tauri.conf.json must stay in lockstep with
-// the semver `version`, and must stay readable by F-Droid's autoupdate checker.
-//
-// F-Droid (metadata/page.tine.app.yml, UpdateCheckMode: Tags) reads BOTH the
-// versionName and the integer versionCode straight out of this file at every
-// git tag, via UpdateCheckData regexes. Tauri derives the same versionCode by
-// `major*1e6 + minor*1e3 + patch` when it's not set explicitly, so if someone
-// bumps `version` and forgets `bundle.android.versionCode`, the APK and the
-// F-Droid metadata would silently disagree. This test turns that into a CI
-// failure instead of a broken release.
+// Guard release metadata through the shared release policy. Stable versions stay
+// readable by F-Droid's tag checker; Beta uses its separate Android identity and
+// must not match that stable-only versionName expression.
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -20,38 +14,19 @@ const conf = JSON.parse(confText) as {
   bundle?: { android?: { versionCode?: number } };
 };
 
-const packageJson = JSON.parse(
-  readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
-) as { version: string };
-const packageLock = JSON.parse(
-  readFileSync(fileURLToPath(new URL("../package-lock.json", import.meta.url)), "utf8"),
-) as { version: string; packages?: Record<string, { version?: string }> };
-const cargoToml = readFileSync(fileURLToPath(new URL("../Cargo.toml", import.meta.url)), "utf8");
-const cargoLock = readFileSync(fileURLToPath(new URL("../Cargo.lock", import.meta.url)), "utf8");
-
 function deriveVersionCode(version: string): number {
-  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-  if (!m) throw new Error(`unexpected version string: ${version}`);
-  const [, major, minor, patch] = m;
-  return Number(major) * 1_000_000 + Number(minor) * 1_000 + Number(patch);
+  return Number(execFileSync(process.execPath, [
+    "--input-type=module", "-e",
+    "import { releaseVersion } from './scripts/release-policy.mjs'; console.log(releaseVersion(process.argv[1]).androidCode);",
+    version,
+  ], { encoding: "utf8" }).trim());
 }
 
 describe("Android versionCode (F-Droid autoupdate)", () => {
-  it("keeps every shipped package surface on one release version", () => {
-    expect(packageJson.version).toBe(conf.version);
-    expect(packageLock.version).toBe(conf.version);
-    expect(packageLock.packages?.[""]?.version).toBe(conf.version);
-    expect(/^version = "([^"]+)"$/m.exec(cargoToml)?.[1]).toBe(conf.version);
-
-    for (const packageBlock of cargoLock.split("[[package]]")) {
-      const name = /^name = "([^"]+)"$/m.exec(packageBlock)?.[1];
-      if (name === "tine" || name === "tine-core") {
-        expect(/^version = "([^"]+)"$/m.exec(packageBlock)?.[1], `Cargo.lock ${name}`).toBe(conf.version);
-      }
-    }
+  it("preview names advance Android codes only under the separate app identity and isolate the updater channel", () => {
+    execFileSync(process.execPath, ["scripts/test-beta-release.mjs"], { stdio: "pipe" });
   });
-
-  it("matches Tauri's semver-derived versionCode", () => {
+  it("matches the shared release policy versionCode", () => {
     const explicit = conf.bundle?.android?.versionCode;
     expect(explicit, "bundle.android.versionCode must be set for F-Droid").toBeTypeOf("number");
     expect(explicit).toBe(deriveVersionCode(conf.version));
@@ -64,6 +39,14 @@ describe("Android versionCode (F-Droid autoupdate)", () => {
     const codeMatch = /"versionCode":\s*([0-9]+)/.exec(confText);
     const verMatch = /"version":\s*"([0-9.]+)"/.exec(confText);
     expect(codeMatch?.[1]).toBe(String(conf.bundle?.android?.versionCode));
-    expect(verMatch?.[1]).toBe(conf.version);
+    if (conf.version.includes("-beta.")) {
+      expect(verMatch).toBeNull();
+      const identity = JSON.parse(readFileSync(new URL("../src-tauri/app-identity.json", import.meta.url), "utf8"));
+      expect(identity.ship).toBe("experiment");
+    } else {
+      expect(verMatch?.[1]).toBe(conf.version);
+    }
+    // Retain the stable checker contract even while this checkout ships Beta.
+    expect(/"version":\s*"([0-9.]+)"/.exec('{"version": "0.6.5"}')?.[1]).toBe("0.6.5");
   });
 });

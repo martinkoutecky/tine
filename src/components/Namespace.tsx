@@ -1,11 +1,13 @@
 import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
+import { pageIdentityKey } from "../pageIdentity";
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
-import { openPageInSidebar } from "../ui";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
+import { openPageInSidebar } from "../ui";
 import { allPageNames } from "../pages";
 import { EmojiText } from "../render/emoji";
+import { SidebarTitle } from "./SidebarTitle";
 import type { PageKind } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { readOr } from "../resourceRead";
@@ -15,6 +17,25 @@ import { readOr } from "../resourceRead";
 // (shown below the page). Mirrors OG's hierarchy component.
 
 /** Breadcrumb of ancestor namespaces, e.g. for "a/b/c" → a › b (clickable). */
+/** The shared modified-click contract (linkGesture.ts) for a namespace segment:
+ *  Shift → right sidebar (GH #63), Ctrl/Cmd or middle → background tab
+ *  (GH #283), Alt → other pane (GH #438). `stop` keeps a row's own click
+ *  handler from also firing. */
+function nsLink(name: string, after?: () => void, stop = false) {
+  return {
+    onMouseDown: internalLinkMouseDown,
+    onClick: (e: MouseEvent) => {
+      if (stop) e.stopPropagation();
+      const dest = internalLinkDest(e);
+      if (dest === "sidebar") openPageInSidebar(name, "page");
+      else if (dest === "background") openPageInNewTab(name, "page");
+      else if (dest === "pane") openRouteInOtherPane({ kind: "page", name, pageKind: "page" });
+      else { openPage(name, "page"); after?.(); }
+    },
+    onAuxClick: (e: MouseEvent) => internalLinkAuxClick(e, () => openPageInNewTab(name, "page")),
+  };
+}
+
 export function NamespaceCrumb(props: { name: string }): JSX.Element {
   const parts = () => props.name.split("/");
   return (
@@ -25,18 +46,7 @@ export function NamespaceCrumb(props: { name: string }): JSX.Element {
             const prefix = () => parts().slice(0, i() + 1).join("/");
             return (
               <>
-                <span
-                  class="ns-crumb-item"
-                  onMouseDown={internalLinkMouseDown}
-                  onClick={(e) => {
-                    const dest = internalLinkDest(e);
-                    if (dest === "sidebar") openPageInSidebar(prefix(), "page");
-                    else if (dest === "background") openPageInNewTab(prefix(), "page");
-                    else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: prefix(), pageKind: "page" });
-                    else openPage(prefix(), "page");
-                  }}
-                  onAuxClick={(e) => internalLinkAuxClick(e, () => openPageInNewTab(prefix(), "page"))}
-                >
+                <span class="ns-crumb-item" {...nsLink(prefix())}>
                   {parts()[i()]}
                 </span>
                 <span class="ns-crumb-sep">/</span>
@@ -68,20 +78,21 @@ export function buildNamespaceTree(names: string[]): NsNode[] {
     let prefix = "";
     for (const seg of name.split("/")) {
       prefix = prefix ? `${prefix}/${seg}` : seg;
-      let node = byFull.get(prefix.toLowerCase());
+      let node = byFull.get(pageIdentityKey(prefix));
       if (!node) {
         node = { seg, full: prefix, children: [] };
-        byFull.set(prefix.toLowerCase(), node);
+        byFull.set(pageIdentityKey(prefix), node);
         level.push(node);
       }
       level = node.children;
     }
   }
-  const sortRec = (ns: NsNode[]) => {
-    ns.sort((a, b) => a.seg.localeCompare(b.seg));
-    ns.forEach((n) => sortRec(n.children));
-  };
-  sortRec(roots);
+  const pending = [roots];
+  while (pending.length) {
+    const level = pending.pop()!;
+    level.sort((a, b) => a.seg.localeCompare(b.seg));
+    for (const node of level) if (node.children.length) pending.push(node.children);
+  }
   return roots;
 }
 
@@ -101,24 +112,13 @@ function NsNodeView(props: {
         </Show>
         <span
           class="ns-node-label"
-          // Shift+click opens in the right sidebar (GH #63), Ctrl/Cmd+click a
-          // background tab (GH #283); the shared guard suppresses native
-          // shift-range text-selection / middle-click autoscroll (GH #207).
-          onMouseDown={internalLinkMouseDown}
-          onClick={(e) => {
-            const dest = internalLinkDest(e);
-            if (dest === "sidebar") openPageInSidebar(props.node.full, "page");
-            else if (dest === "background") openPageInNewTab(props.node.full, "page");
-            else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: props.node.full, pageKind: "page" });
-            else (openPage(props.node.full, "page"), props.onActiveNavigationComplete?.());
-          }}
-          onAuxClick={(e) => internalLinkAuxClick(e, () => openPageInNewTab(props.node.full, "page"))}
+          {...nsLink(props.node.full, props.onActiveNavigationComplete)}
           onContextMenu={(e) => {
             if (!shouldOpenTextContextMenu(e.target)) return;
             props.onPageContextMenu?.(e, props.node.full, "page");
           }}
         >
-          {props.node.seg}
+          <SidebarTitle text={props.node.seg} fullTitle={props.node.full} />
         </span>
       </div>
       <Show when={has() && open()}>
@@ -142,8 +142,8 @@ export function NamespaceTree(props: {
   onPageContextMenu?: (e: MouseEvent, name: string, kind: PageKind) => void;
   onActiveNavigationComplete?: () => void;
 } = {}): JSX.Element {
-  // Pure CPU derivation off the shared page-name inventory (src/pages.ts) —
-  // no longer its own whole-graph listPages() fetch.
+  // Pure CPU derivation off the shared page-name inventory (src/pageIndex.ts,
+  // one page_inventory for every consumer), not its own whole-graph fetch.
   const tree = createMemo(() => buildNamespaceTree(allPageNames()));
   return (
     <Show when={tree().length > 0}>
@@ -158,11 +158,18 @@ export function NamespaceTree(props: {
 
 // --- {{namespace X}} macro --------------------------------------------------
 
-function collectFulls(nodes: NsNode[], acc: string[]) {
-  for (const n of nodes) {
-    acc.push(n.full);
-    collectFulls(n.children, acc);
+/** Preorder rows without recursion, even for deeply imported names. Cost O(nodes). */
+export function namespaceRows(nodes: NsNode[]): { node: NsNode; depth: number }[] {
+  const rows: { node: NsNode; depth: number }[] = [];
+  const pending = nodes.map(node => ({ node, depth: 0 })).reverse();
+  while (pending.length) {
+    const row = pending.pop()!;
+    rows.push(row);
+    for (let i = row.node.children.length - 1; i >= 0; i--) {
+      pending.push({ node: row.node.children[i], depth: row.depth + 1 });
+    }
   }
+  return rows;
 }
 
 function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string, string> }): JSX.Element {
@@ -175,27 +182,10 @@ function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string,
             <EmojiText text={props.icons[props.node.full]} />
           </span>
         </Show>
-        <a
-          class="page-ref"
-          onMouseDown={internalLinkMouseDown}
-          onClick={(e) => {
-            e.stopPropagation();
-            const dest = internalLinkDest(e);
-            if (dest === "sidebar") openPageInSidebar(props.node.full, "page");
-            else if (dest === "background") openPageInNewTab(props.node.full, "page");
-            else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: props.node.full, pageKind: "page" });
-            else openPage(props.node.full, "page");
-          }}
-          onAuxClick={(e) => {
-            if (internalLinkAuxClick(e, () => openPageInNewTab(props.node.full, "page"))) e.stopPropagation();
-          }}
-        >
+        <a class="page-ref" {...nsLink(props.node.full, undefined, true)}>
           <EmojiText text={props.node.seg} />
         </a>
       </div>
-      <For each={props.node.children}>
-        {(c) => <NsMacroNode node={c} depth={props.depth + 1} icons={props.icons} />}
-      </For>
     </div>
   );
 }
@@ -207,11 +197,10 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
   // inventory (src/pages.ts). Only the per-page icon lookup stays an IPC, keyed on the
   // resulting `fulls` set (so it refetches when the page set changes, not per nav).
   const treeData = createMemo(() => {
-    const prefix = `${props.root}/`.toLowerCase();
-    const names = allPageNames().filter((n) => n.toLowerCase().startsWith(prefix));
+    const prefix = `${pageIdentityKey(props.root)}/`;
+    const names = allPageNames().filter((n) => pageIdentityKey(n).startsWith(prefix));
     const tree = buildNamespaceTree(names);
-    const fulls: string[] = [];
-    collectFulls(tree, fulls);
+    const fulls = namespaceRows(tree).map(row => row.node.full);
     return { tree, fulls };
   });
   const [iconsResource] = createResource(
@@ -240,27 +229,13 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
                   <EmojiText text={iconOf(root.full)!} />
                 </span>
               </Show>
-              <a
-                class="page-ref"
-                onMouseDown={internalLinkMouseDown}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const dest = internalLinkDest(e);
-                  if (dest === "sidebar") openPageInSidebar(root.full, "page");
-                  else if (dest === "background") openPageInNewTab(root.full, "page");
-                  else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: root.full, pageKind: "page" });
-                  else openPage(root.full, "page");
-                }}
-                onAuxClick={(e) => {
-                  if (internalLinkAuxClick(e, () => openPageInNewTab(root.full, "page"))) e.stopPropagation();
-                }}
-              >
+              <a class="page-ref" {...nsLink(root.full, undefined, true)}>
                 <EmojiText text={root.seg} />
               </a>
             </div>
             <div class="ns-macro-tree">
-              <For each={root.children}>
-                {(c) => <NsMacroNode node={c} depth={0} icons={icons() ?? {}} />}
+              <For each={namespaceRows(root.children)}>
+                {(row) => <NsMacroNode node={row.node} depth={row.depth} icons={icons() ?? {}} />}
               </For>
             </div>
           </div>
@@ -279,20 +254,20 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
  *  A namespaced leaf with no descendants → one row: its parent namespace path. */
 export function namespaceHierarchyRows(allNames: string[], name: string): string[][] {
   const pSegs = name.split("/");
-  const prefix = `${name}/`.toLowerCase();
+  const prefix = `${pageIdentityKey(name)}/`;
   const byLower = new Map<string, string[]>(); // cumulative-path (lc) → original segs
   for (const n of allNames) {
-    if (!n.toLowerCase().startsWith(prefix)) continue;
+    if (!pageIdentityKey(n).startsWith(prefix)) continue;
     const segs = n.split("/");
     for (let k = pSegs.length + 1; k <= segs.length; k++) {
       const sub = segs.slice(0, k);
-      const key = sub.join("/").toLowerCase();
+      const key = pageIdentityKey(sub.join("/"));
       if (!byLower.has(key)) byLower.set(key, sub);
     }
   }
   if (byLower.size) {
     return [...byLower.values()].sort((a, b) =>
-      a.join("/").toLowerCase().localeCompare(b.join("/").toLowerCase())
+      pageIdentityKey(a.join("/")).localeCompare(pageIdentityKey(b.join("/")))
     );
   }
   // Namespaced leaf with no descendants → the parent namespace's path.
@@ -330,18 +305,7 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
                           </Show>
                           <a
                             class="page-ref"
-                            onMouseDown={internalLinkMouseDown}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const dest = internalLinkDest(e);
-                              if (dest === "sidebar") openPageInSidebar(full(), "page");
-                              else if (dest === "background") openPageInNewTab(full(), "page");
-                              else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: full(), pageKind: "page" });
-                              else openPage(full(), "page");
-                            }}
-                            onAuxClick={(e) => {
-                              if (internalLinkAuxClick(e, () => openPageInNewTab(full(), "page"))) e.stopPropagation();
-                            }}
+                            {...nsLink(full(), undefined, true)}
                           >
                             <span class="bracket">[[</span>
                             {seg}

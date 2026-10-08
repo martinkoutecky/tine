@@ -9,12 +9,16 @@ import os from "node:os";
 import path from "node:path";
 import { candidateProblems, releaseLayout } from "./release-layout.mjs";
 
+import { BETA_TAG, STABLE_CHANNEL, releaseVersion } from "./release-policy.mjs";
+
 const tag = process.argv[2];
-if (!/^v\d+\.\d+\.\d+$/.test(tag ?? "")) {
-  console.error("usage: check-release-assets.mjs vX.Y.Z");
+const version = process.argv[3];
+if (!version || (tag !== BETA_TAG && tag !== `v${version}`)) {
+  console.error("usage: check-release-assets.mjs (beta | v<VERSION>) VERSION");
   process.exit(2);
 }
-const version = tag.slice(1);
+const channel = releaseVersion(version).sequence ? BETA_TAG : STABLE_CHANNEL;
+if ((channel === BETA_TAG) !== (tag === BETA_TAG)) throw new Error(`${tag} does not match the ${channel} channel of ${version}`);
 const layout = releaseLayout(version);
 const gh = (...args) =>
   execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
@@ -35,7 +39,7 @@ try {
   fs.mkdirSync(local);
   for (const name of layout.platformAssets) fs.writeFileSync(path.join(local, name), "remote-asset-present");
   fs.copyFileSync(path.join(temp, "latest.json"), path.join(local, "latest.json"));
-  problems.push(...candidateProblems(local, version));
+  problems.push(...candidateProblems(local, version, channel));
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

@@ -1,0 +1,100 @@
+/* Favorites arrangement (family 22). A label is text the user types, so it is
+   an input; otherwise it is an ordinary `.nav-page` row with the same drag and
+   indent, because a label and a favorite are one node type. */
+#sidebar-favorites-list .nav-page {
+  padding-top: 3px;
+  padding-bottom: 3px;
+  gap: 4px;
+}
+.nav-fav-group {
+  gap: 2px;
+  cursor: grab;
+}
+.nav-fav-group-toggle,
+.nav-fav-group-delete,
+.nav-fav-add-group {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  opacity: 0.6;
+  padding: 0 4px;
+}
+.nav-fav-group-toggle:hover,
+.nav-fav-group-delete:hover,
+.nav-fav-add-group:hover {
+  opacity: 1;
+}
+.nav-fav-group-delete {
+  visibility: hidden;
+}
+.nav-fav-group:hover .nav-fav-group-delete {
+  visibility: visible;
+}
+/* Sized to its text, never `flex: 1`: an input across the row would leave
+   nothing to grab the group by (master c3adf171c). */
+.nav-fav-group-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: inherit;
+  font: inherit;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  padding: 1px 4px;
+}
+.nav-fav-group-name:hover {
+  border-color: var(--border-color);
+}
+.nav-fav-group-name:focus {
+  outline: none;
+  border-color: var(--link-color);
+  opacity: 1;
+}
+/* Aligns a leaf's star with the caret column of a row that has children. */
+.nav-fav-spacer {
+  flex: 0 0 14px;
+}
+.nav-fav-add-group {
+  font-size: 0.78rem;
+  opacity: 0.5;
+  padding: 3px 10px;
+  text-align: left;
+  width: 100%;
+}
+/* The insertion line starts at the depth the drop would land at. */
+#sidebar-favorites-list .nav-page.row-drop-before,
+#sidebar-favorites-list .nav-page.row-drop-after {
+  background-image: linear-gradient(to right, transparent 0 var(--fav-drop-indent, 0px), var(--link-color) var(--fav-drop-indent, 0px));
+  background-size: 100% 2px;
+  background-repeat: no-repeat;
+}
+#sidebar-favorites-list .nav-page.row-drop-before {
+  background-position: top left;
+}
+#sidebar-favorites-list .nav-page.row-drop-after {
+  background-position: bottom left;
+}
+/* A move-drag is not a text gesture (see dragSelectionGuard.ts): favorites
+   reorder and the outline bullet drag (GH #424). */
+html.drag-selection-suppressed,
+html.drag-selection-suppressed * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+/* The label shrinks inside the full clickable row, including emoji runs. */
+.nav-page-label {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

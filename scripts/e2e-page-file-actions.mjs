@@ -6,10 +6,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-
-await ensureDisplay();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -41,7 +37,7 @@ const env = {
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11",
 };
 const log = fs.openSync(`${TMP}/tauri-driver.log`, "w");
-const td = spawn(TD, webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), {
+const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
   env, stdio: ["ignore", log, log], detached: true,
 });
 await sleep(2500);
@@ -89,7 +85,7 @@ async function runMenu(label) {
 try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
-    capabilities: tauriCapabilities(APP, "page-file-actions"),
+    capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
   for (const selector of ["a.page-ref=Exact", "span.page-ref=Exact", "*=Exact"]) {
@@ -173,7 +169,7 @@ try {
     .map((item) => item.getAttribute("data-page-action-id")));
   const expectedIds = [
     "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-    "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
+    "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
     "show-in-folder", "open-default-app", "page-properties",
     "rename-page", "delete-page",
   ];

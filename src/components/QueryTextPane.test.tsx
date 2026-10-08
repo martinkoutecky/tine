@@ -4,6 +4,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { clearTransientLayersForTest } from "../transientLayers";
+import { initNavSettings, queryTextOpen, resetQueryTextOpenForTests } from "../navSettings";
 import {
   QueryBuilder,
   resetQueryRegistryRevisionForTests,
@@ -11,7 +12,6 @@ import {
 } from "./QueryBuilder";
 import { contentFilter, taskFilter } from "../editor/queryBuilder";
 import type { Filter, ParsedQuery, Query, RegistrySnapshot } from "../editor/queryIr";
-import { stubVocabularyGeometry } from "./QueryVocabularyPicker.test-helpers";
 
 // **The live query-text pane** (SPEC §7.5, §4.3.1–§4.3.2, I-20, I-4/I-9).
 //
@@ -136,10 +136,11 @@ function deferredParser() {
   };
 }
 
-let restoreGeometry: (() => void) | null = null;
 
 beforeEach(() => {
-  restoreGeometry = stubVocabularyGeometry();
+  // GH #619 item 4: the text pane sits behind a remembered toggle; these tests are about the pane.
+  resetQueryTextOpenForTests(true);
+  vi.spyOn(backend(), "setAppBool").mockResolvedValue(undefined);
   resetQueryRegistryRevisionForTests();
   vi.spyOn(backend(), "queryFacets").mockResolvedValue([]);
   vi.spyOn(backend(), "queryRegistry").mockResolvedValue(EMPTY_REGISTRY);
@@ -147,8 +148,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  restoreGeometry?.();
-  restoreGeometry = null;
   clearTransientLayersForTest();
   resetSharedQueryResultsForTests();
   resetQueryRegistryRevisionForTests();
@@ -530,6 +529,98 @@ describe("§7.8: the part the sheet cannot draw is still reachable", () => {
       expect(document.activeElement).toBe(textarea());
       expect(JSON.stringify(builder.session())).toBe(before);
       expect(builder.changes).toHaveLength(0);
+    } finally {
+      builder.dispose();
+    }
+  });
+});
+
+describe("GH #619 item 4: the text is behind an \"Edit as text\" toggle that remembers its state", () => {
+  const toggle = () => document.querySelector<HTMLButtonElement>(".qs-text-toggle")!;
+
+  it("persists the toggle through the app-settings store, so a restart keeps it (not localStorage)", async () => {
+    const store = new Map<string, boolean>();
+    const setAppBool = vi.spyOn(backend(), "setAppBool").mockImplementation(async (key, value) => { store.set(key, value); });
+    vi.spyOn(backend(), "getAppBool").mockImplementation(async (key, fallback) => store.get(key) ?? fallback);
+    resetQueryTextOpenForTests(false);
+    const builder = mountBuilder(session(taskFilter(["TODO"])));
+    try {
+      builder.open();
+      await settle();
+      toggle().click();
+      await settle();
+      expect(setAppBool).toHaveBeenCalledWith("query_text_open", true);
+      expect(queryTextOpen()).toBe(true);
+    } finally {
+      builder.dispose();
+    }
+    // A restart: the in-memory signal is gone, localStorage is gone, only the settings store remains.
+    localStorage.clear();
+    resetQueryTextOpenForTests(false);
+    expect(queryTextOpen()).toBe(false);
+    await initNavSettings();
+    await settle();
+    expect(queryTextOpen()).toBe(true);
+  });
+
+  it("opens the sheet without the text, shows it on the toggle, and remembers the choice", async () => {
+    resetQueryTextOpenForTests(false);
+    const printQuery = vi.spyOn(backend(), "printQuery").mockResolvedValue("@block and task is TODO");
+    let builder = mountBuilder(session(taskFilter(["TODO"])));
+    try {
+      builder.open();
+      await settle();
+      // Default: the rows are the editor; no text box, nothing printed.
+      expect(document.querySelector(".query-text-pane")).toBeNull();
+      expect(toggle().textContent).toBe("Edit as text");
+      expect(toggle().getAttribute("aria-expanded")).toBe("false");
+      expect(printQuery).not.toHaveBeenCalled();
+
+      toggle().click();
+      await settle();
+      expect(toggle().getAttribute("aria-expanded")).toBe("true");
+      expect(textarea().value).toBe("@block and task is TODO");
+      builder.close();
+    } finally {
+      builder.dispose();
+    }
+
+    // A later sheet (even a fresh mount) opens the way it was left.
+    builder = mountBuilder(session(taskFilter(["TODO"])));
+    try {
+      builder.open();
+      await settle();
+      expect(textarea().value).toBe("@block and task is TODO");
+      toggle().click();
+      await settle();
+      expect(document.querySelector(".query-text-pane")).toBeNull();
+    } finally {
+      builder.dispose();
+    }
+    const again = mountBuilder(session(taskFilter(["TODO"])));
+    try {
+      again.open();
+      await settle();
+      expect(document.querySelector(".query-text-pane")).toBeNull();
+    } finally {
+      again.dispose();
+    }
+  });
+
+  it("still opens a retained leaf for editing as text from a closed toggle", async () => {
+    resetQueryTextOpenForTests(false);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("@block and (foo bar)");
+    const builder = mountBuilder(session({ kind: "raw", text: "foo bar", diagnostic_kind: "syntax" }));
+    try {
+      builder.open();
+      await settle();
+      expect(document.querySelector(".query-text-pane")).toBeNull();
+      const edit = document.querySelector<HTMLButtonElement>(".qs-raw-edit");
+      expect(edit).not.toBeNull();
+      edit!.click();
+      await settle();
+      expect(pane()).toBeTruthy();
+      expect(document.activeElement).toBe(textarea());
     } finally {
       builder.dispose();
     }

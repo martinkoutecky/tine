@@ -3,12 +3,13 @@ import { render } from "solid-js/web";
 import { renderInlines, InlineText, expandTemplate, expansionIsBlockLevel } from "./inline";
 import { AstBody, renderBlocks } from "./body";
 import { initParser, parseBlock } from "./parse";
-import { setGraphMeta } from "../ui";
+import { setGraphMeta } from "../graphSession";
 import type { JSX } from "solid-js";
 import type { Block, Inline } from "./ast";
 import { backend } from "../backend";
+import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { clearAssetBlobCache } from "../assetCache";
-import { blockRunResult } from "../queryReadingsTestkit";
+import { initLocalFileSettings } from "../localFileSettings";
 
 // A few render paths reach back into the wasm parser (e.g. a properties block
 // renders each value via InlineText → parseBlock). Node supports WebAssembly +
@@ -46,6 +47,11 @@ function mountedIframeWrap(raw: string): { wrap: HTMLElement; dispose: () => voi
 }
 
 describe("renderInlines", () => {
+  it.each(["javascript:alert(1)", "java\nscript:alert(1)", "vbscript:alert(1)", "data:text/html,<script>alert(1)</script>"])("does not place an executable graph link in href: %s", (dest) => {
+    const h = inl([{ k: "link", url: { type: "file", v: dest }, full: `[run](${dest})`, label: [{ k: "plain", text: "run" }] }]);
+    expect(h).not.toContain("href=");
+    expect(h).toContain("run");
+  });
   it("plain + emphasis", () => {
     const h = inl([
       { k: "plain", text: "a " },
@@ -320,6 +326,30 @@ describe("renderInlines", () => {
     const h = html(() => renderInlines([{ k: "hiccup", v: source }], undefined, true, false, format));
     expect(h).toContain(source);
     expect(h).not.toContain("<span>unterminated</span>");
+  });
+
+  it("D29: local image loading reads only the resource of the surviving image", async () => {
+    const preference = vi.spyOn(backend(), "getAppBool").mockResolvedValue(true);
+    const read = vi.spyOn(backend(), "readLocalImage").mockResolvedValue(new Uint8Array());
+    await initLocalFileSettings();
+    const host = document.createElement("div");
+    const dispose = render(() => renderInlines([{ k: "inline_html", text: '<!-- <img src="/tmp/phantom.png"> --><img src="https://example.test/web.png"><img title=">" src="/tmp/real.png">' }]), host);
+    try {
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      expect(read).toHaveBeenCalledWith("/tmp/real.png");
+      expect(host.querySelectorAll("img")).toHaveLength(2);
+      expect(host.querySelector("img")!.getAttribute("src")).toBe("https://example.test/web.png");
+    } finally {
+      dispose();
+      preference.mockResolvedValue(false);
+      await initLocalFileSettings();
+    }
+  });
+
+  it("D29: embeds the iframe's src rather than a data-src lookalike", () => {
+    const { wrap, dispose } = mountedIframeWrap('<iframe data-src="https://example.test/other" src="https://example.test/real"></iframe>');
+    try { expect(wrap.querySelector("iframe")!.getAttribute("src")).toBe("https://example.test/real"); }
+    finally { dispose(); }
   });
 
   it("uses iframe width and height from attrs or style", () => {
@@ -701,15 +731,14 @@ describe("user macro helpers", () => {
   });
 
   it("still dispatches a query nested in a configured macro", async () => {
+    // master astRender.test: the engine's run carries the parsed source.
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([]));
     setGraphMeta({ root: "/test", macros: { outer: "{{query (task TODO)}}" } } as never);
     const root = document.createElement("div");
     const dispose = render(() => <AstBody raw="{{outer}}" />, root);
     try {
       await vi.waitFor(() =>
-        expect(vi.mocked(backend().queryRun).mock.calls[0]?.[0].source).toMatchObject({
-          original: "(task TODO)",
-        }),
+        expect(vi.mocked(backend().queryRun).mock.calls[0]?.[0].source).toMatchObject({ original: "(task TODO)" }),
       );
     } finally {
       dispose();

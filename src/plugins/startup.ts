@@ -1,7 +1,6 @@
 import { initThemeGallery } from "../themeGallery";
 import { initThemePackages } from "../themes/manager";
 import { platformKind } from "../platform";
-import { isPublishedExport } from "../publishedBackend";
 import { pluginManager } from "./manager";
 import {
   loadVerifiedCachedRegistry,
@@ -15,6 +14,14 @@ export interface CommunityExtensionStartup {
   liveRefresh: Promise<void>;
 }
 
+/** Observe the detached rejection while preserving it on the returned promise;
+ * main.tsx reports that failure to the user. No extra work is started. */
+function observePluginInitializationFailure(_error: unknown): void {}
+
+/** Seed verified extensions and return the initialization and refresh tasks.
+ * On iOS the Wasm plugin host is never initialized (ADR 0052); themes still
+ * load. Cost O(installed extensions) plus one registry request. Initialization may
+ * reject on the returned promise; main.tsx reports that failure to the user. */
 export async function startCommunityExtensions(
   options: {
     cacheTimeoutMs?: number;
@@ -23,11 +30,6 @@ export async function startCommunityExtensions(
     platform?: "desktop" | "android" | "ios";
   } = {}
 ): Promise<CommunityExtensionStartup> {
-  // A published query export (Stage 2) ships no plugins or themes and must not
-  // fetch the community registry from a reader's browser.
-  if (isPublishedExport()) {
-    return { initialRevocations: new Set(), pluginInitialization: Promise.resolve(), liveRefresh: Promise.resolve() };
-  }
   const platform = options.platform ?? await platformKind();
   const cached = await loadVerifiedCachedRegistry(options.cacheTimeoutMs);
   const initialRevocations = seedCachedCommunityRegistry(cached);
@@ -46,7 +48,7 @@ export async function startCommunityExtensions(
   const pluginInitialization = platform === "ios"
     ? Promise.resolve()
     : pluginManager.initialize(initialRevocations, activationHeld);
-  void pluginInitialization.catch(() => {});
+  void pluginInitialization.then(undefined, observePluginInitializationFailure);
   const liveRefresh = refreshCommunityRegistry({ timeoutMs: options.networkTimeoutMs });
   await initThemePackages(initialRevocations);
   await initThemeGallery();

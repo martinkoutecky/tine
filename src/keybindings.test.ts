@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
-import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands } from "./keybindings";
-import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setGraphMeta, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
+import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal } from "./keybindings";
+import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
+import { makePdfRoute } from "./router";
+import { bumpGraphEpoch, setGraphMeta } from "./graphSession";
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
 import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
 import { exitPaneSelect, paneSel } from "./paneSelect";
-import { clearSelection, doc, hasSelection, loadSingle, moveSelection, resetStore, selectBlock, selectedIds, setDoc, setRaw, undo } from "./store";
+import { clearSelection, hasSelection, moveSelection, resetStore, selectBlock, selectedIds, setRaw, undo } from "./document";
+import { loadSingle } from "./document/workingSet";
+import { doc, setDoc } from "./document/model";
 import { endEdit, startEditing } from "./editorController";
 import { pluginManager } from "./plugins/manager";
 import * as router from "./router";
@@ -19,8 +23,32 @@ const pluginGraphMeta: GraphMeta = {
   shortcuts: {}, start_of_week: 6, block_hidden_properties: [], linked_references_collapsed_threshold: 100, default_journal_template: null,
   favorites: [], journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "yyyy_MM_dd",
   preferred_format: "md", macros: {}, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
-  logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true,
+  logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true, mobile_gestures_disabled_in_block_with_tags: [],
 };
+
+it("offers the journal navigation hotstrings and steps from the current journal day", () => {
+  const defaults = Object.fromEntries(commandDefaults().map((command) => [command.id, command.binding]));
+  expect(defaults["go/home"]).toBe("g h");
+  expect(defaults["go/journal-next"]).toBe("g n");
+  expect(defaults["go/journal-prev"]).toBe("g p");
+  router.openPage("Jul 31st, 2026", "journal");
+  goAdjacentJournal(1);
+  expect(router.route()).toMatchObject({ kind: "page", name: "Aug 1st, 2026", pageKind: "journal" });
+  goAdjacentJournal(-1);
+  expect(router.route()).toMatchObject({ kind: "page", name: "Jul 31st, 2026", pageKind: "journal" });
+});
+
+it("keeps unbound commands in the palette and offers reset zoom and pane controls", () => {
+  const defaults = Object.fromEntries(commandDefaults().map((command) => [command.id, command.binding]));
+  expect(defaults["ui/reset-zoom"]).toBe("");
+  expect(defaults["pane/toggle-maximize"]).toBe("mod+alt+m");
+  expect(defaults["pane/grow-width"]).toBe("");
+  installFakeWindow();
+  const dispose = installKeybindings({ "go/home": "false" });
+  expect(paletteCommands().find((command) => command.id === "go/home")?.binding).toBe("");
+  dispose();
+  restoreFakeGlobals?.();
+});
 
 function keyEvent(init: Partial<KeyboardEvent>): KeyboardEvent {
   return {
@@ -202,6 +230,24 @@ describe("mouse side-button navigation (#156)", () => {
   });
 });
 
+it("keyboard Cut keeps a selected block edited while the clipboard write is pending", async () => {
+  loadSingle({
+    name: "Cut", kind: "page", title: "Cut", pre_block: null,
+    blocks: [{ id: "cut-me", raw: "Original", collapsed: false, children: [] }],
+  });
+  selectBlock("cut-me");
+  let finish!: () => void;
+  vi.spyOn(backend(), "writeRich").mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+  const fake = installFakeWindow();
+  const dispose = installKeybindings();
+  fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "x", code: "KeyX", ctrlKey: true }).event);
+  setDoc("byId", "cut-me", "raw", "Edited");
+  finish();
+  await vi.waitFor(() => expect(peekClipboardPayload()?.op).toBe("copy"));
+  expect(doc.byId["cut-me"].raw).toBe("Edited");
+  dispose();
+});
+
 describe("plugin command context", () => {
   it("registers plugin default bindings in the same remappable dispatcher", async () => {
     setGraphMeta(pluginGraphMeta);
@@ -297,16 +343,8 @@ describe("keyboard binding strings", () => {
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     try {
       const macBindings = await import("./keybindings");
-      expect(macBindings.eventToBindingString(keyEvent({
-        key: "k",
-        code: "KeyK",
-        ctrlKey: true,
-      }))).toBe("ctrl+k");
-      expect(macBindings.eventToBindingString(keyEvent({
-        key: "k",
-        code: "KeyK",
-        metaKey: true,
-      }))).toBe("mod+k");
+      expect(macBindings.eventToBindingString(keyEvent({ key: "k", code: "KeyK", ctrlKey: true }))).toBe("ctrl+k");
+      expect(macBindings.eventToBindingString(keyEvent({ key: "k", code: "KeyK", metaKey: true }))).toBe("mod+k");
     } finally {
       vi.unstubAllGlobals();
       vi.resetModules();
@@ -434,15 +472,12 @@ describe("Alt-only shortcuts while editing (GH #461)", () => {
   });
 
   it("fires a bare-Alt global shortcut with the caret in a block", () => {
-    // The reporter's exact setup: next-tab on Alt+S, two tabs, caret in a block.
     resetPaneLayoutToSingle(twoTabSnapshot());
     const fake = installFakeWindow();
     const dispose = installKeybindings({ "tab/next": "alt+s" });
     const editor = editableTarget("TEXTAREA", { blockEditor: true });
-
     const pressed = trackedKeyEvent({ key: "s", code: "KeyS", altKey: true, target: editor });
     fake.dispatchCaptureKeydown(pressed.event);
-
     expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Second" });
     expect(pressed.prevented()).toBe(true);
     dispose();
@@ -453,26 +488,20 @@ describe("Alt-only shortcuts while editing (GH #461)", () => {
     const fake = installFakeWindow();
     const dispose = installKeybindings({ "tab/next": "alt+s" });
     const editor = editableTarget("TEXTAREA", { blockEditor: true });
-
     const typed = trackedKeyEvent({ key: "s", code: "KeyS", target: editor });
     fake.dispatchCaptureKeydown(typed.event);
-
     expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "First" });
     expect(typed.prevented()).toBe(false);
     dispose();
   });
 
   it("leaves an Alt chord nothing is bound to for the textarea (Option-composed characters)", () => {
-    // Nothing global answers alt+e, so the dispatcher must not preventDefault:
-    // on macOS this event is the ´ dead key.
     resetPaneLayoutToSingle(twoTabSnapshot());
     const fake = installFakeWindow();
     const dispose = installKeybindings({ "tab/next": "alt+s" });
     const editor = editableTarget("TEXTAREA", { blockEditor: true });
-
     const deadKey = trackedKeyEvent({ key: "e", code: "KeyE", altKey: true, target: editor });
     fake.dispatchCaptureKeydown(deadKey.event);
-
     expect(deadKey.prevented()).toBe(false);
     expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "First" });
     dispose();
@@ -498,7 +527,7 @@ describe("find-in-page routing", () => {
     const fake = installFakeWindow();
     const dispose = installKeybindings();
     const e = modFEvent();
-    paneRouter("main").replaceActiveRoute(router.makePdfRoute("paper.pdf", "Paper"));
+    paneRouter("main").openPdf(makePdfRoute("paper.pdf", "Paper"));
 
     fake.dispatchCaptureKeydown(e.event);
 
@@ -514,7 +543,7 @@ describe("block-selection commands", () => {
   it("Mod+C preserves public flavors and records the exact full private subtree", () => {
     setGraphMeta(pluginGraphMeta);
     loadSingle({
-      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, format: "md", path: "pages/tasks.md",
+      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, format: "md", id: "pages/tasks.md",
       blocks: [{
         id: "parent", raw: "Parent\ncollapsed:: true\nid:: 11111111-1111-1111-1111-111111111111", collapsed: true,
         children: [{ id: "child", raw: "Child\nid:: 22222222-2222-2222-2222-222222222222", collapsed: false, children: [] }],
@@ -545,10 +574,10 @@ describe("block-selection commands", () => {
     dispose();
   });
 
-  it("Mod+X leaves a fresh one-shot cut payload with its exact source page", () => {
+  it("Mod+X leaves a fresh one-shot cut payload with its exact source page", async () => {
     setGraphMeta(pluginGraphMeta);
     loadSingle({
-      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, path: "pages/tasks.md",
+      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, id: "pages/tasks.md",
       blocks: [{ id: "cut-me", raw: "Cut me\nid:: 33333333-3333-3333-3333-333333333333", collapsed: false, children: [] }],
     });
     selectBlock("cut-me");
@@ -564,7 +593,43 @@ describe("block-selection commands", () => {
       name: "Tasks", kind: "page", path: "pages/tasks.md", generation: expect.any(Number),
     })]);
     expect(payload?.blocks[0].raw).toContain("id:: 33333333-3333-3333-3333-333333333333");
-    expect(doc.byId["cut-me"]).toBeUndefined();
+    await vi.waitFor(() => expect(doc.byId["cut-me"]).toBeUndefined());
+    dispose();
+  });
+
+  it("Mod+X public text carries the whole subtree it deletes, under the selected-only copy default", async () => {
+    setGraphMeta(pluginGraphMeta);
+    loadSingle({
+      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, format: "md", id: "pages/tasks.md",
+      blocks: [{
+        id: "cut-parent", raw: "Parent", collapsed: false,
+        children: [{ id: "cut-child", raw: "Child", collapsed: false, children: [] }],
+      }],
+    });
+    selectBlock("cut-parent");
+    const write = vi.spyOn(backend(), "writeRich").mockResolvedValue();
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "x", code: "KeyX", ctrlKey: true }).event);
+
+    await vi.waitFor(() => expect(doc.byId["cut-parent"]).toBeUndefined());
+    expect(doc.byId["cut-child"]).toBeUndefined();
+    expect(write).toHaveBeenCalledWith(expect.stringContaining("Child"), expect.any(String));
+    dispose();
+  });
+
+  it("Mod+X keeps the selected block if the clipboard write rejects", async () => {
+    setGraphMeta(pluginGraphMeta);
+    loadSingle({ name: "Tasks", kind: "page", title: "Tasks", pre_block: null,
+      blocks: [{ id: "cut-failure", raw: "Keep me", collapsed: false, children: [] }] });
+    selectBlock("cut-failure");
+    vi.spyOn(backend(), "writeRich").mockRejectedValue(new Error("clipboard denied"));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "x", code: "KeyX", ctrlKey: true }).event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(doc.byId["cut-failure"]).toBeDefined();
     dispose();
   });
 
@@ -866,6 +931,109 @@ describe("pane-select Esc cascade", () => {
   });
 });
 
+describe("g h opens the graph home page (config.edn :default-home)", () => {
+  const homePage = { name: "Directory", kind: "page" as const, title: "Directory", pre_block: null, blocks: [], read_only: false, guide: false };
+  const pressGH = (fake: ReturnType<typeof installFakeWindow>) => {
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "g", code: "KeyG" }).event);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "h", code: "KeyH" }).event);
+  };
+  const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+
+  it("opens the configured page when it resolves", async () => {
+    setGraphMeta({ ...pluginGraphMeta, default_home: "Directory" });
+    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(homePage as never);
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    pressGH(fake);
+    await settle();
+    expect(getPage).toHaveBeenCalledWith("Directory", "page");
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Directory", pageKind: "page" });
+    dispose();
+  });
+
+  it("falls back to the Journals feed when none is configured or the page no longer resolves", async () => {
+    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    setGraphMeta({ ...pluginGraphMeta, default_home: null });
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    pressGH(fake);
+    await settle();
+    expect(getPage).not.toHaveBeenCalled();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "journals" });
+
+    setGraphMeta({ ...pluginGraphMeta, default_home: "Deleted" });
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    pressGH(fake);
+    await settle();
+    expect(getPage).toHaveBeenCalledWith("Deleted", "page");
+    expect(paneRouter("main").route()).toMatchObject({ kind: "journals" });
+    dispose();
+  });
+
+  it("lets a navigation (including A→B→A) or a graph rebind made during the lookup win (I-20)", async () => {
+    setGraphMeta({ ...pluginGraphMeta, default_home: "Directory" });
+    let finish!: (page: unknown) => void;
+    vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise((resolve) => { finish = resolve as never; }));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    pressGH(fake);
+    router.openPage("User Chose This", "page", { inPlace: true });
+    finish(homePage);
+    await settle();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "User Chose This" });
+
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    pressGH(fake);
+    router.openPage("Elsewhere", "page", { inPlace: true });
+    router.openPage("Source", "page", { inPlace: true }); // A→B→A: an equal route, a newer intent
+    finish(homePage);
+    await settle();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    pressGH(fake);
+    bumpGraphEpoch();
+    finish(null);
+    await settle();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+    dispose();
+  });
+
+  it("opens a journal-titled home page as that journal", async () => {
+    setGraphMeta({ ...pluginGraphMeta, default_home: "Aug 1st, 2026" });
+    const journal = { ...homePage, name: "Aug 1st, 2026", title: "Aug 1st, 2026", kind: "journal" as const };
+    vi.spyOn(backend(), "getPage").mockImplementation(async (_name, kind) => (kind === "journal" ? journal : null) as never);
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    pressGH(fake);
+    await settle();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Aug 1st, 2026", pageKind: "journal" });
+    dispose();
+  });
+
+  it("does not land in another pane that gains focus during the lookup (I-20)", async () => {
+    setGraphMeta({ ...pluginGraphMeta, default_home: "Directory" });
+    let finish!: (page: unknown) => void;
+    vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise((resolve) => { finish = resolve as never; }));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const other = splitRootAtEdge("right", "main", { focusNew: false, snapshot: pageSnapshot("Source") })!;
+    focusPane("main");
+    pressGH(fake);
+    focusPane(other); // focus moves to another pane showing an equal route
+    finish(homePage);
+    await settle();
+    expect(paneRouter(other).route()).toMatchObject({ kind: "page", name: "Source" });
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+    dispose();
+  });
+});
+
 describe("secondary default chords (aliases)", () => {
   // GH #491: Ctrl+Z undid, Ctrl+Y did nothing. Logseq binds redo to
   // mod+shift+z and leaves Ctrl+Y unbound, so on Windows the key every other
@@ -878,7 +1046,7 @@ describe("secondary default chords (aliases)", () => {
   function seedUndoneEdit(): string {
     resetStore();
     loadSingle({
-      name: "Redo", kind: "page", title: "Redo", pre_block: null, format: "md", path: "pages/redo.md",
+      name: "Redo", kind: "page", title: "Redo", pre_block: null, format: "md", id: "pages/redo.md",
       blocks: [{ id: "b1", raw: "Body", collapsed: false, children: [] }],
     });
     setRaw("b1", "Body edited");

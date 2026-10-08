@@ -1,10 +1,23 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { startEditing } from "../editorController";
+import { openPage } from "../router";
+import { resetPaneLayoutToSingle } from "../panes";
+
+vi.mock("../editorController", async (original) => ({ ...(await original<object>()), startEditing: vi.fn() }));
+vi.mock("../document", async (original) => ({
+  ...(await original<object>()),
+  resolveBlockRef: vi.fn(() => "runtime-1"),
+  node: vi.fn(() => ({ raw: "aBooksbBooksc" })),
+}));
 import { render } from "solid-js/web";
-import { OccurrenceControls, ReferenceExcerptBlocks, buildFullMarkedSegments } from "./ReferenceEvidence";
+import { OccurrenceControls, ReferenceExcerptBlocks, buildFullMarkedSegments, occurrenceSelection } from "./ReferenceEvidence";
 import type { BlockDto, ReferenceBlockEvidence, ReferenceOccurrence } from "../types";
 
 afterEach(() => {
   document.body.innerHTML = "";
+  vi.useRealTimers();
+  vi.mocked(startEditing).mockClear();
+  resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
 });
 
 const occ = (start: number): ReferenceOccurrence => ({
@@ -58,39 +71,43 @@ function renderExcerpt(mentions: number, gap: number) {
   const { block, evidence: item } = blockWith(mentions, gap);
   const host = document.createElement("div");
   document.body.appendChild(host);
-  render(
-    () => (
-      <ReferenceExcerptBlocks blocks={[block]} evidence={[item]} page="Journal" kind="journal" />
-    ),
-    host,
-  );
+  render(() => <ReferenceExcerptBlocks blocks={[block]} evidence={[item]} page="Journal" kind="journal" />, host);
   return host;
 }
 
 describe("Unlinked reference occurrences (GH #200 round 2: the highlight is the affordance)", () => {
   it("retires the numbered jump row when the excerpt already shows every mention", () => {
-    // The reporter's case: a SHORT block with four mentions rendered four marks
-    // AND four numbered circles saying the same thing twice.
+    // A SHORT block with four mentions used to render four marks AND four
+    // numbered circles saying the same thing twice.
     const host = renderExcerpt(4, 4);
     expect(host.querySelectorAll(".reference-excerpt-mark").length).toBe(4);
     expect(host.querySelector(".reference-occurrence-controls")).toBeNull();
     expect(host.textContent ?? "").not.toContain("4 mentions");
   });
 
+  it("makes each highlighted mention a real button naming the page and the mention's ordinal", () => {
+    const host = renderExcerpt(3, 4);
+    const marks = [...host.querySelectorAll<HTMLButtonElement>(".reference-excerpt-mark")];
+    expect(marks.map((mark) => mark.tagName)).toEqual(["BUTTON", "BUTTON", "BUTTON"]);
+    expect(marks.map((mark) => mark.getAttribute("aria-label"))).toEqual([
+      "Open mention 1 in Journal",
+      "Open mention 2 in Journal",
+      "Open mention 3 in Journal",
+    ]);
+  });
+
   it("keeps the jump row when mentions fall outside the excerpt windows", () => {
-    // The long-block case the row exists for: the excerpt caps at three windows,
-    // so later mentions are unreachable without it.
+    // The excerpt caps at three windows, so later mentions are unreachable
+    // without the numbered row.
     const host = renderExcerpt(6, 400);
-    const marks = host.querySelectorAll(".reference-excerpt-mark").length;
-    expect(marks).toBeLessThan(6);
+    expect(host.querySelectorAll(".reference-excerpt-mark").length).toBeLessThan(6);
     expect(host.querySelector(".reference-occurrence-controls")).not.toBeNull();
     expect(host.textContent ?? "").toContain("6 mentions");
   });
 
   it("marks every mention once the block is expanded, and retires the row with it", () => {
     const host = renderExcerpt(6, 400);
-    const expand = [...host.querySelectorAll<HTMLButtonElement>(".reference-show-full")][0];
-    expand.click();
+    host.querySelector<HTMLButtonElement>(".reference-show-full")!.click();
     expect(host.querySelectorAll(".reference-excerpt-mark").length).toBe(6);
     expect(host.querySelector(".reference-occurrence-controls")).toBeNull();
   });
@@ -103,5 +120,38 @@ describe("Unlinked reference occurrences (GH #200 round 2: the highlight is the 
     expect(segments.map((segment) => segment.text)).toEqual(["a", "Books", "b", "Books", "c"]);
     expect(segments.filter((segment) => segment.marked).length).toBe(2);
     expect(segments.map((segment) => segment.text).join("")).toBe("aBooksbBooksc");
+  });
+});
+
+describe("occurrence jumps land on a selection, not a collapsed caret", () => {
+  // iOS paints no caret for a programmatic focus, so jump 1 and jump 4 looked
+  // identical there; a selection is drawn everywhere (master GH #200).
+  it("selects the whole mention in visible offsets", () => {
+    expect(occurrenceSelection("see Books here", { start: 4, end: 9 }, "Some page")).toEqual({
+      start: 4,
+      end: 9,
+      direction: "forward",
+    });
+  });
+});
+
+describe("I-20: a mention jump belongs to the surface the click opened", () => {
+  const click = () => {
+    const host = renderExcerpt(2, 4);
+    host.querySelector<HTMLButtonElement>(".reference-excerpt-mark")!.click();
+  };
+  it("focuses the mention in the opened page", () => {
+    vi.useFakeTimers();
+    click();
+    vi.advanceTimersByTime(200);
+    expect(startEditing).toHaveBeenCalledOnce();
+  });
+  it("does not grab the editor after the user navigated elsewhere", () => {
+    vi.useFakeTimers();
+    click();
+    vi.advanceTimersByTime(20);
+    openPage("Somewhere else");
+    vi.advanceTimersByTime(500);
+    expect(startEditing).not.toHaveBeenCalled();
   });
 });

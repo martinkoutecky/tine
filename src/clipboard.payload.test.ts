@@ -1,17 +1,13 @@
+import { blockSubtreeMarkdown, dtoSubtreeMarkdown, exportNodesFor } from "./document/edits/serialize";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  buildClipboardPayload,
-  ensurePageLoaded,
-  forgetPage,
-  loadSingle,
-  pageInstanceGeneration,
-  reloadPage,
-  resetStore,
-} from "./store";
+import { buildClipboardPayload, ensurePageLoaded, resetStore } from "./document";
+import { forgetPage, reloadPage } from "./document/workingSet";
+import { loadSingle } from "./document/workingSet";
+import { pageInstanceGeneration } from "./document/save/engine";
 import type { BlockDto, PageDto } from "./types";
 
-const page = (name: string, blocks: BlockDto[], path = `pages/${name}.md`): PageDto => ({
-  name, kind: "page", title: name, pre_block: null, blocks, format: "md", path,
+const page = (name: string, blocks: BlockDto[], id = `pages/${name}.md`): PageDto & { id: string } => ({
+  name, kind: "page", title: name, pre_block: null, blocks, format: "md", id,
 });
 
 afterEach(() => resetStore());
@@ -55,16 +51,16 @@ describe("clipboard payload builder", () => {
 });
 
 describe("page-instance generations", () => {
-  it("changes across reload/rebind/forget and never reuses a retired instance", async () => {
+  it("changes across reload/rebind/forget and never reuses a retired instance", () => {
     loadSingle(page("Page", [{ id: "a", raw: "a", collapsed: false, children: [] }]));
     const loaded = pageInstanceGeneration("Page")!;
-    await reloadPage(page("Page", [{ id: "a", raw: "changed", collapsed: false, children: [] }]));
+    reloadPage(page("Page", [{ id: "a", raw: "changed", collapsed: false, children: [] }]));
     const reloaded = pageInstanceGeneration("Page")!;
-    await ensurePageLoaded(page("Page", [{ id: "b", raw: "rebound", collapsed: false, children: [] }], "pages/other.md"));
+    ensurePageLoaded(page("Page", [{ id: "b", raw: "rebound", collapsed: false, children: [] }], "pages/other.md"));
     const rebound = pageInstanceGeneration("Page")!;
     forgetPage("Page");
     expect(pageInstanceGeneration("Page")).toBeNull();
-    await ensurePageLoaded(page("Page", [{ id: "c", raw: "new", collapsed: false, children: [] }]));
+    ensurePageLoaded(page("Page", [{ id: "c", raw: "new", collapsed: false, children: [] }]));
     const recreated = pageInstanceGeneration("Page")!;
 
     expect(reloaded).toBeGreaterThan(loaded);
@@ -72,15 +68,26 @@ describe("page-instance generations", () => {
     expect(recreated).toBeGreaterThan(rebound);
   });
 
-  it("retires an evicted page generation", async () => {
+  it("retires an evicted page generation", () => {
     loadSingle(page("Main", [{ id: "main", raw: "main", collapsed: false, children: [] }]));
-    await ensurePageLoaded(page("P0", [{ id: "p0", raw: "zero", collapsed: false, children: [] }]));
+    ensurePageLoaded(page("P0", [{ id: "p0", raw: "zero", collapsed: false, children: [] }]));
     const original = pageInstanceGeneration("P0")!;
     for (let i = 1; i <= 80; i++) {
-      await ensurePageLoaded(page(`P${i}`, [{ id: `p${i}`, raw: String(i), collapsed: false, children: [] }]));
+      ensurePageLoaded(page(`P${i}`, [{ id: `p${i}`, raw: String(i), collapsed: false, children: [] }]));
     }
     expect(pageInstanceGeneration("P0")).toBeNull();
-    await ensurePageLoaded(page("P0", [{ id: "p0-new", raw: "new", collapsed: false, children: [] }]));
+    ensurePageLoaded(page("P0", [{ id: "p0-new", raw: "new", collapsed: false, children: [] }]));
     expect(pageInstanceGeneration("P0")!).toBeGreaterThan(original);
   });
+});
+
+it("shares exact clipboard outline bytes and selection-root filtering across live/fetched inputs", () => {
+  const child: BlockDto = { id: "child", raw: "Child\n\ncontinued", collapsed: false, children: [] };
+  const root: BlockDto = { id: "root", raw: "Parent  \nline\n", collapsed: false, children: [child] };
+  loadSingle(page("Page", [root]));
+  const expected = "- Parent\n  line\n\n\t- Child\n\n\t  continued";
+  expect(blockSubtreeMarkdown("root")).toBe(expected);
+  expect(dtoSubtreeMarkdown(root)).toBe(expected);
+  expect(buildClipboardPayload(["root", "child"])?.blocks.map((b) => b.key)).toEqual(["root"]);
+  expect(exportNodesFor(["root", "child"]).map((b) => b.raw)).toEqual([root.raw]);
 });

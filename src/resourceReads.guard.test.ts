@@ -17,13 +17,20 @@ import { describe, expect, it } from "vitest";
 // had written one, and none of those branches could run. `.error`, `.loading`,
 // `.state` and `.refetch` stay available, because none of them throws.
 //
-// Exemplar to imitate: src/render/inline.tsx, `grpResource` → `grp`.
-const FACTORIES = new Set(["createResource", "createReadyQueryResource"]);
+// Exemplar to imitate: src/render/inline.tsx (preview, grp).
+const FACTORIES = new Set(["createResource"]);
 const READERS = new Set(["readOr", "readLatestOr"]);
 /** Properties that do not throw. `latest` is NOT one of them (dist/solid.js:394). */
 const SAFE_PROPERTIES = new Set(["error", "loading", "state", "refetch", "mutate"]);
 
 const SRC = path.resolve(__dirname);
+
+/** Files whose reads are not converted yet because another og lane owns them
+ *  while it is in flight (og-D, 2026-09-29). This list may only SHRINK: the
+ *  "still offends" test below fails the moment one of these files is clean, so
+ *  its entry must then be deleted, and a file cannot be added. Owner lane in the
+ *  value; the conversion is mechanical (see src/render/inline.tsx). */
+const PENDING_OWNED_FILES: Record<string, string> = {};
 
 function sources(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -123,24 +130,33 @@ const RULE = "A Solid resource binding must not be called: reading a rejected re
   + "(solid.js read() :318-322, latest :390-397) and the throw discards the whole pending effect "
   + "queue, which is how one failed fetch blanks a region. Read it with readOr/readLatestOr "
   + "(src/resourceRead.ts) and give it the fallback this site already draws for 'not loaded'. "
-  + "Exemplar: src/render/inline.tsx, grpResource → grp. If emptiness would MISINFORM the user, "
-  + "pair it with <ResourceFailure of={…} /> (exemplar: src/components/BlockReferences.tsx).";
+  + "Exemplar: src/render/inline.tsx. If emptiness would MISINFORM the user, "
+  + "pair it with <ResourceFailure of={…} /> (exemplar: src/components/ResourceFailure.tsx).";
 
 describe("resource reads never throw into render (GH #490/#332)", () => {
   const files = sources(SRC);
 
   it("finds the resources it is supposed to police", () => {
     const counted = files.reduce((total, file) => total + resourceBindings(file, readFileSync(file, "utf8")).length, 0);
-    expect(counted).toBeGreaterThan(30);
+    expect(counted).toBeGreaterThan(25);
   });
 
-  it("calls no resource binding anywhere in src/", () => {
+  it("calls no resource binding anywhere in src/ outside the shrinking pending list", () => {
     const offenders: string[] = [];
     for (const file of files) {
+      const relative = path.relative(SRC, file);
+      if (relative in PENDING_OWNED_FILES) continue;
       const found = throwingReads(file, readFileSync(file, "utf8"));
-      if (found.length) offenders.push(`${path.relative(SRC, file)}: ${found.join(", ")}`);
+      if (found.length) offenders.push(`${relative}: ${found.join(", ")}`);
     }
     expect(offenders, RULE).toEqual([]);
+  });
+
+  it("keeps the pending list honest: every listed file still offends (delete an entry once converted)", () => {
+    for (const relative of Object.keys(PENDING_OWNED_FILES)) {
+      const file = path.join(SRC, relative);
+      expect(throwingReads(file, readFileSync(file, "utf8")).length, `${relative} is clean: remove it from PENDING_OWNED_FILES`).toBeGreaterThan(0);
+    }
   });
 
   it("is not vacuous: a called binding is reported", () => {

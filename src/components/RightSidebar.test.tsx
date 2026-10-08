@@ -3,8 +3,10 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { editingId, endEdit } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, persistentBlockRef, resetStore } from "../store";
-import type { PageDto } from "../types";
+import { blockRef, blockPositionRef, ensureBlockId, pageByName, resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
+import type { PageDto, PageRead } from "../types";
 import { applySidebarSession, openBlockInSidebar, rightSidebar, setRightSidebar } from "../ui";
 import { RightSidebar } from "./RightSidebar";
 
@@ -54,36 +56,42 @@ function mount(items = [
 }
 
 describe("right sidebar collection disclosures", () => {
-  it("stores a fresh block's durable UUID instead of its transient sidebar key", () => {
-    const uuid = "12345678-1234-4234-8234-123456789abc";
-    vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
-    vi.spyOn(backend(), "savePage").mockResolvedValue({ revision: "rev-sidebar" });
+  it("opening a fresh block in the sidebar writes nothing and stores its position, not an id", () => {
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-sidebar"] });
     loadSingle({
       ...page,
       blocks: [{ id: "bfresh-sidebar", raw: "Fresh sidebar target", collapsed: false, children: [] }],
     });
 
-    openBlockInSidebar(persistentBlockRef("bfresh-sidebar"));
+    openBlockInSidebar(blockPositionRef(blockRef("bfresh-sidebar")));
 
-    expect(rightSidebar()[0]).toMatchObject({
-      kind: "block",
-      uuid,
-      page: page.name,
-      pageKind: "page",
+    expect(rightSidebar()[0]).toMatchObject({ kind: "block", page: page.name, pageKind: "page", blockPos: [0] });
+    expect(doc.byId["bfresh-sidebar"].raw).toBe("Fresh sidebar target");
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("Copy block ref on a sidebar block still stamps its durable UUID", async () => {
+    const uuid = "12345678-1234-4234-8234-123456789abc";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-sidebar"] });
+    loadSingle({
+      ...page,
+      blocks: [{ id: "bfresh-sidebar", raw: "Fresh sidebar target", collapsed: false, children: [] }],
     });
-    expect((rightSidebar()[0] as { uuid?: string }).uuid).not.toBe("bfresh-sidebar");
+    expect(await ensureBlockId("bfresh-sidebar")).toBe(uuid);
+    expect(doc.byId["bfresh-sidebar"].raw).toBe(`Fresh sidebar target\nid:: ${uuid}`);
   });
 
   it("resolves a durable Org sidebar UUID to its transient live store node", async () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";
     const transient = "bfresh-org-sidebar";
-    const orgPage: PageDto = {
+    const orgPage: PageRead = {
       name: "2026-07-22",
       kind: "journal",
       title: "Wednesday, 22 July 2026",
       pre_block: null,
       format: "org",
-      path: "journals/2026_07_22.org",
+      id: "journals/2026_07_22.org",
       blocks: [{
         id: transient,
         raw: `Fresh Org target\n:PROPERTIES:\n:id: ${uuid}\n:END:`,
@@ -99,7 +107,7 @@ describe("right sidebar collection disclosures", () => {
         uuid,
         page: orgPage.name,
         pageKind: "journal",
-        path: orgPage.path,
+        path: orgPage.id,
       }],
     });
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
@@ -120,7 +128,7 @@ describe("right sidebar collection disclosures", () => {
   });
 
   it("replaces a same-name loaded page with the sidebar item's exact physical owner", async () => {
-    loadSingle({ ...page, path: "pages/Sidebar test.md" });
+    loadSingle({ ...page, id: "pages/Sidebar test.md" });
     applySidebarSession({
       right: true,
       items: [{
@@ -130,9 +138,9 @@ describe("right sidebar collection disclosures", () => {
         path: "pages/duplicates/Sidebar test.md",
       }],
     });
-    const exact = {
+    const exact: PageRead = {
       ...page,
-      path: "pages/duplicates/Sidebar test.md",
+      id: "pages/duplicates/Sidebar test.md",
       blocks: [{ id: "exact-root", raw: "Noncanonical exact content", collapsed: false, children: [] }],
     };
     const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
@@ -147,7 +155,7 @@ describe("right sidebar collection disclosures", () => {
     try {
       await vi.waitFor(() => {
         expect(root.textContent).toContain("Noncanonical exact content");
-        expect(pageByName(page.name)?.path).toBe("pages/duplicates/Sidebar test.md");
+        expect(pageByName(page.name)?.id).toBe("pages/duplicates/Sidebar test.md");
       });
       expect(getPageByPath).toHaveBeenCalledWith("pages/duplicates/Sidebar test.md");
       expect(getPage).not.toHaveBeenCalled();
@@ -162,7 +170,7 @@ describe("right sidebar collection disclosures", () => {
       right: true,
       items: [{ kind: "page", name: "Page1", pageKind: "page" }],
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(canonical);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(canonical as PageRead);
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
     vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
     vi.spyOn(backend(), "getBlockRefCounts").mockResolvedValue({});

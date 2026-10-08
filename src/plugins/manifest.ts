@@ -1,3 +1,5 @@
+import { isPackageId, isPackageVersion } from "../packageIdentity";
+import { schemaGuards } from "../schemaGuards";
 import { parsePluginSettingDefinitions, type PluginSettingDefinition } from "./settings";
 
 export const PLUGIN_API_VERSION = "0.2" as const;
@@ -26,6 +28,10 @@ export const PLUGIN_CAPABILITIES = [
   "settings.write",
 ] as const;
 export type PluginCapability = (typeof PLUGIN_CAPABILITIES)[number];
+/** Byte ceilings a plugin package must meet before it is read or compiled.
+ *  Mirrors `MAX_MANIFEST_BYTES` / `MAX_WASM_BYTES` in src-tauri/src/plugins.rs. */
+export const PLUGIN_MANIFEST_MAX_BYTES = 64 * 1024;
+export const PLUGIN_WASM_MAX_BYTES = 8 * 1024 * 1024;
 
 export interface PluginCommandContribution {
   id: string;
@@ -88,30 +94,14 @@ export class PluginManifestError extends Error {
   }
 }
 
-const ID_RE = /^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])?$/;
-const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/;
 const CONTRIBUTION_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SAFE_ENTRY_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*\.wasm$/;
 
-function record(value: unknown, where: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new PluginManifestError(`${where} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function knownKeys(obj: Record<string, unknown>, where: string, allowed: readonly string[]) {
-  const known = new Set(allowed);
-  const unknown = Object.keys(obj).find((key) => !known.has(key));
-  if (unknown) throw new PluginManifestError(`${where} contains unknown field ${unknown}`);
-}
-
-function stringField(value: unknown, where: string, max: number): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > max) {
-    throw new PluginManifestError(`${where} must be a non-empty string of at most ${max} characters`);
-  }
-  return value;
-}
+const { record, knownKeys, text: stringField } = schemaGuards(PluginManifestError, {
+  object: (where) => `${where} must be an object`,
+  string: (where, max) => `${where} must be a non-empty string of at most ${max} characters`,
+  plainText: false,
+});
 
 function stringArray<T extends string>(
   value: unknown,
@@ -268,9 +258,9 @@ export function parsePluginManifest(value: unknown): PluginManifest {
     throw new PluginManifestError(`apiVersion must be ${PLUGIN_API_VERSION}`);
   }
   const id = stringField(obj.id, "id", 64);
-  if (!ID_RE.test(id) || !id.includes(".")) throw new PluginManifestError("id must be a lowercase dotted identifier");
+  if (!isPackageId(id)) throw new PluginManifestError("id must be a lowercase dotted identifier");
   const version = stringField(obj.version, "version", 64);
-  if (!VERSION_RE.test(version)) throw new PluginManifestError("version must be SemVer");
+  if (!isPackageVersion(version)) throw new PluginManifestError("version must be SemVer");
   const entry = stringField(obj.entry, "entry", 160);
   if (!SAFE_ENTRY_RE.test(entry) || entry.startsWith("/") || entry.split("/").includes("..")) {
     throw new PluginManifestError("entry must be a relative .wasm path without traversal");

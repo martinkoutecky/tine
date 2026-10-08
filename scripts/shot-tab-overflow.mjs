@@ -1,7 +1,6 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Browser geometry and screenshot proof for GH #105 across widths and themes.
 // Usage: npm run build && node scripts/shot-tab-overflow.mjs
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -23,9 +22,16 @@ mkdirSync(OUT, { recursive: true });
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 let browser;
 
+async function waitForServer() {
+  for (let i = 0; i < 50; i++) {
+    try { if ((await fetch(`http://localhost:${PORT}/?regressions`)).ok) return; } catch {}
+    await sleep(200);
+  }
+  throw new Error("server did not start");
+}
 
 try {
-  await waitForHttpServer(`http://localhost:${PORT}/?regressions`, 50, 200, { failureMessage: "server did not start" });
+  await waitForServer();
   browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   await page.goto(`http://localhost:${PORT}/?regressions`);

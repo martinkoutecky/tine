@@ -1,68 +1,70 @@
 // Pure helpers for reading/editing `key:: value` property lines — a block's
 // continuation lines or a page's pre-block. No store/DOM, so unit-testable.
 
-import { transitionFence, displayMathOpenAfter, closesDisplayMath, type FenceState } from "./fences";
+import { displayMathOpenAfter, closesDisplayMath, fenceExitTrim } from "./fences";
+import type { Format } from "../render/ast";
+import { blockRegions, editBlock, parserReady } from "../render/parse";
+import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
+import { reportUiFailure } from "../uiFailure";
 
-/** The editor's `key:: value` matcher for reading and rewriting property lines.
- * The key class is the same Unicode class as `PAGE_HEADER_KEY` below. lsdoc's
- * canonical recognizer (`crates/tine-core/src/property_line.rs`) does not use a
- * character class at all — a key is any nonempty run without a colon, parser
- * space, CR or LF — so an ASCII-only class here made a non-ASCII key WRITE-ONCE:
- * the new-key path created it unconditionally, then no later edit could match
- * the line, and an update prepended a second line with the same key instead of
- * replacing the first (GH #164). Only the charset is widened: the `::`
- * separator rule stays as it is, because the page-header grammar
- * (`parsePageHeaderPropertyLine`) is deliberately a different, laxer rule for a
- * different job, pinned by its own tests. */
-export const PROP_LINE = /^([\p{L}\p{M}\p{N}_./-]+):: ?(.*)$/u;
+import { property_line_json, page_regions_json, page_header_json } from "../render/wasm/lsdoc_wasm.js";
+import type { RegionProperty } from "../render/parse";
 
-/** Whether `key` may be committed as a property key from the UI.
- *
- *  This deliberately asks the very matcher that will later have to FIND the key
- *  ({@link PROP_LINE}) instead of carrying its own rule, so anything accepted
- *  here is guaranteed matchable for update and removal. A validator that
- *  disagrees with the finder is precisely how GH #164's write-once bug existed:
- *  the new-key path wrote unconditionally while the matcher could not find what
- *  it had written.
- *
- *  It compares the recovered key rather than just testing the line, because a
- *  key such as `a::b` produces a line the matcher happily accepts by binding
- *  `a` and treating `b:: value` as the value. */
+/** Native accepted line grammar; callers choose placement and authoring policy. */
+export function acceptedPropertyLine(line: string): { key: string; value: string } | null {
+  if (!line) return null;
+  const pair = JSON.parse(property_line_json(line)) as [string, string] | null;
+  return pair ? { key: pair[0], value: pair[1] } : null;
+}
+
+/** Whether the properties panel may write `key` (GH #164): letters, marks,
+ *  digits, `_`, `.`, `/` or `-` — the intersection of Tine's Markdown page
+ *  header, Org drawer/directive readers and lsdoc. The Rust block-property
+ *  reader now accepts this class too. Syntactic only: machine-managed keys (`id`,
+ *  `collapsed`, `tine.*`) pass here and callers refuse them separately.
+ *  Pinned by crates/tine-core/tests/fixtures/editable-property-keys.txt, which
+ *  the Rust readers test too. Cost O(key). */
 export function isEditablePropertyKey(key: string): boolean {
-  return PROP_LINE.exec(`${key}:: value`)?.[1] === key;
+  return /^[\p{L}\p{M}\p{N}_./-]+$/u.test(key);
 }
 
-const PAGE_HEADER_KEY = /^[\p{L}\p{M}\p{N}_./-]+$/u;
-
-/** Parse one canonical Markdown page-header property line. This grammar is
- * intentionally separate from ordinary block properties: page headers may use
- * Unicode/plugin keys, but must start at column zero and cannot absorb prose,
- * headings or fences into metadata. The value is returned byte-for-byte after
- * the exact `::` delimiter (including its optional conventional space). */
-export function parsePageHeaderPropertyLine(line: string): { key: string; value: string } | null {
-  const delimiter = line.indexOf("::");
-  if (delimiter <= 0) return null;
-  const key = line.slice(0, delimiter);
-  if (key.startsWith("#") || !PAGE_HEADER_KEY.test(key)) return null;
-  return { key, value: line.slice(delimiter + 2) };
+/** A Markdown page header the parser accepted (Rust `block_regions::page_header`): the leading run of
+ * accepted `key:: value` properties, joined only by empty lines. Named Tine policies over lsdoc's
+ * answer: the run starts at the first byte, lines start at column zero, and a key does not start
+ * with `#` (a `#tag::` line is prose that happens to parse). No-space `key::value`, indented lines
+ * and fenced lines are not properties because lsdoc says so (I-12). Offsets here are UTF-16: `end`
+ * is the end of the last header line (newline excluded), `line` is the 0-based line index. */
+interface PageHeader {
+  end: number;
+  entries: { key: string; value: string; line: number }[];
 }
+const NO_HEADER: PageHeader = { end: 0, entries: [] };
+let lastHeader: { raw: string; header: PageHeader } | undefined;
 
-/** A complete canonical page header: one or more property lines, with blank
- * separators permitted only between properties (never at either edge). */
-export function isPageHeaderPropertiesOnly(raw: string): boolean {
-  if (!raw || raw.startsWith("\n") || raw.endsWith("\n")) return false;
-  const lines = raw.split("\n");
-  let sawProperty = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (line === "") {
-      if (!sawProperty || i === lines.length - 1) return false;
-      continue;
-    }
-    if (!parsePageHeaderPropertyLine(line)) return false;
-    sawProperty = true;
+function pageHeader(raw: string): PageHeader {
+  // Every header line holds `::`; without one there is nothing to parse.
+  if (!raw.includes("::") || !parserReady()) return NO_HEADER;
+  if (lastHeader?.raw === raw) return lastHeader.header;
+  let json: string;
+  try {
+    json = page_header_json(raw);
+  } catch (error) {
+    // A parser trap (the glue already recovered a fresh instance) must not take the page down:
+    // read it as "no header" for this text, the same answer as before the parser is ready, and say so (I-9).
+    reportUiFailure("page-header-read", error);
+    return NO_HEADER;
   }
-  return sawProperty;
+  const parsed = JSON.parse(json) as { end: number; entries: PageHeader["entries"] };
+  const header = { end: utf8ToUtf16Cursor(raw)(parsed.end), entries: parsed.entries.map(({ key, value, line }) => ({ key, value, line })) };
+  lastHeader = { raw, header };
+  return header;
+}
+
+/** A complete page header: the whole text is header properties, with empty lines permitted only
+ * between properties (never at either edge). */
+export function isPageHeaderPropertiesOnly(raw: string): boolean {
+  const header = pageHeader(raw);
+  return header.entries.length > 0 && header.end === raw.length;
 }
 
 /** Keep the canonical page-header predicate shared by display and edit paths so
@@ -74,13 +76,15 @@ export function isPropertiesOnly(raw: string): boolean {
 
 /** Whether the textarea caret is on a complete `key:: value` line. This is
  * deliberately line-local: an empty line after a run of page properties is the
- * double-Enter exit sentinel, not another property line. */
+ * double-Enter exit sentinel, not another property line. The line is lsdoc's accepted
+ * property line under the page-header policies (column zero, no `#` key). */
 export function caretOnPropertyLine(raw: string, caret: number): boolean {
   const c = Math.max(0, Math.min(caret, raw.length));
   const lineStart = raw.lastIndexOf("\n", c - 1) + 1;
   const nextNewline = raw.indexOf("\n", c);
-  const lineEnd = nextNewline === -1 ? raw.length : nextNewline;
-  return parsePageHeaderPropertyLine(raw.slice(lineStart, lineEnd)) !== null;
+  const line = raw.slice(lineStart, nextNewline === -1 ? raw.length : nextNewline);
+  const property = acceptedPropertyLine(line);
+  return property !== null && line.startsWith(property.key) && !property.key.startsWith("#");
 }
 
 /** Split a Markdown page preamble into real page-property lines and ordinary
@@ -93,38 +97,13 @@ export function splitPagePreamble(raw: string | null | undefined): {
   remainder: string | null;
 } {
   if (!raw) return { properties: null, content: null, remainder: null };
-  if (!parsePageHeaderPropertyLine(raw.split("\n", 1)[0])) {
-    const content = raw.replace(/^\n+|\n+$/g, "") || null;
-    return { properties: null, content, remainder: raw };
-  }
-
-  // Extend through property lines and blank runs only when another property
-  // follows. A blank before prose belongs to the exact suffix, not the header.
-  let pos = 0;
-  let headerEnd = 0;
-  while (pos < raw.length) {
-    const nl = raw.indexOf("\n", pos);
-    const end = nl === -1 ? raw.length : nl;
-    const line = raw.slice(pos, end);
-    if (!parsePageHeaderPropertyLine(line)) break;
-    headerEnd = end;
-    if (nl === -1) break;
-    let next = nl + 1;
-    while (next < raw.length) {
-      const nextNl = raw.indexOf("\n", next);
-      const nextEnd = nextNl === -1 ? raw.length : nextNl;
-      if (raw.slice(next, nextEnd) !== "") break;
-      next = nextNl === -1 ? raw.length : nextNl + 1;
-    }
-    const nextNl = raw.indexOf("\n", next);
-    const nextEnd = nextNl === -1 ? raw.length : nextNl;
-    if (next >= raw.length || !parsePageHeaderPropertyLine(raw.slice(next, nextEnd))) break;
-    pos = next;
-  }
-  const properties = raw.slice(0, headerEnd);
-  const remainder = raw.slice(headerEnd) || null;
-  const content = remainder?.replace(/^\n+|\n+$/g, "") || null;
-  return { properties, content, remainder };
+  const { end, entries } = pageHeader(raw);
+  const remainder = entries.length ? raw.slice(end) || null : raw;
+  return {
+    properties: entries.length ? raw.slice(0, end) : null,
+    content: remainder?.replace(/^\n+|\n+$/g, "") || null,
+    remainder,
+  };
 }
 
 // Built-in properties hidden from the editor by default (like OG): `id::`,
@@ -141,23 +120,14 @@ export const isSheetCellHidden = (key: string): boolean =>
 /** Hide every property (annotation blocks edit only their text). */
 export const hideAll = (_key: string): boolean => true;
 
-function propLineKey(line: string): string | null {
-  // Same Unicode key class as PROP_LINE. An ASCII-only class here meant a
-  // non-ASCII-keyed property line was never classified as a property at all, so
-  // `isHidden` was never consulted for it: with `hideAll` (annotation blocks,
-  // which hide every property and edit only their text) the line stayed visible
-  // as raw metadata in the edit textarea (GH #164).
-  const m = /^\s*([\p{L}\p{M}\p{N}_./-]+)::/u.exec(line);
-  return m ? m[1].toLowerCase() : null;
-}
-
 /** For a multi-line editor that normally keeps Enter inside it, return the text
  * with its trailing sentinel blank line removed when the caret is on the
  * double-Enter exit line. Blank lines in the middle remain ordinary content. */
 export function multilineExitTrim(
   text: string,
   caret: number,
-  kind: "calc" | "fence" | "math" | "properties"
+  kind: "calc" | "fence" | "math" | "properties",
+  format: Format = "md",
 ): string | null {
   const c = Math.max(0, Math.min(caret, text.length));
   const lineStart = text.lastIndexOf("\n", c - 1) + 1;
@@ -169,119 +139,56 @@ export function multilineExitTrim(
     if (text.slice(lineEnd).trim() !== "") return null;
     return text.slice(0, lineStart - 1);
   }
+  if (kind === "fence") return fenceExitTrim(text, lineStart, lineEnd, format);
 
   const after = text.slice(lineEnd + 1);
   const nextNewline = after.indexOf("\n");
   const nextLine = nextNewline === -1 ? after : after.slice(0, nextNewline);
-  const before = text.slice(0, lineStart);
-  if (kind === "math") {
-    if (!displayMathOpenAfter(before) || !closesDisplayMath(nextLine)) return null;
-  } else {
-    let fence: FenceState | null = null;
-    for (const line of before.split("\n")) {
-      fence = transitionFence(fence, line).next;
-    }
-    if (!fence || !transitionFence(fence, nextLine).closes) return null;
-  }
+  if (!displayMathOpenAfter(text.slice(0, lineStart), format) || !closesDisplayMath(nextLine)) return null;
   const afterClosing = nextNewline === -1 ? "" : after.slice(nextNewline + 1);
   if (afterClosing.trim() !== "") return null;
   return text.slice(0, lineStart - 1) + text.slice(lineEnd);
-}
-
-/** Whether a textarea caret offset is inside a fenced code region. The fence
- *  delimiter lines themselves are outside; the content lines between them are
- *  inside, including an unterminated fence while the user is editing. */
-export function caretInFence(raw: string, offset: number): boolean {
-  const target = Math.max(0, Math.min(offset, raw.length));
-  let fence: FenceState | null = null;
-  let pos = 0;
-  while (pos <= raw.length) {
-    const nl = raw.indexOf("\n", pos);
-    const end = nl === -1 ? raw.length : nl;
-    const line = raw.slice(pos, end);
-    const t = transitionFence(fence, line);
-    if (target <= end) return fence !== null && !t.closes;
-    fence = t.next;
-    if (nl === -1) break;
-    pos = end + 1;
-  }
-  return fence !== null;
 }
 
 /** The two on-disk block formats. Markdown keeps built-in props as trailing
  *  `key:: value` lines; org keeps them inside a `:PROPERTIES:`/`:END:` drawer. */
 export type PropFormat = "md" | "org";
 
-/** Key of an org drawer property line (`:id: <uuid>` → `"id"`), lowercased, or
- *  null if the line isn't a `:key: value` drawer entry. The `:PROPERTIES:` and
- *  `:END:` wrapper lines return null (they aren't `key value` pairs). */
-function orgDrawerKey(line: string): string | null {
-  const m = /^\s*:([A-Za-z0-9_@.-]+):(?:\s|$)/.exec(line);
-  const k = m ? m[1].toLowerCase() : null;
-  return k === "properties" || k === "end" ? null : k;
-}
-
 type LineClass = "v" | "h" | "d"; // visible | hidden-payload | dropped(org wrapper)
 
-/** Classify every line as visible / hidden-property / dropped-org-wrapper.
- *  Fence-aware. For org, a block-properties `:PROPERTIES:`/`:END:` drawer whose
- *  inner lines are ALL built-in-hidden is dropped whole (wrapper marked `d`,
- *  inner marked `h`) — mirroring OG's `remove-built-in-properties`, which also
- *  strips the emptied drawer. A drawer that still holds a user property keeps its
- *  wrapper + user lines visible and hides only the built-in lines within. */
+/** Present only primary properties accepted by the block-region door. Lines
+ * are transport coordinates here, never evidence that text is metadata. */
 function classifyLines(
   lines: string[],
   isHidden: (key: string) => boolean,
   format: PropFormat
 ): LineClass[] {
   const cls: LineClass[] = new Array(lines.length).fill("v");
-  let fence: FenceState | null = null;
-  let i = 0;
-  while (i < lines.length) {
-    const l = lines[i];
-    const t = transitionFence(fence, l);
-    if (t.opens || t.closes) {
-      fence = t.next; // fence delimiter lines are always visible content
-      i++;
-      continue;
+  if (!parserReady()) return cls;
+  const raw = lines.join("\n");
+  const regions = blockRegions(raw, format);
+  if (regions.quarantined) return cls;
+  const starts = [0];
+  const encoder = new TextEncoder();
+  for (let i = 0; i < lines.length - 1; i++) starts.push(starts[i] + encoder.encode(lines[i]).length + 1);
+  const lineAt = (byte: number) => {
+    let lo = 0, hi = starts.length;
+    while (lo + 1 < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (starts[mid] <= byte) lo = mid;
+      else hi = mid;
     }
-    if (fence !== null) {
-      i++; // inside a code fence — never metadata
-      continue;
+    return lo;
+  };
+  const own = regions.properties.filter((p) => p.primary);
+  for (const p of own) if (isHidden(p.key.toLowerCase())) cls[lineAt(p.line[0])] = "h";
+  if (format === "org") {
+    for (const [index, range] of regions.property_regions.entries()) {
+      const entries = own.filter((p) => p.region === index);
+      if (!entries.length || !entries.every((p) => isHidden(p.key.toLowerCase()))) continue;
+      cls[lineAt(range[0])] = "d";
+      cls[lineAt(Math.max(range[0], range[1] - 1))] = "d";
     }
-    if (format === "org" && l.trim().toUpperCase() === ":PROPERTIES:") {
-      let j = i + 1;
-      while (j < lines.length && lines[j].trim().toUpperCase() !== ":END:") j++;
-      if (j < lines.length) {
-        // Complete drawer spans i..j. Classify inner lines i+1..j-1.
-        let anyKept = false;
-        const inner: LineClass[] = [];
-        for (let k = i + 1; k < j; k++) {
-          const key = orgDrawerKey(lines[k]);
-          const hid = key != null && isHidden(key);
-          inner.push(hid ? "h" : "v");
-          if (!hid) anyKept = true; // a user prop (or a non-prop line) survives
-        }
-        if (anyKept) {
-          for (let k = i + 1; k < j; k++) cls[k] = inner[k - (i + 1)]; // wrapper stays "v"
-        } else {
-          cls[i] = "d"; // drop the emptied :PROPERTIES:
-          cls[j] = "d"; // drop the :END:
-          for (let k = i + 1; k < j; k++) cls[k] = "h";
-        }
-        i = j + 1;
-        continue;
-      }
-      // No matching :END: — treat the line as ordinary content.
-    }
-    // Markdown `key:: value` property lines. Only in md files: org uses the
-    // drawer for properties, so a `key::` line in an org block is body content,
-    // never metadata (and must never be folded into a drawer on reattach).
-    if (format !== "org") {
-      const key = propLineKey(l);
-      if (key && isHidden(key)) cls[i] = "h";
-    }
-    i++;
   }
   return cls;
 }
@@ -362,41 +269,20 @@ export function rawOffsetToVisibleOffset(
  *  {@link splitProps}. Markdown appends them below the body (that's where its
  *  `id::`/`collapsed::` live). Org folds them back into a `:PROPERTIES:` drawer
  *  at OG's canonical spot (into an existing drawer if the visible text still has
- *  one, else a fresh drawer right after the title + SCHEDULED/DEADLINE planning
- *  lines — matching {@link rawWithBlockId}). A metadata-only block (empty
+ *  one, else native placement after the title and accepted planning — matching
+ *  {@link rawWithBlockId}). A metadata-only block (empty
  *  visible) is just its hidden lines — no spurious leading newline. */
 export function joinProps(visible: string, hidden: string, format: PropFormat = "md"): string {
   if (!hidden) return visible;
   if (format !== "org") return visible ? `${visible}\n${hidden}` : hidden;
-  const hiddenLines = hidden.split("\n").filter((l) => l.trim() !== "");
-  if (hiddenLines.length === 0) return visible;
-  const lines = visible ? visible.split("\n") : [];
-  const start = lines.findIndex((l) => l.trim().toUpperCase() === ":PROPERTIES:");
-  const end =
-    start >= 0 ? lines.findIndex((l, i) => i > start && l.trim().toUpperCase() === ":END:") : -1;
-  if (start >= 0 && end > start) {
-    lines.splice(end, 0, ...hiddenLines); // extend the existing drawer, before :END:
-    return lines.join("\n");
-  }
-  if (lines.length === 0) return [":PROPERTIES:", ...hiddenLines, ":END:"].join("\n");
-  const [title, ...rest] = lines;
-  const isSched = (l: string) => l.startsWith("SCHEDULED");
-  const isDead = (l: string) => l.startsWith("DEADLINE");
-  const scheduled = rest.filter(isSched);
-  const deadline = rest.filter(isDead);
-  const body = rest.filter((l) => !isSched(l) && !isDead(l));
-  return [title, ...scheduled, ...deadline, ":PROPERTIES:", ...hiddenLines, ":END:", ...body].join(
-    "\n"
-  );
+  return editBlock(visible, format, { kind: "reattach_properties", hidden });
 }
 
 /** First value for `key` (case-insensitive) in a property block, or null. */
 export function readPropertyValue(block: string | null, key: string): string | null {
   if (!block) return null;
-  for (const l of block.split("\n")) {
-    const m = PROP_LINE.exec(l);
-    if (m && m[1].toLowerCase() === key.toLowerCase()) return m[2].trim();
-  }
+  const property = blockRegions(block).properties.find((p) => p.primary && p.key.toLowerCase() === key.toLowerCase());
+  if (property) return property.value;
   return null;
 }
 
@@ -415,10 +301,21 @@ export function upsertPropertyLine(
   const lines = block == null || block === "" ? [] : block.split("\n");
   const out: string[] = [];
   let matched = false;
-  for (const line of lines) {
-    const m = PROP_LINE.exec(line);
-    if (m && m[1].toLowerCase() === key.toLowerCase()) {
-      if (!matched && v) out.push(`${m[1]}:: ${v}`);
+  const raw = block ?? "";
+  const decoder = new TextDecoder();
+  const bytes = new TextEncoder().encode(raw);
+  const lineIndices = new Map<number, number>();
+  let byteStart = 0;
+  const encoder = new TextEncoder();
+  lines.forEach((line, i) => { lineIndices.set(byteStart, i); byteStart += encoder.encode(line).length + 1; });
+  const regions = blockRegions(raw);
+  if (regions.quarantined) throw new Error("Structural edit refused: block parsing is quarantined");
+  const accepted = new Map(regions.properties.filter((p) => p.primary)
+    .map((p) => [lineIndices.get(p.line[0]), p]));
+  for (const [index, line] of lines.entries()) {
+    const p = accepted.get(index);
+    if (p && p.key.toLowerCase() === key.toLowerCase()) {
+      if (!matched && v) out.push(`${line.slice(0, decoder.decode(bytes.subarray(p.line[0], p.key_range[1])).length)}:: ${v}${line.endsWith("\r") ? "\r" : ""}`);
       matched = true;
       continue;
     }
@@ -429,6 +326,90 @@ export function upsertPropertyLine(
   // contract instead of inventing a Tine-local append rule.
   if (!matched && v) out.unshift(`${key}:: ${v}`);
   return out.some((line) => line.trim() !== "") ? out.join("\n") : null;
+}
+
+/** One page property line: `key` (Org keys lowercased, as OG/mldoc store
+ *  them), trimmed `value`, and `line`, its 0-based line index in the text. */
+export interface PagePropertyEntry {
+  key: string;
+  value: string;
+  line: number;
+}
+
+let lastPageEntries: { raw: string; entries: PagePropertyEntry[] } | undefined;
+
+/** Accepted whole-preamble properties, in file order. Markdown's are the parser-accepted page header
+ * (`pageHeader`); Org uses parser-owned directives and drawers, excluding literal src/example
+ * regions. Both cost O(text) cold and O(properties) for a repeated read of one retained source. */
+export function pagePropertyEntries(text: string | null | undefined, format: PropFormat): PagePropertyEntry[] {
+  if (!text) return [];
+  if (format === "md") return pageHeader(text).entries.map((e) => ({ ...e }));
+  const source = text;
+  if (lastPageEntries?.raw === source) return lastPageEntries.entries.map((e) => ({ ...e }));
+  const regions = JSON.parse(page_regions_json(source, true)) as RegionProperty[];
+  const bytes = new TextEncoder().encode(source);
+  const decoder = new TextDecoder();
+  let byte = 0, line = 0;
+  const entries = regions.map((p) => {
+    line += decoder.decode(bytes.subarray(byte, p.line[0])).split("\n").length - 1;
+    byte = p.line[0];
+    return { key: p.key.toLowerCase(), value: p.value, line };
+  });
+  lastPageEntries = { raw: source, entries };
+  return entries.map((e) => ({ ...e }));
+}
+
+/** The lowercased keys of a Markdown page header text, in file order (the parser's header, see
+ *  {@link pagePropertyEntries}). */
+export function pageHeaderKeys(raw: string): string[] {
+  return pagePropertyEntries(raw, "md").map((e) => e.key.toLowerCase());
+}
+
+/** Set (or, for a null/blank value, remove) page property `key` across `parts`
+ *  — the texts a page's properties are read from, in file order, each parsed on
+ *  its own by {@link pagePropertyEntries}. The first case-insensitive match is
+ *  replaced in place (Markdown keeps the file's key spelling; Org writes the
+ *  lowercased key), every other match is removed, and a new key is prepended
+ *  to `parts[0]` (Logseq's insert-property order). Unrelated lines keep their
+ *  bytes. A removal that empties an Org drawer drops the drawer; one that
+ *  removes a Markdown header's first line also drops the blank separators that
+ *  would otherwise detach the rest of the header. Returns the new texts, same
+ *  length as `parts`. Cost O(total text). */
+export function pagePartsWithProperty(parts: string[], format: PropFormat, key: string, value: string | null): string[] {
+  const v = value?.trim() || null;
+  const lower = key.toLowerCase();
+  const hits = parts.flatMap((text, part) =>
+    pagePropertyEntries(text, format).filter((e) => e.key.toLowerCase() === lower).map((e) => ({ part, line: e.line, key: e.key })));
+  const lines = parts.map((text) => (text === "" ? [] : text.split("\n")));
+  const dropped = parts.map(() => new Set<number>());
+  hits.forEach(({ part, line, key: spelling }, i) => {
+    if (i > 0 || !v) {
+      dropped[part].add(line);
+      return;
+    }
+    const old = lines[part][line];
+    const indent = old.slice(0, old.length - old.trimStart().length);
+    lines[part][line] = format === "org"
+      ? `${indent}${old.trimStart().startsWith("#+") ? `#+${lower}: ` : `:${lower}: `}${v}`
+      : `${spelling}:: ${v}`;
+  });
+  if (!hits.length && v) lines[0].unshift(format === "org" ? `#+${lower}: ${v}` : `${key}:: ${v}`);
+  return lines.map((all, part) => {
+    if (!dropped[part].size) return all.join("\n");
+    const entryLines = new Set(pagePropertyEntries(parts[part], format).map((e) => e.line));
+    let kept = all.map((line, i) => ({ line, i })).filter(({ i }) => !dropped[part].has(i));
+    if (format === "org") {
+      // A drawer is "emptied" only when one of OUR removals lay inside it.
+      const emptied = (open?: { line: string; i: number }, end?: { line: string; i: number }) =>
+        !!open && !!end && /^:PROPERTIES:$/i.test(open.line.trim()) && /^:END:$/i.test(end.line.trim())
+        && [...dropped[part]].some((d) => open.i < d && d < end.i);
+      kept = kept.filter((_, k) => !emptied(kept[k], kept[k + 1]) && !emptied(kept[k - 1], kept[k]));
+    } else if (dropped[part].has(0)) {
+      const first = kept.findIndex(({ line }) => line.trim() !== "");
+      if (first > 0 && entryLines.has(kept[first].i)) kept = kept.slice(first);
+    }
+    return kept.map(({ line }) => line).join("\n");
+  });
 }
 
 /** The page-level properties we surface in the page-properties panel, with a
@@ -446,141 +427,3 @@ export const PAGE_PROP_SPECS: PagePropSpec[] = [
   { key: "icon", label: "Icon", hint: "An emoji/character shown with the title", kind: "text" },
   { key: "public", label: "Public", hint: "Include this page when exporting/publishing public pages", kind: "bool" },
 ];
-
-// --------------------------------------------------------------------------
-// Raw block-property writers (one per on-disk format)
-// --------------------------------------------------------------------------
-//
-// These are the store's own placement rules, lifted here UNCHANGED so that a
-// caller that builds a block's raw text before it belongs to any store — the
-// query workspace materializing its first `{{query …}}` block — writes a
-// property exactly where `setBlockProperty` would. A markdown `key:: value`
-// line written into an org file renders as visible body text and is never read
-// back as a property (the GH #25 class), so the format is the writer's choice,
-// not a formatting detail.
-
-/** Pure Markdown property rewrite for one compound store mutation. It scans only
- * the canonical head (title, planning, contiguous properties) plus the legacy
- * trailing property block, so a `key::` lookalike in body text or a code fence is
- * never touched or reordered. Existing property order is retained. */
-export function markdownRawWithProperty(raw: string, key: string, value: string | null): string {
-  const lines = raw.split("\n");
-  const first = lines[0] ?? "";
-  const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*</;
-  let i = 1;
-  while (i < lines.length && PLANNING_LINE.test(lines[i])) i++;
-  const planningEnd = i;
-  while (i < lines.length && PROP_LINE.test(lines[i])) i++;
-  const propsEnd = i;
-  let j = lines.length;
-  while (j > propsEnd && PROP_LINE.test(lines[j - 1] ?? "")) j--;
-  const notKey = (l: string) => PROP_LINE.exec(l)?.[1] !== key;
-  const props = lines.slice(planningEnd, propsEnd);
-  const at = props.findIndex((l) => PROP_LINE.exec(l)?.[1] === key);
-  if (value !== null) {
-    const line = `${key}:: ${value}`;
-    if (at >= 0) props[at] = line;
-    else props.push(line);
-  } else if (at >= 0) {
-    props.splice(at, 1);
-  }
-  return [
-    first,
-    ...lines.slice(1, planningEnd),
-    ...props,
-    ...lines.slice(propsEnd, j),
-    ...lines.slice(j).filter(notKey),
-  ].join("\n");
-}
-
-/** `raw` with an org drawer property set/updated/removed. Operates ONLY on the
- *  first `:PROPERTIES:` drawer in the canonical head region (title, planning,
- *  drawer, body — the same placement rawWithBlockId uses); body text and code
- *  blocks are never scanned. Removing the last property removes the drawer. */
-export function orgRawWithProperty(raw: string, key: string, value: string | null): string {
-  const lines = raw.split("\n");
-  const start = lines.findIndex((l) => l.trim().toUpperCase() === ":PROPERTIES:");
-  const end =
-    start >= 0 ? lines.findIndex((l, i) => i > start && l.trim().toUpperCase() === ":END:") : -1;
-  const keyRe = new RegExp(`^:${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:\\s*`, "i");
-  if (start >= 0 && end > start) {
-    // Update in place so an existing drawer key keeps its position (GH #216);
-    // only a new key appends.
-    const inner = lines.slice(start + 1, end);
-    const at = inner.findIndex((l) => keyRe.test(l.trim()));
-    if (value !== null) {
-      const line = `:${key}: ${value}`;
-      if (at >= 0) inner[at] = line;
-      else inner.push(line);
-    } else if (at >= 0) {
-      inner.splice(at, 1);
-    }
-    if (inner.length === 0) {
-      // Drawer emptied: drop it entirely.
-      return [...lines.slice(0, start), ...lines.slice(end + 1)].join("\n");
-    }
-    return [...lines.slice(0, start + 1), ...inner, ...lines.slice(end)].join("\n");
-  }
-  if (value === null) return raw; // nothing to remove
-  // No drawer yet: title, SCHEDULED*, DEADLINE*, drawer, rest (rawWithBlockId's rule).
-  const [title, ...rest] = lines;
-  const isPlan = (l: string) => l.startsWith("SCHEDULED") || l.startsWith("DEADLINE");
-  let planEnd = 0;
-  while (planEnd < rest.length && isPlan(rest[planEnd])) planEnd++;
-  return [
-    title,
-    ...rest.slice(0, planEnd),
-    ":PROPERTIES:",
-    `:${key}: ${value}`,
-    ":END:",
-    ...rest.slice(planEnd),
-  ].join("\n");
-}
-
-/** A page's org PRE-BLOCK with one page property set, updated or removed.
- *
- *  Org carries PAGE properties as `#+key: value` file directives; the
- *  `:PROPERTIES:` drawer that {@link orgRawWithProperty} writes is the BLOCK
- *  form. Logseq splits the same way and this is transcribed from its page
- *  writer, `frontend.util.page-property/insert-property`
- *  (og 6e7afa8eb, `src/main/frontend/util/page_property.cljs:10-32`), against
- *  its block writer `frontend.util.property/build-properties-str`
- *  (`property.cljs:169-177`), which is the one that emits the drawer. Writing a
- *  markdown `key:: value` line into an org preamble instead is not a property
- *  to org at all: neither Tine's own org reader nor Logseq reads it back, and
- *  the metadata silently does not exist (I-4, GH #164).
- *
- *  Transcribed exactly: the key is lower-cased, and an existing directive is
- *  found case-insensitively by the `#+key: ` prefix INCLUDING its trailing
- *  space, so `#+TAGS: x` is matched and `#+TAGS:x` is not. A new key is
- *  prepended, as OG's `cons` does.
- *
- *  Two deliberate departures. Duplicate keys collapse to the first slot rather
- *  than being left in place as OG leaves them, so this agrees with
- *  {@link upsertPropertyLine}; an org page and a markdown page must not
- *  disagree about what a second `tags` line means. And removal has no OG
- *  counterpart at all — its value is never null — so dropping the matching
- *  directive is Tine's own complement of the same markdown rule.
- *
- *  Returns null when no nonblank content remains. */
-export function orgPreBlockWithProperty(
-  preBlock: string | null,
-  key: string,
-  value: string | null
-): string | null {
-  const v = value == null ? null : value.trim();
-  const prefix = `#+${key.toLowerCase()}: `;
-  const lines = preBlock == null || preBlock === "" ? [] : preBlock.split("\n");
-  const out: string[] = [];
-  let matched = false;
-  for (const line of lines) {
-    if (line.toLowerCase().startsWith(prefix)) {
-      if (!matched && v) out.push(`${prefix}${v}`);
-      matched = true;
-      continue;
-    }
-    out.push(line);
-  }
-  if (!matched && v) out.unshift(`${prefix}${v}`);
-  return out.some((line) => line.trim() !== "") ? out.join("\n") : null;
-}

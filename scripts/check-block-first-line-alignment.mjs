@@ -1,4 +1,3 @@
-import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // Vertical alignment of everything that must sit on a block's FIRST line:
 // the bullet dot / ordered number (GH #459) and the reference-count badge
 // (GH #454).
@@ -12,7 +11,7 @@ import { waitForHttpServer } from "./e2e-capabilities.mjs";
 // hard-coded pixel. A typography theme that changes the line height therefore
 // changes the oracle too, which is the point: the bullet column must follow the
 // text, not cancel one particular error with one particular constant.
-import { chromium } from "./lib/playwright.mjs";
+import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -33,6 +32,14 @@ const TOLERANCE_PX = 0.5;
 // is somewhere on the heading's own first line — it deliberately does not freeze
 // the heading column's exact height, which is presentation.
 const HEADING_TOLERANCE_PX = 3;
+
+async function waitForServer(url) {
+  for (let i = 0; i < 80; i += 1) {
+    try { if ((await fetch(url)).ok) return; } catch {}
+    await sleep(250);
+  }
+  throw new Error("preview server did not start");
+}
 
 const server = spawn(
   path.join(root, "node_modules", ".bin", "vite"),
@@ -105,7 +112,7 @@ const note = (message) => problems.push(message);
 
 try {
   const url = `http://127.0.0.1:${port}/`;
-  await waitForHttpServer(url, 80, 250, { failureMessage: "preview server did not start" });
+  await waitForServer(url);
   const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   const page = await browser.newPage({ viewport: { width: 1000, height: 1000 } });
   const pageErrors = [];
@@ -162,7 +169,7 @@ try {
   // Narrow the text column until the same block wraps: the reported case.
   // Constraining the column rather than the window keeps every responsive
   // breakpoint out of the measurement.
-  await page.addStyleTag({ content: ":root { --tine-main-content-max-width: 380px; }" });
+  await page.addStyleTag({ content: ":root { --ls-main-content-max-width: 380px; }" });
   await sleep(400);
   await page.locator(`.ls-block[data-block-id="${REFERENCED_BLOCK}"]`).scrollIntoViewIfNeeded();
   await sleep(200);

@@ -5,10 +5,6 @@ import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
-
-await ensureDisplay();
 
 const utcHour = new Date().getUTCHours();
 const TZ = utcHour < 11 ? "Etc/GMT+12" : "Etc/GMT-14";
@@ -87,11 +83,11 @@ if (process.env.TZ !== TZ) {
   for (const d of ["data", "config", "cache"]) fs.mkdirSync(`${XDG}/${d}`, { recursive: true });
   const env = { ...process.env, TZ, TINE_GRAPH: G, XDG_DATA_HOME: `${XDG}/data`, XDG_CONFIG_HOME: `${XDG}/config`, XDG_CACHE_HOME: `${XDG}/cache`, WEBKIT_DISABLE_DMABUF_RENDERER: "1", LIBGL_ALWAYS_SOFTWARE: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", GDK_BACKEND: "x11" };
   const log = fs.openSync("/tmp/td-journal-future.log", "w");
-  const td = spawn(TD, webdriverServerArgs(driverPort, nativePort, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), { env, stdio: ["ignore", log, log], detached: true });
+  const td = spawn(TD, ["--port", String(driverPort), "--native-port", String(nativePort), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", log, log], detached: true });
   let browser;
   try {
     await sleep(2500);
-    browser = await remote({ hostname: "127.0.0.1", port: driverPort, path: "/", capabilities: tauriCapabilities(APP, "journal-future-feed"), logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000 });
+    browser = await remote({ hostname: "127.0.0.1", port: driverPort, path: "/", capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } }, logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000 });
     await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
     await sleep(1000);
     const body = await browser.execute(() => document.body.innerText);

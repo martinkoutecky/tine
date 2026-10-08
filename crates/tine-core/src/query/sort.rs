@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 /// A result row's precomputed sort key: a numeric axis or lexical text.
 /// Within one requested field every row supplies the same variant.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum SortDecor {
+pub enum SortDecor {
     Num(i64),
     Text(String),
 }
@@ -19,7 +19,7 @@ pub(crate) enum SortDecor {
 ///
 /// The caller owns the stable tie because different row kinds use different
 /// base identities. Direction applies only to requested keys, never to that tie.
-pub(crate) fn compare_sort_decorations(
+pub fn compare_sort_decorations(
     left: &[SortDecor],
     right: &[SortDecor],
     ascending: &[bool],
@@ -47,7 +47,7 @@ pub(crate) fn compare_sort_decorations(
 /// lowercase its value for lexical ordering, and invoke the row kind's fallback
 /// only when no property matched. The fallback is lowercased here by the same
 /// rule, so callers provide exact row text rather than a pre-normalized shadow.
-pub(crate) fn lexical_property_sort_text<'a>(
+pub fn lexical_property_sort_text<'a>(
     properties: impl IntoIterator<Item = (&'a str, &'a str)>,
     field: &str,
     fallback: impl FnOnce() -> String,

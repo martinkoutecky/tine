@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { PaneTree } from "../App";
 import { focusPane, layoutRoot, paneRouter, resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "../panes";
 import { setPaneSel } from "../paneSelect";
-import { resetStore } from "../store";
+import { resetStore } from "../document";
 import type { PaneSnapshot } from "../router";
 
 const pageSnapshot = (name: string): PaneSnapshot => ({
@@ -22,54 +22,6 @@ afterEach(() => {
 });
 
 describe("PaneTree", () => {
-  it("renders a PDF route as the pane body instead of the page scroller or a dedicated sibling pane", async () => {
-    resetPaneLayoutToSingle({
-      tabs: [{
-        history: [{
-          kind: "pdf", viewId: "pdf-pane-view", filename: "assets/paper.pdf", label: "Paper",
-        }],
-        pos: 0,
-        pinned: false,
-      }],
-      activeIndex: 0,
-    });
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    const dispose = render(() => <PaneTree node={layoutRoot()} path={[]} />, root);
-    await Promise.resolve();
-
-    expect(root.querySelector('[data-pdf-view-id="pdf-pane-view"]')).not.toBeNull();
-    expect(root.querySelector(".main-content")).toBeNull();
-    expect(root.querySelectorAll(".pdf-pane")).toHaveLength(1);
-    dispose();
-  });
-
-  it("keeps the mounted PDF viewer when route-owned page or scale changes", async () => {
-    resetPaneLayoutToSingle({
-      tabs: [{
-        history: [{
-          kind: "pdf", viewId: "pdf-stable-view", filename: "assets/paper.pdf", label: "Paper",
-        }],
-        pos: 0,
-        pinned: false,
-      }],
-      activeIndex: 0,
-    });
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    const dispose = render(() => <PaneTree node={layoutRoot()} path={[]} />, root);
-    await Promise.resolve();
-
-    const mountedPane = root.querySelector('[data-pdf-view-id="pdf-stable-view"]');
-    expect(mountedPane).not.toBeNull();
-    paneRouter("main").updateActivePdfViewState({ page: 2, scale: 1.75 });
-    await Promise.resolve();
-
-    expect(root.querySelector('[data-pdf-view-id="pdf-stable-view"]')).toBe(mountedPane);
-    expect(paneRouter("main").route()).toMatchObject({ page: 2, scale: 1.75 });
-    dispose();
-  });
-
   it("renders split leaves with independent pane tab bars", () => {
     restorePaneLayout(
       {

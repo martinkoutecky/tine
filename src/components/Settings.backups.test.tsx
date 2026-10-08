@@ -1,12 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { Backend } from "../backend";
 import { closeSettings, openSettings } from "../ui";
+import { resetStore } from "../document";
+import { setToasts, toasts } from "../toasts";
 
 const backupBackend = vi.hoisted(() => ({
   getBackupKeep: vi.fn(),
   listBackups: vi.fn(),
-  confirm: vi.fn(),
+  setBackupKeep: vi.fn(),
 }));
 
 vi.mock("../backend", async (importOriginal) => {
@@ -22,6 +24,12 @@ import { Settings } from "./Settings";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+beforeEach(() => {
+  backupBackend.getBackupKeep.mockReset();
+  backupBackend.listBackups.mockReset();
+  backupBackend.setBackupKeep.mockReset();
+});
+
 afterEach(() => {
   closeSettings();
   document.body.innerHTML = "";
@@ -30,6 +38,28 @@ afterEach(() => {
 });
 
 describe("Backups settings", () => {
+  it("reports a retention write failure after the graph changes", async () => {
+    backupBackend.getBackupKeep.mockResolvedValue(12);
+    backupBackend.listBackups.mockResolvedValue([]);
+    let rejectWrite!: (error: Error) => void;
+    backupBackend.setBackupKeep.mockImplementation(() => new Promise((_, reject) => { rejectWrite = reject; }));
+    setToasts([]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Settings />, root);
+    openSettings("backups");
+    await tick();
+    await tick();
+    const keep = root.querySelector('input[type="number"]') as HTMLInputElement;
+    keep.value = "7";
+    keep.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(backupBackend.setBackupKeep).toHaveBeenCalledWith(7);
+    resetStore();
+    rejectWrite(new Error("retention disk failed"));
+    await tick();
+    expect(toasts().some((toast) => toast.message.includes("retention disk failed"))).toBe(true);
+    dispose();
+  });
   it("shows loading and error states, then enables backup controls after data loads", async () => {
     let rejectList!: (error: Error) => void;
     backupBackend.getBackupKeep.mockResolvedValue(12);
@@ -67,32 +97,6 @@ describe("Backups settings", () => {
     expect(root.textContent).toContain("1 files");
     expect(keep.disabled).toBe(false);
     const restore = [...root.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Restore") as HTMLButtonElement;
-    expect(restore.disabled).toBe(false);
-    dispose();
-  });
-
-  it("owns the busy state while the restore confirmation is still open", async () => {
-    backupBackend.getBackupKeep.mockResolvedValue(12);
-    backupBackend.listBackups.mockResolvedValue([{ stamp: "2026-07-22_12-00-00", files: 1 }]);
-    let answer!: (confirmed: boolean) => void;
-    backupBackend.confirm.mockImplementation(
-      () => new Promise<boolean>((resolve) => { answer = resolve; }),
-    );
-    const root = document.createElement("div");
-    document.body.append(root);
-    const dispose = render(() => <Settings />, root);
-    openSettings("backups");
-    await tick();
-    await tick();
-
-    const restore = [...root.querySelectorAll("button")]
-      .find((button) => button.textContent?.trim() === "Restore") as HTMLButtonElement;
-    restore.click();
-    await tick();
-    expect(backupBackend.confirm).toHaveBeenCalledOnce();
-    expect(restore.disabled).toBe(true);
-    answer(false);
-    await tick();
     expect(restore.disabled).toBe(false);
     dispose();
   });

@@ -2,30 +2,27 @@
 .el .ds Aq '
 .TH tine-export-live 1  "live " 
 .SH NAME
-tine\-export\-live \- Write the read\-only Tine app, with the static site as its fallback
+tine\-export\-live \- Write the read\-only Tine app
 .SH SYNOPSIS
-\fBtine export live\fR [\fB\-\-output\fR] [\fB\-\-all\-pages\fR] [\fB\-\-debug\fR] [\fB\-\-replace\fR] [\fB\-\-home\fR] [\fB\-\-name\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIGRAPH\fR> 
+\fBtine export live\fR <\fB\-\-output\fR> [\fB\-\-debug\fR] [\fB\-\-name\fR] [\fB\-\-all\-pages\fR] [\fB\-\-home\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIGRAPH\fR> 
 .SH DESCRIPTION
-Write the read\-only Tine app, with the static site as its fallback
+Write the read\-only Tine app
 .SH OPTIONS
 .TP
-\fB\-\-output\fR \fI<DIRECTORY>\fR [default: publish]
-Graph\-relative output directory
-.TP
-\fB\-\-all\-pages\fR
-Publish every page, ignoring `public:: true` selection for this run
+\fB\-\-output\fR \fI<PARENT>\fR
+Existing absolute folder outside the graph; a new child is created in it
 .TP
 \fB\-\-debug\fR
 Enable diagnostic logging for the desktop app
 .TP
-\fB\-\-replace\fR
-Retire an existing output into recovery and install the new export
+\fB\-\-name\fR \fI<NAME>\fR
+Name of the created child and of the published site. Defaults to the graph folder name
+.TP
+\fB\-\-all\-pages\fR
+Publish every page, ignoring `public:: true` selection for this run
 .TP
 \fB\-\-home\fR \fI<PAGE>\fR
-Page to open first. Defaults to configured home, Welcome to Tine, or the first page
-.TP
-\fB\-\-name\fR \fI<NAME>\fR
-Name shown in the published app. Defaults to the graph directory name
+Page to open first. Defaults to the configured home page when it is exported, Welcome to Tine, or the first page
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

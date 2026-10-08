@@ -9,6 +9,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
+import { releaseVersion, releaseChannel, releaseTag, packagingProblems } from "./release-policy.mjs";
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readJson = (relative) => JSON.parse(fs.readFileSync(path.join(root, relative), "utf8"));
 const tauri = readJson("src-tauri/tauri.conf.json");
@@ -41,14 +43,7 @@ const versions = new Map([
 const expected = tauri.version;
 const problems = [];
 
-const storagePin = spawnSync(process.execPath, [path.join(root, "scripts", "check-storage-pin.mjs")], {
-  encoding: "utf8",
-});
-if (storagePin.status !== 0) {
-  problems.push(`check-storage-pin.mjs failed:\n${storagePin.stderr || storagePin.stdout}`);
-}
-
-const benchPolicy = spawnSync(process.execPath, [path.join(root, "scripts", "check-bench-policy.mjs")], {
+const benchPolicy = spawnSync(process.execPath, [path.join(root, "scripts", "check-bench-policy.mjs"), "--expected-previous", "v0.6.5"], {
   encoding: "utf8",
   env: process.env,
 });
@@ -60,16 +55,13 @@ for (const [source, version] of versions) {
   if (version !== expected) problems.push(`${source} has ${version ?? "no version"}; expected ${expected}`);
 }
 
-const parts = expected.split(".").map(Number);
-if (parts.length !== 3 || parts.some((part) => !Number.isSafeInteger(part) || part < 0)) {
-  problems.push(`Tauri version is not a three-part numeric semver: ${expected}`);
-} else {
-  const expectedCode = parts[0] * 1_000_000 + parts[1] * 1_000 + parts[2];
-  if (tauri.bundle?.android?.versionCode !== expectedCode) {
-    problems.push(
-      `Android versionCode is ${tauri.bundle?.android?.versionCode ?? "missing"}; expected ${expectedCode}`
-    );
-  }
+try {
+  releaseVersion(expected);
+  releaseChannel(tauri);
+  const identity = readJson("src-tauri/app-identity.json");
+  problems.push(...packagingProblems(tauri, identity.ship));
+} catch (error) {
+  problems.push(error.message);
 }
 
 if (!new RegExp(`^## \\[${expected.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\d{2}$`, "m").test(changelog)) {
@@ -78,14 +70,14 @@ if (!new RegExp(`^## \\[${expected.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\
 
 if (process.env.GITHUB_REF?.startsWith("refs/tags/")) {
   const tag = process.env.GITHUB_REF.slice("refs/tags/".length);
-  if (tag !== `v${expected}`) problems.push(`tag ${tag} does not match metadata version v${expected}`);
+  if (tag !== releaseTag(tauri)) problems.push(`tag ${tag} is not this build's release tag ${releaseTag(tauri)}`);
 }
 
 if (process.env.REQUIRE_RELEASE_READINESS === "1") {
   for (const [script, args = []] of [
     ["check-regression-catalog.mjs"],
     ["check-release-readiness.mjs"],
-    ["build-guide-site.mjs", ["--check"]],
+    // No demo check: website/demo is master's (build-guide-demo.mjs header).
   ]) {
     const result = spawnSync(process.execPath, [path.join(root, "scripts", script), ...args], { encoding: "utf8" });
     if (result.status !== 0) problems.push(`${script} failed:\n${result.stderr || result.stdout}`);

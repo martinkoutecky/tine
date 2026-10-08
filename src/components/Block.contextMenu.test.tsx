@@ -19,4 +19,16 @@ describe("block context-menu targeting (GH #162)", () => {
     expect(shouldOpenTextContextMenu(content, false)).toBe(true);
     expect(shouldOpenTextContextMenu(editor, false)).toBe(false);
   });
+  it("code caret opens desktop block actions while selections and mobile gestures stay native", () => {
+    const editor = document.createElement("textarea");
+    editor.className = "block-editor code-edit";
+    editor.value = "payload";
+    editor.setSelectionRange(0, 0);
+    expect(shouldOpenBlockContextMenu(editor, false)).toBe(true);
+    expect(shouldOpenBlockContextMenu(editor, true)).toBe(false);
+    editor.setSelectionRange(0, 4);
+    expect(shouldOpenBlockContextMenu(editor, false)).toBe(false);
+    expect(shouldOpenTextContextMenu(editor, false)).toBe(false);
+  });
+
 });

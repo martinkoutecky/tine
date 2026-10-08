@@ -11,10 +11,7 @@ import {
   tauriCapabilities,
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
-import { ensureDisplay } from "./lib/e2e-display.mjs";
-
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
-await ensureDisplay();
 
 if (process.platform !== "win32") throw new Error("windows smoke must run on Windows");
 const APP = process.env.TINE_APP;
@@ -22,13 +19,11 @@ const TD = process.env.TAURI_DRIVER || "tauri-driver";
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4444);
 const root = path.join(os.tmpdir(), `tine-windows-smoke-${process.pid}`);
 const graph = path.join(root, "graph");
-const artifacts = path.resolve(process.env.E2E_ARTIFACT_DIR || root);
 const now = new Date();
 const stem = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 const journal = path.join(graph, "journals", `${stem}.md`);
 fs.rmSync(root, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
-fs.mkdirSync(artifacts, { recursive: true });
 fs.writeFileSync(journal, "- WINDOWS_SMOKE_ORIGINAL\n");
 
 const env = {
@@ -38,7 +33,7 @@ const env = {
   LOCALAPPDATA: path.join(root, "localappdata"),
 };
 const webviewTarget = await startWebdriverApplication(APP, env, Number(process.env.E2E_NATIVE_PORT || 4445));
-const log = fs.openSync(path.join(artifacts, "tauri-driver.log"), "w");
+const log = fs.openSync(path.join(process.env.E2E_ARTIFACT_DIR || root, "tauri-driver.log"), "w");
 const driver = spawn(TD, webdriverServerArgs(DRIVER_PORT), { env: webviewTarget.env, stdio: ["ignore", log, log] });
 await sleep(3000);
 
@@ -53,23 +48,14 @@ try {
     connectionRetryCount: 1,
     connectionRetryTimeout: 60000,
   });
-  // The Windows driver does not reliably attach to the app window: it can land
-  // on the Quick Capture window, where every application selector is legitimately
-  // absent. Three windows-smoke journeys failed that way in one run, each
-  // reporting its own missing element instead of the shared cause.
   await ensureMainWindow(browser);
+  await browser.$(".ls-block").waitForExist({ timeout: 30000 });
   // The first journal block can paint before the application shell's reactive
-  // content subtree is mounted on WebView2. Observe the shell, scroll pane, and
-  // block atomically in one document evaluation; separate element waits can
-  // straddle a transient WebView2 document swap.
-  await browser.waitUntil(() => browser.execute(() => Boolean(
-    document.querySelector(".app-container")
-      && document.querySelector(".main-content")
-      && document.querySelector(".ls-block")
-  )), {
-    timeout: 30_000,
-    timeoutMsg: "Windows application shell, scroll pane, and seeded block did not become ready together",
-  });
+  // content subtree is mounted on WebView2. The styles below are the actual
+  // scroll-containment contract, so wait for both required elements rather than
+  // passing a transient null to getComputedStyle().
+  await browser.$(".app-container").waitForExist({ timeout: 10_000 });
+  await browser.$(".main-content").waitForExist({ timeout: 10_000 });
   const overscroll = await browser.execute(() => {
     const shell = document.querySelector(".app-container");
     const main = document.querySelector(".main-content");
@@ -109,13 +95,6 @@ try {
     throw new Error("saved text did not survive reload");
   }
   console.log("PASS: Windows WebView2 launch, overscroll containment, graph render, edit, save, and reload");
-} catch (error) {
-  try { await browser?.saveScreenshot(path.join(artifacts, "failure.png")); } catch {}
-  try {
-    const html = await browser?.execute(() => document.documentElement.outerHTML);
-    if (typeof html === "string") fs.writeFileSync(path.join(artifacts, "failure.html"), html);
-  } catch {}
-  throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
   spawnSync("taskkill", ["/PID", String(driver.pid), "/T", "/F"], { stdio: "ignore" });

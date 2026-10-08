@@ -1,23 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { setFavorites, setRecentPages, setToasts, toasts } from "../ui";
+import { setFavorites, setRecentPages } from "../ui";
+import { setToasts, toasts } from "../toasts";
 import { GraphSwitcher, Sidebar } from "./Sidebar";
 
 afterEach(() => {
   setFavorites([]);
   setRecentPages([]);
   setToasts([]);
+  vi.restoreAllMocks();
   document.body.innerHTML = "";
 });
 
-describe("graph open recovery", () => {
-  it("keeps a graph open failure sticky and retries its same target", async () => {
+describe("graph open recovery (master 9a9122b1544d)", () => {
+  it("keeps a known graph's open failure sticky and retries its same target", async () => {
     vi.spyOn(backend(), "listKnownGraphs").mockResolvedValue([
       { name: "Shared notes", path: "/graphs/shared-notes" },
     ]);
     const openKnown = vi.fn(async () => {
-      throw new Error("Permission denied (os error 13)");
+      throw new Error("graph root is not readable");
     });
     const root = document.createElement("div");
     document.body.append(root);
@@ -37,7 +39,8 @@ describe("graph open recovery", () => {
       row.click();
       await vi.waitFor(() => expect(toasts()).toHaveLength(1));
       const failure = toasts()[0]!;
-      expect(failure.message).toBe("Couldn't open the graph. (Permission denied (os error 13))");
+      expect(failure.kind).toBe("error");
+      expect(failure.message).toContain("graph root is not readable");
       expect(failure.sticky).toBe(true);
       expect(failure.action?.label).toBe("Retry");
 

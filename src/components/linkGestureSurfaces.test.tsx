@@ -4,12 +4,13 @@ import type { JSX } from "solid-js";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
-import { mainPaneRouter, openPage } from "../router";
-import { resetPaneLayoutToSingle } from "../panes";
+import { resetStore } from "../document";
+import { setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
+import { openPage } from "../router";
+import { paneRouter, resetPaneLayoutToSingle } from "../panes";
 import {
   applySidebarSession,
-  bumpDataRev,
+  pageIdentityKey,
   closeContextMenu,
   contextMenu,
   rightSidebar,
@@ -25,10 +26,11 @@ import { Block } from "./Block";
 import { NamespaceHierarchy, NamespaceMacro } from "./Namespace";
 import { RightSidebar } from "./RightSidebar";
 import { PageView } from "./Page";
-import type { PageEntry, QueryExecution } from "../types";
+import { refreshPageIndex, resetPageIndex } from "../pageIndex";
+import type { PageInventoryEntry, QueryExecution } from "../types";
 import { LONG_PRESS_DELAY } from "../render/longPress";
-import { backendReadsQueries } from "../queryReadingsTestkit";
-import { blockRunResult } from "../queryReadingsTestkit";
+import { backendReadsQueries } from "../tests/queryReadingsTestkit";
+import { blockRunResult } from "../tests/queryReadingsTestkit";
 
 // GH #207: the internal-link gesture contract (linkGesture.ts, GH #283) is ONE
 // decision — plain click opens, Shift+click → right sidebar, Ctrl/Cmd+click or
@@ -69,17 +71,17 @@ function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => 
 }
 
 function tabsCount(): number {
-  return mainPaneRouter.tabs().length;
+  return paneRouter("main").tabs().length;
 }
 
 function activeRouteName(): string | null {
-  const r = mainPaneRouter.route();
+  const r = paneRouter("main").route();
   return r.kind === "page" ? r.name : r.kind;
 }
 
 function backgroundRoutes(): { name: string; block?: string }[] {
   const active = activeRouteName();
-  return mainPaneRouter.tabs()
+  return paneRouter("main").tabs()
     .map((t) => t.history[t.pos])
     .filter((r) => r.kind === "page" && r.name !== active)
     .map((r) => ({ name: (r as { name: string }).name, block: (r as { block?: string }).block }));
@@ -126,17 +128,14 @@ function node(id: string, raw: string, pageName: string, parent: string | null =
   return { id, raw, collapsed: false, parent, page: pageName, children };
 }
 
-function seedNamespaceInventory(names: string[]) {
-  const entries: PageEntry[] = names.map((name) => ({
-    name,
-    kind: "page",
-    date_key: null,
-    path: `pages/${name.replaceAll("/", "___")}.md`,
+async function seedNamespaceInventory(names: string[]) {
+  const entries: PageInventoryEntry[] = names.map((name) => ({
+    key: pageIdentityKey(name), name, is_journal: false, day: null,
+    target: { kind: "existing", id: `pages/${name.replaceAll("/", "___")}.md`, others: [] },
   }));
-  vi.spyOn(backend(), "listPages").mockResolvedValue(entries);
-  vi.spyOn(backend(), "referencedPageNames").mockResolvedValue({ digest: 1, names });
-  vi.spyOn(backend(), "pageIcons").mockResolvedValue({});
-  bumpDataRev();
+  vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries });
+  resetPageIndex();
+  await refreshPageIndex();
 }
 
 describe("reference page headers follow the gesture contract (GH #207)", () => {
@@ -250,7 +249,7 @@ describe("sidebar rows suppress the middle-mousedown default (GH #207)", () => {
 
 describe("namespace links follow the gesture contract (GH #207)", () => {
   it("namespace macro head + node links: middle/ctrl → background tab, shift → sidebar", async () => {
-    seedNamespaceInventory(["ns/a", "ns/a/b"]);
+    await seedNamespaceInventory(["ns/a", "ns/a/b"]);
     const m = mount(() => <NamespaceMacro root="ns" />);
     try {
       const head = await vi.waitFor(() => {
@@ -282,7 +281,7 @@ describe("namespace links follow the gesture contract (GH #207)", () => {
   });
 
   it("namespace hierarchy path links: middle/ctrl → background tab, shift → sidebar", async () => {
-    seedNamespaceInventory(["ns/a/b"]);
+    await seedNamespaceInventory(["ns/a/b"]);
     const m = mount(() => <NamespaceHierarchy name="ns/a" />);
     try {
       const links = await vi.waitFor(() => {
@@ -321,22 +320,23 @@ describe("zoom breadcrumb follows the gesture contract (GH #207)", () => {
     vi.spyOn(backend(), "getPage").mockResolvedValue({
       name: "Host",
       kind: "page",
+      id: "pages/x.md",
       title: "Host",
       pre_block: null,
       blocks: [
         { id: "r1", raw: "Ancestor text", collapsed: false, children: [{ id: "z1", raw: "Zoom root", collapsed: false, children: [] }] },
       ],
     });
-    mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Host", pageKind: "page", block: "z1" });
+    paneRouter("main").replaceActiveRoute({ kind: "page", name: "Host", pageKind: "page", block: "z1" });
     const m = mount(() => <PageView />);
     // A background open must never move the FOREGROUND off the zoomed block:
     // count host-page routes (with/without anchor) instead of navigating away.
     const hostRoutes = (withBlock: boolean) =>
-      mainPaneRouter.tabs()
+      paneRouter("main").tabs()
         .map((t) => t.history[t.pos])
         .filter((r) => r.kind === "page" && r.name === "Host" && ("block" in r ? !!r.block : false) === withBlock);
     const foregroundBlock = () =>
-      mainPaneRouter.route().kind === "page" ? (mainPaneRouter.route() as { block?: string }).block : undefined;
+      paneRouter("main").route().kind === "page" ? (paneRouter("main").route() as { block?: string }).block : undefined;
     try {
       const crumbPage = await vi.waitFor(() => {
         const el = m.root.querySelector<HTMLElement>(".zoom-breadcrumb .crumb-page");
@@ -367,7 +367,7 @@ describe("zoom breadcrumb follows the gesture contract (GH #207)", () => {
       auxMiddle(ancestor);
       expect(hostRoutes(true).length).toBe(before + 1);
       expect(foregroundBlock()).toBe("z1");
-      const anchored = mainPaneRouter.tabs()
+      const anchored = paneRouter("main").tabs()
         .map((t) => t.history[t.pos])
         .filter((r) => r.kind === "page" && r.name === "Host" && "block" in r)
         .map((r) => (r as { block?: string }).block);
@@ -383,6 +383,7 @@ describe("right-sidebar item title follows the gesture contract (GH #207)", () =
     vi.spyOn(backend(), "getPage").mockResolvedValue({
       name: "Twin",
       kind: "page",
+      id: "pages/x.md",
       title: "Twin",
       pre_block: null,
       blocks: [{ id: "twin-b", raw: "body", collapsed: false, children: [] }],
@@ -504,7 +505,7 @@ describe("query search-presentation rows follow the gesture contract (GH #207)",
       blocks: [{ id: "q1", raw: "TODO row", collapsed: false, children: [] }],
     }]));
     backendReadsQueries({
-      "(task TODO) {:table-view? true}": { form: "(task TODO)", opts: "{:table-view? true}" },
+      "(task TODO) {:table-view? true}": { form: "(task TODO)", opts: "{:table-view? true}", legacy_table: true },
       "(task DONE)": { form: "(task DONE)" },
     });
     loadQueryDoc("{{query (task TODO) {:table-view? true}}}");
@@ -546,11 +547,12 @@ describe("page title ctrl-click matches the contract (GH #207)", () => {
     vi.spyOn(backend(), "getPage").mockResolvedValue({
       name: "Twin",
       kind: "page",
+      id: "pages/x.md",
       title: "Twin",
       pre_block: null,
       blocks: [{ id: "twin-b", raw: "Body", collapsed: false, children: [] }],
     });
-    mainPaneRouter.openPage("Twin", "page", { inPlace: true });
+    paneRouter("main").openPage("Twin", "page", { inPlace: true });
     const m = mount(() => <PageView />);
     try {
       const title = await vi.waitFor(() => {

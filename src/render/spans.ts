@@ -243,6 +243,73 @@ export function renderedTextCaret(
   return { text, caret };
 }
 
+/** The offset inside a whole-block CODE CARD's own text for a click that landed
+ *  in it, or null when the click was not inside one.
+ *
+ *  A code card is highlight.js `innerHTML`, so it carries no lsdoc span data:
+ *  {@link editorOffsetFromRenderedRange} declines and every click inside one
+ *  used to fall through to "the end of the block". In a three-line fence nobody
+ *  noticed. In a thousand-line one the caret lands hundreds of lines from the
+ *  click, and when a long line sits at the end the no-wrap code editor scrolls
+ *  to that line's far right — so the block shows blank space and is hard to
+ *  scroll back (GH #489).
+ *
+ *  The card's text is exactly what the editor will hold for such a block (the
+ *  editor shows the fenced body, not the wrapper), so the offset is simply
+ *  counted. The caller owns the "is this block one code card" question and
+ *  clamps the result to the body it is about to edit. */
+export function codeCardOffsetFromRange(
+  root: Element,
+  range: Pick<Range, "startContainer" | "startOffset">,
+): number | null {
+  const code = root.querySelector("pre.code-block > code");
+  if (!code) return null;
+  const container = range.startContainer;
+  if (code !== container && !code.contains(container)) return null;
+  const { caret } = renderedTextCaret(code, container, range.startOffset);
+  return caret;
+}
+
+export function editorOffsetFromRenderedRange(
+  root: Element,
+  range: Pick<Range, "startContainer" | "startOffset">,
+  raw: string,
+  isHidden: (key: string) => boolean,
+  format: PropFormat = "md",
+): number | null {
+  const el = closestSpanElement(root, range.startContainer);
+  if (!el) return null;
+  const data = spanDataFromElement(el);
+  if (!data) return null;
+
+  let sourceByte: number | null;
+  if (data.kind === "coarse") {
+    // Coarse elements map to an EDGE, not an interior byte. Pick the nearer one:
+    // a click landing in the second half of the rendered text (e.g. to the right
+    // of a trailing `[[link]]`) resolves to the span end, so the caret sits after
+    // the construct instead of before it (GH #34).
+    sourceByte = data.start;
+    if (data.end != null) {
+      const { text, caret } = renderedTextCaret(el, range.startContainer, range.startOffset);
+      if (caret != null && text.length > 0 && caret * 2 >= text.length) sourceByte = data.end;
+    }
+  } else {
+    const { text, caret } = renderedTextCaret(el, range.startContainer, range.startOffset);
+    if (caret == null) return null;
+    sourceByte = sourceByteFromPlainTextByte(
+      data.span,
+      data.spanMap,
+      utf16ToUtf8ByteOffset(text, caret),
+      utf8ByteLength(text),
+    );
+  }
+  if (sourceByte == null) return null;
+
+  const rawByte = rebulletedSourceByteToRawByte(raw, sourceByte);
+  const rawUtf16 = utf8ByteToUtf16Offset(raw, rawByte);
+  return rawOffsetToVisibleOffset(raw, rawUtf16, isHidden, format);
+}
+
 /** Rectangles of one rendered block's content, one per visual line box.
  *  Narrower than `DOMRectList` so tests can hand in plain objects. */
 export interface LineBox {
@@ -339,71 +406,4 @@ function collectInFlowRects(node: Node, view: Window | null, range: Range, out: 
   range.selectNode(node);
   const rects = range.getClientRects();
   for (let i = 0; i < rects.length; i++) out.push(rects[i]);
-}
-
-/** The offset inside a whole-block CODE CARD's own text for a click that landed
- *  in it, or null when the click was not inside one.
- *
- *  A code card is highlight.js `innerHTML`, so it carries no lsdoc span data:
- *  {@link editorOffsetFromRenderedRange} declines and every click inside one
- *  used to fall through to "the end of the block". In a three-line fence nobody
- *  noticed. In a thousand-line one the caret lands hundreds of lines from the
- *  click, and when a long line sits at the end the no-wrap code editor scrolls
- *  to that line's far right — so the block shows blank space and is hard to
- *  scroll back (GH #489).
- *
- *  The card's text is exactly what the editor will hold for such a block (the
- *  editor shows the fenced body, not the wrapper), so the offset is simply
- *  counted. The caller owns the "is this block one code card" question and
- *  clamps the result to the body it is about to edit. */
-export function codeCardOffsetFromRange(
-  root: Element,
-  range: Pick<Range, "startContainer" | "startOffset">,
-): number | null {
-  const code = root.querySelector("pre.code-block > code");
-  if (!code) return null;
-  const container = range.startContainer;
-  if (code !== container && !code.contains(container)) return null;
-  const { caret } = renderedTextCaret(code, container, range.startOffset);
-  return caret;
-}
-
-export function editorOffsetFromRenderedRange(
-  root: Element,
-  range: Pick<Range, "startContainer" | "startOffset">,
-  raw: string,
-  isHidden: (key: string) => boolean,
-  format: PropFormat = "md",
-): number | null {
-  const el = closestSpanElement(root, range.startContainer);
-  if (!el) return null;
-  const data = spanDataFromElement(el);
-  if (!data) return null;
-
-  let sourceByte: number | null;
-  if (data.kind === "coarse") {
-    // Coarse elements map to an EDGE, not an interior byte. Pick the nearer one:
-    // a click landing in the second half of the rendered text (e.g. to the right
-    // of a trailing `[[link]]`) resolves to the span end, so the caret sits after
-    // the construct instead of before it (GH #34).
-    sourceByte = data.start;
-    if (data.end != null) {
-      const { text, caret } = renderedTextCaret(el, range.startContainer, range.startOffset);
-      if (caret != null && text.length > 0 && caret * 2 >= text.length) sourceByte = data.end;
-    }
-  } else {
-    const { text, caret } = renderedTextCaret(el, range.startContainer, range.startOffset);
-    if (caret == null) return null;
-    sourceByte = sourceByteFromPlainTextByte(
-      data.span,
-      data.spanMap,
-      utf16ToUtf8ByteOffset(text, caret),
-      utf8ByteLength(text),
-    );
-  }
-  if (sourceByte == null) return null;
-
-  const rawByte = rebulletedSourceByteToRawByte(raw, sourceByte);
-  const rawUtf16 = utf8ByteToUtf16Offset(raw, rawByte);
-  return rawOffsetToVisibleOffset(raw, rawUtf16, isHidden, format);
 }

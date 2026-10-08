@@ -65,6 +65,12 @@ there is no hidden clock, random source, logging channel, WASI, or browser autho
 - `blockDecorations`: a small host-owned visual vocabulary (`thread-lines`,
   `badge`). A plugin cannot inject HTML or CSS.
 
+A command or slash command receives the raw text of the one block the user
+invoked it on; that explicit action is consent to that block. Decorations run
+over every visible block without a user action, so their block snapshots carry
+raw text only when the plugin declares `graph.read.visible`; otherwise `raw` is
+empty.
+
 API 0.2 effects are notices, focused-block text replacement with an expected-text
 precondition, caret insertion, known block decorations, and plugin-local scalar
 settings. A write effect requires `graph.write.block`, may target only the block Tine

@@ -1,12 +1,15 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import type { JSX } from "solid-js";
+import { createSignal, Show, type JSX } from "solid-js";
 import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
-import { blockProperty, resetStore, setDoc, type Node, type FeedPage } from "../store";
+import { blockProperty, resetStore } from "../document";
+import { type Node, type FeedPage } from "../document/model";
+import { setDoc } from "../document/model";
 import { openJournals, route } from "../router";
 import { resetCellSelectionForTests } from "../sheet/selection";
+import { SheetContainer } from "./SheetContainer";
 
 beforeAll(async () => {
   await initParser();
@@ -209,12 +212,29 @@ function loadOrgSheetDoc() {
 }
 
 describe("SheetGrid", () => {
+  it("resets horizontal scroll when a table changes to a board", async () => {
+    const [board, setBoard] = createSignal(false);
+    const { root, dispose } = mount(() => (
+      <SheetContainer>
+        <Show when={board()} fallback={<div class="sheet-table">Table</div>}>
+          <div class="sheet-board-wrap">Board</div>
+        </Show>
+      </SheetContainer>
+    ));
+    try {
+      const scroll = root.querySelector(".sheet-scroll") as HTMLDivElement;
+      scroll.scrollLeft = 335;
+      setBoard(true);
+      await vi.waitFor(() => expect(scroll.firstElementChild?.classList.contains("sheet-board-wrap")).toBe(true));
+      await vi.waitFor(() => expect(scroll.scrollLeft).toBe(0));
+    } finally { dispose(); }
+  });
   it("caps and progressively discloses a very wide grid", () => {
     const pageName = "Sheet";
     const byId: Record<string, Node> = {};
     const rowIds = ["wide-row-0", "wide-row-1", "wide-row-2"];
     for (let row = 0; row < 3; row++) {
-      const cellIds = Array.from({ length: 4_000 }, (_, col) => `wide-cell-${row}-${col}`);
+      const cellIds = Array.from({ length: 20_000 }, (_, col) => `wide-cell-${row}-${col}`);
       byId[rowIds[row]] = node(rowIds[row], "", pageName, "wide-grid", cellIds);
       for (const cellId of cellIds) byId[cellId] = node(cellId, cellId, pageName, rowIds[row]);
     }
@@ -224,7 +244,7 @@ describe("SheetGrid", () => {
     const { root, dispose } = mount(() => <Block id="wide-grid" />);
     const grid = root.querySelector(".sheet-grid") as HTMLElement;
     expect(grid.querySelectorAll(":scope > .sheet-cell")).toHaveLength(600);
-    expect(grid.querySelector(".sheet-load-more-columns")?.textContent).toContain("1-200 of 4000");
+    expect(grid.querySelector(".sheet-load-more-columns")?.textContent).toContain("1-200 of 20000");
     (grid.querySelector(".sheet-load-more-columns") as HTMLButtonElement).click();
     expect(grid.querySelectorAll(":scope > .sheet-cell")).toHaveLength(1_200);
     expect(grid.querySelectorAll(":scope > .sheet-cell").length).toBeLessThanOrEqual(2_000);
@@ -274,7 +294,7 @@ describe("SheetGrid", () => {
     dispose();
   });
 
-  it("keeps an overflowing block sheet aligned and internally scrollable", async () => {
+  it("bleeds an overflowing block sheet into its pane before scrolling", async () => {
     let naturalWidth = 640;
     const layout = mockSheetLayout(() => naturalWidth);
     loadMdSheetDoc();
@@ -287,7 +307,7 @@ describe("SheetGrid", () => {
       await settledMeasure();
       const container = root.querySelector(".block-sheet-container") as HTMLElement | null;
       expect(container).not.toBeNull();
-      expect(container!.classList.contains("sheet-breakout")).toBe(false);
+      expect(container!.classList.contains("sheet-breakout")).toBe(true);
       expect(container!.style.getPropertyValue("--sheet-breakout-width")).toBe("640px");
       expect(container!.style.getPropertyValue("--sheet-breakout-shift")).toBe("220px");
       expect(root.querySelector(".sheet-cell .block-sheet-container")).toBeNull();
@@ -322,7 +342,7 @@ describe("SheetGrid", () => {
     dispose();
   });
 
-  it("cell menu switches children between outline/grid/table and zooms into the cell", () => {
+  it("cell menu switches children between outline/grid/table and zooms into the cell", async () => {
     loadMdSheetDoc();
     const { root, dispose } = mount(() => (
       <>
@@ -343,7 +363,7 @@ describe("SheetGrid", () => {
 
     contextMenu(cell!);
     ([...document.querySelectorAll(".ctx-item")].find((el) => el.textContent?.includes("Zoom into cell")) as HTMLElement).click();
-    expect(route()).toMatchObject({ kind: "page", name: "Sheet", pageKind: "page" });
+    await vi.waitFor(() => expect(route()).toMatchObject({ kind: "page", name: "Sheet", pageKind: "page" }));
     expect((route() as { block?: string }).block).toBeTruthy();
 
     dispose();
@@ -491,7 +511,7 @@ describe("SheetGrid", () => {
     }
   });
 
-  it("opens a sheet block as a full page from the sheet context menu", () => {
+  it("opens a sheet block as a full page from the sheet context menu", async () => {
     loadMdSheetDoc();
     const { root, dispose } = mount(() => (
       <>
@@ -505,7 +525,7 @@ describe("SheetGrid", () => {
     contextMenu(grid!);
     ([...document.querySelectorAll(".ctx-item")].find((el) => el.textContent?.trim() === "Open as full page") as HTMLElement).click();
 
-    expect(route()).toMatchObject({ kind: "page", name: "Sheet", pageKind: "page" });
+    await vi.waitFor(() => expect(route()).toMatchObject({ kind: "page", name: "Sheet", pageKind: "page" }));
     expect((route() as { block?: string }).block).toBeTruthy();
     dispose();
   });

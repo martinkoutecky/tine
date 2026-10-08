@@ -4,14 +4,55 @@
 // occurrence and resets the marker to the workflow's open state. Pure + tested.
 
 import { leadingMarker, nextMarker, cycleMarker, setMarker, type Workflow } from "./marker";
-import { taskCheckboxState } from "../markers";
+import { matchLeadingMarker, taskCheckboxState } from "../markers";
 import { applyMarkerTransition } from "../logbook";
+import { blockRegions, editBlock } from "../render/parse";
+import type { TimestampPoint } from "../render/ast";
 import type { Format } from "../types";
-import { appNow } from "../journal";
 
-const REPEATER = /([.+]{1,2})(\d+)([dwmy])/;
-const TS_RE = /<(\d{4})-(\d{2})-(\d{2})(?:\s+[A-Za-z]{3})?(?:\s+([.+]{1,2})(\d+)([dwmy]))?>/;
+import { appNow, localCalendarDate } from "../journal";
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+export type RepMode = "+" | "++" | ".+";
+type Repeater = {mode: RepMode; num: number; unit: string};
+
+/** Decode lsdoc's accepted repetition tuple. UI/completion share this policy:
+ * day/week/month/year are supported; zero cookies retain their existing no-advance policy; hourly cookies are unsupported. */
+const repetitionCache = new WeakMap<TimestampPoint, Repeater | null>();
+function repetition(point: TimestampPoint): Repeater | null {
+  if (repetitionCache.has(point)) return repetitionCache.get(point)!;
+  const r = point.repetition as [[string], [string], number] | undefined;
+  if (!Array.isArray(r) || !Array.isArray(r[0]) || !Array.isArray(r[1])) return null;
+  const mode = ({Plus:"+", DoublePlus:"++", Dotted:".+"} as Record<string,RepMode>)[r[0][0]];
+  const unit = ({Day:"d", Week:"w", Month:"m", Year:"y"} as Record<string,string>)[r[1][0]];
+  const result = mode && unit && r[2] >= 0 ? {mode, unit, num:r[2]} : null;
+  repetitionCache.set(point, result);
+  return result;
+}
+const cookie = (r: Repeater | null): string | null => r ? `${r.mode}${r.num}${r.unit}` : null;
+
+/** Project a parser-accepted planning point into calendar UI state. O(1), no parse. */
+export function scheduleParts(value: unknown): {y:number; m:number; d:number; time:string|null; repeater:string|null} | null {
+  const point = value as TimestampPoint;
+  if (!point?.date) return null;
+  const {year:y, month, day:d} = point.date;
+  if (!localCalendarDate(y, month - 1, d)) return null;
+  const time = point.time ? `${String(point.time.hour).padStart(2,"0")}:${String(point.time.min).padStart(2,"0")}` : null;
+  return {y, m:month - 1, d, time, repeater:cookie(repetition(point))};
+}
+
+/** Read a date-picker cookie using the same parser grammar as task planning.
+ * Bounded synthetic timestamp, no regex/fallback grammar, no graph or I/O. */
+export function parseRepeater(raw: string | null): Repeater {
+  const p = raw ? blockRegions(`SCHEDULED: <2000-01-01 Sat ${raw}>`, "md").planning[0] : null;
+  return p && repetition(p.date as TimestampPoint) || {mode:"+", num:1, unit:""};
+}
+
+/** One planning writer, using explicit parts. Month is zero-based. O(1). */
+export function planningTimestamp(parts: {y:number; m:number; d:number; time?:string|null; repeater?:string|null}): string {
+  const date = localCalendarDate(parts.y, parts.m, parts.d);
+  if (!date) throw new Error("Invalid planning date");
+  return `<${String(parts.y).padStart(4,"0")}-${String(parts.m+1).padStart(2,"0")}-${String(parts.d).padStart(2,"0")} ${WD[date.getDay()]}${parts.time ? ` ${parts.time}` : ""}${parts.repeater ? ` ${parts.repeater}` : ""}>`;
+}
 
 interface MarkerTimeOptions {
   format: Format;
@@ -19,6 +60,48 @@ interface MarkerTimeOptions {
   withSeconds: boolean;
 }
 
+/** True when parser-owned planning contains a supported repeater.
+ * O(planning entries) on the warm block parse; literals never supply planning. */
+export function hasRepeater(raw: string, format: Format): boolean {
+  return blockRegions(raw, format).planning.some(p => p.kind !== "Closed" && repetition(p.date as TimestampPoint) !== null);
+}
+
+/** Advance accepted planning and reset the marker. Completion-time `. +` and
+ * catch-up `++` policies retain the existing calendar rollover semantics.
+ * One cached parse; O(planning entries + catch-up steps). */
+export function rollRepeat(raw: string, workflow: Workflow, format: Format): string | null {
+  let next = raw, rolled = false;
+  for (const p of blockRegions(raw, format).planning) {
+    if (p.kind === "Closed") continue;
+    const point = p.date as TimestampPoint;
+    const r = repetition(point), parts = scheduleParts(point);
+    if (!r || !parts) continue;
+    if (r.num === 0) { rolled = true; continue; }
+    const date = r.mode === ".+" ? appNow() : localCalendarDate(parts.y, parts.m, parts.d)!;
+    const step = () => {
+      if (r.unit === "d") date.setDate(date.getDate() + r.num);
+      else if (r.unit === "w") date.setDate(date.getDate() + r.num*7);
+      else if (r.unit === "m") date.setMonth(date.getMonth() + r.num);
+      else date.setFullYear(date.getFullYear() + r.num);
+    };
+    const today = appNow(); today.setHours(0,0,0,0);
+    let guard = 0;
+    do { step(); } while (r.mode === "++" && date <= today && ++guard < 100000);
+    next = editBlock(next, format, {kind:"planning", which:p.kind, value:planningTimestamp({
+      y:date.getFullYear(), m:date.getMonth(), d:date.getDate(), time:parts.time, repeater:parts.repeater,
+    })});
+    rolled = true;
+  }
+  return rolled ? setMarker(next, workflow === "now" ? "LATER" : "TODO") : null;
+}
+
+/** Toggle a task's checkbox the way OG's `check`/`uncheck` do: an OPEN task →
+ *  `DONE` (but a *repeating* task rolls its date(s) forward and stays open
+ *  instead); `DONE` → the workflow's open marker (`TODO`, or `LATER` under the
+ *  `now` workflow). Returns the new raw, or null if the block has no checkbox
+ *  (no leading marker, or a CANCELED/CANCELLED one). Only line 0's marker word
+ *  is rewritten; the rest of the block (properties, SCHEDULED/DEADLINE) is kept. */
+/** Whether a marker label click does anything (see toggleMarkerLabel). */
 export function markerLabelClickable(marker: string | null | undefined): boolean {
   return marker === "TODO" || marker === "DOING" || marker === "LATER" || marker === "NOW";
 }
@@ -39,113 +122,40 @@ export function toggleMarkerLabel(raw: string, time?: MarkerTimeOptions): string
   return time ? applyMarkerTransition(raw, next, time.format, time.enabled, time.withSeconds) : next;
 }
 
-/** True if the block has a repeater on a SCHEDULED/DEADLINE line. */
-export function hasRepeater(raw: string): boolean {
-  return raw.split("\n").some((l) => {
-    const t = l.trim();
-    return (t.startsWith("SCHEDULED:") || t.startsWith("DEADLINE:")) && REPEATER.test(t);
-  });
-}
-
-/** Advance one `<…>` timestamp by its repeater; null if it has none. */
-function advanceTimestamp(ts: string): string | null {
-  const m = TS_RE.exec(ts);
-  if (!m || !m[4]) return null;
-  const [, y, mo, d, kind, n, unit] = m;
-  const num = Number(n);
-  if (!num) return null; // a +0 repeater is degenerate — don't loop/advance
-  const step = (dt: Date) => {
-    if (unit === "d") dt.setDate(dt.getDate() + num);
-    else if (unit === "w") dt.setDate(dt.getDate() + num * 7);
-    else if (unit === "m") dt.setMonth(dt.getMonth() + num);
-    else if (unit === "y") dt.setFullYear(dt.getFullYear() + num);
-  };
-  // `.+` repeats from the completion date (today); `+`/`++` from the stored date.
-  // `++` is catch-up: advance repeatedly until strictly past today (skipping any
-  // missed occurrences); `+`/`.+` advance once. The kind is preserved verbatim.
-  let dt: Date;
-  if (kind === ".+") {
-    dt = appNow();
-    step(dt);
-  } else {
-    dt = new Date(Number(y), Number(mo) - 1, Number(d));
-    if (kind === "++") {
-      const today = appNow();
-      today.setHours(0, 0, 0, 0);
-      let guard = 0;
-      do {
-        step(dt);
-      } while (dt <= today && ++guard < 100000);
-    } else {
-      step(dt);
-    }
-  }
-  const yyyy = dt.getFullYear();
-  const MM = String(dt.getMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getDate()).padStart(2, "0");
-  return `<${yyyy}-${MM}-${dd} ${WD[dt.getDay()]} ${kind}${num}${unit}>`;
-}
-
-/** Roll a repeating task forward: advance its dates and reset the marker to the
- *  workflow's open state. Returns the new raw, or null if not repeating. */
-export function rollRepeat(raw: string, workflow: Workflow): string | null {
-  if (!hasRepeater(raw)) return null;
-  const open = workflow === "now" ? "LATER" : "TODO";
-  const lines = raw.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const m = /^(\s*)(SCHEDULED|DEADLINE):\s*(<[^>]+>)(.*)$/.exec(lines[i]);
-    if (m) {
-      const adv = advanceTimestamp(m[3]);
-      if (adv) lines[i] = `${m[1]}${m[2]}: ${adv}${m[4]}`;
-    }
-  }
-  const cur = leadingMarker(raw);
-  let first = lines[0];
-  if (cur) first = first.slice(cur.length).replace(/^ /, "");
-  lines[0] = first ? `${open} ${first}` : open;
-  return lines.join("\n");
-}
-
-/** Toggle a task's checkbox the way OG's `check`/`uncheck` do: an OPEN task →
- *  `DONE` (but a *repeating* task rolls its date(s) forward and stays open
- *  instead); `DONE` → the workflow's open marker (`TODO`, or `LATER` under the
- *  `now` workflow). Returns the new raw, or null if the block has no checkbox
- *  (no leading marker, or a CANCELED/CANCELLED one). Only line 0's marker word
- *  is rewritten; the rest of the block (properties, SCHEDULED/DEADLINE) is kept. */
-export function toggleTaskDone(raw: string, workflow: Workflow, time?: MarkerTimeOptions): string | null {
+export function toggleTaskDone(raw: string, workflow: Workflow, format: Format, time?: MarkerTimeOptions): string | null {
   const cur = leadingMarker(raw);
   const state = taskCheckboxState(cur);
   if (state === null) return null;
 
-  const lines = raw.split("\n");
-  const rest = cur ? lines[0].slice(cur.length).replace(/^ /, "") : lines[0];
   if (state === true) {
     // DONE → open marker (uncheck).
-    const open = workflow === "now" ? "LATER" : "TODO";
-    lines[0] = rest ? `${open} ${rest}` : open;
-    const next = lines.join("\n");
+    const next = setMarker(raw, workflow === "now" ? "LATER" : "TODO");
     return time ? applyMarkerTransition(raw, next, time.format, time.enabled, time.withSeconds) : next;
   }
   // OPEN → DONE (check). A repeater rolls forward instead of closing.
-  const rolled = rollRepeat(raw, workflow);
+  const rolled = rollRepeat(raw, workflow, format);
   if (rolled) return time ? applyMarkerTransition(raw, rolled, time.format, time.enabled, time.withSeconds) : rolled;
-  lines[0] = rest ? `DONE ${rest}` : "DONE";
-  const next = lines.join("\n");
+  const next = setMarker(raw, "DONE");
   return time ? applyMarkerTransition(raw, next, time.format, time.enabled, time.withSeconds) : next;
+}
+
+/** Offset just past the leading marker and its one separating space (0 with no
+ *  marker): the same prefix `cycleMarker` measures its caret delta over. */
+function markerPrefixEnd(raw: string): number {
+  const m = matchLeadingMarker(raw);
+  return m ? m.end + (raw[m.end] === " " ? 1 : 0) : 0;
 }
 
 /** Cycle the marker, but if the step would mark a *repeating* task DONE, roll it
  *  forward instead. Returns the new raw + caret delta on the first line. */
-export function cycleMarkerSmart(raw: string, workflow: Workflow, time?: MarkerTimeOptions): { raw: string; delta: number } {
+export function cycleMarkerSmart(raw: string, workflow: Workflow, format: Format, time?: MarkerTimeOptions): { raw: string; delta: number } {
   const cur = leadingMarker(raw);
   if (nextMarker(cur, workflow) === "DONE") {
-    const rolled = rollRepeat(raw, workflow);
+    const rolled = rollRepeat(raw, workflow, format);
     if (rolled) {
-      const open = workflow === "now" ? "LATER" : "TODO";
-      const oldLen = cur ? cur.length + 1 : 0;
       return {
         raw: time ? applyMarkerTransition(raw, rolled, time.format, time.enabled, time.withSeconds) : rolled,
-        delta: open.length + 1 - oldLen,
+        delta: markerPrefixEnd(rolled) - markerPrefixEnd(raw),
       };
     }
   }

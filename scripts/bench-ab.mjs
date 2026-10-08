@@ -25,14 +25,6 @@ const runsPerRound = policy.reliability?.runsPerRound;
 if (!Number.isInteger(rounds) || rounds < 3) throw new Error("policy reliability.rounds must be at least 3");
 if (!Number.isInteger(runsPerRound) || runsPerRound < 2) throw new Error("policy reliability.runsPerRound must be at least 2");
 
-const median = (values) => {
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-};
-const round1 = (value) => Math.round(value * 10) / 10;
-const spreadPct = (values) => (Math.max(...values) / Math.min(...values) - 1) * 100;
-
 const versions = [
   { label: "immutable", dir: path.resolve(arg("--immutable-dir")) },
   { label: "previous", dir: path.resolve(arg("--previous-dir")) },
@@ -68,6 +60,14 @@ for (let round = 0; round < rounds; round++) {
     measurements.get(version.label).push(JSON.parse(readFileSync(destination, "utf8")));
   }
 }
+
+const median = (values) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+};
+const round1 = (value) => Math.round(value * 10) / 10;
+const spreadPct = (values) => (Math.max(...values) / Math.min(...values) - 1) * 100;
 
 for (const { label } of versions) {
   const samples = measurements.get(label);

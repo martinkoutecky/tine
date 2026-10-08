@@ -1,12 +1,12 @@
 import { backend } from "./backend";
-import { serializedWrites } from "./serializedWrites";
+import { graphOwner, readOwned } from "./owned";
 
 const AUDIO_MAX_BYTES = 64 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 128 * 1024 * 1024;
 const TOTAL_MAX_BYTES = 128 * 1024 * 1024;
 
 let retainedBytes = 0;
-const mediaFallbackWrites = serializedWrites("media-blob-fallback-budget");
+let queueTail: Promise<void> = Promise.resolve();
 
 export type MediaBlobLease = {
   url: string;
@@ -14,29 +14,38 @@ export type MediaBlobLease = {
   release: () => void;
 };
 
+function enqueue<T>(task: () => Promise<T>): Promise<T> {
+  const result = queueTail.then(task, task);
+  queueTail = result.then(() => {}, () => {});
+  return result;
+}
+
 function abortError(): Error {
   return new DOMException("media fallback cancelled", "AbortError");
 }
 
-/**
- * Serialized, process-wide whole-file compatibility fallback for media that a
- * WebKit backend rejects through the range-aware custom protocol. The remaining
- * global allowance is passed to Rust before reading, so retained plus in-flight
- * encoded bytes never exceed the budget. Callers own and must release the lease.
- */
+/** Serialize whole-file fallback reads for media rejected by the range-aware
+ * protocol. Raw file bytes are capped at 64 MiB for audio, 128 MiB for video,
+ * and 128 MiB retained across leases; the remaining raw-byte allowance is
+ * passed to Rust before reading. This does not bound transient IPC/Blob copies.
+ * Abort, stale graph ownership and budget exhaustion reject. Release the URL
+ * lease when done; repeated release is harmless. */
 export function acquireMediaBlobFallback(
   name: string,
   kind: "audio" | "video",
   mime: string,
   signal?: AbortSignal
 ): Promise<MediaBlobLease> {
-  return mediaFallbackWrites.run(async () => {
+  const owner = graphOwner(() => !signal?.aborted);
+  return enqueue(async () => {
     if (signal?.aborted) throw abortError();
+    if (!owner()) throw abortError();
     const perFileMax = kind === "audio" ? AUDIO_MAX_BYTES : VIDEO_MAX_BYTES;
     const remaining = TOTAL_MAX_BYTES - retainedBytes;
     if (remaining <= 0) throw new Error("media blob fallback budget exhausted");
-    const bytes = await backend().readAsset(name, Math.min(perFileMax, remaining));
-    if (signal?.aborted) throw abortError();
+    const result = await readOwned(owner, backend().readAsset(name, Math.min(perFileMax, remaining)));
+    if (result.kind === "stale") throw abortError();
+    const bytes = result.value;
 
     const size = bytes.byteLength;
     if (size > remaining) throw new Error("media blob fallback budget exceeded");

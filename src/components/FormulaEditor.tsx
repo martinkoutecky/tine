@@ -1,13 +1,9 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
-import {
-  closeFormulaEditor,
-  formulaEditor,
-  type FormulaEditorHome,
-  type FormulaEditorTarget,
-} from "../ui";
-import { blockPageReadOnly, doc, pageByName, setBlockProperty, setPageProperty } from "../store";
+import { closeFormulaEditor, formulaEditor, type FormulaEditorHome, type FormulaEditorTarget } from "../ui";
+import { blockPageReadOnly, pageByName, setBlockProperty, setPageProperty, node as docNode } from "../document";
 import { astToExpr, encodeFormulaExpr, formulaNameValid, parseFormula, type Ast, type BinaryOp } from "../sheet/formula";
 import { registerTransientLayer } from "../transientLayers";
+import { refuseStaleWrite } from "../binding";
 
 const STDLIB_CHIPS = [
   "if()",
@@ -110,9 +106,15 @@ function isKnownMember(ast: Ast): boolean {
 }
 
 function isSimpleValueAst(ast: Ast): boolean {
-  if (ast.kind === "literal" || ast.kind === "field" || ast.kind === "formulaRef") return true;
-  if (ast.kind === "call") return (ast.name === "now" || ast.name === "today") && ast.args.length === 0;
-  if (ast.kind === "member") return isKnownMember(ast) && isSimpleValueAst(ast.object) && ast.args?.every(isSimpleValueAst) !== false;
+  // A member chain is walked iteratively: the parser builds it in a loop, so it
+  // may be thousands of links long within the source cap (og C, I-22).
+  let cursor = ast;
+  while (cursor.kind === "member") {
+    if (!isKnownMember(cursor) || cursor.args?.every(isSimpleValueAst) === false) return false;
+    cursor = cursor.object;
+  }
+  if (cursor.kind === "literal" || cursor.kind === "field" || cursor.kind === "formulaRef") return true;
+  if (cursor.kind === "call") return (cursor.name === "now" || cursor.name === "today") && cursor.args.length === 0;
   return false;
 }
 
@@ -223,9 +225,9 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
   };
   const home = (): FormulaEditorHome | null => {
     if (props.target.mode === "edit") return props.target.home ?? null;
-    if (props.target.mode === "filter") return doc.byId[props.target.ownerId] ? { kind: "block", id: props.target.ownerId } : null;
+    if (props.target.mode === "filter") return docNode(props.target.ownerId) ? { kind: "block", id: props.target.ownerId } : null;
     if (props.target.home) return props.target.home;
-    if (doc.byId[props.target.ownerId]) return { kind: "block", id: props.target.ownerId };
+    if (docNode(props.target.ownerId)) return { kind: "block", id: props.target.ownerId };
     return props.target.schemaPage ? { kind: "page", name: props.target.schemaPage } : null;
   };
   const writeAllowed = () => {
@@ -272,6 +274,8 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
     });
   };
   const save = () => {
+    // I-20: the target was opened in this graph; a switch retires it.
+    if (formulaEditor() !== props.target) return refuseStaleWrite("The formula");
     if (!canSave()) return;
     const h = home();
     if (!h) return;
@@ -874,21 +878,24 @@ function TransformPick(props: {
   );
 }
 
-function RawCommitInput(props: { source: string; onCommit: (ast: Ast) => void }): JSX.Element {
-  const [value, setValue] = createSignal(props.source);
+/** Parse/commit state shared by the full raw input and inline face. No extra effects. */
+function createAstCommit(source: () => string, onCommit: (ast: Ast) => void) {
+  const [value, setValue] = createSignal(source());
   const [error, setError] = createSignal<string | null>(null);
   createEffect(() => {
-    setValue(props.source);
+    setValue(source());
     setError(null);
   });
   const commit = () => {
     const ast = parseAstText(value());
-    if (!ast) {
-      setError("Invalid expression");
-      return;
-    }
-    props.onCommit(ast);
+    if (!ast) { setError("Invalid expression"); return; }
+    onCommit(ast);
   };
+  return { value, setValue, error, commit };
+}
+
+function RawCommitInput(props: { source: string; onCommit: (ast: Ast) => void }): JSX.Element {
+  const { value, setValue, error, commit } = createAstCommit(() => props.source, (ast) => props.onCommit(ast));
   return (
     <div class="formula-builder-raw-commit">
       <input
@@ -912,20 +919,7 @@ function RawCommitInput(props: { source: string; onCommit: (ast: Ast) => void })
 }
 
 function AstRawExpressionFace(props: { source: string; onAst: (ast: Ast) => void }): JSX.Element {
-  const [value, setValue] = createSignal(props.source);
-  const [error, setError] = createSignal<string | null>(null);
-  createEffect(() => {
-    setValue(props.source);
-    setError(null);
-  });
-  const commit = () => {
-    const ast = parseAstText(value());
-    if (!ast) {
-      setError("Invalid expression");
-      return;
-    }
-    props.onAst(ast);
-  };
+  const { value, setValue, error, commit } = createAstCommit(() => props.source, (ast) => props.onAst(ast));
   return (
     <span class="formula-builder-raw-face qb-chip-raw">
       <input

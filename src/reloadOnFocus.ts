@@ -1,210 +1,237 @@
-// Concord L0 — the reload-on-focus fallback (IntelliJ/VS Code's trick).
+// Family 10 — reload on focus (Concord L0; master d56219d73, b3d64addee39).
 //
-// The watcher is the primary freshness path and stays so. But some filesystems
-// and sync clients deliver no event at all — network mounts, a client writing
+// The watcher is the primary freshness path and stays so. Some filesystems and
+// sync clients deliver no event at all (network mounts, a client writing
 // through a path the kernel does not report, an app the OS suspended while the
-// user was elsewhere — and then a page can sit stale indefinitely. The one
-// signal always available is the user coming back to the window.
-//
-// Two things happen on return, and NEITHER is a new freshness path:
-//
-//  1. `sweepReplaceable()` — the P1 net. A reload deferred while a block was
-//     being edited fires when the page announces it became replaceable; if the
-//     user alt-tabbed away mid-edit, that announcement may never have come.
-//     The sweep re-checks every watched page against the same gate.
-//  2. `rescanGraphNow()` — asks the BACKEND watcher for one full stat diff.
-//     Anything it finds is emitted as ordinary `graph-changed` events, so the
-//     disposition, the divergence proof and the deferred replay all apply
-//     exactly as for a live event. A caret is never stolen here.
-//
-// Throttled, because window focus is a gesture a user makes constantly, and a
-// rescan is one stat per graph-text file.
-
-import { backend, isTauri } from "./backend";
-import {
-  beginFreshnessBarrier,
-  endFreshnessBarrier,
-  installFreshnessInputGate,
-} from "./freshnessBarrier";
-import { sweepReplaceable } from "./store";
-import { pushToast } from "./ui";
-import { graphBinding } from "./persistence";
-import { captureGraphScope, isScopeCurrent, type GraphScope } from "./landAsync";
+// user was elsewhere), and then a page can sit stale indefinitely. The one
+// signal always available is the user coming back to the window. Neither step
+// below is a new freshness path:
+//  1. `replayDeferredExternalReloads()` replays reloads deferred mid-edit
+//     (deferredReload.ts) whose page is replaceable now;
+//  2. `rescanGraphNow()` asks the BACKEND watcher for one full stat diff.
+//     What it finds is emitted as ordinary `graph-changed` events, so the
+//     reload disposition and the deferred replay apply as for a live event.
+// Typing is never blocked by observation (SPEC-storage §6.1, K22): while the
+// rescan runs the editor stays live, and a stale-base save is refused by the
+// base-revision guard and becomes a conflict, never a silent overwrite. A
+// rescan slower than 500 ms only says so (`refreshingFromDisk`, a dim
+// status in the lower-right corner beside the help button). Throttled: a
+// focus is a gesture users make constantly, and a rescan costs one stat per
+// graph-text file. Coalesced: a focus during a rescan of the same graph joins it.
+import { createSignal } from "solid-js";
+import { backend } from "./backend";
+import { noteFocusReturn, type FocusPhase } from "./focusTiming";
+import { captureBinding, bindingCurrent, type Binding } from "./binding";
+import { applyGraphChangesBulk, replayDeferredExternalReloads } from "./document";
+import { ownedWhen, readOwnedResource, type Owned } from "./owned";
 import { isPublishedExport } from "./publishedBackend";
+import { pushToast } from "./toasts";
+import { graphTransitioning } from "./ui";
 
-/** Minimum spacing between focus-driven rescans. Below this, returning to the
- *  window is answered by the sweep alone (which is pure in-memory work). */
+/** Minimum spacing between focus-driven rescans; below it, a return to the
+ *  window is answered by the in-memory replay alone. */
 export const FOCUS_RESCAN_THROTTLE_MS = 1500;
+const COMPLETION_TIMEOUT_MS = 30_000;
+/** A rescan that takes longer than this says what it is doing. */
+export const REFRESH_NOTICE_DELAY_MS = 500;
 
-let installed = false;
+/** True while a rescan has been running longer than the notice delay. A status
+ *  line only: nothing waits on it and no input is held. */
+const [refreshingFromDisk, setRefreshingFromDisk] = createSignal(false);
+export { refreshingFromDisk };
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+let noticeShownAt: number | null = null;
+
+/** GH #623: one phase of a focus rescan, as a number in the flight recorder. */
+function recordPhase(phase: FocusPhase, startedAt: number): void {
+  void backend().diagnosticTimingEvent?.(phase, performance.now() - startedAt);
+}
+
+function beginRefreshNotice(): void {
+  noticeTimer ??= setTimeout(() => { noticeTimer = null; noticeShownAt = performance.now(); setRefreshingFromDisk(true); }, REFRESH_NOTICE_DELAY_MS);
+}
+
+function endRefreshNotice(): void {
+  if (noticeTimer !== null) clearTimeout(noticeTimer);
+  noticeTimer = null;
+  // How long the notice was actually on screen (only when it showed at all).
+  if (noticeShownAt !== null) recordPhase("focus.banner", noticeShownAt);
+  noticeShownAt = null;
+  setRefreshingFromDisk(false);
+}
+
 let lastRescan = 0;
-let activeRefresh: Promise<void> | null = null;
-let activeRefreshBinding: number | null = null;
-let queuedBindingRefresh = false;
-let stateBinding = graphBinding();
-let completedSequence = 0;
-let completionListener: Promise<void> | null = null;
-const completionWaiters = new Map<number, {
-  binding: number;
-  resolve: () => void;
-  reject: (error: Error) => void;
-}>();
-const graphApplications = new Map<Promise<unknown>, number>();
-let verifyPinnedPages: () => Promise<void> = async () => {};
+/** When the last rescan (focus or Settings) completed and its events were applied. */
+let lastFinishedAt: number | null = null;
+let finishedCount = 0;
+let active: { refresh: Promise<void>; binding: Binding } | null = null;
+let stateBinding: Binding | null = null;
+let completed = 0;
+let listener: Promise<unknown> | null = null;
+const waiters = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
+const applications = new Set<Promise<unknown>>();
 
 class StaleFocusRefresh extends Error {}
 
-function requireCurrent(scope: GraphScope): void {
-  if (!isScopeCurrent(scope)) throw new StaleFocusRefresh();
-}
-
+/** A graph switch retires the throttle and every pending completion. */
 function retireChangedBinding(): boolean {
-  const binding = graphBinding();
-  if (binding === stateBinding) return false;
-  stateBinding = binding;
+  if (stateBinding && bindingCurrent(stateBinding)) return false;
+  stateBinding = captureBinding();
   lastRescan = 0;
-  completedSequence = 0;
-  for (const waiter of completionWaiters.values()) {
-    waiter.reject(new StaleFocusRefresh());
-  }
-  completionWaiters.clear();
-  graphApplications.clear();
-  if (activeRefresh && activeRefreshBinding !== binding) queuedBindingRefresh = true;
+  for (const waiter of waiters.values()) waiter.reject(new StaleFocusRefresh());
+  waiters.clear();
   return true;
 }
 
-/** App-level final verifier. Native completion proves the backend cache is
- * current, but Tauri does not promise that earlier event callbacks have
- * finished applying to Solid before the completion callback runs. */
-export function installFocusFreshnessVerifier(verifier: () => Promise<void>): void {
-  verifyPinnedPages = verifier;
+/** Track the async application of one native graph-change event: the rescan
+ *  completion follows the events, but their handlers may still await reads. */
+export function trackGraphChangeApplication(work: Promise<unknown>): void {
+  applications.add(work);
+  // Tracking never consumes a failure: a rejection is re-raised exactly as the
+  // untracked `void applyGraphChange(c)` raised it before.
+  const untrack = () => { applications.delete(work); };
+  void work.then(untrack, (error: unknown) => { untrack(); throw error; });
 }
 
-function ensureCompletionListener(): Promise<void> {
-  if (!isTauri()) return Promise.resolve();
-  if (!completionListener) {
-    completionListener = backend().onGraphRescanComplete((sequence) => {
-      completedSequence = Math.max(completedSequence, sequence);
-      for (const [target, waiter] of completionWaiters) {
-        if (waiter.binding === stateBinding && target <= completedSequence) {
-          completionWaiters.delete(target);
-          waiter.resolve();
-        }
-      }
-    }).then(() => undefined);
-  }
-  return completionListener;
+function ensureCompletionListener(subscribe: (cb: (sequence: number) => void) => Promise<() => void>): Promise<unknown> {
+  listener ??= subscribe((sequence) => {
+    completed = Math.max(completed, sequence);
+    for (const [target, waiter] of waiters) if (target <= completed) { waiters.delete(target); waiter.resolve(); }
+  }).catch((error) => { listener = null; throw error; });
+  return listener;
 }
 
 function waitForCompletion(sequence: number): Promise<void> {
-  if (!isTauri() || sequence <= completedSequence) return Promise.resolve();
+  if (sequence <= completed) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
-    const waiter = { binding: stateBinding, resolve, reject };
-    completionWaiters.set(sequence, waiter);
-    window.setTimeout(() => {
-      if (completionWaiters.get(sequence) !== waiter) return;
-      completionWaiters.delete(sequence);
+    const waiter = { resolve, reject };
+    waiters.set(sequence, waiter);
+    setTimeout(() => {
+      if (waiters.get(sequence) !== waiter) return;
+      waiters.delete(sequence);
       reject(new Error(`watcher rescan ${sequence} did not complete`));
-    }, 30_000);
+    }, COMPLETION_TIMEOUT_MS);
   });
 }
 
-async function drainGraphApplications(scope: GraphScope): Promise<void> {
-  for (;;) {
-    const current = [...graphApplications]
-      .filter(([, binding]) => binding === scope.binding)
-      .map(([work]) => work);
-    if (!current.length) return;
-    await Promise.allSettled(current);
-    requireCurrent(scope);
-  }
+/** Whether this window has a graph to rescan. Before the launch/switch load
+ *  has published its binding (Welcome screen, or load_graph still running or
+ *  its answer not yet received) the backend refuses the rescan with
+ *  `no graph loaded for window …` / `missing-graph-binding`. That is not a
+ *  failure: the load that installs the binding reads the disk itself, and its
+ *  watcher subscription starts at the revision it read. So the fallback is
+ *  sequenced after the binding, never reported against it (OG-TOAST T1). */
+function graphReadyForRescan(): boolean {
+  return captureBinding().backendGeneration !== 0 && !graphTransitioning();
 }
 
-/** Track the async application started by one native graph-change event. The
- * rescan completion marker is emitted after those events, but their handlers
- * may still be awaiting page reads; the focus barrier drains them all. */
-export function trackGraphChangeApplication(work: Promise<unknown>): void {
-  graphApplications.set(work, graphBinding());
-  void work.finally(() => graphApplications.delete(work));
+function releaseActive(refresh: Promise<void>): void {
+  if (active?.refresh === refresh) active = null;
 }
 
 /** Exported for tests; `installReloadOnFocus` wires it to focus/visibility. */
-export function refreshOnReturnToWindow(now = Date.now()): Promise<void> {
-  // A published export is an immutable snapshot with no watcher behind it, and
-  // its backend refuses the rescan, so asking only produced an error toast on
-  // every refocus (GH #549). There is nothing to refresh and nothing deferred.
+export function refreshOnReturnToWindow(now = Date.now(), force = false, rebuild = false): Promise<void> {
+  // A published export is an immutable snapshot with no watcher behind it.
   if (isPublishedExport()) return Promise.resolve();
-  // Always cheap: replay anything already deferred that has become replaceable.
-  sweepReplaceable();
-  const bindingChanged = retireChangedBinding();
-  if (activeRefresh) {
-    // Decide replacement NOW, while the in-flight refresh's binding is still
-    // recorded. Deciding after it settles reads the nulled binding and turns
-    // every coalesced same-graph focus into a second full rescan (wave-2 D2).
-    const needsReplacement = bindingChanged || activeRefreshBinding !== stateBinding;
-    if (!needsReplacement) return activeRefresh;
-    queuedBindingRefresh = true;
-    return activeRefresh.then(() => refreshOnReturnToWindow(now + FOCUS_RESCAN_THROTTLE_MS));
+  noteFocusReturn();
+  replayDeferredExternalReloads();
+  if (!graphReadyForRescan()) return Promise.resolve();
+  const changed = retireChangedBinding();
+  if (active) {
+    // A forced (Settings) rescan must itself start after the click, so it waits
+    // for a rescan already in flight and runs its own.
+    if (!force && !changed && bindingCurrent(active.binding)) return active.refresh;
+    return active.refresh.then(() => refreshOnReturnToWindow(now, force, rebuild));
   }
-  if (now - lastRescan < FOCUS_RESCAN_THROTTLE_MS) return Promise.resolve();
-  const scope = captureGraphScope();
-  if (!scope) return Promise.resolve();
+  const api = backend();
+  if (!api.rescanGraphNow || !api.onGraphRescanComplete || (!force && now - lastRescan < FOCUS_RESCAN_THROTTLE_MS)) return Promise.resolve();
   lastRescan = now;
-  beginFreshnessBarrier();
-  activeRefreshBinding = scope.binding;
+  const binding = stateBinding!;
+  const current = () => { if (!bindingCurrent(binding)) throw new StaleFocusRefresh(); };
+  beginRefreshNotice();
+  const startedAt = performance.now();
+  // A forced/rebuild rescan is a different, much longer operation (Settings):
+  // only the focus-return stat diff is recorded as the focus phases.
+  const measured = !rebuild;
   let refresh!: Promise<void>;
   refresh = (async () => {
     try {
-      await ensureCompletionListener();
-      requireCurrent(scope);
-      const sequence = await backend().rescanGraphNow();
-      requireCurrent(scope);
+      await ensureCompletionListener((cb) => api.onGraphRescanComplete!(cb));
+      current();
+      const ipcAt = performance.now();
+      const sequence = await api.rescanGraphNow!(rebuild);
+      if (measured) recordPhase("focus.ipc", ipcAt);
+      current();
+      const waitAt = performance.now();
       await waitForCompletion(sequence);
-      requireCurrent(scope);
-      await drainGraphApplications(scope);
-      requireCurrent(scope);
-      await verifyPinnedPages();
-      requireCurrent(scope);
-      await drainGraphApplications(scope);
-      requireCurrent(scope);
-      sweepReplaceable();
+      if (measured) recordPhase("focus.wait", waitAt);
+      const applyAt = performance.now();
+      while (applications.size) {
+        await Promise.allSettled([...applications]);
+        current();
+      }
+      if (measured) {
+        recordPhase("focus.apply", applyAt);
+        recordPhase("focus.total", startedAt);
+      }
+      replayDeferredExternalReloads();
+      lastFinishedAt = Date.now();
+      finishedCount++;
     } catch (error) {
-      if (error instanceof StaleFocusRefresh) return;
-      // The watcher remains the primary path. Most importantly, a failed
-      // fallback must release the input gate rather than strand the editor.
-      pushToast(
-        `Tine couldn't finish checking for external changes. Editing is available, but reopen the page before relying on it being current. (${String(error)})`,
-        "error",
-      );
+      // A refusal because the graph was switched or restored meanwhile is the
+      // stale case too: the new binding's load read the disk itself.
+      if (error instanceof StaleFocusRefresh || !bindingCurrent(binding)) return;
+      // The watcher stays primary; a failed fallback must clear the notice.
+      pushToast(`Tine couldn't finish checking for external changes. Editing is available, but reopen the page before relying on it being current. (${String(error)})`, "error");
     } finally {
-      endFreshnessBarrier();
-      if (activeRefresh === refresh) {
-        activeRefresh = null;
-        activeRefreshBinding = null;
-      }
-      if (queuedBindingRefresh) {
-        queuedBindingRefresh = false;
-        queueMicrotask(() => void refreshOnReturnToWindow());
-      }
+      endRefreshNotice();
+      releaseActive(refresh);
     }
   })();
-  activeRefresh = refresh;
-  return activeRefresh;
+  active = { refresh, binding };
+  return refresh;
 }
 
-/** Reset only the time throttle. Graph switches are detected by graph binding;
- * they also retire completion/application state and queue a non-overlapping
- * refresh for the new graph. */
-export function resetFocusRescanThrottle(): void {
-  lastRescan = 0;
+/** Settings → Help & diagnostics "Rescan graph": a forced full rebuild on demand
+ *  (every file re-read and re-parsed, ignoring stamps; the focus-return rescan
+ *  stays the cheap stat diff), unthrottled but through the same
+ *  path as a focus rescan, so its changes are applied before it reports.
+ *  Answers when it finished (ms since the epoch), or `null` when no rescan ran (no graph loaded, published export)
+ *  or it failed (the failure is already toasted by the shared path). */
+export async function rescanGraphNowFromSettings(): Promise<number | null> {
+  const before = finishedCount;
+  await refreshOnReturnToWindow(Date.now(), true, true);
+  return finishedCount !== before ? lastFinishedAt : null;
 }
 
+/** Reset the time throttle only (tests). */
+export function resetFocusRescanThrottle(): void { lastRescan = 0; lastFinishedAt = null; finishedCount = 0; }
+
+let installed = false;
 export function installReloadOnFocus(): void {
   if (installed || typeof window === "undefined" || isPublishedExport()) return;
   installed = true;
-  installFreshnessInputGate();
   window.addEventListener("focus", () => void refreshOnReturnToWindow());
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) void refreshOnReturnToWindow();
-  });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) void refreshOnReturnToWindow(); });
+}
+
+/** Subscribe the window to the watcher's checkout-sized batches and to a
+ *  refused/restored OS watch. A refusal (inotify's per-user watch limit, a
+ *  network mount or filesystem without notifications) is said out loud: the
+ *  backend polls every 3 seconds meanwhile, so the graph is never silently
+ *  stale (I-9). Returns the unsubscribe. */
+export function subscribeWatcherFreshness(): () => void {
+  let alive = true;
+  const owner = ownedWhen(() => alive);
+  const unsubs: (() => void)[] = [];
+  const keep = (result: Owned<() => void>) => { if (result.kind === "current") unsubs.push(result.value); };
+  const api = backend();
+  if (api.onGraphChangedBulk) void readOwnedResource(owner, api.onGraphChangedBulk((bulk) => trackGraphChangeApplication(applyGraphChangesBulk(bulk))), (u) => u()).then(keep);
+  if (api.onGraphWatchStatus) void readOwnedResource(owner, api.onGraphWatchStatus((status) => {
+    if (status.binding_generation !== undefined && status.binding_generation !== captureBinding().backendGeneration) return;
+    if (status.refused) pushToast(`Live file notifications are unavailable for this graph (${status.message}). Tine checks for external changes every 3 seconds instead.`, "warn", { sticky: true });
+    else pushToast("Live file notifications are back for this graph.", "info");
+  }), (u) => u()).then(keep);
+  return () => { alive = false; for (const unsub of unsubs) unsub(); };
 }

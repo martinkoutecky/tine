@@ -18,24 +18,19 @@ import {
   reopenClosedTab,
   activateNextTab,
   activatePrevTab,
-  goBack,
-  goForward,
   openQueryInNewTab,
   updateActiveQuery,
   replaceActiveRoute,
-  createPaneRouter,
-  installLastTabCloseHandler,
-  makePdfRoute,
 } from "./router";
 import { setNavReuseTabs } from "./navSettings";
-import { doc, setDoc } from "./store";
+import { doc, setDoc } from "./document/model";
+import { isDirty, resetStore } from "./document";
 import { backend } from "./backend";
 
 // The router holds singleton tab state, so reset to a single unpinned journals
 // tab before each test. confirm() is stubbed true so closing pinned tabs (which
 // now prompts) doesn't hang the teardown.
 beforeEach(() => {
-  installLastTabCloseHandler(() => false);
   vi.stubGlobal("confirm", () => true);
   setNavReuseTabs(true);
   setDoc({ byId: {}, pages: [], feed: [], loaded: false });
@@ -47,52 +42,37 @@ beforeEach(() => {
   openJournals(); // reset its route in place
 });
 
-describe("first-class PDF routes", () => {
-  it("uses view identity for route equality and remints duplicated snapshots", () => {
-    const router = createPaneRouter("pdf-route-identity");
-    const routeA = makePdfRoute("assets/paper.pdf", "Paper", { viewId: "pdf-view-a" });
-    const sameDocument = makePdfRoute("assets/paper.pdf", "Paper", { viewId: "pdf-view-b" });
-    expect(sameRoute(routeA, { ...routeA, page: 9, scale: 2 })).toBe(true);
-    expect(sameRoute(routeA, sameDocument)).toBe(false);
+const pinActive = () => togglePin(activeId());
 
-    router.openPdf(routeA, { inPlace: true });
-    const duplicate = router.duplicateActiveSnapshot().tabs[0].history.at(-1)!;
-    expect(duplicate).toMatchObject({ kind: "pdf", filename: "assets/paper.pdf" });
-    expect(duplicate.kind === "pdf" ? duplicate.viewId : null).not.toBe(routeA.viewId);
-  });
-
-  it("updates page and scale in place without appending history", () => {
-    const router = createPaneRouter("pdf-route-state");
-    router.openPdf(makePdfRoute("assets/paper.pdf", "Paper", { viewId: "pdf-view-state" }), { inPlace: true });
-    router.updateActivePdfViewState({ page: 7, scale: 1.75 });
-    expect(router.route()).toMatchObject({ kind: "pdf", page: 7, scale: 1.75 });
-    expect(router.activeTab().history).toHaveLength(2);
-  });
-
-  it("closes through history, pane collapse, and Journals fallback in that order", async () => {
-    const withHistory = createPaneRouter("pdf-close-history");
-    withHistory.openPage("Source", "page", { inPlace: true });
-    withHistory.openPdf(makePdfRoute("assets/a.pdf", "A"));
-    await expect(withHistory.closePdf()).resolves.toBe(true);
-    expect(withHistory.route()).toMatchObject({ kind: "page", name: "Source" });
-
-    const disposable = createPaneRouter("pdf-close-disposable");
-    disposable.replaceActiveRoute(makePdfRoute("assets/b.pdf", "B"));
-    const collapsed = vi.fn(() => true);
-    installLastTabCloseHandler((paneId) => paneId === disposable.paneId && collapsed());
-    await disposable.closePdf();
-    expect(collapsed).toHaveBeenCalledOnce();
-    expect(disposable.route().kind).toBe("pdf");
-
-    installLastTabCloseHandler(() => false);
-    const root = createPaneRouter("pdf-close-root");
-    root.replaceActiveRoute(makePdfRoute("assets/c.pdf", "C"));
-    await root.closePdf();
-    expect(root.route()).toEqual({ kind: "journals" });
-  });
+it("does not close a tab after its confirmation outlives the graph binding", async () => {
+  openInNewTab({ kind: "page", name: "Pinned", pageKind: "page" }, true);
+  const id = activeId();
+  togglePin(id);
+  let finish!: (confirmed: boolean) => void;
+  vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const pending = closeTab(id);
+  resetStore();
+  finish(true);
+  await pending;
+  expect(tabs().some((tab) => tab.id === id)).toBe(true);
+  vi.restoreAllMocks();
 });
 
-const pinActive = () => togglePin(activeId());
+it("keeps a tab opened while pinned close confirmation is pending", async () => {
+  openInNewTab({ kind: "page", name: "Pinned", pageKind: "page" }, true);
+  const closingId = activeId();
+  togglePin(closingId);
+  let finish!: (confirmed: boolean) => void;
+  vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const pending = closeTab(closingId);
+  openInNewTab({ kind: "page", name: "New", pageKind: "page" }, true);
+  const newId = activeId();
+  finish(true);
+  await pending;
+  expect(tabs().some((tab) => tab.id === newId)).toBe(true);
+  expect(tabs().some((tab) => tab.id === closingId)).toBe(false);
+  vi.restoreAllMocks();
+});
 
 describe("independent empty query workspaces (GH #172)", () => {
   it("keeps same-timestamp empty query routes identity-distinct through edits, presentation, and tab history", () => {
@@ -115,218 +95,39 @@ describe("independent empty query workspaces (GH #172)", () => {
   });
 });
 
-describe("query workspace display draft (P5C)", () => {
-  const queryRoute = () => {
-    const r = route();
-    if (r.kind !== "query") throw new Error("expected a query route");
-    return r;
-  };
-
-  it("starts with no draft, so the workspace inherits what the query text states", () => {
+describe("a query workspace edit is validated as one atomic patch (og E, master P5C)", () => {
+  it("refuses an unreadable display, presentation or membership without touching the route", () => {
     openQueryInNewTab("alpha", "search", true);
-    expect(Object.hasOwn(queryRoute(), "display")).toBe(false);
-  });
-
-  it("stores a normalized snapshot and keeps an empty draft distinct from none", () => {
-    openQueryInNewTab("alpha", "table", true);
-    updateActiveQuery({
-      display: {
-        sort: [["priority", "asc"]],
-        group_by: "prop:state",
-        columns: ["state", "prop:owner"],
-        aggregates: [["", "count"]],
-        sample: 25,
-        view: "board",
-        results: [1, 2],
-      } as never,
-    });
-    // The view is the route's presentation, and an unknown key is not carried.
-    expect(queryRoute().display).toEqual({
-      sort: [["priority", "asc"]],
-      group_by: "prop:state",
-      columns: ["state", "prop:owner"],
-      aggregates: [["", "count"]],
-      sample: 25,
-    });
-
-    updateActiveQuery({ display: {} });
-    expect(queryRoute().display).toEqual({});
-    expect(Object.hasOwn(queryRoute(), "display")).toBe(true);
-  });
-
-  it("keeps the existing snapshot through a source-only or presentation-only edit", () => {
-    openQueryInNewTab("alpha", "table", true);
-    updateActiveQuery({ display: { columns: ["state"] } });
-    updateActiveQuery({ source: "alpha -draft", sourceKind: "dsl" });
-    updateActiveQuery({ presentation: "board" });
-    expect(queryRoute()).toMatchObject({
-      source: "alpha -draft", sourceKind: "dsl", presentation: "board",
-      display: { columns: ["state"] },
-    });
-
-    // …including the empty draft, which is a choice and not an absence.
-    updateActiveQuery({ display: {} });
-    updateActiveQuery({ presentation: "list" });
-    expect(queryRoute().display).toEqual({});
-  });
-
-  it("clears the draft back to inheriting on an explicit undefined", () => {
-    openQueryInNewTab("alpha", "table", true);
-    updateActiveQuery({ display: { columns: ["state"] } });
-    updateActiveQuery({ display: undefined });
-    expect(Object.hasOwn(queryRoute(), "display")).toBe(false);
-  });
-
-  it("retains the previous route entirely when an update carries an unreadable draft", () => {
-    openQueryInNewTab("alpha", "table", true);
-    updateActiveQuery({ display: { columns: ["state"] } });
-    const before = queryRoute();
-
-    updateActiveQuery({ source: "beta", presentation: "board", display: { columns: ["bad;name"] } });
-    // Not even the source and presentation in the same patch are applied.
-    expect(queryRoute()).toEqual(before);
-
+    updateActiveQuery({ pageDisplay: { columns: ["prop:owner"] } });
+    const before = JSON.stringify(route());
     for (const bad of [
-      { sample: -1 }, { sample: 1.5 }, { sort: [["priority", "sideways"]] },
-      { aggregates: [["", "sum"]] }, { group_by: "status" }, { columns: [" padded"] },
-    ]) {
-      updateActiveQuery({ display: bad as never });
-      expect(queryRoute()).toEqual(before);
-    }
-    expect(activeTab().history).toHaveLength(1);
-  });
-
-  it("cannot be reached through the array the caller passed in", () => {
-    openQueryInNewTab("alpha", "table", true);
-    const columns = ["prop:a"];
-    const sort: [string, string][] = [["priority", "asc"]];
-    updateActiveQuery({ display: { columns, sort } as never });
-
-    columns.push("prop:b");
-    sort[0][1] = "desc";
-
-    expect(queryRoute().display).toEqual({ columns: ["prop:a"], sort: [["priority", "asc"]] });
-  });
-
-  it("writes each update as a new route, so a captured snapshot is never rewritten", () => {
-    openQueryInNewTab("alpha", "table", true);
-    updateActiveQuery({ display: { columns: ["state"] } });
-    const captured = queryRoute();
-
-    updateActiveQuery({ display: { columns: ["prop:owner"], sample: 4 } });
-    expect(captured.display).toEqual({ columns: ["state"] });
-    expect(queryRoute().display).toEqual({ columns: ["prop:owner"], sample: 4 });
-
-    // The draft rides the history entry, so navigating away leaves it intact.
-    openPage("Notes");
-    expect(activeTab().history[0]).toMatchObject({
-      kind: "query", display: { columns: ["prop:owner"], sample: 4 },
-    });
-  });
-
-  it("applies the complete mixed-result state in one stable history entry", () => {
-    const opened = openQueryInNewTab("alpha", "search", true);
-    updateActiveQuery({
-      source: "alpha -draft",
-      sourceKind: "dsl",
-      presentation: "table",
-      display: { columns: ["prop:legacy"] },
-      pagePresentation: "board",
-      pageDisplay: {},
-      blockPresentation: "list",
-      blockDisplay: { sort: [["priority", "desc"]], sample: 9 },
-      pageMatchScope: "both",
-    });
-
-    expect(queryRoute()).toEqual({
-      kind: "query",
-      id: opened.id,
-      sourceKind: "dsl",
-      source: "alpha -draft",
-      presentation: "table",
-      display: { columns: ["prop:legacy"] },
-      pagePresentation: "board",
-      pageDisplay: {},
-      blockPresentation: "list",
-      blockDisplay: { sort: [["priority", "desc"]], sample: 9 },
-      pageMatchScope: "both",
-    });
-    expect(activeTab().history).toHaveLength(1);
-  });
-
-  it("rejects every simultaneous edit when one optional scoped value is bad", () => {
-    openQueryInNewTab("alpha", "search", true);
-    updateActiveQuery({ pageDisplay: {}, pageMatchScope: "names" });
-    const before = queryRoute();
-
-    for (const badPatch of [
-      { pageDisplay: { columns: ["bad;field"] } },
-      { blockDisplay: { sample: -1 } },
+      { pageDisplay: { columns: ["bad;name"] } },
+      { blockDisplay: { sort: [["priority", "sideways"]] } },
+      { pageDisplay: { group_by: "status" } },
+      { pageDisplay: "not-an-object" },
       { pagePresentation: "gallery" },
-      { blockPresentation: "cards" },
-      { pageMatchScope: "all" },
+      { presentation: "gallery", source: "beta" },
+      { pageMatchScope: "both-and-more" },
+      { sourceKind: "sql" },
     ]) {
-      updateActiveQuery({
-        source: "must-not-apply",
-        blockDisplay: { columns: ["prop:valid"] },
-        ...badPatch,
-      } as never);
-      expect(queryRoute()).toEqual(before);
+      updateActiveQuery(bad as never);
+      expect(JSON.stringify(route()), JSON.stringify(bad)).toBe(before);
     }
-    expect(activeTab().history).toHaveLength(1);
   });
 
-  it("keeps omitted overrides, removes explicit undefined, and preserves empty drafts", () => {
-    openQueryInNewTab("alpha", "table", true);
-    updateActiveQuery({
-      display: { columns: ["prop:legacy"] },
-      pagePresentation: "board",
-      pageDisplay: {},
-      blockPresentation: "list",
-      blockDisplay: { sample: 3 },
-      pageMatchScope: "names",
-    });
-    updateActiveQuery({ source: "beta" });
-    expect(queryRoute()).toMatchObject({
-      pagePresentation: "board",
-      pageDisplay: {},
-      blockPresentation: "list",
-      blockDisplay: { sample: 3 },
-      pageMatchScope: "names",
-    });
-
-    updateActiveQuery({
-      pagePresentation: undefined,
-      pageDisplay: undefined,
-      pageMatchScope: undefined,
-    });
-    const cleared = queryRoute();
-    expect(Object.hasOwn(cleared, "pagePresentation")).toBe(false);
-    expect(Object.hasOwn(cleared, "pageDisplay")).toBe(false);
-    expect(Object.hasOwn(cleared, "pageMatchScope")).toBe(false);
-    expect(cleared.display).toEqual({ columns: ["prop:legacy"] });
-    expect(cleared.blockDisplay).toEqual({ sample: 3 });
-  });
-
-  it("revisits the captured scoped route through Back and Forward", () => {
+  it("keeps an untouched draft, clears on explicit undefined, and stores fresh normalized copies", () => {
     openQueryInNewTab("alpha", "search", true);
-    updateActiveQuery({
-      pagePresentation: "table",
-      pageDisplay: { columns: ["name"] },
-      blockPresentation: "list",
-      blockDisplay: {},
-      pageMatchScope: "content",
-    });
-    const captured = queryRoute();
-    openPage("Elsewhere");
-    expect(activeTab().history).toHaveLength(2);
-
-    goBack();
-    expect(route()).toEqual(captured);
-    goForward();
-    expect(route()).toMatchObject({ kind: "page", name: "Elsewhere" });
-    goBack();
-    expect(route()).toEqual(captured);
+    updateActiveQuery({ pageDisplay: {}, blockDisplay: { columns: ["state"] } });
+    updateActiveQuery({ source: "beta" });
+    expect(route()).toMatchObject({ source: "beta", pageDisplay: {}, blockDisplay: { columns: ["state"] } });
+    const columns = ["prop:a"];
+    updateActiveQuery({ pageDisplay: { columns } });
+    columns.push("prop:b");
+    expect(route()).toMatchObject({ pageDisplay: { columns: ["prop:a"] } });
+    updateActiveQuery({ blockDisplay: undefined, pageMatchScope: "both" });
+    const now = route();
+    expect(Object.hasOwn(now, "blockDisplay")).toBe(false);
+    expect(now).toMatchObject({ pageMatchScope: "both" });
   });
 });
 
@@ -411,16 +212,13 @@ describe("reuse already-open tabs on user navigation", () => {
     expect(tabRoute(activeTab())).toEqual({ kind: "page", name: "Target", pageKind: "page" });
   });
 
-  it("zoom navigation never retargets to another tab", () => {
-    setDoc("byId", "block-zoom", {
-      id: "block-zoom",
-      raw: "Zoom target",
-      collapsed: false,
-      parent: null,
-      page: "Target",
-      children: [],
+  it("zoom navigation never retargets to another tab", async () => {
+    setDoc({
+      byId: { "block-zoom": { id: "block-zoom", raw: "Zoom target\nid:: block-zoom", collapsed: false, parent: null, page: "Target", children: [] } },
+      pages: [{ name: "Target", kind: "page", title: "Target", preBlock: null, roots: ["block-zoom"], format: "md", readOnly: false, guide: false, id: "pages/Target.md" }],
+      feed: ["Target"], loaded: true,
     });
-    const zoomed = { kind: "page" as const, name: "Target", pageKind: "page" as const, block: "block-zoom" };
+    const zoomed = { kind: "page" as const, name: "Target", pageKind: "page" as const, path: "pages/Target.md", block: "block-zoom" };
     openInNewTab(zoomed, true);
     const existingZoomId = activeId();
     setActiveTab(tabs()[0].id);
@@ -431,12 +229,13 @@ describe("reuse already-open tabs on user navigation", () => {
 
     expect(activeId()).toBe(sourceId);
     expect(activeId()).not.toBe(existingZoomId);
-    expect(route()).toEqual(zoomed);
+    await vi.waitFor(() => expect(route()).toEqual(zoomed));
   });
 
-  it("stores a fresh block's durable UUID in the persistent zoom route", () => {
+  it("zooming into a fresh block writes nothing: the route names the live block, not a stamped id", async () => {
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
     const uuid = "12345678-1234-4234-8234-123456789abc";
-    vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
+    const random = vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
     setDoc({
       byId: {
         "bfresh-route": {
@@ -451,7 +250,7 @@ describe("reuse already-open tabs on user navigation", () => {
       pages: [{
         name: "Target", kind: "page", title: "Target", preBlock: null,
         roots: ["bfresh-route"], format: "md", readOnly: false, guide: false,
-        path: "pages/Target.md",
+        id: "pages/Target.md",
       }],
       feed: ["Target"],
       loaded: true,
@@ -464,9 +263,14 @@ describe("reuse already-open tabs on user navigation", () => {
       name: "Target",
       pageKind: "page",
       path: "pages/Target.md",
-      block: uuid,
+      block: "bfresh-route",
     });
-    expect((route() as { block?: string }).block).not.toBe("bfresh-route");
+    // Browsing never mutates the graph (OG stamps id:: only when a reference is made).
+    expect(doc.byId["bfresh-route"].raw).toBe("Fresh route target");
+    expect(isDirty("Target")).toBe(false);
+    await Promise.resolve();
+    expect(save).not.toHaveBeenCalled();
+    expect(random).not.toHaveBeenCalled();
   });
 
   it("explicit new-tab navigation still duplicates", () => {
@@ -542,25 +346,6 @@ describe("sticky (pinned) tabs", () => {
     await closeTab(id);
     expect(tabs().some((t) => t.id === id)).toBe(false); // confirmed → closed
   });
-
-  it("re-reads tabs after the pinned confirmation instead of discarding a new tab", async () => {
-    openInNewTab({ kind: "page", name: "Pinned", pageKind: "page" }, true);
-    const pinnedId = activeId();
-    togglePin(pinnedId);
-    let confirm!: (answer: boolean) => void;
-    vi.spyOn(backend(), "confirm").mockImplementation(
-      () => new Promise<boolean>((resolve) => { confirm = resolve; }),
-    );
-
-    const closing = closeTab(pinnedId);
-    openInNewTab({ kind: "page", name: "Arrived during confirm", pageKind: "page" }, true);
-    const arrivedId = activeId();
-    confirm(true);
-
-    await expect(closing).resolves.toBe(true);
-    expect(tabs().some((tab) => tab.id === pinnedId)).toBe(false);
-    expect(tabs().some((tab) => tab.id === arrivedId)).toBe(true);
-  });
 });
 
 describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
@@ -595,7 +380,8 @@ describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
     expect((route() as { path?: string }).path).toBe("journals/Friday, 26-06-2026.org");
   });
 
-  it("retains the loaded physical owner while zooming into and back out of a block", () => {
+  it("retains the loaded physical owner while zooming into and back out of a block", async () => {
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
     const path = "pages/client-b/Twin.md";
     const id = "11111111-1111-4111-8111-111111111111";
     const external = "22222222-2222-4222-8222-222222222222";
@@ -606,7 +392,7 @@ describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
       },
       pages: [{
         name: "Twin", kind: "page", title: "Twin", preBlock: null, roots: [id],
-        format: "md", readOnly: false, guide: false, path,
+      format: "md", readOnly: false, guide: false, id: path,
       }],
       feed: ["Twin"],
       loaded: true,
@@ -614,9 +400,11 @@ describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
     openFile(path, "Twin", "page");
 
     focusBlock(id);
-    expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path, block: external });
-    expect(route()).not.toMatchObject({ block: id });
-    expect(doc.byId[id].raw).toBe(`Client B\nid:: ${external}`);
+    // GH #373 + browsing-never-writes: a UUID-shaped runtime key is a locator for
+    // this session only; zooming neither stamps an id:: nor mints one.
+    expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path, block: id });
+    expect(doc.byId[id].raw).toBe("Client B");
+    expect(random).not.toHaveBeenCalled();
 
     focusBlock(null);
     expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path });
@@ -668,24 +456,6 @@ describe("graph switch tab reset", () => {
     expect(tabs()[0].pinned).toBe(false);
     expect(route()).toEqual({ kind: "journals" });
     expect(activeId()).toBe(tabs()[0].id);
-  });
-});
-
-describe("pane-local scroll ownership", () => {
-  it("does not borrow a document-wide pane scroller after its own scroller is cleared", () => {
-    const foreignScroller = { scrollTop: 73, isConnected: true } as HTMLElement;
-    vi.stubGlobal("document", { querySelector: vi.fn(() => foreignScroller) });
-    try {
-      const isolated = createPaneRouter("pdf-route-pane");
-      isolated.openPage("Route without a page scroller");
-      isolated.setScrollerElement(null);
-
-      expect(isolated.snapshot().scrolls).toEqual([null]);
-      expect(document.querySelector).not.toHaveBeenCalled();
-    } finally {
-      vi.unstubAllGlobals();
-      vi.stubGlobal("confirm", () => true);
-    }
   });
 });
 

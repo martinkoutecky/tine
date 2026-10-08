@@ -5,7 +5,7 @@
 //! follow from that, and this module is the ONE place each is answered (I-12):
 //!
 //! 1. **Where does the trailing options map begin?** [`split_trailing_map`] —
-//!    the W3 transcription of `src/editor/edn.ts:89`, widened to take the input
+//!    the shared span reader for EDN, with a lexical TQL boundary taking the input
 //!    language family so a TQL `'{'` literal and an EDN `"{"` string are both
 //!    protected by the rules of their own grammar. After this wave nothing
 //!    outside `query_parse` splits a query argument.
@@ -29,169 +29,14 @@
 //! Every one of these is a LEXICAL question about bytes in a document. None of
 //! them parses the query language; the grammar lives in `og.rs` and `tql.rs`.
 
-use crate::query::ir::{Diagnostic, DiagnosticKind, Span, QUERY_MACRO_NAMES};
+use crate::query::ir::{Diagnostic, DiagnosticKind, Span};
 
-/// Whether `name` is one of [`QUERY_MACRO_NAMES`], case-insensitively and as a
-/// WHOLE name (§7.9).
-///
-/// The ONE recognizer for "is this macro a query", so a neighbour cannot answer
-/// it with its own `name == "query"` and thereby publish `{{tine-query …}}` as
-/// literal text (Y1). Callers hold a name the document parser already tokenized;
-/// callers holding raw bytes want [`query_macro_extent`] instead.
-pub fn is_query_macro_name(name: &str) -> bool {
-    QUERY_MACRO_NAMES
-        .iter()
-        .any(|candidate| name.eq_ignore_ascii_case(candidate))
-}
-
-/// Which grammar's literals protect a delimiter while scanning FORM text.
-///
-/// This is a property of the text being scanned, not of the query: an OG or
-/// advanced form is EDN-shaped (`"…"` strings, `;` comments), a TQL form is
-/// SQL-shaped (`'…'` strings with `''` doubling). Inside an options map the
-/// EDN rules always apply, whichever family the form was — the map is EDN
-/// either way (§4.3.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FormFamily {
-    /// `{{query …}}`: the OG DSL and the advanced `{:query …}` map.
-    Edn,
-    /// `{{tine-query …}}`: TQL.
-    Tql,
-}
-
-impl FormFamily {
-    /// The family the macro NAME implies. `query` carries OG or advanced text,
-    /// `tine-query` carries TQL (§7.1).
-    pub fn for_macro_name(name: &str) -> FormFamily {
-        if name.eq_ignore_ascii_case("tine-query") {
-            FormFamily::Tql
-        } else {
-            FormFamily::Edn
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// The one lexical scan (§4.3.1 W3)
-// ---------------------------------------------------------------------------
-
-/// One brace the scan found outside every literal, comment and page ref.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Brace {
-    /// Byte offset of the brace.
-    at: usize,
-    /// `true` for `{`, `false` for `}`.
-    open: bool,
-    /// Nesting depth AFTER this brace, counting from `form_depth`.
-    depth: i32,
-}
-
-/// **The one scan.** Walk `text` once and report every `{` / `}` that is not
-/// inside a protected region, with the depth it produces.
-///
-/// `form_depth` is the depth at which the form text sits: 0 when scanning a
-/// macro ARGUMENT (the splitter), 2 when scanning from inside `{{` (the extent
-/// reader). While the depth is at `form_depth` the `family` decides which
-/// literals protect a brace; deeper than that we are inside an options map and
-/// EDN rules apply — strings and semicolon comments protect delimiters.
-///
-/// An unterminated literal consumes to end of input rather than resynchronising:
-/// that is what makes an unbalanced `}` inside a literal invisible to the split,
-/// which is the fixture §4.3.1 names.
-fn scan_braces(text: &str, family: FormFamily, form_depth: i32) -> Vec<Brace> {
-    let bytes = text.as_bytes();
-    let mut out = Vec::new();
-    let mut depth = form_depth;
-    let mut i = 0usize;
-    while i < bytes.len() {
-        // Inside a map the text is EDN whatever the form was; an EDN symbol's
-        // apostrophe (`'foo`, `#'x`) is never a SQL string, and a semicolon in
-        // TQL form text is never a comment.
-        let edn = depth > form_depth || family == FormFamily::Edn;
-        match bytes[i] {
-            b'"' if edn => {
-                i = edn_string_end(text, i);
-                continue;
-            }
-            b'\'' if !edn => {
-                i = tql_string_end(text, i);
-                continue;
-            }
-            b';' if edn => {
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
-                continue;
-            }
-            b'[' if text[i..].starts_with("[[") => {
-                i = page_ref_end(text, i);
-                continue;
-            }
-            b'{' => {
-                depth += 1;
-                out.push(Brace {
-                    at: i,
-                    open: true,
-                    depth,
-                });
-            }
-            b'}' => {
-                depth -= 1;
-                out.push(Brace {
-                    at: i,
-                    open: false,
-                    depth,
-                });
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    out
-}
-
-/// Index just past an EDN double-quoted string opening at `at`; end of input if
-/// unterminated. Only `\` escapes the next byte (`edn.ts::strClose`).
-fn edn_string_end(text: &str, at: usize) -> usize {
-    let bytes = text.as_bytes();
-    let mut j = at + 1;
-    while j < bytes.len() {
-        match bytes[j] {
-            b'\\' => j += 2,
-            b'"' => return j + 1,
-            _ => j += 1,
-        }
-    }
-    text.len()
-}
-
-/// Index just past a TQL single-quoted string opening at `at`; end of input if
-/// unterminated. SQL doubles the quote (`''`) rather than backslash-escaping it.
-fn tql_string_end(text: &str, at: usize) -> usize {
-    let bytes = text.as_bytes();
-    let mut j = at + 1;
-    while j < bytes.len() {
-        if bytes[j] == b'\'' {
-            if bytes.get(j + 1) == Some(&b'\'') {
-                j += 2;
-                continue;
-            }
-            return j + 1;
-        }
-        j += 1;
-    }
-    text.len()
-}
-
-/// Index just past a `[[page ref]]` opening at `at`; end of input if
-/// unterminated. Page refs do not nest, so the first `]]` closes it
-/// (`edn.ts::pageRefEnd`) — which is what makes `[[a}}b]]` opaque to the scan.
-fn page_ref_end(text: &str, at: usize) -> usize {
-    match text[at + 2..].find("]]") {
-        Some(offset) => at + 2 + offset + 2,
-        None => text.len(),
-    }
-}
+#[cfg(test)]
+use super::macro_extent::SCAN_WORK;
+pub use super::macro_extent::{
+    is_query_macro_name, query_macro_extent, query_macro_extents, FormFamily, MacroExtent,
+};
+use super::macro_extent::{page_ref_end, scan_braces, sql_quoted_end};
 
 // ---------------------------------------------------------------------------
 // C1 / W3 — the one `split_trailing_map`
@@ -208,8 +53,19 @@ fn page_ref_end(text: &str, at: usize) -> usize {
 ///
 /// Both parts come back trimmed, exactly as the TypeScript helper trims them:
 /// the map's own extent is unaffected (it starts at `{` and ends at `}`), and
-/// re-emitting `form + " " + options` is then idempotent.
+/// re-emitting `form + " " + options` is then idempotent. An argument above the
+/// shared 64 KiB source ceiling is returned unchanged as the form, with empty
+/// options; the parser refuses it before calling this splitter. Cost is linear
+/// in the admitted argument length, with no I/O or failure path.
 pub fn split_trailing_map(argument: &str, family: FormFamily) -> (String, String) {
+    // Public callers may use the lexical splitter directly. Bound its scan
+    // with the same answerer the parse entry uses for the complete argument.
+    if !super::query_source_within_limit(argument) {
+        return (argument.to_string(), String::new());
+    }
+    if family == FormFamily::Edn {
+        return crate::query_edn::split_trailing_map(argument);
+    }
     let trimmed = argument.trim_end();
     if !trimmed.ends_with('}') {
         return (argument.trim().to_string(), String::new());
@@ -243,103 +99,6 @@ pub fn split_trailing_map(argument: &str, family: FormFamily) -> (String, String
 // ---------------------------------------------------------------------------
 // C7 — the Rust raw-extent reader (§4.3.1, §7.9)
 // ---------------------------------------------------------------------------
-
-/// One query macro as it sits in the ORIGINAL raw source.
-///
-/// `argument` is the exact byte slice between the macro name and the closing
-/// braces — never a rejoin of the document parser's comma-split arguments, and
-/// never missing the options map's closing brace the way the AST's argument is
-/// (§4.3.1, measured on installed mldoc 1.5.7 and on the pinned `lsdoc`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MacroExtent {
-    /// Byte offset of the opening `{{`.
-    pub start: usize,
-    /// Byte offset just past the closing `}}`.
-    pub end: usize,
-    pub name: String,
-    pub argument: String,
-}
-
-/// The first query macro in `raw`, or `None`.
-///
-/// Brace-, string- and page-ref-aware (`edn.ts::queryMacroExtent`): a `}}`
-/// inside a string, a nested `{…}` options map, or a `[[page]]` ref does not end
-/// it early — which is exactly what a lazy `/\{\{query.*?\}\}/` gets wrong.
-pub fn query_macro_extent(raw: &str) -> Option<MacroExtent> {
-    query_macro_extent_from(raw, 0)
-}
-
-/// Every query macro in `raw`, in source order. A block may hold several
-/// (X2), and a rewrite must target the right one by extent.
-pub fn query_macro_extents(raw: &str) -> Vec<MacroExtent> {
-    let mut out = Vec::new();
-    let mut from = 0usize;
-    while from < raw.len() {
-        let Some(found) = query_macro_extent_from(raw, from) else {
-            break;
-        };
-        from = found.end;
-        out.push(found);
-    }
-    out
-}
-
-fn query_macro_extent_from(raw: &str, from: usize) -> Option<MacroExtent> {
-    let mut search = from;
-    while let Some(offset) = raw[search..].find("{{") {
-        let start = search + offset;
-        match macro_at(raw, start) {
-            Some(extent) => return Some(extent),
-            None => search = start + 2,
-        }
-    }
-    None
-}
-
-/// Read one macro whose `{{` is at `start`, if its name is a query macro name.
-///
-/// **Widened from the TypeScript, recorded:** the pre-P0-ts `edn.ts` matched
-/// `/\{\{query\b/i`, which knew only one name and would also accept
-/// `{{query-foo}}` (`-` is a word boundary in JavaScript). Here the name is read
-/// as a token and compared against [`QUERY_MACRO_NAMES`] whole, so
-/// `{{tine-query …}}` is recognised and `{{query-foo …}}` is not.
-///
-/// The LONGEST matching candidate wins, not the first, so the shared constant's
-/// array order carries no meaning (§7.9): P0-ts reordered it to the spec's
-/// `["query", "tine-query"]` and this scan is unchanged by that.
-fn macro_at(raw: &str, start: usize) -> Option<MacroExtent> {
-    let after_braces = start + 2;
-    let rest = raw.get(after_braces..)?;
-    let name = QUERY_MACRO_NAMES
-        .iter()
-        .filter(|candidate| {
-            rest.len() >= candidate.len()
-                && rest[..candidate.len()].eq_ignore_ascii_case(candidate)
-                && matches!(
-                    rest.as_bytes().get(candidate.len()),
-                    None | Some(b' ') | Some(b'\t') | Some(b'}')
-                )
-        })
-        .max_by_key(|candidate| candidate.len())?;
-    let argument_start = after_braces + name.len();
-    let family = FormFamily::for_macro_name(name);
-    // Depth 2 is what the two opening braces already contributed, so form text
-    // sits at depth 2 and a `{` of the options map takes it to 3.
-    let braces = scan_braces(raw.get(argument_start..)?, family, 2);
-    let close = braces
-        .iter()
-        .find(|brace| !brace.open && brace.depth == 0)?;
-    let end = argument_start + close.at + 1;
-    // Everything between the name and the LAST closing brace is the argument;
-    // one leading space is the macro's separator, not part of it.
-    let argument = &raw[argument_start..end - 2];
-    Some(MacroExtent {
-        start,
-        end,
-        name: name.to_string(),
-        argument: argument.strip_prefix(' ').unwrap_or(argument).to_string(),
-    })
-}
 
 // ---------------------------------------------------------------------------
 // C5 — `macro_safe` (§4.3.1)
@@ -375,6 +134,12 @@ pub fn macro_safe(argument: &str, family: FormFamily) -> Result<(), Diagnostic> 
         return refuse(at, "`#{` cannot appear inside a query macro");
     }
     let (_, options) = split_trailing_map(argument, family);
+    if !options.is_empty() && crate::query_edn::options(&options).is_none() {
+        return refuse(
+            argument.len() - options.len(),
+            "unreadable EDN options; the query was not changed",
+        );
+    }
     // With options, the ONE legal `}` is the argument's last byte. Without
     // them, no `}` is legal at all.
     let allowed = (!options.is_empty())
@@ -390,6 +155,89 @@ pub fn macro_safe(argument: &str, family: FormFamily) -> Result<(), Diagnostic> 
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// C5b — spelling a TQL form so the document parser can read it (§4.3.1)
+// ---------------------------------------------------------------------------
+
+/// Re-spell a printed TQL form so no macro argument begins with a page
+/// reference.
+///
+/// The document parser splits a macro's arguments on commas, and an argument
+/// that begins (after spaces) with `[[` takes its page-reference alternative:
+/// it must then be followed by only spaces or the next comma. So
+/// `{{tine-query @block and any(children, [[a]])}}` — whose second argument is
+/// `[[a]])` — is not a macro at all, although every lexical rule of
+/// [`macro_safe`] passes. The operand after such a comma is wrapped in
+/// parentheses, `any(children, ([[a]]))`, which TQL reads as the same filter
+/// and the document parser reads as a plain argument. Only operands that would
+/// be misread are touched; text inside `'…'` strings and `[[…]]` references is
+/// copied verbatim. Pure and linear in the length of `form`.
+pub fn guard_page_ref_arguments(form: &str) -> String {
+    let bytes = form.as_bytes();
+    let mut out = String::with_capacity(form.len() + 8);
+    let mut depth = 0i32;
+    // Paren depths at which a synthetic `(` is still open.
+    let mut wraps: Vec<i32> = Vec::new();
+    let mut after_comma = false;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let byte = bytes[i];
+        let close_wraps = |out: &mut String, wraps: &mut Vec<i32>, depth: i32| {
+            while wraps.last() == Some(&depth) {
+                out.push(')');
+                wraps.pop();
+            }
+        };
+        match byte {
+            b'\'' => {
+                let end = sql_quoted_end(form, i, b'\'');
+                out.push_str(&form[i..end]);
+                i = end;
+                after_comma = false;
+                continue;
+            }
+            b'[' if form[i..].starts_with("[[") => {
+                if after_comma && depth > 0 {
+                    out.push('(');
+                    wraps.push(depth);
+                }
+                let end = page_ref_end(form, i);
+                out.push_str(&form[i..end]);
+                i = end;
+                after_comma = false;
+                continue;
+            }
+            b'(' => depth += 1,
+            b')' => {
+                close_wraps(&mut out, &mut wraps, depth);
+                depth -= 1;
+            }
+            b',' => {
+                close_wraps(&mut out, &mut wraps, depth);
+                after_comma = true;
+                out.push(',');
+                i += 1;
+                continue;
+            }
+            b' ' | b'\t' => {
+                out.push(byte as char);
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+        after_comma = false;
+        // Copy one whole character so multibyte text is never split.
+        let width = form[i..].chars().next().map_or(1, char::len_utf8);
+        out.push_str(&form[i..i + width]);
+        i += width;
+    }
+    while wraps.pop().is_some() {
+        out.push(')');
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -427,7 +275,11 @@ pub fn recognizable_macro(name: &str, argument: &str) -> Result<(), Diagnostic> 
     let expected_end = wrapped.len() - usize::from(!options.is_empty());
 
     for format in ["md", "org"] {
-        let nodes = lsdoc::inline(&wrapped, format);
+        let Some(nodes) = crate::render::parse_inline_bounded(&wrapped, format) else {
+            return refuse(format!(
+                "the `{{{{{name}}}}}` macro is nested too deeply to read"
+            ));
+        };
         let recognized = matches!(
             nodes.first(),
             Some(lsdoc::ast::Inline::Macro {
@@ -464,6 +316,48 @@ pub fn recognizable_macro(name: &str, argument: &str) -> Result<(), Diagnostic> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn b_query_extent_work_is_one_pass_for_hostile_and_benign_extremes() {
+        for (raw, expected) in [
+            ("{{query x ".repeat(500), 0),
+            ("{{query (task TODO)}} ".repeat(2_000), 2_000),
+        ] {
+            SCAN_WORK.with(|w| w.set(0));
+            assert_eq!(query_macro_extents(&raw).len(), expected);
+            let work = SCAN_WORK.with(std::cell::Cell::get);
+            assert!(
+                work <= 2 * raw.len(),
+                "I-22: query macro extent scanning must visit bytes once; {work} work for {} bytes",
+                raw.len()
+            );
+        }
+    }
+
+    // --- C5b: page-reference operands after a comma ------------------------
+
+    #[test]
+    fn a_page_reference_after_a_comma_is_parenthesized_and_nothing_else_moves() {
+        assert_eq!(
+            guard_page_ref_arguments("@block and any(children, [[a]])"),
+            "@block and any(children, ([[a]]))"
+        );
+        assert_eq!(
+            guard_page_ref_arguments("@block and none(children, [[a]] or [[b]], x)"),
+            "@block and none(children, ([[a]] or [[b]]), x)"
+        );
+        // Not after a comma, inside a string, or already parenthesized.
+        for untouched in [
+            "@block and [[a]] and tag('t')",
+            "@block and content like '%x, [[a]]%'",
+            "@block and any(children, ([[a]]))",
+            "@block and any(children, 中文 and [[a]])",
+        ] {
+            assert_eq!(guard_page_ref_arguments(untouched), untouched);
+        }
+        let once = guard_page_ref_arguments("@block and any(children, [[a]])");
+        assert_eq!(guard_page_ref_arguments(&once), once, "idempotent");
+    }
 
     // --- C1: the one splitter ---------------------------------------------
 
