@@ -52,11 +52,12 @@ function reachableReleaseTags() {
 let expectedPrevious = argument("--expected-previous");
 const selection = policy.previousRelease?.selection ?? "latest-release";
 if (selection === "og-campaign") {
-  // A master's latest release is not the experiment's performance anchor.
-  // This selector cannot advance the anchor or apply to a stable build.
+  // A master's latest release is not this line's performance anchor; the line
+  // (Beta, and stable since 0.7.0) keeps v0.6.5. This selector cannot advance the
+  // anchor, and the configured application must be the switch's shipped identity.
   const identity = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/app-identity.json"), "utf8"));
-  if (identity.ship !== "experiment" || app.identifier !== identity.identities.experiment.identifier) {
-    problems.push("og-campaign performance selection requires the OG application identity");
+  if (app.identifier !== identity.identities[identity.ship]?.identifier) {
+    problems.push("og-campaign performance selection requires the shipped application identity");
   }
   expectedPrevious = "v0.6.5";
 } else if (selection !== "latest-release") {
