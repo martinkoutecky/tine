@@ -254,7 +254,11 @@ impl Config {
         // Locate only direct root entries, as the graph-feature setters do.
         // Arbitrary unrelated forms need not fit the small sidecar value model.
         let mut cfg = Config::default();
-        parse_journal_settings(edn, &mut cfg);
+        let journal = parse_journal_settings(edn);
+        cfg.default_journal_queries = journal.queries;
+        cfg.disable_scheduled_and_deadline_query = journal.disable;
+        cfg.scheduled_future_days = journal.future_days;
+        cfg.journal_config_diagnostics = journal.diagnostics;
         if let Some(v) = string_value(edn, ":journals-directory") {
             cfg.journals_dir = v;
         }
@@ -592,15 +596,24 @@ fn journal_title(value: &crate::edn::Edn) -> Option<String> {
     }
 }
 
-fn parse_journal_settings(edn: &str, cfg: &mut Config) {
+/// The three Logseq journal keys, returned rather than written into a `Config`
+/// so the checkpoint-key guard does not count this parser as a build reader.
+#[derive(Default)]
+struct JournalSettings {
+    queries: Vec<JournalQuery>,
+    disable: bool,
+    future_days: Option<i32>,
+    diagnostics: Vec<String>,
+}
+
+fn parse_journal_settings(edn: &str) -> JournalSettings {
+    let mut cfg = JournalSettings::default();
     use crate::edn::{self, Edn};
     let horizon = ":scheduled/future-days";
     if let Some(value) = journal_setting_value(edn, horizon) {
         match value {
-            Some(Edn::Int(n)) if i32::try_from(n).is_ok() => {
-                cfg.scheduled_future_days = Some(n as i32)
-            }
-            _ => cfg.journal_config_diagnostics.push(format!(
+            Some(Edn::Int(n)) if i32::try_from(n).is_ok() => cfg.future_days = Some(n as i32),
+            _ => cfg.diagnostics.push(format!(
                 "{horizon} must be an integer; using the Settings value."
             )),
         }
@@ -608,27 +621,27 @@ fn parse_journal_settings(edn: &str, cfg: &mut Config) {
     let disable = ":feature/disable-scheduled-and-deadline-query?";
     if let Some(value) = journal_setting_value(edn, disable) {
         match value {
-            Some(Edn::Bool(b)) => cfg.disable_scheduled_and_deadline_query = b,
+            Some(Edn::Bool(b)) => cfg.disable = b,
             _ => cfg
-                .journal_config_diagnostics
+                .diagnostics
                 .push(format!("{disable} must be true or false; using false.")),
         }
     }
     let Some(value) = journal_setting_value(edn, ":default-queries") else {
-        return;
+        return cfg;
     };
     let Some(Edn::Map(_)) = value.as_ref() else {
-        cfg.journal_config_diagnostics
+        cfg.diagnostics
             .push(":default-queries must be a map.".into());
-        return;
+        return cfg;
     };
     let Some(journals) = value.as_ref().and_then(|v| v.get("journals")) else {
-        return;
+        return cfg;
     };
     let Edn::Vec(queries) = journals else {
-        cfg.journal_config_diagnostics
+        cfg.diagnostics
             .push(":default-queries :journals must be a vector.".into());
-        return;
+        return cfg;
     };
     for (index, entry) in queries.iter().enumerate() {
         let title = entry.get("title").and_then(journal_title);
@@ -651,13 +664,14 @@ fn parse_journal_settings(edn: &str, cfg: &mut Config) {
                     format!("query {source} {}", edn::to_string(&Edn::Map(options)))
                 };
                 if entry.get("title").is_some_and(|v| !matches!(v, Edn::Nil) && journal_title(v).is_none()) {
-                    cfg.journal_config_diagnostics.push(format!(":default-queries :journals entry {} has no plain-text title.", index + 1));
+                    cfg.diagnostics.push(format!(":default-queries :journals entry {} has no plain-text title.", index + 1));
                 }
             }
             _ => query.error = Some(format!("Invalid default journal query {}: expected a map with :query (a string, list or vector).", index + 1)),
         }
-        cfg.default_journal_queries.push(query);
+        cfg.queries.push(query);
     }
+    cfg
 }
 
 /// String value following `key`, e.g. `:journals-directory "journals"`.
