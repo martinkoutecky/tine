@@ -434,13 +434,16 @@ mod cold_index_tests {
     }
 }
 
-fn portable_component(name: &str) -> bool {
+pub(crate) fn portable_component(name: &str) -> bool {
     if name.is_empty()
         || matches!(name, "." | "..")
         || name.ends_with([' ', '.'])
         || name.chars().any(|character| {
             character.is_control()
-                || matches!(character, '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*')
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
         })
     {
         return false;

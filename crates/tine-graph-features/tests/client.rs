@@ -238,27 +238,30 @@ fn guide_creation_writes_the_bundled_templates_and_chooses_a_folder() {
     let (empty, _) = fixture("demo-empty-new");
     fs::remove_dir(empty.join("pages")).unwrap();
     fs::remove_dir(empty.join("assets")).unwrap();
-    assert_eq!(guide::create_demo_graph(&empty).unwrap(), empty);
-    assert_tree_is(&empty, &tree);
+    let empty_root = guide::create_demo_graph(&empty, "notes").unwrap();
+    assert_eq!(empty_root, empty.join("notes"));
+    assert_tree_is(&empty_root, &tree);
 
     let (parent, _) = fixture("demo-parent");
     fs::write(parent.join("keep"), b"keep").unwrap();
-    let first = guide::create_demo_graph(&parent).unwrap();
-    assert_eq!(first, parent.join("tine-demo"));
+    let first =
+        guide::create_demo_graph(&parent, &Store::suggest_graph_name(&parent).unwrap()).unwrap();
+    assert_eq!(first, parent.join("notes"));
     assert_tree_is(&first, &tree);
-    let second = guide::create_demo_graph(&parent).unwrap();
-    assert_eq!(second, parent.join("tine-demo-2"));
+    let second =
+        guide::create_demo_graph(&parent, &Store::suggest_graph_name(&parent).unwrap()).unwrap();
+    assert_eq!(second, parent.join("notes-2"));
     assert_tree_is(&second, &tree);
     assert_eq!(fs::read(parent.join("keep")).unwrap(), b"keep");
 
     let file = parent.join("file");
     fs::write(&file, b"x").unwrap();
     assert!(matches!(
-        Store::create_graph(&file, &[]),
+        Store::create_graph(&file, "notes", &[]),
         Err(tine_store::OpenError::NotAFolder(_))
     ));
     assert!(matches!(
-        Store::create_graph(std::path::Path::new(""), &[]),
+        Store::create_graph(std::path::Path::new(""), "notes", &[]),
         Err(tine_store::OpenError::NotAFolder(_))
     ));
 
@@ -273,15 +276,15 @@ fn guide_creation_writes_the_bundled_templates_and_chooses_a_folder() {
         (Area::Assets, "same.bin".to_string(), b"second".to_vec()),
     ];
     assert!(matches!(
-        Store::create_graph(&collision, &duplicate),
+        Store::create_graph(&collision, "notes", &duplicate),
         Err(tine_store::OpenError::CreateFailed { .. })
     ));
     assert_eq!(
-        fs::read(collision.join("tine-demo/assets/same.bin")).unwrap(),
+        fs::read(collision.join("notes/assets/same.bin")).unwrap(),
         b"first"
     );
     assert_eq!(
-        fs::read(collision.join("tine-demo/logseq/config.edn")).unwrap(),
+        fs::read(collision.join("notes/logseq/config.edn")).unwrap(),
         b"{:custom true}\n"
     );
 }

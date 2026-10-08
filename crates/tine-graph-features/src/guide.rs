@@ -24,7 +24,10 @@ pub struct GuideCopyResult {
 }
 
 /// Seed and scaffold the onboarding graph; returns its chosen root.
-pub fn create_demo_graph(parent: &std::path::Path) -> Result<std::path::PathBuf, OpenError> {
+pub fn create_demo_graph(
+    parent: &std::path::Path,
+    name: &str,
+) -> Result<std::path::PathBuf, OpenError> {
     let config = tine_core::config::Config::parse(CONFIG_EDN);
     let mut seed = vec![
         (
@@ -48,7 +51,7 @@ pub fn create_demo_graph(parent: &std::path::Path) -> Result<std::path::PathBuf,
             template.markdown.as_bytes().to_vec(),
         ));
     }
-    Store::create_graph(parent, &seed)
+    Store::create_graph(parent, name, &seed)
 }
 
 fn create_if_absent(store: &Store, area: Area, rel: &str, bytes: &[u8]) -> io::Result<bool> {

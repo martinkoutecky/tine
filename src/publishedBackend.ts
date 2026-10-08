@@ -1030,6 +1030,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "verifyPluginRegistry",
   "storePluginRegistryCache",
   "createGraph",
+  "suggestGraphName",
   "savePage",
   "beginDirectCrossPageMove",
   "finishDirectCrossPageMove",

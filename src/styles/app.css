@@ -1595,6 +1595,11 @@ html[data-system-insets="native-viewport"] {
 }
 
 /* Copy / export modal */
+.modal-overlay.graph-name-overlay { z-index: 9100; } /* Above first-run Welcome. */
+.export-modal.graph-name-prompt { width: min(420px, 100%); box-sizing: border-box; overflow-y: auto; }
+.graph-name-field { display: flex; flex-direction: column; gap: 8px; padding: 16px; }
+.graph-name-field input { width: 100%; box-sizing: border-box; font: inherit; padding: 8px; }
+.graph-name-error { padding: 0 16px; color: var(--error, #b42318); overflow-wrap: anywhere; }
 .export-modal {
   width: 620px;
   max-width: 94vw;

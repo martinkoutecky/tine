@@ -7,6 +7,12 @@ import { loadSingle } from "./document/workingSet";
 import { setGraphMeta } from "./graphSession";
 import type { GraphMeta, PageDto, PageRead } from "./types";
 
+// This seam tests journal revisions after creation; the prompt's render/flow
+// tests cover interaction. Submit the backend suggestion here.
+vi.mock("./graphNamePrompt", () => ({
+  askGraphName: async (suggestion: string, create: (name: string) => Promise<string | null>) => create(suggestion),
+}));
+
 const ROOT = "/tmp/creator-pin-graph";
 const meta = (template: string | null): GraphMeta => ({
   root: ROOT, journals_dir: "journals", pages_dir: "pages", preferred_workflow: "now", shortcuts: {},
@@ -32,6 +38,7 @@ describe("graph creators that bypass the save engine", () => {
       vi.spyOn(api, "listTemplates").mockResolvedValue([{ name: "Daily", page: "Templates", kind: "page", blocks: [{ id: "template", raw: "Template body", collapsed: false, children: [] }] }]);
       vi.spyOn(api, "readCustomCss").mockResolvedValue("");
       vi.spyOn(api, "pickFolder").mockResolvedValue("/tmp");
+      vi.spyOn(api, "suggestGraphName").mockResolvedValue("creator-pin-graph");
       vi.spyOn(api, "createGraph").mockResolvedValue(ROOT);
       const save = vi.spyOn(api, "savePages").mockImplementation(async (entries) => { const { id: id, page: dto } = entries[0];
         const rev = files.has(id) ? "edited-rev" : "created-rev";
@@ -40,6 +47,7 @@ describe("graph creators that bypass the save engine", () => {
       });
       const result = template ? await loadGraphPath(ROOT) : await createNewGraph();
       expect(result.kind).toBe("loaded");
+      if (!template) expect(api.createGraph).toHaveBeenCalledWith("/tmp", "creator-pin-graph");
       // The visible Journals surface materializes the template (master 5bb8ce020).
       if (template) expect(await ensureJournalTemplateForDay(new Date())).toBe("ready");
       expect(files.size).toBe(1);

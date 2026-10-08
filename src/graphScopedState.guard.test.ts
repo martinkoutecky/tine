@@ -333,6 +333,7 @@ describe("graph-scoped UI state (I-20)", () => {
     expect(consumers.filter((c) => c.proven).map((c) => c.key).sort(), "the proven writers").toEqual([
       "src/components/DatePicker.tsx#datePicker",
       "src/components/FormulaEditor.tsx#formulaEditor",
+      "src/components/GraphNamePrompt.tsx#graphNameRequest",
       "src/components/Settings.tsx#orphanScan",
       "src/draftStore.ts#earlier",
     ]);

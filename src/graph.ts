@@ -32,6 +32,7 @@ import { clearWorkspaces } from "./workspaces";
 import { reportUiFailure } from "./uiFailure";
 import { reportGraphOpenFailure } from "./graphOpenFailure";
 import { activeElement, isHTMLElementNode } from "./windowRealm";
+import { askGraphName } from "./graphNamePrompt";
 export const [graphConfigProblem, setGraphConfigProblem] = createSignal<unknown>(null);
 
 const GRAPH_KEY = "tine.graphPath";
@@ -658,9 +659,16 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
   }
   let root: string;
   try {
-    const created = await writeOwned(owner, backend().createGraph(dir));
-    if (created.kind === "stale") return { kind: "aborted" };
-    root = created.value;
+    const suggested = await readOwned(owner, backend().suggestGraphName(dir));
+    if (suggested.kind === "stale") return { kind: "aborted" };
+    const parent = dir;
+    const created = await askGraphName(suggested.value, async name => {
+      if (!owner()) return null;
+      const result = await writeOwned(owner, backend().createGraph(parent, name));
+      return result.kind === "stale" ? null : result.value;
+    });
+    if (created === null || !owner()) return { kind: "aborted" };
+    root = created;
   } catch (e) {
     const kept = graphMeta() ? " The current graph is still open." : "";
     pushToast(`Couldn't create the graph.${kept} (${String(e)})`, "error");

@@ -89,7 +89,7 @@ use debug::{
 use graph::{
     app_platform, approve_external_assets, capture_graph_binding, capture_target, create_graph,
     default_graph_parent, inspect_graph_access, load_graph, local_clock, open_graph_window,
-    startup_graph_path, warm_done,
+    startup_graph_path, suggest_graph_name, warm_done,
 };
 use graph_verification::{
     cancel_graph_verification, create_graph_verification, save_graph_verification_report,
@@ -944,6 +944,7 @@ pub fn run() {
             capture_graph_binding,
             capture_frontend_ready,
             create_graph,
+            suggest_graph_name,
             app_platform,
             local_clock,
             default_graph_parent,

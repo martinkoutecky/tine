@@ -946,12 +946,43 @@ impl Store {
         }
     }
 
-    /// Scaffold a graph in an empty parent, or in the first unused `tine-demo`
-    /// child when the parent is nonempty. Use the returned path as the actual
-    /// graph root. Cost O(siblings probed + seed bytes). Partial failures leave
-    /// created files in place and identify the failing path.
+    /// Suggest the first unoccupied notes child. Any entry, including an empty
+    /// directory or dangling symlink, occupies a name. Cost O(names probed).
+    pub fn suggest_graph_name(parent: &Path) -> Result<String, OpenError> {
+        if parent.as_os_str().is_empty() || !parent.is_dir() {
+            return Err(OpenError::NotAFolder(parent.to_path_buf()));
+        }
+        for number in 1usize.. {
+            let name = if number == 1 {
+                "notes".to_string()
+            } else {
+                format!("notes-{number}")
+            };
+            let path = parent.join(&name);
+            match fs::symlink_metadata(&path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(name),
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(OpenError::CreateFailed {
+                        path,
+                        cause: error.into(),
+                    })
+                }
+            }
+        }
+        Err(OpenError::CreateFailed {
+            path: parent.to_path_buf(),
+            cause: std::io::Error::other("No unused graph folder name.").into(),
+        })
+    }
+
+    /// Create only the named child, reusing it only when it is an empty real
+    /// directory. Every file publication is no-clobber, including concurrent
+    /// creators and external files arriving during scaffolding. Partial failures
+    /// leave created files in place and identify the failing path. Cost O(seed bytes).
     pub fn create_graph(
         parent: &Path,
+        name: &str,
         seed: &[(Area, String, Vec<u8>)],
     ) -> Result<PathBuf, OpenError> {
         if parent.as_os_str().is_empty() || !parent.is_dir() {
@@ -961,38 +992,35 @@ impl Store {
             path: path.to_path_buf(),
             cause: error.into(),
         };
-        let empty = fs::read_dir(parent)
-            .map_err(|error| failed(parent, error))?
-            .next()
-            .is_none();
-        let root = if empty {
-            parent.to_path_buf()
-        } else {
-            let mut number = 1usize;
-            loop {
-                let name = if number == 1 {
-                    "tine-demo".to_string()
-                } else {
-                    format!("tine-demo-{number}")
-                };
-                let candidate = parent.join(name);
-                match fs::create_dir(&candidate) {
-                    Ok(()) => break candidate,
-                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                        number = number.checked_add(1).ok_or_else(|| {
-                            failed(
-                                &candidate,
-                                std::io::Error::other("no unused demo folder name"),
-                            )
-                        })?;
-                    }
-                    Err(error) => return Err(failed(&candidate, error)),
+        if name.chars().any(char::is_control)
+            || name.ends_with(' ')
+            || !crate::model::portable_component(name.trim())
+        {
+            return Err(failed(parent, std::io::Error::new(std::io::ErrorKind::InvalidInput,
+                "Choose a non-empty graph name without path separators, control characters or <>:\"/\\|?*. Names cannot be . or .., end with a dot or space, or use a Windows device name (CON, NUL, COM1, etc.).")));
+        }
+        let root = parent.join(name.trim());
+        match fs::create_dir(&root) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let metadata = fs::symlink_metadata(&root).map_err(|error| failed(&root, error))?;
+                if !metadata.is_dir()
+                    || fs::read_dir(&root)
+                        .map_err(|error| failed(&root, error))?
+                        .next()
+                        .transpose()
+                        .map_err(|error| failed(&root, error))?
+                        .is_some()
+                {
+                    return Err(failed(&root, std::io::Error::new(std::io::ErrorKind::AlreadyExists,
+                        "This graph folder already exists and is not empty (or is not a directory). Choose another name.")));
                 }
             }
-        };
+            Err(error) => return Err(failed(&root, error)),
+        }
         for area in ["logseq", "pages", "journals", "assets"] {
             let dir = root.join(area);
-            fs::create_dir_all(&dir).map_err(|error| failed(&dir, error))?;
+            fs::create_dir(&dir).map_err(|error| failed(&dir, error))?;
         }
         let config = root.join("logseq/config.edn");
         let supplied_config = seed
@@ -3449,6 +3477,61 @@ fn export_bytes_error(bytes: usize) -> QueryError {
         limit: QUERY_EXPORT_MAX_BYTES,
         bytes: Some(bytes),
         byte_limit: QUERY_EXPORT_MAX_BYTES,
+    }
+}
+
+#[cfg(test)]
+mod graph_name_tests {
+    use super::*;
+
+    #[test]
+    fn suggestion_skips_every_existing_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        assert_eq!(Store::suggest_graph_name(temp.path()).unwrap(), "notes");
+        fs::create_dir(temp.path().join("notes")).unwrap();
+        assert_eq!(Store::suggest_graph_name(temp.path()).unwrap(), "notes-2");
+        fs::write(temp.path().join("notes-2"), b"keep").unwrap();
+        assert_eq!(Store::suggest_graph_name(temp.path()).unwrap(), "notes-3");
+    }
+
+    #[test]
+    fn graph_names_are_portable_and_trimmed() {
+        for name in [
+            "", " ", ".", "..", "a/b", "a\\b", "a<", "a>", "a:", "a\"", "a|", "a?", "a*", "a\0",
+            "a\n", "a.", "a ", "CON", "nul.txt", "PRN", "AUX", "com1", "COM9.txt", "LPT1", "LPT9",
+            "COM¹",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            assert!(
+                Store::create_graph(temp.path(), name, &[]).is_err(),
+                "{name:?}"
+            );
+            assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0, "{name:?}");
+        }
+        let temp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            Store::create_graph(temp.path(), "  My notes", &[]).unwrap(),
+            temp.path().join("My notes")
+        );
+    }
+
+    #[test]
+    fn creation_refuses_nonempty_and_uses_empty_child() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("notes");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("keep"), b"untouched").unwrap();
+        let error = Store::create_graph(temp.path(), "notes", &[]).unwrap_err();
+        assert!(format!("{error}").contains("not empty"));
+        assert_eq!(fs::read(root.join("keep")).unwrap(), b"untouched");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        fs::create_dir(temp.path().join("empty")).unwrap();
+        assert_eq!(
+            Store::create_graph(temp.path(), "empty", &[]).unwrap(),
+            temp.path().join("empty")
+        );
+        assert!(temp.path().join("empty/logseq/config.edn").is_file());
+        assert!(!temp.path().join("logseq").exists());
     }
 }
 

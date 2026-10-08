@@ -46,8 +46,8 @@ fn atomic_write(root: &Path, path: &Path, bytes: &[u8]) {
 
 #[test]
 fn demo_graph_scaffolds_and_resolves() {
-    let dir = scratch("demo");
-    guide::create_demo_graph(&dir).unwrap();
+    let parent = scratch("demo");
+    let dir = guide::create_demo_graph(&parent, "notes").unwrap();
     assert!(dir.join("logseq/config.edn").is_file());
     assert!(dir.join("journals").is_dir());
     assert!(dir.join("assets/quick-capture.png").is_file());
