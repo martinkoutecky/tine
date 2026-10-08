@@ -260,14 +260,22 @@ pub(crate) async fn copy_image_to_clipboard(
     bytes_b64: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        use tauri_plugin_clipboard_manager::ClipboardExt;
         let bytes = decode_asset_b64(&bytes_b64)?;
-        #[cfg(target_os = "linux")]
-        if linux_copy_image(&bytes).is_ok() {
-            return Ok(());
+        // The clipboard plugin's mobile `write_image` is "Unsupported on this
+        // platform", so Android publishes the image through its own plugin
+        // (GH #654).
+        #[cfg(target_os = "android")]
+        return crate::android_clipboard::copy_png(&app, &bytes);
+        #[cfg(not(target_os = "android"))]
+        {
+            use tauri_plugin_clipboard_manager::ClipboardExt;
+            #[cfg(target_os = "linux")]
+            if linux_copy_image(&bytes).is_ok() {
+                return Ok(());
+            }
+            let img = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
+            app.clipboard().write_image(&img).map_err(|e| e.to_string())
         }
-        let img = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
-        app.clipboard().write_image(&img).map_err(|e| e.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
