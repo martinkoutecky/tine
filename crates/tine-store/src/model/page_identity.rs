@@ -308,7 +308,7 @@ mod cold_index_tests {
             .whole_graph()
             .expect("one page's title panic stopped the initial load");
         assert!(view
-            .inventory(crate::InventoryScope::All)
+            .inventory()
             .0
             .iter()
             .any(|entry| entry.name == "Links"));
