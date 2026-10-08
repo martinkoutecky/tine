@@ -100,8 +100,10 @@ export function persistedGraphPath(): string {
 /** Load a graph by path ("" → backend uses env/CLI). Updates meta, persists a
  *  non-empty path, and reloads the views. */
 export type LoadGraphPathOutcome =
-  | { kind: "loaded" | "already_current"; root: string }
-  | { kind: "focused_existing" | "aborted" };
+  | { kind: "loaded"; root: string }
+  | { kind: "already_current"; root: string }
+  | { kind: "focused_existing" }
+  | { kind: "aborted" };
 
 /** Inspect a graph's external-assets target. Return true immediately when no
  * external target exists or this device has already approved it. Otherwise
@@ -566,6 +568,12 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
       }
       return { kind: "aborted" };
     }
+    if (platform === "android" && result.status === "local-folder-required") {
+      pushToast(
+        "Tine needs a folder on the device's own storage. This provider folder can't be opened directly. Use your provider's sync-to-local-folder feature, then pick that local folder in Open graph.",
+        "error"
+      );
+    }
     if (
       platform === "android" &&
       (result.status === "permission-requested" || result.status === "permission-needed")
@@ -602,7 +610,7 @@ async function openPickedGraphPath(path: string): Promise<LoadGraphPathOutcome> 
  * containers (anything else is refused with a toast), then open it and navigate to Welcome to Tine. Cancellation
  * returns aborted. A created directory can remain if opening fails; today's
  * narrated journal seed is best effort and its failure does not change a
- * loaded outcome. Creation errors toast and return aborted; picker/parent errors
+ * loaded outcome. Creation/opening errors toast and return aborted; picker/parent errors
  * reject. Cost follows graph creation, templates and the graph load. */
 export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
   const owner = bindingOwner();
@@ -654,14 +662,39 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     if (created.kind === "stale") return { kind: "aborted" };
     root = created.value;
   } catch (e) {
-    pushToast(`Couldn't create the graph. (${String(e)})`, "error");
+    const kept = graphMeta() ? " The current graph is still open." : "";
+    pushToast(`Couldn't create the graph.${kept} (${String(e)})`, "error");
     return { kind: "aborted" };
   }
-  const loaded = await loadGraphPath(root);
-  if (loaded.kind !== "loaded" || loaded.root !== root) {
-    pushToast(`Created the graph at ${root}, but kept the current graph open.`, "info");
+  const openAction = { label: "Open graph", run: () => void openPickedGraphPath(root) };
+  let loaded: LoadGraphPathOutcome;
+  try {
+    loaded = await loadGraphPath(root);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    pushToast(`Created the graph at ${root}, but couldn't open it. (${detail})`, "error", {
+      action: openAction,
+    });
+    return { kind: "aborted" };
+  }
+  if (loaded.kind === "aborted") {
+    pushToast(`Created the graph at ${root}, but it wasn't opened. You can open this folder again.`, "info", {
+      sticky: true, action: openAction,
+    });
     return loaded;
   }
+  if (loaded.kind === "focused_existing") {
+    pushToast(`Created the graph at ${root} and focused its existing window.`, "success");
+    return loaded;
+  }
+  if (loaded.kind === "already_current") {
+    pushToast(`Created the graph at ${loaded.root}. It is already open.`, "success");
+    return loaded;
+  }
+  pushToast(`Created and opened the graph at ${loaded.root}.`, "success");
+  // Keep demo seeding scoped to the created root, as before; the message
+  // describes the load outcome even when the backend returns a different path.
+  if (loaded.root !== root) return loaded;
   const loadedOwner = bindingOwner();
   await seedTodayJournal();
   if (!loadedOwner()) return { kind: "aborted" };

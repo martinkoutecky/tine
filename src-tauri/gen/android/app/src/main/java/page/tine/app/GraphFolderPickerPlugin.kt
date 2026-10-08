@@ -55,7 +55,10 @@ class GraphFolderPickerPlugin(private val activity: Activity): Plugin(activity) 
           val path = RealPathResolver.getPath(activity, docUri)
           Log.i("Tine/FolderPicker", "Resolved $docUri to $path")
           if (path.isNullOrEmpty()) {
-            invoke.reject("Cannot resolve folder to a filesystem path: $docUri")
+            // The Rust bridge preserves status but stringifies rejection codes.
+            val ret = JSObject()
+            ret.put("status", "local-folder-required")
+            invoke.resolve(ret)
             return
           }
           val ret = JSObject()
