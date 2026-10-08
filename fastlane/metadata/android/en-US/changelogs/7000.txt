@@ -1,0 +1,1 @@
+Tine 0.7.0 makes the Beta line stable: plain Markdown/Org files are the only storage, with no search index to build or repair. Fixes pages that would not open and empty [[ suggestions caused by one malformed page, pages that stayed stale after a sync while a block was being edited, and image copy on Android. Your settings and graphs carry over.
