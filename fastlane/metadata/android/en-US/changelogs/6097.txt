@@ -1,0 +1,1 @@
+Adds cross-device graph verification, consistent page-link gestures, batch reference export, and faster managed queries. Fixes managed sync projection collisions and retry errors, split-pane tab closing, query parity, Unicode search and tag handling, task/property parsing drift, config safety, rename edge cases, and several durability error paths.

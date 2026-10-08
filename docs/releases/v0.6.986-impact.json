@@ -1,0 +1,470 @@
+{
+  "schemaVersion": 2,
+  "version": "0.6.986",
+  "baseTag": "v0.6.985",
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "On Android 11 to 14 shared storage, creating, saving and renaming pages failed with \"Invalid argument (os error 22)\", because the storage refuses the rename that is guaranteed never to overwrite a file. Tine now checks that the name is free and renames without the guarantee on storage that refuses it. The same applies to network drives (NFS) that refuse it (GH #538).",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-SAVE-FLAG-REFUSING-STORAGE-538"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "internal-only: storage compatibility on refusing filesystems; no Guide workflow changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The no-clobber publication fallback and its refusal scenario are recorded in the storage/sync contract.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Renaming a page that many pages link to, or a sync tool changing many files at once, no longer holds up searches and references while Tine updates its index. The update is written as one transaction instead of one per 32 pages, and copying the index's log into the index file moved off the update onto a background thread. On a 10,000-page graph a rename now writes about a third as much (603 to 200 MB) and finishes in half the time; on Windows, where each of those copies flushed the disk, a rename took about a minute (GH #543). Once copied, the log is emptied, so the next launch does not copy it again. Internal: tine-storage v0.28.2.",
+      "userVisible": true,
+      "regressions": [
+        "REG-INDEX-TURN-WRITE-COST-543"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "performance-only: index write cost and checkpoint placement.",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The index writer's turn transaction, background checkpoint and WAL emptying are recorded in the storage/sync contract.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Typing in a block no longer resends the list of every linked page name to the editor after each save when no link changed: a precision loss in the check made it resend all of it, 307 KB on a 10,000-page graph (GH #543).",
+      "userVisible": true,
+      "regressions": [
+        "REG-REFERENCED-NAMES-DIGEST-JS-SAFE-543"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "performance-only: a precision fix in an internal change digest.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "internal-only: the digest's width is not a documented contract value.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A save refused to protect data in the file, such as a page with unresolved merge markers or a page-header property moved into the outline, is now reported once and not retried. v0.6.985 said this was fixed, but the app still received the refusal as `unknown` and retried it (GH #535, GH #546).",
+      "userVisible": true,
+      "regressions": [
+        "REG-REFUSED-SAVE-NO-RETRY-535"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "internal-only: corrects how an existing refusal reaches the app; the Guide already describes refused saves.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "internal-only: the refusal classes are unchanged; only their transport to the app was fixed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "When a save fails because the device refuses a file operation, the message now names the operation and the system's error number, so a report or screenshot tells which step failed (GH #538, GH #590).",
+      "userVisible": true,
+      "regressions": [
+        "REG-SAVE-FAILURE-NAMES-PLATFORM-STEP-538"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "internal-only: message detail on an existing error.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "internal-only: no contract states the failure message text.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Search no longer treats letters that differ by a mark as the same letter where the mark makes a different letter or syllable: `か` no longer finds `が`, `и` no longer finds `й`, and in Hindi, Thai or Tibetan a vowel sign or virama is no longer dropped, so `क` no longer finds `कु`. Accents still fold as before (`cafe` finds `café`, `γεια` finds `γειά`), `елка` finds `ёлка`, and `lodz` now finds `Łódź` (likewise ø, đ, ħ, ŧ). The first launch after this update re-indexes the graph once.",
+      "userVisible": true,
+      "regressions": [
+        "REG-SEARCH-FOLD-KEEPS-LETTER-MARKS-001"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The search section states which marks fold and which make another letter.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The search-token folding rule is recorded in the direct query identities contract.",
+        "refs": [
+          "docs/contracts/direct-query-identities.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The Guide site is regenerated from the canonical templates in this release commit (npm run docs:build; docs:check reports every generated file matches).",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A Ctrl+K search of one or two Chinese, Japanese or Korean characters, such as `会议` or `東京`, now reads an index of those short words and visits only the matching blocks. Before, it scanned every block, which for a rare word took about 1.5 s per keystroke on a 10,000-page graph. Unlinked References of a one- or two-character page name and `content match` queries use the same index. It is built during the same one-time re-index as the change above (GH #543). Internal: tine-storage v0.28.0, projection schema 31.",
+      "userVisible": true,
+      "regressions": [
+        "REG-CJK-SHORT-WORD-INDEX-543"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The search section describes one- and two-character CJK search.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "ADR 0069 records the decision; the storage/sync contract records schema 31.",
+        "refs": [
+          "docs/adr/0069-cjk-short-needle-index.md",
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The Guide site is regenerated from the canonical templates in this release commit (npm run docs:build; docs:check reports every generated file matches).",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Reopening a graph no longer makes Ctrl+K, Linked and Unlinked References, query blocks, the page list and block reference counts wait while Tine compares the graph on disk with its search index. Until that comparison finishes they answer from the index as you left it, and they update by themselves when it finishes, so a page edited in another app while Tine was closed shows up then. Edits you make meanwhile show up at once. Actions that depend on the answer, such as creating, renaming or deleting a page, inserting a template or exporting, still wait for the comparison (GH #550).",
+      "userVisible": true,
+      "regressions": [
+        "REG-LAUNCH-SERVE-STORED-550"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The search section says what answers during the launch comparison.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Launch serving during the comparison is recorded in the index-readiness contract.",
+        "refs": [
+          "docs/contracts/index-readiness.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The Guide site is regenerated from the canonical templates in this release commit (npm run docs:build; docs:check reports every generated file matches).",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Reopening a graph no longer waits for a full check of the search index before Ctrl+K, references and queries answer: that check took over a second on a 10,000-page graph at every launch. The index is now checked in the background, and only after the computer or phone restarted or once a week; a phone closing Tine in the background never causes a check or a rebuild. Damage the check finds still rebuilds the index (GH #550).",
+      "userVisible": true,
+      "regressions": [
+        "REG-LAUNCH-INTEGRITY-OFF-PATH-550"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "performance-only: when the background integrity check runs.",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The integrity check schedule is recorded in the index-readiness contract.",
+        "refs": [
+          "docs/contracts/index-readiness.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A block reference whose target cannot be found now shows its full `((…))` text, as Logseq does, instead of the first eight characters of its id. This includes `(((uuid)))`, which Logseq and Tine both read as a reference to the id `(uuid`; write `( ((uuid)))` or `[label](((uuid)))` to show a reference in parentheses (GH #589).",
+      "userVisible": true,
+      "regressions": [
+        "UI-UNRESOLVED-BLOCK-REF-SOURCE-TEXT-589"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "internal-only: rendering of an unresolved reference now matches Logseq; the Guide does not describe the unresolved form.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "internal-only: no contract covers unresolved reference rendering.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Linked and Unlinked References no longer lose blocks from pages you edited before restarting Tine. A block you added or moved on a page in one session went missing from other pages' reference panels after a relaunch, and stayed missing until that page was edited again. Looking such a block up by its id after a relaunch works again too. The first launch after this update re-indexes the graph once (GH #594).",
+      "userVisible": true,
+      "regressions": [
+        "REG-REFERENCES-EDITED-PAGE-REOPEN-594"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "internal-only: restores documented reference behavior after a relaunch.",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Stored structural block ids and session live ids are recorded in the direct query identities contract.",
+        "refs": [
+          "docs/contracts/direct-query-identities.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "When the search index cannot be built, Linked and Unlinked References and query blocks now say so instead of staying empty or \"indexing\" for the rest of the session. Tine tries a failing build at most three times; after that those panels show \"couldn't be built\" with a short code, a **Retry** button and **Create diagnostic report**, and a relaunch tries again. Each failed attempt is recorded in the diagnostic report as a fixed code with no graph content. While the index is still building, Linked References shows \"indexing…\" instead of hiding, and reads that can fall back to the pages themselves, such as the page list, wait at most a minute for the index. A page Tine cannot read, or one deleted while Tine was not watching, no longer makes Linked or Unlinked References read every page in the graph (GH #594).",
+      "userVisible": true,
+      "regressions": [
+        "REG-INDEX-LIVENESS-594"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "Troubleshooting describes the failed-index panel, Retry and the diagnostic report.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Index liveness and failure codes are recorded in the index-readiness and diagnostics contracts.",
+        "refs": [
+          "docs/contracts/index-readiness.md",
+          "docs/contracts/diagnostics.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The Guide site is regenerated from the canonical templates in this release commit (npm run docs:build; docs:check reports every generated file matches).",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Ctrl+K** answers a one- or two-character search in a large graph in a fraction of the time: such a search now reads only the most recent blocks and says **More matches exist** when older ones may match too, where it could take over a second on a 10,000-page graph. A search in Chinese, Japanese or Korean, where one or two characters are a whole word, still searches every block. While the index is first being built, Ctrl+K answers from the pages up to several times faster, and it switches to the index sooner once the index is ready. While you type, the previous results stay on screen until the new ones arrive instead of blanking on every key, and **Enter** waits for the new results. With `--debug`, the log says whether each search was answered by the index or by scanning pages, and how long it took (GH #543).",
+      "userVisible": true,
+      "regressions": [
+        "REG-CTRLK-SHORT-SEARCH-SCAN-BUDGET-543",
+        "UI-SWITCHER-KEEPS-RESULTS-WHILE-TYPING-543"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The search section describes the short-search budget and More matches exist.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "internal-only: the scan budget is a presentation heuristic, not a contract value.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "The Guide site is regenerated from the canonical templates in this release commit (npm run docs:build; docs:check reports every generated file matches).",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On a Mac, Tine now declares macOS 12.3 (Monterey) as its minimum, and the startup message for a too-old web engine no longer says to update Safari: on older macOS, updating the Safari app does not update the engine other apps use, so the advice could not work (GH #572).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OLD-WEBKIT-ENGINE-FLOOR-572"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "Platforms states the macOS 12.3 minimum.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "packaging-only: the minimum system version lives in the bundle configuration.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "The Guide site is regenerated from the canonical templates in this release commit (npm run docs:build; docs:check reports every generated file matches).",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On Windows and macOS, a page whose name differs from its file name only in case (for example **Contents** stored as `contents.md`) opens and can be edited again. It failed with \"could not be activated for editing\" when opened as the home page, from search or from the sidebar, and it could appear twice in search. A file renamed by case only outside Tine, for example by another device, is now listed once under its new name, and a tab or Recent entry saved under the old spelling opens again (GH #597).",
+      "userVisible": true,
+      "regressions": [
+        "REG-CASE-VARIANT-PAGE-NAME-597"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "internal-only: restores opening and editing of a case-variant page on case-insensitive filesystems.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "internal-only: page identity rules are unchanged.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No website page describes this behavior beyond the Guide, whose disposition is recorded separately.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the minor-release editorial gate does not apply and no standalone blog entry is proposed.",
+        "refs": []
+      }
+    }
+  ]
+}

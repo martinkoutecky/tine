@@ -1,0 +1,1501 @@
+{
+  "schemaVersion": 2,
+  "version": "0.6.982",
+  "baseTag": "v0.6.981",
+  "items": [
+    {
+      "section": "Added",
+      "text": "**\"Insert block above\" in a bullet's right-click menu.** The keyboard route to a bullet above an existing one is Enter with the caret at its very start, which splits the bullet — but a code block keeps Enter for adding a line of code, so a page whose first block was a code block had no way to get anything above it. The menu item works on any bullet, at any depth (GH #480).",
+      "userVisible": true,
+      "regressions": [
+        "UI-INSERT-BLOCK-ABOVE-480"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The capture topic now names the right-click route to a bullet above an existing one, which is the only route when the first block owns Enter.",
+        "refs": [
+          "crates/tine-core/src/templates/capture-plan-day.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Managed and Direct reference and query reads now share one evaluator per question, and a Managed navigation request loads its pending overlay at most once.** Backlinks, unlinked references, block referrers, simple and advanced queries and query export each ran through a separate Managed copy of the Direct evaluator; they now run the same code over the same projected page forest, and the Managed reference reads reuse the projection the query path already retains instead of rebuilding one per read. Results, ordering and bounds are unchanged.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Behavior, ordering and results are unchanged; this is a performance-only change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Sorting a sheet now derives each row's sort key once.** The key was previously recomputed inside the comparator, so a 200-row sheet parsed, looked up or read one about 12.7 times per row per sort. Sort order and displayed values are unchanged.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Behavior, ordering and results are unchanged; this is a performance-only change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Several query builders on one page now share a single facets request.** Every mounted builder previously asked the same whole-graph question independently on each data revision; they now share one request per graph and data revision, and all of them still show the current answer.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Behavior, ordering and results are unchanged; this is a performance-only change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Direct and Managed reads now share template, backlink, and block-UUID ownership rules.** Duplicate UUIDs consistently resolve to Logseq's parser-order owner across projection, fallback, pending, and drained states, while Managed adapters reuse the shared template and backlink producers.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Phase-A native commands now keep typed errors to the Tauri boundary without changing rejection bytes.** `CommandError` retains tagged, coded, I/O, worker, Tauri, and core sources behind one legacy-string serializer; the remaining native command files are explicitly assigned to W4-E2b.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Every remaining native command and helper now uses `CommandError`.** The phase-B conversion drives command/helper `Result<_, String>` and temporary stringify bridges to zero, retains JSON, durability, worker, plugin, clipboard, platform, and graph-verification source families, keeps every legacy rejection string byte-identical, and makes the cross-target guard absolute.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Backend refusal handling now branches on typed error kinds instead of English wording.** Native control-flow failures use bounded JSON tags, one frontend funnel constructs the existing error family, panic records retain only fixed-shape metadata, and scenario I/O errors preserve `ErrorKind`. Plugin-visible errors keep their previous string shape.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Diagnostics now keep graph content out of automatic output.** Native detailed diagnostics are actually debug-gated, remaining core print sites and frontend console calls have equality censuses, save refusals report only a count, and lsdoc-diff failures cross worker/report boundaries only as fixed offsets, lengths, and hashes rather than raw parser text.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Managed shared joins now commit through one generation-bearing marker.** Verified baseline and operation directories are published under the next generation, and cold open follows the marker to one complete pair while reclaiming interrupted candidates.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Core duplicate paths now share their canonical converters.** Static query lists and query-backed sheets hydrate from one source-graph boundary, hot and borrowed-state page materialization share one allocation-neutral block collector, and graph-keyed conflict capsules use the session key helper.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Sheets, serialized writes, and local screenshot harnesses now share their canonical implementations.** Board and table field rendering use the same facet readers, query DTO facets are memoized by DTO identity, shared-key frontend writes use one promise-tail shape, and local preview scripts retain their individual retry budgets behind one readiness helper.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**The pinned `tine-storage` release now certifies every shipped platform.** Version 0.12.2 preserves complete plugin packages that contain harmless extra files, strengthens interrupted-install recovery checks, and gives Linux and Windows directory publication one audited implementation each. Its immutable receipt names Linux, Windows, Android, macOS, iOS, and API-semver jobs.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A dependency pin refresh; this is a packaging-only change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Direct Files property facets and PageRef queries now use the same SQLite read families as Managed Storage.** One shared plan-to-SQL lowering narrows PageRef candidates before the existing parser evaluator runs, while stale or unavailable projections keep the exact full-walk fallback. No schema, index, or query-result cache was added.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Behavior, ordering and results are unchanged; this is a performance-only change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Added internal release-only benchmark drivers for query, facet, invalidation, and managed save-versus-drain attribution; production behavior is unchanged.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Behavior, ordering and results are unchanged; this is a performance-only change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Repeated performance work is cut from four storage and query paths.** Terminal SQLite bootstrap no longer encodes every replay intermediate into a dead map; managed projection completion carries its already-authorized plan instead of parsing and planning again; routed page tag queries share one request per graph revision across the toggle, table, and split panes; and one Query Builder instance shares a graph-revision-keyed facets fetch across its controls. Product behavior and persisted formats are unchanged.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Behavior, ordering and results are unchanged; this is a performance-only change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Conflict resolution now scales with unresolved races rather than retained history.** A disposable accepted-sequence index tracks concurrent block pairs, exact pure-create projection candidates, and descendant settlement; it rebuilds from immutable accepted batches on reopen and leaves conflict semantics and persisted formats unchanged.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Managed-storage startup diagnostics now say which stage did the work, and how much.** `TINE_DEBUG=1` already printed a per-stage timing line for a managed cold open, but a slow stage could not be attributed to a mechanism. The open now also emits one content-free work-counter record — batches replayed, receipt evidence names and content reads, full-catalog passes, summary and own-completion chain reads, archive inspections — and splits the old journal-drain boundary into own-endpoint retirement scan and absence-decision-map open. Diagnostics only: nothing in the open path reads a counter, and no user-visible behavior changes.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Behavior, ordering and results are unchanged; this is a performance-only change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Direct Files indexed queries now avoid the whole-graph parser walk when their generation-bound projection is ready.** Candidate selection uses the shared Managed/Direct lowering, so a `{{query}}` block on a page property, block property, page, namespace, or boolean composition no longer re-reads every page after every keystroke. A query whose candidate set is not selective — more than one thirty-second of the graph — keeps the parser walk, which is faster for those shapes; stale or unavailable projections keep it too. Both routes return the same answer.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Behavior, ordering and results are unchanged; this is a performance-only change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**`:ref/linked-references-collapsed-threshold` in `config.edn` is honored.** Tine already collapsed a page's Linked References once the backlink count got large, matching Logseq's rule, but the number was hard-wired to Logseq's default of 100 and your setting was ignored. Setting it to `0` now means what it means in Logseq: every page opens with the panel folded (GH #479).",
+      "userVisible": true,
+      "regressions": [
+        "UI-LINKED-REFS-COLLAPSE-THRESHOLD-479"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The references topic now names :ref/linked-references-collapsed-threshold and what 0 means.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A query no longer returns the block it is written in.** `{{query \"xyz\"}}` matched its own text, so the results listed the page the query lives on — which renders the query again, which lists the page again. Matching Logseq, the query's own block is left out of its results; blocks under it are not (GH #469).",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-EXCLUDES-ITS-OWN-BLOCK-469"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The Guide already documents what a query returns; excluding the query's own block is the documented Logseq behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Tab inside a block embed no longer throws the caret out of the embed.** Indenting, outdenting or moving a bullet inside a `{{embed}}` did the right thing to the outline but reopened the editor on the block's other rendering further down the page, so the following keystrokes landed out of sight. These three operations now keep the caret on the surface you were typing on, as splitting and merging already did (GH #477).",
+      "userVisible": true,
+      "regressions": [
+        "UI-EMBED-STRUCTURAL-CARET-477"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Query Builder dropdowns close when you click somewhere else.** Its clause menu and add-filter picker stayed open while you clicked away and started editing a different block, even though the sort and summarize popovers beside them closed correctly. Closing on an outside press now has one implementation that every popover in Tine shares, so this cannot differ per menu again; the `+ sort` button also toggles shut when you press it a second time (GH #472).",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-BUILDER-POPOVER-DISMISS-472"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A context submenu stays on screen.** Opened near the right edge of the window — over a wide table, say — the `Show children as →` submenu was drawn past the edge and its items could not be reached. It now mirrors to the left, or overlays its own menu when the window is too narrow for either side (GH #471).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CONTEXT-SUBMENU-ONSCREEN-471"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A page opened only in the right sidebar can be typed into.** An empty page, or one whose only content is its `key:: value` header, offered nothing to click and no place for the caret unless you first opened it in the main pane (GH #483).",
+      "userVisible": true,
+      "regressions": [
+        "UI-SIDEBAR-EMPTY-PAGE-EDIT-483"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Both copy buttons in the references sections sit on the same edge.** The one in Linked References floated in the middle of its row because it and the filter button each claimed the row's free space (GH #475).",
+      "userVisible": true,
+      "regressions": [
+        "UI-REFERENCE-HEADER-COPY-ALIGN-475"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A `[[link]]` stops looking dead the moment its name becomes an alias.** After you added `alias:: page1` to another page, every existing `[[page1]]` kept the faded missing-page styling until you restarted Tine — even though clicking it went to the right page. Tine now notices that the set of names which resolve to a page has changed, not just the set of files on disk (GH #484).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PAGE-REF-ALIAS-RESTYLE-484"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Journal-day queries such as `(between …)` work in Managed Storage on a graph with a custom journal page-title format.** Tine's Managed reader worked out which day a journal page was from the DEFAULT title format rather than the one your graph configures, so on any graph that sets `:journal/page-title-format` every journal page looked like it had no date and every journal-day query came back empty — while the same query over the same files answered normally in Direct Files. Both now read the day from your configured format.",
+      "userVisible": true,
+      "regressions": [
+        "REG-W4-C7B-MANAGED-JOURNAL-ORDINAL-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Failure messages no longer reach the logs with your notes inside them.** Twelve always-on diagnostic lines used to print whatever a failed operation said — and a failed save, print, or conflict capture says it about the page it was working on, by name or by path. Each failure is still reported, and still just as visible; what it prints is now the failure's kind and a content-free identity for it. Two of the twelve, in the Direct Files projection, keep their full text behind `TINE_DEBUG`/`--debug`, so you can still ask for it; the ten in the app itself do not print the text anywhere, which also means a debug log you send us will no longer contain it.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A Tine that cannot find anywhere to store its application data now says why.** The fatal startup message names the reason (for example `PermissionDenied`) rather than only that something went wrong — you cannot relaunch past that message to go looking for the cause.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**The diagnostics flight recorder releases its single-writer lock when it shuts down**, instead of leaving release to whenever the last copy of the file descriptor happens to close. A process spawn duplicates that descriptor into the child until it execs, so the lock could outlive the recorder that held it.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed clean-open failures no longer collapse source types into prose.** Core maps the 16 reachable error classes to stable, content-free reason codes and carries them through the existing open-refusal boundary as tagged JSON, so a refusal you can read and copy no longer carries a note name or a path. The reason itself still reaches Settings and the startup recovery pane: the diagnostic sanitizer renders the typed envelope instead of discarding it.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Direct save errors can no longer become discard-capable conflicts because of a page title or block text.** The save producer carries a closed reason code and conflict epoch through tagged JSON, and the frontend no longer reconstructs either value from error wording.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed activation now recovers after a process abort before its authority marker is published.** The marker remains the sole commit point; the next activation retires a wholly recognized unmarked generation and disposable SQLite projection, then rebuilds from unchanged Direct Files.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Internal guards and Managed diagnostics now fail on the regressions they name.** Source ratchets detect helper-hidden error parsing and grouped filesystem imports, platform coverage is enumerated, projection/conflict counters cover their real drain/rebuild boundaries, generation refusals are scenario-pinned, and skipped checkpoint captures retain a bounded cause without being mislabeled as recovery.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Closing or switching graphs no longer leaves a conflicted page's crash-recovery draft up to half a second stale.** The close barrier now lands every pending conflict-capsule refresh before it resolves.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A refused sync join names the affected notes again.** The typed `shared-frontier-mismatch` refusal carries the bounded list of differing relative paths (at most 32, never note content) that the join panel shows and the storage/sync contract promises; the previous typed-error change had dropped it.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed recovery moves and Windows backup restore close their publication crash windows.** Private-root archive moves now synchronize both renamed parents, and Windows recovery publication cannot replace a same-named entry delivered concurrently by a sync service.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Static publishing no longer exposes a private page whose malformed `public::true` line is rejected by Logseq.** Publication now uses the shared lsdoc-transcribed property recognizer, including its exact whitespace rules.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Managed inventory now determines Page-versus-Journal identity from the decoded filename exactly like Logseq, rather than from the containing configured directory.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Bulk insertions now keep one storage authority from admission through publication.** Clipboard, quick-capture, template, HTML, and dropped-file insertions route through the shared storage front door; managed limit tokens retain their binding-generation re-check so a late result cannot land after a backend switch.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Android: saving a page in Direct Files works again** (GH #466). 0.6.981 failed every Direct Files save on Android with \"unknown: Permission denied (os error 13)\", because page publication had been moved onto a hard-link-based no-clobber move that Android's shared storage refuses. Direct Files pages are published again with the same no-clobber rename 0.6.98 used on every platform, keeping the exact-byte checks around it; a refused filesystem call now names itself in the error instead of showing a bare errno.",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH-466-ANDROID-DIRECT-SAVE-NOREPLACE-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Conflicted pages no longer rewrite their restart-recovery capsule for every save attempt.** Identical retained drafts skip the atomic envelope write, and changed drafts use a capsule-specific debounce so continued editing preserves the latest recovery copy without coupling it to the ordinary page-save timer.",
+      "userVisible": true,
+      "regressions": [
+        "UI-CONCORD-LIVE-SAVE-CAPSULE-COALESCING-B3E"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Concord now uses the full pane width while you review a conflict.** The ordinary reading-width limit left both versions and their decision controls cramped and wrapping in a spacious window unless you happened to discover wide mode. A mounted resolver now uses that pane's wide content width automatically, then restores the usual reading width when the conflict is resolved; narrow and split panes keep their responsive layout.",
+      "userVisible": true,
+      "regressions": [
+        "UI-CONCORD-DEFAULT-FULL-WIDTH-20260901"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A failed PDF area-highlight save no longer leaves an invisible nested crop behind.** If the PNG lands but the highlight sidecar transaction is refused, Tine now moves that exact crop into recoverable asset trash before reverting the optimistic highlight.",
+      "userVisible": true,
+      "regressions": [
+        "REG-HARVEST-H2-PDF-AREA-ROLLBACK-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Unrelated backend errors containing the word “conflict” no longer trigger the stale-file recovery path.** Direct save conflicts are classified once at the native call boundary from their exact wire tag; UI code consumes the typed result instead of searching arbitrary error prose.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Retired plugin-registry settings-cache keys are no longer parsed or migrated. They are disposable cache data: Tine ignores that old shape and fetches a currently signed registry, while preserving all unrelated app settings.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Harvest D — asynchronous results stay with the graph and editor that started them.** Quick Switcher creation/search, pinned-tab confirmation, asset imports and recordings, plugin calls, focus rescans, and Settings operations now revalidate graph-binding or operation ownership after waits; display-only repaint changes no longer invalidate plugin work, and desktop media-editor settings remain hidden on mobile.",
+      "userVisible": true,
+      "regressions": [
+        "UI-HARVEST-D-QUICK-SWITCHER-GRAPH-OWNERSHIP"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Managed Storage clean reopen no longer semantically reapplies every accepted operation since activation. A crash-durable disposable engine checkpoint now restores the accepted frontier and replays only its unpublished archive tail; damaged checkpoint bytes always fall back to full replay, while missing authoritative manifests or required objects remain visible as archive damage. Per-save checkpoint capture now extends that cache from its durable frontier instead of recapturing accepted history. Pre-0.7 sharing descriptors no longer have a production decoder, and a failure after activation authority is retained resumes from the preserved marker, baseline, and archive on the next open.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Harvest F — hostile graph and clipboard content now reaches its existing consumption boundaries instead of bypassing them.** Macro links can no longer navigate the privileged WebView directly, mobile blocks unknown schemes, formula/query/peek/backlink recursion has explicit bounds, and pasted HTML links open only through the native scheme allowlist. (Packet F's re-enabled paste-time Markdown escaping was undone on review: literal brackets in pasted text stay literal, per `UI-PASTE-BRACKET-LITERAL-001`.)",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Harvest H — pre-release Managed private formats have one decoder, and concurrent theme changes no longer overwrite one another.** Schema-4 lazy genesis and schema-1 forensic records now invalidate their containing store so the existing preserve-and-rebuild lifecycle handles them atomically; theme package installs and removals serialize their shared settings array.",
+      "userVisible": false,
+      "regressions": [
+        "REG-HARVEST-H-MANAGED-FORMAT-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No user-facing workflow or control changed; this is an internal-only implementation change.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A crash during plugin installation or removal no longer wedges that plugin version until its files are deleted by hand.** Plugin packages now publish as one durably staged, no-clobber directory on every shipped platform; removal retires the complete directory before reclaim, and the next plugin-store open cleans interrupted staging, retirement, or incomplete package residue (internal B5p, Harvest sweep).",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Media (audio/video) assets returned 403 and never loaded when a graph runs under Managed Storage; the native media protocol now serves assets under both storage authorities with unchanged path containment and binding checks (internal B026).",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Managed Storage stopped accepting work at 4,096 lifetime-distinct page names, and at 4,096 lifetime blocks a save could report success and then leave the store permanently unable to open. Four internal fixed-capacity limits on run-local identity indexes were removed; the indexes now simply grow with the graph's lifetime history (internal A4, Harvest sweep).",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Open tabs and pane state now survive a crash immediately after an autosave.** Session and workspace files now use the same durable atomic replacement protocol as other app-private settings, including file and directory barriers; bursts of tab actions are serialized, and the one-time legacy session move receives the same directory durability check.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A draft that met an external edit no longer disappears when Tine is restarted.** Direct Files and Tine-managed storage now retain unresolved live drafts in one graph-keyed, app-private atomic capsule. Reopening restores the exact draft before the graph becomes interactive; Managed storage observes its current owner again instead of reviving stale overwrite authority, and a completed resolution durably retires the capsule before Tine reports success.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "A bug fix that restores the behavior Tine already promised; no Guide topic changes.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract or public API surface changes for this item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "A patch release item; the public marketing site describes capabilities, not bug-level detail.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Blog and Reddit synchronization is a 0.x.0 editorial gate; 0.6.982 is a patch release.",
+        "refs": []
+      }
+    }
+  ]
+}

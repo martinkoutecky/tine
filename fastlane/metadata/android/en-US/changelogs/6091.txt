@@ -1,0 +1,10 @@
+Saving is much faster on large graphs: a save no longer re-reads and re-analyses
+every page before writing.
+
+"Keep mine" now works when a page changed on disk behind Tine's back. It could
+never succeed before, leaving discarding your own edits as the only way out.
+
+Fixes for saves that could get stuck for good: a file replaced with identical
+content, a symlink in the graph, and errors wrongly shown as "changed on disk".
+
+Edits made outside Tine now appear for pages kept anywhere in your graph.

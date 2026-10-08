@@ -1,0 +1,313 @@
+{
+  "schemaVersion": 1,
+  "version": "0.6.93",
+  "baseTag": "v0.6.92",
+  "focusedAudit": {
+    "required": true,
+    "reason": "Required, and recorded as such deliberately. GH #318's repair rewrote roughly 1,300 lines of crates/tine-core/src/model.rs around the Direct Files creation admission authority -- introducing a bounded, generation-coherent shared identity build with join semantics for racing and paced-warm creators -- and this release additionally carries a managed bulk-insertion admission lane across paste, file drop, template expansion, quick capture and Sheet bulk actions. That is a substantial rewrite of an admission mechanism on the default write path, which is the AGENTS.md section 9 trigger, even though the change originates as a repair of a regression introduced and never shipped inside this same cycle. A focused change-cluster audit was therefore run over that cluster (creation authority plus bulk-insertion admission), scoped to data safety and the no-replace contract: creation must still refuse an existing target, portable case/NFC aliases, semantic owners, hard links, symlinks and external creator races without overwriting their bytes. The three permanent 0.x.0 audit areas are not claimed here; 0.6.93 is a patch release and carries no audit attestation file."
+  },
+  "items": [
+    {
+      "section": "Added",
+      "text": "**The built-in Guide is now a real manual rather than a feature tour.** Thirteen new pages cover the journeys people actually arrive with — bringing an existing Logseq graph in, where things are, capturing and planning a day, finding and revisiting, researching a document, keeping context visible, structuring repeated information, extending Tine, and what platforms exist — alongside precise reference pages for journals/tasks/scheduling, pages/links/references/search, files/external edits/backups, troubleshooting and recovery, and platforms and mobile. The index is grouped into Start, Workflows, Feature reference and Feature showcase, and every page is a read-only page in your own graph that you can copy into it. Every claim was reread against the shipped UI at the end, which is where several long-standing wrong labels and one round-trip overclaim were found and corrected.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "update",
+        "reason": "This item IS the documentation change: thirteen new canonical Guide pages plus a restructured index, each registered in GUIDE_TEMPLATES with a semantic registration/link/copy test, and the single-source demo output regenerated from them. Phase D reread every claim against shipped source and corrected the wrong labels it found.",
+        "refs": [
+          "crates/tine-core/src/templates/bring-existing-graph.md",
+          "crates/tine-core/src/templates/where-things-are.md",
+          "crates/tine-core/src/templates/capture-plan-day.md",
+          "crates/tine-core/src/templates/find-and-revisit.md",
+          "crates/tine-core/src/templates/research-document.md",
+          "crates/tine-core/src/templates/keep-context-visible.md",
+          "crates/tine-core/src/templates/structure-repeated-information.md",
+          "crates/tine-core/src/templates/extend-tine.md",
+          "crates/tine-core/src/templates/journals-tasks-scheduling.md",
+          "crates/tine-core/src/templates/pages-links-references-search.md",
+          "crates/tine-core/src/templates/files-external-edits-backups.md",
+          "crates/tine-core/src/templates/troubleshooting-recovery.md",
+          "crates/tine-core/src/templates/platforms-and-mobile.md",
+          "crates/tine-core/src/templates/guide.md",
+          "crates/tine-core/src/onboarding.rs",
+          "website/demo/"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "website/demo is the published Guide; the generated pages, index and search index were regenerated from the same single source and verified by npm run docs:check.",
+        "refs": [
+          "website/demo/",
+          "website/demo/search-index.js"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane release. The human blog is a 0.x.0 editorial gate; the changelog and release notes carry this item.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Sheet table columns can now be resized and reset from their header edges.** Widths persist on the table's real block or tag/schema page by field identity, so they survive reloads and column reordering without moving to another field; wide columns scroll horizontally instead of crushing their text (GH #316).",
+      "userVisible": true,
+      "regressions": [
+        "UI-SHEET-TABLE-COLUMN-RESIZE-316"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "Features/Sheets taught building a table but not sizing one. Added the drag-edge/double-click-reset step with the durable-width and horizontal-scroll behaviour, and regenerated the demo.",
+        "refs": [
+          "crates/tine-core/src/templates/sheets.md",
+          "website/demo/features-sheets.html",
+          "website/demo/search-index.js"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The public website states what Tine is and links the releases; this item changes neither a website capability nor a claim made there.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane release. The human blog is a 0.x.0 editorial gate; the changelog and release notes carry this item.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Journal Settings now includes the `E, dd.MM.yyyy`, `EEE, dd.MM.yyyy`, and `EEEE, dd.MM.yyyy` title formats** already supported by Tine's date engine (GH #317).",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "Reference/Journals, tasks, and scheduling documents what the Journal date format setting controls and where it is stored, deliberately without enumerating the option list; three more options need no text change. Covered by src/components/Settings.test.tsx.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The public website states what Tine is and links the releases; this item changes neither a website capability nor a claim made there.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane release. The human blog is a 0.x.0 editorial gate; the changelog and release notes carry this item.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Opening a graph now tells you what Tine is doing, and offers a way out when it cannot finish.** A progress card names the current phase and elapsed time once startup takes longer than a moment. If the open genuinely cannot complete, it becomes a recovery dialog with Retry lookup, Open another graph, Copy details, and — for a graph enrolled in experimental managed storage — Return this graph to Direct Files. It states plainly that no managed-storage data has been discarded. Previously a startup that stalled showed nothing and offered nothing.",
+      "userVisible": true,
+      "regressions": [
+        "UI-STARTUP-PROGRESS-RECOVERY-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "Reference/Troubleshooting and recovery lists only shipped recovery paths, and a graph that will not finish opening is now one of them. Added a numbered section naming each action, including that no managed-storage data is discarded, and regenerated the demo.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md",
+          "website/demo/reference-troubleshooting-and-recovery.html",
+          "website/demo/search-index.js"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The public website states what Tine is and links the releases; this item changes neither a website capability nor a claim made there.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane release. The human blog is a 0.x.0 editorial gate; the changelog and release notes carry this item.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**The retired v1 managed-storage prototype has been removed.** v1 was a pre-release format that never shipped enabled; its recovery paths, activation fence, lifecycle API and model path were already inert. Leftover v1 bytes in a graph directory are now simply ignored and can no longer cause a Direct Files open to be refused. Direct files, the default, is unaffected.",
+      "userVisible": false,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "v1 was a pre-release managed-storage prototype that never shipped enabled and was never documented in the Guide; Features/Managed sync describes the current experimental storage only.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The public website states what Tine is and links the releases; this item changes neither a website capability nor a claim made there.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane release. The human blog is a 0.x.0 editorial gate; the changelog and release notes carry this item.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Direct Files can create a page or journal immediately after opening a graph.** A cold parsed-page cache was treated as evidence that the requested name already existed, so ordinary creation could be refused until background warming happened to finish. Creation now joins one bounded, generation-coherent identity build and proceeds only from its published evidence; malformed owners, generation drift, aliases, links, symlinks, and an external creator of the same file still fail closed without overwriting bytes (GH #318).",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-COLD-CREATION-318"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Restores the documented Direct Files creation behaviour rather than changing it. Reference/Files, external edits, and backups already states the save and no-replace contract, and the Guide never described a warm-up window because there was not supposed to be one.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The public website states what Tine is and links the releases; this item changes neither a website capability nor a claim made there.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane release. The human blog is a 0.x.0 editorial gate; the changelog and release notes carry this item.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Experimental managed storage now refuses oversized bulk insertions before changing the page.** Multiline and structured paste, file drop, template expansion and quick capture are planned against the exact active runtime's page limits before anything is inserted; a stale, unavailable, or mismatched storage binding fails closed instead of allowing a partial edit that the native writer cannot save. Pasting a large CSV or structural selection directly into a Sheet's cells is not admitted this way yet (GH #320).",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-BULK-INSERTION-ADMISSION-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Experimental managed storage is documented as testing-only and off by default in Features/Managed sync; an admission limit that fails closed before mutating the page changes no documented Direct Files behaviour.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The public website states what Tine is and links the releases; this item changes neither a website capability nor a claim made there.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane release. The human blog is a 0.x.0 editorial gate; the changelog and release notes carry this item.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Heading commands and bullet dragging now act on the active block selection even when the pointer is on another block.** Multi-block heading changes and drags are atomic, undo together, preserve subtree order, and keep cross-page moves destination-first on disk (GH #240).",
+      "userVisible": true,
+      "regressions": [
+        "UI-BLOCK-SELECTION-ACTION-OWNERSHIP-240"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Correctness repair to an existing documented behaviour: the Guide already teaches block selection, heading commands and bullet dragging, and now describes what actually happens.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The public website states what Tine is and links the releases; this item changes neither a website capability nor a claim made there.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane release. The human blog is a 0.x.0 editorial gate; the changelog and release notes carry this item.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Indenting, outdenting and moving a multi-block selection no longer floods the undo history or the store.** Indent and outdent now apply as one shared-store command instead of one per block, and a run of Up/Down moves collapses into a single undo unit that closes on an idle pause, a three-second maximum, a change of selection, any other edit, or a reload — so one Undo reverses the move you just made rather than one block of it. A feed-spanning selection that includes a read-only day is still refused without dirtying either page.",
+      "userVisible": true,
+      "regressions": [
+        "UI-EDITOR-SELECTION-COMMAND-BATCHING-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Undo granularity for an already-documented operation. The Guide does not promise per-block undo units for indent, outdent or move, so no page makes a claim this contradicts.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The public website states what Tine is and links the releases; this item changes neither a website capability nor a claim made there.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane release. The human blog is a 0.x.0 editorial gate; the changelog and release notes carry this item.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Pasting a large selection that carries preserved block IDs is no longer quadratic.** Each pasted candidate used to scan the whole loaded document for an ID collision; 200+ candidates now share one pass, and the cost of the incoming check stops growing with the size of the page you paste into.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PASTE-PRESERVED-ID-LOADED-SCAN-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Internal cost of an unchanged paste contract; the Guide's clipboard and block-reference behaviour is unaffected.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The public website states what Tine is and links the releases; this item changes neither a website capability nor a claim made there.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane release. The human blog is a 0.x.0 editorial gate; the changelog and release notes carry this item.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A managed-storage graph whose cold start failed can no longer trap you in it.** Malformed retained scratch left over from an interrupted run refused the open permanently instead of being recovered; the exact cold-start slot is now recovered, the recovered runtime is proven to accept saves again, and an escape back to Direct Files stays available and actionable throughout. Managed storage remains experimental and off by default.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-RETAINED-SCRATCH-OPEN-RECOVERY-001",
+        "UI-STARTUP-PROGRESS-RECOVERY-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "Covered by the same new Troubleshooting and recovery section, which is where a user meeting this failure will look; it states the escape back to Direct Files and that no managed data was discarded.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md",
+          "website/demo/reference-troubleshooting-and-recovery.html"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The public website states what Tine is and links the releases; this item changes neither a website capability nor a claim made there.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane release. The human blog is a 0.x.0 editorial gate; the changelog and release notes carry this item.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Creating a page in Direct Files no longer stalls and then refuses the save on a large graph** (part of GH #249, GH #266 and GH #267). The creation path ran the managed-storage shadow-import capture twice, retaining and parsing every graph file before it could answer whether one filename was safe. On affected graphs that ended in `precheck.limit`, stranded the new edit, and made graph transitions or close wait behind repeated failed flushes. Creation now checks one non-retaining streaming census—without applying the retained-shadow cumulative-byte ceiling—against the already parsed, generation-current Direct Files index and passes that single proof to the no-replace publisher. Creation still refuses an existing target, portable case/NFC aliases of that target (including ancestor directories), semantic owners, hard links, symlinks, and an external creator of the same file without overwriting their bytes; existing exact-target saves retain their prior path-local traversal behavior. A conflicting *different* path created by another process inside the final publication window is still not detected, which is long-standing behaviour rather than new here (GH #321).",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-CREATE-RETAINED-SHADOW-LIMIT-249-266"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Restores the documented Direct Files creation behaviour rather than changing it; Reference/Files, external edits, and backups already states the save and no-replace contract that now holds again.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The public website states what Tine is and links the releases; this item changes neither a website capability nor a claim made there.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch-lane release. The human blog is a 0.x.0 editorial gate; the changelog and release notes carry this item.",
+        "refs": []
+      }
+    }
+  ]
+}

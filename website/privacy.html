@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy — Tine</title>
+<meta name="description" content="How Tine handles your notes and the limited information it sends over the network.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<style>
+  .privacy { max-width: 780px; }
+  .privacy h1 { font-size: clamp(2.2rem, 5vw, 3.4rem); }
+  .privacy h2 { font-size: 1.45rem; margin-top: 2.4rem; }
+  .privacy p, .privacy li { color: var(--ink-soft); }
+  .privacy strong { color: var(--ink); }
+  .privacy .effective { color: var(--ink-faint); font-size: .9rem; }
+</style>
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="index.html" aria-label="Tine — home">
+    <svg class="mark" width="34" height="34" viewBox="0 0 64 80" aria-hidden="true">
+      <g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none">
+        <path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/>
+        <path d="M16 36 H48"/><path d="M32 36 V70"/>
+      </g>
+    </svg>
+    <span class="brand-word">Tine</span>
+  </a>
+  <nav class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="guide/">Guide</a>
+    <a href="plugins.html">Plugins</a>
+    <a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a>
+  </nav>
+</header>
+
+<main>
+  <article class="wrap privacy">
+    <p class="eyebrow">Privacy policy</p>
+    <h1>Your notes stay <span class="accent">yours.</span></h1>
+    <p class="lede">Tine is a local-first outliner. It has no Tine account, no advertising, no analytics, and no tracking.</p>
+    <p class="effective">Effective 23 August 2026.</p>
+
+    <h2>Your graphs and notes</h2>
+    <p><strong>Tine does not upload your graph or note contents to Tine servers.</strong> Your data stays on your device, or in a folder or storage provider that you choose. If you use a third-party sync service, its handling of the files is governed by that service's privacy policy.</p>
+
+    <h2>Network access</h2>
+    <p>Tine may contact public Tine or GitHub endpoints to check for app updates, retrieve signed community-plugin catalogue metadata, or open documentation and project pages that you request. These requests can expose ordinary connection information such as your IP address and user agent to the service receiving them. Tine does not attach your note contents to those requests.</p>
+    <p>If a graph contains a remote image, video, iframe, or other web embed, displaying it can contact the service named by that URL, such as YouTube or Vimeo. Opening a web link does the same in your browser. The remote service receives the URL and ordinary connection information; a URL can itself contain information chosen by the graph's author. Tine does not send the surrounding note text.</p>
+    <p>Tine plugins run in a capability-limited sandbox. They do not receive unrestricted access to the network, native platform, or your filesystem.</p>
+
+    <h2>Information we collect</h2>
+    <p>We do not operate accounts, analytics, advertising, or tracking systems for Tine, and we do not sell or share personal information for advertising.</p>
+    <p>If you email <a href="mailto:support@tine.page">support@tine.page</a> or deliberately send information through another support channel, we receive the address, message, attachments, and technical details you choose to include. We use them to answer you and investigate the issue, and retain them only as long as reasonably needed for those purposes or legal obligations.</p>
+
+    <h2>Your choices</h2>
+    <p>You control your local graph files and Tine's app data through your device. You can remove a graph from Tine without deleting its files, delete the files yourself, uninstall plugins, or uninstall Tine. To ask about support correspondence or this policy, email <a href="mailto:support@tine.page">support@tine.page</a>.</p>
+
+    <h2>Changes</h2>
+    <p>If Tine's data handling changes, this page will be updated before the affected release is distributed. Material changes will be described plainly in the release notes.</p>
+  </article>
+</main>
+
+<footer class="foot">
+  <div class="foot-inner">
+    <div class="foot-brand"><span>Tine</span></div>
+    <nav class="foot-links">
+      <a href="index.html">Home</a>
+      <a href="https://github.com/martinkoutecky/tine">GitHub</a>
+      <a href="https://github.com/martinkoutecky/tine/releases">Releases</a>
+      <a href="mailto:support@tine.page">Email support</a>
+    </nav>
+    <p class="foot-copy">© 2026 Martin Koutecký · Tine is free and open-source software.</p>
+  </div>
+</footer>
+</body>
+</html>

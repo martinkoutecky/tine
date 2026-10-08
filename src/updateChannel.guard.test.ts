@@ -1,56 +1,59 @@
-// RULE (Beta identity): Beta is a separate app (`page.tine.TineBeta`, version
-// 0.6.x) that must NEVER learn about, offer, or install the shipped Tine. The
-// shipped Tine's releases/latest carries a higher version number, so an og that
-// read it would offer master, and installing it would replace og with master.
+// RULE (channel identity): stable Tine (`page.tine.Tine`) and Tine Beta
+// (`page.tine.TineBeta`) are separate apps, and each must NEVER offer or install
+// the other's build: installing it would replace one app with the other.
 //
-// The og update channel is the fixed-tag release `beta`, and it is named in
-// exactly ONE machine-read place: the updater endpoint in src-tauri/tauri.conf.json.
-// src/update.ts learns what the channel offers from the Tauri updater plugin's
-// check() (a Rust-side request); it never fetch()es a channel URL, because GitHub
-// release-asset downloads send no Access-Control-Allow-Origin and a webview fetch
-// would fail silently forever. Exemplar: src/update.ts offeredVersion().
+// Each build's channel is named in exactly ONE machine-read place: the updater
+// endpoint in src-tauri/tauri.conf.json (stable: releases/latest; Beta: the
+// fixed-tag release `beta`), chosen by the identity switch. src/update.ts learns
+// what the channel offers from the Tauri updater plugin's check() (a Rust-side
+// request); it never fetch()es a channel URL, because GitHub release-asset
+// downloads send no Access-Control-Allow-Origin and a webview fetch would fail
+// silently forever. Exemplar: src/update.ts offeredVersion().
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const RULE =
-  "og updater must read only the beta channel, and only through the updater plugin's check(): " +
-  "the one channel URL is the tauri.conf.json updater endpoint " +
-  "(https://github.com/martinkoutecky/tine/releases/download/beta/latest.json), never releases/latest " +
-  "(the shipped Tine there is a newer version; installing it would replace og with master); " +
+  "the updater must read only this build's channel, and only through the updater plugin's check(): " +
+  "the one channel URL is the tauri.conf.json updater endpoint chosen by the identity switch " +
+  "(stable: releases/latest; Beta: releases/download/beta), never the other channel's " +
+  "(installing it would replace one app with the other); " +
   "src/update.ts must not fetch() a channel URL (GitHub release assets send no CORS headers).";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const stripComments = (source: string) =>
   source.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
 
-describe("og update channel", () => {
+describe("update channel", () => {
   it("src/update.ts names no channel URL and never fetch()es one", () => {
     const code = stripComments(read("./update.ts"));
     expect(code, RULE).not.toMatch(/\bfetch\s*\(/);
-    expect(code, RULE).not.toMatch(/releases\/latest/);
+    expect(code, RULE).not.toMatch(/releases\/latest\/download/);
     expect(code, RULE).not.toMatch(/releases\/download|latest\.json|api\.github\.com/);
-    // The only URL is the human-facing release page, and it is the beta one.
+    // The only URLs are the two channels' human-facing release pages.
     const urls = code.match(/https?:\/\/[^\s"'`]+/g) ?? [];
-    expect(urls, RULE).toEqual(["https://github.com/martinkoutecky/tine/releases/tag/beta"]);
+    expect(urls, RULE).toEqual([
+      "https://github.com/martinkoutecky/tine/releases/latest",
+      "https://github.com/martinkoutecky/tine/releases/tag/beta",
+    ]);
     // The offered version comes from the updater plugin.
     expect(code, RULE).toMatch(/import\("@tauri-apps\/plugin-updater"\)/);
   });
 
-  it("the Tauri updater endpoint is the beta manifest, never releases/latest", () => {
+  it("the Tauri updater endpoint is the switch's channel manifest", () => {
     const conf = JSON.parse(read("../src-tauri/tauri.conf.json"));
-    // Identity is spelled only in the switch (src/appIdentity.guard.test.ts): this channel
-    // exists because the running build is NOT the released identity.
+    // Identity is spelled only in the switch (src/appIdentity.guard.test.ts): the released
+    // identity reads releases/latest, the experiment reads only the beta release.
     const sw = JSON.parse(read("../src-tauri/app-identity.json"));
-    expect(sw.ship, "this guard is for the experiment identity; a release build ships releases/latest").not.toBe("release");
     const endpoints: string[] = conf.plugins.updater.endpoints;
-    expect(endpoints, RULE).toEqual(["https://github.com/martinkoutecky/tine/releases/download/beta/latest.json"]);
-    for (const endpoint of endpoints) expect(endpoint, RULE).not.toMatch(/releases\/latest/);
+    expect(endpoints, RULE).toEqual([sw.ship === "release"
+      ? "https://github.com/martinkoutecky/tine/releases/latest/download/latest.json"
+      : "https://github.com/martinkoutecky/tine/releases/download/beta/latest.json"]);
   });
 
-  it("I-4/I-12: notification and installation acquire updates through checkedBetaUpdate (src/update.ts)", () => {
+  it("I-4/I-12: notification and installation acquire updates through checkedChannelUpdate (src/update.ts)", () => {
     const code = stripComments(read("./update.ts"));
     expect(code.match(/await check\(\)/g), RULE).toHaveLength(1);
-    expect(code.match(/await checkedBetaUpdate\(\)/g), RULE).toHaveLength(2);
+    expect(code.match(/await checkedChannelUpdate\(\)/g), RULE).toHaveLength(2);
     expect(code, RULE).toContain("releaseVersion(update.version).sequence");
   });
 

@@ -1,0 +1,11 @@
+The built-in Guide is now a real manual: thirteen new pages on bringing an
+existing graph in, planning a day, finding things again, files and backups,
+troubleshooting, and platforms.
+
+Sheet table columns resize from their header edges, and the widths stick.
+
+Three dot-separated weekday journal title formats.
+
+Opening a graph shows its progress, and offers a way out if it cannot finish.
+
+Indent, outdent and move on a selection now undo as one step.

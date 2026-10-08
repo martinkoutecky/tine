@@ -1,0 +1,860 @@
+{
+  "schemaVersion": 1,
+  "version": "0.6.95",
+  "baseTag": "v0.6.94",
+  "items": [
+    {
+      "section": "Added",
+      "text": "**The iOS beta can use a TineOutline-owned graph in iCloud Drive.** The native folder picker recommends `iCloud Drive → TineOutline` when iCloud is available and also accepts `On My iPhone/iPad → TineOutline`, while clearly refusing arbitrary third-party Files providers. Before Rust opens the selected graph, the iOS bridge requests any ubiquitous files that are not yet local. Signed TestFlight builds install and verify the exact iCloud Documents entitlements in both the provisioning profile and app signature.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "The checked-in Apple distribution contract documents this release surface and its deliberate limits.",
+        "refs": [
+          "docs/APPLE-DISTRIBUTION.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**macOS release builds are now signed and notarized.** The universal direct-download app and DMG use Tine's Developer ID identity, authenticate notarization with a short-lived App Store Connect token, and must pass independent signature, team, stapled-ticket, Gatekeeper, and DMG-integrity checks before the release lane can be staged. Windows signing remains separate future work.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "The checked-in Apple distribution contract documents this release surface and its deliberate limits.",
+        "refs": [
+          "docs/APPLE-DISTRIBUTION.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Tine can now build a signed iOS beta for TestFlight.** A manual-only workflow creates and verifies a `TineOutline` IPA for the existing `page.tine.Tine` bundle ID, retains it as an immutable artifact by default, and only validates or uploads to TestFlight when that action is explicitly selected. It cannot submit or release a production App Store version. The iOS bundle includes its privacy manifest, export-compliance declaration, App Store provisioning proof, and a unique build number for each run.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "The checked-in Apple distribution contract documents this release surface and its deliberate limits.",
+        "refs": [
+          "docs/APPLE-DISTRIBUTION.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Tine now publishes a plain-language privacy policy and support contact.** The in-app About tab links to both, the website links to the policy, and the policy distinguishes local graph data from the limited update, plugin-catalogue, documentation, and voluntary-support traffic Tine can make.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "The published privacy policy and About links are the documentation for this user-facing policy.",
+        "refs": [
+          "website/privacy.html"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "The website publishes the policy and links it from its public navigation.",
+        "refs": [
+          "website/privacy.html",
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**New editor command: Copy block embed** (GH #279) — `Mod+Shift+C` copies `{{embed ((block-id))}}` for the current block using its durable `id::`, the embed counterpart of the existing `Mod+C` block-reference copy. Remappable in Settings → Keybindings; with text selected it gets out of the way so normal copy works.",
+      "userVisible": true,
+      "regressions": [
+        "UI-EDITOR-COPY-EMBED-279"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "The Logseq feature map records the Copy block embed command and its interoperable syntax.",
+        "refs": [
+          "docs/og-feature-map.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "The public comparison page already explains copying block references and embeds.",
+        "refs": [
+          "website/compare.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Logseq navigation hotstrings `gh`, `gn`, `gp`** (GH #276). `g h` opens the graph's configured home page (falling back to the journals landing when none is set — Logseq's default home), `g n` / `g p` open the next and previous journal day relative to the journal you're in (or relative to today anywhere else), in the graph's configured journal title format. All three are remappable.",
+      "userVisible": true,
+      "regressions": [
+        "UI-JOURNAL-HOTSTRINGS-276"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "The canonical Guide shortcut reference covers the new navigation hotstrings.",
+        "refs": [
+          "website/guide/features-tips-shortcuts.html"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Sheets now render in the HTML export and print output for any graph.** Until now, publishing a page holding a Tine Sheet emitted only the sheet's plain-bullet twin plus the visible `tine.*` view configuration, so the presentation — columns, grouping, computed cells — disappeared. Block-powered sheets now publish as meaningful read-only views: tables with their title/declared/formula/observed columns, typed checkbox cells, aggregate footers, and arithmetic formula columns; boards grouped by state, priority, tags, or fields, including query-backed boards; and grids with their positional cells, header rows, and nested grids. Numbered list blocks (`logseq.order-list-type:: number`) keep their ordinal markers, and blocks with LOGBOOK clock rows keep an elapsed-time badge while the drawer stays hidden. This applies to both whole-graph publishing and single-page print/PDF export.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "The canonical Sheets Guide already explains tables, boards and grids; the export now preserves that documented presentation.",
+        "refs": [
+          "website/guide/features-sheets.html"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "The generated public Guide demonstrates Sheets and is produced by the corrected exporter.",
+        "refs": [
+          "website/guide/features-sheets.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**The managed-storage opt-in now says plainly that it is known to be buggy.** Settings and the built-in Guide no longer describe it merely as experimental or not mature: they state that it does not yet fully work in Tine's own testing and that work is ongoing, while retaining Direct Files as a fully supported peer rather than a migration step.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "The managed-storage contract and canonical Guide describe the opt-in status and workflow.",
+        "refs": [
+          "docs/storage-sync-contract.md",
+          "website/guide/features-managed-sync.html"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "The public Guide carries the same managed-storage warning and workflow.",
+        "refs": [
+          "website/guide/features-managed-sync.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**The first iOS beta keeps Wasm plugins disabled, as required by ADR 0052.** Installed guests are not loaded, the package/catalogue surface is absent from Settings, and plugin commands cannot register. Built-in and inert token themes remain available. Enabling iOS plugins later remains a separate product and App Review decision.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "The checked-in Apple distribution contract documents this release surface and its deliberate limits.",
+        "refs": [
+          "docs/APPLE-DISTRIBUTION.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**The iOS About tab omits the external Ko-fi support link.** Website, desktop, and Android support links are unchanged; iOS keeps only non-purchase project, privacy, and email-support links while the initial App Store review surface is deliberately minimal.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "The checked-in Apple distribution contract documents this release surface and its deliberate limits.",
+        "refs": [
+          "docs/APPLE-DISTRIBUTION.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**The public website \"Demo\" is now the Guide**, at `https://tine.page/guide/`: the read-only tour of workflows, reference pages, and rendered examples published by Tine's own HTML export, no longer described as a live or editable demo. Old `https://tine.page/demo/` links redirect there; the in-app Guide and the onboarding demo graph are unchanged.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "The website navigation and generated Guide now consistently present this surface as the Guide.",
+        "refs": [
+          "website/index.html",
+          "website/guide/index.html"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "The site now calls the exported documentation the Guide and redirects the former Demo route.",
+        "refs": [
+          "website/index.html",
+          "website/demo/index.html",
+          "website/guide/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Renaming a page no longer exhausts the Direct Files safety budget on very large graphs** (GH #364). A rename already makes one bounded, no-follow inventory and rechecks every file it will touch; its inner publication helpers nevertheless attempted a second whole-graph identity build, which could refuse the operation around 13,000 pages with `initial shadow peak build memory bound exceeded`. Rename now keeps the transaction's existing evidence and repeats only target-local collision and no-clobber checks while preserving external-edit detection, rollback, hard-link refusal, namespace cascades, and graph-wide reference rewriting.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-RENAME-RETAINED-SHADOW-LIMIT-364"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Ctrl/Cmd+click on an internal link now opens a background tab everywhere** (GH #283). One standard pointer contract now covers page links, block refs, references, search results, Favorites, Recent, namespace crumbs and query group headers alike: plain click navigates, Shift+click opens the right sidebar, Ctrl(Win/Linux)/Cmd(macOS)+click opens a background tab — as does middle-click — and right-click keeps the explicit destination menu. (Behavior change note: Ctrl+click on a rendered `[[page]]` or `((block))` link previously opened the other pane; pane opening remains available through context menus and the window/pane gestures.)",
+      "userVisible": true,
+      "regressions": [
+        "UI-MODIFIED-CLICK-CONTRACT-283"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Block embeds now track their source block's collapse state live** (GH #360). Folding or unfolding a source block updates every visible embedding of it immediately — no page leave/re-open needed. Folding a block inside one embed remains yours alone: it never touches the source block or another embed of it, is never written to `collapsed::`/disk, and resets when that embed remounts or the app reloads; the next collapse change on the source reclaims authority everywhere.",
+      "userVisible": true,
+      "regressions": [
+        "UI-EMBED-COLLAPSE-CONTRACT-360"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Queries with `<% current page %>` rerun when you navigate** (GH #301). A query that explicitly carries the `<% current page %>` dyvar now binds it to the page in the focused pane — so a sidebar (or any open) query like \"everything on #current page tagged #pin\" updates as you move between pages. The authored query text is untouched, queries without the dyvar don't rerun on navigation, and a delayed result from the previous page can never leak into the new page's view. (`:query-page` remains bound to the block owning the query; the EDN `:inputs [:current-page]` advanced form is still outside the engine's entity binding and is documented in the issue thread.)",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-CURRENT-PAGE-NAV-301"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Mobile: long-pressing a page link now shows its context menu** (GH #231). Holding a `[[page link]]` (or anywhere on its angle bracket region) for ~½ second opens the same context menu desktop right-click gives, instead of silently selecting the link text. Quick taps still navigate, moving your finger cancels the hold (so scrolling is unaffected), and desktop + mouse behavior is unchanged.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PAGEREF-LONGPRESS-MENU-231"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Typing `(`, `{`, `[`, `\"` or backtick now inserts its counterpart by default** (GH #291). Logseq has always paired these; Tine's pairing existed but was opt-in, so on a default install the two reporters naturally disagreed. It is now on by default — Settings stays available to turn it off (an explicit opt-out is remembered). Brackets doubling (`[[`, `((`, `{{`), selection wrapping, type-through, Backspace-on-empty-pair, IME composition, and the always-on `[[ ]]` page-ref pairing behave exactly as before.",
+      "userVisible": true,
+      "regressions": [
+        "UI-AUTOPAIR-DEFAULT-OG-PARITY-291"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Code blocks no longer jump layout when clicked** (GH #357). Clicking a fenced code block used to swap the mono, unwrapped, padded code card for a proportional 16px-textarea view that soft-wrapped long lines, visibly re-laying out every line. While a block is a code fence (Markdown ` ``` `/`~~~` or Org `#+BEGIN_SRC`/`#+BEGIN_EXAMPLE` — not `calc`, not mixed paragraph+fence content), the editor now presents as the same card: identical font, size, leading and padding, zero soft wrapping, horizontal scroll for long lines instead. The text stays the honest raw source, fences included, and it flips in and out live as you type.",
+      "userVisible": true,
+      "regressions": [
+        "UI-CODEBLOCK-EDIT-LAYOUT-STABILITY-357"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Searching for a page alias opens the real page, not a phantom alias page** (GH #353). When an alias's text was also referenced anywhere (`[[Book]]`), search (Ctrl+K) and the `[[` / `#` autocomplete listed both the owning page and a separate alias-named virtual page — selecting it opened a standalone \"Book\" page instead of the original. The shared page-candidate search now treats an alias like the page name itself, so it can never be its own result; case variants and multiple aliases are covered, ordinary pages that merely overlap an alias still rank normally, and the owning row shows an \"aka Book\" hint so the match is understandable.",
+      "userVisible": true,
+      "regressions": [
+        "UI-ALIAS-OWNER-NAVIGATION-353"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Files and folders linked inside `assets/` open in the system viewer / file manager** (GH #367). A labeled link such as `[image](./assets/quick-capture.png)` or `[path](./assets/)` (Markdown or Org) was handed to the external-URL opener, which rejected the relative path, so nothing opened. Such links now resolve extension-agnostically through the graph's asset opener: a file opens in the OS default app, a directory or the assets root opens in the file manager, and percent-encoded nested paths are decoded first.",
+      "userVisible": true,
+      "regressions": [
+        "UI-ASSET-LINK-OS-OPENER-367"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Enter at an in-block line break no longer leaves an empty first line** (GH #361). Pressing Enter with the caret right after an in-block newline now turns that newline into the block boundary, matching Logseq: the previous block ends with its last text line and the new block starts with the next line's actual text — on desktop and mobile. Shift+Enter's in-block newline, mid-line splits, and Enter at the very start of a block are unchanged.",
+      "userVisible": true,
+      "regressions": [
+        "UI-ENTER-LINE-BOUNDARY-361"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Blocks opened in the right sidebar always show their children** (GH #358). Shift-clicking the bullet of a collapsed block parked it in the sidebar but hid its child content until you first expanded it in the main page. The sidebar now treats the opened block as the root of its own view, exactly like zooming in the main page — children always render, and deeper collapsed blocks stay collapsed as expected.",
+      "userVisible": true,
+      "regressions": [
+        "UI-SIDEBAR-COLLAPSED-ROOT-358"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Page-reference styling updates as soon as a referenced page gains content** (GH #355). A `[[Page]]` link could stay in the \"missing page\" style after its target was created later in the same session, refreshing only on restart. The existence answers now invalidate whenever the graph's page inventory changes, so links restyle immediately — both when a page appears and when one is deleted.",
+      "userVisible": true,
+      "regressions": [
+        "UI-REF-STYLE-INVENTORY-355"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Block reference locations can be collapsed to a compact overview** (GH #344). The expanded view you get from a block's reference-count badge now offers Collapse all / Expand all: collapsed groups show only their source page title and disclosure button, which re-expands the breadcrumb and referenced block while the title itself keeps its normal navigation behavior. The state is local to that view — the page-level Linked References section keeps its own.",
+      "userVisible": true,
+      "regressions": [
+        "UI-BLOCKREFS-COLLAPSE-ALL-344"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Arrow keys now move between bullets inside linked references, block references, query results, and embeds** (GH #341). Previously, pressing Up/Down while editing a block in one of those views moved the caret into the block's owning page outline — an editor that usually isn't visible there — so the cursor simply vanished. Navigation now steps through the blocks exactly as rendered in that view, while structural edits (merges, indent) keep operating on the real page outline.",
+      "userVisible": true,
+      "regressions": [
+        "UI-REF-SURFACE-ARROW-NAV-341"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Linked References: include filter chips now combine with OR** (GH #273). Selecting two pages/tags in the filter panel previously required every backlink to reference both, so the union you meant to keep collapsed to nothing. A backlink now survives when it carries any included facet; exclude chips still subtract cumulatively, and typed search still narrows the result further.",
+      "userVisible": true,
+      "regressions": [
+        "UI-REFFILTER-INCLUDE-OR-273"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Search and Quick Switcher results support modified clicks** (GH #288). Middle-click and Ctrl/Cmd+click open a result in a background tab of the current pane while the switcher stays open, so you can fan several hits out at once; Alt+click opens in the other pane; Shift+click opens pages and blocks in the right sidebar. Ordinary clicks, Enter, and the existing Shift/Alt+Enter shortcuts are unchanged. This is the same action set the Enter-key modifiers already offered, now reachable by mouse.",
+      "userVisible": true,
+      "regressions": [
+        "UI-SWITCHER-MODIFIED-CLICK-288"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**New actions: keyboard pane resizing** (GH #286). Four remappable commands — Grow/Shrink active pane width and Grow/Shrink active pane height — nudge the nearest split of the matching axis by five points per step (the existing 15–85% limits apply). They ship unbound so you can assign your own chords in Settings → Keybindings, and are also available from the command palette.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PANE-RESIZE-KEYBOARD-286"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**New action: Toggle maximize active pane** (GH #285). One pane can temporarily borrow the whole pane area (sidebars untouched) — useful when limited space wraps long lines in a multi-pane split. Toggling again restores the exact split arrangement and sizes; the state never survives into sessions or workspaces. Default shortcut `Ctrl/Cmd+Alt+M`, remappable and available from the command palette.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PANE-MAXIMIZE-285"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Move Tab to pane {left,right,up,down} now creates the pane when none exists** (GH #282). Previously the command did nothing unless a pane already lay in that direction — so from a one-pane window (the most common starting point) it never did anything at all. With several tabs in the source pane, the active tab moves into a new pane on the requested side; with only one tab, the new pane opens as a mirror of the current tab and history and the original stays, since Tine panes are never empty. Moving into an already-existing pane behaves exactly as before.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PANE-MOVE-SPAWNS-MISSING-282"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Android: hiding the keyboard no longer taps the note behind the toolbar** (GH #336). The editor toolbar's hide-keyboard button blurred the editor on touch-down, which closed the keyboard and removed the toolbar mid-gesture, so the tap's release landed on whatever block happened to be underneath. The button now consumes the whole touch gesture.",
+      "userVisible": true,
+      "regressions": [
+        "UI-ANDROID-HIDE-KEYBOARD-TOUCH-336"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Calculator blocks no longer render a phantom empty line** (GH #339). After exiting edit mode, a ```calc block showed one extra blank row below the last expression (the fenced block's trailing newline was rendered as a row). Blank lines between expressions still keep their positions.",
+      "userVisible": true,
+      "regressions": [
+        "UI-CALC-TRAILING-BLANK-339"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**The Settings dialog can be enlarged on desktop** (GH #287). A new maximize/restore button in the Settings header grows the dialog to nearly fill the window with a comfortable margin, preserving the selected page and scroll position; closing Settings always restores the default size. Narrow/mobile screens are unchanged — the sheet already fills the viewport there.",
+      "userVisible": true,
+      "regressions": [
+        "UI-SETTINGS-MAXIMIZE-287"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Tab close buttons always sit at the tab's right edge** (GH #340). With short titles the ✕ no longer drifts to just after the text — it stays pinned rightmost at any tab width — and it is now a real keyboard-focusable button with its own \"Close tab\" tooltip instead of showing the tab's \"Double-click to pin\" hint.",
+      "userVisible": true,
+      "regressions": [
+        "UI-TAB-CLOSE-RIGHTMOST-340"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**No more white frame around the page after clicking empty space and pressing a key** (GH #345). Clicking an empty spot of the main content focused the page scroller, and the next keypress flipped the browser's focus heuristic, painting its default white frame around the whole content area. Only that default frame is suppressed — the pane-select ring and the usual focus cues on buttons and other controls are unchanged.",
+      "userVisible": true,
+      "regressions": [
+        "UI-MAIN-CONTENT-FOCUS-FRAME-345"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This is a behavior correction whose user contract is clear in the changelog and regression test; it needs no separate documentation page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a public website change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed-storage block moves across journal-day boundaries now stay immediate and keep keyboard focus.** The source and destination publish as one durable foreground transaction, so archive/SQLite derivatives no longer dim or stall the interface before the block appears on the adjacent day. The foreground path is graph-size invariant at 100 and 10,000 pages, and rapid queued edits use exact pending-projection indexes instead of repeatedly scanning the journal prefix. Multi-page foreground prefixes now also drain from accepted state instead of letting later queued catalog heads block an earlier projection, and a peer move no longer stalls merely because this device concurrently advanced an unrelated page in its catalog. Page and namespace renames likewise use exact SQLite name/range lookups instead of enumerating every unrelated graph page before the indexed reference rewrite. Accepted saves advance authenticated roots by path-copying only changed documents and the new batch, provider-head publication reads an incremental frontier-tip set, and clean projection attach decodes only current path heads; none of these routine boundaries now clone or replay the graph/session history.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-JOURNAL-REORDER-CROSS-DAY-DERIVATIVE-20260823",
+        "UI-MANAGED-JOURNAL-CROSS-DAY-EDITOR-CONTINUITY-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "The managed-storage contract and canonical Guide describe the opt-in status and workflow.",
+        "refs": [
+          "docs/storage-sync-contract.md",
+          "website/guide/features-managed-sync.html"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "The public Guide carries the same managed-storage warning and workflow.",
+        "refs": [
+          "website/guide/features-managed-sync.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog and existing Guide carry the relevant change.",
+        "refs": []
+      }
+    }
+  ]
+}

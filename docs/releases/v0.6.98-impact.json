@@ -1,0 +1,899 @@
+{
+  "schemaVersion": 2,
+  "version": "0.6.98",
+  "baseTag": "v0.6.97",
+  "items": [
+    {
+      "section": "Changed",
+      "text": "**Managed-storage projection recovery is prepared for cheaper durable publication.** Every projection-only producer now records one durable, description-only turn before graph mutation, while foreground saves replay through the same turn-level executor. Existing projection receipts remain as redundant recovery evidence, startup drains semantic edits before projection turns, and a disposable per-page SQLite digest avoids rendering an unchanged page merely to prove it needs no terminal repair. Durability-barrier budgets remain 25 for a save and 74 for a cross-page move.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "performance-only; the user workflow and controls are unchanged",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The managed-storage contract documents the affected durability, recovery and performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**The shared parser is updated to lsdoc v0.5.6.** Raw HTML recognition now indexes every supported tag in one source pass, static HTML export renders safe Hiccup vectors as markup, and deeply nested projections serialize iteratively instead of consuming the native stack. Native and browser-WASM consumers use the same released parser and serialization contract.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "update",
+        "reason": "The Feature showcase now documents and exercises safe Hiccup rendering.",
+        "refs": [
+          "crates/tine-core/src/templates/showcase.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The released lsdoc receipt and Tine's pinned native/WASM boundary document the parser update.",
+        "refs": [
+          "crates/lsdoc-wasm/src/lib.rs",
+          "src/devtools/lsdoc-diff/vendor/oracle.source.json"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Startup no longer loads the complete Settings implementation before the first page appears.** Settings and its plugin, theme, backup, and diagnostics controls now load only when opened; the small journal-conflict row shared with Concord remains available independently. Native startup is back within the immutable v0.4.7 performance budget.",
+      "userVisible": true,
+      "regressions": [
+        "UI-DESKTOP-STABLE-STARTUP-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "performance-only; the Settings workflow and controls are unchanged",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The release startup contract and immutable baseline already document this performance boundary.",
+        "refs": [
+          "docs/RELEASE-CHECKLIST.md",
+          "docs/UI-REGRESSION-TESTING.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This startup optimization does not change the public website.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Managed storage's private receipt-store format has been bumped** (development only). Projection records now carry an explicit target-kind discriminant, so a private store created by an earlier build is refused with a named notice telling you to re-activate managed storage for that graph. Your Markdown files are untouched by the refusal — the check runs before anything can modify the graph. Managed storage has not shipped, so no released build can have created such a store; this affects development machines only.",
+      "userVisible": false,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "internal-only; no user workflow or control changed",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The managed-storage contract documents the affected durability, recovery and performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Saving a page performs fewer disk-durability round trips** (28 → 25 core-initiated barriers per accepted single-block save; 77 → 74 for a cross-page move). Three barriers defended no failure Tine's threat model covers: a re-flush of a file that was already flushed before publication, a durable queue-state write on an empty cleanup queue, and a flush of a file about to be moved aside whose exact bytes are already recorded. Edits feel the difference most on slow, networked, or synced filesystems.",
+      "userVisible": true,
+      "regressions": [
+        "REG-CORE-MANAGED-SAVE-DURABILITY-BARRIER-CONFETTI"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "performance-only; the user workflow and controls are unchanged",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The managed-storage contract documents the affected durability, recovery and performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Keyboard Shortcuts can now be searched in place** (GH #380). The existing Settings search field filters command names, IDs, and bindings while that section is open, including built-in shortcuts and a clear no-results state.",
+      "userVisible": true,
+      "regressions": [
+        "UI-SHORTCUT-SEARCH-380"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "The shortcut Guide now explains how to search the remappable command list.",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Long pages no longer grow and shrink when a block enters or leaves edit mode** (GH #390). Pane-relative end-of-page breathing room is now derived from whether the page content naturally overflows, rather than from the transient presence of a textarea, so its scroll geometry stays stable.",
+      "userVisible": true,
+      "regressions": [
+        "UI-LONG-PAGE-EDIT-HEIGHT-STABILITY-390"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already intended behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A held mouse click now shows the block caret on mouse-down, matching Logseq** (GH #368). Exact rendered-text caret placement still applies, and a drag can still select text in the editor or escalate across blocks.",
+      "userVisible": true,
+      "regressions": [
+        "UI-BLOCK-MOUSEDOWN-EDIT-368"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already intended behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Android and system-decorated windows keep frequent top-bar actions directly visible whenever they fit** (GH #205). The overflow threshold now accounts for whether Tine's three custom window controls actually occupy the row, so a 390px phone no longer hides calendar, journals, theme, and right sidebar in the `...` menu while leaving usable space.",
+      "userVisible": true,
+      "regressions": [
+        "UI-TOPBAR-RESPONSIVE-WORKSPACE-205"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The mobile and responsive-layout Guide already documents direct actions and width-dependent sidebars.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md",
+          "crates/tine-core/src/templates/where-things-are.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Copying the in-app Guide no longer stops after its first page** (GH #391). Guide pages now carry the same completed-write receipt as ordinary Direct Files edits, so Tine's native watcher recognizes its own multi-page copy instead of treating page one as an external change that blocks page two.",
+      "userVisible": true,
+      "regressions": [
+        "REG-GUIDE-COPY-DIRECT-WATCHER-391"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The bundled Guide already documents copying the read-only Guide into the active graph.",
+        "refs": [
+          "crates/tine-core/src/templates/guide.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Creating pages on Windows no longer lets a filesystem callback interrupt the very Tine write that caused it** (GH #374). The earlier v0.6.97 repair proved exact file-event echoes, but an ambiguous Windows callback could still raise the graph-wide external-change frontier before waiting for the active writer. Callback admission now serializes behind graph-text publication; genuine ambiguous or external changes still go through the normal debounced reconciliation before later creations are admitted.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-WINDOWS-EXACT-WATCHER-CREATION-366"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already intended behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Rapid scrolling and zooming no longer make PDF pages compete for the UI thread or flash blank while sharpening.** The reader now has one viewport-prioritized full-page render scheduler, drops obsolete prefetch work, pauses speculative rendering during fast wheel bursts, and defers selectable text-layer construction until scrolling settles. A page's previous bitmap remains visible until its sharper zoom replacement is complete. The longer-term tile-aware viewer architecture is tracked in GH #393.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-BOUNDED-RENDER-SCHEDULER-20260827"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The PDF Guide already documents scrolling, zooming and the reader workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/pdf.md",
+          "crates/tine-core/src/templates/research-document.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Long PDFs no longer skip pages or overload the viewer during ordinary scrolling.** Evicting an offscreen page's canvas could collapse its flex wrapper, shrinking the document while it was being scrolled and making many distant pages appear visible and render at once. Page placeholders now keep stable geometry, so scrolling stays sequential and rendering remains local to the viewport.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-LONG-SCROLL-GEOMETRY-20260827"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The PDF Guide already documents the long-document reader workflow.",
+        "refs": [
+          "crates/tine-core/src/templates/pdf.md",
+          "crates/tine-core/src/templates/research-document.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**F-Droid can rebuild Tine's browser parser from source again** (GH #392). The logbook code shared with the small WASM wrapper had started reaching into a tine-core-only module, while Tine's own release path kept using the already generated WASM bundle. The property recognizer is now one dependency-free source module shared by both crates. Pull requests and full release CI now rebuild the WASM bundle from clean source. A daily monitor also files or updates an Inbox issue when F-Droid's public auto-update pipeline reports a new failure.",
+      "userVisible": true,
+      "regressions": [],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already intended behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The CI documentation and release gates describe the clean WASM source-build boundary.",
+        "refs": [
+          "docs/CI.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Unlinked References now opens when a matching source page contains 10,000 or more blocks** (GH #388). Managed storage was applying the whole-page editor payload limit before constructing the already-bounded reference result. Large source pages now take one linear authenticated read while the panel keeps its existing row and byte limits.",
+      "userVisible": true,
+      "regressions": [
+        "UI-MANAGED-LARGE-UNLINKED-SOURCE-388"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The references Guide already documents opening bounded Unlinked References results.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md",
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**PDFs no longer flash and disappear when two render triggers reach the same page together** (GH #275). Visibility and navigation could both begin before the first PDF page lookup finished, causing PDF.js to reject two simultaneous renders into one canvas. Each page now has one render owner from before its first asynchronous lookup through completion, zoom, eviction, or teardown.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-SINGLE-CANVAS-RENDER-275"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The PDF Guide already documents page navigation and zoom rendering.",
+        "refs": [
+          "crates/tine-core/src/templates/pdf.md",
+          "crates/tine-core/src/templates/research-document.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**The block you are typing in stays above the Android keyboard toolbar** (GH #384). Tine now accounts for its own toolbar when focus moves, the block grows, or the keyboard viewport changes, instead of letting the active text remain hidden behind the fixed controls.",
+      "userVisible": true,
+      "regressions": [
+        "UI-ANDROID-EDITOR-ABOVE-TOOLBAR-384"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The mobile Guide already documents Android editing and keyboard behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Pressing Back beyond the first Android page now closes Tine instead of leaving a gray, unusable screen** (GH #386). Storage was already stopped safely, but the final handoff called a Tauri command that does not exist. Android now uses the installed process-exit API after the same guarded save and shutdown checks.",
+      "userVisible": true,
+      "regressions": [
+        "UI-ANDROID-ROOT-CLOSE-386"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The mobile Guide already documents Android Back through the navigation ladder and app exit.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Enter at either side of an in-block line break now creates a clean new block** (GH #361). The first fix handled the caret at the start of line two, but pressing Enter at the end of line one still copied the newline into the new block as an empty first line. Both caret positions now consume the same structural boundary on desktop and mobile while preserving intentional blank lines.",
+      "userVisible": true,
+      "regressions": [
+        "UI-ENTER-LINE-BOUNDARY-361"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already intended behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Android page links now open their page menu consistently on long-press** (GH #207). Body wiki links, links and page headers in Linked References, and page results in search now distinguish Tine's deliberate hold from the browser's native text-selection gesture. Quick taps, scrolling, and desktop click gestures are unchanged.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PAGE-LINK-LONG-PRESS-207"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The mobile and link Guides already document long-press and page-link behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md",
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**The keyboard-shortcut recorder now captures Control on macOS** (GH #378). Physical Control is recorded as `ctrl`, while portable `mod` remains Command on macOS and Control on Windows/Linux.",
+      "userVisible": true,
+      "regressions": [
+        "UI-SHORTCUT-RECORD-CTRL-378"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "This fix restores the already intended behavior and adds no user workflow or control.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Pages no longer become narrow or jump sideways when you start editing or expand references** (GH #382). The pane-relative end-of-page space added in v0.6.96 accidentally let the centered page column shrink to the width of its current contents. Standard pages now hold a stable reading width, and Wide mode fills the pane as intended. Settings → Appearance → Advanced also lets you tune the standard width or give Wide mode a custom maximum on this device.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PAGE-WIDTH-CONTENT-INDEPENDENT-382"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The Guide already documents stable standard width and configurable Wide mode.",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The changelog and regression evidence fully describe this patch behavior; no separate contract update is needed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Saving a page in a subfolder no longer costs extra waits for the disk.** Every time Tine wrote or renamed a file in your graph, it asked the operating system to confirm not just the folder it had actually changed, but every folder above it up to the graph root. A page in `pages/Work/Notes.md` therefore waited three times where a page in `pages/Notes.md` waited once, on roughly six file operations per save. Only the folder that actually changed is confirmed now; a folder Tine has just created is still confirmed at the moment it is created, so a crash cannot lose the path your page was written into. On Managed Storage an ordinary edit now waits on 28 disk flushes instead of 37, and a cross-page move on 77 instead of 93 -- measured both on a test fixture and on a 1,045-file copy of a real graph.",
+      "userVisible": true,
+      "regressions": [
+        "REG-CORE-MANAGED-SAVE-DURABILITY-BARRIER-CONFETTI"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "performance-only; the user workflow and controls are unchanged",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The managed-storage contract documents the affected durability, recovery and performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed Storage saves wait on fewer disk flushes.** Each accepted edit used to write four small bookkeeping files whose only job was to notice if something had swapped out a folder inside Tine's own private data directory -- which nothing but a program already running as you could do, and which Tine does not defend against by design. Each of those files cost two waits for the disk to confirm, on every page an edit touches. They are gone, and Tine now simply recreates the folder if it is missing instead of refusing to save the page forever. An ordinary edit now waits on 37 disk flushes instead of 45, and a cross-page move on 93 instead of 109. On a slow or network-backed disk that wait is the bulk of the delay between finishing a keystroke and the file being safely on disk.",
+      "userVisible": true,
+      "regressions": [
+        "REG-CORE-MANAGED-SAVE-DURABILITY-BARRIER-CONFETTI"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "performance-only; the user workflow and controls are unchanged",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The managed-storage contract documents the affected durability, recovery and performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Opening and scrolling the Journals feed no longer walks the whole graph on Managed Storage.** The feed was assembled by enumerating every page in the graph and then loading the handful of days it actually shows -- on every open, and again for each three-day step as you scroll back. The runtime now keeps the graph's journal days indexed and rebuilds that index only when something is actually accepted, so a feed page costs a lookup plus its own page loads. Going back to Journals with nothing changed in between does no graph-sized work at all, and the whole request is now answered in one runtime turn instead of one per page.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-JOURNAL-FEED-OPEN-GRAPH-SIZED"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "performance-only; the user workflow and controls are unchanged",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The managed-storage contract documents the affected durability, recovery and performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed Storage saves stop paying a disk round trip per internal file.** Every accepted edit fanned its history out into several separately-flushed private files, and each flush is a real device round trip: one single-block save performed 55 of them and a cross-page move 130. On a local SSD that is tens of milliseconds; on a slow, network, or phone filesystem it is what makes an edit feel heavy. An accepted edit's history is now written and made durable as ONE unit -- 45 and 109 -- and three flushes that ran before *reading* a file, which could not affect what was read, are gone. Crash safety is unchanged and is now stated and tested: a save interrupted by a crash or power loss is either fully recorded or not recorded at all, never half-written, and the graph still reopens and completes the same edit.",
+      "userVisible": true,
+      "regressions": [
+        "REG-CORE-MANAGED-SAVE-DURABILITY-BARRIER-CONFETTI"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "performance-only; the user workflow and controls are unchanged",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The managed-storage contract documents the affected durability, recovery and performance boundary.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Built-in themes now recolor the main page in dark mode** (GH #401). The no-flash startup frame now yields its high-specificity viewport colors to the active theme tokens after startup, so Nord, Solarized, and Gruvbox apply consistently to the page and sidebar while `custom.css` remains the final user override.",
+      "userVisible": true,
+      "regressions": [
+        "UI-THEME-BUILTIN-VIEWPORT-401"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The Guide already describes built-in themes applying to the whole window with custom.css as the final override; this restores the behaviour it documents rather than changing it.",
+        "refs": [
+          "crates/tine-core/src/templates/extend-tine.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No engineering contract governs the startup frame's CSS specificity; the invariant is held by the regression row instead.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**An exact `#` or `[[` page match no longer hides other matching pages** (GH #186). The exact page remains the first/default result and suppresses the redundant Create row, while prefix, substring, and fuzzy matches remain available in the existing bounded literal autocomplete pool.",
+      "userVisible": true,
+      "regressions": [
+        "UI-AUTOCOMPLETE-EXACT-RETAINS-MATCHES-186"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The Guide's linking and search page already describes the autocomplete offering matching pages with the exact match first; the fix restores that described behaviour.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Autocomplete ranking has no engineering contract doc; the user outcome is pinned by the regression row.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A journal-feed read failure is no longer misreported as an empty graph** (GH #385). The initial Journals view now shows the actual bounded backend error, while a transient refresh failure still keeps an already visible feed intact and retries later. This makes cloud-filesystem and access failures diagnosable without mistaking present journal files for no journals.",
+      "userVisible": true,
+      "regressions": [
+        "REG-JOURNAL-FEED-READ-ERROR-385"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "No Guide page described the misreported empty state, and the replacement is a self-describing in-app error message; there is nothing the Guide now states incorrectly.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "The change is a frontend error-surface distinction, not a storage layout, state machine or public-surface change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Unlinked References no longer falls back to a whole-graph scan while an ordinary edit's one-page SQLite update is already in flight** (GH #400). Reference reads wait for that bounded background delta, then use the exact current candidate set; an unavailable or failed disposable projection still falls back to the parser. Exact Direct Files byte conflicts remain unchanged and continue to preserve both the disk version and the unsaved draft.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-REFERENCE-DELTA-HANDOFF-400"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The Guide already describes Unlinked References and its results; the workflow and controls are unchanged and only the read's freshness and cost improve.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The storage/sync contract already states that the SQLite projection is a disposable cache with a parser fallback, which is the boundary this handoff respects.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "This patch item does not require a separate public marketing-site change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; the changelog carries the relevant release detail.",
+        "refs": []
+      }
+    }
+  ]
+}

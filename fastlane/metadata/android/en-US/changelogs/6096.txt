@@ -1,0 +1,1 @@
+Improves conflict review with safe merged suggestions, clearer previews, a pinned mobile-friendly panel, and recoverable pre-resolution files. Fixes split-pane scrollbars, advanced current-page queries, graph-owned Home settings, PDF merge-marker safety, long-line conflict performance, and managed-storage startup diagnostics.

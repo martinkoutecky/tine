@@ -1,0 +1,5 @@
+Experimental opt-in managed sync can keep Markdown/Org as a projection while
+synchronizing operations over existing Syncthing or Dropbox folders.
+
+Also fixes graph-wide file discovery, safe reversible page filenames, missing
+remembered-graph startup, and journal templates across midnight.
