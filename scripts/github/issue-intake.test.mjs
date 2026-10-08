@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classificationLabel, labelOpenedIssue, reopenFollowup, shouldReopen } from "./issue-intake.mjs";
+import { classificationLabel, flagFollowup, labelOpenedIssue, needsTriage } from "./issue-intake.mjs";
 import { readFileSync } from "node:fs";
 
 const reporter = { id: 123, login: "reporter", type: "User" };
@@ -18,42 +18,41 @@ function fixture(closeSeconds = 0, commentSeconds = 0, actor = reporter) {
   ] };
 }
 
-test("same actor can reopen after 30 seconds, including much later", () => {
-  for (const seconds of [30, 31, 3600]) {
+test("the person who closed it is never flagged, however much later they comment", () => {
+  for (const seconds of [0, 30, 31, 3600, 86400 * 30]) {
     const { event, issue, timeline } = fixture(0, seconds);
-    assert.equal(shouldReopen(event, issue, timeline), seconds > 30);
+    event.comment.body = "Works now, thanks!";
+    assert.equal(needsTriage(event, issue, timeline), false);
   }
-  const { event, issue, timeline } = fixture(30, 0);
-  assert.equal(shouldReopen(event, issue, timeline), false);
 });
 
-test("another actor's close permits an immediate or later follow-up", () => {
+test("another actor's close flags an immediate or later follow-up", () => {
   for (const seconds of [0, 2, 3600]) {
     const { event, issue, timeline } = fixture(0, seconds, maintainer);
-    assert.equal(shouldReopen(event, issue, timeline), true);
+    assert.equal(needsTriage(event, issue, timeline), true);
   }
 });
 
-test("delayed comments from before the latest close cannot undo it", () => {
+test("delayed comments from before the latest close are not flagged", () => {
   const { event, issue, timeline } = fixture(100, 0, maintainer);
-  assert.equal(shouldReopen(event, issue, timeline), false);
+  assert.equal(needsTriage(event, issue, timeline), false);
 });
 
 test("uses the latest lifecycle event across the full timeline", () => {
   const { event, issue, timeline } = fixture(0, 3600, maintainer);
   const newer = { event: "closed", id: 1001, actor: reporter, created_at: at(3600) };
   const reopen = { event: "reopened", id: 1000, actor: maintainer, created_at: at(1) };
-  assert.equal(shouldReopen(event, issue, [newer, ...timeline, reopen]), false);
-  assert.equal(shouldReopen(event, issue, [...timeline, reopen]), false);
+  assert.equal(needsTriage(event, issue, [newer, ...timeline, reopen]), false);
+  assert.equal(needsTriage(event, issue, [...timeline, reopen]), false);
   // Equal-second lifecycle transitions are ordered by event ID.
-  assert.equal(shouldReopen(event, issue, [...timeline, { ...reopen, created_at: at(0) }]), false);
+  assert.equal(needsTriage(event, issue, [...timeline, { ...reopen, created_at: at(0) }]), false);
 });
 
 test("keeps bots, collaborators, PRs, non-created events and open issues quiet", () => {
   for (const association of ["OWNER", "MEMBER", "COLLABORATOR"]) {
     const { event, issue, timeline } = fixture(0, 100, maintainer);
     event.comment.author_association = association;
-    assert.equal(shouldReopen(event, issue, timeline), false);
+    assert.equal(needsTriage(event, issue, timeline), false);
   }
   for (const change of [
     (f) => { f.event.comment.user = { ...reporter, type: "Bot" }; },
@@ -63,20 +62,20 @@ test("keeps bots, collaborators, PRs, non-created events and open issues quiet",
   ]) {
     const f = fixture(0, 100, maintainer);
     change(f);
-    assert.equal(shouldReopen(f.event, f.issue, f.timeline), false);
+    assert.equal(needsTriage(f.event, f.issue, f.timeline), false);
   }
 });
 
-test("missing or malformed close evidence causes no reopen", () => {
+test("missing or malformed close evidence flags nothing", () => {
   const { event, issue, timeline } = fixture(0, 100, maintainer);
-  assert.equal(shouldReopen(event, issue, []), false);
-  assert.equal(shouldReopen(event, issue, [{ ...timeline[0], actor: null }]), false);
-  assert.equal(shouldReopen(event, issue, [{ ...timeline[0], created_at: "invalid" }]), false);
+  assert.equal(needsTriage(event, issue, []), false);
+  assert.equal(needsTriage(event, issue, [{ ...timeline[0], actor: null }]), false);
+  assert.equal(needsTriage(event, issue, [{ ...timeline[0], created_at: "invalid" }]), false);
   event.comment.created_at = "invalid";
-  assert.equal(shouldReopen(event, issue, timeline), false);
+  assert.equal(needsTriage(event, issue, timeline), false);
 });
 
-function client(f, { failUpdate = false } = {}) {
+function client(f, {} = {}) {
   const writes = [];
   const reads = [];
   const github = {
@@ -89,7 +88,6 @@ function client(f, { failUpdate = false } = {}) {
           f.issue.labels.push({ name });
       },
       update: async ({ state }) => {
-        if (failUpdate) { failUpdate = false; throw new Error("temporary API failure"); }
         writes.push({ state }); f.issue.state = state;
       },
     } },
@@ -106,46 +104,36 @@ test("fresh issue state handles an open webhook snapshot followed by a close", a
   const f = fixture(2, 0);
   f.event.issue = { ...f.issue, state: "open" };
   const api = client(f);
-  await reopenFollowup(api);
+  await flagFollowup(api);
   assert.equal(api.reads.length, 1);
   assert.deepEqual(api.writes, []);
   assert.equal(f.issue.state, "closed");
 });
 
-test("repeated eligible delivery reopens and labels only once, preserving labels", async () => {
+test("eligible delivery labels once, preserves labels and never reopens", async () => {
   const f = fixture(0, 100, maintainer);
   f.issue.labels = [{ name: "bug" }];
   const api = client(f);
-  await reopenFollowup(api);
-  await reopenFollowup(api);
-  assert.deepEqual(api.writes, [{ labels: ["needs-triage"] }, { state: "open" }]);
+  await flagFollowup(api);
+  await flagFollowup(api);
+  assert.deepEqual(api.writes, [{ labels: ["needs-triage"] }]);
   assert.deepEqual(f.issue.labels, [{ name: "bug" }, { name: "needs-triage" }]);
-  f.issue.state = "closed";
-  f.timeline.push({ event: "closed", id: 1002, actor: maintainer, created_at: at(200) });
-  await reopenFollowup(api);
-  assert.equal(api.writes.length, 2);
+  assert.equal(f.issue.state, "closed");
 });
 
-test("retry completes a failed reopen without adding the triage label twice", async () => {
-  const api = client(fixture(0, 100, maintainer), { failUpdate: true });
-  await assert.rejects(reopenFollowup(api), /temporary API failure/);
-  await reopenFollowup(api);
-  assert.deepEqual(api.writes, [{ labels: ["needs-triage"] }, { state: "open" }]);
-});
-
-test("latest close on a later timeline page governs reopening", async () => {
+test("latest close on a later timeline page governs flagging", async () => {
   const f = fixture(0, 1000, maintainer);
   f.timeline.push(...Array.from({ length: 100 }, (_, id) => ({ event: "labeled", id })));
   f.timeline.push({ event: "closed", id: 2000, actor: reporter, created_at: at(1000) });
   const api = client(f);
-  await reopenFollowup(api);
+  await flagFollowup(api);
   assert.deepEqual(api.writes, []);
 });
 
 test("repeated self-close delivery performs no writes", async () => {
   const api = client(fixture(0, 2));
-  await reopenFollowup(api);
-  await reopenFollowup(api);
+  await flagFollowup(api);
+  await flagFollowup(api);
   assert.deepEqual(api.writes, []);
 });
 
@@ -219,6 +207,6 @@ for (const [name, closeSeconds, commentSeconds] of [
 ]) {
   test(`#436 close-with-comment stays closed: ${name}`, () => {
     const { event, issue, timeline } = fixture(closeSeconds, commentSeconds);
-    assert.equal(shouldReopen(event, issue, timeline), false);
+    assert.equal(needsTriage(event, issue, timeline), false);
   });
 }
