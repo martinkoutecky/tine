@@ -96,6 +96,9 @@ export interface GraphSources {
 
 export type GraphFolderPickResult =
   | { status: "picked"; path: string }
+  // Android could not resolve the selected provider folder to local files.
+  // A status survives the Rust bridge, which stringifies plugin rejections.
+  | { status: "local-folder-required"; path?: undefined }
   | { status: "permission-requested" | "permission-needed" | "cancelled" | "refused"; path?: string };
 
 export type PreparedGraphFolder =

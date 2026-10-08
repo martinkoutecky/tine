@@ -627,6 +627,18 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn android_guide_requires_a_local_graph_folder() {
+        let mobile = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "device's own storage",
+            "Cloud document providers",
+            "sync-to-local-folder",
+        ] {
+            assert!(mobile.contains(outcome), "missing Android Guide outcome: {outcome}");
+        }
+    }
+
+    #[test]
     fn ios_guide_says_where_graphs_live_and_that_plugins_stay_off() {
         // The iOS picker opens only the app's own On My iPhone / iCloud Drive
         // folders (src/graph.ts switchGraph) and Settings hides Plugins on iOS.

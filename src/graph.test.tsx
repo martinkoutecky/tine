@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GraphFolderPickResult, PreparedGraphFolder } from "./backend";
+import type { GraphFolderPickResult, PreparedGraphFolder, LoadGraphResult } from "./backend";
 import type { GraphMeta, PageDto, PageRead } from "./types";
 
 const META: GraphMeta = {
@@ -41,7 +41,7 @@ async function loadHarness(
     inspectGraphAccess: vi.fn(async () => access),
     approveExternalAssets: vi.fn(async () => {}),
     confirm: vi.fn(async () => confirm),
-    loadGraph: vi.fn(async () => ({ kind: "loaded" as const, meta: META, binding_generation: 1 })),
+    loadGraph: vi.fn(async (): Promise<LoadGraphResult> => ({ kind: "loaded", meta: META, binding_generation: 1 })),
     pickFolder: vi.fn(async () => "/tmp"),
     pickGraphFolder: vi.fn(async (): Promise<GraphFolderPickResult> => mobile.pickerResult ?? { status: "cancelled" }),
     prepareGraphFolder: vi.fn(async (_path: string): Promise<PreparedGraphFolder> => ({ status: "ready", location: "local" })),
@@ -245,6 +245,123 @@ describe("mobile graph folder picker", () => {
 
     await expect(harness.switchGraph()).resolves.toEqual({ kind: "loaded", root: META.root });
     expect(harness.api.prepareGraphFolder).not.toHaveBeenCalled();
+  });
+});
+
+describe("GH #621 graph creation messages", () => {
+  it("reports a newly loaded graph and opens its tour", async () => {
+    const h = await loadHarness(null);
+    await expect(h.createNewGraph()).resolves.toEqual({ kind: "loaded", root: META.root });
+    const { toasts } = await import("./toasts");
+    expect(toasts().at(-1)).toMatchObject({ kind: "success", message: `Created and opened the graph at ${META.root}.` });
+    expect(h.openPage).toHaveBeenCalledWith("Welcome to Tine", "page");
+  });
+
+  it("reports the actual loaded folder when the backend canonicalizes the created path", async () => {
+    const h = await loadHarness(null);
+    h.api.createGraph.mockResolvedValue("/tmp/link-to-graph");
+    await expect(h.createNewGraph()).resolves.toEqual({ kind: "loaded", root: META.root });
+    const { toasts } = await import("./toasts");
+    expect(toasts().at(-1)).toMatchObject({ kind: "success", message: `Created and opened the graph at ${META.root}.` });
+    expect(h.api.savePages).not.toHaveBeenCalled();
+    expect(h.openPage).not.toHaveBeenCalled();
+  });
+
+  it("recognizes an already-current graph as open", async () => {
+    const h = await loadHarness(null);
+    await h.loadGraphPath(META.root);
+    h.api.loadGraph.mockResolvedValue({ kind: "already_current", meta: META, binding_generation: 1 });
+    await expect(h.createNewGraph()).resolves.toEqual({ kind: "already_current", root: META.root });
+    const { toasts } = await import("./toasts");
+    expect(toasts().at(-1)).toMatchObject({ kind: "success", message: `Created the graph at ${META.root}. It is already open.` });
+  });
+
+  it("reports a graph focused in another window", async () => {
+    const h = await loadHarness(null);
+    h.api.loadGraph.mockResolvedValue({ kind: "focused_existing", window_label: "graph-window" });
+    await expect(h.createNewGraph()).resolves.toEqual({ kind: "focused_existing" });
+    const { toasts } = await import("./toasts");
+    expect(toasts().at(-1)?.message).toContain("focused its existing window");
+  });
+
+  it("names a created folder after load failure and retries that folder without creating again", async () => {
+    const h = await loadHarness(null);
+    h.api.loadGraph.mockRejectedValueOnce(new Error("Disk read failed"));
+    await expect(h.createNewGraph()).resolves.toEqual({ kind: "aborted" });
+    const { toasts } = await import("./toasts");
+    const toast = toasts().at(-1)!;
+    expect(toast).toMatchObject({ kind: "error", sticky: true });
+    expect(toast.message).toContain(`Created the graph at ${META.root}`);
+    expect(toast.message).toContain("couldn't open it");
+    expect(toast.message).toContain("Disk read failed");
+    expect(toast.action?.label).toBe("Open graph");
+    toast.action!.run();
+    await vi.waitFor(() => expect(h.api.loadGraph).toHaveBeenCalledTimes(2));
+    expect(h.api.loadGraph).toHaveBeenLastCalledWith(META.root);
+    expect(h.api.createGraph).toHaveBeenCalledOnce();
+    expect(h.api.pickFolder).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an Open action when opening was aborted after creation", async () => {
+    const h = await loadHarness(null, { graph_root: META.root, external_assets_path: "/tmp/assets", approved: false }, false);
+    await expect(h.createNewGraph()).resolves.toEqual({ kind: "aborted" });
+    const { toasts } = await import("./toasts");
+    expect(toasts().at(-1)).toMatchObject({ kind: "info", sticky: true, action: { label: "Open graph" } });
+    expect(toasts().at(-1)?.message).toContain(`Created the graph at ${META.root}, but it wasn't opened`);
+    expect(h.api.loadGraph).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes creation failure and keeps the current graph", async () => {
+    const h = await loadHarness(null);
+    await h.loadGraphPath(META.root);
+    h.api.loadGraph.mockClear();
+    h.api.createGraph.mockRejectedValue(new Error("Disk full"));
+    await expect(h.createNewGraph()).resolves.toEqual({ kind: "aborted" });
+    const { toasts } = await import("./toasts");
+    expect(toasts().at(-1)?.message).toContain("Couldn't create the graph. The current graph is still open.");
+    expect(h.api.loadGraph).not.toHaveBeenCalled();
+    const { graphMeta } = await import("./graphSession");
+    expect(graphMeta()?.root).toBe(META.root);
+  });
+});
+
+describe("GH #630 Android picker outcomes", () => {
+  it("explains the local-folder requirement for an unresolved provider", async () => {
+    const h = await loadHarness(null, undefined, true, false, undefined, undefined, { platform: "android" });
+    // Native transport passes status through the existing Rust DTO unchanged.
+    h.api.pickGraphFolder.mockResolvedValue({ status: "local-folder-required" });
+    await expect(h.switchGraph()).resolves.toEqual({ kind: "aborted" });
+    const { toasts } = await import("./toasts");
+    const toast = toasts().at(-1)!;
+    expect(toast).toMatchObject({ kind: "error", sticky: true });
+    expect(toast.message).toContain("device's own storage");
+    expect(toast.message).toContain("sync-to-local-folder");
+    expect(toast.message).toContain("pick that local folder");
+    expect(toast.message).not.toContain("content://");
+    expect(h.api.loadGraph).not.toHaveBeenCalled();
+  });
+
+  it("keeps cancellation silent", async () => {
+    const h = await loadHarness(null, undefined, true, false, undefined, undefined, { platform: "android" });
+    await h.switchGraph();
+    const { toasts } = await import("./toasts");
+    expect(toasts()).toEqual([]);
+  });
+
+  it.each(["permission-needed", "permission-requested"] as const)("keeps %s guidance distinct", async (status) => {
+    const h = await loadHarness(null, undefined, true, false, undefined, undefined,
+      { platform: "android", pickerResult: { status } });
+    await h.switchGraph();
+    const { toasts } = await import("./toasts");
+    expect(toasts().at(-1)).toMatchObject({ kind: "info", message: 'Grant "All files access" for Tine, then tap Open again.' });
+  });
+
+  it.each(["Permission denied", "Local I/O error"])("keeps ordinary errors distinct: %s", async (reason) => {
+    const h = await loadHarness(null, undefined, true, false, undefined, undefined, { platform: "android" });
+    h.api.pickGraphFolder.mockRejectedValue(new Error(reason));
+    await h.switchGraph();
+    const { toasts } = await import("./toasts");
+    expect(toasts().at(-1)?.message).toBe(`Couldn't open the Android folder picker. (Error: ${reason})`);
   });
 });
 

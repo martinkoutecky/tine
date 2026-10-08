@@ -16,6 +16,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- New graph messages describe whether the graph opened, was already open, or was created but could not be opened; the last case names the folder and offers Open graph to try again (GH #621).
+- Android: choosing a cloud provider folder now explains that Tine needs a folder on the device's own storage and suggests syncing to a local folder, then opening it (GH #630).
 - A block opened in the right sidebar now shows its source page name in the header (GH #640).
 
 ## [0.7.0-beta.3] - 2026-10-08
