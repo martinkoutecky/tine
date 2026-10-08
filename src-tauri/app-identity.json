@@ -1,5 +1,5 @@
 {
-  "ship": "release",
+  "ship": "experiment",
   "identities": {
     "release": {
       "identifier": "page.tine.Tine",
