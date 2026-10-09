@@ -166,6 +166,8 @@ fn review_f7_missing_backend_refusal_guards_are_called_directly() {
         version: 1,
         base: Base::Known(None),
         bytes: text("recover"),
+        trash: None,
+        pending_trash: vec![],
     };
     h.fs.draft_temp("p-unknown.draft", &drafts::encode(&[record]))
         .unwrap();
@@ -205,6 +207,8 @@ fn draft_envelopes_reject_each_invalid_header_record_and_vehicle_name() {
         version: 1,
         base: Base::Known(text("A")),
         bytes: text("A"),
+        trash: None,
+        pending_trash: vec![],
     };
     let encoded = drafts::encode(std::slice::from_ref(&record));
     assert_eq!(drafts::decode(&encoded).unwrap(), vec![record.clone()]);
@@ -267,6 +271,8 @@ fn retirement_selects_only_older_single_page_vehicles_in_order() {
             version: seq,
             base: Base::Unknown,
             bytes: text("A"),
+            trash: None,
+            pending_trash: vec![],
         };
         files.push((format!("p-{seq}.draft"), drafts::encode(&[record])));
     }
@@ -298,6 +304,8 @@ fn draft_phase_failures_preserve_whether_the_file_step_completed() {
                 version: 1,
                 base: Base::Unknown,
                 bytes: text("A"),
+                trash: None,
+                pending_trash: vec![],
             };
             let mut v = Vehicle::write("p-a.draft".into(), &[record]);
             if initial != Stage::Temp {
@@ -771,6 +779,8 @@ fn trash_collision_retries_with_a_fresh_name_without_removal() {
     assert_ne!(h.job.as_ref().unwrap().trash_name, name);
     assert_eq!(h.fs.files["graph/a.md"].as_ref(), b"A");
     assert!(!h.events.iter().any(|e| matches!(e, Event::Removed { .. })));
+    assert_eq!(h.advance_save(0), Disposition::Waiting);
+    drain(&mut h);
     for _ in 0..8 {
         if h.job.is_none() {
             break;

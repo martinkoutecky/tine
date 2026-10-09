@@ -2,6 +2,29 @@ use std::fs;
 use std::path::Path;
 
 #[test]
+fn host_publication_witnesses_cover_exactly_the_five_shipped_targets() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for file in ["src/atomic_file.rs", "src/directory_durability.rs"] {
+        let source = fs::read_to_string(root.join(file)).unwrap();
+        let mut targets = std::collections::BTreeSet::new();
+        for tail in source.split("target_os = \"").skip(1) {
+            targets.insert(tail.split('"').next().unwrap());
+        }
+        assert_eq!(
+            targets,
+            ["linux", "android", "macos", "ios", "windows"]
+                .into_iter()
+                .collect(),
+            "{file}"
+        );
+    }
+    let atomic = fs::read_to_string(root.join("src/atomic_file.rs")).unwrap();
+    assert!(atomic.contains("MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH"));
+    let directory = fs::read_to_string(root.join("src/directory_durability.rs")).unwrap();
+    assert!(directory.contains("!private") && directory.contains("DirectoryWitness::Unsupported"));
+}
+
+#[test]
 fn one_no_replace_owner_covers_all_shipped_targets() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let owner = fs::read_to_string(root.join("src/no_replace.rs")).unwrap();

@@ -7,6 +7,10 @@ use std::path::Path;
 
 /// Move an absolute or caller-resolved path atomically if its destination is absent.
 pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if let Some(kind) = MOVE_ERRORS.with(|errors| errors.borrow_mut().pop_front()) {
+        return Err(io::Error::new(kind, "injected no-replace move failure"));
+    }
     #[cfg(any(
         target_os = "linux",
         target_os = "android",
@@ -199,6 +203,8 @@ fn destination_absent_where_the_flag_is_refused(
 
 #[cfg(test)]
 thread_local! {
+    /// Fault the audited move boundary without changing either real path.
+    pub(crate) static MOVE_ERRORS: std::cell::RefCell<std::collections::VecDeque<io::ErrorKind>> = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
     /// Make this thread's no-replace moves fail as flag-refusing storage does
     /// (`EINVAL`, GH #538); `no_replace_tests.rs` drives it through the store.
     pub(crate) static REFUSE_NOREPLACE_FLAG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };

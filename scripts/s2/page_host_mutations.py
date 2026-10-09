@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Byte-identical isolated host/oracle fixture harness for the 2a census."""
+"""Byte-identical isolated host/oracle/production-adapter mutation harness."""
 import argparse
 import hashlib
 import json
@@ -24,12 +24,21 @@ def prepare():
                 shutil.copyfile(source, dest)
                 assert source.read_bytes() == dest.read_bytes()
                 sources.append((str(relative), hashlib.sha256(source.read_bytes()).hexdigest()))
-    (WORK / "src/lib.rs").write_text("mod page_state;\nmod page_host;\n")
+    for filename in ["atomic_file.rs", "directory_durability.rs", "no_replace.rs", "platform_step.rs"]:
+        source = ROOT / "crates/tine-store/src" / filename
+        dest = WORK / "src" / filename
+        shutil.copyfile(source, dest)
+        assert source.read_bytes() == dest.read_bytes()
+        sources.append(("src/" + filename, hashlib.sha256(source.read_bytes()).hexdigest()))
+    (WORK / "src/lib.rs").write_text("mod atomic_file;\nmod directory_durability;\nmod no_replace;\nmod platform_step;\nmod page_state;\nmod page_host;\n")
     (WORK / "Cargo.toml").write_text(f'''[package]
 name = "tine-store"
 version = "0.0.0"
 edition = "2021"
 [workspace]
+[features]
+default = ["test-faults"]
+test-faults = []
 [dependencies]
 serde = {{ version = "=1.0.228", features = ["derive", "rc"] }}
 serde_json = "=1.0.150"
@@ -37,6 +46,11 @@ sha2 = "0.10"
 postcard = {{ version = "1", features = ["use-std"] }}
 uuid = {{ version = "1", features = ["v4"] }}
 tine-core = {{ path = "{ROOT / 'crates/tine-core'}" }}
+tempfile = "3"
+libc = "0.2"
+cap-std = "4.0.2"
+[target.'cfg(windows)'.dependencies]
+windows-sys = {{ version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem"] }}
 [profile.dev]
 debug = 0
 ''')
@@ -66,6 +80,7 @@ def main():
                "--", "--lib", args.test_filter, "--", "--skip", "scheduler_random_walks",
                "--skip", "committed_witnesses_through_host"]
     filters = []
+    command[command.index("--output"):command.index("--output")] = ["--exclude", "**/native_conformance.rs", "--exclude", "**/native_cost.rs"]
     if args.survivors:
         for outcome in json.loads(args.survivors.read_text())["outcomes"]:
             if outcome["summary"] == "MissedMutant":

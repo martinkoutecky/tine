@@ -12,6 +12,8 @@ pub(super) struct Record {
     pub version: u64,
     pub base: Base,
     pub bytes: Text,
+    pub trash: Option<[u8; 16]>,
+    pub pending_trash: Vec<[u8; 16]>,
 }
 
 const MAGIC: &[u8; 8] = b"TINEDRF2";

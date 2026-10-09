@@ -125,6 +125,10 @@ fn set(files: &mut BTreeMap<String, Arc<[u8]>>, key: &str, bytes: Text) {
 }
 
 impl HostIo for ModelFs {
+    fn page_finish(&mut self, page: &str) {
+        self.files.remove(&format!("temp/page/{page}"));
+    }
+
     fn read_page(&mut self, page: &str) -> IoResult<Text> {
         self.run(Phase::Read, |fs| {
             Ok(fs.files.get(&format!("graph/{page}")).cloned())
@@ -167,6 +171,10 @@ impl HostIo for ModelFs {
     fn trash_move(&mut self, page: &str, name: &str) -> MoveResult {
         let removed = self.files.get(&format!("graph/{page}")).cloned();
         let result = self.run(Phase::TrashMove, |fs| {
+            if !fs.files.contains_key(&format!("graph/{page}")) {
+                fs.publications.insert(page.into(), None);
+                return Ok(());
+            }
             let key = format!("trash/{page}/{name}");
             if fs.files.contains_key(&key) {
                 return Err(IoFailure {
@@ -186,13 +194,16 @@ impl HostIo for ModelFs {
         }
     }
 
-    fn trash_sync(&mut self, page: &str) -> IoResult<Witness> {
+    fn trash_sync(&mut self, page: &str, names: &[[u8; 16]]) -> IoResult<Witness> {
         if self.weak_graph {
             self.calls.push(Phase::TrashSync);
             return Ok(Witness::Unsupported);
         }
         self.run(Phase::TrashSync, |fs| {
-            fs.sync_prefix(&format!("trash/{page}/"));
+            for name in names {
+                let key = format!("trash/{page}/{}", super::trash_name(*name));
+                set(&mut fs.stable, &key, fs.files.get(&key).cloned());
+            }
             Ok(Witness::Durable)
         })
     }

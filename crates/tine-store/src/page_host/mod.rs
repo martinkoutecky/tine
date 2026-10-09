@@ -7,7 +7,12 @@ mod drafts;
 mod io;
 #[cfg(test)]
 mod model_fs;
+#[cfg(test)]
+mod native_cost;
 mod operations;
+mod production;
+#[cfg(test)]
+mod production_tests;
 mod progress;
 #[cfg(test)]
 mod tests;
@@ -20,6 +25,25 @@ use std::sync::{Arc, Mutex};
 
 type Text = Option<Arc<[u8]>>;
 type PageKey = String;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct TrashCustody {
+    trash: Option<[u8; 16]>,
+    pending: Vec<[u8; 16]>,
+}
+
+fn trash_name(name: [u8; 16]) -> String {
+    uuid::Uuid::from_bytes(name).simple().to_string()
+}
+
+fn self_custody_matches(
+    custody: &BTreeMap<PageKey, TrashCustody>,
+    key: &str,
+    record: &Record,
+) -> bool {
+    let current = custody.get(key).cloned().unwrap_or_default();
+    current.trash == record.trash && current.pending == record.pending_trash
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum Base {
@@ -139,6 +163,7 @@ struct SaveJob {
     epoch: u64,
     removed: Text,
     trash_name: String,
+    trash_durable: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -206,6 +231,8 @@ enum Event {
 #[cfg_attr(test, derive(Clone))]
 enum Application {
     Refresh(Record),
+    /// Only physical custody changes; all model draft fields are identical.
+    TrashCustody(Record),
     Removal(PageKey),
     Operation {
         pages: BTreeMap<PageKey, Page>,
@@ -219,6 +246,8 @@ enum Application {
 
 #[cfg_attr(test, derive(Clone))]
 struct DraftWorker {
+    /// Retiring the last record must first finish the payload identities it owns.
+    sync_trash: bool,
     /// The initial vehicle names this obligation, even when copies are replaced.
     effect: String,
     refresh: Option<PageKey>,
@@ -254,6 +283,10 @@ struct Host<F: HostIo> {
     locks: BTreeMap<PageKey, Arc<Mutex<()>>>,
     lock_ownership: BTreeSet<PageKey>,
     pages: BTreeMap<PageKey, Page>,
+    trash: BTreeMap<PageKey, TrashCustody>,
+    /// Names allocated in this incarnation that certainly have not moved yet.
+    /// A recovered name may already own a payload, even if its next move collides.
+    fresh_trash: BTreeSet<[u8; 16]>,
     queue: VecDeque<Request>,
     applying: Option<Request>,
     outbox: BTreeMap<PageKey, Mail>,
@@ -281,6 +314,8 @@ impl<F: HostIo> Host<F> {
             locks,
             lock_ownership: BTreeSet::new(),
             pages: BTreeMap::new(),
+            trash: BTreeMap::new(),
+            fresh_trash: BTreeSet::new(),
             queue: VecDeque::new(),
             applying: None,
             outbox: BTreeMap::new(),
@@ -348,12 +383,39 @@ impl<F: HostIo> Host<F> {
 
     fn record(&mut self, key: &str, page: &Page) -> Record {
         self.wseq = self.wseq.checked_add(1).expect("draft sequence exhausted");
+        let mut custody = self.trash.get(key).cloned().unwrap_or_default();
+        if page.buf.is_none() && custody.trash.is_none() {
+            let name = *uuid::Uuid::new_v4().as_bytes();
+            self.fresh_trash.insert(name);
+            custody.trash = Some(name);
+            custody.pending.push(name);
+        }
         Record {
             page: key.into(),
             wseq: self.wseq,
             version: page.version,
             base: page.base.clone(),
             bytes: page.buf.clone(),
+            trash: custody.trash,
+            pending_trash: custody.pending,
+        }
+    }
+
+    fn apply_custody(&mut self, record: &Record) {
+        self.trash.insert(
+            record.page.clone(),
+            TrashCustody {
+                trash: record.trash,
+                pending: record.pending_trash.clone(),
+            },
+        );
+    }
+
+    fn clear_trash_custody(&mut self, key: &str) {
+        if let Some(custody) = self.trash.remove(key) {
+            for name in custody.pending {
+                self.fresh_trash.remove(&name);
+            }
         }
     }
 
@@ -695,13 +757,17 @@ impl<F: HostIo> Host<F> {
             let desired = page.as_ref().filter(|p| p.risk);
             if let Some(page) = desired {
                 if previous.is_some_and(|r| {
-                    r.bytes == page.buf && r.base == page.base && r.version == page.version
+                    r.bytes == page.buf
+                        && r.base == page.base
+                        && r.version == page.version
+                        && self_custody_matches(&host.trash, key, r)
                 }) {
                     return Disposition::Disabled;
                 }
                 let record = host.record(key, page);
                 let task = Vehicle::write(drafts::page_name(key), std::slice::from_ref(&record));
                 host.worker = Some(DraftWorker {
+                    sync_trash: false,
                     effect: task.name.clone(),
                     refresh: Some(key.into()),
                     pages: keys.clone(),
@@ -728,6 +794,7 @@ impl<F: HostIo> Host<F> {
                     return Disposition::Waiting;
                 };
                 host.worker = Some(DraftWorker {
+                    sync_trash: host.trash.get(key).is_some_and(|c| !c.pending.is_empty()),
                     effect: task.name.clone(),
                     refresh: None,
                     pages: keys.clone(),
@@ -762,6 +829,7 @@ impl<F: HostIo> Host<F> {
             drafts::op_name()
         };
         self.worker = Some(DraftWorker {
+            sync_trash: false,
             effect: name.clone(),
             refresh: None,
             pages: keys,
@@ -793,7 +861,25 @@ impl<F: HostIo> Host<F> {
         if !terminal {
             let failures = worker.task.failures;
             self.with_locks(&worker.pages.clone(), |host| {
-                worker.task.advance(&mut host.fs)
+                if worker.sync_trash {
+                    let key = worker.pages.first().expect("removal page");
+                    let names = host
+                        .trash
+                        .get(key)
+                        .map(|c| c.pending.clone())
+                        .unwrap_or_default();
+                    match host.fs.trash_sync(key, &names) {
+                        Ok(witness) => {
+                            if witness == Witness::Durable {
+                                host.clear_trash_custody(key);
+                            }
+                            worker.sync_trash = false;
+                        }
+                        Err(_) => worker.task.failures += 1,
+                    }
+                } else {
+                    worker.task.advance(&mut host.fs);
+                }
             });
             worker.failures = worker
                 .failures
@@ -884,7 +970,18 @@ impl<F: HostIo> Host<F> {
     ) {
         match application {
             Application::Refresh(record) if present => {
+                self.apply_custody(&record);
                 self.events.push(Event::Draft(record.clone()));
+                let scan = drafts::scan(self.fs.draft_files(true));
+                worker.remaining.extend(
+                    drafts::older_vehicles(&scan, &record.page, Some(record.wseq))
+                        .into_iter()
+                        .map(Vehicle::remove),
+                );
+            }
+            Application::TrashCustody(record) => {
+                assert!(present);
+                self.apply_custody(&record);
                 let scan = drafts::scan(self.fs.draft_files(true));
                 worker.remaining.extend(
                     drafts::older_vehicles(&scan, &record.page, Some(record.wseq))
@@ -902,6 +999,9 @@ impl<F: HostIo> Host<F> {
             } => {
                 if present {
                     self.version = last_version;
+                    for record in &records {
+                        self.apply_custody(record);
+                    }
                     for (key, page) in pages {
                         self.set_page(&key, Some(page));
                     }
@@ -943,6 +1043,15 @@ impl<F: HostIo> Host<F> {
             Application::Refresh(_) => worker.recover_notice = false,
             Application::Representation => {}
         }
+        // A failed capture can leave a freshly allocated name with no owner.
+        // Clean only this effect's records, never every pending page/name.
+        for record in &worker.records {
+            if let Some(name) = record.trash {
+                if self.trash.get(&record.page).and_then(|c| c.trash) != Some(name) {
+                    self.fresh_trash.remove(&name);
+                }
+            }
+        }
     }
 
     fn start_save(&mut self, key: &str) -> Disposition {
@@ -970,7 +1079,13 @@ impl<F: HostIo> Host<F> {
             version: page.version,
             epoch: 0,
             removed: None,
-            trash_name: uuid::Uuid::new_v4().simple().to_string(),
+            trash_name: self
+                .trash
+                .get(key)
+                .and_then(|c| c.trash)
+                .map(trash_name)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
+            trash_durable: true,
         });
         Disposition::Pending
     }
@@ -1021,6 +1136,7 @@ impl<F: HostIo> Host<F> {
                         self.version = page.version;
                     }
                     self.set_page(&key, Some(page));
+                    self.fs.page_finish(&key);
                     return Disposition::Applied;
                 }
                 Err(_) => Some(Outcome::Failed),
@@ -1032,7 +1148,11 @@ impl<F: HostIo> Host<F> {
                         bytes: job.bytes.clone(),
                         version: job.version,
                     });
-                    job.phase = SavePhase::DirectorySync;
+                    job.phase = if self.trash.get(&key).is_some_and(|c| !c.pending.is_empty()) {
+                        SavePhase::TrashSync
+                    } else {
+                        SavePhase::DirectorySync
+                    };
                     job.epoch = epoch;
                     None
                 }
@@ -1048,6 +1168,11 @@ impl<F: HostIo> Host<F> {
             },
             SavePhase::Rename => {
                 let movement = self.fs.trash_move(&key, &job.trash_name);
+                if movement.result.is_ok() || movement.result.as_ref().is_err_and(|e| e.completed) {
+                    if let Some(name) = self.trash.get(&key).and_then(|c| c.trash) {
+                        self.fresh_trash.remove(&name);
+                    }
+                }
                 job.removed = movement.removed;
                 if job.removed.is_some() {
                     self.events.push(Event::Removed {
@@ -1067,7 +1192,34 @@ impl<F: HostIo> Host<F> {
                         None
                     }
                     Err(e) if e.kind == ErrorKind::Collision => {
-                        job.trash_name = uuid::Uuid::new_v4().simple().to_string();
+                        let name = *uuid::Uuid::new_v4().as_bytes();
+                        self.fresh_trash.insert(name);
+                        let old = self.trash[&key].trash.expect("deletion custody");
+                        let mut record = self.record(&key, &self.pages[&key].clone());
+                        record.trash = Some(name);
+                        if self.fresh_trash.remove(&old) {
+                            record.pending_trash.retain(|n| *n != old);
+                        }
+                        record.pending_trash.push(name);
+                        let task =
+                            Vehicle::write(drafts::page_name(&key), std::slice::from_ref(&record));
+                        self.worker = Some(DraftWorker {
+                            sync_trash: false,
+                            effect: task.name.clone(),
+                            refresh: None,
+                            pages: BTreeSet::from([key.clone()]),
+                            before: self.logical_drafts(),
+                            application: Some(Application::TrashCustody(record.clone())),
+                            task,
+                            remaining: VecDeque::new(),
+                            allocator: false,
+                            retry_copy: true,
+                            records: vec![record],
+                            tidied: false,
+                            failures: 0,
+                            recover_notice: true,
+                        });
+                        job.trash_name = trash_name(name);
                         None
                     }
                     Err(e) if e.completed => {
@@ -1081,8 +1233,19 @@ impl<F: HostIo> Host<F> {
                     Err(_) => Some(Outcome::Failed),
                 }
             }
-            SavePhase::TrashSync => match self.fs.trash_sync(&key) {
-                Ok(_) => {
+            SavePhase::TrashSync => match self.fs.trash_sync(
+                &key,
+                &self
+                    .trash
+                    .get(&key)
+                    .map(|c| c.pending.clone())
+                    .unwrap_or_default(),
+            ) {
+                Ok(witness) => {
+                    job.trash_durable = witness == Witness::Durable;
+                    if job.trash_durable {
+                        self.clear_trash_custody(&key);
+                    }
                     job.phase = SavePhase::DirectorySync;
                     None
                 }
@@ -1090,7 +1253,7 @@ impl<F: HostIo> Host<F> {
             },
             SavePhase::DirectorySync => match self.fs.page_sync(&key) {
                 Ok(witness) => {
-                    if witness == Witness::Durable && job.bytes.is_none() {
+                    if witness == Witness::Durable && job.trash_durable && job.bytes.is_none() {
                         self.events.push(Event::DeleteDurable {
                             page: key.clone(),
                             bytes: job.removed.clone(),
@@ -1102,6 +1265,7 @@ impl<F: HostIo> Host<F> {
             },
         };
         if let Some(outcome) = result {
+            self.fs.page_finish(&key);
             let mut page = self.pages[&key].clone();
             if outcome == Outcome::Published {
                 page.base = Base::Known(job.bytes.clone());
@@ -1245,6 +1409,8 @@ impl<F: HostIo> Host<F> {
         // Fault teardown ends an incarnation; it does not apply page mutations.
         self.alive = false;
         self.pages.clear();
+        self.trash.clear();
+        self.fresh_trash.clear();
         self.queue.clear();
         self.applying = None;
         self.outbox.clear();
@@ -1279,9 +1445,11 @@ impl<F: HostIo> Host<F> {
         self.window_crash();
         self.last_admitted = 0;
         self.last_applied = 0;
+        self.fs.graph_launch(&self.keys);
         let keys = scan.logical.keys().cloned().collect();
         self.with_locks(&keys, |host| {
             for (key, record) in &scan.logical {
+                host.apply_custody(record);
                 host.version = host.next_version();
                 host.set_page(
                     key,
@@ -1332,6 +1500,7 @@ impl<F: HostIo> Host<F> {
                 .and_then(|b| drafts::decode(b).ok())
                 .unwrap_or_default();
             self.worker = Some(DraftWorker {
+                sync_trash: false,
                 effect: task.name.clone(),
                 refresh: None,
                 pages: keys,

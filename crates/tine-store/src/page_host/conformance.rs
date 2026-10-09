@@ -6,6 +6,58 @@ use io::Phase;
 use model_fs::{Fault, ModelFs};
 use serde_json::{json, Value};
 
+#[path = "native_conformance.rs"]
+mod native_conformance;
+
+/// Test physical environment; the native implementation independently checks
+/// the real paths after every production I/O phase. Power stays ModelFs-only.
+trait ConformanceIo: HostIo {
+    fn native_create_refinement() -> bool {
+        false
+    }
+    fn fresh(profile: &str, count: usize) -> Self;
+    fn physical(&self) -> &ModelFs;
+    fn physical_mut(&mut self) -> &mut ModelFs;
+    fn external(&mut self, page: &str, bytes: Text, durable: bool);
+    fn crash(&mut self);
+    fn power(&mut self, keep: &BTreeSet<String>, keep_drafts: bool);
+    fn fork(&self) -> Option<Self>
+    where
+        Self: Sized;
+}
+
+impl ConformanceIo for ModelFs {
+    fn fresh(profile: &str, count: usize) -> Self {
+        let mut fs = Self {
+            weak_graph: matches!(profile, "weak" | "all"),
+            ..Self::default()
+        };
+        for (p, t) in [(0, 1), (1, 2)].into_iter().filter(|(p, _)| *p < count) {
+            fs.external(&key(p), text(t), true);
+        }
+        fs.epochs.clear();
+        fs
+    }
+    fn physical(&self) -> &ModelFs {
+        self
+    }
+    fn physical_mut(&mut self) -> &mut ModelFs {
+        self
+    }
+    fn external(&mut self, page: &str, bytes: Text, durable: bool) {
+        self.external(page, bytes, durable);
+    }
+    fn crash(&mut self) {
+        self.crash();
+    }
+    fn power(&mut self, keep: &BTreeSet<String>, keep_drafts: bool) {
+        self.power(keep, keep_drafts);
+    }
+    fn fork(&self) -> Option<Self> {
+        Some(self.clone())
+    }
+}
+
 const ABSENT: i64 = -1;
 const NONE: i64 = -2;
 const UNKNOWN: i64 = -3;
@@ -56,9 +108,8 @@ impl Default for Window {
     }
 }
 
-#[derive(Clone)]
-struct Driver {
-    host: Host<ModelFs>,
+struct Driver<F: ConformanceIo = ModelFs> {
+    host: Host<F>,
     oracle: Oracle,
     windows: Vec<Window>,
     pending_ids: Vec<Option<u64>>,
@@ -74,19 +125,24 @@ struct Driver {
     effect: Option<(String, Vec<Value>, u64, u64)>,
 }
 
-impl Driver {
+impl Clone for Driver<ModelFs> {
+    fn clone(&self) -> Self {
+        self.fork().unwrap()
+    }
+}
+
+impl Driver<ModelFs> {
     fn new(profile: &str, count: usize) -> Self {
+        Self::new_with_io(profile, count)
+    }
+}
+
+impl<F: ConformanceIo> Driver<F> {
+    fn new_with_io(profile: &str, count: usize) -> Self {
         let locks = (0..count)
             .map(|p| (key(p), Arc::new(Mutex::new(()))))
             .collect();
-        let mut fs = ModelFs {
-            weak_graph: matches!(profile, "weak" | "all"),
-            ..ModelFs::default()
-        };
-        for (p, t) in [(0, 1), (1, 2)].into_iter().filter(|(p, _)| *p < count) {
-            fs.external(&key(p), text(t), true);
-        }
-        fs.epochs.clear();
+        let fs = F::fresh(profile, count);
         let oracle = Oracle::new(profile, count);
         let observed = oracle.state(); // Only the model's fixed init state.
         Self {
@@ -105,6 +161,51 @@ impl Driver {
             prepare_operations: false,
             effect: None,
         }
+    }
+
+    fn fork(&self) -> Option<Self> {
+        let h = &self.host;
+        Some(Self {
+            host: Host {
+                trash: BTreeMap::new(),
+                fresh_trash: BTreeSet::new(),
+                fs: h.fs.fork()?,
+                keys: h.keys.clone(),
+                locks: h.locks.clone(),
+                lock_ownership: h.lock_ownership.clone(),
+                pages: h.pages.clone(),
+                queue: h.queue.clone(),
+                applying: h.applying.clone(),
+                outbox: h.outbox.clone(),
+                subscriptions: h.subscriptions.clone(),
+                events: h.events.clone(),
+                job: h.job.clone(),
+                worker: h.worker.clone(),
+                retained: h.retained.clone(),
+                version: h.version,
+                wseq: h.wseq,
+                incarnation: h.incarnation,
+                generation: h.generation,
+                last_admitted: h.last_admitted,
+                last_applied: h.last_applied,
+                admission_open: h.admission_open,
+                switch_confirmation: h.switch_confirmation,
+                alive: h.alive,
+            },
+            oracle: self.oracle.clone(),
+            windows: self.windows.clone(),
+            pending_ids: self.pending_ids.clone(),
+            observed: self.observed.clone(),
+            versions: self.versions.clone(),
+            record_versions: self.record_versions.clone(),
+            counter: self.counter,
+            profile: self.profile.clone(),
+            barriers: self.barriers,
+            actions: self.actions,
+            stepped: self.stepped,
+            prepare_operations: self.prepare_operations,
+            effect: self.effect.clone(),
+        })
     }
 
     fn version(&self, raw: u64) -> i64 {
@@ -277,10 +378,10 @@ impl Driver {
                 })
                 .collect()
         };
-        json!({"alive":self.host.alive,"disk":disk(&self.host.fs.files),
-            "stable":disk(&self.host.fs.stable),"drafts":records,"pages":pages,
+        json!({"alive":self.host.alive,"disk":disk(&self.host.fs.physical().files),
+            "stable":disk(&self.host.fs.physical().stable),"drafts":records,"pages":pages,
             "mb":mail,"up":up,"job":job,"w":self.windows,
-            "trash":trash(&self.host.fs.files),"trashStable":trash(&self.host.fs.stable)})
+            "trash":trash(&self.host.fs.physical().files),"trashStable":trash(&self.host.fs.physical().stable)})
     }
 
     fn compare(&mut self, context: &str) {
@@ -520,7 +621,7 @@ impl Driver {
                         Phase::Read
                     };
                     if !matches!(kind, RequestKind::Submit { .. } | RequestKind::Close) {
-                        self.host.fs.inject(phase, [Fault::Before]);
+                        self.host.fs.physical_mut().inject(phase, [Fault::Before]);
                     }
                 }
                 if self.host.applying.is_none() {
@@ -531,7 +632,7 @@ impl Driver {
                 if self.host.worker.is_none() {
                     // rok belongs to this delivery; a held open or a stale
                     // move performs no read/install and consumes no fault.
-                    self.host.fs.faults.clear();
+                    self.host.fs.physical_mut().faults.clear();
                 }
                 if self.host.applying.is_some() && self.host.worker.is_some() {
                     self.compare("install pending");
@@ -553,7 +654,14 @@ impl Driver {
             }
             "rename" => {
                 let page = self.host.job.as_ref().unwrap().page.clone();
-                let ep = self.host.fs.epochs.get(&page).copied().unwrap_or(0);
+                let ep = self
+                    .host
+                    .fs
+                    .physical()
+                    .epochs
+                    .get(&page)
+                    .copied()
+                    .unwrap_or(0);
                 self.host.advance_save(ep);
             }
             "dirSync" => {
@@ -563,7 +671,10 @@ impl Driver {
                 }
                 if !b(0) {
                     // An explicit error wins over graph Unsupported too.
-                    self.host.fs.inject(Phase::PageSync, [Fault::Before]);
+                    self.host
+                        .fs
+                        .physical_mut()
+                        .inject(Phase::PageSync, [Fault::Before]);
                 }
                 self.host.advance_save(0);
             }
@@ -577,7 +688,7 @@ impl Driver {
                     SavePhase::Rename => Phase::TrashMove,
                     _ => panic!("late saveFail"),
                 };
-                self.host.fs.inject(phase, [Fault::Before]);
+                self.host.fs.physical_mut().inject(phase, [Fault::Before]);
                 self.host.advance_save(0);
             }
             "draftSync" => {
@@ -815,7 +926,7 @@ impl Driver {
             }
             "saveFail" => g["guard"] = json!(false),
             "extWrite" | "extWriteD" => {
-                g["ext"][p] = json!(self.host.fs.epochs[&key(p)]);
+                g["ext"][p] = json!(self.host.fs.physical().epochs[&key(p)]);
                 tag = "extWrite";
             }
             "crash" | "switchFin" | "power" | "powerK" | "powerKBits" => {
@@ -895,7 +1006,13 @@ impl Driver {
                     // Model dirSync L431/L439 certifies deletion only while
                     // its path still contains the job's absent payload. This
                     // is a test-side projection, never another host path read.
-                    if !self.host.fs.files.contains_key(&format!("graph/{page}")) {
+                    if !self
+                        .host
+                        .fs
+                        .physical()
+                        .files
+                        .contains_key(&format!("graph/{page}"))
+                    {
                         g["delDurable"][p] = g["removed"][p].clone();
                     }
                 }
@@ -930,7 +1047,7 @@ impl Driver {
     fn program(&mut self, program: &[Value]) -> Result<(), &'static str> {
         for op in program {
             match op[0].as_str().unwrap() {
-                "init" => *self = Self::new(&self.profile, self.windows.len()),
+                "init" => *self = Self::new_with_io(&self.profile, self.windows.len()),
                 "expect" => {
                     if !self
                         .oracle
@@ -955,7 +1072,9 @@ impl Driver {
                     self.program(op[branch].as_array().unwrap())?;
                 }
                 "fail" => {
-                    let mut probe = self.clone();
+                    let Some(mut probe) = self.fork() else {
+                        return Err("unsupported-native-probe");
+                    };
                     if probe.program(op[1].as_array().unwrap()).is_ok() {
                         return Err("false");
                     }
@@ -967,6 +1086,24 @@ impl Driver {
                         .iter()
                         .map(|e| self.oracle.eval_observed(e, &self.observed))
                         .collect();
+                    if F::native_create_refinement()
+                        && op[1] == "rename"
+                        && self.host.job.as_ref().is_some_and(|job| {
+                            job.bytes.is_some()
+                                && job.base == Base::Known(None)
+                                && self
+                                    .host
+                                    .fs
+                                    .physical()
+                                    .files
+                                    .contains_key(&format!("graph/{}", job.page))
+                        })
+                    {
+                        // The design explicitly refines contested creates into
+                        // saveFail; the unchanged replace-model expectations
+                        // are checked separately by the native no-replace test.
+                        return Err("native-create-refinement");
+                    }
                     if !self.step(op[1].as_str().unwrap(), &args) {
                         return Err("disabled");
                     }

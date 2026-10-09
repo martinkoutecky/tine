@@ -83,7 +83,112 @@ fn fit_name(prefix: &str, stem: &str, tail: &str, limit: usize) -> String {
 /// Shared replace-allowed platform rename (rename(2) / MoveFileExW with
 /// REPLACE_EXISTING). The caller owns its guard and directory durability.
 pub(crate) fn rename_replace(src: &Path, dst: &Path) -> io::Result<()> {
-    fs::rename(src, dst)
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+        };
+        let src: Vec<_> = src.as_os_str().encode_wide().chain(Some(0)).collect();
+        let dst: Vec<_> = dst.as_os_str().encode_wide().chain(Some(0)).collect();
+        let result = unsafe {
+            MoveFileExW(
+                src.as_ptr(),
+                dst.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        (result != 0)
+            .then_some(())
+            .ok_or_else(io::Error::last_os_error)
+    }
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    ))]
+    {
+        fs::rename(src, dst)
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows"
+    )))]
+    {
+        let _ = (src, dst);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "replace unavailable on this target",
+        ))
+    }
+}
+
+/// The existing atomic-write protocol split at its synced-temp barrier. The
+/// caller retains its base guard and page lock through publication and sync.
+pub(crate) struct PreparedWrite {
+    temporary: PathBuf,
+    target: PathBuf,
+}
+
+impl PreparedWrite {
+    pub(crate) fn new(path: &Path, bytes: &[u8]) -> io::Result<Self> {
+        Self::with_hooks(path, bytes, || {}, || {})
+    }
+
+    fn with_hooks(
+        path: &Path,
+        bytes: &[u8],
+        on_write: impl FnOnce(),
+        on_file_sync: impl FnOnce(),
+    ) -> io::Result<Self> {
+        let temporary = temp_path(path, WRITE_TMP_SEQ.fetch_add(1, Ordering::Relaxed), "");
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(at("create temporary file"))?;
+        let prepared = Self {
+            temporary,
+            target: path.to_path_buf(),
+        };
+        file.write_all(bytes).map_err(at("write temporary file"))?;
+        #[cfg(test)]
+        TEMP_WRITES.with(|count| {
+            let (files, written) = count.get();
+            count.set((files + 1, written + bytes.len() as u64));
+        });
+        on_write();
+        sync_file_handle(&file).map_err(at("fsync temporary file"))?;
+        on_file_sync();
+        Ok(prepared)
+    }
+
+    pub(crate) fn publish(&self, create: bool) -> io::Result<()> {
+        if create {
+            super::no_replace::move_file_noreplace(&self.temporary, &self.target)
+        } else {
+            rename_replace(&self.temporary, &self.target)
+                .map_err(at("rename temporary file over target"))
+        }
+    }
+}
+
+impl Drop for PreparedWrite {
+    fn drop(&mut self) {
+        // Only this protocol's unpublished scratch file; never the target.
+        let _ = fs::remove_file(&self.temporary);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static FAIL_FILE_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(crate) static FILE_SYNCS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    pub(crate) static TEMP_WRITES: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -117,13 +222,29 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// Windows needs a writable handle for FlushFileBuffers.
 pub(crate) fn sync_existing(path: &Path) -> io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    sync_file_bytes(path)?;
+    super::directory_durability::sync_directory_entry(dir)
+}
+
+/// File part of the existing durability recipe, also used for bytes moved
+/// into trash: an external R1 writer need not have flushed those bytes.
+pub(crate) fn sync_file_bytes(path: &Path) -> io::Result<()> {
     #[cfg(windows)]
     let file = fs::OpenOptions::new().write(true).open(path);
     #[cfg(not(windows))]
     let file = fs::File::open(path);
-    file.and_then(|file| file.sync_all())
-        .map_err(at("fsync unchanged file"))?;
-    super::directory_durability::sync_directory_entry(dir)
+    file.and_then(|file| sync_file_handle(&file))
+        .map_err(at("fsync unchanged file"))
+}
+
+fn sync_file_handle(file: &fs::File) -> io::Result<()> {
+    #[cfg(test)]
+    FILE_SYNCS.with(|count| count.set(count.get() + 1));
+    #[cfg(test)]
+    if FAIL_FILE_SYNC.with(|fail| fail.replace(false)) {
+        return Err(io::Error::other("injected file sync failure"));
+    }
+    file.sync_all()
 }
 
 pub(crate) fn atomic_write_with_check(
@@ -135,28 +256,12 @@ pub(crate) fn atomic_write_with_check(
     on_dir_sync: impl FnOnce(),
 ) -> io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let tmp = temp_path(path, WRITE_TMP_SEQ.fetch_add(1, Ordering::Relaxed), "");
-    let res = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-            .map_err(at("create temporary file"))?;
-        file.write_all(bytes).map_err(at("write temporary file"))?;
-        on_write();
-        file.sync_all().map_err(at("fsync temporary file"))?;
-        on_file_sync();
-        drop(file);
-        check()?;
-        rename_replace(&tmp, path).map_err(at("rename temporary file over target"))
-    })();
-    if res.is_err() {
-        let _ = fs::remove_file(&tmp);
-    } else {
-        super::directory_durability::sync_directory_entry(dir)?;
-        on_dir_sync();
-    }
-    res
+    let prepared = PreparedWrite::with_hooks(path, bytes, on_write, on_file_sync)?;
+    check()?;
+    prepared.publish(false)?;
+    super::directory_durability::sync_directory_entry(dir)?;
+    on_dir_sync();
+    Ok(())
 }
 
 #[cfg(test)]

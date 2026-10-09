@@ -394,6 +394,8 @@ fn post_unlink_sync_failure_retries_sync_only_for_cleanup_retirement_and_removal
             version: 1,
             base: Base::Unknown,
             bytes: text("mine"),
+            trash: None,
+            pending_trash: vec![],
         };
         let mut task = Vehicle::write(drafts::page_name("a.md"), &[record]);
         for _ in 0..3 {
@@ -651,6 +653,8 @@ fn launch_seeds_all_readable_versions_and_canonical_unknown_base() {
             version: 80,
             base: Base::Unknown,
             bytes: text("mine"),
+            trash: None,
+            pending_trash: vec![],
         },
         Record {
             page: "c.md".into(),
@@ -658,6 +662,8 @@ fn launch_seeds_all_readable_versions_and_canonical_unknown_base() {
             version: 50,
             base: Base::Known(None),
             bytes: None,
+            trash: None,
+            pending_trash: vec![],
         },
     ];
     let name = drafts::op_name();
@@ -687,6 +693,8 @@ fn unreadable_files_are_preserved_and_equal_wseq_disagreement_is_quarantined() {
         version: 1,
         base: Base::Unknown,
         bytes: text("one"),
+        trash: None,
+        pending_trash: vec![],
     };
     let mut two = one.clone();
     two.bytes = text("two");
@@ -796,6 +804,25 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
             assert!(!line.contains("page_state::"));
             assert!(
                 !line.contains("std::fs") && !line.contains("std::io") && !line.contains("cap_std")
+            );
+        }
+    }
+    let adapter = include_str!("production.rs");
+    assert!(include_str!("mod.rs").contains("\nmod production;"));
+    for line in adapter
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+    {
+        for bypass in [
+            "fs::write(",
+            "fs::rename(",
+            "sync_all()",
+            "MoveFileExW(",
+            "renameat2(",
+        ] {
+            assert!(
+                !line.contains(bypass),
+                "adapter bypasses audited primitive: {line}"
             );
         }
     }

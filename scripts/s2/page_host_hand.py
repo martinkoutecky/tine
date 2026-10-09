@@ -48,6 +48,20 @@ MUTATIONS = [
     ("H-error-abandonment", "progress.rs", "self.host.pages.get(key).is_some_and(|page| page.risk)", "true", "Discard after terminal failed refresh"),
     ("H-backoff-independent-saves", "progress.rs", "if let Some(w) = self.host.worker.as_ref().filter(|_| draft_ready) {", "if self.host.worker.is_some() && !draft_ready { return Disposition::Disabled; }\n        if let Some(w) = self.host.worker.as_ref().filter(|_| draft_ready) {", "unrelated overdue/running save during capped draft backoff"),
     ("H-retryable-sync-notice", "mod.rs", "worker.task.stage == Stage::Absent && worker.refresh.is_some()", "worker.task.failures > 0 && worker.refresh.is_some()", "first retryable sync failure must stay silent"),
+    ("H-adapter-trash-witnesses", "mod.rs", "witness == Witness::Durable && job.trash_durable && job.bytes.is_none()", "witness == Witness::Durable && job.bytes.is_none()", "weak trash / strong source witness"),
+    ("H-adapter-private-sync", "production.rs", "durability::sync_private_directory(&self.drafts).map_err(sync_failure)?;", "durability::sync_directory_entry(&self.drafts).map_err(sync_failure)?;", "EINVAL cannot complete an app-data vehicle"),
+    ("H-adapter-trash-payload", "production.rs", "crate::atomic_file::sync_file_bytes(&path)", "Ok::<(), std::io::Error>(())", "unflushed R1 payload and failed file sync"),
+    ("H-adapter-directory-custody", "production.rs", "fn graph_directory(&mut self, dir: &Path) -> IoResult<()> {", "fn graph_directory(&mut self, dir: &Path) -> IoResult<()> {\n        self.directories.clear();", "retry must retain the created chain's missing directory sync"),
+    ("H-trash-capture", "mod.rs", "pending_trash: custody.pending,", "pending_trash: vec![],", "deletion install must persist the payload obligation before moving"),
+    ("H-trash-launch", "mod.rs", "host.apply_custody(record);", "let _ = record;", "restart must recover recorded pending payloads"),
+    ("H-trash-recovered-collision", "mod.rs", "if self.fresh_trash.remove(&old) {", "if true {", "a recovered colliding candidate may already own an unsynced payload"),
+    ("H-trash-collision-record", "mod.rs", "record.trash = Some(name);", "record.trash = Some(old);", "fresh collision target must agree with the durable record"),
+    ("H-trash-recreation-phase", "mod.rs", "job.phase = if self.trash.get(&key).is_some_and(|c| !c.pending.is_empty()) {", "job.phase = if false {", "recreated and undone deletes still owe the recorded payload sync"),
+    ("H-trash-clear-after-witness", "mod.rs", "if job.trash_durable {", "if false {", "new at-risk snapshots clear custody only after a strong witness"),
+    ("H-trash-failed-capture-custody", "mod.rs", "for record in &worker.records {", "for record in std::iter::empty::<&Record>() {", "repeated refused installs release only their unowned names"),
+    ("H-trash-synced-name-custody", "mod.rs", "for name in custody.pending {", "for name in std::iter::empty::<[u8; 16]>() {", "undo before a move releases the missing candidate after its successful witness"),
+    ("H-trash-before-removal", "mod.rs", "sync_trash: host.trash.get(key).is_some_and(|c| !c.pending.is_empty()),", "sync_trash: false,", "Discard cannot retire the last unsynced payload identity"),
+    ("H-trash-removal-error", "mod.rs", "Err(_) => worker.task.failures += 1,", "Err(_) => {},", "pending removal surfaces the third payload-witness failure"),
 ]
 
 
@@ -55,6 +69,7 @@ def main():
     import argparse
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--only")
+    ap.add_argument("--adapter-only", action="store_true")
     ap.add_argument("--output", type=Path, help="explicit hand-run artifact directory")
     args = ap.parse_args()
     harness.WORK = ROOT / "scratch/page-host/hand-harness"
@@ -62,7 +77,7 @@ def main():
     output = args.output or ROOT / "scratch/page-host" / ("hand-rerun-" + args.only if args.only else "hand-census")
     output.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "TINE_HOST_REPO_ROOT": str(ROOT),
-           "CARGO_TARGET_DIR": str(ROOT / "target/page-host-hand")}
+           "CARGO_TARGET_DIR": str(work / "target")}
     command = ["rtk", "proxy", "cargo", "test", "--manifest-path", str(work / "Cargo.toml"),
                "--lib", "page_host", "--", "--skip", "scheduler_random_walks",
                "--skip", "committed_witnesses_through_host"]
@@ -72,6 +87,8 @@ def main():
     assert baseline.returncode == 0, "baseline must pass before mutation"
     for name, filename, before, after, barrier in MUTATIONS:
         if args.only and name != args.only:
+            continue
+        if args.adapter_only and not name.startswith("H-adapter-"):
             continue
         path = work / "src/page_host" / filename
         original = path.read_text()

@@ -17,6 +17,7 @@ def main():
     ap.add_argument("--extra", type=Path, help="additional new-source census")
     ap.add_argument("--current", type=Path, help="completed full current-source runtime census, without historic artifacts")
     ap.add_argument("--hand-current", type=Path, help="explicit current hand-run outcomes (required with --current)")
+    ap.add_argument("--rerun-current", type=Path, help="explicit completed rerun of this current census after adding regression coverage")
     args = ap.parse_args()
     artifact = ROOT / "scratch/page-host"
     if args.current:
@@ -25,7 +26,17 @@ def main():
         latest = {o["scenario"]["Mutant"]["name"]:o for o in current["outcomes"] if isinstance(o["scenario"], dict)}
         listed = json.loads((args.current.parent / "mutants.json").read_text())
         assert set(latest) == {m["name"] for m in listed}, "every enumerated mutant needs an outcome"
+        if args.rerun_current:
+            rerun = json.loads(args.rerun_current.read_text())
+            assert rerun["end_time"] is not None, "explicit rerun must finish"
+            assert any(o["summary"] == "Success" for o in rerun["outcomes"]), "rerun needs a passing baseline"
+            for o in rerun["outcomes"]:
+                if isinstance(o["scenario"], dict):
+                    name = o["scenario"]["Mutant"]["name"]
+                    assert name in latest, "rerun must name a mutant in this exact census"
+                    latest[name] = o
     else:
+        assert args.rerun_current is None, "rerun requires an explicit current census"
         initial = outcomes(artifact / "cargo-census/mutants.out/outcomes.json")
         latest = {o["scenario"]["Mutant"]["name"]: o for o in initial if isinstance(o["scenario"], dict)}
         for directory in ["cargo-rerun", "cargo-save-guards"]:
