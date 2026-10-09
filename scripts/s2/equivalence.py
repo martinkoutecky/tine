@@ -23,21 +23,23 @@ FACTS = {
     "versionBound": "PAGES.forall(p => s.pages.get(p).ver <= g.vc)",
     "ghostMineEmpty": "g.mine == Set()",
     "mailAckSent": "PAGES.forall(p => (s.mb.get(p).on and s.mb.get(p).ack >= 0) implies s.w.get(p).sent)",
-    "writtenSeen": "PAGES.forall(p => g.wrote.get(p).forall(w => g.seen.get(p).contains(w._1)))",
+    "operationBytesWritten": "PAGES.forall(p => s.pages.get(p).typed implies (g.seen.get(p).contains(s.pages.get(p).buf) or g.wrote.get(p).exists(w => w._1 == s.pages.get(p).buf)))",
     "strongRenameBase": "(s.job.on and s.job.phase == 2 and not(RACES.contains(\"R1\"))) implies s.disk.get(s.job.p) == s.job.base",
     "sameByteSaveSeen": "(s.job.on and s.job.bytes == s.job.base) implies (g.seen.get(s.job.p).contains(s.job.base) or g.wrote.get(s.job.p).exists(w => w._1 == s.job.base))",
     "freshMoveChangesBoth": "if (s.alive and s.up.length() > 0) { val m = s.up.head() val a = s.pages.get(m.p) val b = s.pages.get(m.q) (m.kind == \"op\" and a.held and b.held and m.bv == a.ver and m.bv2 == b.ver) implies (m.t != a.buf and m.t2 != b.buf) } else true",
     "jobPromiseBound": "s.job.on implies g.promise.get(s.job.p).ver <= s.job.ver",
     "draftAckEcho": "PAGES.forall(p => { val a = s.pages.get(p) val pr = g.promise.get(p) (a.held and a.risk and a.ver == pr.ver and pr.on and not(pr.saved)) implies (pr.bytes == a.buf and pr.ep == 0) })",
-    "savedAckEcho": "s.job.on implies { val j = s.job val pr = g.promise.get(j.p) (j.ver == pr.ver and pr.saved) implies (pr.bytes == j.bytes and (j.phase != 3 or pr.ep == j.ep)) }",
+    "savedAckEcho": "s.job.on implies { val j = s.job val pr = g.promise.get(j.p) (j.ver == pr.ver and pr.on and pr.saved) implies (pr.bytes == j.bytes and (j.phase != 3 or pr.ep == j.ep)) }",
     "freshSubmitSeen": "if (s.alive and s.up.length() > 0) { val m = s.up.head() val a = s.pages.get(m.p) (m.kind == \"submit\" and m.ro == NONE and a.held and m.bv == a.ver) implies (g.seen.get(m.p).contains(a.buf) or not(a.typed)) } else true",
     "resolveWithoutMine": "if (s.alive and s.up.length() > 0) { val m = s.up.head() val a = s.pages.get(m.p) val pr = g.promise.get(m.p) (m.kind == \"submit\" and m.ro != NONE and a.held and m.bv != a.ver) implies (a.buf == m.t or (not(a.typed) and a.buf == a.obs) or (pr.ver >= a.ver and pr.bytes == a.buf)) } else true",
     "offMailPadding": "PAGES.forall(p => not(s.mb.get(p).on) implies s.mb.get(p) == NOMAIL)",
     "offWindowPadding": "PAGES.forall(p => { val w = s.w.get(p) not(w.on) implies (w.text == ABSENT and w.bv == -1 and not(w.pend) and w.obs == ABSENT and not(w.conf)) })",
-    "absentClean": "PAGES.forall(p => s.pages.get(p).buf == ABSENT implies clean(s.pages.get(p)))",
     "sameVersionBytes": "PAGES.forall(p => { val pr = g.promise.get(p) pr.on implies g.wrote.get(p).forall(w => w._2 == pr.ver implies w._1 == pr.bytes) })",
-    "typedSeen": "PAGES.forall(p => s.pages.get(p).typed implies g.seen.get(p).contains(s.pages.get(p).buf))",
+    "cleanNoConflict": "PAGES.forall(p => (s.pages.get(p).held and clean(s.pages.get(p))) implies not(s.pages.get(p).conflict))",
     "downOwed": "not(s.alive) implies g.owed == Set()",
+    "saveBaseSeenOrRead": "(s.job.on and s.job.phase == 2 and g.guard and s.job.bytes != s.job.base) implies (g.seen.get(s.job.p).contains(s.job.base) or g.opRead.get(s.job.p).contains(s.job.base))",
+    "jobDirty": "s.job.on implies (s.pages.get(s.job.p).held and dirty(s.pages.get(s.job.p)))",
+    "removedInTrash": "PAGES.forall(p => g.removed.get(p).subseteq(s.trash.get(p)))",
 }
 
 
@@ -99,16 +101,19 @@ def main():
     ap.add_argument("model_dir", type=Path)
     ap.add_argument("--samples", type=int, default=4096)
     ap.add_argument("--steps", type=int, default=80)
-    ap.add_argument("--output", type=Path, default=ROOT / "scratch/s2/equivalence")
+    ap.add_argument("--output", type=Path, default=ROOT / "scratch/s3/equivalence")
     ap.add_argument("--only", help="comma-separated structural facts, excluding commit checks and guarantee")
     ap.add_argument("--mutant", default="none")
+    ap.add_argument("--profiles", help="comma-separated profiles for a correction of invalidated evidence")
     args = ap.parse_args()
-    model = (args.model_dir / "storage-s2.qnt").read_text()
+    model = (args.model_dir / "storage-s3.qnt").read_text()
     assert hashlib.sha256(model.encode()).hexdigest() == SHA
     quint = args.model_dir.parent / "model/tools/node_modules/.bin/quint"
     work = args.output.resolve()
     work.mkdir(parents=True, exist_ok=True)
     for i, (profile, races) in enumerate(PROFILES.items()):
+        if args.profiles and profile not in args.profiles.split(","):
+            continue
         text = re.sub(r"pure val RACES: Set\[str\] = .*", f"pure val RACES: Set[str] = {races}", model, count=1)
         text = re.sub(r'pure val MUTANT: str = ".*"', f'pure val MUTANT: str = "{args.mutant}"', text, count=1)
         text = traced_model(text)
@@ -123,7 +128,7 @@ def main():
         result = command([quint, "run", path, "--backend", "typescript", "--init", "traceInit",
                           "--step", "traceStep", "--invariant", "equivalentReachability",
                           "--max-samples", args.samples, "--max-steps", args.steps,
-                          "--seed", 20261008 + i * 7919, "--verbosity", "1",
+                          "--seed", 20261009 + i * 7919, "--verbosity", "1",
                           "--out-itf", work / f"{profile}-failure.itf.json"],
                          work / f"{profile}.log", {**os.environ, "TMPDIR": str(work)})
         assert result.returncode == 0, result.stdout + result.stderr

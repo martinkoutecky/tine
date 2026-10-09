@@ -258,7 +258,7 @@ GUARDS = {
     "wClose": "s.alive and s.w.get(p).on and not(s.w.get(p).pend) and not(s.w.get(p).sent)",
     "wRecv": "s.alive and s.mb.get(p).on",
     "deliverUp": "s.alive and s.up.length() > 0 and (if (s.up.length() > 0) not(s.job.on and s.job.p == s.up.head().p) and (s.up.head().kind != \"op\" or not(s.job.on and s.job.p == s.up.head().q)) else false)",
-    "observe": "s.alive and s.pages.get(p).held and not(s.job.on and s.job.p == p) and s.disk.get(p) != s.pages.get(p).obs",
+    "observe": "s.alive and s.pages.get(p).held and not(s.job.on and s.job.p == p) and table(s.pages.get(p), s.disk.get(p), g.vc + 1) != s.pages.get(p)",
     "flush": "s.alive and not(s.job.on) and s.pages.get(p).held and not(s.pages.get(p).conflict) and s.pages.get(p).buf != ABSENT and dirty(s.pages.get(p))",
     "check": "s.alive and s.job.on and s.job.phase == 1",
     "rename": "s.alive and s.job.on and s.job.phase == 2",
@@ -275,33 +275,157 @@ GUARDS = {
 }
 
 
+GUARDS.update({
+    "wOpTo": "s.alive and p != q and s.w.get(p).on and s.w.get(q).on and not(s.w.get(p).pend) and not(s.w.get(p).sent) and not(s.w.get(q).pend) and not(s.w.get(q).sent) and ds != s.w.get(p).text and dd != s.w.get(q).text",
+    "opDelete": "s.alive and opFree(Set(p)) and opClean(s, p) and opCur(s, p) != ABSENT",
+    "flushDel": "s.alive and not(s.job.on) and s.pages.get(p).held and not(s.pages.get(p).conflict) and s.pages.get(p).buf == ABSENT and dirty(s.pages.get(p))",
+})
+# Short s3 witnesses exercise page-operation custody, historical exemptions,
+# trash durability, rollback and each operation guard in every role.
+WITNESSES["observe-last-read-after-own-save"] = {
+    "profile": "base", "actions": SAVED + [("extWriteD", [0, 1, 1]), ("observe", [0])],
+    "predicate": "s.pages.get(0).buf == 1 and s.pages.get(0).obs == 1",
+}
+WITNESSES["cli-rename-trash-and-launch"] = {
+    "profile": "base", "actions": [("opRenameRaw", [0,2,0,1,0,3,3,3]),
+        ("flushDel",[0]),("check",[]),("rename",[]),("dirSync",[1]),("draftSync",[0]),
+        ("crash",[]),("launch",[]),("observe",[1]),("observe",[2]),
+        ("flush",[2]),("check",[]),("rename",[]),("dirSync",[1]),
+        ("flush",[1]),("check",[]),("rename",[]),("dirSync",[1]),("powerKBits",[0,0,0])],
+    "predicate": "s.disk.get(2) == 1 and s.disk.get(1) == 3 and s.trash.get(0) == Set(1)",
+}
+WITNESSES["cli-delete-r1-unflushed-trash"] = {
+    "profile": "R1", "actions": [("opDelete",[0]),("flushDel",[0]),("check",[]),
+        ("extWriteD",[0,3,0]),("rename",[]),("dirSync",[0]),("powerKBits",[1,0,0])],
+    "predicate": "s.trash.get(0) == Set(3) and g.removed.get(0) == Set(3)",
+}
+WITNESSES["delete-rollback-trash"] = {
+    "profile": "base", "actions": [("opDelete",[1]),("flushDel",[1]),("check",[]),
+        ("rename",[]),("powerKBits",[0,0,0]),("launch",[]),("observe",[1])],
+    "predicate": "s.disk.get(1) == 2 and s.trash.get(1) == Set() and s.pages.get(1).risk",
+}
+WITNESSES["delete-keep-third-path"] = {
+    "profile": "base", "actions": [("extWriteD",[2,3,0]),("opDelete",[2]),
+        ("flushDel",[2]),("check",[]),("rename",[]),("powerKBits",[0,0,1])],
+    "predicate": "s.disk.get(2) == ABSENT and s.trash.get(2) == Set(3)",
+}
+WITNESSES["rename-refs-only-no-source"] = {
+    "profile": "base", "actions": [("opRenameRaw",[2,0,0,1,0,1,3,1])],
+    "predicate": "s.pages.get(1).buf == 3 and s.pages.get(0) == NOPAGE and g.vc == 3",
+}
+WITNESSES["rename-clean-held-absent-destination"] = {
+    "profile": "base", "actions": [("wOpen",[2]),("deliverUp",[1]),("wRecv",[2]),
+        ("opRenameRaw",[0,2,0,1,0,3,3,3])],
+    "predicate": "s.pages.get(2).buf == 1 and s.pages.get(2).base == ABSENT",
+}
+WITNESSES["rename-clobbered-held-target-fault"] = {
+    "profile": "base", "mutant": "MRN3", "actions": OPEN + [("opRenameRaw",[1,0,0,0,0,3,3,3])],
+    "predicate": "g.bad.contains(\"rename-clobbered-target\")",
+}
+WITNESSES["rename-dirty-referrer-fault"] = {
+    "profile": "base", "mutant": "MRN2", "actions": OPEN + EDIT + [("opRenameRaw",[1,2,1,0,0,3,3,3])],
+    "predicate": "g.bad.contains(\"D4-unclean-page-changed\")",
+}
+WITNESSES["delete-stale-window"] = {
+    "profile": "base", "actions": OPEN + [("wEdit",[0,2]),("opDelete",[0]),
+        ("wSend",[0]),("deliverUp",[1])], "predicate": "s.pages.get(0).conflict and guarantee",
+}
+WITNESSES["one-path-delete-and-restore"] = {
+    "profile": "base", "pages": 1,
+    "actions": [("opDelete",[0]),("crash",[]),("launch",[]),("flushDel",[0]),
+        ("check",[]),("rename",[]),("dirSync",[1])],
+    "predicate": "s.disk.get(0) == ABSENT and s.trash.get(0) == Set(1)", "guards": False,
+}
+WITNESSES["two-path-rename-and-restore"] = {
+    "profile": "base", "pages": 2,
+    "actions": [("extWriteD",[1,-1,1]),("opRenameRaw",[0,1,0,0,0,3,3,3]),
+        ("crash",[]),("launch",[])],
+    "predicate": "s.pages.get(0).buf == ABSENT and s.pages.get(1).buf == 1 and g.vc == 4", "guards": False,
+}
+WITNESSES["five-path-sparse-launch-versions"] = {
+    "profile": "base", "pages": 5,
+    "actions": [("opRenameRaw",[0,4,0,1,0,3,3,3]),("crash",[]),("launch",[])],
+    "predicate": "s.pages.get(0).ver == 6 and s.pages.get(1).ver == 7 and s.pages.get(4).ver == 8 and g.vc == 8", "guards": False,
+}
+WITNESSES["fault-trash-disk-fallback"] = {
+    "profile": "base", "mutant": "MDT",
+    "actions": [("opDelete",[0]),("flushDel",[0]),("check",[]),("rename",[]),
+        ("dirSync",[1]),("extWriteD",[0,1,1])],
+    "predicate": "trashed and s.trash.get(0) == Set() and g.removed.get(0) == Set(1)",
+}
+WITNESSES["ended-deletion-promise-watermark-has-old-bytes"] = {
+    "profile": "base",
+    "actions": [("opDelete",[0]),("flushDel",[0]),("check",[]),("rename",[]),("dirSync",[1])]
+        + OPEN + EDIT + [("wRecv",[0]),("flush",[0]),("check",[]),("rename",[]),("dirSync",[0]),
+            ("wDiscard",[0]),("deliverUp",[1]),("flush",[0])],
+    "predicate": "s.job.on and not(g.promise.get(0).on) and g.promise.get(0).saved and g.promise.get(0).ver == s.job.ver and g.promise.get(0).bytes != s.job.bytes",
+}
+WITNESSES["delete-conflict-blocks-flush-del"] = {
+    "profile": "base", "actions": [("opDelete",[0]),("extWriteD",[0,3,1]),("observe",[0])],
+    "predicate": "s.pages.get(0).buf == ABSENT and s.pages.get(0).conflict and s.disk.get(0) == 3",
+}
+for label, k0, k1, expected in [("keeps-second",0,1,3),("reverts-second",0,0,2),("keeps-first-only",1,0,2)]:
+    WITNESSES["power-alias-" + label] = {
+        "profile": "base", "actions": [("extWriteD",[1,3,0]),("power",[k0,k1])],
+        "predicate": f"s.disk.get(1) == {expected} and s.stable.get(1) == {expected}",
+    }
+
 def guard_oracle():
     import itertools
     entries = []
+    declarations = []
     for name, guard in GUARDS.items():
-        domains = ([range(2), [1, 2, 3]] if name in ["wEdit", "wResolve"] else
+        domains = ([range(3), [1, 2, 3]] if name in ["wEdit", "wResolve"] else
                    [range(2), [1, 2, 3], [1, 2, 3]] if name == "wOp" else
-                   [range(2), [-1, 1, 2, 3], [0, 1]] if name == "extWriteD" else
+                   [range(3), range(3), [1,2,3], [1,2,3]] if name == "wOpTo" else
+                   [range(3), [-1, 1, 2, 3], [0, 1]] if name == "extWriteD" else
                    [[0, 1], [0, 1]] if name == "power" else
                    [[0, 1]] if name in ["deliverUp", "dirSync"] else
-                   [range(2)] if name in ["wOpen", "wSend", "wDiscard", "wClose", "wRecv", "observe", "flush", "draftSync"] else [])
+                   [range(3)] if name in ["wOpen", "wSend", "wDiscard", "wClose", "wRecv", "observe", "flush", "draftSync", "opDelete", "flushDel"] else [])
         for args in itertools.product(*domains):
             params = (["p", "v"] if name in ["wEdit", "wResolve", "extWriteD"] else
-                      ["p", "ds", "dd"] if name == "wOp" else ["p"])
-            expression = guard
-            for p, v in zip(params, args):
-                # Substitute free p only: switchReq/switchFin have bound p.
-                expression = re.sub(rf"(?<![.\w]){p}\b", str(v), expression)
+                      ["p", "ds", "dd"] if name == "wOp" else ["p","q","ds","dd"] if name == "wOpTo" else ["p"])
+            free = params[:len(args)] if name not in ["deliverUp", "dirSync", "power"] else []
+            declaration = f"  def guard{name}(sys: Sys" + "".join(f", {p}: int" for p in free) + "): bool = " + re.sub(r"\bs\b", "sys", guard) + "\n"
+            if declaration not in declarations: declarations.append(declaration)
+            expression = f"guard{name}(s" + "".join(f", {v}" for v in args[:len(free)]) + ")"
             entries.append(f'{{ name: "{name}", args: List({", ".join(map(str, args))}), allowed: {expression} }}')
+    for src, dst, r0, r1, r2 in itertools.product(range(3), range(3), [0,1], [0,1], [0,1]):
+        refs = f"Set({', '.join(str(p) for p, on in enumerate([r0,r1,r2]) if on)})"
+        full = f"opCur(s, {src}) != ABSENT"
+        named = f"if ({full}) Set({src}, {dst}) else Set()"
+        all3 = f"({named}).union({refs})"
+        guard = f"guardOpRename(s,{src},{dst},{r0},{r1},{r2})"
+        entries.append(f'{{ name: "opRenameRaw", args: List({src},{dst},{r0},{r1},{r2},3,3,3), allowed: {guard} }}')
+    for k0,k1,k2 in itertools.product([0,1], repeat=3):
+        entries.append(f'{{ name: "powerKBits", args: List({k0},{k1},{k2}), allowed: true }}')
     body = "[" + ",\n".join(entries) + "]"
-    return "  type GuardChoice = { name: str, args: List[int], allowed: bool }\n  def guardOracle(sys: Sys): List[GuardChoice] = " + re.sub(r"\bs\b", "sys", body) + "\n"
+    helpers = """
+  def guardOpRename(sys: Sys, src: int, dst: int, r0: int, r1: int, r2: int): bool = {
+    val refs = PAGES.filter(p => (p == 0 and r0 == 1) or (p == 1 and r1 == 1) or (p == 2 and r2 == 1))
+    val full = opCur(sys, src) != ABSENT
+    val named = if (full) Set(src, dst) else Set()
+    val all3 = named.union(refs)
+    sys.alive and src != dst and opFree(all3) and refs.forall(r => r != src and r != dst)
+      and (not(full) or opClean(sys, src))
+      and (not(full) or (opCur(sys, dst) == ABSENT and opClean(sys, dst)))
+      and refs.forall(r => opClean(sys, r)) and all3 != Set()
+  }
+  action powerKBits(k0: bool, k1: bool, k2: bool): bool = powerK(PAGES.filter(p => (p == 0 and k0) or (p == 1 and k1) or (p == 2 and k2)))
+  action opRenameRaw(src: int, dst: int, r0: bool, r1: bool, r2: bool, t0: int, t1: int, t2: int): bool =
+    opRename(src, dst, PAGES.filter(p => (p == 0 and r0) or (p == 1 and r1) or (p == 2 and r2)), Map(0 -> t0, 1 -> t1, 2 -> t2))
+"""
+    return helpers + "".join(declarations) + "  type GuardChoice = { name: str, args: List[int], allowed: bool }\n  def guardOracle(sys: Sys): List[GuardChoice] = " + re.sub(r"\bs\b", "sys", body) + "\n"
 
 
 def find(model_dir, quint, name, spec, reuse=False):
-    work = ROOT / "scratch/s2/witnesses"
+    work = ROOT / "scratch/s3/witnesses"
     work.mkdir(parents=True, exist_ok=True)
-    model = (model_dir / "storage-s2.qnt").read_text()
+    model = (model_dir / "storage-s3.qnt").read_text()
     assert hashlib.sha256(model.encode()).hexdigest() == SHA
+    pages = spec.get("pages", 3)
+    if pages != 3:
+        model = model.replace("pure val PAGES = Set(0, 1, 2)", "pure val PAGES = Set(" + ", ".join(map(str, range(pages))) + ")")
     model = re.sub(r"pure val RACES: Set\[str\] = .*",
                    f"pure val RACES: Set[str] = {PROFILES[spec['profile']]}", model, count=1)
     mutant = spec.get("mutant", "none")
@@ -310,26 +434,27 @@ def find(model_dir, quint, name, spec, reuse=False):
     steps = spec.get("steps", len(actions))
     branches = []
     for i, (action, args) in enumerate(actions):
-        boolean = {"deliverUp": {0}, "dirSync": {0}, "extWriteD": {2}, "power": {0, 1}}
+        boolean = {"deliverUp": {0}, "dirSync": {0}, "extWriteD": {2}, "power": {0, 1}, "powerKBits": {0,1,2}, "opRenameRaw": {2,3,4}}
         params = [str(bool(v)).lower() if j in boolean.get(action, set()) else str(v)
                   for j, v in enumerate(args)]
         call = action + ("(" + ", ".join(params) + ")" if args else "")
-        stage_guard = f"stage % {len(actions)} == {i}" if "cycle" in spec else f"stage == {i}"
+        stage_guard = f"stage < {steps} and stage % {len(actions)} == {i}" if "cycle" in spec else f"stage == {i}"
         oracle = "guardOracle(s)" if spec.get("guards", True) else "[]"
         branches.append(f'''all {{ {stage_guard}, {call}, stage' = stage + 1,
-          traceAction' = {{ name: "{action}", args: List({", ".join(map(str, args))}) }},
-          actionEnabled' = {oracle}, predicateValues' = predicateOracle }}''')
+          traceAction' = {{ name: "{action}", args: List({", ".join(map(str, args))}) }} }}''')
     driver = '''
   var stage: int
   var traceAction: { name: str, args: List[int] }
   var actionEnabled: List[GuardChoice]
-  var predicateValues: { loss: bool, accepted: bool, within: bool }
-  val predicateOracle = { loss: noLoss, accepted: accepted, within: within }
-  action witnessInit = all { init, stage' = 0, traceAction' = { name: "init", args: List() }, actionEnabled' = [], predicateValues' = { loss: true, accepted: true, within: true } }
-  action witnessStep = any {
-''' + ",\n".join(branches) + f'''
+  var predicateValues: { loss: bool, accepted: bool, within: bool, trash: bool, guarantee: bool }
+  val predicateOracle = { loss: noLoss, accepted: accepted, within: within, trash: trashed, guarantee: guarantee }
+  action witnessInit = all { init, stage' = 0, traceAction' = { name: "init", args: List() }, actionEnabled' = [], predicateValues' = { loss: true, accepted: true, within: true, trash: true, guarantee: true } }
+  action witnessSchedule = any {
+''' + ",\n".join(branches) + f''',
+    all {{ stage == {steps}, s' = s, g' = g, stage' = stage + 1, traceAction' = {{ name: "capture", args: List() }} }}
   }}
-  val witness = not(stage >= {steps} and ({spec['predicate']}))
+  action witnessStep = all {{ witnessSchedule, actionEnabled' = {oracle}, predicateValues' = predicateOracle }}
+  val witness = not(stage >= {steps + 1} and ({spec['predicate']}))
 '''
     path = work / f"{name}.qnt"
     text = model.replace("  // @@SCENARIOS@@", guard_oracle() + driver)
@@ -340,17 +465,19 @@ def find(model_dir, quint, name, spec, reuse=False):
         path.write_text(text)
         result = command([quint, "run", path, "--backend", "typescript", "--init", "witnessInit",
             "--step", "witnessStep", "--invariant", "witness", "--max-samples", "1",
-            "--max-steps", steps + 1, "--seed", "20261008", "--verbosity", "1",
+            "--max-steps", steps + 2, "--seed", "20261009", "--verbosity", "1",
             "--out-itf", itf], log, {**os.environ, "TMPDIR": str(work)})
         assert result.returncode == 1 and "Invariant violated" in result.stdout + result.stderr and itf.exists(), result.stdout + result.stderr
     states = json.loads(itf.read_text())["states"]
-    assert len(states) == steps + 1
-    return {"name": name, "profile": spec["profile"], "mutant": mutant, "predicate": spec["predicate"],
+    assert len(states) == steps + 2
+    assert decode(states[-1]["s"]) == decode(states[-2]["s"]) and decode(states[-1]["g"]) == decode(states[-2]["g"])
+    print(f"witness {name}: {len(states) - 1} states", flush=True)
+    return {"name": name, "profile": spec["profile"], "pages": pages, "mutant": mutant, "predicate": spec["predicate"],
             "states": [{"action": decode(s["traceAction"]),
                         "state": {"s": decode(s["s"]), "g": decode(s["g"])},
                         "enabled": decode(states[i + 1]["actionEnabled"]) if i + 1 < len(states) and mutant == "none" else [],
                         "predicates": decode(states[i + 1]["predicateValues"]) if i + 1 < len(states) else None}
-                       for i, s in enumerate(states)]}
+                       for i, s in enumerate(states[:-1])]}
 
 
 def delta(before, after, path=()):
@@ -366,30 +493,22 @@ def delta(before, after, path=()):
     return [{"path": path, "value": after}]
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("model_dir", type=Path)
-    ap.add_argument("--quint", type=Path)
-    ap.add_argument("--reuse", action="store_true", help="reuse only identical scratch models with successful witness logs")
-    args = ap.parse_args()
-    quint = args.quint or args.model_dir.parent / "model/tools/node_modules/.bin/quint"
-    traces = [find(args.model_dir, quint, name, spec, args.reuse) for name, spec in WITNESSES.items()]
-    path = ROOT / "crates/tine-store/tests/fixtures/s2/witnesses.json"
-    choices = [{"name": c["name"], "args": c["args"]} for c in traces[0]["states"][0]["enabled"]]
+def pack(traces, min_states=100):
     paths, actions = [], []
     for trace in traces:
         for entry in trace["states"]:
-            entry["enabled"] = [c["allowed"] for c in entry["enabled"]]
+            if "enabled" in entry:
+                entry["enabled"] = [c["allowed"] for c in entry["enabled"]]
         # Lossless state deltas keep long diagnostic threshold witnesses modest.
-        if len(trace["states"]) > 100:
+        if len(trace["states"]) > min_states:
             previous = trace["states"][0]["state"]
             for i, entry in enumerate(trace["states"]):
                 action = entry.pop("action")
                 if action not in actions:
                     actions.append(action)
                 entry["a"] = actions.index(action)
-                entry.pop("enabled")
-                predicates = entry.pop("predicates")
+                entry.pop("enabled", None)
+                predicates = entry.pop("predicates", None)
                 if predicates:
                     entry["within"] = predicates["within"]
                 if i:
@@ -405,6 +524,20 @@ def main():
                         changes.append(encoded)
                     entry["delta"] = changes
                     previous = current
+    return paths, actions
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("model_dir", type=Path)
+    ap.add_argument("--quint", type=Path)
+    ap.add_argument("--reuse", action="store_true", help="reuse only identical scratch models with successful witness logs")
+    args = ap.parse_args()
+    quint = args.quint or args.model_dir.parent / "model/tools/node_modules/.bin/quint"
+    traces = [find(args.model_dir, quint, name, spec, args.reuse) for name, spec in WITNESSES.items()]
+    path = ROOT / "crates/tine-store/tests/fixtures/s2/witnesses.json"
+    choices = [{"name": c["name"], "args": c["args"]} for c in traces[0]["states"][0]["enabled"]]
+    paths, actions = pack(traces)
     path.write_text(json.dumps({"model_sha256": SHA, "choices": choices,
                                "paths": paths, "actions": actions, "traces": traces}, separators=(",", ":")) + "\n")
     print(f"{len(traces)} witness traces, {sum(len(t['states']) for t in traces)} states, {path.stat().st_size} bytes")

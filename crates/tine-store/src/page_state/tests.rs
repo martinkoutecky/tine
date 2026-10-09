@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 
 fn config(profile: &str, mutant: &str) -> Config {
     Config {
+        pages: 3,
         r1: profile == "R1" || profile == "all",
         weak: profile == "weak" || profile == "all",
         mutant: mutant.into(),
@@ -25,6 +26,8 @@ fn eval(e: &Value, x: &State) -> Value {
                 "canSwitch" => json!(can_switch(x)),
                 "ABSENT" => json!(ABSENT),
                 "NONE" => json!(NONE),
+                "MUTANT" => json!(x.config.mutant),
+                "PAGES" => json!((0..x.s.pages.len()).collect::<Vec<_>>()),
                 "UNKNOWN" => json!(UNKNOWN),
                 _ if n.starts_with('"') => json!(n.trim_matches('"')),
                 _ => json!(n.parse::<i64>().expect("unsupported identifier")),
@@ -54,14 +57,48 @@ fn eval(e: &Value, x: &State) -> Value {
                 "<=" => json!(a.as_i64().unwrap() <= b.as_i64().unwrap()),
                 "+" => json!(a.as_i64().unwrap() + b.as_i64().unwrap()),
                 "-" => json!(a.as_i64().unwrap() - b.as_i64().unwrap()),
+                "->" => json!([a, b]),
                 op => panic!("unsupported operator {op}"),
             }
         }
         "call" => {
             let f = &e[1];
             let args = e[2].as_array().unwrap();
+            if f[0] == "id" && (f[1] == "Set" || f[1] == "Map") {
+                let mut values: Vec<_> = args.iter().map(|e| eval(e, x)).collect();
+                if f[1] == "Set" {
+                    values.sort_by_key(|v| v.to_string());
+                    values.dedup();
+                }
+                return json!(values);
+            }
             if f[0] == "dot" {
                 let method = f[2].as_str().unwrap();
+                if method == "forall" {
+                    let domain = eval(&f[1], x);
+                    let lambda = &args[0];
+                    assert_eq!(lambda[1], "=>");
+                    return json!(domain.as_array().unwrap().iter().all(|v| {
+                        fn substitute(e: &Value, name: &str, value: &Value) -> Value {
+                            if e.is_array() && e[0] == "id" && e[1] == name {
+                                return json!(["id", value.to_string()]);
+                            }
+                            match e {
+                                Value::Array(a) => json!(a
+                                    .iter()
+                                    .map(|e| substitute(e, name, value))
+                                    .collect::<Vec<_>>()),
+                                _ => e.clone(),
+                            }
+                        }
+                        eval(
+                            &substitute(&lambda[3], lambda[2][1].as_str().unwrap(), v),
+                            x,
+                        )
+                        .as_bool()
+                        .unwrap()
+                    }));
+                }
                 if method == "get" {
                     return eval(&f[1], x)[eval(&args[0], x).as_u64().unwrap() as usize].clone();
                 }
@@ -81,6 +118,7 @@ fn eval(e: &Value, x: &State) -> Value {
                 "clean" => json!(clean(&serde_json::from_value(a).unwrap())),
                 "dirty" => json!(dirty(&serde_json::from_value(a).unwrap())),
                 "draftEntry" => json!(draft_entry(&serde_json::from_value(a).unwrap())),
+                "opClean" => json!(op_clean(&x.s, eval(&args[1], x).as_u64().unwrap() as usize)),
                 function => panic!("unsupported function {function}"),
             }
         }
@@ -99,6 +137,41 @@ fn action(name: &str, args: &[Value]) -> Action {
         "wResolve" => Action::WResolve(p(), v(1)),
         "wDiscard" => Action::WDiscard(p()),
         "wOp" => Action::WOp(p(), v(1), v(2)),
+        "wOpTo" => Action::WOpTo(p(), v(1) as usize, v(2), v(3)),
+        "opDelete" => Action::OpDelete(p()),
+        "flushDel" => Action::FlushDel(p()),
+        "opRename" => Action::OpRename(
+            p(),
+            v(1) as usize,
+            serde_json::from_value(args[2].clone()).unwrap(),
+            args[3]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|pair| {
+                    (
+                        pair[0].as_u64().unwrap() as usize,
+                        pair[1].as_i64().unwrap(),
+                    )
+                })
+                .collect(),
+        ),
+        "powerK" => Action::PowerK(serde_json::from_value(args[0].clone()).unwrap()),
+        "powerKBits" => Action::PowerK((0..3).filter(|&i| b(i)).collect()),
+        "opRenamePacked" => Action::OpRename(
+            p(),
+            v(1) as usize,
+            (0..3)
+                .filter(|&i| i != p() && i != v(1) as usize && b(2 + i))
+                .collect(),
+            (0..3).map(|i| (i, v(5 + i))).collect(),
+        ),
+        "opRenameRaw" => Action::OpRename(
+            p(),
+            v(1) as usize,
+            (0..3).filter(|&i| b(2 + i)).collect(),
+            (0..3).map(|i| (i, v(5 + i))).collect(),
+        ),
         "wClose" => Action::WClose(p()),
         "wRecv" => Action::WRecv(p()),
         "deliverUp" => Action::DeliverUp(b(0)),
@@ -140,6 +213,12 @@ fn program(ops: &[Value], x: &mut State) -> Result<(), &'static str> {
                 .unwrap(),
                 x,
             )?,
+            "fail" => {
+                let mut probe = x.clone();
+                if program(op[1].as_array().unwrap(), &mut probe).is_ok() {
+                    return Err("false");
+                }
+            }
             "action" => {
                 let args: Vec<_> = op[2]
                     .as_array()
@@ -163,9 +242,13 @@ fn scenarios() -> Value {
 fn scenario_outcomes_equal_quint_in_all_profiles_and_mutants() {
     let fixture = scenarios();
     assert_eq!(fixture["model_sha256"], MODEL_SHA);
+    assert_eq!(
+        fixture["scenario_sha256"],
+        "b446ab25e60e140c16ebd1bf4e73054e3de78928f0087ed712ed4151d2cdf530"
+    );
     let scenarios = fixture["scenarios"].as_object().unwrap();
-    assert_eq!(scenarios.len(), 88);
-    assert_eq!(fixture["oracles"].as_array().unwrap().len(), 23);
+    assert_eq!(scenarios.len(), 120);
+    assert_eq!(fixture["oracles"].as_array().unwrap().len(), 31);
     let mut comparisons = 0;
     for oracle in fixture["oracles"].as_array().unwrap() {
         let profile = oracle["profile"].as_str().unwrap();
@@ -183,7 +266,7 @@ fn scenario_outcomes_equal_quint_in_all_profiles_and_mutants() {
             comparisons += 1;
         }
     }
-    assert_eq!(comparisons, 2024);
+    assert_eq!(comparisons, 3720);
 }
 
 #[test]
@@ -212,7 +295,9 @@ fn every_declared_mutant_is_caught() {
             }
             x = power(&x, false, true).unwrap();
         }
-        assert!(!guarantee(&x), "{mutant} failed only a scenario predicate");
+        if mutant != "MRN5" {
+            assert!(!guarantee(&x), "{mutant} failed only a scenario predicate");
+        }
         eprintln!(
             "{mutant}: caught; A={} B={} Bprime={} C={} G={} accepted={} bad={:?}",
             no_loss(&x),
@@ -225,7 +310,7 @@ fn every_declared_mutant_is_caught() {
         );
         count += 1;
     }
-    assert_eq!(count, 19);
+    assert_eq!(count, 27);
 }
 
 fn replay_traces(fixture: &Value) -> (usize, usize) {
@@ -235,7 +320,9 @@ fn replay_traces(fixture: &Value) -> (usize, usize) {
     for (ti, trace) in traces.iter().enumerate() {
         let profile = trace["profile"].as_str().unwrap();
         let mutant = trace["mutant"].as_str().unwrap_or("none");
-        let mut x = init(config(profile, mutant));
+        let mut cfg = config(profile, mutant);
+        cfg.pages = trace["pages"].as_u64().unwrap_or(3) as usize;
+        let mut x = init(cfg);
         let mut expected = Value::Null;
         for (si, entry) in trace["states"].as_array().unwrap().iter().enumerate() {
             let recorded = if let Some(index) = entry["a"].as_u64() {
@@ -295,6 +382,11 @@ fn replay_traces(fixture: &Value) -> (usize, usize) {
                     entry["predicates"]["accepted"].as_bool().unwrap()
                 );
                 assert_eq!(within(&x), entry["predicates"]["within"].as_bool().unwrap());
+                assert_eq!(trashed(&x), entry["predicates"]["trash"].as_bool().unwrap());
+                assert_eq!(
+                    guarantee(&x),
+                    entry["predicates"]["guarantee"].as_bool().unwrap()
+                );
             }
             if let Some(expected) = entry["within"].as_bool() {
                 assert_eq!(within(&x), expected);
@@ -338,11 +430,11 @@ fn targeted_quint_witnesses_match_states_and_disabled_choices() {
 #[cfg(test)]
 fn generated_random_traces_match_every_state() {
     // Optional larger local corpus; normal CI always runs the committed sample.
-    let Ok(path) = std::env::var("S2_TRACE_FIXTURE") else {
+    let Ok(path) = std::env::var("S3_TRACE_FIXTURE") else {
         return;
     };
     let fixture: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let (traces, states) = replay_traces(&fixture);
     assert!(traces >= 256);
-    eprintln!("s2 full corpus: {traces} traces / {states} full states matched");
+    eprintln!("s3 full corpus: {traces} traces / {states} full states matched");
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Freeze s2 scenarios/oracles and full-state random Quint traces into Rust fixtures.
+"""Freeze s3 scenarios/oracles and full-state random Quint traces into Rust fixtures.
 
 Parser adapted from the read-only lean1/replay.py (same frozen syntax).
 All generated models, logs and ITF files stay in this worktree's scratch/.
@@ -8,7 +8,7 @@ import argparse, ast, hashlib, json, os, re, subprocess
 from pathlib import Path
 
 def lex(s):
-    return re.findall(r'"[^"]*"|\d+|[A-Za-z_][\w\x27]*|==|!=|>=|<=|->|[^\s]', s)
+    return re.findall(r'"[^"]*"|\d+|[A-Za-z_][\w\x27]*|==|!=|>=|<=|->|=>|[^\s]', s)
 
 class Parser:
     def __init__(self, s):
@@ -38,8 +38,8 @@ class Parser:
                 self.pop(')'); x = ('call',x,args)
             elif t == '.':
                 self.pop(); x=('dot',x,self.pop())
-            elif t in {'or':2,'and':3,'==':4,'!=':4,'>':4,'<':4,'>=':4,'<=':4,'+':5,'-':5}:
-                prec={'or':2,'and':3,'==':4,'!=':4,'>':4,'<':4,'>=':4,'<=':4,'+':5,'-':5}[t]
+            elif t in {'->':1,'=>':1,'or':2,'and':3,'==':4,'!=':4,'>':4,'<':4,'>=':4,'<=':4,'+':5,'-':5}:
+                prec={'->':1,'=>':1,'or':2,'and':3,'==':4,'!=':4,'>':4,'<':4,'>=':4,'<=':4,'+':5,'-':5}[t]
                 if prec < minprec: break
                 self.pop(); x=('bin',t,x,self.expr(prec+1))
             else: break
@@ -52,7 +52,8 @@ def name(e):
     return e[1] if e[0]=='id' else None
 
 
-SHA = "1c3194293856a11630536b74a8221c76c2a8725e77bc366b9172641681a08cef"
+SHA = "baaaeab459890ea8b09c49dbd0ab506489c372c944c71aec8b12f43e3ebba557"
+SCENARIO_SHA = "b446ab25e60e140c16ebd1bf4e73054e3de78928f0087ed712ed4151d2cdf530"
 PROFILES = {
     "base": 'Set("crash", "power")',
     "R1": 'Set("crash", "power", "R1")',
@@ -70,15 +71,23 @@ def scenarios(source):
         body = source[m.end():matches[i+1].start() if i+1 < len(matches) else len(source)].strip()
         definitions[n] = (re.findall(r"(\w+)\s*:", params or ""), parse(body))
         if kind == "run": runs.append(n)
-    assert len(runs) == 88
+    assert len(runs) == 120
+    def predicate(e):
+        if isinstance(e, list): return [predicate(a) for a in e]
+        if not isinstance(e, tuple): return e
+        if e[0] == "id" and e[1] in definitions and not definitions[e[1]][0]:
+            return predicate(definitions[e[1]][1])
+        return tuple(predicate(a) for a in e)
     def expand(e, stack=()):
         if e[0] == "call" and e[1][0] == "dot" and e[1][2] in ["then", "expect"]:
             pre = expand(e[1][1], stack)
-            return pre + (expand(e[2][0], stack) if e[1][2] == "then" else [["expect", e[2][0]]])
+            return pre + (expand(e[2][0], stack) if e[1][2] == "then" else [["expect", predicate(e[2][0])]])
         if e[0] == "if":
             return [["if", e[1], expand(e[2], stack), expand(e[3], stack)]]
         if e[0] == "id" and e[1] == "init": return [["init"]]
         if e[0] == "id" and e[1] == "noop": return []
+        if e[0] == "call" and e[1][0] == "dot" and e[1][2] == "fail":
+            return [["fail", expand(e[1][1], stack)]]
         n = name(e) if e[0] == "id" else name(e[1]) if e[0] == "call" else None
         if n in definitions:
             params, body = definitions[n]
@@ -105,7 +114,7 @@ def decode(v):
     if "#bigint" in v: return int(v["#bigint"])
     if "#map" in v:
         pairs = v["#map"]
-        assert sorted(int(decode(k)) for k, _ in pairs) == [0, 1]
+        assert sorted(int(decode(k)) for k, _ in pairs) == list(range(len(pairs)))
         return [decode(x) for _, x in sorted(pairs, key=lambda kv: int(decode(kv[0])))]
     if "#set" in v: return sorted((decode(x) for x in v["#set"]), key=lambda x: x)
     if "#tup" in v: return [decode(x) for x in v["#tup"]]
@@ -119,12 +128,12 @@ def traced_model(model):
     # Bias toward protocol progress while retaining every original choice.
     # Unbiased simulation mostly crashes before windows can send or saves run.
     weights = {"wOpen": 8, "wSend": 20, "wRecv": 20, "wEdit": 8,
-               "wResolve": 8, "wOp": 12, "deliverUp": 20, "flush": 8,
+               "wResolve": 8, "wOpTo": 12, "opRename": 12, "opDelete": 8, "flushDel": 20, "deliverUp": 20, "flush": 8,
                "check": 20, "rename": 20, "dirSync": 20, "launch": 20,
                "observe": 4, "draftSync": 4, "wDiscard": 2, "wClose": 2,
                "switchReq": 2}
     def emit(n, args=(), bind=""):
-        encoded = [f"if ({a}) 1 else 0" if a in ["ok", "dur", "k0", "k1"] else a for a in args]
+        encoded = [f"if ({a}) 1 else 0" if a in ["ok", "dur", "k0", "k1", "k2", "r0", "r1", "r2"] else a for a in args]
         call = n + ("(" + ", ".join(args) + ")" if args else "")
         group = bind + ' all { ' + call + ', traceAction\' = { name: "' + n + '", args: List(' + ", ".join(encoded) + ') } }'
         groups.extend([group] * weights.get(n, 1))
@@ -132,13 +141,19 @@ def traced_model(model):
         emit(n, ["p"], "nondet p = PAGES.oneOf()")
     for n in ["wEdit", "wResolve"]:
         emit(n, ["p", "v"], "nondet p = PAGES.oneOf() nondet v = TEXTS.oneOf()")
-    emit("wOp", ["p", "dS", "dD"], "nondet p = PAGES.oneOf() nondet dS = TEXTS.oneOf() nondet dD = TEXTS.oneOf()")
+    emit("wOpTo", ["p", "q", "dS", "dD"], "nondet p = PAGES.oneOf() nondet q = PAGES.oneOf() nondet dS = TEXTS.oneOf() nondet dD = TEXTS.oneOf()")
     for n in ["check", "rename", "saveFail", "switchReq", "switchFin", "crash", "windowCrash", "launch"]:
         emit(n)
     for n in ["dirSync", "deliverUp"]: emit(n, ["ok"], "nondet ok = BOOLS.oneOf()")
     emit("extWriteD", ["p", "v", "dur"], "nondet p = PAGES.oneOf() nondet v = TEXTS.union(Set(ABSENT)).oneOf() nondet dur = BOOLS.oneOf()")
-    emit("power", ["k0", "k1"], "nondet k0 = BOOLS.oneOf() nondet k1 = BOOLS.oneOf()")
-    driver = """  var traceAction: { name: str, args: List[int] }
+    emit("powerKBits", ["k0", "k1", "k2"], "nondet k0 = BOOLS.oneOf() nondet k1 = BOOLS.oneOf() nondet k2 = BOOLS.oneOf()")
+    for n in ["opDelete", "flushDel"]: emit(n, ["p"], "nondet p = PAGES.oneOf()")
+    emit("opRenamePacked", ["src", "dst", "r0", "r1", "r2", "t0", "t1", "t2"],
+         "nondet src = PAGES.oneOf() nondet dst = PAGES.oneOf() nondet r0 = BOOLS.oneOf() nondet r1 = BOOLS.oneOf() nondet r2 = BOOLS.oneOf() nondet t0 = TEXTS.oneOf() nondet t1 = TEXTS.oneOf() nondet t2 = TEXTS.oneOf()")
+    driver = """  action powerKBits(k0: bool, k1: bool, k2: bool): bool = powerK(PAGES.filter(p => (p == 0 and k0) or (p == 1 and k1) or (p == 2 and k2)))
+  action opRenamePacked(src: int, dst: int, r0: bool, r1: bool, r2: bool, t0: int, t1: int, t2: int): bool =
+    opRename(src, dst, PAGES.exclude(Set(src, dst)).filter(p => (p == 0 and r0) or (p == 1 and r1) or (p == 2 and r2)), Map(0 -> t0, 1 -> t1, 2 -> t2))
+  var traceAction: { name: str, args: List[int] }
   action traceInit = all { init, traceAction' = { name: "init", args: List() } }
   action traceStep = any {
 """ + ",\n".join(groups) + "\n  }\n"
@@ -155,11 +170,12 @@ def main():
     ap.add_argument("--reuse-scenarios", action="store_true", help="reuse scenario oracle logs but generate fresh random traces")
     args = ap.parse_args()
     root = Path(__file__).resolve().parents[2]
-    work = root/"scratch"/"s2"; work.mkdir(parents=True, exist_ok=True)
+    work = root/"scratch"/"s3"; work.mkdir(parents=True, exist_ok=True)
     fixture = root/"crates/tine-store/tests/fixtures/s2"; fixture.mkdir(parents=True, exist_ok=True)
-    model = (args.model_dir/"storage-s2.qnt").read_text()
+    model = (args.model_dir/"storage-s3.qnt").read_text()
     assert hashlib.sha256(model.encode()).hexdigest() == SHA
-    source = (args.model_dir/"scenarios-s2.inc").read_text()
+    source = (args.model_dir/"scenarios-s3.inc").read_text()
+    assert hashlib.sha256(source.encode()).hexdigest() == SCENARIO_SHA
     muts = ast.literal_eval(re.search(r"// SWEEP-MUTS: (\{.*\})", model).group(1))
     quint = args.quint or args.model_dir.parent/"model/tools/node_modules/.bin/quint"
     env = {**os.environ, "TMPDIR": str(work)}
@@ -176,8 +192,8 @@ def main():
         out = log.read_text()
         statuses = {n: "pass" for n in re.findall(r"ok (\w+) passed", out)}
         errors = dict(re.findall(r"\n\s+\d+\) (\w+):\n\s+Error \[(QNT\d+)\]", out))
-        statuses.update({n: {"QNT508": "assertion", "QNT507": "disabled", "QNT513": "disabled"}.get(e, e) for n, e in errors.items()})
-        assert len(statuses) == 88, (p, m, len(statuses), out)
+        statuses.update({n: {"QNT508": "assertion", "QNT507": "disabled", "QNT513": "disabled", "QNT511": "false"}.get(e, e) for n, e in errors.items()})
+        assert len(statuses) == 120, (p, m, len(statuses), out)
         assert m != "none" or set(statuses.values()) == {"pass"}
         assert m == "none" or statuses["m"+m] == "assertion"
         outcomes.append({"profile": p, "mutant": m, "outcomes": statuses})
@@ -186,7 +202,7 @@ def main():
     assert all(set(o["outcomes"]) == set(data["scenarios"]) for o in outcomes)
     (fixture/"scenarios.json").write_text(json.dumps(data, separators=(",", ":"))+"\n")
     traces = []
-    seeds = {p: str(20261008 + i * 7919) for i, p in enumerate(PROFILES)}
+    seeds = {p: str(20261009 + i * 7919) for i, p in enumerate(PROFILES)}
     for p in PROFILES:
         text = re.sub(r"pure val RACES: Set\[str\] = .*", f"pure val RACES: Set[str] = {PROFILES[p]}", model, count=1)
         path = work/f"trace-{p}.qnt"; path.write_text(traced_model(text))
@@ -202,11 +218,11 @@ def main():
         print(f"traces {p}: {len(paths)}", flush=True)
     seen = {s["action"]["name"] for t in traces for s in t["states"]}
     required = {"wOpen", "wSend", "wDiscard", "wClose", "wRecv", "flush", "observe", "draftSync",
-                "wEdit", "wResolve", "wOp", "check", "rename", "saveFail", "switchReq", "switchFin",
-                "crash", "windowCrash", "launch", "dirSync", "deliverUp", "extWriteD", "power"}
+                "wEdit", "wResolve", "wOpTo", "opRenamePacked", "opDelete", "flushDel", "check", "rename", "saveFail", "switchReq", "switchFin",
+                "crash", "windowCrash", "launch", "dirSync", "deliverUp", "extWriteD", "powerKBits"}
     assert required <= seen, ("random corpus omitted actions", required-seen)
     all_data = {"model_sha256": SHA, "seeds": seeds, "max_steps": args.steps,
-                "driver": "weighted-original-choices", "traces": traces}
+                "driver": "weighted-original-choices", "pages": 3, "traces": traces}
     (work/"traces.json").write_text(json.dumps(all_data, separators=(",", ":"))+"\n")
     sample = []
     for p in PROFILES:
@@ -220,7 +236,10 @@ def main():
             chosen = candidates.pop(best)
             covered.update(s["action"]["name"] for s in chosen["states"])
             sample.append(chosen)
-    sample_data = {**all_data, "traces": sample}
+    from witnesses import pack
+    sample = json.loads(json.dumps(sample))
+    paths, actions = pack(sample, min_states=0)
+    sample_data = {**all_data, "traces": sample, "paths": paths, "actions": actions}
     (fixture/"traces.json").write_text(json.dumps(sample_data, separators=(",", ":"))+"\n")
     print(f"generated {len(traces)} traces, {sum(len(t['states']) for t in traces)} states; committed {len(sample)} traces, {(fixture/'traces.json').stat().st_size} bytes")
 

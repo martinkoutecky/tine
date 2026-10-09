@@ -6,18 +6,16 @@ Run --list to inspect; --run tests each change and restores the original in fina
 Never runs alongside cargo-mutants --in-place.
 """
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import shutil
-from mutation_harness import prepare
+from mutation_harness import prepare, SOURCES, source_sha256
 from tree_sitter import Language, Parser
 import tree_sitter_rust
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE = ROOT / "crates/tine-store/src/page_state/mod.rs"
 
 
 def mutations(source):
@@ -63,43 +61,50 @@ def mutations(source):
             visit(child, function)
 
     visit(tree.root_node)
-    assert any(m["function"] == "up_discard" and
-               m["dropped"] == "d == x.s.drafts[p].bytes" for m in result)
     return result
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--run", action="store_true")
+    ap.add_argument("--skip-witnesses", action="store_true", help="baseline census before s3 witnesses are regenerated")
     ap.add_argument("--only", help="comma-separated IDs")
-    ap.add_argument("--output", type=Path, default=ROOT / "scratch/s2/hand")
+    ap.add_argument("--output", type=Path, default=ROOT / "scratch/s3/hand")
     ap.add_argument("--baseline-tests", type=Path, help="use saved step-1 tests for fail-before census")
     ap.add_argument("--allow-equivalents", type=Path, help="reviewed same-source equivalence ledger")
     args = ap.parse_args()
-    original = SOURCE.read_bytes()
+    originals = {name: (ROOT / "crates/tine-store" / name).read_bytes() for name in SOURCES}
     equivalents = {}
     if args.allow_equivalents:
         ledger = json.loads(args.allow_equivalents.read_text())
-        assert ledger["source_sha256"] == hashlib.sha256(original).hexdigest(), "equivalence ledger must be reviewed after source changes"
+        assert ledger["source_sha256"] == source_sha256(), "equivalence ledger must be reviewed after source changes"
         equivalents = ledger["hand"]
-    entries = mutations(original)
+    entries = []
+    for name, original in originals.items():
+        for entry in mutations(original):
+            entry["id"] = f"H{len(entries) + 1:03}"
+            entries.append({**entry, "file": name})
+    assert any(m["function"] == "up_discard" and m["dropped"] == "d == x.s.drafts[p].bytes" for m in entries)
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "mutants.json").write_text(json.dumps({
-        "source_sha256": hashlib.sha256(original).hexdigest(),
+        "source_sha256": source_sha256(),
         "mutants": entries}, indent=2) + "\n")
     print(f"{len(entries)} hand mutants", flush=True)
     if not args.run:
         return
     work = prepare(args.output / "harness")
-    source = work / "src/page_state/mod.rs"
     if args.baseline_tests:
         shutil.copyfile(args.baseline_tests, work / "src/page_state/tests.rs")
-    env = {**os.environ, "CARGO_TARGET_DIR": str(ROOT / "target/s2-hand-mutants")}
+    env = {**os.environ, "CARGO_TARGET_DIR": str(ROOT / "target/s3-hand-mutants")}
     outcomes = []
     try:
         for entry in entries:
             if args.only and entry["id"] not in args.only.split(","):
                 continue
+            for name, original in originals.items():
+                (work / name).write_bytes(original)
+            source = work / entry["file"]
+            original = originals[entry["file"]]
             source.write_bytes(original[:entry["start"]] +
                                entry["replacement"].encode() + original[entry["end"]:])
             log = args.output / f"{entry['id']}.log"
@@ -111,14 +116,15 @@ def main():
                     status = "unviable"
                 else:
                     test = subprocess.run(["rtk", "proxy", "cargo", "test", "-p",
-                                           "tine-store", "--lib", "page_state"],
+                                           "tine-store", "--lib", "page_state"] + (["--", "--skip", "targeted_quint_witnesses"] if args.skip_witnesses else []),
                                           cwd=work, env=env, stdout=output, stderr=output)
                     status = "caught" if test.returncode else "missed"
             outcomes.append({**entry, "status": status})
             (args.output / "outcomes.json").write_text(json.dumps(outcomes, indent=2) + "\n")
             print(entry["id"], status, entry["function"], entry["dropped"], flush=True)
     finally:
-        source.write_bytes(original)
+        for name, original in originals.items():
+            (work / name).write_bytes(original)
     for outcome in outcomes:
         if outcome["status"] == "missed" and outcome["id"] in equivalents:
             proof = equivalents[outcome["id"]]

@@ -1,543 +1,724 @@
 {
-  "source_sha256": "c6a60c48fe2c320174569c3e6bb6c9c4e8a56145869f5958015e835a3396a0b6",
+  "source_sha256": "3c44ac6cf64a8ecf807c3c00856a918ef7528b101d865742ff03f57ef18c6e05",
+  "scope": "Each entry describes one mutation, separately, over reachable healthy frozen-s3 states and canonical model input domains; the 27 individually configured faults are tested, not universally proved. Structural/commit invariants sampled in scratch/s3/equivalence-{core,correction,g,mis,operations}; core R1 with obsolete savedAckEcho failed and is superseded by correction. Samples support the accompanying arguments, not exhaustive proofs. Frozen Lean guarantee supplies healthy monotonic-permission facts. Domain and unused-alias survivors are unreachable; constructor/name cases are syntactic equivalents.",
+  "census": {
+    "hand": 350,
+    "cargo": 688
+  },
   "hand": {
     "H002": {
+      "function": "clean",
+      "dropped": "pg.buf == pg.base",
       "invariant": "cleanEquality",
-      "argument": "Without typed input or risk, every held page has buf == base; NOPAGE does too. Init establishes this; submit sets typed, uncertain/conflict sets risk, Published/discard establish equality.",
-      "dropped": "pg.buf == pg.base"
+      "argument": "Without typed input or risk, every held page has buf == base; NOPAGE does too. Init establishes this; submit sets typed, uncertain/conflict sets risk, Published/discard establish equality."
     },
     "H004": {
+      "function": "draft_entry",
+      "dropped": "pg.held",
       "invariant": "riskHeld,unheldPadding",
-      "argument": "Risk implies held. Every retirement installs NOPAGE, which is clean, so !held is redundant in clean-or-risk and risk predicates.",
-      "dropped": "pg.held"
+      "argument": "Risk implies held. Every retirement installs NOPAGE, which is clean, so !held is redundant in clean-or-risk and risk predicates."
     },
     "H020": {
+      "function": "ack",
+      "dropped": "ver == pr.ver",
       "invariant": "jobPromiseBound,draftAckEcho,savedAckEcho",
-      "argument": "The page is locked throughout a save, so its promise cannot outrun that job. A same-version unsaved draft ack repeats identical bytes/ep; a same-version saved ack repeats the saved record. Dropping these tests either remains false or repeats the same record.",
-      "dropped": "ver == pr.ver"
+      "argument": "The locked page's promise cannot outrun its save job. An active same-version draft acknowledgement repeats bytes/ep; an active same-version saved acknowledgement repeats the saved record. Upgrade requires pr.on; an ended promise may retain different historical bytes, and is excluded. Each individual removal is either still rejected or repeats the original record."
     },
     "H022": {
+      "function": "ack",
+      "dropped": "saved",
       "invariant": "jobPromiseBound,draftAckEcho,savedAckEcho",
-      "argument": "The page is locked throughout a save, so its promise cannot outrun that job. A same-version unsaved draft ack repeats identical bytes/ep; a same-version saved ack repeats the saved record. Dropping these tests either remains false or repeats the same record.",
-      "dropped": "saved"
+      "argument": "The locked page's promise cannot outrun its save job. An active same-version draft acknowledgement repeats bytes/ep; an active same-version saved acknowledgement repeats the saved record. Upgrade requires pr.on; an ended promise may retain different historical bytes, and is excluded. Each individual removal is either still rejected or repeats the original record."
     },
     "H023": {
+      "function": "ack",
+      "dropped": "!pr.saved",
       "invariant": "jobPromiseBound,draftAckEcho,savedAckEcho",
-      "argument": "The page is locked throughout a save, so its promise cannot outrun that job. A same-version unsaved draft ack repeats identical bytes/ep; a same-version saved ack repeats the saved record. Dropping these tests either remains false or repeats the same record.",
-      "dropped": "!pr.saved"
+      "argument": "The locked page's promise cannot outrun its save job. An active same-version draft acknowledgement repeats bytes/ep; an active same-version saved acknowledgement repeats the saved record. Upgrade requires pr.on; an ended promise may retain different historical bytes, and is excluded. Each individual removal is either still rejected or repeats the original record."
     },
     "H026": {
+      "function": "kept_b",
+      "dropped": "a.held",
       "invariant": "guarantee,unheldPadding",
-      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty.",
-      "dropped": "a.held"
+      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty."
     },
     "H028": {
+      "function": "kept_b",
+      "dropped": "!b.held",
       "invariant": "guarantee,unheldPadding",
-      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty.",
-      "dropped": "!b.held"
+      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty."
     },
     "H032": {
+      "function": "kept_b",
+      "dropped": "!a.typed",
       "invariant": "guarantee,unheldPadding",
-      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty.",
-      "dropped": "!a.typed"
+      "argument": "Dropping !a.typed from the first safe conjunction widens keptB permission. The healthy model already satisfies keptB at every commit; unheld NOPAGE remains safe. Thus no healthy bad-set contribution changes, and the fault witnesses preserve their observed results."
     },
     "H033": {
+      "function": "kept_b",
+      "dropped": "a.buf == a.obs",
       "invariant": "guarantee,unheldPadding",
-      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty.",
-      "dropped": "a.buf == a.obs"
+      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty."
     },
     "H034": {
+      "function": "kept_b",
+      "dropped": "pr.ver >= a.ver",
       "invariant": "guarantee,unheldPadding",
-      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty.",
-      "dropped": "pr.ver >= a.ver"
-    },
-    "H035": {
-      "invariant": "guarantee,unheldPadding",
-      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty.",
-      "dropped": "pr.bytes == a.buf"
-    },
-    "H037": {
-      "invariant": "guarantee,unheldPadding",
-      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty.",
-      "dropped": "(x.g.seen[p].contains(&a.buf) || !a.typed)"
+      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty."
     },
     "H038": {
+      "function": "kept_b",
+      "dropped": "x.g.seen[p].contains(&a.buf)",
       "invariant": "shownAND,shownTyped,noSwitch",
-      "argument": "The commit-boundary invariant compares the original keptB result with stricter shown and switch alternatives. A stale typed replacement is already acknowledged or carries the current window version; an untyped replacement is either read-safe/acknowledged or shown. At switchFin dirty pages have an exact current draft/ack, and clean pages are read-safe. The final switch disjunct adds no permission.",
-      "dropped": "x.g.seen[p].contains(&a.buf)"
+      "argument": "The commit-boundary invariant compares the original keptB result with stricter shown and switch alternatives. A stale typed replacement is already acknowledged or carries the current window version; an untyped replacement is either read-safe/acknowledged or shown. At switchFin dirty pages have an exact current draft/ack, and clean pages are read-safe. The final switch disjunct adds no permission."
     },
     "H039": {
+      "function": "kept_b",
+      "dropped": "!a.typed",
       "invariant": "shownAND,shownTyped,noSwitch",
-      "argument": "The commit-boundary invariant compares the original keptB result with stricter shown and switch alternatives. A stale typed replacement is already acknowledged or carries the current window version; an untyped replacement is either read-safe/acknowledged or shown. At switchFin dirty pages have an exact current draft/ack, and clean pages are read-safe. The final switch disjunct adds no permission.",
-      "dropped": "!a.typed"
+      "argument": "The commit-boundary invariant compares the original keptB result with stricter shown and switch alternatives. A stale typed replacement is already acknowledged or carries the current window version; an untyped replacement is either read-safe/acknowledged or shown. At switchFin dirty pages have an exact current draft/ack, and clean pages are read-safe. The final switch disjunct adds no permission."
     },
     "H045": {
+      "function": "kept_b",
+      "dropped": "(name == \"switchFin\" && ns.drafts[p].bytes == a.buf)",
       "invariant": "shownAND,shownTyped,noSwitch",
-      "argument": "The commit-boundary invariant compares the original keptB result with stricter shown and switch alternatives. A stale typed replacement is already acknowledged or carries the current window version; an untyped replacement is either read-safe/acknowledged or shown. At switchFin dirty pages have an exact current draft/ack, and clean pages are read-safe. The final switch disjunct adds no permission.",
-      "dropped": "(name == \"switchFin\" && ns.drafts[p].bytes == a.buf)"
+      "argument": "The commit-boundary invariant compares the original keptB result with stricter shown and switch alternatives. A stale typed replacement is already acknowledged or carries the current window version; an untyped replacement is either read-safe/acknowledged or shown. At switchFin dirty pages have an exact current draft/ack, and clean pages are read-safe. The final switch disjunct adds no permission."
     },
     "H046": {
+      "function": "kept_b",
+      "dropped": "name == \"switchFin\"",
       "invariant": "guarantee,unheldPadding",
-      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty.",
-      "dropped": "name == \"switchFin\""
+      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty."
     },
     "H050": {
+      "function": "kept_w",
+      "dropped": "!b.on",
       "invariant": "guarantee,mailAckSent",
-      "argument": "Dropping !b.on widens keptW permission. Dropping the wAck name allows no additional replacement: only an ack can clear a sent window; other pushes preserve it, and a closed window has no pending input.",
-      "dropped": "!b.on"
+      "argument": "Dropping !b.on widens keptW permission. Dropping the wAck name allows no additional replacement: only an ack can clear a sent window; other pushes preserve it, and a closed window has no pending input."
     },
     "H059": {
+      "function": "kept_w",
+      "dropped": "name == \"wAck\"",
       "invariant": "guarantee,mailAckSent",
-      "argument": "Dropping !b.on widens keptW permission. Dropping the wAck name allows no additional replacement: only an ack can clear a sent window; other pushes preserve it, and a closed window has no pending input.",
-      "dropped": "name == \"wAck\""
+      "argument": "Dropping !b.on widens keptW permission. Dropping the wAck name allows no additional replacement: only an ack can clear a sent window; other pushes preserve it, and a closed window has no pending input."
     },
     "H062": {
-      "invariant": "noHeldA,noHeldB,absentClean",
-      "argument": "The commit invariant compares complete resulting promises. An unheld predecessor is clean, so cannot meet dirty(a); an unheld successor has ABSENT bytes, which cannot match a dirty predecessor. Neither removal changes an ack.",
-      "dropped": "a.held"
+      "function": "commit",
+      "dropped": "a.held",
+      "invariant": "unheldPadding,noHeldA",
+      "argument": "An unheld predecessor is NOPAGE and clean; dirty(a) remains false, so dropping a.held cannot change the promise."
     },
     "H064": {
-      "invariant": "noHeldA,noHeldB,absentClean",
-      "argument": "The commit invariant compares complete resulting promises. An unheld predecessor is clean, so cannot meet dirty(a); an unheld successor has ABSENT bytes, which cannot match a dirty predecessor. Neither removal changes an ack.",
-      "dropped": "b.held"
+      "function": "commit",
+      "dropped": "b.held",
+      "invariant": "unheldPadding,noHeldB,versionBound",
+      "argument": "An unheld successor is NOPAGE with ver=0. Promise versions are nonnegative, so ack(pr, ABSENT, 0, false, 0) is the identity even when a dirty deletion predecessor also has ABSENT bytes. Held successors retain the original condition. The commit probe compares resulting promises, not just predicates."
     },
     "H067": {
+      "function": "commit",
+      "dropped": "ns.alive",
       "invariant": "mailDrop1,mailDrop4,downPadding,offMailPadding,windowDomain",
-      "argument": "Down clears windows, making the alive mailbox guard redundant. Buffer/held changes also change version or leave an identical request ack; the invariant compares mailbox records. An off mailbox is NOMAIL (took=false). Every on-window text is ABSENT or a TEXTS member.",
-      "dropped": "ns.alive"
+      "argument": "Down clears windows, making the alive mailbox guard redundant. Buffer/held changes also change version or leave an identical request ack; the invariant compares mailbox records. An off mailbox is NOMAIL (took=false). Every on-window text is ABSENT or a TEXTS member."
     },
     "H073": {
+      "function": "commit",
+      "dropped": "a.buf != b.buf",
       "invariant": "mailDrop1,mailDrop4,downPadding,offMailPadding,windowDomain",
-      "argument": "Down clears windows, making the alive mailbox guard redundant. Buffer/held changes also change version or leave an identical request ack; the invariant compares mailbox records. An off mailbox is NOMAIL (took=false). Every on-window text is ABSENT or a TEXTS member.",
-      "dropped": "a.buf != b.buf"
+      "argument": "Down clears windows, making the alive mailbox guard redundant. Buffer/held changes also change version or leave an identical request ack; the invariant compares mailbox records. An off mailbox is NOMAIL (took=false). Every on-window text is ABSENT or a TEXTS member."
     },
     "H076": {
+      "function": "commit",
+      "dropped": "a.held != b.held",
       "invariant": "mailDrop1,mailDrop4,downPadding,offMailPadding,windowDomain",
-      "argument": "Down clears windows, making the alive mailbox guard redundant. Buffer/held changes also change version or leave an identical request ack; the invariant compares mailbox records. An off mailbox is NOMAIL (took=false). Every on-window text is ABSENT or a TEXTS member.",
-      "dropped": "a.held != b.held"
+      "argument": "Down clears windows, making the alive mailbox guard redundant. Buffer/held changes also change version or leave an identical request ack; the invariant compares mailbox records. An off mailbox is NOMAIL (took=false). Every on-window text is ABSENT or a TEXTS member."
     },
     "H077": {
+      "function": "commit",
+      "dropped": "m.on",
       "invariant": "mailDrop1,mailDrop4,downPadding,offMailPadding,windowDomain",
-      "argument": "Down clears windows, making the alive mailbox guard redundant. Buffer/held changes also change version or leave an identical request ack; the invariant compares mailbox records. An off mailbox is NOMAIL (took=false). Every on-window text is ABSENT or a TEXTS member.",
-      "dropped": "m.on"
+      "argument": "Down clears windows, making the alive mailbox guard redundant. Buffer/held changes also change version or leave an identical request ack; the invariant compares mailbox records. An off mailbox is NOMAIL (took=false). Every on-window text is ABSENT or a TEXTS member."
     },
     "H080": {
+      "function": "commit",
+      "dropped": "(w.text == ABSENT || real(w.text))",
       "invariant": "mailDrop1,mailDrop4,downPadding,offMailPadding,windowDomain",
-      "argument": "Down clears windows, making the alive mailbox guard redundant. Buffer/held changes also change version or leave an identical request ack; the invariant compares mailbox records. An off mailbox is NOMAIL (took=false). Every on-window text is ABSENT or a TEXTS member.",
-      "dropped": "(w.text == ABSENT || real(w.text))"
+      "argument": "Down clears windows, making the alive mailbox guard redundant. Buffer/held changes also change version or leave an identical request ack; the invariant compares mailbox records. An off mailbox is NOMAIL (took=false). Every on-window text is ABSENT or a TEXTS member."
     },
     "H086": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
+      "function": "w_edit",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
     "H089": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
+      "function": "w_send",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
     "H090": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!a.on"
+      "function": "w_send",
+      "dropped": "!a.on",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
     "H093": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
+      "function": "w_resolve",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
     "H094": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!a.on"
+      "function": "w_resolve",
+      "dropped": "!a.on",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
     "H099": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
+      "function": "w_discard",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
     "H102": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
+      "function": "w_op_to",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
-    "H111": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
+    "H112": {
+      "function": "w_close",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
-    "H115": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
+    "H116": {
+      "function": "w_recv",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
-    "H118": {
+    "H119": {
+      "function": "w_recv",
+      "dropped": "a.sent",
       "invariant": "mailAckSent,offMailPadding",
-      "argument": "An on mailbox with ack>=0 has a sent window. If a pending push is treated as an ack, took is false and its update (text/pend preserved, sent=false, bv unchanged, obs/conf copied) equals the original pending-push update.",
-      "dropped": "a.sent"
-    },
-    "H121": {
-      "invariant": "mailAckSent,offMailPadding",
-      "argument": "An on mailbox with ack>=0 has a sent window. If a pending push is treated as an ack, took is false and its update (text/pend preserved, sent=false, bv unchanged, obs/conf copied) equals the original pending-push update.",
-      "dropped": "is_ack"
-    },
-    "H134": {
-      "invariant": "guarantee",
-      "argument": "Only the internal name changes among uOpen/uOpenFail or uDiscard/uDiscardFail. None belongs to keptB's stale/crash/power/switch exceptions or keptW's user/wAck exceptions; names are not stored. Sys/Ghost are identical for every argument, not merely reachable ones.",
-      "dropped": "pg.held"
+      "argument": "An on mailbox with ack>=0 has a sent window. If a pending push is treated as an ack, took is false and its update (text/pend preserved, sent=false, bv unchanged, obs/conf copied) equals the original pending-push update."
     },
     "H135": {
+      "function": "up_open",
+      "dropped": "pg.held",
       "invariant": "guarantee",
-      "argument": "Only the internal name changes among uOpen/uOpenFail or uDiscard/uDiscardFail. None belongs to keptB's stale/crash/power/switch exceptions or keptW's user/wAck exceptions; names are not stored. Sys/Ghost are identical for every argument, not merely reachable ones.",
-      "dropped": "rok"
+      "argument": "Only the internal name changes among uOpen/uOpenFail or uDiscard/uDiscardFail. None belongs to keptB's stale/crash/power/switch exceptions or keptW's user/wAck exceptions; names are not stored. Sys/Ghost are identical for every argument, not merely reachable ones."
     },
     "H136": {
-      "invariant": "unheldPadding",
-      "argument": "When !held, clean(NOPAGE) is true and assigning NOPAGE to an existing NOPAGE is an identity. When held, the removed conjunct was true.",
-      "dropped": "pg.held"
-    },
-    "H153": {
+      "function": "up_open",
+      "dropped": "rok",
       "invariant": "guarantee",
-      "argument": "Only the internal name changes among uOpen/uOpenFail or uDiscard/uDiscardFail. None belongs to keptB's stale/crash/power/switch exceptions or keptW's user/wAck exceptions; names are not stored. Sys/Ghost are identical for every argument, not merely reachable ones.",
-      "dropped": "pg.held"
+      "argument": "Only the internal name changes among uOpen/uOpenFail or uDiscard/uDiscardFail. None belongs to keptB's stale/crash/power/switch exceptions or keptW's user/wAck exceptions; names are not stored. Sys/Ghost are identical for every argument, not merely reachable ones."
+    },
+    "H137": {
+      "function": "up_close",
+      "dropped": "pg.held",
+      "invariant": "unheldPadding",
+      "argument": "When !held, clean(NOPAGE) is true and assigning NOPAGE to an existing NOPAGE is an identity. When held, the removed conjunct was true."
     },
     "H154": {
+      "function": "up_discard",
+      "dropped": "pg.held",
       "invariant": "guarantee",
-      "argument": "Only the internal name changes among uOpen/uOpenFail or uDiscard/uDiscardFail. None belongs to keptB's stale/crash/power/switch exceptions or keptW's user/wAck exceptions; names are not stored. Sys/Ghost are identical for every argument, not merely reachable ones.",
-      "dropped": "!rok"
+      "argument": "Only the internal name changes among uOpen/uOpenFail or uDiscard/uDiscardFail. None belongs to keptB's stale/crash/power/switch exceptions or keptW's user/wAck exceptions; names are not stored. Sys/Ghost are identical for every argument, not merely reachable ones."
     },
-    "H159": {
-      "invariant": "freshSubmitSeen,resolveWithoutMine",
-      "argument": "Only mine/transition name change, and mine is cleared by commit. A fresh submit's predecessor was shown at that window version; relabeling it stale satisfies keptB. A resolution whose version changed has an unchanged/read-safe/acknowledged predecessor. Relabeling a stale submit fresh only widens permission already satisfied.",
-      "dropped": "!resolve"
+    "H155": {
+      "function": "up_discard",
+      "dropped": "!rok",
+      "invariant": "guarantee",
+      "argument": "Only the internal name changes among uOpen/uOpenFail or uDiscard/uDiscardFail. None belongs to keptB's stale/crash/power/switch exceptions or keptW's user/wAck exceptions; names are not stored. Sys/Ghost are identical for every argument, not merely reachable ones."
     },
     "H160": {
+      "function": "up_submit",
+      "dropped": "!resolve",
       "invariant": "freshSubmitSeen,resolveWithoutMine",
-      "argument": "Only mine/transition name change, and mine is cleared by commit. A fresh submit's predecessor was shown at that window version; relabeling it stale satisfies keptB. A resolution whose version changed has an unchanged/read-safe/acknowledged predecessor. Relabeling a stale submit fresh only widens permission already satisfied.",
-      "dropped": "m.bv != pg.ver"
+      "argument": "Only mine/transition name change, and mine is cleared by commit. A fresh submit's predecessor was shown at that window version; relabeling it stale satisfies keptB. A resolution whose version changed has an unchanged/read-safe/acknowledged predecessor. Relabeling a stale submit fresh only widens permission already satisfied."
     },
-    "H169": {
-      "invariant": "freshMoveChangesBoth (also sampled with MIS)",
-      "argument": "Without MIS, submitTo always takes both requested texts. With MIS, accepted moves require both versions current and both new texts different; both took flags are false. Any changed backend version refuses the whole move before these tests. Exactly one failed take is unreachable.",
-      "dropped": "!took_d"
+    "H161": {
+      "function": "up_submit",
+      "dropped": "m.bv != pg.ver",
+      "invariant": "freshSubmitSeen,resolveWithoutMine",
+      "argument": "Only mine/transition name change, and mine is cleared by commit. A fresh submit's predecessor was shown at that window version; relabeling it stale satisfies keptB. A resolution whose version changed has an unchanged/read-safe/acknowledged predecessor. Relabeling a stale submit fresh only widens permission already satisfied."
     },
     "H170": {
-      "invariant": "freshMoveChangesBoth (also sampled with MIS)",
-      "argument": "Without MIS, submitTo always takes both requested texts. With MIS, accepted moves require both versions current and both new texts different; both took flags are false. Any changed backend version refuses the whole move before these tests. Exactly one failed take is unreachable.",
-      "dropped": "!took_s"
-    },
-    "H171": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
-    },
-    "H177": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
-    },
-    "H181": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
-    },
-    "H183": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!pg.held"
-    },
-    "H185": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "pg.buf == ABSENT"
-    },
-    "H187": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
-    },
-    "H188": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!j.on"
-    },
-    "H193": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
-    },
-    "H194": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!j.on"
-    },
-    "H197": {
-      "invariant": "strongRenameBase,jobGuard",
-      "argument": "In a profile without R1, extWriteD cannot change the locked page between check and rename, so disk != base is impossible there. With R1 the disjunct is explicitly false. MC is still caught by !guard.",
-      "dropped": "(x.s.disk[p] != j.base && !x.config.r1)"
-    },
-    "H200": {
-      "invariant": "jobGuard,sameByteSaveSeen,writtenSeen",
-      "argument": "A real rename follows a successful guard; an unchanged-byte save's base was seen/written. Every Tine-written byte was already seen by the originating window (and seen persists through crashes), so the wrote fallback supplies no additional G permission in this frozen model.",
-      "dropped": "x.g.guard"
-    },
-    "H201": {
-      "invariant": "jobGuard,sameByteSaveSeen,writtenSeen",
-      "argument": "A real rename follows a successful guard; an unchanged-byte save's base was seen/written. Every Tine-written byte was already seen by the originating window (and seen persists through crashes), so the wrote fallback supplies no additional G permission in this frozen model.",
-      "dropped": "j.bytes != j.base"
-    },
-    "H204": {
-      "invariant": "jobGuard,sameByteSaveSeen,writtenSeen",
-      "argument": "A real rename follows a successful guard; an unchanged-byte save's base was seen/written. Every Tine-written byte was already seen by the originating window (and seen persists through crashes), so the wrote fallback supplies no additional G permission in this frozen model.",
-      "dropped": "x.g.wrote[p].iter().any(|w| w.0 == j.base)"
-    },
-    "H205": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
-    },
-    "H206": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!j.on"
-    },
-    "H211": {
-      "invariant": "guarantee",
-      "argument": "With ok=true, MRE's Page constructor is exactly onReply(Published): base=job.bytes, typed=false, risk=false, other fields preserved. With ok=false the original branch already selects it.",
-      "dropped": "!ok"
-    },
-    "H213": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
-    },
-    "H218": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
-    },
-    "H220": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "!x.s.alive"
-    },
-    "H222": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "pg.held"
-    },
-    "H225": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "pg.held"
-    },
-    "H235": {
-      "invariant": "riskHeld,unheldPadding",
-      "argument": "Risk implies held. Every retirement installs NOPAGE, which is clean, so !held is redundant in clean-or-risk and risk predicates.",
-      "dropped": "!pg.held"
-    },
-    "H241": {
-      "invariant": "riskHeld,unheldPadding",
-      "argument": "Risk implies held. Every retirement installs NOPAGE, which is clean, so !held is redundant in clean-or-risk and risk predicates.",
-      "dropped": "pg.held"
-    },
-    "H243": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates.",
-      "dropped": "s.job.on"
-    },
-    "H251": {
-      "invariant": "guarantee",
-      "argument": "If promise.on is false, endPromise(pr, pr.ver) returns that identical off record. Removing the on check cannot change state.",
-      "dropped": "pr.on"
-    },
-    "H264": {
-      "invariant": "guarantee,sameVersionBytes",
-      "argument": "These widen A's exemption/newer-copy tests. noLoss is true throughout the non-mutant frozen model, so its Boolean result remains true. The false fault witnesses also reject unsupported widening where applicable.",
-      "dropped": "x.g.ext[p] > pr.ep"
-    },
-    "H267": {
-      "invariant": "guarantee,sameVersionBytes",
-      "argument": "These widen A's exemption/newer-copy tests. noLoss is true throughout the non-mutant frozen model, so its Boolean result remains true. The false fault witnesses also reject unsupported widening where applicable.",
-      "dropped": "w.0 == c"
-    },
-    "H269": {
-      "invariant": "downOwed",
-      "argument": "Down/crash/power/switch clear owed; its universal containment test is true on an empty set even without the !alive disjunct.",
-      "dropped": "!x.s.alive"
-    },
-    "H280": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers.",
-      "dropped": "p < 2"
-    },
-    "H281": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers.",
-      "dropped": "real(v)"
-    },
-    "H282": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers.",
-      "dropped": "p < 2"
-    },
-    "H283": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers.",
-      "dropped": "real(ds)"
-    },
-    "H284": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers.",
-      "dropped": "real(dd)"
-    },
-    "H285": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers.",
-      "dropped": "p < 2"
-    },
-    "H286": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers.",
-      "dropped": "(real(v) || v == ABSENT)"
-    }
-  },
-  "cargo": {
-    "src/page_state/mod.rs:181:5: replace real -> bool with true": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers."
-    },
-    "src/page_state/mod.rs:383:26: replace && with || in kept_b": {
-      "invariant": "guarantee,unheldPadding",
-      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty."
-    },
-    "src/page_state/mod.rs:383:65: replace && with || in kept_b": {
-      "invariant": "guarantee,unheldPadding",
-      "argument": "These widen keptB permission (or test an unheld NOPAGE whose !typed && buf == obs is already safe). Every original model transition satisfies keptB, so its bad-set contribution remains empty."
-    },
-    "src/page_state/mod.rs:385:81: replace || with && in kept_b": {
-      "invariant": "shownAND,shownTyped,noSwitch",
-      "argument": "The commit-boundary invariant compares the original keptB result with stricter shown and switch alternatives. A stale typed replacement is already acknowledged or carries the current window version; an untyped replacement is either read-safe/acknowledged or shown. At switchFin dirty pages have an exact current draft/ack, and clean pages are read-safe. The final switch disjunct adds no permission."
-    },
-    "src/page_state/mod.rs:385:84: delete ! in kept_b": {
-      "invariant": "shownAND,shownTyped,noSwitch",
-      "argument": "The commit-boundary invariant compares the original keptB result with stricter shown and switch alternatives. A stale typed replacement is already acknowledged or carries the current window version; an untyped replacement is either read-safe/acknowledged or shown. At switchFin dirty pages have an exact current draft/ack, and clean pages are read-safe. The final switch disjunct adds no permission."
-    },
-    "src/page_state/mod.rs:391:18: replace == with != in kept_b": {
-      "invariant": "shownAND,shownTyped,noSwitch",
-      "argument": "The commit-boundary invariant compares the original keptB result with stricter shown and switch alternatives. A stale typed replacement is already acknowledged or carries the current window version; an untyped replacement is either read-safe/acknowledged or shown. At switchFin dirty pages have an exact current draft/ack, and clean pages are read-safe. The final switch disjunct adds no permission."
-    },
-    "src/page_state/mod.rs:484:19: replace || with && in w_send": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates."
-    },
-    "src/page_state/mod.rs:498:19: replace || with && in w_resolve": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates."
-    },
-    "src/page_state/mod.rs:641:32: replace || with && in up_open": {
-      "invariant": "guarantee",
-      "argument": "Only the internal name changes among uOpen/uOpenFail or uDiscard/uDiscardFail. None belongs to keptB's stale/crash/power/switch exceptions or keptW's user/wAck exceptions; names are not stored. Sys/Ghost are identical for every argument, not merely reachable ones."
-    },
-    "src/page_state/mod.rs:690:20: replace && with || in up_discard": {
-      "invariant": "guarantee",
-      "argument": "Only the internal name changes among uOpen/uOpenFail or uDiscard/uDiscardFail. None belongs to keptB's stale/crash/power/switch exceptions or keptW's user/wAck exceptions; names are not stored. Sys/Ghost are identical for every argument, not merely reachable ones."
-    },
-    "src/page_state/mod.rs:690:23: delete ! in up_discard": {
-      "invariant": "guarantee",
-      "argument": "Only the internal name changes among uOpen/uOpenFail or uDiscard/uDiscardFail. None belongs to keptB's stale/crash/power/switch exceptions or keptW's user/wAck exceptions; names are not stored. Sys/Ghost are identical for every argument, not merely reachable ones."
-    },
-    "src/page_state/mod.rs:717:26: replace && with || in up_submit": {
-      "invariant": "freshSubmitSeen,resolveWithoutMine",
-      "argument": "Only mine/transition name change, and mine is cleared by commit. A fresh submit's predecessor was shown at that window version; relabeling it stale satisfies keptB. A resolution whose version changed has an unchanged/read-safe/acknowledged predecessor. Relabeling a stale submit fresh only widens permission already satisfied."
-    },
-    "src/page_state/mod.rs:717:17: delete ! in up_submit": {
-      "invariant": "freshSubmitSeen,resolveWithoutMine",
-      "argument": "Only mine/transition name change, and mine is cleared by commit. A fresh submit's predecessor was shown at that window version; relabeling it stale satisfies keptB. A resolution whose version changed has an unchanged/read-safe/acknowledged predecessor. Relabeling a stale submit fresh only widens permission already satisfied."
-    },
-    "src/page_state/mod.rs:717:34: replace != with == in up_submit": {
-      "invariant": "freshSubmitSeen,resolveWithoutMine",
-      "argument": "Only mine/transition name change, and mine is cleared by commit. A fresh submit's predecessor was shown at that window version; relabeling it stale satisfies keptB. A resolution whose version changed has an unchanged/read-safe/acknowledged predecessor. Relabeling a stale submit fresh only widens permission already satisfied."
-    },
-    "src/page_state/mod.rs:768:19: replace == with != in up_op": {
-      "invariant": "freshSubmitSeen,typedSeen; stale-set emptiness",
-      "argument": "Swapping which page is tagged stale preserves stale-set emptiness, so the non-mutant model refuses exactly the same moves. MSM may swap mine membership, but the uOpStale exception accepts each predecessor's already-seen typed bytes or untyped file bytes. mine is cleared by commit; all stored fields are identical."
-    },
-    "src/page_state/mod.rs:803:24: replace || with && in up_op": {
+      "function": "up_op",
+      "dropped": "!took_d",
       "invariant": "freshMoveChangesBoth (also sampled with MIS)",
       "argument": "Without MIS, submitTo always takes both requested texts. With MIS, accepted moves require both versions current and both new texts different; both took flags are false. Any changed backend version refuses the whole move before these tests. Exactly one failed take is unreachable."
     },
-    "src/page_state/mod.rs:869:19: replace || with && in check": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates."
+    "H171": {
+      "function": "up_op",
+      "dropped": "!took_s",
+      "invariant": "freshMoveChangesBoth (also sampled with MIS)",
+      "argument": "Without MIS, submitTo always takes both requested texts. With MIS, accepted moves require both versions current and both new texts different; both took flags are false. Any changed backend version refuses the whole move before these tests. Exactly one failed take is unreachable."
     },
-    "src/page_state/mod.rs:895:19: replace || with && in rename": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates."
+    "H172": {
+      "function": "deliver_up",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
-    "src/page_state/mod.rs:921:19: replace || with && in dir_sync": {
-      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding,absentClean",
-      "argument": "Down has no on/pending/conflicting windows, held/dirty pages, job or queue; another surviving guard rejects the action. Pending implies on; conflict implies on. NOJOB has phase 0. Unheld/ABSENT pages are clean, excluding flush and dirty switch loops. These facts are preserved by the only constructors and guarded updates."
+    "H178": {
+      "function": "observe",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
-    "src/page_state/mod.rs:1038:5: replace ext_write -> Option<State> with None": {
-      "invariant": "original step driver action census",
-      "argument": "Unreachable Rust alias: both step and scenario ExtWrite dispatch directly to ext_write_d; ext_write has no caller. The frozen Quint step likewise names extWriteD. This is an unused transcription alias, not an equivalent public API for hypothetical callers."
+    "H182": {
+      "function": "flush",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
-    "src/page_state/mod.rs:1141:44: replace > with >= in no_loss": {
+    "H184": {
+      "function": "flush",
+      "dropped": "!pg.held",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
+    },
+    "H188": {
+      "function": "check",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
+    },
+    "H189": {
+      "function": "check",
+      "dropped": "!j.on",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
+    },
+    "H194": {
+      "function": "rename",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
+    },
+    "H195": {
+      "function": "rename",
+      "dropped": "!j.on",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
+    },
+    "H198": {
+      "function": "rename",
+      "dropped": "(x.s.disk[p] != j.base && !x.config.r1)",
+      "invariant": "strongRenameBase,jobGuard",
+      "argument": "In a profile without R1, extWriteD cannot change the locked page between check and rename, so disk != base is impossible there. With R1 the disjunct is explicitly false. MC is still caught by !guard."
+    },
+    "H201": {
+      "function": "rename",
+      "dropped": "x.g.guard",
+      "invariant": "jobGuard",
+      "argument": "In the healthy model, reaching phase 2 requires a successful check, so g.guard is true at rename. Removing it from the unseen test changes no result. Faults MC/MC1 violate this invariant; their observed assertion outcomes remain covered."
+    },
+    "H202": {
+      "function": "rename",
+      "dropped": "j.bytes != j.base",
+      "invariant": "sameByteSaveSeen",
+      "argument": "If job.bytes == job.base, that base is seen or has a wrote entry. The other G exemptions therefore make unseen false with or without the byte-inequality test. This removal is reviewed separately from removal of the wrote exemption."
+    },
+    "H205": {
+      "function": "rename",
+      "dropped": "x.g.wrote[p].iter().any(|w| w.0 == j.base)",
+      "invariant": "saveBaseSeenOrRead",
+      "argument": "At a healthy phase-2 save with guard true and bytes != base, the base is already seen or in opRead. Window input exposes its predecessor; CLI operations record the base they read, including ABSENT. Restore retains that provenance; a newly saved operation byte is initially clean, and a later meaningful edit either exposes it to a window or reads it through an operation. UNKNOWN mismatches cannot publish. Four 4096x80 samples support this conditional invariant. writtenSeen is false in s3; removing both this exemption and the bytes!=base condition is not justified."
+    },
+    "H209": {
+      "function": "dir_sync",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
+    },
+    "H210": {
+      "function": "dir_sync",
+      "dropped": "!j.on",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
+    },
+    "H215": {
+      "function": "dir_sync",
+      "dropped": "!ok",
+      "invariant": "guarantee",
+      "argument": "With ok=true, MRE's Page constructor is exactly onReply(Published): base=job.bytes, typed=false, risk=false, other fields preserved. With ok=false the original branch already selects it."
+    },
+    "H217": {
+      "function": "save_fail",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
+    },
+    "H224": {
+      "function": "switch_req",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
+    },
+    "H226": {
+      "function": "switch_req",
+      "dropped": "pg.held",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
+    },
+    "H229": {
+      "function": "switch_req",
+      "dropped": "pg.held",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
+    },
+    "H239": {
+      "function": "can_switch",
+      "dropped": "!pg.held",
+      "invariant": "riskHeld,unheldPadding",
+      "argument": "Risk implies held. Every retirement installs NOPAGE, which is clean, so !held is redundant in clean-or-risk and risk predicates."
+    },
+    "H245": {
+      "function": "can_switch",
+      "dropped": "pg.held",
+      "invariant": "riskHeld,unheldPadding",
+      "argument": "Risk implies held. Every retirement installs NOPAGE, which is clean, so !held is redundant in clean-or-risk and risk predicates."
+    },
+    "H247": {
+      "function": "window",
+      "dropped": "s.job.on",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
+    },
+    "H261": {
+      "function": "power_k",
+      "dropped": "pr.on",
+      "invariant": "guarantee",
+      "argument": "If promise.on is false, endPromise(pr, pr.ver) returns that identical off record. Removing the on check cannot change state."
+    },
+    "H272": {
+      "function": "no_loss",
+      "dropped": "x.g.ext[p] > pr.ep",
       "invariant": "guarantee,sameVersionBytes",
       "argument": "These widen A's exemption/newer-copy tests. noLoss is true throughout the non-mutant frozen model, so its Boolean result remains true. The false fault witnesses also reject unsupported widening where applicable."
     },
-    "src/page_state/mod.rs:1143:82: replace > with >= in no_loss": {
+    "H275": {
+      "function": "no_loss",
+      "dropped": "w.0 == c",
       "invariant": "guarantee,sameVersionBytes",
       "argument": "These widen A's exemption/newer-copy tests. noLoss is true throughout the non-mutant frozen model, so its Boolean result remains true. The false fault witnesses also reject unsupported widening where applicable."
     },
-    "src/page_state/mod.rs:1216:9: delete match arm Action::WEdit(p, v) | Action::WResolve(p, v) in step": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers."
+    "H277": {
+      "function": "accepted",
+      "dropped": "!x.s.alive",
+      "invariant": "downOwed",
+      "argument": "Down/crash/power/switch clear owed; its universal containment test is true on an empty set even without the !alive disjunct."
     },
-    "src/page_state/mod.rs:1217:9: delete match arm Action::WOp(p, ds, dd) in step": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers."
+    "H345": {
+      "function": "flush_del",
+      "dropped": "!x.s.alive",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
-    "src/page_state/mod.rs:1218:9: delete match arm Action::ExtWriteD(p, v, _) in step": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers."
+    "H347": {
+      "function": "flush_del",
+      "dropped": "!pg.held",
+      "invariant": "downPadding,jobHeld,pendingOpen,offWindowPadding,unheldPadding",
+      "argument": "Down clears windows, queues and the job and installs NOPAGE pages; surviving guards reject these actions. Pending/conflicting windows are on; an off job has phase 0; unheld pages are clean NOPAGE. A job implies alive and held. Each removed padding conjunct is implied by another remaining guard. This argument does not assume ABSENT pages are clean: held deletion pages may be dirty."
     },
-    "src/page_state/mod.rs:1219:9: delete match arm Action::WOpen(p) | Action::WSend(p) | Action::WDiscard(p) | Action::WClose(p) | Action::WRecv(p) | Action::Observe(p) | Action::Flush(p) | Action::DraftSync(p) in step": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers."
+    "H291": {
+      "function": "step",
+      "dropped": "*p < n",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
     },
-    "src/page_state/mod.rs:1216:63: replace && with || in step": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers."
+    "H292": {
+      "function": "step",
+      "dropped": "real(*v)",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
     },
-    "src/page_state/mod.rs:1216:59: replace < with <= in step": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers."
+    "H293": {
+      "function": "step",
+      "dropped": "*p < n",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
     },
-    "src/page_state/mod.rs:1217:53: replace && with || in step": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers."
+    "H294": {
+      "function": "step",
+      "dropped": "real(*ds)",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
     },
-    "src/page_state/mod.rs:1217:41: replace && with || in step": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers."
+    "H295": {
+      "function": "step",
+      "dropped": "real(*dd)",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
     },
-    "src/page_state/mod.rs:1217:37: replace < with <= in step": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers."
+    "H296": {
+      "function": "step",
+      "dropped": "*p < n",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
     },
-    "src/page_state/mod.rs:1218:45: replace && with || in step": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers."
+    "H297": {
+      "function": "step",
+      "dropped": "(real(*v) || *v == ABSENT)",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
     },
-    "src/page_state/mod.rs:1218:41: replace < with <= in step": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers."
+    "H300": {
+      "function": "step",
+      "dropped": "*p < n",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
     },
-    "src/page_state/mod.rs:1226:37: replace < with <= in step": {
-      "invariant": "windowDomain; original PAGES/TEXTS/BOOLS driver domains",
-      "argument": "The frozen driver selects p in {0,1}, edit/move text in {1,2,3}, and external text in {-1,1,2,3}. Every dropped domain check is true on every model action. This does not claim equivalence for out-of-domain callers."
+    "H301": {
+      "function": "step",
+      "dropped": "*q < n",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
+    },
+    "H302": {
+      "function": "step",
+      "dropped": "real(*ds)",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
+    },
+    "H303": {
+      "function": "step",
+      "dropped": "real(*dd)",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
+    },
+    "H304": {
+      "function": "step",
+      "dropped": "*p < n",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
+    },
+    "H305": {
+      "function": "step",
+      "dropped": "*q < n",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
+    },
+    "H306": {
+      "function": "step",
+      "dropped": "refs\n                    .iter()\n                    .all(|r| *r < n && rt.get(r).is_some_and(|t| real(*t)))",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
+    },
+    "H307": {
+      "function": "step",
+      "dropped": "*r < n",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
+    },
+    "H308": {
+      "function": "step",
+      "dropped": "rt.get(r).is_some_and(|t| real(*t))",
+      "invariant": "driverDomains,windowDomain",
+      "argument": "The Quint driver selects page arguments from PAGES, text arguments from TEXTS (plus ABSENT where permitted), keep/ref sets from subsets of PAGES, and complete TEXTS-valued maps for all refs. Thus the dropped domain check is true on every representable model input. Remaining canonical guard oracles use the same domains, including page counts 1, 2 and 5. This is unreachable invalid-input behavior, not equivalence for arbitrary Rust callers."
+    },
+    "H309": {
+      "function": "op_clean",
+      "dropped": "!s.pages[p].held",
+      "invariant": "unheldPadding",
+      "argument": "An unheld page is NOPAGE, which is clean. For a held page the original negated-held disjunct is false, leaving exactly the same clean test."
+    },
+    "H342": {
+      "function": "op_delete",
+      "dropped": "!op_free(x, &BTreeSet::from([p]))",
+      "invariant": "jobDirty,cleanNoConflict",
+      "argument": "While a healthy save job is active its page remains held and dirty. opDelete independently requires opClean on that page, so the job's page cannot pass even without opFree. Flush starts dirty; guarded observe/delivery/operations cannot change the locked page; completion or lifecycle clears the job atomically. Four 4096x40 samples support jobDirty. The explicit lock remains in the transcription and is an implementation obligation."
+    }
+  },
+  "cargo": {
+    "src/page_state/mod.rs:186:5: replace real -> bool with true": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:402:26: replace && with || in kept_b": {
+      "invariant": "guarantee,unheldPadding",
+      "argument": "Changing the first safe conjunction to a disjunction widens keptB permission. In the healthy frozen model keptB is already true at every commit (the B conjunct); unheld NOPAGE is safe. False fault cases that distinguish a widener are checked by the witness corpus."
+    },
+    "src/page_state/mod.rs:404:81: replace || with && in kept_b": {
+      "invariant": "shownAND",
+      "argument": "The commit-boundary probe compares keptB with the stricter shown conjunction. Typed stale replacement already has an acknowledgement/current window provenance; an untyped replacement is read-safe/acknowledged or shown. Thus tightening this disjunct changes no healthy commit result."
+    },
+    "src/page_state/mod.rs:410:18: replace == with != in kept_b": {
+      "invariant": "noSwitch,guarantee",
+      "argument": "At switchFin a dirty page has an exact draft acknowledgement and a clean page is read-safe, so the switch permission adds nothing. For other transition names the changed comparison only widens keptB, whose original healthy result is true. The noSwitch commit invariant is sampled."
+    },
+    "src/page_state/mod.rs:505:19: replace || with && in w_send": {
+      "invariant": "downPadding,pendingOpen,offWindowPadding",
+      "argument": "The mutated first guard can differ only on an off/down window. Remaining !pend or !conf tests reject those cases, since pending/conflict requires on and down clears the windows."
+    },
+    "src/page_state/mod.rs:519:19: replace || with && in w_resolve": {
+      "invariant": "downPadding,pendingOpen,offWindowPadding",
+      "argument": "The mutated first guard can differ only on an off/down window. Remaining !pend or !conf tests reject those cases, since pending/conflict requires on and down clears the windows."
+    },
+    "src/page_state/mod.rs:670:32: replace || with && in up_open": {
+      "invariant": "internalNameEquivalence",
+      "argument": "Only the name among uOpen/uOpenFail or uDiscard/uDiscardFail changes. None is a special keptB or keptW name; names are not stored, and all Sys/Ghost updates are identical. This is a syntactic equivalence for every argument."
+    },
+    "src/page_state/mod.rs:719:20: replace && with || in up_discard": {
+      "invariant": "internalNameEquivalence",
+      "argument": "Only the name among uOpen/uOpenFail or uDiscard/uDiscardFail changes. None is a special keptB or keptW name; names are not stored, and all Sys/Ghost updates are identical. This is a syntactic equivalence for every argument."
+    },
+    "src/page_state/mod.rs:719:23: delete ! in up_discard": {
+      "invariant": "internalNameEquivalence",
+      "argument": "Only the name among uOpen/uOpenFail or uDiscard/uDiscardFail changes. None is a special keptB or keptW name; names are not stored, and all Sys/Ghost updates are identical. This is a syntactic equivalence for every argument."
+    },
+    "src/page_state/mod.rs:746:26: replace && with || in up_submit": {
+      "invariant": "freshSubmitSeen,resolveWithoutMine",
+      "argument": "Only mine and the internal stale name change; commit clears mine. A fresh submit's predecessor is seen or untyped. A stale resolution has an unchanged/read-safe/acknowledged predecessor. Therefore tightening or widening the stale label adds no bad tag; the submitted page is dirty, so no clean-transition acknowledgement changes."
+    },
+    "src/page_state/mod.rs:801:19: replace == with != in up_op": {
+      "invariant": "staleMoveRefusal",
+      "argument": "The filter changes which stale page is tagged as the source, but not whether the stale set is empty. The normal model refuses any stale two-page operation before this label matters; fresh accepted operations have an empty stale set. The Rust fault corpus also preserves its tested results. This is scoped to healthy reachable model states, not arbitrary MSM states."
+    },
+    "src/page_state/mod.rs:836:24: replace || with && in up_op": {
+      "invariant": "freshMoveChangesBoth",
+      "argument": "Exactly one failed take is unreachable. Without MIS both submitTo calls take their text; with MIS a fresh accepted move has both texts different and both takes fail. A stale normal move is refused. Four 4096x40 MIS samples support the fresh-move invariant; independently configured MSM does not combine with MIS."
+    },
+    "src/page_state/mod.rs:902:19: replace || with && in check": {
+      "invariant": "downPadding,jobHeld",
+      "argument": "The surviving phase check requires phase 1/2/3. NOJOB has phase 0, and an on job implies alive, so weakening the alive/on disjunction cannot enable a previously disabled action."
+    },
+    "src/page_state/mod.rs:928:19: replace || with && in rename": {
+      "invariant": "downPadding,jobHeld",
+      "argument": "The surviving phase check requires phase 1/2/3. NOJOB has phase 0, and an on job implies alive, so weakening the alive/on disjunction cannot enable a previously disabled action."
+    },
+    "src/page_state/mod.rs:963:19: replace || with && in dir_sync": {
+      "invariant": "downPadding,jobHeld",
+      "argument": "The surviving phase check requires phase 1/2/3. NOJOB has phase 0, and an on job implies alive, so weakening the alive/on disjunction cannot enable a previously disabled action."
+    },
+    "src/page_state/mod.rs:1086:5: replace ext_write -> Option<State> with None": {
+      "invariant": "unreachableAlias",
+      "argument": "Neither the production dispatcher nor the replay dispatcher calls ext_write; both call ext_write_d. This retained Rust alias has no reachable transition call site."
+    },
+    "src/page_state/mod.rs:1213:44: replace > with >= in no_loss": {
+      "invariant": "guarantee",
+      "argument": "Allowing ext==pr.ep only widens the noLoss external-change exemption. Healthy reachable states already satisfy noLoss, so its Boolean stays true. The fault traces containing false noLoss values still distinguish consequential changes elsewhere."
+    },
+    "src/page_state/mod.rs:1215:82: replace > with >= in no_loss": {
+      "invariant": "sameVersionBytes",
+      "argument": "A wrote entry with the active promise's exact version has exactly its bytes. Adding equal versions to the newer-write disjunct adds no byte custody beyond the existing c==pr.bytes case. Different bytes have different versions."
+    },
+    "src/page_state/mod.rs:1307:9: delete match arm Action::WEdit(p, v) | Action::WResolve(p, v) in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1308:9: delete match arm Action::WOp(p, ds, dd) in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1309:9: delete match arm Action::ExtWriteD(p, v, _) in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1310:9: delete match arm Action::WOpTo(p, q, ds, dd) in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1311:9: delete match arm Action::OpRename(p, q, refs, rt) in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1318:9: delete match arm Action::PowerK(keep) in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1319:9: delete match arm Action::OpDelete(p) | Action::FlushDel(p) | Action::WOpen(p) | Action::WSend(p) | Action::WDiscard(p) | Action::WClose(p) | Action::WRecv(p) | Action::Observe(p) | Action::Flush(p) | Action::DraftSync(p) in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1307:64: replace && with || in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1307:60: replace < with <= in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1308:55: replace && with || in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1308:42: replace && with || in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1308:38: replace < with <= in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1309:46: replace && with || in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1309:42: replace < with <= in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1310:70: replace && with || in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1310:57: replace && with || in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1310:47: replace && with || in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1310:43: replace < with <= in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1310:53: replace < with <= in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1314:17: replace && with || in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1313:17: replace && with || in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1312:16: replace < with <= in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1313:23: replace < with <= in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1316:37: replace && with || in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1316:33: replace < with <= in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1318:56: replace < with <= in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/mod.rs:1328:38: replace < with <= in step": {
+      "invariant": "driverDomains,windowDomain",
+      "argument": "All dispatched Quint inputs satisfy PAGES/TEXTS/subset/map domains by construction, so each removed, widened or combined validation branch still falls through to the same action. Invalid Rust caller inputs are outside this equivalence claim; domain checks remain explicit."
+    },
+    "src/page_state/operations.rs:19:13: delete field buf from struct Page expression in op_edit": {
+      "invariant": "constructorOverride",
+      "argument": "The intermediate Page's buf is overwritten with t by the following Page construction before any read. Omitting the loaded buf field changes no returned Page, Sys or Ghost for any argument."
     }
   }
 }

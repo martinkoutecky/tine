@@ -1,21 +1,25 @@
-//! Executable, unwired transcription of storage-s2.qnt. See README.md.
+//! Executable, unwired transcription of storage-s3.qnt. See README.md.
 #![allow(dead_code)]
 
+#[cfg(test)]
+use operations::op_clean;
+use operations::{flush_del, op_delete, op_rename};
 use std::collections::BTreeSet;
+
+mod operations;
 
 const ABSENT: i64 = -1;
 const NONE: i64 = -2;
 const UNKNOWN: i64 = -3;
-const PAGES: [usize; 2] = [0, 1];
-const MODEL_SHA: &str = "1c3194293856a11630536b74a8221c76c2a8725e77bc366b9172641681a08cef";
+const MODEL_SHA: &str = "baaaeab459890ea8b09c49dbd0ab506489c372c944c71aec8b12f43e3ebba557";
 type Text = i64; // Opaque equality labels, never arithmetic operands.
 type Pairs = BTreeSet<(usize, Text)>;
 
 macro_rules! record {
-    ($name:ident { $($field:ident: $ty:ty),* $(,)? }) => {
+    ($name:ident { $($(#[$attr:meta])* $field:ident: $ty:ty),* $(,)? }) => {
         #[derive(Clone, Debug, PartialEq, Eq)]
         #[cfg_attr(test, derive(serde::Serialize, serde::Deserialize))]
-        struct $name { $( $field: $ty, )* }
+        struct $name { $( $(#[$attr])* $field: $ty, )* }
     };
 }
 record!(Page {
@@ -72,7 +76,7 @@ record!(Up {
     ro: Text,
     cur: bool
 });
-record!(Sys { alive: bool, disk: [Text; 2], stable: [Text; 2], drafts: [Draft; 2], pages: [Page; 2], job: Job, w: [W; 2], mb: [Mail; 2], up: Vec<Up> });
+record!(Sys { alive: bool, disk: Vec<Text>, stable: Vec<Text>, drafts: Vec<Draft>, trash: Vec<BTreeSet<Text>>, #[cfg_attr(test, serde(rename = "trashStable"))] trash_stable: Vec<BTreeSet<Text>>, pages: Vec<Page>, job: Job, w: Vec<W>, mb: Vec<Mail>, up: Vec<Up> });
 record!(Promise {
     on: bool,
     bytes: Text,
@@ -80,10 +84,11 @@ record!(Promise {
     saved: bool,
     ep: i64
 });
-record!(Ghost { vc: i64, promise: [Promise; 2], ext: [i64; 2], wrote: [BTreeSet<(Text, i64)>; 2], owed: Pairs, guard: bool, seen: [BTreeSet<Text>; 2], mine: BTreeSet<usize>, bad: BTreeSet<String> });
+record!(Ghost { vc: i64, promise: Vec<Promise>, ext: Vec<i64>, wrote: Vec<BTreeSet<(Text, i64)>>, owed: Pairs, guard: bool, seen: Vec<BTreeSet<Text>>, mine: BTreeSet<usize>, #[cfg_attr(test, serde(rename = "opRead"))] op_read: Vec<BTreeSet<Text>>, removed: Vec<BTreeSet<Text>>, #[cfg_attr(test, serde(rename = "delDurable"))] del_durable: Vec<BTreeSet<Text>>, bad: BTreeSet<String> });
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Config {
+    pages: usize,
     r1: bool,
     weak: bool,
     #[cfg(test)]
@@ -175,7 +180,7 @@ fn nopromise() -> Promise {
 }
 fn next(v: i64) -> i64 {
     v.checked_add(1)
-        .expect("s2 counter exceeds Rust i64 representation")
+        .expect("s3 counter exceeds Rust i64 representation")
 }
 fn real(v: Text) -> bool {
     [1, 2, 3].contains(&v)
@@ -183,28 +188,42 @@ fn real(v: Text) -> bool {
 
 /// Quint: init
 fn init(config: Config) -> State {
+    assert!(config.pages > 0, "PAGES must be nonempty");
+    let count = config.pages;
+    let disk: Vec<_> = (0..count)
+        .map(|p| match p {
+            0 => 1,
+            1 => 2,
+            _ => ABSENT,
+        })
+        .collect();
     State {
         config,
         s: Sys {
             alive: true,
-            disk: [1, 2],
-            stable: [1, 2],
-            drafts: PAGES.map(|_| nodraft()),
-            pages: PAGES.map(|_| nopage()),
+            disk: disk.clone(),
+            stable: disk,
+            drafts: (0..count).map(|_| nodraft()).collect(),
+            pages: (0..count).map(|_| nopage()).collect(),
             job: nojob(),
-            w: PAGES.map(|_| now()),
-            mb: PAGES.map(|_| nomail()),
+            w: (0..count).map(|_| now()).collect(),
+            mb: (0..count).map(|_| nomail()).collect(),
+            trash: vec![BTreeSet::new(); count],
+            trash_stable: vec![BTreeSet::new(); count],
             up: vec![],
         },
         g: Ghost {
             vc: 0,
-            promise: PAGES.map(|_| nopromise()),
-            ext: [0; 2],
-            wrote: PAGES.map(|_| BTreeSet::new()),
+            promise: (0..count).map(|_| nopromise()).collect(),
+            ext: vec![0; count],
+            wrote: (0..count).map(|_| BTreeSet::new()).collect(),
             owed: BTreeSet::new(),
             guard: false,
-            seen: PAGES.map(|_| BTreeSet::new()),
+            seen: (0..count).map(|_| BTreeSet::new()).collect(),
             mine: BTreeSet::new(),
+            op_read: vec![BTreeSet::new(); count],
+            removed: vec![BTreeSet::new(); count],
+            del_durable: vec![BTreeSet::new(); count],
             bad: BTreeSet::new(),
         },
     }
@@ -309,10 +328,10 @@ fn end_promise(pr: &Promise, watermark: i64) -> Promise {
 fn down(sys: &Sys) -> Sys {
     Sys {
         alive: false,
-        pages: PAGES.map(|_| nopage()),
+        pages: vec![nopage(); sys.pages.len()],
         job: nojob(),
-        w: PAGES.map(|_| now()),
-        mb: PAGES.map(|_| nomail()),
+        w: vec![now(); sys.pages.len()],
+        mb: vec![nomail(); sys.pages.len()],
         up: vec![],
         ..sys.clone()
     }
@@ -372,7 +391,7 @@ fn kept_b(
     x: &State,
     p: usize,
     ns: &Sys,
-    np: &[Promise; 2],
+    np: &[Promise],
     mine: &BTreeSet<usize>,
     name: &str,
 ) -> bool {
@@ -401,16 +420,18 @@ fn kept_w(x: &State, p: usize, ns: &Sys, owed: &Pairs, name: &str) -> bool {
 }
 /// Quint: commit
 fn commit(x: &State, mut ns: Sys, mut ng: Ghost, name: &str) -> Option<State> {
-    let np = PAGES.map(|p| {
-        let a = &x.s.pages[p];
-        let b = &ns.pages[p];
-        if !ng.mine.contains(&p) && a.held && dirty(a) && b.held && clean(b) && b.buf == a.buf {
-            ack(&ng.promise[p], b.buf, b.ver, false, 0)
-        } else {
-            ng.promise[p].clone()
-        }
-    });
-    for p in PAGES {
+    let np: Vec<_> = (0..x.s.pages.len())
+        .map(|p| {
+            let a = &x.s.pages[p];
+            let b = &ns.pages[p];
+            if !ng.mine.contains(&p) && a.held && dirty(a) && b.held && clean(b) && b.buf == a.buf {
+                ack(&ng.promise[p], b.buf, b.ver, false, 0)
+            } else {
+                ng.promise[p].clone()
+            }
+        })
+        .collect();
+    for p in 0..x.s.pages.len() {
         let a = &x.s.pages[p];
         let b = &ns.pages[p];
         let m = &ns.mb[p];
@@ -524,10 +545,18 @@ fn w_discard(x: &State, p: usize) -> Option<State> {
 }
 /// Quint: wOp
 fn w_op(x: &State, src: usize, ds: Text, dd: Text) -> Option<State> {
-    let dst = 1 - src;
+    let dst = 1usize.checked_sub(src)?;
+    if dst >= x.s.pages.len() {
+        return None;
+    }
+    w_op_to(x, src, dst, ds, dd)
+}
+/// Quint: wOpTo
+fn w_op_to(x: &State, src: usize, dst: usize, ds: Text, dd: Text) -> Option<State> {
     let a = &x.s.w[src];
     let b = &x.s.w[dst];
     if !x.s.alive
+        || src == dst
         || !a.on
         || !b.on
         || a.pend
@@ -721,7 +750,11 @@ fn up_submit(x: &State, mut s: Sys, m: &Up, ok: bool) -> Option<State> {
         let took = nw.buf == m.t;
         s.pages[p] = nw;
         if x.config.mutant("MDO") {
-            s.pages[1 - p] = nopage();
+            for q in 0..s.pages.len() {
+                if q != p {
+                    s.pages[q] = nopage();
+                }
+            }
         }
         ack_mail(&mut s, p, ok, v1, took);
         g.vc = v1;
@@ -832,11 +865,11 @@ fn deliver_up(x: &State, rok: bool) -> Option<State> {
 fn observe(x: &State, p: usize) -> Option<State> {
     let pg = &x.s.pages[p];
     let d = x.s.disk[p];
-    if !x.s.alive || !pg.held || locked(x, p) || d == pg.obs {
-        return None;
-    }
     let v1 = next(x.g.vc);
     let nw = table(x, pg, d, v1);
+    if !x.s.alive || !pg.held || locked(x, p) || nw == *pg {
+        return None;
+    }
     let mut s = x.s.clone();
     let mut g = x.g.clone();
     if nw.ver == v1 {
@@ -899,9 +932,18 @@ fn rename(x: &State) -> Option<State> {
     let violates = !x.g.guard || (x.s.disk[p] != j.base && !x.config.r1);
     let unseen = x.g.guard
         && j.bytes != j.base
-        && !(x.g.seen[p].contains(&j.base) || x.g.wrote[p].iter().any(|w| w.0 == j.base));
+        && !(x.g.seen[p].contains(&j.base)
+            || x.g.wrote[p].iter().any(|w| w.0 == j.base)
+            || x.g.op_read[p].contains(&j.base));
     let mut s = x.s.clone();
     let mut g = x.g.clone();
+    let del = j.bytes == ABSENT && x.s.disk[p] != ABSENT;
+    if del {
+        if !x.config.mutant("MDT") {
+            s.trash[p].insert(x.s.disk[p]);
+        }
+        g.removed[p].insert(x.s.disk[p]);
+    }
     s.disk[p] = j.bytes;
     s.job.phase = 3;
     s.job.ep = g.ext[p];
@@ -926,6 +968,12 @@ fn dir_sync(x: &State, ok: bool) -> Option<State> {
     let mut g = x.g.clone();
     if ok && !x.config.weak && s.disk[p] == j.bytes {
         s.stable[p] = s.disk[p];
+        if !x.config.mutant("MTS") {
+            s.trash_stable[p] = s.trash[p].clone();
+        }
+        if j.bytes == ABSENT {
+            g.del_durable[p] = g.removed[p].clone();
+        }
     }
     s.pages[p] = if !ok && x.config.mutant("MRE") {
         Page {
@@ -997,7 +1045,7 @@ fn can_switch(x: &State) -> bool {
     x.s.alive
         && !x.s.job.on
         && x.s.up.is_empty()
-        && PAGES.iter().all(|&p| {
+        && (0..x.s.pages.len()).all(|p| {
             let pg = &x.s.pages[p];
             let a = &x.s.w[p];
             !a.pend
@@ -1051,8 +1099,8 @@ fn window_crash(x: &State) -> Option<State> {
         return None;
     }
     let mut s = x.s.clone();
-    s.w = PAGES.map(|_| now());
-    s.mb = PAGES.map(|_| nomail());
+    s.w = vec![now(); x.s.pages.len()];
+    s.mb = vec![nomail(); x.s.pages.len()];
     if x.config.mutant("MDQ") {
         s.up.clear();
     } else {
@@ -1064,53 +1112,77 @@ fn window_crash(x: &State) -> Option<State> {
 }
 /// Quint: power
 fn power(x: &State, keep0: bool, keep1: bool) -> Option<State> {
-    let nd = PAGES.map(|p| {
-        if [keep0, keep1][p] {
-            x.s.disk[p]
-        } else {
-            x.s.stable[p]
-        }
-    });
+    let keep = (0..x.s.pages.len())
+        .filter(|&p| (p == 0 && keep0) || (p == 1 && keep1))
+        .collect();
+    power_k(x, &keep)
+}
+/// Quint: powerK
+fn power_k(x: &State, keep: &BTreeSet<usize>) -> Option<State> {
+    let nd: Vec<_> = (0..x.s.pages.len())
+        .map(|p| {
+            if keep.contains(&p) {
+                x.s.disk[p]
+            } else {
+                x.s.stable[p]
+            }
+        })
+        .collect();
     let mut s = down(&x.s);
     let mut g = g_down(&x.g);
-    for p in PAGES {
+    for p in 0..x.s.pages.len() {
         let pr = &g.promise[p];
         let kept = [nd[p], x.s.drafts[p].bytes].contains(&pr.bytes);
         if x.config.weak && pr.on && pr.saved && !kept {
             g.promise[p] = end_promise(pr, pr.ver);
         }
+        s.trash[p] = if keep.contains(&p) {
+            x.s.trash[p].clone()
+        } else {
+            x.s.trash_stable[p].clone()
+        };
+        s.trash_stable[p] = s.trash[p].clone();
+        g.removed[p] = if keep.contains(&p) {
+            x.g.removed[p].clone()
+        } else {
+            x.g.del_durable[p].clone()
+        };
+        g.del_durable[p] = x.g.del_durable[p]
+            .intersection(&g.removed[p])
+            .copied()
+            .collect();
     }
-    s.disk = nd;
+    s.disk = nd.clone();
     s.stable = nd;
     commit(x, s, g, "power")
 }
 /// Quint: restored
-fn restored(x: &State) -> [Page; 2] {
-    PAGES.map(|p| {
-        let d = &x.s.drafts[p];
-        if d.bytes == NONE {
-            nopage()
-        } else {
-            Page {
-                held: true,
-                buf: d.bytes,
-                base: if x.config.mutant("MRB") && d.base == UNKNOWN {
-                    x.s.disk[p]
-                } else {
-                    d.base
-                },
-                obs: NONE,
-                ver: if p == 1 && x.s.drafts[0].bytes != NONE {
-                    next(next(x.g.vc))
-                } else {
-                    next(x.g.vc)
-                },
-                risk: true,
-                typed: true,
-                ..nopage()
+fn restored(x: &State) -> Vec<Page> {
+    (0..x.s.pages.len())
+        .map(|p| {
+            let d = &x.s.drafts[p];
+            if d.bytes == NONE {
+                nopage()
+            } else {
+                Page {
+                    held: true,
+                    buf: d.bytes,
+                    base: if x.config.mutant("MRB") && d.base == UNKNOWN {
+                        x.s.disk[p]
+                    } else {
+                        d.base
+                    },
+                    obs: NONE,
+                    ver: (0..p)
+                        .filter(|&q| x.s.drafts[q].bytes != NONE)
+                        .fold(next(x.g.vc), |v, _| next(v)),
+                    risk: true,
+                    typed: true,
+                    ..nopage()
+                }
             }
-        }
-    })
+        })
+        .collect()
 }
 /// Quint: launch
 fn launch(x: &State) -> Option<State> {
@@ -1135,7 +1207,7 @@ fn copies(x: &State, p: usize) -> BTreeSet<Text> {
 /// Quint: noLoss (A).
 fn no_loss(x: &State) -> bool {
     x.s.alive
-        || PAGES.iter().all(|&p| {
+        || (0..x.s.pages.len()).all(|p| {
             let pr = &x.g.promise[p];
             !pr.on
                 || (pr.saved && x.g.ext[p] > pr.ep)
@@ -1156,9 +1228,17 @@ fn accepted(x: &State) -> bool {
 fn transitions(x: &State) -> bool {
     x.g.bad.is_empty()
 }
+/// Quint: trashed (D).
+fn trashed(x: &State) -> bool {
+    (0..x.s.pages.len()).all(|p| {
+        x.g.removed[p]
+            .iter()
+            .all(|b| x.s.trash[p].contains(b) || x.s.disk[p] == *b)
+    })
+}
 /// Quint: guarantee
 fn guarantee(x: &State) -> bool {
-    no_loss(x) && transitions(x) && accepted(x)
+    no_loss(x) && transitions(x) && accepted(x) && trashed(x)
 }
 /// Quint: C, history recorded by rename.
 fn clause_c(x: &State) -> bool {
@@ -1184,7 +1264,7 @@ fn within(x: &State) -> bool {
 }
 
 // Explicit choices replace step's nondeterministic parameter selection.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum Action {
     WOpen(usize),
     WEdit(usize, Text),
@@ -1192,6 +1272,16 @@ enum Action {
     WResolve(usize, Text),
     WDiscard(usize),
     WOp(usize, Text, Text),
+    WOpTo(usize, usize, Text, Text),
+    OpRename(
+        usize,
+        usize,
+        BTreeSet<usize>,
+        std::collections::BTreeMap<usize, Text>,
+    ),
+    OpDelete(usize),
+    FlushDel(usize),
+    PowerK(BTreeSet<usize>),
     WClose(usize),
     WRecv(usize),
     DeliverUp(bool),
@@ -1212,18 +1302,30 @@ enum Action {
 }
 /// Quint: step (explicit nondeterministic choice, with the original finite domains).
 fn step(x: &State, a: Action) -> Option<State> {
-    let in_domain = match a {
-        Action::WEdit(p, v) | Action::WResolve(p, v) => p < 2 && real(v),
-        Action::WOp(p, ds, dd) => p < 2 && real(ds) && real(dd),
-        Action::ExtWriteD(p, v, _) => p < 2 && (real(v) || v == ABSENT),
-        Action::WOpen(p)
+    let n = x.s.pages.len();
+    let in_domain = match &a {
+        Action::WEdit(p, v) | Action::WResolve(p, v) => *p < n && real(*v),
+        Action::WOp(p, ds, dd) => *p < n && real(*ds) && real(*dd),
+        Action::ExtWriteD(p, v, _) => *p < n && (real(*v) || *v == ABSENT),
+        Action::WOpTo(p, q, ds, dd) => *p < n && *q < n && real(*ds) && real(*dd),
+        Action::OpRename(p, q, refs, rt) => {
+            *p < n
+                && *q < n
+                && refs
+                    .iter()
+                    .all(|r| *r < n && rt.get(r).is_some_and(|t| real(*t)))
+        }
+        Action::PowerK(keep) => keep.iter().all(|p| *p < n),
+        Action::OpDelete(p)
+        | Action::FlushDel(p)
+        | Action::WOpen(p)
         | Action::WSend(p)
         | Action::WDiscard(p)
         | Action::WClose(p)
         | Action::WRecv(p)
         | Action::Observe(p)
         | Action::Flush(p)
-        | Action::DraftSync(p) => p < 2,
+        | Action::DraftSync(p) => *p < n,
         _ => true,
     };
     if !in_domain {
@@ -1236,6 +1338,11 @@ fn step(x: &State, a: Action) -> Option<State> {
         Action::WResolve(p, v) => w_resolve(x, p, v),
         Action::WDiscard(p) => w_discard(x, p),
         Action::WOp(p, a, b) => w_op(x, p, a, b),
+        Action::WOpTo(p, q, a, b) => w_op_to(x, p, q, a, b),
+        Action::OpRename(p, q, refs, rt) => op_rename(x, p, q, &refs, &rt),
+        Action::OpDelete(p) => op_delete(x, p),
+        Action::FlushDel(p) => flush_del(x, p),
+        Action::PowerK(keep) => power_k(x, &keep),
         Action::WClose(p) => w_close(x, p),
         Action::WRecv(p) => w_recv(x, p),
         Action::DeliverUp(ok) => deliver_up(x, ok),

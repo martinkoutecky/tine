@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare an isolated crate containing byte-identical s2 source/tests/fixtures.
+"""Prepare an isolated crate containing byte-identical s3 source/tests/fixtures.
 
 Avoids rebuilding unrelated tine-store modules for every mutation. The final
 gate still runs the real package. All products live under scratch/ and target/.
@@ -9,11 +9,20 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
+SOURCES = ["src/page_state/mod.rs", "src/page_state/operations.rs"]
+
+
+def source_sha256():
+    digest = hashlib.sha256()
+    for name in SOURCES:
+        digest.update(name.encode() + b"\0")
+        digest.update((ROOT / "crates/tine-store" / name).read_bytes())
+    return digest.hexdigest()
 
 
 def prepare(work=None):
-    work = work or ROOT / "scratch/s2/mutation-harness"
-    files = ["src/page_state/mod.rs", "src/page_state/tests.rs",
+    work = work or ROOT / "scratch/s3/mutation-harness"
+    files = SOURCES + ["src/page_state/tests.rs",
              "tests/fixtures/s2/scenarios.json", "tests/fixtures/s2/traces.json"]
     extra = ROOT / "crates/tine-store/tests/fixtures/s2/witnesses.json"
     if extra.exists():

@@ -1,116 +1,100 @@
-# s2 executable storage model
+# s3 executable storage model
 
-This private, unwired module transcribes the frozen Quint model
-`storage-s2.qnt`, SHA-256
-`1c3194293856a11630536b74a8221c76c2a8725e77bc366b9172641681a08cef`.
-It performs no I/O and has no clock, async tasks, or production consumers.
-It does not establish conformance of the existing storage implementation.
+This private, unwired module transcribes `storage-s3.qnt`, SHA-256
+`baaaeab459890ea8b09c49dbd0ab506489c372c944c71aec8b12f43e3ebba557`.
+The scenario source is `scenarios-s3.inc`, SHA-256
+`b446ab25e60e140c16ebd1bf4e73054e3de78928f0087ed712ed4151d2cdf530`.
+It performs no I/O and has no clock, async tasks or production consumers.
+Replay establishes transcription evidence, not backend or native I/O conformance.
 
-Every primitive action returns a cloned successor or `None` when disabled.
-The explicit `Action` argument replaces Quint's nondeterministic choice in
-`step`. Backend request subactions preserve their original commit boundary.
-The state includes all system and ghost fields; guarantee predicates preserve
-the model's history through the ghost sets and promises.
+There is one s3 model; no separate s2 mode or s2-only fixture remains.
+On two paths without the new actions, its rules are s2.1. Every read goes through
+`table`; `observe` is enabled when that read changes the page, even if the bytes
+equal the last read. `opRename`, `opDelete` and `flushDel` include the literal
+draft/promise, trash, `opRead`, D4 and no-clobber rules and `trashed` guarantee.
 
-The finite model has two pages and equality-only text labels 1, 2, 3, plus
-ABSENT (-1), NONE (-2), UNKNOWN (-3). Arrays represent total page maps;
-BTreeSet represents mathematical sets; Vec preserves request order.
-Versions and external-write counts use checked i64 increments, with a panic
-on representation exhaustion rather than wraparound. There is no artificial
-VMAX/EMAX/QMAX transition bound. Only the four specified race profiles are
-represented; all allow crash and power cut. Mutant selection and serialization
-exist only under `cfg(test)`. The module is private pending the later backend
-integration decision.
+`Config.pages` selects any positive count of contiguous page IDs. Vec implements
+total page maps; BTreeSet implements sets; BTreeMap implements operation rewrite
+maps; Vec preserves request order. Texts remain opaque equality labels 1/2/3,
+with ABSENT (-1), NONE (-2), UNKNOWN (-3). Checked i64 increments panic on
+representation exhaustion rather than wrapping or adding a transition guard.
+VMAX/EMAX/QMAX remain diagnostics. Only base/R1/weak/all race profiles are
+represented, all with crash and power enabled. Fault selection and serialization
+remain `cfg(test)` only. Actions return a cloned successor or None when disabled,
+and request subactions preserve the model's commit boundaries.
 
-From the repository root, regenerate with the model directory as an argument:
+The existing `scripts/s2/` and `tests/fixtures/s2/` paths are retained to avoid
+unrelated path/reference changes; their contents now describe s3. All generated
+models, logs, ITF and larger corpora stay under ignored `scratch/s3/`.
+Generators never write into the supplied model directory or proof lanes.
+
+Regenerate the 120 scenarios, four profile oracles, 27 model-mutant oracles and
+three-path random traces from the repository root:
 
 ```sh
 rtk proxy python3 -B scripts/s2/generate.py /path/to/og/merged --quint /path/to/og/model/tools/node_modules/.bin/quint
-rtk proxy bash -c 'source scripts/env.sh; export CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target S2_TRACE_FIXTURE=$PWD/scratch/s2/traces.json; rtk cargo test -p tine-store page_state -- --nocapture'
+rtk proxy python3 -B scripts/s2/witnesses.py /path/to/og/merged --quint /path/to/og/model/tools/node_modules/.bin/quint
+rtk proxy bash -c 'source scripts/env.sh; export CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target S3_TRACE_FIXTURE=$PWD/scratch/s3/traces.json; rtk cargo test -p tine-store'
 ```
 
-The generator verifies the model hash, parses and expands the original 88
-scenarios (preserving intermediate assertions and conditionals), and invokes
-Quint for four profiles and all 19 sweep mutants. The test compares all 2,024
-outcomes, distinguishing pass, disabled action, and failed assertion. Each
-mutant's own scenario must fail, and its resulting guarantee must be false
-(MDE additionally executes its power-loss suffix).
+The generator checks both pinned source hashes, expands intermediate assertions,
+conditionals and refusal checks, and compares 3,720 scenario outcomes. It
+distinguishes pass, disabled action (QNT507/QNT513), failed assertion (QNT508)
+and test returned false (QNT511). All 27 sweep mutants fail their own scenario.
+MRN5 violates the restored-deletion completion assertion rather than the guarantee;
+MDE additionally executes the power-loss suffix to demonstrate A.
 
-For random traces the generator instruments only the next-state driver to
-record the selected primitive and its arguments. Repeated branches weight the
-original choices toward protocol progress; all original choices remain, and
-the complete generated corpus must cover every next-state action. The rules remain unchanged.
-It invokes Quint with per-profile seeds 20261008 + profile index × 7919,
-64 traces per profile, 40 steps, and the
-full guarantee. All 256 traces stay under ignored `scratch/s2/`; eight per
-profile are committed, chosen deterministically to retain rare actions.
-Replay compares every Sys/Ghost field after init and
-every transition, including inactive records, set contents and queue order.
-The ordinary crate test always replays the committed sample; setting
-`S2_TRACE_FIXTURE` additionally replays the larger generated corpus.
-Generators write nothing to the supplied model directory or proof lanes.
+Random traces use 64 runs per profile, 40 steps, seeds 20261009 plus profile index
+times 7919. Repeated original driver choices weight protocol progress; helper
+actions encode the three-path power set and rewrite map in integer arguments
+without changing any model rule. The complete corpus must cover every step
+primitive, including the new operations. Eight traces per profile are selected
+deterministically to retain rare actions and committed using lossless state
+deltas and interned paths/actions. Normal tests replay that sample; setting
+`S3_TRACE_FIXTURE` additionally replays all 256 generated traces. Every Sys/Ghost
+field is compared after init and every transition, including inactive padding,
+set contents and queue order.
 
-Step 1b adds `witnesses.json`: targeted counterexamples to branch-avoidance
-invariants over scratch copies of the same frozen model. Every scheduled
-transition is an original model action. Some traces use its declared test-only
-faults, including MSM, to exercise false guarantee clauses. Normal traces also
-carry Quint-evaluated guards for all finite action choices, so replay checks
-disabled actions as well as successful transitions. Fault traces compare full
-states and the model's guarantee predicates without assuming they remain true.
-The three diagnostic bounds require crossing 1,000; their longer traces use
-lossless state deltas with interned paths/actions. Replay reconstructs the
-entire expected Sys/Ghost before comparing every state. These bounds remain
-diagnostics, never transition guards.
+Targeted witnesses are short Quint counterexamples to branch-avoidance invariants
+over scratch copies. They compare full states, normal enabled/disabled choices
+and Quint's guarantee predicates even when faults make them false. A final
+instrumentation-only capture stutter exports the last state's guard/predicate
+oracles; it is checked to preserve Sys/Ghost and excluded from replay.
+Parameterized witnesses instantiate one, two and five paths, including sparse
+launch version numbering. Three longer witnesses cross the diagnostic 1,000
+bounds; they use the same lossless delta encoding, never extra transition guards.
 
-Regenerate the witnesses and supporting reachability checks:
+Regenerate supporting reachability samples:
 
 ```sh
-rtk proxy python3 -B scripts/s2/witnesses.py /path/to/og/merged
-rtk proxy python3 -B scripts/s2/equivalence.py /path/to/og/merged
+rtk proxy python3 -B scripts/s2/equivalence.py /path/to/og/merged --samples 4096 --steps 80 --output scratch/s3/equivalence-core
+rtk proxy python3 -B scripts/s2/equivalence.py /path/to/og/merged --only saveBaseSeenOrRead --samples 4096 --steps 80 --output scratch/s3/equivalence-g
 ```
 
-`--reuse` on the witness generator accepts only identical scratch model text
-with an existing invariant-violation log and ITF; it claims no fresh run.
-`equivalence.py --only FACT,...` checks selected structural facts; `--mutant MIS`
-can check the refused/accepted move fact under the frozen MIS fault. Samples
-support the short inductive arguments in `scripts/s2/equivalents.json`; they
-are not exhaustive proofs. The ledger explicitly limits domain equivalence to
-the frozen model's action domains.
+Samples support explicit constructor/transition arguments; they are not exhaustive
+proofs. s2's writtenSeen, typedSeen and absentClean facts are not asserted for s3.
 
-The hand-mutation sweep is CI-runnable. It uses the Rust syntax tree to drop
-each operand of each &&/|| chain, including nested groups. It asserts that the
-originally missed draft-equals-disk discard disjunct belongs to the set. Install
-the parser in a local environment, then run from the repository root:
+Run the Rust port sweeps (an isolated scratch crate uses byte-identical source,
+tests and fixtures, avoiding unrelated integration-test linking):
 
 ```sh
-rtk proxy uv --cache-dir scratch/s2/uv-cache venv scratch/s2/python
-rtk proxy uv --cache-dir scratch/s2/uv-cache pip install --python scratch/s2/python/bin/python tree-sitter==0.26.0 tree-sitter-rust==0.24.2
-rtk proxy bash -c 'source scripts/env.sh; export CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target; rtk proxy scratch/s2/python/bin/python -B scripts/s2/hand_mutations.py --run --allow-equivalents scripts/s2/equivalents.json'
+rtk proxy uv --cache-dir scratch/s3/uv-cache venv scratch/s3/python
+rtk proxy uv --cache-dir scratch/s3/uv-cache pip install --python scratch/s3/python/bin/python tree-sitter==0.26.0 tree-sitter-rust==0.24.2
+rtk proxy bash -c 'source scripts/env.sh; export CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target; rtk proxy scratch/s3/python/bin/python -B scripts/s2/hand_mutations.py --run --output scratch/s3/hand-final --allow-equivalents scripts/s2/equivalents.json'
+rtk proxy bash -c 'source scripts/env.sh; export CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target; rtk proxy python3 -B scripts/s2/cargo_mutations.py --output scratch/s3/cargo-final'
+rtk proxy python3 -B scripts/s2/mutation_report.py
 ```
 
-`--only H002,H146` is a quick check of one reviewed equivalent and the planted
-mutant. Any unexplained survivor or compile failure exits nonzero. The ledger
-is tied to the complete source hash and exact dropped expression, so changing
-the implementation requires reviewing equivalences again. Each outcome and
-build/test log is written under the requested scratch output directory.
-
-Cargo-mutants is optional locally, not required in CI:
-
-```sh
-rtk proxy bash -c 'source scripts/env.sh; export CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target; rtk proxy python3 -B scripts/s2/cargo_mutations.py'
-```
-
-Both sweeps prepare isolated scratch crates with byte-identical copies of the
-production module, its tests and fixtures, and run only the page_state library
-tests. This avoids repeatedly linking unrelated storage tests. All targets
-remain inside this worktree. The real-package `cargo test -p tine-store` gate
-still runs the complete crate. Sweeps never mutate the production file or the
-frozen model directory; their scratch files are restored on normal completion.
-`mutation_report.py` merges the saved fail-before and correction censuses and
-rejects any survivor lacking an explicit argument before generating the ledger.
+The hand sweep drops each operand of every &&/|| chain, preserving nested groups
+and including all new guards/rules. Cargo-mutants is optional locally; the task
+receipt records its completed sweep. `--skip-witnesses` supports the baseline
+census before witness regeneration; final verification includes the witnesses.
+The exact-source equivalence ledger records each surviving mutation and its
+argument, limited to the model's finite action domains. A changed source hash,
+unexplained survivor, missing census or hand compile failure fails the checker.
+The real-package crate gate remains mandatory.
 
 **A model change lands here and in the fixtures in the same commit.**
-Update the pinned hash deliberately when transcribing that change. Replay is
-evidence of transcription fidelity, not a proof of semantic equivalence or of
-native I/O conformance. Model obligations about real reads, request identity,
-draft durability, and orderly shutdown remain for later integration steps.
+Update both pinned source hashes deliberately. Rust representation choices,
+literal model observations and mutation findings are recorded in the task's
+TRANSCRIPTION.md and RECEIPT.md. Unit cost: none (no persisted record).
