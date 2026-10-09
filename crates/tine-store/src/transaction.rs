@@ -430,6 +430,22 @@ pub struct Transaction<'a> {
         std::cell::RefCell<BTreeMap<PathBuf, BTreeMap<std::ffi::OsString, std::ffi::OsString>>>,
 }
 
+/// A page file's alternate-extension twin (`.md` ↔ `.org`) on disk, from one
+/// metadata call: another file claiming the same page name. Shared by the
+/// transaction's create checks and the page host's save (STEP3 §3.2).
+pub(crate) fn alternate_extension_twin(path: &Path) -> io::Result<Option<PathBuf>> {
+    let alt = match path.extension().and_then(|value| value.to_str()) {
+        Some("md") => path.with_extension("org"),
+        Some("org") => path.with_extension("md"),
+        _ => return Ok(None),
+    };
+    match fs::symlink_metadata(&alt) {
+        Ok(_) => Ok(Some(alt)),
+        Err(error) if crate::atomic_file::names_nothing(&error) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 impl Store {
     /// Begin a transaction. Commit serializes writes through this Store; it
     /// does not lock other Store instances or external processes. Two stores
@@ -797,14 +813,8 @@ impl<'a> Transaction<'a> {
             return Ok(None);
         }
         let path = self.path(file)?;
-        let alt = match path.extension().and_then(|value| value.to_str()) {
-            Some("md") => path.with_extension("org"),
-            Some("org") => path.with_extension("md"),
-            _ => return Ok(None),
-        };
-        match fs::symlink_metadata(&alt) {
-            Ok(_) => Ok(Some(FileId::from(self.store.graph.rel_path(&alt)))),
-            Err(error) if crate::atomic_file::names_nothing(&error) => Ok(None),
+        match alternate_extension_twin(&path) {
+            Ok(alt) => Ok(alt.map(|alt| FileId::from(self.store.graph.rel_path(&alt)))),
             Err(error) if self.page(file) && error.kind() == io::ErrorKind::InvalidData => {
                 Err(content_refusal(error))
             }

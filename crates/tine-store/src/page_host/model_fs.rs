@@ -60,6 +60,8 @@ pub(super) struct ModelFs {
     /// Adapter memory (STEP3 §2), lost at a crash. A model entry is named by
     /// its key; a spelling only orders the driver's path locks.
     pub spellings: BTreeMap<String, String>,
+    /// Alternate-extension twins a creating save finds (STEP3 §3.2).
+    pub twins: BTreeMap<String, String>,
 }
 
 /// One power outcome for readable trash names that are not yet durable.
@@ -392,6 +394,10 @@ impl HostIo for ModelFs {
             }
             Ok(Witness::Durable)
         })
+    }
+
+    fn page_twin(&mut self, page: &str) -> IoResult<Option<String>> {
+        Ok(self.twins.get(page).cloned())
     }
 
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult {

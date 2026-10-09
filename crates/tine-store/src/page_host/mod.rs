@@ -2,6 +2,8 @@
 #![allow(dead_code)]
 
 #[cfg(test)]
+mod command_tests;
+#[cfg(test)]
 mod conformance;
 mod drafts;
 mod driver;
@@ -21,7 +23,7 @@ mod progress;
 mod tests;
 
 use drafts::{Record, Stage, Vehicle};
-use io::{ErrorKind, HostIo, Witness};
+use io::{ErrorKind, HostIo, IoFailure, Witness};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -242,6 +244,33 @@ enum Event {
     /// A driver observation (watcher read or released reservation) failed a
     /// third time; it keeps retrying with the save backoff (STEP3 §7).
     ObserveError(PageKey),
+    /// Why request `id` was answered without taking it (STEP3 §3.3).
+    Refused {
+        page: PageKey,
+        id: u64,
+        reason: Refusal,
+    },
+    /// Another page file claims this page's name (the alternate-extension
+    /// twin, STEP3 §3.2): before the rename it failed the save; after it, a
+    /// notice beside the save's own outcome (Q9).
+    Twin {
+        page: PageKey,
+        existing: String,
+    },
+}
+
+/// Typed reasons for an answer that did not take its request (STEP3 §3.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum Refusal {
+    /// A submit or discard for a page the host does not hold.
+    NotHeld,
+    /// A discard whose disk read failed (SPEC-s2 §4.11 "discard failed").
+    ReadFailed,
+    /// A move whose versions were no longer current.
+    Stale,
+    /// A move whose receiver draft could not be written.
+    DraftFailed,
 }
 
 #[cfg_attr(test, derive(Clone))]
@@ -642,6 +671,18 @@ impl<F: HostIo> Host<F> {
         );
     }
 
+    /// An answer that did not take `request`, with its typed reason.
+    fn refused(&mut self, request: &Request, key: &str, reason: Refusal) {
+        if request.generation == self.generation {
+            self.events.push(Event::Refused {
+                page: key.into(),
+                id: request.id,
+                reason,
+            });
+        }
+        self.answer(request, key, false);
+    }
+
     fn finish_request(&mut self, request: &Request) {
         self.last_applied = request.id;
         self.applying = None;
@@ -766,7 +807,7 @@ impl<F: HostIo> Host<F> {
                 resolve,
             } => {
                 let Some(mut page) = self.pages.get(key).cloned() else {
-                    self.answer(request, key, false);
+                    self.refused(request, key, Refusal::NotHeld);
                     self.finish_request(request);
                     return Disposition::Refused;
                 };
@@ -786,9 +827,9 @@ impl<F: HostIo> Host<F> {
                 self.answer(request, key, true);
             }
             RequestKind::Discard { .. } => {
-                if let (Some(mut page), Ok(bytes)) =
-                    (self.pages.get(key).cloned(), self.fs.read_page(key))
-                {
+                let held = self.pages.get(key).cloned();
+                let read = held.as_ref().map(|_| self.fs.read_page(key));
+                if let (Some(mut page), Some(Ok(bytes))) = (held, read.clone()) {
                     let drafts = self.logical_drafts();
                     let hold = page.risk
                         && (page.buf == bytes
@@ -797,8 +838,15 @@ impl<F: HostIo> Host<F> {
                     page = Self::initial_page(bytes, self.version);
                     page.risk = hold;
                     self.set_page(key, Some(page));
+                    self.answer(request, key, false);
+                } else {
+                    let reason = if read.is_some() {
+                        Refusal::ReadFailed
+                    } else {
+                        Refusal::NotHeld
+                    };
+                    self.refused(request, key, reason);
                 }
-                self.answer(request, key, false);
             }
             RequestKind::Move {
                 receiver,
@@ -839,8 +887,8 @@ impl<F: HostIo> Host<F> {
     }
 
     fn refuse_move(&mut self, request: &Request, receiver: &str) -> Disposition {
-        self.answer(request, receiver, false);
-        self.answer(request, &request.page, false);
+        self.refused(request, receiver, Refusal::Stale);
+        self.refused(request, &request.page, Refusal::Stale);
         self.finish_request(request);
         Disposition::Refused
     }
@@ -1172,10 +1220,17 @@ impl<F: HostIo> Host<F> {
                     }
                 }
                 if let Some(request) = request {
+                    let mut pages = vec![request.page.clone()];
                     if let RequestKind::Move { receiver, .. } = &request.kind {
-                        self.answer(&request, receiver, present);
+                        pages.insert(0, receiver.clone());
                     }
-                    self.answer(&request, &request.page, present);
+                    for page in pages {
+                        if present {
+                            self.answer(&request, &page, true);
+                        } else {
+                            self.refused(&request, &page, Refusal::DraftFailed);
+                        }
+                    }
                     self.finish_request(&request);
                 }
                 // Keep the allocator through explosion (§4), never acquire
@@ -1290,12 +1345,29 @@ impl<F: HostIo> Host<F> {
             },
             SavePhase::Check => match self.fs.read_page(&key) {
                 Ok(bytes) if job.base == Base::Known(bytes.clone()) => {
-                    job.phase = if job.bytes.is_none() {
-                        SavePhase::Marker
-                    } else {
-                        SavePhase::Rename
-                    };
-                    None
+                    // A creation's twin check before the rename (STEP3 §3.2):
+                    // a twin fails the save, as any failure before the rename.
+                    // Scenario: Syncthing/Dropbox delivers `c.org` while the
+                    // user creates `c.md`; two files would claim one page
+                    // (contract row `page_create_checks::Twin`).
+                    match self.creation_twin(&job) {
+                        Ok(None) => {
+                            job.phase = if job.bytes.is_none() {
+                                SavePhase::Marker
+                            } else {
+                                SavePhase::Rename
+                            };
+                            None
+                        }
+                        Ok(Some(existing)) => {
+                            self.events.push(Event::Twin {
+                                page: key.clone(),
+                                existing,
+                            });
+                            Some(Outcome::Failed)
+                        }
+                        Err(_) => Some(Outcome::Failed),
+                    }
                 }
                 Ok(bytes) => {
                     if self.allocator_busy() {
@@ -1320,6 +1392,15 @@ impl<F: HostIo> Host<F> {
                         bytes: job.bytes.clone(),
                         version: job.version,
                     });
+                    // Again after the rename: a twin delivered meanwhile is a
+                    // notice, never this save's outcome or an undo (Q9). A
+                    // failed probe raises nothing; the watcher still sees it.
+                    if let Ok(Some(existing)) = self.creation_twin(&job) {
+                        self.events.push(Event::Twin {
+                            page: key.clone(),
+                            existing,
+                        });
+                    }
                     job.phase = SavePhase::DirectorySync;
                     job.epoch = epoch;
                     None
@@ -1458,6 +1539,16 @@ impl<F: HostIo> Host<F> {
         } else {
             self.job = Some(job);
             Disposition::Pending
+        }
+    }
+
+    /// A creating save's alternate-extension twin (STEP3 §3.2); a save that
+    /// replaces a file or deletes one has none to check.
+    fn creation_twin(&mut self, job: &SaveJob) -> Result<Option<String>, IoFailure> {
+        if job.base == Base::Known(None) && job.bytes.is_some() {
+            self.fs.page_twin(&job.page)
+        } else {
+            Ok(None)
         }
     }
 

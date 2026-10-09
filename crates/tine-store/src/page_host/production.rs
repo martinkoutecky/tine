@@ -287,6 +287,19 @@ impl HostIo for ProductionIo {
         self.graph_sync(super::io::Phase::PageSync, path.parent().unwrap())
     }
 
+    fn page_twin(&mut self, page: &str) -> IoResult<Option<String>> {
+        let twin =
+            crate::transaction::alternate_extension_twin(&self.page_path(page)).map_err(failure)?;
+        Ok(twin.map(|path| {
+            let relative = path.strip_prefix(&self.graph).unwrap_or(&path);
+            relative
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/")
+        }))
+    }
+
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult {
         let result = (|| {
             self.before(super::io::Phase::TrashMove)?;

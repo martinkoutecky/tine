@@ -219,6 +219,9 @@ impl HostIo for NativeFs {
         self.ledger.spell(key, spelling);
         self.native.spell(key, spelling);
     }
+    fn page_twin(&mut self, page: &str) -> IoResult<Option<String>> {
+        self.native.page_twin(page)
+    }
     fn graph_launch(&mut self, pages: &BTreeSet<String>) {
         self.native.graph_launch(pages);
     }

@@ -33,7 +33,12 @@ impl<F: HostIo> Host<F> {
         if self.worker.is_some() || self.busy(key) || self.allocator_busy() {
             return Disposition::Waiting;
         }
-        self.with_locks(&BTreeSet::from([key.into()]), |host| {
+        let keys = BTreeSet::from([key.into()]);
+        // Plan before any side effect (STEP3 §1): the caller takes the lock.
+        if self.lacks_locks(&keys) {
+            return Disposition::Waiting;
+        }
+        self.with_locks(&keys, |host| {
             if !load && !host.pages.contains_key(key) {
                 return Disposition::Refused;
             }
@@ -154,6 +159,9 @@ impl<F: HostIo> Host<F> {
         }
         let mut locks = refs.clone();
         locks.extend([source.into(), target.into()]);
+        if self.lacks_locks(&locks) {
+            return Disposition::Waiting;
+        }
         self.with_locks(&locks, |host| {
             let Ok(src) = host.operation_page(source) else {
                 return Disposition::Refused;

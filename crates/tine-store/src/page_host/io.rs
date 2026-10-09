@@ -63,6 +63,9 @@ pub(super) trait HostIo {
     fn page_temp(&mut self, page: &str, bytes: &Text) -> IoResult<()>;
     fn page_rename(&mut self, page: &str) -> IoResult<()>;
     fn page_sync(&mut self, page: &str) -> IoResult<Witness>;
+    /// The page file's alternate-extension twin (`.md` ↔ `.org`), if one
+    /// exists: another file claiming the page's name (STEP3 §3.2, Q9).
+    fn page_twin(&mut self, page: &str) -> IoResult<Option<String>>;
     /// No-replace move of the page's file to the graph trash as `payload`.
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult;
     /// Custody phases (A4): (a) the payload's data, then (b) the trash

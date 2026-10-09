@@ -1682,3 +1682,51 @@ fn a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it() {
     assert_eq!(fs::read(f.graph.join("A.md")).unwrap(), b"typed");
     assert!(!f.graph.join("a.md").exists());
 }
+
+fn twin_events(f: &Fixture) -> Vec<String> {
+    f.host
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Twin { existing, .. } => Some(existing.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// STEP3 §3.2 and Q9 on a real directory: an alternate-extension file
+/// present before the rename fails the creating save and writes nothing;
+/// one that appears after the Check phase is a notice beside Published, and
+/// both files stay.
+#[test]
+fn a_real_alternate_extension_twin_fails_or_annotates_a_creating_save() {
+    let mut f = Fixture::new();
+    fs::write(f.graph.join("c.org"), b"* org").unwrap();
+    f.edit("c.md", "created");
+    assert_eq!(f.save("c.md"), Outcome::Failed);
+    assert_eq!(twin_events(&f), vec!["c.org".to_string()]);
+    assert!(!f.graph.join("c.md").exists());
+    assert_eq!(fs::read(f.graph.join("c.org")).unwrap(), b"* org");
+    assert!(f.host.pages["c.md"].risk);
+
+    let mut f = Fixture::new();
+    f.edit("c.md", "created");
+    assert_eq!(f.host.start_save("c.md"), Disposition::Pending);
+    while f.host.job.as_ref().unwrap().phase != SavePhase::Rename {
+        f.host.advance_save(0);
+    }
+    fs::write(f.graph.join("c.org"), b"* org").unwrap();
+    while f.host.job.is_some() {
+        f.host.advance_save(0);
+    }
+    assert!(f.host.events.iter().any(|event| matches!(
+        event,
+        Event::SaveOutcome {
+            outcome: Outcome::Published,
+            ..
+        }
+    )));
+    assert_eq!(twin_events(&f), vec!["c.org".to_string()]);
+    assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"created");
+    assert_eq!(fs::read(f.graph.join("c.org")).unwrap(), b"* org");
+}

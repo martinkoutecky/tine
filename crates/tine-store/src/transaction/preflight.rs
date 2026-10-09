@@ -36,28 +36,9 @@ impl<'a> Transaction<'a> {
                 markers,
             } => {
                 let file = id.file();
-                if doc.guide {
-                    return Err(Why::Refused(Refusal::InvalidTarget(
-                        "Guide pages are ephemeral".into(),
-                    )));
-                }
-                if !self.page(&file) {
-                    return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
-                }
-                if !crate::model::dto_depth_within_limit(doc) {
-                    return Err(Why::Refused(Refusal::InvalidTarget(
-                        "page content nesting exceeds 512 levels".into(),
-                    )));
-                }
+                self.page_save_target(&file, doc)?;
                 if matches!(base, SaveBase::CreateNew) {
-                    if let Some(existing) = self.disk_twin(&file)? {
-                        return Err(Why::Refused(Refusal::Twin {
-                            existing: PageId::from(existing.as_str()),
-                        }));
-                    }
-                    self.absent(&file)?;
-                    self.twin(&file, None)?;
-                    self.unreadable_owner(&file, &[doc.name.as_str()])?;
+                    self.page_create_checks(&file, doc.name.as_str())?;
                 }
                 let old = match base {
                     // `save_page` maps ResolvingMarkers to Existing + Markers::Resolve.
@@ -66,50 +47,8 @@ impl<'a> Transaction<'a> {
                     }
                     SaveBase::CreateNew => None,
                 };
-                if let Some(old) = old.as_ref() {
-                    crate::model::validate_parse_bytes_for_path(old, &self.path(&file)?)
-                        .map_err(content_refusal)?;
-                }
-                let path = self.path(&file)?;
-                let text = match old.as_deref() {
-                    Some(bytes) => Some(std::str::from_utf8(bytes).map_err(|error| {
-                        content_refusal(io::Error::new(io::ErrorKind::InvalidData, error))
-                    })?),
-                    None => None,
-                };
-                // Refusal R-VCS-MARKERS (docs/storage-contract.md). Threat
-                // scenario: a VCS merge by an external writer left unresolved
-                // markers; a rewrite would re-indent them and silently lose a
-                // side. This is the one place og serializes page bytes for a
-                // save (ordinary, forced, merged and PDF-highlight page saves
-                // all reach it). Only `SaveBase::ResolvingMarkers` passes.
-                let found = text
-                    .map(|text| {
-                        tine_core::concord_queue::vcs_conflict_markers(
-                            text,
-                            Format::from_path(&path),
-                        )
-                    })
-                    .unwrap_or_default();
-                if !found.is_empty() && *markers == Markers::Refuse {
-                    return Err(Why::Refused(Refusal::ReadOnly(format!(
-                        "unresolved VCS merge conflict markers ({}); resolve them first",
-                        found.join(" ")
-                    ))));
-                }
-                let (new, saved_page) = self
-                    .store
-                    .graph
-                    .prepare_page_bytes(doc, &path, text)
-                    .map_err(|error| {
-                        if error.kind() == io::ErrorKind::PermissionDenied {
-                            Why::Refused(Refusal::ReadOnly(error.to_string()))
-                        } else {
-                            Why::Failed(error.into())
-                        }
-                    })?;
-                crate::model::validate_parse_bytes_for_path(&new, &path)
-                    .map_err(content_refusal)?;
+                let (new, saved_page) =
+                    self.serialize_page(&file, doc, old.as_deref(), *markers == Markers::Resolve)?;
                 Ok(Prepared {
                     src: file,
                     dst: None,
@@ -358,4 +297,96 @@ fn refuse_marker_rewrite(old: &[u8], new: &[u8], format: Format) -> Result<(), W
         "unresolved VCS merge conflict markers ({}); resolve them first",
         found.join(" ")
     ))))
+}
+
+/// A page save's checks by precondition (STEP3 §3.2). The transaction's
+/// preflight composes them; the page host runs each where its precondition
+/// holds, so none is added and none runs where it did not before.
+impl Transaction<'_> {
+    /// Every page save, whatever its base: Guide-ephemeral, page target and
+    /// nesting depth.
+    pub(crate) fn page_save_target(&self, file: &FileId, doc: &PageDto) -> Result<(), Why> {
+        if doc.guide {
+            return Err(Why::Refused(Refusal::InvalidTarget(
+                "Guide pages are ephemeral".into(),
+            )));
+        }
+        if !self.page(file) {
+            return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
+        }
+        if !crate::model::dto_depth_within_limit(doc) {
+            return Err(Why::Refused(Refusal::InvalidTarget(
+                "page content nesting exceeds 512 levels".into(),
+            )));
+        }
+        Ok(())
+    }
+
+    /// Create-only: a `CreateNew` save, and the page host's open of a path
+    /// with no file. `name` is the name the new page claims.
+    pub(crate) fn page_create_checks(&self, file: &FileId, name: &str) -> Result<(), Why> {
+        if let Some(existing) = self.disk_twin(file)? {
+            return Err(Why::Refused(Refusal::Twin {
+                existing: PageId::from(existing.as_str()),
+            }));
+        }
+        self.absent(file)?;
+        self.twin(file, None)?;
+        self.unreadable_owner(file, &[name])
+    }
+
+    /// Serialize `doc` over `old`, the bytes it replaces (None creates), with
+    /// every content firewall: parse validation of both sides, VCS markers
+    /// (unless `resolving` them), the page-header and Org round-trip
+    /// firewalls in `prepare_page_bytes`.
+    pub(crate) fn serialize_page(
+        &self,
+        file: &FileId,
+        doc: &PageDto,
+        old: Option<&[u8]>,
+        resolving: bool,
+    ) -> Result<(Vec<u8>, Document), Why> {
+        if let Some(old) = old {
+            crate::model::validate_parse_bytes_for_path(old, &self.path(file)?)
+                .map_err(content_refusal)?;
+        }
+        let path = self.path(file)?;
+        let text = match old {
+            Some(bytes) => Some(std::str::from_utf8(bytes).map_err(|error| {
+                content_refusal(io::Error::new(io::ErrorKind::InvalidData, error))
+            })?),
+            None => None,
+        };
+        // Refusal R-VCS-MARKERS (docs/storage-contract.md). Threat
+        // scenario: a VCS merge by an external writer left unresolved
+        // markers; a rewrite would re-indent them and silently lose a
+        // side. This is the one place og serializes page bytes for a
+        // save (ordinary, forced, merged and PDF-highlight page saves
+        // all reach it, and the page host's submits). Only a resolving save
+        // passes.
+        let found = text
+            .map(|text| {
+                tine_core::concord_queue::vcs_conflict_markers(text, Format::from_path(&path))
+            })
+            .unwrap_or_default();
+        if !found.is_empty() && !resolving {
+            return Err(Why::Refused(Refusal::ReadOnly(format!(
+                "unresolved VCS merge conflict markers ({}); resolve them first",
+                found.join(" ")
+            ))));
+        }
+        let (new, saved_page) = self
+            .store
+            .graph
+            .prepare_page_bytes(doc, &path, text)
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::PermissionDenied {
+                    Why::Refused(Refusal::ReadOnly(error.to_string()))
+                } else {
+                    Why::Failed(error.into())
+                }
+            })?;
+        crate::model::validate_parse_bytes_for_path(&new, &path).map_err(content_refusal)?;
+        Ok((new, saved_page))
+    }
 }
