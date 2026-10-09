@@ -1,0 +1,84 @@
+/* Margin dialogue, slice 1 (vision 2026-10 §3.7): inline comment cards.
+   A comment block (`quote::` under a parent block) and its thread are one tinted
+   card; agent-written blocks (`author::`) carry a chip and a quiet left mark. */
+
+.ls-block.comment-card {
+  margin: 4px 0;
+  padding: 2px 6px 4px 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-primary, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.comment-quote {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+  padding: 3px 0 0 var(--comment-quote-indent, 39px);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+.comment-quote-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  padding-left: 6px;
+  font-style: italic;
+}
+.comment-quote-text.whole {
+  font-style: normal;
+}
+.comment-quote.stale .comment-quote-text {
+  border-left-color: var(--text-muted);
+}
+.comment-quote-stale {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 7px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.author-chip {
+  float: right;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  user-select: none;
+}
+.author-chip.agent {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.block-content.done > .author-chip {
+  text-decoration: none;
+}
+
+/* "Not yours": a block an agent wrote keeps a quiet mark at its content edge. */
+.ls-block.authored > .block-main > .block-content-wrapper {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 40%, transparent);
+  padding-left: 6px;
+}
+
+/* The passage a comment quotes, inside the parent's text. */
+.comment-quote-anchor {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 2px;
+}
+
+@media (max-width: 640px) {
+  .comment-quote {
+    --comment-quote-indent: 28px;
+  }
+}

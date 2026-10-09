@@ -177,6 +177,32 @@ fn guide_explains_following_the_link_at_the_caret() {
 }
 
 #[test]
+fn guide_explains_margin_comments() {
+    // Margin dialogue slice 1 (vision 2026-10 §3.7): Ctrl/Cmd+R comments on a
+    // selection as a `quote::` child; a stale quote is kept, never dropped.
+    let tips = bundled_guide_pages()
+        .into_iter()
+        .find(|page| page.title == "Features/Tips & shortcuts")
+        .expect("tips guide is bundled");
+    assert!(tips.markdown.contains("## Comment on a passage — Ctrl+R"));
+    assert!(tips
+        .markdown
+        .contains("select a few words and press **Ctrl/Cmd+R**"));
+    assert!(tips
+        .markdown
+        .contains("an ordinary child bullet carrying a `quote::` property"));
+    assert!(tips
+        .markdown
+        .contains("**Comment on selection** in the command palette"));
+    assert!(tips
+        .markdown
+        .contains("struck through with **quoted text changed**"));
+    assert!(tips
+        .markdown
+        .contains("A bullet with an `author::` property"));
+}
+
+#[test]
 fn pdf_guide_explains_conflict_discard_and_crop_cleanup_retry() {
     let pdf = bundled_guide_pages()
         .into_iter()

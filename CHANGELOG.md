@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Logseq journal configuration: `:default-queries {:journals [...]}` renders beneath today's blocks with independent query errors; `:feature/disable-scheduled-and-deadline-query?` hides the agenda and `:scheduled/future-days` controls its horizon. Config edits apply live (GH #223, GH #629).
 - Deleting referenced blocks shows how many references are now broken, with **Undo** to restore the blocks and their ids (GH #635).
 - Merging blocks with Backspace/Delete shows how many references now point to the surviving block, or broke when both blocks had ids, with **Undo** (GH #652).
+- Comment on a passage: select words while editing and press **Ctrl/Cmd+R** (or **Comment on selection** in the command palette) to add a child comment that quotes them. Comments are ordinary bullets with a `quote::` property; they render as a tinted card with the quote above and the passage marked in the block, and a quote whose text was later edited away stays shown, struck through. Bullets with an `author::` property show their author in a chip.
 - Linked and Unlinked References: click a breadcrumb ancestor to show its subtree inline while keeping your place; Shift+click opens it in the right sidebar. Inline context resets when the reference group closes (GH #526).
 
 ### Changed

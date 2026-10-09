@@ -20,6 +20,9 @@ icon:: ⌨️
 - ## Copy a link to a block — Ctrl+C
 	- With several blocks selected, right-click any selected bullet: **Copy blocks**, **Cut blocks**, **Copy block refs**, **Copy block embeds**, and **Delete blocks** act on the selection. Cut and delete take one Undo step; cutting keeps the complete subtrees for pasting. Right-clicking an unselected bullet acts on that bullet.
 	- While editing with no text selected, **Ctrl/Cmd+C** copies a reference `((id))` to the block and **Ctrl/Cmd+Shift+C** copies an embed `{{embed ((id))}}`. With text selected, both keep their ordinary copy meaning.
+- ## Comment on a passage — Ctrl+R
+	- While editing, select a few words and press **Ctrl/Cmd+R**: Tine adds a comment under the block that quotes them and puts the caret in it. The comment is an ordinary child bullet carrying a `quote::` property, so the page stays plain Markdown; replies are simply its children. **Comment on selection** in the command palette does the same. With nothing selected, the comment is about the whole block.
+	- A comment shows as a tinted card with the quoted words above it, and those words are marked in the block. If the block is later edited so the quoted words are gone, the card keeps the quote struck through with **quoted text changed**; the comment is never dropped. A bullet with an `author::` property, such as one an assistant wrote, shows that name in a small chip; in a comment thread your own bullets show **you**.
 - ## Insert a block above
 	- To put a bullet *above* an existing one, press **Enter** with the caret at its very start. Some bullets keep Enter for themselves — inside a code block it adds a line of code — so for those, right-click the bullet's dot and choose **Insert block above**. That works on any bullet, including the first one on a page.
 - ## Create one yourself

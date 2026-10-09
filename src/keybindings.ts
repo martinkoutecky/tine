@@ -38,6 +38,7 @@ import { cutBlocks } from "./cut";
 import { deleteRenderedTextSelection } from "./editor/renderedSelectionDelete";
 import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { openInPageFind } from "./inpageFind";
+import { commentOnPaletteSelection, rememberEditorSelectionForPalette } from "./commentActions";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
 import {
@@ -260,10 +261,15 @@ export function handlePaneSelectKey(e: KeyboardEvent): boolean {
   }
 }
 
+function openSwitcherKeepingSelection(opts: Parameters<typeof openSwitcher>[0]): void {
+  rememberEditorSelectionForPalette();
+  openSwitcher(opts);
+}
+
 // Default command table. Editor command ids mirror OG Logseq where practical.
 const COMMANDS: CommandDef[] = [
-  { id: "go/search", binding: "mod+k", label: "Search / quick switch", scope: "global", run: () => openSwitcher({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
-  { id: "go/search-current-page", binding: "mod+shift+k", label: "Search blocks in current page", scope: "global", run: () => openSwitcher({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
+  { id: "go/search", binding: "mod+k", label: "Search / quick switch", scope: "global", run: () => openSwitcherKeepingSelection({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
+  { id: "go/search-current-page", binding: "mod+shift+k", label: "Search blocks in current page", scope: "global", run: () => openSwitcherKeepingSelection({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
   { id: "guide/open", binding: "", label: "Open Guide", scope: "global", run: () => void openGuide(), global: true },
   { id: "go/find-in-page", binding: "mod+f", label: "Find in page", scope: "global", run: openInPageFind, global: true },
   // GH #274 / OG parity: `:editor/follow-link` (mod+o) and
@@ -272,7 +278,10 @@ const COMMANDS: CommandDef[] = [
   // textarea itself and is a no-op when nothing is being edited.
   { id: "editor/follow-link", binding: "mod+o", label: "Open the link at the caret", scope: "global", run: () => { followLinkUnderCaret(); }, global: true },
   { id: "editor/open-link-in-sidebar", binding: "mod+shift+o", label: "Open the link at the caret in the sidebar", scope: "global", run: () => { openLinkUnderCaretInSidebar(); }, global: true },
-  { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: () => openCommandPalette(pluginFocusedBlock() ?? null), global: true },
+  { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: () => { rememberEditorSelectionForPalette(); openCommandPalette(pluginFocusedBlock() ?? null); }, global: true },
+  // Margin dialogue (vision §3.7): the palette form of Ctrl/Cmd+R. Opening the
+  // palette blurs the editor, so the selection is remembered as it opens.
+  { id: "comment/on-selection", binding: "", label: "Comment on selection", scope: "global", run: commentOnPaletteSelection, global: true },
   // Toggle the WebKit Web Inspector for theme/CSS debugging (GH #31). The usual
   // Ctrl+Shift+I / F12 / Ctrl+Shift+C are all swallowed by WebKitGTK itself (its
   // built-in inspector keys, handled in the web process below where the app can
@@ -409,6 +418,9 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/strike-through", binding: "mod+shift+s", label: "Strikethrough", scope: "editor" },
   { id: "editor/highlight", binding: "mod+shift+h", label: "Highlight", scope: "editor" },
   { id: "editor/insert-link", binding: "mod+l", label: "Insert link", scope: "editor" },
+  // Margin dialogue (vision §3.7): a child comment quoting the selected text.
+  // Consumed in the editor, so it never reaches the webview's reload.
+  { id: "editor/comment", binding: "mod+r", label: "Comment on selected text", scope: "editor" },
   // GH #279: the embed counterpart of builtin Mod+C (copy block ref) — with a
   // text selection the handler declines so the platform's ordinary copy runs.
   { id: "editor/copy-embed", binding: "mod+shift+c", label: "Copy block embed when no text is selected", scope: "editor" },

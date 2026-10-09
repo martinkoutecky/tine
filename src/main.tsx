@@ -37,6 +37,7 @@ import "./styles/pdf-workspace.css";
 import "./styles/settingsControls.css";
 import "./styles/query.css";
 import "./styles/conflicts.css";
+import "./styles/comments.css";
 import "./styles/region-failure.css";
 import "./styles/published.css";
 

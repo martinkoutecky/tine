@@ -150,6 +150,9 @@ import { wireBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd } from "./blockGestures";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
+import { commentAndEdit } from "../commentActions";
+import { authorOf, quoteSelectorOf } from "../comments";
+import { AuthorChip, CommentQuoteHeader, inCommentThread, QuoteHighlightProvider } from "./CommentParts";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
 type SheetSlashView = "grid" | "table" | "board";
 
@@ -302,6 +305,49 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // (they own collapse/zoom/sidebar behavior) and suppress only the macro host.
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
+  // Margin dialogue (vision §3.7). Plain functions over the facets memo: an
+  // ordinary block pays two property scans and allocates nothing.
+  // A walk up the parents, not a context provider per level: a provider would
+  // deepen every nested outline's owner chain (128-level outlines must render).
+  const inThread = () => inCommentThread(node().parent, fmt());
+  const commentSelector = () => (node().parent !== null ? quoteSelectorOf(blockFacets().properties) : null);
+  const author = () => authorOf(blockFacets().properties);
+  const showsAuthor = () => author() !== null || commentSelector() !== null || inThread();
+  const renderedView = () => (
+    <Rendered
+      id={props.id}
+      node={node}
+      fmt={fmt}
+      facets={blockFacets}
+      headingLevel={headingLevel}
+      macro={macro}
+      owner={instanceId}
+      outlineScope={outlineScope}
+      refCountBadge={<>
+        {/* OG's per-block reference-count badge: shown only when the block
+            is referenced. Plain click toggles the referrers panel below;
+            shift-click opens the block in the sidebar (matching OG and the
+            bullet's shift-click). */}
+        <Show when={parserReady() && blockRefCount(props.id) > 0 && !props.hideRefCount}>
+          <a
+            class="block-refs-count"
+            classList={{ open: showRefs() }}
+            title="Open block references (shift-click → sidebar)"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (e.shiftKey) openDurableBlock(props.id, "sidebar");
+              else setShowRefs((v) => !v);
+            }}
+          >
+            {blockRefCount(props.id)}
+          </a>
+        </Show>
+        <Show when={showsAuthor()}>
+          <AuthorChip author={author()} />
+        </Show>
+      </>}
+    />
+  );
 
   return (
     <div
@@ -309,11 +355,17 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       classList={{
         collapsed: collapsed(),
         "block-embed-host": blockEmbedHost(),
+        "comment-card": commentSelector() !== null && !inThread(),
+        "comment-in-thread": commentSelector() !== null || inThread(),
+        authored: author() !== null,
         ...rowDecorationClasses(threadLineDecoration()),
       }}
       data-block-id={props.id}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
+      <Show when={commentSelector()}>
+        {(selector) => <CommentQuoteHeader parentId={node().parent!} selector={selector()} />}
+      </Show>
       <div
         class="block-main"
         ref={(el) => {
@@ -411,36 +463,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           <Show
             when={editing()}
             fallback={
-              <Rendered
-                id={props.id}
-                node={node}
-                fmt={fmt}
-                facets={blockFacets}
-                headingLevel={headingLevel}
-                macro={macro}
-                owner={instanceId}
-                outlineScope={outlineScope}
-                refCountBadge={
-                  // OG's per-block reference-count badge: shown only when the block
-                  // is referenced. Plain click toggles the referrers panel below;
-                  // shift-click opens the block in the sidebar (matching OG and the
-                  // bullet's shift-click).
-                  <Show when={parserReady() && blockRefCount(props.id) > 0 && !props.hideRefCount}>
-                    <a
-                      class="block-refs-count"
-                      classList={{ open: showRefs() }}
-                      title="Open block references (shift-click → sidebar)"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (e.shiftKey) openDurableBlock(props.id, "sidebar");
-                        else setShowRefs((v) => !v);
-                      }}
-                    >
-                      {blockRefCount(props.id)}
-                    </a>
-                  </Show>
-                }
-              />
+              <Show when={hasChildren()} fallback={renderedView()}>
+                <QuoteHighlightProvider parentId={props.id} format={fmt()}>{renderedView()}</QuoteHighlightProvider>
+              </Show>
             }
           >
             <Editor id={props.id} propertySession={propertySession} />
@@ -486,6 +511,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
 }
 
 const SHEET_CELL_BLOCKED_EDITOR_COMMANDS = new Set([
+  // A cell is not an outline parent; the grid also owns mod+r (fill right).
+  "editor/comment",
   "editor/indent",
   "editor/outdent",
   "editor/move-block-up",
@@ -2145,6 +2172,19 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // GH #279: embed twin of Mod+C; with a text selection decline so the platform copy runs.
     "editor/copy-embed": (e) => { if (ref.selectionStart !== ref.selectionEnd) return false; e.preventDefault(); commit(ref.value); void copyBlockLink(props.id, "embed"); return true; },
     "editor/clear-block": (e) => { e.preventDefault(); applyEdit({ text: "", start: 0, end: 0 }); return true; },
+    // Margin dialogue (vision §3.7). Always consumed: Ctrl/Cmd+R must not reach
+    // the webview, whose default is reload. No selection quotes the whole block.
+    "editor/comment": (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (cap) return true; // the capture window shows one block, not a thread
+      const text = ref.value;
+      const start = ref.selectionStart;
+      const end = ref.selectionEnd;
+      commit(text);
+      if (!commentAndEdit(props.id, text, start, end, editSurface())) pushToast("This block cannot take a comment here", "warn");
+      return true;
+    },
     "editor/kill-line-before": (e) => { e.preventDefault(); applyEdit(killLineBefore(ref.value, ref.selectionStart)); return true; },
     "editor/kill-line-after": (e) => { e.preventDefault(); applyEdit(killLineAfter(ref.value, ref.selectionStart)); return true; },
     "editor/backward-kill-word": (e) => { e.preventDefault(); applyEdit(killWordBackward(ref.value, ref.selectionStart)); return true; },
@@ -2235,6 +2275,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       blockId: props.id,
       dispatch: dispatchMobileEditorCommand,
       blur: () => ref.blur(),
+      textSelection: () => (ref && ref.selectionStart !== ref.selectionEnd
+        ? { text: ref.value, start: ref.selectionStart, end: ref.selectionEnd }
+        : null),
     });
   };
   const unregisterFocusedEditor = () => {

@@ -62,6 +62,12 @@
       "nonRequirements": ["An end-user journey by itself."],
       "stability": "stable"
     },
+    "scripts/e2e-margin-comment.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "On a routed named page, selecting words in a block, pressing Ctrl+R and typing a reply saves the reply as a child bullet carrying quote:: with the selected words, leaves the commented block unchanged on disk, does not reload the app, and renders the reply as a comment card with the passage marked.", "blocking": true }],
+      "acceptableVariations": ["How the selection is made (mouse, Shift+arrows or a programmatic textarea selection) as long as the editor holds it when Ctrl+R is pressed.", "Card colours, chip and header layout, and save latency, which is awaited by polling the page file."],
+      "nonRequirements": ["Exact pixels, DOM nesting or card styling.", "Indentation characters of the saved child bullet, only that it is a child of the commented block.", "Certification outside Linux WebKitGTK."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-alias.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "First-block aliases and page properties remain editable, persist, and resolve their page.", "blocking": true }],
       "acceptableVariations": ["Autocomplete ranking and editor layout may evolve while the saved alias still resolves the page."],

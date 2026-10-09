@@ -27,10 +27,10 @@ import { rawHtmlPresentation } from "./htmlSanitize";
 import { allowLocalFileImages } from "../localFileSettings";
 import { resolvedTarget } from "../pageIndex";
 import { pageIcon } from "../pageIconBatch";
-import { typographic } from "./typography";
-import { coarseSpanAttrs, literalSpanAttrs, plainSpanAttrs, rebulletedSourceByteToRawByte, typographicPlainSpanAttrs, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
+import { coarseSpanAttrs, literalSpanAttrs, rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
+import { QuoteHighlightContext } from "./quoteHighlight";
+import { renderPlain, renderQuotedPlain } from "./plainText";
 import { literalBlockOfLine } from "../editor/literalLines";
-import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { parseImageMetaBrace } from "./imageMeta";
 import { AstBody } from "./body";
@@ -134,16 +134,13 @@ export function renderInlines(
 function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansion = false, format?: Format): JSX.Element {
   switch (s.k) {
     case "plain": {
-      // Render-time typographic replacement (`->`→`→`, `--`→`–`, …) is a Tine
-      // opinion applied ONLY to plain text — code/links/math/tags are other node
-      // kinds, so they're excluded for free. Source keeps the ASCII.
-      const text = typographyMode() === "render" ? typographic(s.text) : s.text;
-      const attrs = spanMode
-        ? text === s.text
-          ? plainSpanAttrs(s.span, s.span_map)
-          : typographicPlainSpanAttrs(s.text, s.span, s.span_map)
-        : undefined;
-      return attrs ? <span {...attrs}><EmojiText text={text} /></span> : <EmojiText text={text} />;
+      const quoted = spanMode && blockId ? useContext(QuoteHighlightContext) : null;
+      // Reactive only under a parent that may hold comments: a comment added,
+      // edited or removed re-marks this run without re-rendering the block.
+      if (quoted && quoted.blockId === blockId) {
+        return <>{renderQuotedPlain(s, quoted.ranges()) ?? renderPlain(s.text, s.span, s.span_map, spanMode)}</>;
+      }
+      return renderPlain(s.text, s.span, s.span_map, spanMode);
     }
     case "code":
     case "verbatim":

@@ -19,6 +19,8 @@ export interface FocusedEditorCommandBridge {
   blockId: string;
   dispatch(command: MobileEditorCommandId): boolean;
   blur(): void;
+  /** The editor's text and its non-collapsed selection, or null. */
+  textSelection?(): { text: string; start: number; end: number } | null;
 }
 
 const [focusedEditorBridge, setFocusedEditorBridge] =
