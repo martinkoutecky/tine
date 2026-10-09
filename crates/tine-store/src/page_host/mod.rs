@@ -4,6 +4,9 @@
 #[cfg(test)]
 mod conformance;
 mod drafts;
+mod driver;
+#[cfg(test)]
+mod driver_tests;
 mod io;
 #[cfg(test)]
 mod model_fs;
@@ -236,6 +239,9 @@ enum Event {
         page: PageKey,
         payload: String,
     },
+    /// A driver observation (watcher read or released reservation) failed a
+    /// third time; it keeps retrying with the save backoff (STEP3 §7).
+    ObserveError(PageKey),
 }
 
 #[cfg_attr(test, derive(Clone))]
@@ -288,6 +294,15 @@ struct Host<F: HostIo> {
     /// Handles supplied from Graph::page_lock; this is not another registry.
     locks: BTreeMap<PageKey, Arc<Mutex<()>>>,
     lock_ownership: BTreeSet<PageKey>,
+    /// Path locks the driver holds for this step (STEP3 §1: plan, lock,
+    /// revalidate). None only under test, where each step takes its own.
+    held: Option<BTreeSet<PageKey>>,
+    /// The key set a step needs and the driver does not hold: recorded, never
+    /// acquired here. The step returned before any side effect.
+    lock_request: Option<BTreeSet<PageKey>>,
+    /// D-10: decoded durable draft vehicles, kept in step with the adapter's
+    /// durable census through `draft_changes`, never rescanned per call.
+    drafts: BTreeMap<String, Vec<Record>>,
     pages: BTreeMap<PageKey, Page>,
     custody: BTreeMap<PageKey, Debt>,
     retire: BTreeMap<String, Retire>,
@@ -317,12 +332,17 @@ struct Host<F: HostIo> {
 }
 
 impl<F: HostIo> Host<F> {
-    fn new(fs: F, locks: BTreeMap<PageKey, Arc<Mutex<()>>>) -> Self {
+    fn new(mut fs: F, locks: BTreeMap<PageKey, Arc<Mutex<()>>>) -> Self {
+        let drafts = drafts::scan(fs.draft_files(true)).files;
+        fs.draft_changes();
         Self {
             keys: locks.keys().cloned().collect(),
             fs,
             locks,
             lock_ownership: BTreeSet::new(),
+            held: None,
+            lock_request: None,
+            drafts,
             pages: BTreeMap::new(),
             custody: BTreeMap::new(),
             retire: BTreeMap::new(),
@@ -348,15 +368,50 @@ impl<F: HostIo> Host<F> {
         }
     }
 
+    /// Plan step: true when the caller does not hold `keys`. The set is
+    /// recorded for the driver, which takes those path locks (writer → paths
+    /// → state) and polls again; the caller returns before any side effect.
+    fn lacks_locks(&mut self, keys: &BTreeSet<PageKey>) -> bool {
+        match &self.held {
+            Some(held) if !keys.is_subset(held) => {
+                self.lock_request = Some(keys.clone());
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Runs `apply` with page-buffer ownership of `keys`. The driver holds
+    /// the path locks already (asserted); only tests let a step take its own.
     fn with_locks<R>(&mut self, keys: &BTreeSet<PageKey>, apply: impl FnOnce(&mut Self) -> R) -> R {
         assert!(self.lock_ownership.is_empty());
-        let handles: Vec<_> = keys.iter().map(|key| self.locks[key].clone()).collect();
+        let handles: Vec<Arc<Mutex<()>>> = match &self.held {
+            Some(held) => {
+                assert!(keys.is_subset(held), "path locks not held by the driver");
+                vec![]
+            }
+            #[cfg(test)]
+            None => keys.iter().map(|key| self.locks[key].clone()).collect(),
+            #[cfg(not(test))]
+            None => panic!("the page host runs only under its driver"),
+        };
         let guards: Vec<_> = handles.iter().map(|lock| lock.lock().unwrap()).collect();
         self.lock_ownership = keys.clone();
+        self.sync_drafts();
         let result = apply(self);
         self.lock_ownership.clear();
         drop(guards);
         result
+    }
+
+    /// Apply the adapter's durable census changes to the draft index.
+    fn sync_drafts(&mut self) {
+        for (name, bytes) in self.fs.draft_changes() {
+            match bytes.and_then(|bytes| drafts::vehicle(&name, &bytes)) {
+                Some(records) => self.drafts.insert(name, records),
+                None => self.drafts.remove(&name),
+            };
+        }
     }
 
     fn set_page(&mut self, key: &str, page: Option<Page>) {
@@ -629,10 +684,11 @@ impl<F: HostIo> Host<F> {
         if !self.alive || !self.keys.contains(key) || self.pages.contains_key(key) {
             return Disposition::Disabled;
         }
-        if self.busy(key) || self.allocator_busy() {
+        let keys = BTreeSet::from([key.into()]);
+        if self.busy(key) || self.allocator_busy() || self.lacks_locks(&keys) {
             return Disposition::Waiting;
         }
-        self.with_locks(&BTreeSet::from([key.into()]), |host| host.load_locked(key))
+        self.with_locks(&keys, |host| host.load_locked(key))
     }
 
     fn load_locked(&mut self, key: &str) -> Disposition {
@@ -682,6 +738,9 @@ impl<F: HostIo> Host<F> {
                 return Disposition::Waiting;
             }
             keys.insert(receiver.clone());
+        }
+        if self.lacks_locks(&keys) {
+            return Disposition::Waiting;
         }
         self.with_locks(&keys, |host| host.apply_locked_request(&request))
     }
@@ -796,10 +855,11 @@ impl<F: HostIo> Host<F> {
         if !self.alive || !self.pages.contains_key(key) {
             return Disposition::Disabled;
         }
-        if self.busy(key) || self.allocator_busy() {
+        let keys = BTreeSet::from([key.into()]);
+        if self.busy(key) || self.allocator_busy() || self.lacks_locks(&keys) {
             return Disposition::Waiting;
         }
-        self.with_locks(&BTreeSet::from([key.into()]), |host| {
+        self.with_locks(&keys, |host| {
             let Ok(bytes) = host.fs.read_page(key) else {
                 return Disposition::Refused;
             };
@@ -819,16 +879,34 @@ impl<F: HostIo> Host<F> {
     /// Logical entries are computed from durable files and the actual worker.
     /// Pending removal retains its previous entry; pending install is excluded.
     fn logical_drafts(&self) -> BTreeMap<PageKey, Record> {
-        // While stopped, recovery's readable directory is the projection. A
-        // process crash may retain a renamed vehicle without a sync witness;
-        // launch will make those recovered names durable before retirement.
-        let mut files = self.fs.draft_files(self.alive);
-        if let Some(worker) = &self.worker {
-            if worker.application.is_some() && worker.task.bytes.is_some() {
-                files.retain(|(name, _)| name != &worker.task.name);
+        let installing = self
+            .worker
+            .as_ref()
+            .filter(|w| w.application.is_some() && w.task.bytes.is_some())
+            .map(|w| w.task.name.as_str());
+        let mut logical = if self.alive {
+            let index = drafts::logical(
+                self.drafts
+                    .iter()
+                    .filter(|(name, _)| Some(name.as_str()) != installing)
+                    .map(|(_, records)| records),
+            );
+            // Conformance: the index equals the scan of the durable census.
+            #[cfg(test)]
+            {
+                let mut files = self.fs.draft_files(true);
+                files.retain(|(name, _)| Some(name.as_str()) != installing);
+                assert_eq!(index, drafts::scan(files).logical, "draft index");
             }
-        }
-        let mut logical = drafts::scan(files).logical;
+            index
+        } else {
+            // While stopped, recovery's readable directory is the projection.
+            // A process crash may retain a renamed vehicle without a sync
+            // witness; launch makes those names durable before retirement.
+            let mut files = self.fs.draft_files(false);
+            files.retain(|(name, _)| Some(name.as_str()) != installing);
+            drafts::scan(files).logical
+        };
         if let Some(worker) = &self.worker {
             if worker.application.is_some() {
                 for key in &worker.pages {
@@ -847,9 +925,12 @@ impl<F: HostIo> Host<F> {
             return Disposition::Waiting;
         }
         let keys = BTreeSet::from([key.into()]);
+        if self.lacks_locks(&keys) {
+            return Disposition::Waiting;
+        }
         self.with_locks(&keys, |host| {
-            let scan = drafts::scan(host.fs.draft_files(true));
-            let previous = scan.logical.get(key);
+            let durable = drafts::logical(host.drafts.values());
+            let previous = durable.get(key);
             let page = host.pages.get(key).cloned();
             let desired = page.as_ref().filter(|p| p.risk);
             if let Some(page) = desired {
@@ -864,7 +945,7 @@ impl<F: HostIo> Host<F> {
                     effect: task.name.clone(),
                     refresh: Some(key.into()),
                     pages: keys.clone(),
-                    before: scan.logical,
+                    before: durable.clone(),
                     task,
                     application: Some(Application::Refresh(record.clone())),
                     remaining: VecDeque::new(),
@@ -879,7 +960,7 @@ impl<F: HostIo> Host<F> {
                 if previous.is_none() {
                     return Disposition::Disabled;
                 }
-                let mut tasks: VecDeque<_> = drafts::older_vehicles(&scan, key, None)
+                let mut tasks: VecDeque<_> = drafts::older_vehicles(&host.drafts, key, None)
                     .into_iter()
                     .map(Vehicle::remove)
                     .collect();
@@ -890,7 +971,7 @@ impl<F: HostIo> Host<F> {
                     effect: task.name.clone(),
                     refresh: None,
                     pages: keys.clone(),
-                    before: scan.logical,
+                    before: durable.clone(),
                     task,
                     application: Some(Application::Removal(key.into())),
                     remaining: tasks,
@@ -945,14 +1026,19 @@ impl<F: HostIo> Host<F> {
 
     /// Advance exactly one draft I/O phase, or its terminal application.
     fn advance_draft(&mut self) -> Disposition {
-        let Some(mut worker) = self.worker.take() else {
+        let Some(keys) = self.worker.as_ref().map(|w| w.pages.clone()) else {
             return Disposition::Disabled;
         };
+        if self.lacks_locks(&keys) {
+            return Disposition::Waiting;
+        }
+        let mut worker = self.worker.take().unwrap();
         let terminal = matches!(worker.task.stage, Stage::Present | Stage::Absent);
         if !terminal {
             let failures = worker.task.failures;
-            self.with_locks(&worker.pages.clone(), |host| {
+            self.with_locks(&keys, |host| {
                 worker.task.advance(&mut host.fs);
+                host.sync_drafts();
             });
             worker.failures = worker
                 .failures
@@ -989,7 +1075,6 @@ impl<F: HostIo> Host<F> {
         }
         if let Some(application) = worker.application.take() {
             let present = worker.task.stage == Stage::Present;
-            let keys = worker.pages.clone();
             self.with_locks(&keys, |host| {
                 host.apply_draft_terminal(&mut worker, application, present);
             });
@@ -999,10 +1084,9 @@ impl<F: HostIo> Host<F> {
             // Launch may find identical highest-sequence copies left by a
             // crash during explosion. Retain one, so repeated crashes cannot
             // accumulate recovery vehicles without bound.
-            let scan = drafts::scan(self.fs.draft_files(true));
             for key in &worker.pages {
-                let mut vehicles: Vec<_> = scan
-                    .files
+                let mut vehicles: Vec<_> = self
+                    .drafts
                     .iter()
                     .filter(|(name, records)| name.starts_with("p-") && records[0].page == *key)
                     .map(|(name, records)| (records[0].wseq, name.clone()))
@@ -1044,9 +1128,8 @@ impl<F: HostIo> Host<F> {
         match application {
             Application::Refresh(record) if present => {
                 self.events.push(Event::Draft(record.clone()));
-                let scan = drafts::scan(self.fs.draft_files(true));
                 worker.remaining.extend(
-                    drafts::older_vehicles(&scan, &record.page, Some(record.wseq))
+                    drafts::older_vehicles(&self.drafts, &record.page, Some(record.wseq))
                         .into_iter()
                         .map(Vehicle::remove),
                 );
@@ -1080,10 +1163,9 @@ impl<F: HostIo> Host<F> {
                             .remaining
                             .push_back(Vehicle::remove(worker.task.name.clone()));
                     }
-                    let scan = drafts::scan(self.fs.draft_files(true));
                     for record in &records {
                         worker.remaining.extend(
-                            drafts::older_vehicles(&scan, &record.page, Some(record.wseq))
+                            drafts::older_vehicles(&self.drafts, &record.page, Some(record.wseq))
                                 .into_iter()
                                 .map(Vehicle::remove),
                         );
@@ -1157,6 +1239,9 @@ impl<F: HostIo> Host<F> {
             return Disposition::Waiting;
         }
         let keys = BTreeSet::from([job.page.clone()]);
+        if self.lacks_locks(&keys) {
+            return Disposition::Waiting;
+        }
         self.with_locks(&keys, |host| host.advance_save_locked(epoch))
     }
 
@@ -1391,7 +1476,7 @@ impl<F: HostIo> Host<F> {
         if !keys.is_subset(&self.retained) {
             return Disposition::Refused;
         }
-        if self.allocator_busy() {
+        if self.allocator_busy() || self.lacks_locks(keys) {
             return Disposition::Waiting;
         }
         // Reconcile even an undone transaction; failed reads retain custody.
@@ -1442,6 +1527,9 @@ impl<F: HostIo> Host<F> {
             return Disposition::Waiting;
         }
         let keys = self.pages.keys().cloned().collect();
+        if self.lacks_locks(&keys) {
+            return Disposition::Waiting;
+        }
         self.with_locks(&keys, |host| {
             for key in &keys {
                 let mut page = host.pages[key].clone();
@@ -1525,6 +1613,10 @@ impl<F: HostIo> Host<F> {
             // Caller must provide shared locks for every recovered key.
             return Disposition::Refused;
         }
+        let keys = scan.logical.keys().cloned().collect();
+        if self.lacks_locks(&keys) {
+            return Disposition::Waiting;
+        }
         self.version = scan.max_version;
         self.wseq = scan.max_wseq;
         self.incarnation = self
@@ -1542,7 +1634,6 @@ impl<F: HostIo> Host<F> {
             self.settle(&key);
         }
         self.fs.graph_launch(&self.keys);
-        let keys = scan.logical.keys().cloned().collect();
         self.with_locks(&keys, |host| {
             for (key, record) in &scan.logical {
                 host.version = host.next_version();
@@ -1565,6 +1656,8 @@ impl<F: HostIo> Host<F> {
         if !matches!(self.fs.draft_sync(), Ok(Witness::Durable)) {
             return Disposition::Pending;
         }
+        self.drafts = scan.files.clone();
+        self.fs.draft_changes();
         let mut tasks = VecDeque::new();
         for (name, records) in &scan.files {
             if name.starts_with("op-") {
@@ -1582,7 +1675,7 @@ impl<F: HostIo> Host<F> {
         }
         for (key, record) in &scan.logical {
             tasks.extend(
-                drafts::older_vehicles(&scan, key, Some(record.wseq))
+                drafts::older_vehicles(&scan.files, key, Some(record.wseq))
                     .into_iter()
                     .map(Vehicle::remove),
             );

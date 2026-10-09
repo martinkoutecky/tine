@@ -55,6 +55,8 @@ pub(super) struct ModelFs {
     pub owed: Vec<String>,
     /// System calls left before an injected `Fault::Cut` fails the next one.
     pub budget: Option<usize>,
+    /// Durable draft entries as last reported by `draft_changes`.
+    pub reported: BTreeMap<String, Arc<[u8]>>,
 }
 
 /// One power outcome for readable trash names that are not yet durable.
@@ -516,6 +518,27 @@ impl HostIo for ModelFs {
                     .map(|name| (name.into(), bytes.to_vec()))
             })
             .collect()
+    }
+
+    fn draft_changes(&mut self) -> Vec<(String, Option<Vec<u8>>)> {
+        let current: BTreeMap<String, Arc<[u8]>> = self
+            .stable
+            .iter()
+            .filter_map(|(key, bytes)| {
+                key.strip_prefix("draft/")
+                    .filter(|name| !name.contains('/'))
+                    .map(|name| (name.to_string(), bytes.clone()))
+            })
+            .collect();
+        let mut changes = vec![];
+        for name in current.keys().chain(self.reported.keys()) {
+            let (now, before) = (current.get(name), self.reported.get(name));
+            if now != before && !changes.iter().any(|(n, _)| n == name) {
+                changes.push((name.clone(), now.map(|b| b.to_vec())));
+            }
+        }
+        self.reported = current;
+        changes
     }
 
     fn draft_temp(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {

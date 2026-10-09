@@ -34,7 +34,7 @@ struct DraftFailure {
     terminal: bool,
 }
 
-fn backoff(failures: u32) -> u64 {
+pub(super) fn backoff(failures: u32) -> u64 {
     let delays = [100, 300, 1000, 3000, 10000, 30000];
     delays[(failures as usize - 1).min(delays.len() - 1)]
 }
@@ -62,6 +62,8 @@ pub(super) struct Progress<F: HostIo, C: Clock> {
     /// Backoff for the custody listing and retire-only markers (V1, V2).
     custody_retry: Option<u64>,
     custody_retries: u32,
+    /// Round-robin among due saves (STEP3 §1): the page started last.
+    save_cursor: Option<PageKey>,
 }
 
 impl<F: HostIo, C: Clock> Progress<F, C> {
@@ -79,6 +81,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             draft_errors: BTreeMap::new(),
             custody_retry: None,
             custody_retries: 0,
+            save_cursor: None,
         };
         result.reconcile();
         result
@@ -114,7 +117,43 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         self.draft_retry.into_iter().chain(self.custody_retry).min()
     }
 
+    /// The earliest time an idle host has timed work: a save or draft
+    /// refresh deadline, or a retry. A page whose save or draft is blocked
+    /// (conflict, reservation, a busy worker or job) contributes nothing:
+    /// whatever unblocks it wakes the driver, so an expired deadline is
+    /// never spun on (STEP3 §1).
+    pub fn next_deadline(&self) -> Option<u64> {
+        let drafts = self.host.logical_drafts();
+        let pages = self.times.iter().filter(|(key, _)| !self.host.busy(key));
+        let saves = pages
+            .clone()
+            .filter_map(|(_, t)| t.deadline().filter(|_| !t.page.clean() && !t.page.conflict));
+        let refreshes = pages.filter_map(|(key, t)| {
+            let differs = t.page.risk
+                && !drafts.get(key).is_some_and(|r| {
+                    r.bytes == t.page.buf && r.base == t.page.base && r.version == t.page.version
+                });
+            t.last_draft
+                .filter(|_| differs && self.host.worker.is_none())
+                .map(|last| last.checked_add(500).expect("clock exhausted"))
+        });
+        saves
+            .chain(refreshes)
+            .chain(self.draft_retry.filter(|_| self.host.worker.is_some()))
+            .chain(self.custody_retry)
+            .min()
+    }
+
+    /// Every event since the last call, removed from the host after this
+    /// progress tracker has read them (D-10: the vector does not grow).
+    pub fn take_events(&mut self) -> Vec<Event> {
+        self.reconcile();
+        self.events_seen = 0;
+        std::mem::take(&mut self.host.events)
+    }
+
     fn reconcile(&mut self) {
+        self.host.sync_drafts();
         let now = self.clock.now_ms();
         if self.incarnation != self.host.incarnation {
             self.times.clear();
@@ -270,6 +309,9 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 && matches!(w.application, Some(Application::Refresh(_)));
             let keys = w.pages.clone();
             let result = self.host.advance_draft();
+            if self.host.lock_request.is_some() {
+                return Disposition::Waiting;
+            }
             if let Some(w) = &self.host.worker {
                 if w.failures > failures && !(stage == Stage::Sync && w.task.stage == Stage::Sync) {
                     self.draft_retries = self
@@ -318,7 +360,9 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         }
         let now = self.clock.now_ms();
         let drafts = self.host.logical_drafts();
-        for key in &self.host.keys.clone() {
+        // Held pages and pages with draft vehicles only (D-10), in key order.
+        let keys: BTreeSet<_> = self.times.keys().chain(drafts.keys()).cloned().collect();
+        for key in &keys {
             let t = self.times.get(key);
             let desired = t.filter(|t| t.page.risk);
             let differs = match desired {
@@ -331,25 +375,37 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 t.last_draft
                     .is_none_or(|last| now >= last.checked_add(500).expect("clock exhausted"))
             });
-            if differs && due && self.host.begin_draft(key) == Disposition::Pending {
-                if let Some(t) = self.times.get_mut(key) {
-                    t.last_draft = Some(now);
+            if differs && due {
+                let result = self.host.begin_draft(key);
+                if self.host.lock_request.is_some() {
+                    return Disposition::Waiting;
                 }
-                return Disposition::Pending;
+                if result == Disposition::Pending {
+                    if let Some(t) = self.times.get_mut(key) {
+                        t.last_draft = Some(now);
+                    }
+                    return Disposition::Pending;
+                }
             }
         }
-        let mut due: Vec<_> = self
+        // Due saves are served round-robin, from the page after the one
+        // started last, so a page that is due again cannot starve another.
+        let due: Vec<_> = self
             .times
             .iter()
-            .filter_map(|(key, t)| {
+            .filter(|(_, t)| {
                 t.deadline()
-                    .filter(|&deadline| !t.page.clean() && !t.page.conflict && now >= deadline)
-                    .map(|deadline| (deadline, key.clone()))
+                    .is_some_and(|deadline| !t.page.clean() && !t.page.conflict && now >= deadline)
             })
+            .map(|(key, _)| key.clone())
             .collect();
-        due.sort();
-        for (_, key) in due {
+        let after = self.save_cursor.as_ref();
+        let (later, earlier): (Vec<_>, Vec<_>) = due
+            .into_iter()
+            .partition(|key| after.is_none_or(|c| key > c));
+        for key in later.into_iter().chain(earlier) {
             if self.host.start_save(&key) == Disposition::Pending {
+                self.save_cursor = Some(key);
                 return Disposition::Pending;
             }
         }
@@ -367,8 +423,11 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             })
             .map(|(key, _)| key.clone());
         if let Some(key) = retire {
-            self.host
-                .with_locks(&BTreeSet::from([key.clone()]), |h| h.close_clean(&key));
+            let keys = BTreeSet::from([key.clone()]);
+            if self.host.lacks_locks(&keys) {
+                return Disposition::Waiting;
+            }
+            self.host.with_locks(&keys, |h| h.close_clean(&key));
             self.reconcile();
             return Disposition::Applied;
         }

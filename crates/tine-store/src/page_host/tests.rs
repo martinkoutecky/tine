@@ -7,7 +7,7 @@ mod mutation_tests;
 #[path = "progress_tests.rs"]
 mod progress_tests;
 
-fn text(bytes: &str) -> Text {
+pub(super) fn text(bytes: &str) -> Text {
     Some(Arc::from(bytes.as_bytes()))
 }
 
@@ -72,7 +72,7 @@ fn review_f8_production_rename_rebinds_title_with_durable_custody_and_recovery()
     }
 }
 
-fn host() -> Host<ModelFs> {
+pub(super) fn host() -> Host<ModelFs> {
     let mut fs = ModelFs::default();
     fs.external("a.md", text("A"), true);
     fs.external("b.md", text("B"), true);
@@ -83,7 +83,7 @@ fn host() -> Host<ModelFs> {
     Host::new(fs, locks)
 }
 
-fn send(host: &mut Host<ModelFs>, key: &str, kind: RequestKind) -> Disposition {
+pub(super) fn send(host: &mut Host<ModelFs>, key: &str, kind: RequestKind) -> Disposition {
     let request = Request {
         id: host.last_admitted + 1,
         generation: host.generation,
@@ -95,12 +95,12 @@ fn send(host: &mut Host<ModelFs>, key: &str, kind: RequestKind) -> Disposition {
     host.apply_request()
 }
 
-fn open(host: &mut Host<ModelFs>, key: &str) {
+pub(super) fn open(host: &mut Host<ModelFs>, key: &str) {
     assert_eq!(send(host, key, RequestKind::Open), Disposition::Applied);
     host.receive(key);
 }
 
-fn edit(host: &mut Host<ModelFs>, key: &str, bytes: &str) {
+pub(super) fn edit(host: &mut Host<ModelFs>, key: &str, bytes: &str) {
     let version = host.pages[key].version;
     assert_eq!(
         send(
@@ -117,7 +117,7 @@ fn edit(host: &mut Host<ModelFs>, key: &str, bytes: &str) {
     host.receive(key);
 }
 
-fn drain(host: &mut Host<ModelFs>) {
+pub(super) fn drain(host: &mut Host<ModelFs>) {
     for _ in 0..200 {
         if host.worker.is_none() {
             return;
@@ -127,19 +127,19 @@ fn drain(host: &mut Host<ModelFs>) {
     panic!("draft worker failed to reach terminal state on a recovered disk");
 }
 
-fn draft(host: &mut Host<ModelFs>, key: &str) {
+pub(super) fn draft(host: &mut Host<ModelFs>, key: &str) {
     assert_eq!(host.begin_draft(key), Disposition::Pending);
     drain(host);
 }
 
-fn risk(host: &mut Host<ModelFs>, key: &str) {
+pub(super) fn risk(host: &mut Host<ModelFs>, key: &str) {
     assert_eq!(host.start_save(key), Disposition::Pending);
     host.fs.inject(Phase::PageTemp, [Fault::Before]);
     host.advance_save(0);
     assert!(host.pages[key].risk);
 }
 
-fn saved(host: &mut Host<ModelFs>, key: &str) {
+pub(super) fn saved(host: &mut Host<ModelFs>, key: &str) {
     assert_eq!(host.start_save(key), Disposition::Pending);
     for _ in 0..10 {
         if host.job.is_none() {
@@ -761,8 +761,20 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
             if path.extension().is_none_or(|ext| ext != "rs") {
                 continue;
             }
-            let relative = path.strip_prefix(root).unwrap().to_string_lossy();
-            if relative.contains("/page_state/") || relative.contains("/page_host/") {
+            // `/`-joined on every platform: Windows paths display with `\`.
+            let relative = path
+                .strip_prefix(root)
+                .unwrap()
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            // An integration test crate cannot name a private module; there
+            // "page_host" is only a path string (the I-21 owner census).
+            if relative.contains("/page_state/")
+                || relative.contains("/page_host/")
+                || relative.contains("/tests/")
+            {
                 continue;
             }
             let source = std::fs::read_to_string(&path).unwrap();
@@ -790,6 +802,7 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
         include_str!("operations.rs"),
         include_str!("progress.rs"),
         include_str!("io.rs"),
+        include_str!("driver.rs"),
     ] {
         for line in source
             .lines()

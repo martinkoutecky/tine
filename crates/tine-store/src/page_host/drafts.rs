@@ -92,16 +92,10 @@ pub(super) fn scan(files: Vec<(String, Vec<u8>)>) -> Scan {
     let mut result = Scan::default();
     let mut sequences: BTreeMap<u64, (Record, BTreeSet<String>)> = BTreeMap::new();
     for (name, bytes) in files {
-        let Ok(records) = decode(&bytes) else {
+        let Some(records) = vehicle(&name, &bytes) else {
             result.unreadable.insert(name);
             continue;
         };
-        if !(name.starts_with("p-") && records.len() == 1 || name.starts_with("op-"))
-            || !name.ends_with(".draft")
-        {
-            result.unreadable.insert(name);
-            continue;
-        }
         for record in &records {
             result.max_version = result.max_version.max(record.version);
             result.max_wseq = result.max_wseq.max(record.wseq);
@@ -131,16 +125,33 @@ pub(super) fn scan(files: Vec<(String, Vec<u8>)>) -> Scan {
     result
         .files
         .retain(|name, _| !result.unreadable.contains(name));
-    for record in result.files.values().flatten() {
-        let current = result
-            .logical
+    result.logical = logical(result.files.values());
+    result
+}
+
+/// One vehicle's records, or None when the file is unreadable by itself
+/// (format, checksum, or a name that does not match its records).
+pub(super) fn vehicle(name: &str, bytes: &[u8]) -> Option<Vec<Record>> {
+    let records = decode(bytes).ok()?;
+    ((name.starts_with("p-") && records.len() == 1 || name.starts_with("op-"))
+        && name.ends_with(".draft"))
+    .then_some(records)
+}
+
+/// The highest write sequence per page.
+pub(super) fn logical<'a>(
+    files: impl IntoIterator<Item = &'a Vec<Record>>,
+) -> BTreeMap<String, Record> {
+    let mut logical = BTreeMap::<String, Record>::new();
+    for record in files.into_iter().flatten() {
+        let current = logical
             .entry(record.page.clone())
             .or_insert_with(|| record.clone());
         if record.wseq > current.wseq {
             *current = record.clone();
         }
     }
-    result
+    logical
 }
 
 pub(super) fn page_name(page: &str) -> String {
@@ -241,9 +252,12 @@ impl Vehicle {
 }
 
 /// Only single-page vehicles can retire independently; op files must explode.
-pub(super) fn older_vehicles(scan: &Scan, page: &str, keep: Option<u64>) -> Vec<String> {
-    let mut files: Vec<_> = scan
-        .files
+pub(super) fn older_vehicles(
+    files: &BTreeMap<String, Vec<Record>>,
+    page: &str,
+    keep: Option<u64>,
+) -> Vec<String> {
+    let mut files: Vec<_> = files
         .iter()
         .filter(|(name, records)| {
             name.starts_with("p-")

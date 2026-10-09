@@ -301,6 +301,12 @@ impl HostIo for NativeFs {
     fn draft_files(&self, durable: bool) -> Vec<(String, Vec<u8>)> {
         self.native.draft_files(durable)
     }
+    fn draft_changes(&mut self) -> Vec<(String, Option<Vec<u8>>)> {
+        // The host's index is checked against the durable census itself
+        // (`Host::logical_drafts` under test); the ledger only keeps pace.
+        self.ledger.draft_changes();
+        self.native.draft_changes()
+    }
     fn draft_temp(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {
         self.phase(
             Phase::DraftTemp,

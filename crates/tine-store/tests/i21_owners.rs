@@ -13,6 +13,13 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         "std::thread::scope joins its child before return",
     ),
     (
+        "crates/tine-store/src/page_host/driver.rs",
+        ".spawn(move ||",
+        1,
+        "Driver::join and Drop set `stopping` and wake the host condition",
+        "Driver::join and Drop join the driver thread",
+    ),
+    (
         "crates/tine-store/src/store.rs",
         ".spawn(move ||",
         1,

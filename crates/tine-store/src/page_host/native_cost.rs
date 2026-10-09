@@ -120,7 +120,14 @@ fn measure_anonymized_draft_unit_cost() {
         "copy must contain parsed 1-block and 60-block pages"
     );
     for (block_count, (path, base)) in samples {
-        let page = path.strip_prefix(&corpus).unwrap().to_str().unwrap();
+        let page = path
+            .strip_prefix(&corpus)
+            .unwrap()
+            .components()
+            .map(|c| c.as_os_str().to_str().unwrap())
+            .collect::<Vec<_>>()
+            .join("/");
+        let page = page.as_str();
         let app = tempfile::tempdir().unwrap();
         let native = ProductionIo::new(
             &corpus,

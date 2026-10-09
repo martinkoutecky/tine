@@ -72,7 +72,13 @@ pub(super) trait HostIo {
     /// temps are unlinked first (no move followed them). The error names the
     /// filesystem's failure (REVIEW-2b-r2 V1).
     fn custody_markers(&mut self) -> Result<Vec<(String, Vec<u8>)>, String>;
+    /// The readable (`durable == false`) or durable census, in full. Launch
+    /// and tests only: a live host reads its draft index instead (D-10).
     fn draft_files(&self, durable: bool) -> Vec<(String, Vec<u8>)>;
+    /// Durable census entries changed since the previous call, in order:
+    /// the new bytes, or None once removed. A live host keeps its decoded
+    /// draft index in step with these instead of rescanning every vehicle.
+    fn draft_changes(&mut self) -> Vec<(String, Option<Vec<u8>>)>;
     fn draft_temp(&mut self, name: &str, bytes: &[u8]) -> IoResult<()>;
     fn draft_rename(&mut self, name: &str) -> IoResult<()>;
     fn draft_unlink(&mut self, name: &str) -> IoResult<()>;

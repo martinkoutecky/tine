@@ -22,6 +22,10 @@ pub(super) struct ProductionIo {
     creates: BTreeMap<String, bool>,
     readable: BTreeMap<String, Vec<u8>>,
     durable: BTreeMap<String, Vec<u8>>,
+    /// Names renamed or unlinked since the last directory sync: the only
+    /// entries a sync can move into the durable census (D-10).
+    unsynced: std::collections::BTreeSet<String>,
+    changes: Vec<(String, Option<Vec<u8>>)>,
     paths: BTreeMap<String, PathBuf>,
     quarantines: BTreeMap<String, (PathBuf, u8)>,
     directories: BTreeMap<PathBuf, durability::DirectoryCreation>,
@@ -80,6 +84,8 @@ impl ProductionIo {
             draft_payloads: BTreeMap::new(),
             durable: readable.clone(),
             readable,
+            unsynced: Default::default(),
+            changes: vec![],
             paths,
             quarantines: BTreeMap::new(),
             directories: BTreeMap::new(),
@@ -362,6 +368,10 @@ impl HostIo for ProductionIo {
             .collect()
     }
 
+    fn draft_changes(&mut self) -> Vec<(String, Option<Vec<u8>>)> {
+        std::mem::take(&mut self.changes)
+    }
+
     fn draft_temp(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {
         self.before(super::io::Phase::DraftTemp)?;
         self.draft_temps.insert(
@@ -393,6 +403,7 @@ impl HostIo for ProductionIo {
             .expect("prepared draft payload");
         self.paths.insert(name.into(), target);
         self.readable.insert(name.into(), bytes);
+        self.unsynced.insert(name.into());
         Ok(())
     }
 
@@ -402,6 +413,7 @@ impl HostIo for ProductionIo {
         self.draft_payloads.remove(name);
         remove_present(&self.draft_path(name)).map_err(failure)?;
         self.readable.remove(name);
+        self.unsynced.insert(name.into());
         // NotFound is only readable absence. Vehicle still requires DraftSync.
         Ok(())
     }
@@ -409,9 +421,21 @@ impl HostIo for ProductionIo {
     fn draft_sync(&mut self) -> IoResult<Witness> {
         self.before(super::io::Phase::DraftSync)?;
         durability::sync_private_directory(&self.drafts).map_err(sync_failure)?;
-        self.durable.clone_from(&self.readable);
-        self.paths
-            .retain(|name, _| self.readable.contains_key(name));
+        // Only entries changed since the last sync differ between the two
+        // censuses; every payload is not copied again (D-10).
+        for name in std::mem::take(&mut self.unsynced) {
+            let bytes = self.readable.get(&name).cloned();
+            if bytes.is_none() {
+                self.paths.remove(&name);
+            }
+            if self.durable.get(&name) != bytes.as_ref() {
+                match &bytes {
+                    Some(bytes) => self.durable.insert(name.clone(), bytes.clone()),
+                    None => self.durable.remove(&name),
+                };
+                self.changes.push((name, bytes));
+            }
+        }
         Ok(Witness::Durable)
     }
 
@@ -445,7 +469,10 @@ impl HostIo for ProductionIo {
         let source = self.draft_path(name);
         durability::sync_private_directory(source.parent().unwrap()).map_err(failure)?;
         self.readable.remove(name);
-        self.durable.remove(name);
+        if self.durable.remove(name).is_some() {
+            self.changes.push((name.into(), None));
+        }
+        self.unsynced.remove(name);
         self.paths.remove(name);
         self.quarantines.remove(name);
         Ok(())

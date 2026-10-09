@@ -272,14 +272,14 @@ fn retirement_selects_only_older_single_page_vehicles_in_order() {
     }
     let scan = drafts::scan(files);
     assert_eq!(
-        drafts::older_vehicles(&scan, "a.md", Some(2)),
+        drafts::older_vehicles(&scan.files, "a.md", Some(2)),
         vec!["p-1.draft"]
     );
     assert_eq!(
-        drafts::older_vehicles(&scan, "a.md", None),
+        drafts::older_vehicles(&scan.files, "a.md", None),
         vec!["p-1.draft", "p-2.draft", "p-3.draft"]
     );
-    assert!(drafts::older_vehicles(&scan, "b.md", None).is_empty());
+    assert!(drafts::older_vehicles(&scan.files, "b.md", None).is_empty());
 }
 
 #[test]
