@@ -856,3 +856,127 @@ fn a_switch_aborts_when_neither_the_save_nor_the_draft_can_be_written() {
     assert_eq!(live.host.stop_state(), StopState::Waiting);
     live.host.stop();
 }
+
+// ---- STEP3 §7: retained writers ----
+
+impl Live {
+    /// A retained transaction's write of `body` over `key`'s `old` bytes.
+    fn transaction(&self, key: &str, old: &str, body: &str) {
+        let mut tx = self.store.transaction(None);
+        let dto = self.dto(key, body);
+        let base = crate::SaveBase::Existing(FileRev::from_bytes(old.as_bytes()));
+        tx.save_page(&[EditKind::SaveBlock], &PageId::from(key), base, &dto);
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+    }
+}
+
+/// Q3 (REVIEW-3), first trace: the referrer is flushed at v2, then a
+/// submit applies v3 before the reservation. The input contract is checked
+/// under the final reservation: a refusing writer refuses, a flush-first
+/// writer gets the page only once v3 is saved.
+#[test]
+fn q3_input_applied_before_the_reservation_is_found_under_it() {
+    let live = Live::new(&[("pages/r.md", "- one\n")]);
+    let (key, page) = live.open("pages/r.md");
+    let id = live.submit(&key, "- v2\n", page.version, None).unwrap();
+    let v2 = live.answer(&key, id).answer.unwrap().version;
+    live.until_published(&[(key.clone(), v2, None)]);
+    let id = live.submit(&key, "- v3\n", v2, None).unwrap();
+    live.answer(&key, id);
+    let discover = || vec![PageId::from("pages/r.md")];
+    assert_eq!(
+        live.host.reserve(discover, Input::Refuse).unwrap_err(),
+        BTreeSet::from([key.clone()]),
+        "Q3: a typed page that is not at risk still has unsaved input"
+    );
+    let reservation = live.host.reserve(discover, Input::Flush).unwrap();
+    assert_eq!(live.disk(&key), "- v3\n", "flushed before the write");
+    live.transaction(&key, "- v3\n", "- rewritten\n");
+    live.host.release(reservation);
+    let page = live.wait(&key, "observed", |mail| {
+        mail.page
+            .as_ref()
+            .is_some_and(|p| p.disk == Some(token("- rewritten\n")))
+    });
+    assert!(!page.page.unwrap().conflict);
+    live.host.stop();
+}
+
+/// Q3 (REVIEW-3), second trace: discovery grows under the reservation to
+/// a page with unsaved input that was never in the first set.
+#[test]
+fn q3_a_page_discovered_under_the_reservation_is_checked_too() {
+    let live = Live::new(&[("pages/a.md", "- a\n"), ("pages/r.md", "- r\n")]);
+    let (key, page) = live.open("pages/r.md");
+    let id = live.submit(&key, "- typed\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    let mut round = 0;
+    let discover = || {
+        round += 1;
+        let mut pages = vec![PageId::from("pages/a.md")];
+        if round > 1 {
+            pages.push(PageId::from("pages/r.md"));
+        }
+        pages
+    };
+    assert_eq!(
+        live.host.reserve(discover, Input::Refuse).unwrap_err(),
+        BTreeSet::from([key.clone()])
+    );
+    assert!(
+        live.host
+            .driver
+            .shared
+            .state
+            .lock()
+            .unwrap()
+            .progress
+            .host
+            .retained
+            .is_empty(),
+        "a refused reservation is withdrawn"
+    );
+    live.host.stop();
+}
+
+/// Q6 (REVIEW-3), second boundary: publication P fails and awaits retry;
+/// a retained writer reserves the page and commits T, which publishes its
+/// own index; P's retry must never overwrite T, and the release's
+/// observation leaves the index at T.
+#[test]
+fn q6_a_failed_publication_never_overwrites_a_retained_transaction() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    live.index_faults(u32::MAX);
+    let id = live.submit(&key, "- p\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    live.until_disk(&key, "- p\n");
+    let reservation = live
+        .host
+        .reserve(|| vec![PageId::from("pages/a.md")], Input::Flush)
+        .unwrap();
+    live.index_faults(0);
+    live.transaction(&key, "- p\n", "- t\n");
+    live.until_indexed(&key, "- t\n");
+    // Past P's retry backoff, with the driver woken throughout (any wake
+    // source does): the retry waits for the release.
+    let until = Instant::now() + Duration::from_millis(1500);
+    while Instant::now() < until {
+        live.host.driver.shared.with_state(|_| {});
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        live.indexed(&key),
+        Some(content_rev("- t\n")),
+        "Q6: P's retry overwrote the retained transaction's index"
+    );
+    live.host.release(reservation);
+    live.wait(&key, "observed", |mail| {
+        mail.page
+            .as_ref()
+            .is_some_and(|p| p.disk == Some(token("- t\n")))
+    });
+    settle();
+    assert_eq!(live.indexed(&key), Some(content_rev("- t\n")));
+    live.host.stop();
+}
