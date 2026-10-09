@@ -1,5 +1,5 @@
 import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { classifyReferenceLoadError, referenceLoadErrorMessage, type ReferenceLoadError } from "../referenceLoadError";
 import { graphOwner, latestOwner, readOwned } from "../owned";
@@ -15,6 +15,7 @@ import { mergeReferenceGroups } from "../referenceGroups";
 import { sectionOverride, setSectionOverride } from "../referenceSectionState";
 import { readOr } from "../resourceRead";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 
 type BoundedEvidence = NonNullable<RefGroup["evidence"]>[number] & {
   total?: number;
@@ -43,7 +44,8 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
     reloadGroupCollapse();
     setOpenSignal(sectionOverride("unlinked", page) ?? false);
   });
-  const [groupsResource] = createResource(
+  const [groupsResource] = createMembershipResource(
+    () => props.name,
     () => props.name,
     async (n) => {
       const owner = latestOwner(readScope, "unlinked", graphOwner(() => alive && props.name === n));
@@ -55,7 +57,8 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
         if (owner()) setLoadError(classifyReferenceLoadError(error));
         return [];
       }
-    }
+    },
+    groupsContainEdit,
   );
   // The resource loader reports failures through loadError; readOr covers reads.
   const groups = () => readOr(groupsResource, undefined, "unlinked references");

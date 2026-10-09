@@ -1,6 +1,5 @@
-import { For, Show, createResource, createSignal, type JSX } from "solid-js";
+import { For, Show, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { dataRev, graphEpoch } from "../graphSession";
 import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -11,6 +10,7 @@ import { blockExternalId } from "../document";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 
 // Block-level "linked references": the blocks that reference THIS block (via
 // `((uuid))` / `[..](((uuid)))` / `{{embed ((uuid))}}`), grouped by page. Toggled
@@ -21,9 +21,11 @@ import { ReferenceDisclosure } from "./ReferenceDisclosure";
  * referrer answer on graph revision changes; disclosure is local to this panel
  * and can be changed for one group or all groups without writing the graph. */
 export function BlockReferences(props: { id: string }): JSX.Element {
-  const [groupsResource, { refetch }] = createResource(
-    () => ({ id: blockExternalId(props.id) ?? props.id, epoch: graphEpoch(), revision: dataRev() }),
-    ({ id }) => backend().getBlockReferrers(id)
+  const [groupsResource, { refetch }] = createMembershipResource(
+    () => blockExternalId(props.id) ?? props.id,
+    () => blockExternalId(props.id) ?? props.id,
+    (id) => backend().getBlockReferrers(id),
+    groupsContainEdit,
   );
   // Unlike the page-level panels this one has no fetcher wrapper, so it owns
   // both halves: readOr keeps a failed read out of the page's render, and the

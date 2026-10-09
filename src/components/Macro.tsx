@@ -8,6 +8,7 @@ import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab }
 import { openPageInSidebar, openBlockInSidebar, pageIdentityKey, openQueryExport, switcherOpen } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { blocksContainEdit, createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { bindingOwner, advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
 import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
 import { resolveBlockBatched } from "../resolveBatch";
@@ -329,7 +330,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     return { query, context, search, displayKey, key, both };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const runOwners = {};
-  const [operation] = createResource(runRequest, async (request): Promise<QueryOperation | undefined> => {
+  const [operation] = createMembershipResource(runRequest, () => runRequest()?.displayKey ?? "", async (request): Promise<QueryOperation | undefined> => {
     const owner = latestOwner(runOwners, "run", graphOwner());
     const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
     if (request.search !== null) {
@@ -394,7 +395,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       matchedTotal: result.matched_total ?? null,
       both,
     };
-  });
+  }, (value, id) => !!value && groupsContainEdit(value.groups, id), () => !collapsed());
   /** The last coherent answer; an errored run shows its error, not old rows. */
   const displayed = (): QueryOperation | undefined => {
     const current = runRequest();
@@ -1437,8 +1438,9 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
       && pageIdentityKey(sourcePage) === pageIdentityKey(targetPage);
   };
 
-  const [data] = createResource(
-    () => selfPageEmbed() ? null : `${target()} ${graphEpoch()} ${dataRev()}`,
+  const [data] = createMembershipResource(
+    () => selfPageEmbed() ? null : target(),
+    target,
     async () => {
     const t = target();
     const blockRef = /^\(\(([^)]+)\)\)$/.exec(t);
@@ -1458,7 +1460,7 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
       return p ? { page: p.name, kind: "page" as PageKind, blocks: p.blocks, embedId: undefined } : null;
     }
     return null;
-  });
+  }, (value, id) => !!value && blocksContainEdit(value.blocks, id));
 
   const embedded = () => readOr(data, undefined, "embed");
   return (

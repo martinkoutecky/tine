@@ -20,6 +20,7 @@ import { mergeReferenceGroups } from "../referenceGroups";
 import { sectionOverride, setSectionOverride } from "../referenceSectionState";
 import { readOr } from "../resourceRead";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 
 // One identity fold for chips, filters and group merging: the old private `norm`
 // (trim + toLowerCase) split NFC/NFD and boundary-slash spellings of one page
@@ -106,7 +107,8 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   let alive = true;
   onCleanup(() => { alive = false; });
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
-  const [groupsResource] = createResource(
+  const [groupsResource] = createMembershipResource(
+    () => props.name,
     () => props.name,
     async (n) => {
       const owner = latestOwner(readScope, "backlinks", graphOwner(() => alive && props.name === n));
@@ -118,7 +120,8 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
         if (owner()) setLoadError(classifyReferenceLoadError(error));
         return [];
       }
-    }
+    },
+    groupsContainEdit,
   );
   // The resource loader reports failures through loadError; readOr covers reads.
   const groups = () => readOr(groupsResource, undefined, "linked references");

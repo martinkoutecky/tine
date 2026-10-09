@@ -11,7 +11,7 @@ import { doc, setDoc } from "../document/model";
 import { openJournals, openPage, route } from "../router";
 import { journalTitle } from "../journal";
 import type { QueryExecution, QueryHit, RefGroup } from "../types";
-import { editingId, startEditing } from "../editorController";
+import { editingId, startEditing, endEdit } from "../editorController";
 import type { ParsedQuery, QueryResult, QueryTextDialect, Source } from "../editor/queryIr";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { searchFilter } from "../editor/queryBuilder";
@@ -516,6 +516,27 @@ describe("QueryMacro sheet integration", () => {
     expect(route()).toMatchObject({ kind: "page", name: "Sheet", pageKind: "page" });
 
     dispose();
+  });
+
+  it("GH #659 intentional OG difference: a Table answer retains the edited row until blur", async () => {
+    setDoc({
+      byId: {
+        query: node("query", "{{query (task TODO)}}\ntine.view:: table", null),
+        "todo-1": node("todo-1", "TODO Result 1", null),
+      },
+      pages: [page(["query", "todo-1"])], feed: ["Sheet"], loaded: true,
+    });
+    const run = mockRun(queryGroups(["todo-1"]));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector('.sheet-title-cell[data-block-id="todo-1"]')).not.toBeNull());
+      startEditing("todo-1"); run.mockResolvedValue(blockRunResult([])); bumpDataRev();
+      await settleQuery();
+      expect(root.querySelector('.sheet-title-cell[data-block-id="todo-1"]')).not.toBeNull();
+      endEdit("blur");
+      await vi.waitFor(() => expect(root.querySelector('.sheet-title-cell[data-block-id="todo-1"]')).toBeNull());
+      expect(run).toHaveBeenCalledTimes(2);
+    } finally { endEdit("blur"); dispose(); }
   });
 
   it("keeps ordinary DSL query membership across Search, List, Table, and Board presentations", async () => {

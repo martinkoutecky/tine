@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-result-membership.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"On a routed named page, editing TODO to CANCELED in a query answer retains the editor across a saved-revision recomputation, saves the completed text, and removes the disqualified answer after blur.","blocking":true}],
+      "acceptableVariations":["Query presentation, row ordering outside the edited occurrence, layout and save latency may vary."],
+      "nonRequirements":["Exact pixels, incidental DOM nesting, or certification outside Linux WebKitGTK."],
+      "stability":"stable"
+    },
     "scripts/e2e-gh623-link-navigation.mjs": {
       "contracts": [
         {"class":"core-operation","userOutcome":"Ctrl+K activations using ASCII and fullwidth comma-separated aliases offer the owning page first and never a separate row named after the alias (also when the alias is referenced on another page), and open the owning page's title and body without creating alias files or changing page bytes.","blocking":false},

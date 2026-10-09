@@ -26,6 +26,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Query results keep an edited block in place until editing finishes, so replacing TODO with CANCELED can complete and save normally (GH #659).
+- Linked and Unlinked References, block reference panels, embeds and routed query results refresh membership after settled edits through one shared lifecycle (GH #660).
 - Linked and Unlinked References, their page groups, and query headers use the same collapse triangle size and alignment (GH #658).
 - Calendar keyboard focus uses a visible accent-colored outline in light and dark themes, including Soft (GH #596).
 - Page and tag completion closes when you click or move the caret out of the link you were typing. Before, the popup stayed open, Arrow keys went to it, and Enter rewrote the earlier link (UI-OG-AUTOCOMPLETE-CLOSE-OUTSIDE).
