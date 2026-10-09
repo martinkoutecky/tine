@@ -692,30 +692,21 @@ impl<'a> OgParse<'a> {
                     _ => Filter::not(Filter::and(operands)),
                 }
             }
+            // OG `build-task` / `build-priority` (`query_dsl.cljs:279-296`)
+            // return nil when no marker is given, and `build-and-or-not`
+            // (`:174-182`) drops a nil clause from its group; `blocks?` is set
+            // before the dispatch (`:394-397`), so the anchor still flips. The
+            // bare form is kept in the tree as a membership test against an
+            // EMPTY list so it prints back as written; evaluation removes it
+            // structurally ([`Filter::is_dropped_clause`], D-18, GH #422).
             "task" | "todo" => {
                 self.blocks = true;
                 let markers = self.vector_or_names();
-                // OG drops `(task)` with no markers; Tine's shipped behaviour
-                // reads it as "any open task" and the corpus depends on it.
-                let markers = if markers.is_empty() {
-                    crate::doc::MARKERS
-                        .iter()
-                        .filter(|marker| !crate::doc::DONE_MARKERS.contains(marker))
-                        .map(|marker| (*marker).to_string())
-                        .collect()
-                } else {
-                    markers
-                };
                 Filter::attr(Attr::Task, CmpOp::In, text_list(markers))
             }
             "priority" => {
                 self.blocks = true;
                 let levels = self.vector_or_names();
-                let levels = if levels.is_empty() {
-                    vec!["A".to_string(), "B".to_string(), "C".to_string()]
-                } else {
-                    levels
-                };
                 Filter::attr(Attr::Priority, CmpOp::In, text_list(levels))
             }
             // Tine-only spellings of a bare `[[x]]` / `#x`. OG's `blocks?` rule
@@ -1371,36 +1362,71 @@ mod tests {
         }
     }
 
-    /// GH #422: intentionally differs from OG Logseq, which drops bare `(task)`.
+    /// GH #422, D-18: a bare `(task)` / `(todo)` / `(priority)` reads as OG's
+    /// dropped clause — kept in the tree (so it prints back as written), still
+    /// flipping OG's `blocks?` anchor, and removed by the evaluable filter, so
+    /// alone it matches nothing and beside other clauses it adds nothing.
     #[test]
-    fn bare_task_intentionally_differs_from_og_and_selects_every_open_marker() {
-        let open = vec![
-            "TODO",
-            "DOING",
-            "NOW",
-            "LATER",
-            "WAITING",
-            "WAIT",
-            "STARTED",
-            "IN-PROGRESS",
-        ];
-        for form in ["(task)", "(todo)"] {
+    fn bare_task_and_priority_are_ogs_dropped_clause() {
+        for form in [
+            "(task)",
+            "(todo)",
+            "(TASK)",
+            "(task [])",
+            "(priority)",
+            "(priority #{})",
+        ] {
             let query = parse(form);
-            assert_eq!(query.anchor, Anchor::Block);
+            assert_eq!(query.anchor, Anchor::Block, "{form}: OG sets blocks? first");
+            assert!(
+                query.filter.is_dropped_clause(),
+                "{form}: {:?}",
+                query.filter
+            );
+            assert!(!query.is_invalid(), "{form}");
             assert_eq!(
-                query.filter,
-                Filter::attr(
-                    Attr::Task,
-                    CmpOp::In,
-                    text_list(open.iter().map(|m| m.to_string()).collect())
-                )
+                query.evaluable_filter(),
+                Filter::False,
+                "{form} alone runs nothing"
             );
         }
+        let evaluated = |form: &str| {
+            let query = parse(form);
+            Query::new(query.anchor, query.evaluable_filter(), Source::Builder)
+                .normalized()
+                .filter
+        };
+        let without = evaluated("[[project]]");
+        for form in [
+            "(and (task) [[project]])",
+            "(or (priority) [[project]])",
+            "(and [[project]] (not (todo)))",
+            "(and (and (task)) [[project]])",
+        ] {
+            assert_eq!(evaluated(form), without, "{form}");
+        }
+        // Explicit forms are unchanged.
         for marker in crate::doc::MARKERS {
+            let filter = parse(&format!("(task {marker})")).filter;
             assert_eq!(
-                parse(&format!("(task {marker})")).filter,
+                filter,
                 Filter::attr(Attr::Task, CmpOp::In, text_list(vec![marker.to_string()]))
             );
+            assert!(!filter.is_dropped_clause());
+        }
+        assert_eq!(
+            parse("(priority A)").filter,
+            Filter::attr(Attr::Priority, CmpOp::In, text_list(vec!["A".to_string()]))
+        );
+    }
+
+    /// D-18: an OG query with no condition at all is OG's nil query (`parse`
+    /// returns nil for a blank string), not "every page".
+    #[test]
+    fn a_blank_og_query_runs_nothing() {
+        for form in ["", "   "] {
+            let query = parse(form);
+            assert_eq!(query.evaluable_filter(), Filter::False, "{form:?}");
         }
     }
 

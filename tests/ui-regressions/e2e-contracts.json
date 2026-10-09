@@ -332,6 +332,23 @@
       "nonRequirements": ["Exact sheet or popover geometry, animation, or the order of fields in the chooser."],
       "stability": "burn-in"
     },
+    "scripts/e2e-query-bare-hint.mjs": {
+      "contracts": [
+        {
+          "class": "exact-safety-interoperability",
+          "userOutcome": "A page holding {{query (task)}} shows no task, as in Logseq, with a note on the query that the bare clause adds no condition; clicking Open tasks rewrites the block in the page file to explicit open markers and the query then lists the open tasks (WAITING included) and not the DONE or CANCELED ones.",
+          "blocking": true,
+          "authority": "D-18; OG query_dsl.cljs build-task returns nil without markers and build-and-or-not/parse drop it; GH #422"
+        }
+      ],
+      "acceptableVariations": [
+        "The note's wording, placement and button styling; the order of markers is the engine printer's."
+      ],
+      "nonRequirements": [
+        "Exact note geometry, result DOM structure or row order."
+      ],
+      "stability": "burn-in"
+    },
     "scripts/e2e-query-nested-rows.mjs": {
       "contracts": [
         { "class": "core-operation", "userOutcome": "A query's Table, Board, List and result count answer one membership: a task nested under a task that also matches is not a row of its own (it shows inside its parent in the List), and a task nested under a block that does not match is its own row, including after the query is narrowed so its parent stops matching.", "blocking": true, "authority": "OG tree/filter-top-level-blocks as applied by query/result.cljs to table and list alike; ADR 0042; GH #651" }

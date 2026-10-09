@@ -4,7 +4,7 @@ icon:: 🧭
 	- Tine reads Logseq's query syntax — `{{query …}}` blocks and the common advanced (datalog) queries — but runs them on its own engine, not on a datalog database. This page lists every place where the answer can differ from Logseq's, and why. How to write and display queries is on [[Features/Queries]].
 	- This page describes Tine Beta. Tine 0.6 (stable) gets several of these wrong in ways Beta has fixed; see the last section.
 - ## The rule
-	- **A query in Tine finds everything the same query finds in Logseq, and may find more — never less.** Someone moving a graph over from Logseq should never lose a result. The one exception is named below.
+	- **A query in Tine finds everything the same query finds in Logseq, and may find more — never less.** Someone moving a graph over from Logseq should never lose a result.
 	- **Looking at results never changes your files.** Sorting by a column heading, collapsing a query or opening a result changes only what you see; only settings you save on purpose (Display, the query text) are written to the block.
 - ## Where Tine behaves exactly like Logseq
 	- **Text is exact.** A bare word or quoted text in a query matches the raw block text, property lines included, with case and accents significant: `Alpha` does not find `alpha`, and `cafe` does not find `café`. A query is a deliberate filter, so it matches what you wrote. Ctrl+K, search tabs and in-page Find are for finding things quickly, and ignore case and accents.
@@ -13,14 +13,13 @@ icon:: 🧭
 	- **Commas split only list properties.** `tags`, `alias` and keys listed in `:property/separated-by-commas` are lists; every other value is one piece of text, so `(property list "Foo, Bar")` finds `list:: Foo, Bar`.
 	- **Results sort newest first** unless you write `asc`, `(sample N)` picks before it sorts, and a query of only `sort-by`/`sample` shows nothing.
 	- **Table settings from Logseq are read**: `query-table::`, a query ending in `table`, `query-properties::` and `query-sort-by::` / `query-sort-desc::`.
+	- **`(task)` with no markers and `(priority)` with no levels add no condition.** Logseq drops such a filter, so `(and (task) [[x]])` finds what `[[x]]` finds, and a query left with no condition shows nothing; Tine does the same. A note on the query says so and offers to rewrite the clause to open tasks, any task, or priorities A, B or C.
 - ## Where Tine finds more
 	- **Property values ignore case.** `(property status Done)` also finds `status:: done`. Logseq requires the exact spelling.
 	- **Property names ignore case.** `(property Status x)` works; Logseq's parser lowercases names anyway, so this rarely shows.
 	- **Numbers and dates compare as numbers and dates** when a property holds them (or its page declares `tine.type::`), so `count:: 01` equals `1`. Logseq compares the stored value.
 	- **A single word finds every block containing it.** Logseq's desktop app runs a search instead and shows its top 30 hits.
 	- **`(sort-by …)` knows built-in fields**: priority, page, scheduled and deadline as well as any property. Logseq sorts only by a property of that name.
-- ## The one place Tine finds less
-	- **`(task)` with no marker means open tasks, and `(priority)` with no level means A, B or C.** An open task has a task marker other than `DONE`, `CANCELED`, or `CANCELLED`, including `WAITING`, `WAIT`, `STARTED`, and `IN-PROGRESS`, just like carry-over and the agenda. This intentionally differs from OG Logseq: both bare forms drop the filter there and return every block. Existing Tine graphs rely on the shorter form; explicit marker lists are unchanged.
 - ## What Tine does not run
 	- **There is no datalog engine.** An advanced query runs only if Tine understands every clause: task markers, priorities, page references, properties, pages, namespaces, page tags, scheduled and deadline, and journal dates. If any clause is outside that, the whole query is refused and the notice names the clauses — half an answer would look complete and be wrong.
 	- **Advanced-query shapes that run:** marker and priority triples (literal, variable, `_` or omitted value), `contains?` marker sets and their negation, attribute comparisons, missing scheduled/deadline checks, block-to-journal-page joins, and the built-in `task`, `priority`, `between`, `page-ref`, property, page and namespace rules. A named page joined through `:block/page`, `:block/refs` or `:block/path-refs` accepts a literal name or a string input. `:block/refs` means direct references only; `:block/path-refs` and the `page-ref` rule also include ancestors and the owning page. TQL's `direct_ref('project')` preserves the direct form. A simple query in an EDN `:query` map, such as `(and (todo DOING) (priority A))`, uses the existing simple-query engine.

@@ -6,7 +6,9 @@
 //! frontend's `parseQuery` would receive; two implementations would drift
 //! apart in precisely the merge order §4.1 fixes.
 
-use super::ir::{Query, ScopedDisplaySettings, ViewSettings};
+use super::ir::{
+    Attr, CmpOp, Filter, Leaf, Query, ScopedDisplaySettings, Source, Value, ViewSettings,
+};
 use super::registry::Registry;
 use super::QueryInput;
 
@@ -57,6 +59,159 @@ pub struct ParsedQuery {
     pub legacy_table: bool,
     #[serde(default, flatten)]
     pub scoped: ScopedDisplaySettings,
+    /// The D-18 on-query cue for a Logseq form that adds no condition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub og_hint: Option<OgQueryHint>,
+}
+
+/// **The on-query cue for Logseq's "no condition" forms (D-18, GH #422).**
+///
+/// A bare `(task)` / `(todo)` / `(priority)` adds no condition in OG Logseq,
+/// and a query with no condition left shows nothing ([`Query::evaluable_filter`]).
+/// Tine evaluates them the same way and says so on the query, with one-click
+/// rewrites to explicit forms. Every rewrite is a complete query the caller
+/// saves through the ordinary print-and-write path; the marker lists come from
+/// the one marker source ([`crate::doc::MARKERS`] / [`crate::doc::DONE_MARKERS`]).
+/// Present only for a valid OG-dialect query that has one of these shapes.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct OgQueryHint {
+    /// The bare heads the query contains, `task` before `priority`.
+    pub bare: Vec<BareHead>,
+    /// The query keeps no condition (OG's nil query), so it shows nothing.
+    pub no_conditions: bool,
+    /// The explicit rewrites on offer, one per button.
+    pub rewrites: Vec<OgHintRewrite>,
+}
+
+/// A bare head that adds no condition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BareHead {
+    Task,
+    Priority,
+}
+
+/// Which explicit form a rewrite writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OgRewrite {
+    /// Every marker except DONE / CANCELED / CANCELLED (carry-over's open rule).
+    OpenTasks,
+    /// Every marker.
+    AnyTask,
+    /// Priorities A, B and C.
+    Priorities,
+}
+
+/// One rewrite: the whole query with every bare clause of its head replaced.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct OgHintRewrite {
+    pub rewrite: OgRewrite,
+    pub query: Query,
+}
+
+/// The priority levels OG's `(priority …)` reads (`[#A]`, `[#B]`, `[#C]`).
+const PRIORITY_LEVELS: [&str; 3] = ["A", "B", "C"];
+
+/// Whether `filter` contains a dropped bare clause of `attr` outside `Off`.
+fn has_bare(filter: &Filter, attr: Attr) -> bool {
+    match filter {
+        Filter::Leaf {
+            leaf: Leaf::Attr { attr: found, .. },
+        } => *found == attr && filter.is_dropped_clause(),
+        Filter::Leaf {
+            leaf: Leaf::Rel { pred, .. },
+        } => has_bare(pred, attr),
+        Filter::And { items } | Filter::Or { items } => items.iter().any(|f| has_bare(f, attr)),
+        Filter::Not { inner } => has_bare(inner, attr),
+        _ => false,
+    }
+}
+
+/// Whether `filter` holds any condition besides OG's dropped clauses: a leaf,
+/// a preserved unknown form, or a disabled subtree.
+fn has_condition(filter: &Filter) -> bool {
+    match filter {
+        Filter::Leaf { .. } => !filter.is_dropped_clause(),
+        Filter::Raw { .. } | Filter::Off { .. } => true,
+        Filter::And { items } | Filter::Or { items } => items.iter().any(has_condition),
+        Filter::Not { inner } => has_condition(inner),
+        Filter::True | Filter::False => false,
+    }
+}
+
+/// `filter` with every dropped clause of `attr` replaced by `values`.
+fn with_explicit(filter: &Filter, attr: Attr, values: &[&str]) -> Filter {
+    match filter {
+        Filter::Leaf {
+            leaf: Leaf::Attr { attr: found, .. },
+        } if *found == attr && filter.is_dropped_clause() => Filter::attr(
+            attr,
+            CmpOp::In,
+            Value::List {
+                items: values.iter().map(|v| Value::text(*v)).collect(),
+            },
+        ),
+        Filter::Leaf {
+            leaf: Leaf::Rel { rel, quant, pred },
+        } => Filter::rel(*rel, *quant, with_explicit(pred, attr, values)),
+        Filter::And { items } => Filter::and(
+            items
+                .iter()
+                .map(|f| with_explicit(f, attr, values))
+                .collect(),
+        ),
+        Filter::Or { items } => Filter::or(
+            items
+                .iter()
+                .map(|f| with_explicit(f, attr, values))
+                .collect(),
+        ),
+        Filter::Not { inner } => Filter::not(with_explicit(inner, attr, values)),
+        other => other.clone(),
+    }
+}
+
+/// The D-18 cue for `query`, or `None`. O(query size × rewrites).
+pub fn og_query_hint(query: &Query) -> Option<OgQueryHint> {
+    if !matches!(query.source, Source::Og { .. }) || query.is_invalid() {
+        return None;
+    }
+    let mut bare = Vec::new();
+    let mut rewrites = Vec::new();
+    let rewrite = |attr: Attr, values: &[&str]| Query {
+        filter: with_explicit(&query.filter, attr, values),
+        ..query.clone()
+    };
+    if has_bare(&query.filter, Attr::Task) {
+        bare.push(BareHead::Task);
+        let open: Vec<&str> = crate::doc::MARKERS
+            .iter()
+            .copied()
+            .filter(|marker| !crate::doc::DONE_MARKERS.contains(marker))
+            .collect();
+        rewrites.push(OgHintRewrite {
+            rewrite: OgRewrite::OpenTasks,
+            query: rewrite(Attr::Task, &open),
+        });
+        rewrites.push(OgHintRewrite {
+            rewrite: OgRewrite::AnyTask,
+            query: rewrite(Attr::Task, crate::doc::MARKERS),
+        });
+    }
+    if has_bare(&query.filter, Attr::Priority) {
+        bare.push(BareHead::Priority);
+        rewrites.push(OgHintRewrite {
+            rewrite: OgRewrite::Priorities,
+            query: rewrite(Attr::Priority, &PRIORITY_LEVELS),
+        });
+    }
+    let no_conditions = !has_condition(&query.filter);
+    (no_conditions || !bare.is_empty()).then_some(OgQueryHint {
+        bare,
+        no_conditions,
+        rewrites,
+    })
 }
 
 /// The whole of `query_parse` that is not slot plumbing: parse, then merge the
@@ -86,7 +241,9 @@ pub fn parse_query_pair(
         || matches!(&query.source, super::ir::Source::Og { original, .. }
             if original.trim_end().ends_with("table"));
     let scoped = super::view::read_scoped_display_settings(block_properties);
+    let og_hint = og_query_hint(&query);
     ParsedQuery {
+        og_hint,
         query,
         legacy_table,
         view: super::view::merge_block_property_view(&parsed_view, block_properties),
@@ -211,5 +368,77 @@ mod tests {
             serde_json::to_value(&a).unwrap(),
             serde_json::to_value(&b).unwrap()
         );
+    }
+
+    /// GH #422, D-18: the on-query cue. A bare head is named, a query with no
+    /// condition left says so, and every rewrite is a whole query that prints
+    /// to the explicit OG form and reads back to itself (the save path prints
+    /// it; nothing here writes).
+    #[test]
+    fn the_og_hint_names_bare_heads_and_offers_round_tripping_rewrites() {
+        use crate::query::print::{og_expressible, query_print, PrintDialect};
+        let hint = |text: &str| {
+            parse_query_pair(text, QueryTextDialect::MacroQuery, &[], Registry::none()).og_hint
+        };
+        let printed = |query: &Query| {
+            assert!(og_expressible(query, &ViewSettings::default()));
+            let text = query_print(query, &ViewSettings::default(), PrintDialect::Og, false)
+                .expect("an explicit form prints");
+            let again =
+                parse_query_pair(&text, QueryTextDialect::MacroQuery, &[], Registry::none());
+            assert_eq!(again.query.normalized(), query.normalized(), "{text}");
+            assert!(
+                again.og_hint.is_none(),
+                "{text}: an explicit form needs no cue"
+            );
+            text
+        };
+        let task = hint("(and (task) [[project]])").expect("bare task");
+        assert_eq!(task.bare, vec![BareHead::Task]);
+        assert!(!task.no_conditions);
+        let kinds: Vec<_> = task.rewrites.iter().map(|r| r.rewrite).collect();
+        assert_eq!(kinds, vec![OgRewrite::OpenTasks, OgRewrite::AnyTask]);
+        assert_eq!(
+            printed(&task.rewrites[0].query),
+            "(and (task TODO DOING NOW LATER WAITING WAIT STARTED IN-PROGRESS) [[project]])"
+        );
+        assert_eq!(
+            printed(&task.rewrites[1].query),
+            "(and (task TODO DOING DONE NOW LATER WAITING WAIT CANCELED CANCELLED STARTED IN-PROGRESS) [[project]])"
+        );
+
+        let priority = hint("(priority)").expect("bare priority");
+        assert_eq!(priority.bare, vec![BareHead::Priority]);
+        assert!(priority.no_conditions, "alone it is OG's nil query");
+        assert_eq!(priority.rewrites.len(), 1);
+        assert_eq!(printed(&priority.rewrites[0].query), "(priority A B C)");
+
+        let both = hint("(or (todo) (not (priority)))").expect("both heads");
+        assert_eq!(both.bare, vec![BareHead::Task, BareHead::Priority]);
+        assert!(both.no_conditions);
+
+        for blank in ["", "  ", "(sort-by created-at)", "(and)"] {
+            let empty = hint(blank).expect("no conditions");
+            assert!(empty.no_conditions, "{blank:?}");
+            assert!(
+                empty.bare.is_empty() && empty.rewrites.is_empty(),
+                "{blank:?}"
+            );
+        }
+        for quiet in [
+            "(task TODO)",
+            "(priority A)",
+            "[[project]]",
+            "(and (task NOW) (frobnicate x))",
+        ] {
+            assert_eq!(hint(quiet), None, "{quiet}");
+        }
+        let tine = parse_query_pair(
+            "@block and task in ()",
+            QueryTextDialect::MacroTql,
+            &[],
+            Registry::none(),
+        );
+        assert_eq!(tine.og_hint, None, "Tine's dialect reads it literally");
     }
 }

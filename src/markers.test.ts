@@ -31,7 +31,7 @@ describe("task markers (single source of truth)", () => {
     expect(DONE_MARKERS.has("CANCELLED")).toBe(true);
   });
 
-  it("finished markers match Rust so bare (task) and carry-over cannot drift", () => {
+  it("finished markers match Rust so the query hint's Open tasks rewrite and carry-over cannot drift (GH #422)", () => {
     const source = readFileSync("crates/tine-core/src/doc.rs", "utf8");
     const block = /pub const DONE_MARKERS: &\[&str\] = &\[([^\]]*)\];/.exec(source)?.[1];
     expect(block).toBeDefined();

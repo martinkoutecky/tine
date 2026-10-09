@@ -22,7 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Security: updated HTML sanitizers and desktop updater TLS dependencies, plus compatible dependency fixes from the review in discussion #564.
 
-- Bare `(task)` queries now include every unfinished task, including WAITING, WAIT, STARTED, and IN-PROGRESS, using the same rule as carry-over and the agenda. DONE and both CANCELED spellings stay excluded; queries with explicit markers are unchanged (GH #422).
+- Queries: a bare `(task)` or `(priority)` in a `{{query}}` now adds no condition, as in Logseq, instead of meaning TODO/DOING/NOW/LATER or A/B/C; `(task)` alone, like an empty `{{query}}`, shows nothing. A note on such a query explains this and offers **Open tasks** (every unfinished marker, including WAITING, WAIT, STARTED and IN-PROGRESS), **Any task** or **A, B or C**, which rewrite the query with explicit markers. Queries with explicit markers are unchanged (GH #422).
 
 ### Fixed
 

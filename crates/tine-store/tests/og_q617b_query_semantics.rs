@@ -135,9 +135,15 @@ fn task_accepts_the_vector_form_like_og() {
     assert_eq!(set(&graph, "(todo [todo doing])"), two);
 }
 
-/// GH #422: Tine intentionally differs from OG Logseq's dropped bare task filter.
+/// GH #422, D-18: a bare `(task)`, `(todo)` or `(priority)` adds no condition,
+/// exactly as in OG Logseq (`query_dsl.cljs` `build-task` / `build-priority`
+/// return nil without markers; `build-and-or-not` drops the nil clause; `parse`
+/// / `query` return nil for a query with nothing left, and for a blank one).
+/// On its own it matches nothing; beside other clauses it is as if absent, in
+/// `and`, `or` and `not`. Explicit marker lists keep their meaning. Markdown and
+/// Org pages answer alike.
 #[test]
-fn bare_task_intentionally_differs_from_og_in_markdown_and_org() {
+fn bare_task_and_priority_add_no_condition_as_in_og_in_markdown_and_org() {
     let open = [
         "TODO",
         "DOING",
@@ -157,14 +163,40 @@ fn bare_task_intentionally_differs_from_og_in_markdown_and_org() {
             text.push_str(&format!("{bullet} {marker} work\n"));
         }
         text.push_str(&format!(
-            "{bullet} ordinary prose\n{bullet} TODO: not a task\n"
+            "{bullet} ordinary prose\n{bullet} TODO: not a task\n{bullet} [#A] urgent prose\n"
         ));
         std::fs::write(dir.path().join(format!("pages/Tasks.{extension}")), text).unwrap();
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         let graph = store.whole_graph().unwrap();
-        let expected = open.iter().map(|m| format!("{m} work")).collect();
-        assert_eq!(set(&graph, "(task)"), expected, "{extension}");
-        assert_eq!(set(&graph, "(todo)"), expected, "{extension} alias");
+        // Alone, or as the only clause left, the query is OG's nil query.
+        for alone in [
+            "(task)",
+            "(todo)",
+            "(priority)",
+            "(task [])",
+            "(and (task))",
+            "(or (todo) (priority))",
+            "(not (task))",
+            "(and (task) (and (priority)))",
+        ] {
+            assert!(set(&graph, alone).is_empty(), "{extension}: {alone}");
+        }
+        // Beside other clauses it is as if it were not written.
+        let work = set(&graph, "\"work\"");
+        assert_eq!(work.len(), open.len() + finished.len(), "{extension}");
+        for (with_bare, without) in [
+            ("(and (task) \"work\")", "\"work\""),
+            ("(and \"work\" (todo))", "\"work\""),
+            ("(or (task) \"prose\")", "\"prose\""),
+            ("(and \"work\" (not (task)))", "\"work\""),
+            ("(and (priority) (task TODO DONE))", "(task TODO DONE)"),
+            ("(or (and (task)) \"prose\")", "\"prose\""),
+        ] {
+            let expected = set(&graph, without);
+            assert!(!expected.is_empty(), "{extension}: {without}");
+            assert_eq!(set(&graph, with_bare), expected, "{extension}: {with_bare}");
+        }
+        // Explicit forms are unchanged.
         for marker in open.iter().chain(finished.iter()) {
             assert_eq!(
                 set(&graph, &format!("(task {marker})")),
@@ -172,6 +204,20 @@ fn bare_task_intentionally_differs_from_og_in_markdown_and_org() {
                 "{extension}: {marker}"
             );
         }
+        assert_eq!(
+            set(&graph, "(priority A)"),
+            BTreeSet::from(["[#A] urgent prose".to_string()]),
+            "{extension}"
+        );
+        // A blank `{{query }}` runs nothing: OG renders no rows for it.
+        assert!(
+            page_names(&graph, "").is_empty(),
+            "{extension}: blank query"
+        );
+        assert!(
+            page_names(&graph, "  ").is_empty(),
+            "{extension}: blank query"
+        );
     }
 }
 

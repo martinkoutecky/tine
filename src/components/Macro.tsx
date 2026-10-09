@@ -43,7 +43,7 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import { QueryResultSections } from "./QueryResultSections";
-import { QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
+import { QueryOgHint, QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
 import type { PageKind, QueryHit, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
 import { bothFamilies } from "../queryTwin";
@@ -947,6 +947,21 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
             {/* §7.5, N3: one notice, inline while the sheet is shut and inside
                 the text pane while it is open — never both. */}
             <Show when={showCrossingNotice() && !sheetOpen()}>{crossingNotice()}</Show>
+            {/* D-18: a Logseq form that adds no condition is said out loud on
+                the query, with explicit rewrites saved like any builder edit. */}
+            <Show when={!isAdvanced() && reading()?.og_hint}>
+              {(hint) => (
+                <QueryOgHint
+                  hint={hint()}
+                  onRewrite={props.blockId && !isPublishedExport() && blockWritable(props.blockId)
+                    ? (query) => {
+                      const current = reading();
+                      if (current) void applyEdit({ query, view: current.view });
+                    }
+                    : undefined}
+                />
+              )}
+            </Show>
             <Show when={printError()}>
               {(message) => (
                 <div class="query-unsupported query-print-refused" role="alert">

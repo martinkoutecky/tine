@@ -102,7 +102,7 @@ describe("leaf constructors mirror the OG parser's IR", () => {
     });
   });
 
-  it("`(task …)` is `task in [...]`, and an empty pick is OG's open-task set", () => {
+  it("`(task …)` is `task in [...]`, and an empty list stays empty: OG's bare `(task)` adds no condition (D-18)", () => {
     expect(taskFilter(["TODO", "DOING"])).toEqual({
       kind: "leaf",
       leaf: {
@@ -112,21 +112,18 @@ describe("leaf constructors mirror the OG parser's IR", () => {
         value: { kind: "list", items: [{ kind: "text", text: "TODO" }, { kind: "text", text: "DOING" }] },
       },
     });
-    // og.rs: "OG drops `(task)` with no markers; Tine's shipped behaviour reads
-    // it as any open task and the corpus depends on it."
+    // og.rs reads a bare `(task)` as `task in []` (Filter::is_dropped_clause);
+    // a TS default list here would be a second, different meaning (GH #422).
     const empty = taskFilter([]);
-    expect(empty.kind === "leaf" && empty.leaf.kind === "attr" && empty.leaf.value).toEqual({
-      kind: "list",
-      items: ["TODO", "DOING", "NOW", "LATER"].map((text) => ({ kind: "text", text })),
-    });
+    expect(empty.kind === "leaf" && empty.leaf.kind === "attr" && empty.leaf.value).toEqual({ kind: "list", items: [] });
+    expect(filterLabel(empty)).toBe("task: no markers");
   });
 
-  it("`(priority …)` defaults to A/B/C, matching og.rs", () => {
+  it("`(priority …)` keeps its levels; an empty list is OG's bare `(priority)` (D-18)", () => {
     const empty = priorityFilter([]);
-    expect(empty.kind === "leaf" && empty.leaf.kind === "attr" && empty.leaf.value).toEqual({
-      kind: "list",
-      items: ["A", "B", "C"].map((text) => ({ kind: "text", text })),
-    });
+    expect(empty.kind === "leaf" && empty.leaf.kind === "attr" && empty.leaf.value).toEqual({ kind: "list", items: [] });
+    expect(filterLabel(empty)).toBe("priority: no levels");
+    expect(filterLabel(priorityFilter(["A"]))).toBe("priority: A");
   });
 
   it("`(property k v)` is `props any (key = k AND value = v)` (og.rs::property_leaf)", () => {

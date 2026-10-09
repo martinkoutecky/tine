@@ -29,7 +29,8 @@ pub const MARKERS: &[&str] = &[
     "IN-PROGRESS",
 ];
 
-/// Finished task markers, excluded from open-task queries and carry-over.
+/// Finished task markers, left out of the query hint's **Open tasks** rewrite
+/// (`query::wire_parse::og_query_hint`, GH #422) and of carry-over.
 /// `src/markers.test.ts` checks parity with the frontend's finished-marker set.
 pub const DONE_MARKERS: &[&str] = &["DONE", "CANCELED", "CANCELLED"];
 

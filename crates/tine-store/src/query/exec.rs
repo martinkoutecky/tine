@@ -716,8 +716,11 @@ pub(crate) fn execute(
         statistics: None,
         exceeded: false,
     };
-    // §3.5: an invalid query returns nothing plus its diagnostics.
-    if query.is_invalid() {
+    // §3.5: an invalid query returns nothing plus its diagnostics. A filter
+    // that is constantly false (OG's nil query: `{{query }}`, or one whose
+    // every clause is a dropped bare `(task)` / `(priority)`, D-18) can match
+    // nothing either, so it answers without visiting a page.
+    if query.is_invalid() || plan.filter == Filter::False {
         return Ok(result);
     }
     let wants_recency = view
