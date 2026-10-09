@@ -4,6 +4,7 @@
 
 import type { JSX } from "solid-js";
 import type { Inline, Span } from "./ast";
+import type { QuotedRange } from "./quoteHighlight";
 import { EmojiText } from "./emoji";
 import { typographic } from "./typography";
 import { typographyMode } from "../ui";
@@ -28,7 +29,7 @@ export function renderPlain(sourceText: string, span: Span | undefined, spanMap:
 // map): anything spanning markup or escapes keeps its ordinary rendering, and the
 // comment card still shows the quote. Each piece keeps its own source span, so
 // click-to-caret mapping is unchanged.
-export function renderQuotedPlain(s: Extract<Inline, { k: "plain" }>, ranges: readonly (readonly [number, number])[]): JSX.Element | null {
+export function renderQuotedPlain(s: Extract<Inline, { k: "plain" }>, ranges: readonly QuotedRange[]): JSX.Element | null {
   if (ranges.length === 0 || !s.span || (s.span_map && s.span_map.length > 0)) return null;
   const [from, to] = s.span;
   if (utf8ByteLength(s.text) !== to - from) return null;
@@ -38,12 +39,12 @@ export function renderQuotedPlain(s: Extract<Inline, { k: "plain" }>, ranges: re
   const pieces: JSX.Element[] = [];
   let byte = from;
   let at = 0;
-  for (const [start, end] of hits) {
+  for (const [start, end, commentId] of hits) {
     if (start < byte) continue; // overlaps the previous mark: keep the first
     const a = utf8ByteToUtf16Offset(s.text, start - from);
     const b = utf8ByteToUtf16Offset(s.text, end - from);
     if (a > at) pieces.push(renderPlain(s.text.slice(at, a), [byte, start], undefined, true));
-    pieces.push(<span class="comment-quote-anchor">{renderPlain(s.text.slice(a, b), [start, end], undefined, true)}</span>);
+    pieces.push(<span class="comment-quote-anchor" data-comment-id={commentId}>{renderPlain(s.text.slice(a, b), [start, end], undefined, true)}</span>);
     byte = end;
     at = b;
   }

@@ -10,10 +10,13 @@ import { facetsOf } from "./facets";
 import { utf8ByteLength } from "./spans";
 import type { Format } from "./ast";
 
-/** Byte ranges [start, end) in the parent's rebulleted parse source. */
+/** A quoted passage: byte range [start, end) in the parent's rebulleted parse
+ * source, and the comment that quotes it. */
+export type QuotedRange = readonly [start: number, end: number, commentId: string];
+
 export interface QuoteHighlight {
   blockId: string;
-  ranges: () => readonly (readonly [number, number])[];
+  ranges: () => readonly QuotedRange[];
 }
 
 export const QuoteHighlightContext = createContext<QuoteHighlight | null>(null);
@@ -22,12 +25,12 @@ export const QuoteHighlightContext = createContext<QuoteHighlight | null>(null);
  * source of its raw text (`"- "` + raw without leading whitespace, the form the
  * inline spans count in). A stale or whole-block quote contributes nothing.
  * Cost O(children) facet lookups plus O(raw × occurrences) per comment child. */
-export function quotedSourceRanges(parentId: string, format: Format): [number, number][] {
+export function quotedSourceRanges(parentId: string, format: Format): QuotedRange[] {
   const parent = docNode(parentId);
   if (!parent) return [];
   const raw = parent.raw;
   const lead = raw.length - raw.trimStart().length;
-  const out: [number, number][] = [];
+  const out: QuotedRange[] = [];
   for (const childId of parent.children) {
     const child = docNode(childId);
     if (!child) continue;
@@ -36,7 +39,7 @@ export function quotedSourceRanges(parentId: string, format: Format): [number, n
     const anchor = anchorQuote(raw, selector);
     if (anchor.kind !== "range" || anchor.start < lead) continue;
     const start = utf8ByteLength(raw.slice(lead, anchor.start)) + 2;
-    out.push([start, start + utf8ByteLength(raw.slice(anchor.start, anchor.end))]);
+    out.push([start, start + utf8ByteLength(raw.slice(anchor.start, anchor.end)), childId]);
   }
   return out;
 }

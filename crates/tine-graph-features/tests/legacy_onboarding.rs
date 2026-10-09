@@ -200,6 +200,16 @@ fn guide_explains_margin_comments() {
     assert!(tips
         .markdown
         .contains("A bullet with an `author::` property"));
+    // Slice 2: the margin column on wide windows, and where it does not apply.
+    assert!(tips
+        .markdown
+        .contains("shows the comments in a column on the right"));
+    assert!(tips
+        .markdown
+        .contains("**Enter** in a comment's text adds a reply under it"));
+    assert!(tips
+        .markdown
+        .contains("in a split pane or in the sidebar, comments stay in the outline"));
 }
 
 #[test]

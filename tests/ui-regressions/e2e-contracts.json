@@ -63,9 +63,15 @@
       "stability": "stable"
     },
     "scripts/e2e-margin-comment.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "On a routed named page, selecting words in a block, pressing Ctrl+R and typing a reply saves the reply as a child bullet carrying quote:: with the selected words, leaves the commented block unchanged on disk, does not reload the app, and renders the reply as a comment card with the passage marked.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "On a routed named page in a window too narrow for the margin column, selecting words in a block, pressing Ctrl+R and typing a reply saves the reply as a child bullet carrying quote:: with the selected words, leaves the commented block unchanged on disk, does not reload the app, and renders the reply as a comment card with the passage marked.", "blocking": true }],
       "acceptableVariations": ["How the selection is made (mouse, Shift+arrows or a programmatic textarea selection) as long as the editor holds it when Ctrl+R is pressed.", "Card colours, chip and header layout, and save latency, which is awaited by polling the page file."],
       "nonRequirements": ["Exact pixels, DOM nesting or card styling.", "Indentation characters of the saved child bullet, only that it is a child of the commented block.", "Certification outside Linux WebKitGTK."],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-margin-column.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "On a wide window, Ctrl+R on selected words draws the new comment in the right-hand margin column beside its passage (not in the outline) with a count on the commented block; clicking the comment edits it in place, Enter adds a reply in its thread, and the page file holds the reply nested under the comment (which keeps quote::) under the unchanged commented block.", "blocking": true }],
+      "acceptableVariations": ["How the selection is made and where the click lands inside the comment text; the caret is placed at the end of the comment text before Enter.", "Column width, card styling and the exact pixel offset of the thread beside its passage (within 2 px of the passage's top)."],
+      "nonRequirements": ["Exact pixels, DOM nesting or card styling.", "Indentation characters of the saved bullets, only their nesting.", "Certification outside Linux WebKitGTK."],
       "stability": "burn-in"
     },
     "scripts/e2e-alias.mjs": {

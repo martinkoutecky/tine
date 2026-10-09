@@ -1,7 +1,9 @@
 // Real-app journey for margin dialogue slice 1 (vision 2026-10 §3.7): on a
 // routed named page, select words in a block, press Ctrl+R, type a reply, and
 // the page file on disk holds a child bullet with the reply and `quote::`. The
-// app must not reload on Ctrl+R (the webview's default for that chord).
+// app must not reload on Ctrl+R (the webview's default for that chord). The
+// window is narrow, so the comment renders inline (the margin column is
+// scripts/e2e-margin-column.mjs).
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -52,6 +54,8 @@ try {
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
+  // A window too narrow for the margin column (slice 2): comments stay inline.
+  await browser.setWindowSize(1000, 820);
   await openPageByName(browser, PAGE_NAME);
 
   // The agent block renders with its author chip, not an `author` row.

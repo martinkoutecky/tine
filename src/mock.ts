@@ -17,6 +17,7 @@ import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from ".
 import { searchFold } from "./editor/searchFold";
 import { parseJournalWith } from "./journal";
 import { mockJournalFiles } from "./mockJournalFiles";
+import { marginRegressionPages } from "./mockMarginPages";
 
 /** Mock feed membership must use a Logseq journal-title parser, never the
  * host's permissive/non-portable Date string parser. Keep the same explicit
@@ -460,26 +461,7 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
       pre_block: null,
       blocks: [b("{{embed ((ui-block-embed-root))}}")],
     },
-    {
-      // Margin dialogue slice 1 (vision §3.7): an agent block, a comment with a
-      // two-level thread, a stale quote and a repeated-phrase quote.
-      name: "Margin comments regression",
-      kind: "page",
-      title: "Margin comments regression",
-      pre_block: null,
-      blocks: [
-        b("Gradient descent converges here because the step size shrinks, and the step size shrinks geometrically, so the error halves each round.\nauthor:: claude", [
-          b("Only if the loss is convex; say so.\nquote:: converges here because", [
-            b("Fair: the lemma assumes convexity. I will add it.\nauthor:: claude", [
-              b("Thanks. Also cite the source."),
-            ]),
-          ]),
-          b("Which of the two do you mean?\nquote:: the step size shrinks\nquote-prefix:: the step size shrinks, and\nquote-suffix:: geometrically, so the error"),
-          b("This sentence was rewritten since.\nquote:: the rate is linear in the dimension"),
-        ]),
-        b("A block I wrote myself, with no comments."),
-      ],
-    },
+    ...marginRegressionPages(b).map(([name, blocks]) => ({ name, kind: "page" as const, title: name, pre_block: null, blocks })),
   );
 }
 

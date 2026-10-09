@@ -82,3 +82,70 @@
     --comment-quote-indent: 28px;
   }
 }
+
+/* Margin dialogue, slice 2: the comment column. On a wide main pane, a page with
+   comments widens its centred column by the margin (the outline keeps its width
+   and moves left) and draws each thread beside the passage it quotes. The pane
+   breakpoint is MARGIN_MIN_PANE_WIDTH in src/margin.ts. */
+:root {
+  --margin-column-width: 280px;
+  --margin-column-gap: 32px;
+}
+.main-content-inner:has(.page-blocks.margin-active) {
+  max-width: calc(var(--tine-main-content-max-width, var(--ls-main-content-max-width)) + var(--margin-column-width) + var(--margin-column-gap));
+  padding-right: calc(48px + var(--margin-column-width) + var(--margin-column-gap));
+}
+.wide-mode .main-content-inner:has(.page-blocks.margin-active) {
+  max-width: var(--tine-wide-content-max-width, var(--ls-main-content-max-width-wide));
+}
+.page-section:has(> .margin-column) {
+  position: relative;
+}
+.margin-column {
+  position: absolute;
+  top: 0;
+  left: calc(100% + var(--margin-column-gap));
+  width: var(--margin-column-width);
+}
+.margin-thread {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  --comment-quote-indent: 30px;
+}
+.margin-thread > .ls-block.comment-card {
+  margin: 0;
+  font-size: 0.93em;
+}
+.margin-thread.active > .ls-block.comment-card {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+    0 1px 6px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.page-blocks.margin-active .comment-quote-anchor.active {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-bottom-color: var(--accent);
+}
+
+/* The main column's count of a block's comments drawn in the margin. */
+.margin-marker {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin: 3px 0 0 6px;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 9px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  cursor: pointer;
+}
+.margin-marker:hover,
+.margin-marker.active {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}

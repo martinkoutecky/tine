@@ -150,9 +150,11 @@ import { wireBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd } from "./blockGestures";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
-import { commentAndEdit } from "../commentActions";
+import { commentAndEdit, replyOnEnter } from "../commentActions";
 import { authorOf, quoteSelectorOf } from "../comments";
-import { AuthorChip, CommentQuoteHeader, inCommentThread, QuoteHighlightProvider } from "./CommentParts";
+import { AuthorChip, CommentQuoteHeader, inCommentThread, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
+import { MarginContext } from "./marginContext";
+import { isCommentId, marginNext, marginPrev } from "../margin";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
 type SheetSlashView = "grid" | "table" | "board";
 
@@ -250,7 +252,16 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     // above.) Matches the sidebar rule: edit where you're editing, render elsewhere.
     return !surfaceKey.startsWith("ref:") && !surfaceKey.startsWith("embed:");
   };
-  const hasChildren = () => node().children.length > 0;
+  // Margin dialogue slice 2: on a page whose comments are drawn in the margin,
+  // the main column's outline leaves them out and shows a count marker instead.
+  // Inside a margin thread (or without a margin) every child is drawn.
+  const marginPlace = useContext(MarginContext);
+  // Reference and embed copies inside the outline keep their children inline.
+  const marginMain = () => !!marginPlace && marginPlace.thread === null && marginPlace.api.active()
+    && !surfaceKey.startsWith("ref:") && !surfaceKey.startsWith("embed:");
+  const outlineChildren = () => marginMain() ? node().children.filter((id) => !isCommentId(id, fmt())) : node().children;
+  const marginComments = () => marginMain() ? node().children.filter((id) => isCommentId(id, fmt())) : [];
+  const hasChildren = () => outlineChildren().length > 0;
   const collapsed = () => collapseSurface?.collapsed(props.id, node().collapsed) ?? node().collapsed;
   const fmt = createMemo(() => pageByName(node().page)?.format ?? "md");
   const blockFacets = createMemo<Facets>(() => {
@@ -463,7 +474,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           <Show
             when={editing()}
             fallback={
-              <Show when={hasChildren()} fallback={renderedView()}>
+              <Show when={node().children.length > 0} fallback={renderedView()}>
                 <QuoteHighlightProvider parentId={props.id} format={fmt()}>{renderedView()}</QuoteHighlightProvider>
               </Show>
             }
@@ -471,6 +482,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             <Editor id={props.id} propertySession={propertySession} />
           </Show>
         </div>
+        <Show when={marginComments().length > 0}>
+          <MarginMarker parentId={props.id} comments={marginComments()} />
+        </Show>
       </div>
 
       <Show when={showRefs()}>
@@ -500,7 +514,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             <div class="block-children-container">
               <CollapseAllBorder id={props.id} readOnly={readOnly()} surface={collapseSurface} />
               <div class="block-children">
-                <For {...blockListProps(() => node().children)} />
+                <For {...blockListProps(outlineChildren)} />
               </div>
             </div>
           </Match>
@@ -606,6 +620,21 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const editSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
   // A navOnly display-list scope must never act as a merge/structural topology.
   const structuralScope = outlineScope?.navOnly ? null : outlineScope;
+  // Margin dialogue slice 2: with comments drawn in the margin, the main
+  // column's arrow keys step over threads, and a thread's ends lead back to the
+  // commented block (up) or the block after it (down).
+  const marginPlace = useContext(MarginContext);
+  const marginNav = () => marginPlace && (marginPlace.thread !== null || (marginPlace.api.active()
+    && !surfaceKey.startsWith("ref:") && !surfaceKey.startsWith("embed:")))
+    ? { thread: marginPlace.thread, format: pageFmt() } : null;
+  const viewPrev = () => {
+    const nav = marginNav();
+    return nav ? marginPrev(props.id, outlineScope, nav) : prevVisible(props.id, outlineScope);
+  };
+  const viewNext = () => {
+    const nav = marginNav();
+    return nav ? marginNext(props.id, outlineScope, nav) : nextVisible(props.id, outlineScope);
+  };
   let ref!: HTMLTextAreaElement;
   let pendingScrollAnchor: ReturnType<typeof captureEditorScrollAnchor> | undefined;
   onCleanup(() => pendingScrollAnchor?.cancel());
@@ -2712,6 +2741,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         return;
       }
       commit(raw); // flush current text
+      // A comment keeps its quote: Enter in its text adds a reply (a child).
+      if (!isAnnot() && start === end && replyOnEnter(props.id, raw, start, editSurface())) return;
       if (isAnnot()) {
         // A highlight block isn't split (that would mangle its metadata); Enter
         // adds a new sibling bullet below, which the user can Tab to nest as a
@@ -2795,7 +2826,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       // GH #213: at the very start, move into the END of the previous visible
       // editor. Shift keeps native selection; Ctrl/Meta keep native word/line jumps.
       if (start === end && start === 0) {
-        const prev = prevVisible(props.id, outlineScope);
+        const prev = viewPrev();
         if (prev) {
           e.preventDefault();
           // A number caret clamps to the new editor's full text length at mount.
@@ -2805,7 +2836,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     } else if (e.key === "ArrowRight" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
       // GH #213: at the very end, move into the START of the next visible editor.
       if (start === end && start === raw.length) {
-        const next = nextVisible(props.id, outlineScope);
+        const next = viewNext();
         if (next) {
           e.preventDefault();
           startEditing(next, 0, null, navigationSurface());
@@ -2818,7 +2849,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       // to the parent from the second visual row.)
       const before = raw.slice(0, start);
       if (!before.includes("\n") && caretAtFirstRow(ref, start)) {
-        let prev = prevVisible(props.id, outlineScope);
+        let prev = viewPrev();
         // GH #415: at the top of an embed ROOT there is no in-surface previous
         // block. Exit upward to the block preceding the embed on the host page
         // (editing the host itself would unmount the embed under the caret); the
@@ -2854,7 +2885,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         // here would jump to the end of the next block.
         const sourceCol = start - (raw.slice(0, start).lastIndexOf("\n") + 1);
         const col = caretColumnOnVisualRow(ref, start) ?? sourceCol;
-        const next = nextVisible(props.id, outlineScope);
+        const next = viewNext();
         if (next) {
           e.preventDefault();
           startEditing(next, { col, edge: "first" }, null, navigationSurface());

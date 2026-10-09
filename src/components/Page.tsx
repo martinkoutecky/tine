@@ -3,7 +3,7 @@ import { reportUiFailure } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
-import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
+import { PaneContext, focusedRouter, layoutHasMultiplePanes, layoutRoot, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
 import { graphEpoch, dataRev, graphMeta } from "../graphSession";
@@ -44,7 +44,9 @@ import { conflictForPage } from "../conflictQueue";
 import { pageIdentityKey } from "../pageIdentity";
 import { liveConflictForPage } from "../liveConflicts";
 import { ExternalChangeBar } from "./ExternalChangeBar";
-import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow } from "../windowRealm";
+import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow, useWindowId } from "../windowRealm";
+import { createMarginSurface } from "./MarginColumn";
+import { MarginContext } from "./marginContext";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -864,6 +866,15 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
   const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
   const preambleContent = () => props.page.format === "md" ? splitPagePreamble(props.page.preBlock).content : null;
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
+  // Margin dialogue (vision §3.7): the main pane's single-page view, unsplit,
+  // draws comments in a right-hand column when it is wide enough.
+  let outline: HTMLDivElement | undefined;
+  const windowId = useWindowId();
+  const margin = createMarginSurface({
+    page: () => props.page,
+    eligible: () => pane.paneId === "main" && router.route().kind === "page" && !layoutHasMultiplePanes(layoutRoot(windowId)),
+    outline: () => outline,
+  });
   const editPreamble = () => {
     const id = promotePagePreamble(props.page.name);
     if (id) startEditing(id, docNode(id).raw.length);
@@ -1112,7 +1123,8 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           </FailureBoundary>
         )}
       </Show>
-      <div class="page-blocks">
+      <MarginContext.Provider value={margin.placement}>
+      <div class="page-blocks" ref={outline} classList={{ "margin-active": margin.active() }}>
         <Show when={preambleContent()}>
           {(content) => (
             <div class="ls-block preamble-block" data-page-preamble={props.page.name}>
@@ -1132,6 +1144,8 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         </Show>
         <BlockList ids={rootsToRender()} />
       </div>
+      </MarginContext.Provider>
+      <margin.Column />
       {props.children}
       <PageTypingTarget page={() => props.page} surface={editSurface()} />
     </div>

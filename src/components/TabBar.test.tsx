@@ -334,7 +334,7 @@ describe("TabBar pointer tab drag", () => {
 
 describe("TabBar close control on a split pane's only tab (GH #207)", () => {
   it("shows the ✕ on a lone non-feed tab of a split pane and closes the pane directly", () => {
-    renderSplit(["A", "B"], ["Solo"]);
+    const { dispose } = renderSplit(["A", "B"], ["Solo"]);
     const paneIdsBefore = layoutPaneIds();
     expect(paneIdsBefore).toEqual(["main", "pane-2"]);
 
@@ -345,7 +345,9 @@ describe("TabBar close control on a split pane's only tab (GH #207)", () => {
     close!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
     expect(layoutPaneIds()).toEqual(["main"]);
 
-    // Cleanup: renderSplit mounted into document.body — drop it like the other tests.
+    // Cleanup: dispose the render like the other tests, so no page under it
+    // outlives the test environment.
+    dispose();
     document.body.innerHTML = "";
   });
 

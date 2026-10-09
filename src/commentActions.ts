@@ -8,7 +8,10 @@ import { blockWritable, formatForBlock, insertEmptyChildBlock, node as docNode, 
 import { startEditing } from "./editorController";
 import { focusedEditorCommandBridge } from "./editorCommandBridge";
 import { graphScopedSignal, refuseStaleWrite } from "./binding";
-import { commentRaw, quoteSelectorFor } from "./comments";
+import { commentRaw, quoteSelectorFor, quoteSelectorOf } from "./comments";
+import { blockRegions } from "./render/parse";
+import { facetsOf } from "./render/facets";
+import { utf8ByteLength } from "./render/spans";
 import { splitProps, isBuiltinHidden } from "./editor/properties";
 import { pushToast } from "./toasts";
 
@@ -33,6 +36,25 @@ export function commentAndEdit(parentId: string, editorText: string, start: numb
   const id = createComment(parentId, editorText, start, end);
   if (id) startEditing(id, 0, null, surface);
   return id;
+}
+
+/** Enter in a comment's text, before its property lines, starts a reply: a new
+ * last child (thread order = document order), and the caret moves there. A split
+ * would carry the `quote::` lines into the new block and turn the comment into
+ * an ordinary block. Returns false when Enter should behave as everywhere else
+ * (an ordinary block, or the caret among the property lines). The caller has
+ * committed `editorText`. One parse of the editor text, only on Enter in a
+ * comment (the comment test itself is a cached facet lookup). */
+export function replyOnEnter(commentId: string, editorText: string, caret: number, surface: string | null = null): boolean {
+  const comment = docNode(commentId);
+  if (!comment || comment.parent === null) return false;
+  const format = formatForBlock(commentId);
+  if (quoteSelectorOf(facetsOf(comment.raw, format).properties) === null) return false;
+  const lines = blockRegions(editorText, format).properties.map((p) => p.line[0]);
+  if (lines.length === 0 || utf8ByteLength(editorText.slice(0, caret)) > Math.min(...lines)) return false;
+  const id = insertEmptyChildBlock(commentId, comment.children.length);
+  if (id) startEditing(id, 0, null, surface);
+  return true;
 }
 
 // The palette closes the editor before its command runs (opening it blurs the
