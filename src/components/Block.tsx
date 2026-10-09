@@ -987,6 +987,18 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     const selected = ref.selectionStart !== ref.selectionEnd;
     setHasSel(selected);
     if (!selected) setSelectionOverflowOpen(false);
+    closeAutocompleteIfOutside();
+  };
+  // OG `close-autocomplete-if-outside` (editor.cljs, on click and keyup): page,
+  // tag and block search end once the caret leaves their reference; a stale
+  // popup would keep Arrow/Enter and rewrite the earlier link.
+  const closeAutocompleteIfOutside = () => {
+    const open = ac();
+    if (!open || (open.kind !== "page" && open.kind !== "tag" && open.kind !== "block")) return;
+    const here = detectEditorTrigger();
+    if (here && here.kind === open.kind && here.start === open.start) return;
+    clearTimeout(acTimer);
+    closeAc();
   };
   onMount(() => {
     const owner = ref.ownerDocument;

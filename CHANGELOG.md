@@ -26,6 +26,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Page and tag completion closes when you click or move the caret out of the link you were typing. Before, the popup stayed open, Arrow keys went to it, and Enter rewrote the earlier link (UI-OG-AUTOCOMPLETE-CLOSE-OUTSIDE).
 - Internal: asset reads require an explicit byte limit at the IPC and backend boundaries, preventing an omitted limit from buffering an entire file (L-1).
 - Children nested under a page-properties block stay reachable for deletion or moving into the outline; repaired pages save normally, and Tab no longer nests the first body block under a transient page header (GH #638).
 - New graph messages describe whether the graph opened, was already open, or was created but could not be opened; the last case names the folder and offers Open graph to try again (GH #621).
