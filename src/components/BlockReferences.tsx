@@ -10,6 +10,7 @@ import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { blockExternalId } from "../document";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
 
 // Block-level "linked references": the blocks that reference THIS block (via
 // `((uuid))` / `[..](((uuid)))` / `{{embed ((uuid))}}`), grouped by page. Toggled
@@ -66,7 +67,7 @@ export function BlockReferences(props: { id: string }): JSX.Element {
                 aria-expanded={!groupCollapsed(g)}
                 aria-label={`${groupCollapsed(g) ? "Expand" : "Collapse"} references from ${g.page}`}
                 onClick={() => setGroupCollapsed(g, !groupCollapsed(g))}
-              >{groupCollapsed(g) ? "▸" : "▾"}</button>
+              ><ReferenceDisclosure collapsed={groupCollapsed(g)} /></button>
               <div
                 class="reference-page"
                 onMouseDown={internalLinkMouseDown}

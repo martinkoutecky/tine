@@ -14,6 +14,7 @@ import type { RefGroup } from "../types";
 import { mergeReferenceGroups } from "../referenceGroups";
 import { sectionOverride, setSectionOverride } from "../referenceSectionState";
 import { readOr } from "../resourceRead";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
 
 type BoundedEvidence = NonNullable<RefGroup["evidence"]>[number] & {
   total?: number;
@@ -76,7 +77,7 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
   return (
     <div class="unlinked-references">
       <div class="references-header clickable" onClick={() => setOpen(!open())}>
-        {open() ? "▾" : "▸"} Unlinked References
+        <ReferenceDisclosure collapsed={!open()} /> Unlinked References
         <Show when={groups()}>
           <span class="references-count">{count()}</span>
         </Show>
@@ -118,7 +119,7 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
                   aria-label={`${groupCollapsed(g) ? "Expand" : "Collapse"} references from ${g.page}`}
                   onClick={() => setGroupCollapsed(g, !groupCollapsed(g))}
                 >
-                  {groupCollapsed(g) ? "▸" : "▾"}
+                  <ReferenceDisclosure collapsed={groupCollapsed(g)} />
                 </button>
                 <button
                   type="button"

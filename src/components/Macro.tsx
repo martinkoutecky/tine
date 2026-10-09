@@ -7,6 +7,7 @@ import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
 import { openPageInSidebar, openBlockInSidebar, pageIdentityKey, openQueryExport, switcherOpen } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { bindingOwner, advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
 import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
 import { resolveBlockBatched } from "../resolveBatch";
@@ -831,19 +832,15 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
               </div>
             </Show>
             <div class="query-header">
-              <span
+              <ReferenceDisclosure
                 class="query-collapse"
-                classList={{ collapsed: collapsed() }}
+                collapsed={collapsed()}
                 title={collapsed() ? "Expand results" : "Collapse results"}
                 onClick={(e) => {
                   e.stopPropagation();
                   toggleCollapsed();
                 }}
-              >
-                <svg viewBox="0 0 24 24" class="triangle">
-                  <path d="M8 5l8 7-8 7z" />
-                </svg>
-              </span>
+              />
               <Show
                 when={editingTitle()}
                 fallback={

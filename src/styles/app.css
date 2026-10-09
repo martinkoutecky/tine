@@ -5024,6 +5024,13 @@ body.file-drop-active::after {
   background: var(--accent, #10b981);
   color: var(--on-accent, #fff);
 }
+/* GH #596: roving keyboard focus must remain visible in every palette,
+   independently of the selected date. Override the browser's default box. */
+.dp-cell:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  opacity: 1;
+}
 .dp-empty {
   visibility: hidden;
 }
@@ -6876,6 +6883,10 @@ img.emoji {
   cursor: pointer;
   border-radius: 4px;
 }
+.reference-group-disclosure .ref-collapse {
+  margin-right: 0;
+  vertical-align: middle;
+}
 
 .reference-group-disclosure:hover,
 .reference-group-disclosure:focus-visible {
@@ -7113,21 +7124,7 @@ img.emoji {
 }
 
 .query-collapse {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  color: var(--text-muted);
   margin-left: -2px;
-}
-.query-collapse .triangle {
-  width: 14px;
-  height: 14px;
-  fill: currentColor;
-  transform: rotate(90deg);
-  transition: transform 0.1s ease;
-}
-.query-collapse.collapsed .triangle {
-  transform: rotate(0deg);
 }
 
 .query-view-switcher {
