@@ -34,6 +34,9 @@ pub(super) struct ProductionIo {
     quarantines: BTreeMap<String, (PathBuf, u8)>,
     directories: BTreeMap<PathBuf, durability::DirectoryCreation>,
     pub(super) launch_warnings: Vec<(PathBuf, io::ErrorKind)>,
+    /// The graph whose self-write markers a save sets before its file step
+    /// (STEP3 §5): the watcher's echo handling for paths it still owns.
+    pub(super) marks: Option<std::sync::Arc<crate::model::Graph>>,
     #[cfg(test)]
     pub faults: BTreeMap<super::io::Phase, std::collections::VecDeque<io::ErrorKind>>,
 }
@@ -95,6 +98,7 @@ impl ProductionIo {
             quarantines: BTreeMap::new(),
             directories: BTreeMap::new(),
             launch_warnings: vec![],
+            marks: None,
             #[cfg(test)]
             faults: BTreeMap::new(),
         })
@@ -259,14 +263,14 @@ impl HostIo for ProductionIo {
         self.before(super::io::Phase::PageTemp)?;
         let target = self.page_path(page);
         self.graph_directory(target.parent().unwrap())?;
-        let prepared = PreparedWrite::new(
-            &target,
-            bytes.as_deref().ok_or(IoFailure {
-                kind: ErrorKind::Io,
-                completed: false,
-            })?,
-        )
-        .map_err(failure)?;
+        let bytes = bytes.as_deref().ok_or(IoFailure {
+            kind: ErrorKind::Io,
+            completed: false,
+        })?;
+        if let Some(graph) = &self.marks {
+            graph.transaction_note_page(&target, bytes);
+        }
+        let prepared = PreparedWrite::new(&target, bytes).map_err(failure)?;
         self.page_temps.insert(page.into(), prepared);
         Ok(())
     }
@@ -308,6 +312,9 @@ impl HostIo for ProductionIo {
                 return Ok(None);
             }
             self.graph_directory(&self.trash.clone())?;
+            if let Some(graph) = &self.marks {
+                graph.transaction_note_delete(&source);
+            }
             let target = self.trash.join(payload);
             crate::no_replace::move_file_noreplace(&source, &target).map_err(failure)?;
             // Read the actual moved bytes, including an R1 external replacement

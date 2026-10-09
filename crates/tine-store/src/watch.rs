@@ -106,6 +106,9 @@ fn stamp(path: &Path) -> Option<Stamp> {
     Some(value)
 }
 
+/// Where a reconcile sends the keys of held paths that changed on disk.
+pub(crate) type Forward = Box<dyn Fn(Vec<String>) + Send + Sync>;
+
 fn retry_baseline(now: &mut HashMap<PathBuf, Stamp>, path: &Path, before: Option<&Stamp>) {
     if let Some(old) = before {
         let mut retry = old.clone();
@@ -448,6 +451,13 @@ pub(crate) struct Core {
     dirs: RwLock<[PathBuf; 1]>,
     assets: AssetObserver,
     snapshot: Mutex<HashMap<PathBuf, Stamp>>,
+    /// Page files another index writer owns, by path, with that owner's key
+    /// (STEP3 §5, R13): a reconcile forwards their changes to `forward` and
+    /// leaves their index and their snapshot entry to the owner, whose
+    /// publication aligns the entry (`note_own`). Changed only under the
+    /// writer, so a reconcile already running for a path finishes first.
+    held: Mutex<HashMap<PathBuf, String>>,
+    forward: Mutex<Option<Forward>>,
     /// Baseline paths whose stamp was racy when observed (storage spec
     /// §5.4): a full diff rereads them even when the stamp is unchanged.
     racy: Mutex<HashSet<PathBuf>>,
@@ -790,6 +800,8 @@ impl WatchHandle {
             dirs: RwLock::new(dirs),
             assets: AssetObserver::new(asset_scope),
             snapshot: Mutex::new(snapshot),
+            held: Mutex::new(HashMap::new()),
+            forward: Mutex::new(None),
             racy: Mutex::new(HashSet::new()),
             follow_up: Mutex::new(None),
             config_stamp: Mutex::new(config_stamp),
@@ -926,6 +938,45 @@ impl WatchHandle {
     /// also when it was rolled back and published nothing (no external echo).
     pub(crate) fn settle_asset(&self, path: &Path) {
         self.core.assets.note_own(path);
+    }
+
+    /// Send held paths' changes to `forward` (STEP3 §5): one owner per store.
+    pub(crate) fn forward_held(&self, forward: Forward) {
+        *self.core.forward.lock().unwrap() = Some(forward);
+    }
+
+    /// Hand `path`'s index to its owner, `key` (STEP3 §5). The caller holds
+    /// the writer, which excludes a reconcile already running for it.
+    pub(crate) fn hold(&self, path: PathBuf, key: String) {
+        self.core.held.lock().unwrap().insert(path, key);
+    }
+
+    /// Hand `path`'s index back to the watcher, which reconciles it against
+    /// the owner's last publication at once. The caller holds the writer.
+    pub(crate) fn release_hold(&self, path: &Path) {
+        if self.core.held.lock().unwrap().remove(path).is_some() {
+            self.reconcile_raced(&HashSet::from([path.to_path_buf()]));
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn holds(&self, path: &Path) -> bool {
+        self.core.held.lock().unwrap().contains_key(path)
+    }
+
+    /// The owner stopped: every held path returns to the watcher. The
+    /// caller holds the writer.
+    pub(crate) fn release_holds(&self) {
+        *self.core.forward.lock().unwrap() = None;
+        let paths: HashSet<PathBuf> = self
+            .core
+            .held
+            .lock()
+            .unwrap()
+            .drain()
+            .map(|(p, _)| p)
+            .collect();
+        self.reconcile_raced(&paths);
     }
 
     pub(crate) fn reconcile_raced(&self, paths: &HashSet<PathBuf>) {

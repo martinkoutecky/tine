@@ -309,6 +309,19 @@ fn parse_doc(path: &Path, content: &str) -> Document {
     }
 }
 
+/// Whether `bytes`, read as the page file at `path`, hold a block with id
+/// `id` (STEP3 §8, Q2: a published block-reference target).
+pub(crate) fn bytes_hold_block_id(path: &Path, bytes: &[u8], id: &str) -> bool {
+    let Ok(content) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let mut found = false;
+    SnapshotBlockIndex::for_each_block_id(&parse_doc(path, content), |block| {
+        found |= block == id;
+    });
+    found
+}
+
 fn parse_doc_with_opts(path: &Path, source: &str) -> (Document, doc::SerializeOpts) {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::parse();
@@ -3572,6 +3585,13 @@ impl Graph {
             return None;
         }
         Some(self.vcs_anchored.read().unwrap().contains(path))
+    }
+
+    /// `content_rev` of the bytes the cached page at `path` was parsed from;
+    /// None when it is not cached. Cost O(1).
+    pub(crate) fn cached_rev(&self, path: &Path) -> Option<String> {
+        let _cache = self.cache.read().unwrap();
+        self.disk_revs.read().unwrap().get(path).cloned()
     }
 
     /// Drop one physical page from the cache after its file disappears. Unlike

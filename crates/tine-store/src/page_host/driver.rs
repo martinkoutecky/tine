@@ -10,7 +10,7 @@
 //! legal step from the current state, so an admission, reservation or
 //! observation that arrived meanwhile is honoured; a step needing other locks
 //! releases everything and replans.
-use super::binding::{Book, Delivery};
+use super::binding::{Book, Delivery, Indexing, Publication};
 use super::progress::{Clock, Progress};
 use super::*;
 use std::sync::{Condvar, MutexGuard};
@@ -22,7 +22,24 @@ use std::time::Duration;
 /// order (the publication consumer, §5) and the mail the host delivered to
 /// the window (the page-mail bridge, §3.3).
 pub(super) trait Sink: Send {
-    fn deliver(&mut self, delivery: Delivery);
+    /// `owner` answers, under the state mutex, who publishes a key's index
+    /// now. Returns each publication's result, recorded in order (§5).
+    fn deliver(
+        &mut self,
+        delivery: Delivery,
+        owner: &dyn Fn(&str) -> Owner,
+    ) -> Vec<(Publication, Indexing)>;
+}
+
+/// Who publishes a key's index (§5, Q6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Owner {
+    /// The watcher: the host does not hold the key.
+    Watcher,
+    /// The driver's publication consumer, in host event order.
+    Consumer,
+    /// A retained writer's reservation: its transaction publishes.
+    Reservation,
 }
 
 /// A watcher read or a released reservation the driver must observe (§5, §7).
@@ -110,6 +127,7 @@ impl<F: HostIo, C: Clock> State<F, C> {
             .next_deadline()
             .into_iter()
             .chain(observe)
+            .chain(self.book.next_retry(&self.progress.host))
             .min()
     }
 }
@@ -196,7 +214,11 @@ where
     pub fn join(&mut self) {
         self.shared.with_state(|state| state.stopping = true);
         if let Some(thread) = self.thread.take() {
-            thread.join().expect("page host driver panicked");
+            if let Err(panic) = thread.join() {
+                if !std::thread::panicking() {
+                    std::panic::resume_unwind(panic);
+                }
+            }
         }
     }
 }
@@ -291,8 +313,18 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
         let idle = !stepped && matches!(result, Disposition::Waiting | Disposition::Disabled);
         if !delivery.is_empty() {
             drop(state);
-            sink.deliver(delivery);
+            let owner = |key: &str| {
+                let state = shared.state.lock().unwrap();
+                state.book.owner(key, &state.progress.host)
+            };
+            let results = sink.deliver(delivery, &owner);
             state = shared.state.lock().unwrap();
+            if !results.is_empty() {
+                // Collect again: an eviction or a notice may now be due.
+                let now = state.progress.clock.now_ms();
+                state.book.record(results, now);
+                state.wake();
+            }
         }
         if idle {
             // Sleep until woken, or until the earliest timed work is due.

@@ -245,6 +245,12 @@ enum Event {
     /// A driver observation (watcher read or released reservation) failed a
     /// third time; it keeps retrying with the save backoff (STEP3 §7).
     ObserveError(PageKey),
+    /// The page's observed disk state changed (an Open read, an adopted or
+    /// recorded external change): the publication consumer indexes it (§5).
+    Observed {
+        page: PageKey,
+        bytes: Text,
+    },
     /// Why request `id` was answered without taking it (STEP3 §3.3).
     Refused {
         page: PageKey,
@@ -456,6 +462,14 @@ impl<F: HostIo> Host<F> {
             self.pages.remove(key);
         }
         let current = self.pages.get(key).cloned();
+        if let Some(obs) = current.as_ref().and_then(|p| p.obs.clone()) {
+            if previous.as_ref().and_then(|p| p.obs.as_ref()) != Some(&obs) {
+                self.events.push(Event::Observed {
+                    page: key.into(),
+                    bytes: obs,
+                });
+            }
+        }
         // The model pushes only fields visible to the client, not risk/base.
         let visible = |p: &Option<Page>| {
             p.as_ref()

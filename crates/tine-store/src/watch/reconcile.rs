@@ -328,6 +328,8 @@ impl Core {
             files.push(config_file);
         }
         let mut pages = Vec::new();
+        let held = self.held.lock().unwrap();
+        let mut forwarded = Vec::new();
         for path in names {
             let before = snapshot.get(&path);
             if before.is_some() && !now.contains_key(&path) {
@@ -393,6 +395,12 @@ impl Core {
             let Some(id) = self.file_id(&path) else {
                 continue;
             };
+            // STEP3 §5: the owner observes, indexes and publishes this read.
+            if let Some(key) = held.get(&path) {
+                forwarded.push(key.clone());
+                retry_baseline(&mut now, &path, before);
+                continue;
+            }
             if tine_core::model::path_is_sync_conflict(&path) {
                 // Conflict copies are in the file feed so the window adapter can
                 // refresh the conflicts panel, but never enter the page cache.
@@ -471,8 +479,14 @@ impl Core {
         } else {
             false
         };
+        drop(held);
         drop(racy);
         drop(snapshot);
+        if !forwarded.is_empty() {
+            if let Some(forward) = self.forward.lock().unwrap().as_ref() {
+                forward(forwarded);
+            }
+        }
         walk.changed = files.len() as u64;
         if let Some(deferred) = deferred {
             // The launch diff: its findings ride the Ready publication.

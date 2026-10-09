@@ -67,6 +67,15 @@ impl Unit {
     }
 }
 
+/// A delivery's own-save publications.
+fn own(delivery: &Delivery) -> Vec<&Publication> {
+    delivery
+        .publications
+        .iter()
+        .filter(|p| p.own.is_some())
+        .collect()
+}
+
 #[test]
 fn q8_a_conflict_loop_retains_only_live_handoffs_and_a_late_publication_gets_its_document() {
     let mut u = Unit::new();
@@ -97,15 +106,16 @@ fn q8_a_conflict_loop_retains_only_live_handoffs_and_a_late_publication_gets_its
     let version = u.version();
     u.progress.with_host(|h| risk(h, "a.md"));
     let delivery = u.collect();
-    assert!(delivery.documents.is_empty());
+    assert!(own(&delivery).is_empty());
     assert_eq!(u.book.versions["a.md"].len(), 1);
     u.progress.with_host(|h| saved(h, "a.md"));
     let delivery = u.collect();
-    assert_eq!(delivery.documents.len(), 1);
-    let (page, published, document) = &delivery.documents[0];
-    assert_eq!((page.as_str(), *published), ("a.md", version));
+    let own = own(&delivery);
+    assert_eq!(own.len(), 1);
+    let (published, document) = own[0].own.as_ref().unwrap();
+    assert_eq!((own[0].key.as_str(), *published), ("a.md", version));
     assert_eq!(
-        document.pre_block.as_deref(),
+        document.as_ref().unwrap().pre_block.as_deref(),
         Some("final"),
         "the published version's own Document (its runtime ids)"
     );
@@ -179,7 +189,7 @@ fn a_refused_answer_is_typed_in_its_mail() {
 struct Live {
     _dir: tempfile::TempDir,
     root: PathBuf,
-    store: Store,
+    store: Arc<Store>,
     host: PageHost,
     mail: mpsc::Receiver<PageMail>,
     id: std::cell::Cell<u64>,
@@ -200,7 +210,9 @@ impl Live {
         }
         let app = dir.path().join("app");
         fs::create_dir_all(&app).unwrap();
-        let store = Store::open(&graph, Default::default()).unwrap().0;
+        let store = Arc::new(Store::open(&graph, Default::default()).unwrap().0);
+        // A loaded index: what it holds afterwards was published to it.
+        store.whole_graph_reconciled().unwrap();
         let root = store.graph.root.clone();
         let (sender, mail) = mpsc::channel();
         let host = PageHost::start(&store, &app, "test-graph", 7, move |mail| {
@@ -249,7 +261,7 @@ impl Live {
         let name = rel.rsplit('/').next().unwrap().split('.').next().unwrap();
         let key = self
             .host
-            .open(&self.store, generation, id, &PageId::from(rel), name)
+            .open(generation, id, &PageId::from(rel), name)
             .unwrap();
         let mail = self.answer(&key, id);
         (key, mail.page.unwrap())
@@ -276,7 +288,6 @@ impl Live {
         let generation = self.host.generation();
         self.host
             .submit(
-                &self.store,
                 generation,
                 id,
                 key,
@@ -289,8 +300,8 @@ impl Live {
     }
 
     fn external(&self, key: &str, body: &str) -> MailPage {
+        // The watcher forwards the read of a held page to the host (§5).
         fs::write(self.root.join(key), body).unwrap();
-        self.host.disk_changed(key);
         let token = token(body);
         self.wait(key, "observation", |mail| {
             mail.page
@@ -311,6 +322,45 @@ impl Live {
             assert!(Instant::now() < deadline, "{key} never saved {body:?}");
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+}
+
+impl Live {
+    /// The index's revision of `key`'s page.
+    fn indexed(&self, key: &str) -> Option<String> {
+        self.store.graph.cached_rev(&self.root.join(key))
+    }
+
+    fn until_indexed(&self, key: &str, body: &str) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while self.indexed(key) != Some(content_rev(body)) {
+            assert!(Instant::now() < deadline, "{key} never indexed {body:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn until_published(&self, pages: &[(String, u64, Option<String>)]) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !self.host.pages_published(pages) {
+            assert!(Instant::now() < deadline, "never published: {pages:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// The watcher left `key`'s index to the publication consumer.
+    fn held(&self, key: &str) -> bool {
+        self.store.watch.holds(&self.root.join(key))
+    }
+
+    /// Fail the next `n` index publications.
+    fn index_faults(&self, n: u32) {
+        let faults = &self.host.index_faults;
+        faults.store(n, std::sync::atomic::Ordering::Release);
+    }
+
+    fn close(&self, key: &str) {
+        let generation = self.host.generation();
+        self.host.close(generation, self.id(), key).unwrap();
     }
 }
 
@@ -358,18 +408,14 @@ fn f9_create_checks_run_at_open_of_a_page_with_no_file() {
     let generation = live.host.generation();
     let refused = live
         .host
-        .open(&live.store, generation, 1, &PageId::from("pages/c.md"), "c");
+        .open(generation, 1, &PageId::from("pages/c.md"), "c");
     assert!(
         matches!(&refused, Err(PageRefusal::Twin { existing }) if existing.ends_with("c.org")),
         "{refused:?}"
     );
-    let refused = live.host.open(
-        &live.store,
-        generation,
-        2,
-        &PageId::from("logseq/config.edn"),
-        "config",
-    );
+    let refused = live
+        .host
+        .open(generation, 2, &PageId::from("logseq/config.edn"), "config");
     assert!(
         matches!(refused, Err(PageRefusal::InvalidTarget { .. })),
         "{refused:?}"
@@ -403,8 +449,7 @@ fn q1_trace(
     // The firewall's verdicts the trace depends on: against A it refuses,
     // against C it passes.
     let dto = live.dto(&key, corrupt);
-    let against =
-        |bytes: &str| PageHost::serialize(&live.store, &key, &dto, Some(&text(bytes)), &[]);
+    let against = |bytes: &str| live.host.serialize(&key, &dto, Some(&text(bytes)), &[]);
     assert!(against(a).is_err_and(|refusal| refused(&refusal)));
     assert!(against(c).is_ok());
     let current = live.external(&key, c);
@@ -500,5 +545,140 @@ fn q1_an_old_token_after_the_conflict_cleared_is_stale_input() {
         header,
         "the header page was never rewritten"
     );
+    live.host.stop();
+}
+
+/// R13 (§5): an open page's index has one writer, the publication
+/// consumer. The watcher forwards an external change of it to the host and
+/// leaves its index alone, also while the consumer's publication fails;
+/// the consumer retries with the save backoff, reports the third failure,
+/// and the retry indexes the change. An unheld page stays the watcher's.
+#[test]
+fn r13_a_held_page_is_indexed_by_the_consumer_alone_and_a_failed_publication_retries() {
+    let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- b\n")]);
+    let (key, page) = live.open("pages/a.md");
+    live.until_published(&[(key.clone(), page.version, None)]);
+    assert!(live.held(&key));
+    assert!(!live.held("pages/b.md"));
+    live.index_faults(3);
+    let page = live.external(&key, "- two\n");
+    assert!(!page.conflict, "a clean page adopts the external change");
+    // The watcher indexes an unheld page meanwhile: it is running.
+    fs::write(live.root.join("pages/b.md"), "- b2\n").unwrap();
+    live.until_indexed("pages/b.md", "- b2\n");
+    assert_eq!(
+        live.indexed(&key),
+        Some(content_rev("- one\n")),
+        "R13: the watcher must not index a held page"
+    );
+    live.wait(&key, "the third failure is reported", |mail| {
+        mail.notice.index_error
+    });
+    live.until_indexed(&key, "- two\n");
+    live.wait(&key, "the report clears", |mail| !mail.notice.index_error);
+    let Live {
+        host, store, root, ..
+    } = live;
+    host.stop();
+    assert!(
+        !store.watch.holds(&root.join(&key)),
+        "a stopped host hands every page back"
+    );
+}
+
+/// Q6 (REVIEW-3): Close is not eviction. A page closed by its window with
+/// a submit answered but not yet saved stays held, and the consumer indexes
+/// its save; only once the host retires it does its index return to the
+/// watcher, which then indexes the next external change.
+#[test]
+fn q6_a_dirty_page_closed_before_its_save_stays_held_until_retired() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let id = live
+        .submit(&key, "- one\n- two\n", page.version, None)
+        .unwrap();
+    live.answer(&key, id);
+    live.close(&key);
+    // Inside the save's debounce: the host still holds the dirty page.
+    std::thread::sleep(Duration::from_millis(150));
+    assert!(
+        live.held(&key),
+        "Q6: a surface Close of a dirty page must not hand its index over"
+    );
+    live.until_disk(&key, "- one\n- two\n");
+    live.until_indexed(&key, "- one\n- two\n");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while live.held(&key) {
+        assert!(
+            Instant::now() < deadline,
+            "the retired page is never handed back"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    fs::write(live.root.join(&key), "- three\n").unwrap();
+    live.until_indexed(&key, "- three\n");
+    live.host.stop();
+}
+
+/// Q2 (REVIEW-3): the block-reference barrier needs a completed
+/// publication whose bytes hold the target id. Target submit v2 adds the
+/// id; v3, admitted before v2's save, removes it; only v3's bytes publish.
+/// The watermark passes v2, and a local restoration of the id would still
+/// be unsent, yet no publication ever held the id: the barrier fails.
+#[test]
+fn q2_a_block_reference_barrier_needs_the_id_in_the_published_bytes() {
+    const ID: &str = "64d7c5e0-0000-4000-8000-000000000001";
+    let live = Live::new(&[("pages/t.md", "- target\n")]);
+    let (key, page) = live.open("pages/t.md");
+    let stamped = format!("- target\n  id:: {ID}\n");
+    let id = live.submit(&key, &stamped, page.version, None).unwrap();
+    let v2 = live.answer(&key, id).answer.unwrap().version;
+    let id = live.submit(&key, "- target\n- more\n", v2, None).unwrap();
+    let v3 = live.answer(&key, id).answer.unwrap().version;
+    live.until_published(&[(key.clone(), v3, None)]);
+    assert_eq!(live.disk(&key), "- target\n- more\n");
+    let barrier = |version| vec![(key.clone(), version, Some(ID.to_string()))];
+    assert!(live.host.pages_published(&[(key.clone(), v2, None)]));
+    assert!(
+        !live.host.pages_published(&barrier(v2)),
+        "Q2: no publication of the target held the id"
+    );
+    let id = live.submit(&key, &stamped, v3, None).unwrap();
+    let v4 = live.answer(&key, id).answer.unwrap().version;
+    live.until_published(&barrier(v4));
+    assert!(live.disk(&key).contains(ID));
+    assert!(live.host.pages_published(&barrier(v2)));
+    // Typing on: the page is dirty again, and v4's completed publication
+    // (the index watermark) still answers the barrier.
+    let more = format!("{stamped}- typing\n");
+    let id = live.submit(&key, &more, v4, None).unwrap();
+    live.answer(&key, id);
+    assert!(
+        live.host.pages_published(&barrier(v4)),
+        "§4.4: a completed publication at v4 satisfies a v4 barrier"
+    );
+    live.host.stop();
+}
+
+/// Q5 (REVIEW-3): an untouched opened page owes no save. Once its Open
+/// read is indexed it is published at its version, with no save receipt;
+/// a page the host does not hold has nothing owed.
+#[test]
+fn q5_a_clean_open_page_is_published_without_a_save() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let modified = || {
+        fs::metadata(live.root.join("pages/a.md"))
+            .unwrap()
+            .modified()
+            .unwrap()
+    };
+    let before = modified();
+    let (key, page) = live.open("pages/a.md");
+    live.until_published(&[(key.clone(), page.version, None)]);
+    assert!(live
+        .host
+        .pages_published(&[("pages/other.md".into(), 9, None)]));
+    settle();
+    assert_eq!(modified(), before, "no save of an untouched page");
     live.host.stop();
 }

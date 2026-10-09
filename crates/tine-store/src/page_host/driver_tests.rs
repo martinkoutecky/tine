@@ -3,8 +3,8 @@ use super::io::{HostIo, Phase};
 use super::model_fs::{Fault, ModelFs};
 use super::tests::{draft, edit, host, open, risk, saved, text};
 use super::*;
-use crate::page_host::binding::Delivery;
-use crate::page_host::driver::{Driver, Sink};
+use crate::page_host::binding::{Delivery, Indexing, Publication};
+use crate::page_host::driver::{Driver, Owner, Sink};
 use crate::page_host::progress::{Clock, Progress};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,14 +25,21 @@ enum Delivered {
 }
 
 struct Channel(mpsc::Sender<Delivered>);
+/// Indexes every publication at once.
 impl Sink for Channel {
-    fn deliver(&mut self, delivery: Delivery) {
+    fn deliver(
+        &mut self,
+        delivery: Delivery,
+        _: &dyn Fn(&str) -> Owner,
+    ) -> Vec<(Publication, Indexing)> {
         if !delivery.events.is_empty() {
             let _ = self.0.send(Delivered::Events(delivery.events));
         }
         for (page, mail, _) in delivery.mail {
             let _ = self.0.send(Delivered::Mail(page, mail));
         }
+        let indexed = delivery.publications.into_iter();
+        indexed.map(|p| (p, Indexing::Indexed)).collect()
     }
 }
 
