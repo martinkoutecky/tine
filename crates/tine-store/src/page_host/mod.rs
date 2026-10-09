@@ -189,10 +189,17 @@ enum Event {
         base: Base,
     },
     DraftError {
+        effect: String,
         pages: BTreeSet<PageKey>,
+        refresh: Option<PageKey>,
         failures: u32,
     },
-    DraftRecovered(BTreeSet<PageKey>),
+    DraftFinished {
+        effect: String,
+        pages: BTreeSet<PageKey>,
+        refresh: Option<PageKey>,
+        recovered: bool,
+    },
     Unreadable(String),
 }
 
@@ -212,6 +219,9 @@ enum Application {
 
 #[cfg_attr(test, derive(Clone))]
 struct DraftWorker {
+    /// The initial vehicle names this obligation, even when copies are replaced.
+    effect: String,
+    refresh: Option<PageKey>,
     pages: BTreeSet<PageKey>,
     before: BTreeMap<PageKey, Record>,
     application: Option<Application>,
@@ -690,10 +700,13 @@ impl<F: HostIo> Host<F> {
                     return Disposition::Disabled;
                 }
                 let record = host.record(key, page);
+                let task = Vehicle::write(drafts::page_name(key), std::slice::from_ref(&record));
                 host.worker = Some(DraftWorker {
+                    effect: task.name.clone(),
+                    refresh: Some(key.into()),
                     pages: keys.clone(),
                     before: scan.logical,
-                    task: Vehicle::write(drafts::page_name(key), std::slice::from_ref(&record)),
+                    task,
                     application: Some(Application::Refresh(record.clone())),
                     remaining: VecDeque::new(),
                     allocator: false,
@@ -715,6 +728,8 @@ impl<F: HostIo> Host<F> {
                     return Disposition::Waiting;
                 };
                 host.worker = Some(DraftWorker {
+                    effect: task.name.clone(),
+                    refresh: None,
                     pages: keys.clone(),
                     before: scan.logical,
                     task,
@@ -747,6 +762,8 @@ impl<F: HostIo> Host<F> {
             drafts::op_name()
         };
         self.worker = Some(DraftWorker {
+            effect: name.clone(),
+            refresh: None,
             pages: keys,
             before: self.logical_drafts(),
             task: Vehicle::write(name, &records),
@@ -782,9 +799,17 @@ impl<F: HostIo> Host<F> {
                 .failures
                 .checked_add(worker.task.failures - failures)
                 .expect("draft failure count exhausted");
-            if worker.failures >= 3 && worker.task.failures != failures {
+            // A failed fresh refresh that is already durably absent can be
+            // reported immediately. Retryable sync failures stay silent until
+            // the third failure; their physical obligation is still pending.
+            if worker.task.failures != failures
+                && (worker.failures >= 3
+                    || (worker.task.stage == Stage::Absent && worker.refresh.is_some()))
+            {
                 self.events.push(Event::DraftError {
+                    effect: worker.effect.clone(),
                     pages: worker.pages.clone(),
+                    refresh: worker.refresh.clone(),
                     failures: worker.failures,
                 });
             }
@@ -841,9 +866,12 @@ impl<F: HostIo> Host<F> {
             self.worker = Some(worker);
             Disposition::Pending
         } else {
-            if worker.recover_notice {
-                self.events.push(Event::DraftRecovered(worker.pages));
-            }
+            self.events.push(Event::DraftFinished {
+                effect: worker.effect,
+                pages: worker.pages,
+                refresh: worker.refresh,
+                recovered: worker.recover_notice,
+            });
             Disposition::Applied
         }
     }
@@ -1304,6 +1332,8 @@ impl<F: HostIo> Host<F> {
                 .and_then(|b| drafts::decode(b).ok())
                 .unwrap_or_default();
             self.worker = Some(DraftWorker {
+                effect: task.name.clone(),
+                refresh: None,
                 pages: keys,
                 before: scan.logical,
                 application: Some(Application::Representation),

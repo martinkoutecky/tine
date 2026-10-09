@@ -42,6 +42,237 @@ fn begin_edit(p: &mut Timed) {
     });
 }
 
+fn failed_refresh(p: &mut Timed) {
+    begin_edit(p);
+    p.with_host(|h| {
+        h.fs.external("a.md", text("theirs"), true);
+        assert_eq!(h.observe("a.md"), Disposition::Applied);
+    });
+    p.host.fs.inject(Phase::DraftTemp, [Fault::Before]);
+    pump(p);
+    time(p, 100);
+    pump(p);
+    assert!(p.host.worker.is_none());
+    assert!(p.host.logical_drafts().is_empty());
+    assert!(p.notice("a.md").draft_error);
+}
+
+#[test]
+fn review_r1_failed_move_cannot_clear_unrecovered_source_refresh_error() {
+    let mut p = timed();
+    p.with_host(|h| open(h, "b.md"));
+    failed_refresh(&mut p);
+    p.host.fs.inject(Phase::DraftTemp, [Fault::Before]);
+    p.with_host(|h| {
+        assert_eq!(
+            send(
+                h,
+                "a.md",
+                RequestKind::Move {
+                    receiver: "b.md".into(),
+                    source_text: text("source"),
+                    receiver_text: text("receiver"),
+                    source_version: h.pages["a.md"].version,
+                    receiver_version: h.pages["b.md"].version,
+                }
+            ),
+            Disposition::Pending
+        );
+    });
+    pump(&mut p);
+    time(&p, 200);
+    pump(&mut p);
+    assert!(p.host.worker.is_none());
+    assert!(!p.host.receive("a.md").unwrap().answer.unwrap().took);
+    assert!(!p.host.receive("b.md").unwrap().answer.unwrap().took);
+    assert!(p.host.pages["a.md"].risk);
+    assert!(p.host.logical_drafts().is_empty());
+    assert!(
+        p.notice("a.md").draft_error,
+        "a different refused effect cannot recover the refresh"
+    );
+    assert!(!p.notice("b.md").draft_error);
+    time(&p, 500);
+    pump(&mut p);
+    assert!(!p.notice("a.md").draft_error);
+    assert!(p.host.logical_drafts().contains_key("a.md"));
+}
+
+#[test]
+fn review_r1_discard_clears_obsolete_terminal_refresh_error() {
+    let mut p = timed();
+    failed_refresh(&mut p);
+    p.with_host(|h| {
+        assert_eq!(
+            send(
+                h,
+                "a.md",
+                RequestKind::Discard {
+                    version: h.pages["a.md"].version,
+                }
+            ),
+            Disposition::Applied
+        )
+    });
+    time(&p, 100_000);
+    pump(&mut p);
+    assert!(p.host.pages["a.md"].clean());
+    assert!(!p.host.pages["a.md"].risk);
+    assert!(p.host.subscriptions.contains("a.md"));
+    assert!(p.host.worker.is_none());
+    assert!(
+        !p.notice("a.md").draft_error,
+        "terminal abandoned refresh has no remaining obligation"
+    );
+}
+
+#[test]
+fn review_r1_refresh_recovery_is_specific_to_its_desired_page() {
+    let mut p = timed();
+    failed_refresh(&mut p);
+    p.with_host(|h| {
+        assert_eq!(h.delete("a.md"), Disposition::Refused);
+        open(h, "b.md");
+        edit(h, "b.md", "b unsaved");
+        h.fs.external("b.md", text("b external"), true);
+        assert_eq!(h.observe("b.md"), Disposition::Applied);
+    });
+    assert!(
+        p.notice("a.md").draft_error,
+        "a refused operation is not recovery"
+    );
+    p.host.fs.inject(Phase::DraftTemp, [Fault::Before]);
+    pump(&mut p);
+    time(&p, 200);
+    pump(&mut p);
+    assert!(p.notice("a.md").draft_error);
+    assert!(p.notice("b.md").draft_error);
+    time(&p, 500);
+    pump(&mut p);
+    assert!(!p.notice("a.md").draft_error);
+    assert!(
+        p.notice("b.md").draft_error,
+        "another page's refresh cannot recover b"
+    );
+    time(&p, 600);
+    pump(&mut p);
+    assert!(!p.notice("b.md").draft_error);
+}
+
+#[test]
+fn review_r2_single_retryable_sync_failure_does_not_report_conflict_early() {
+    let mut p = timed();
+    begin_edit(&mut p);
+    p.with_host(|h| {
+        h.fs.external("a.md", text("theirs"), true);
+        h.observe("a.md");
+    });
+    for _ in 0..3 {
+        poll(&mut p);
+    } // start, temp, rename
+    p.host.fs.inject(Phase::DraftSync, [Fault::Before]);
+    poll(&mut p);
+    let worker = p.host.worker.as_ref().unwrap();
+    assert_eq!(worker.task.stage, Stage::Sync);
+    assert_eq!(worker.task.failures, 1);
+    assert!(p.host.logical_drafts().is_empty());
+    assert!(!p
+        .host
+        .events
+        .iter()
+        .any(|e| matches!(e, Event::DraftError { .. })));
+    assert!(!p.notice("a.md").draft_error);
+    assert!(!p.notice("a.md").conflict_reported);
+    pump(&mut p);
+    assert!(p.notice("a.md").conflict_reported);
+    assert!(!p.notice("a.md").draft_error);
+}
+
+fn capped_draft_backoff() -> Timed {
+    let mut p = timed();
+    begin_edit(&mut p);
+    p.with_host(|h| {
+        open(h, "b.md");
+        edit(h, "b.md", "healthy b");
+        h.fs.external("a.md", text("theirs"), true);
+        h.observe("a.md");
+    });
+    p.host.fs.inject(Phase::DraftSync, [Fault::Before; 100]);
+    for _ in 0..40 {
+        poll(&mut p);
+        if let Some(due) = p.draft_retry_at() {
+            if due == 74_400 {
+                assert_eq!(p.clock.now_ms(), 44_400);
+                assert_eq!(
+                    p.host.worker.as_ref().unwrap().task.stage,
+                    Stage::CleanupSync
+                );
+                assert!(p.host.job.is_none());
+                assert!(!p.host.busy("b.md"));
+                assert!(!p.host.allocator_busy());
+                assert_eq!(p.host.fs.files["graph/b.md"].as_ref(), b"B");
+                p.host.fs.faults.clear();
+                return p;
+            }
+            time(&p, due);
+        }
+    }
+    panic!("draft retry did not reach capped backoff");
+}
+
+#[test]
+fn review_r3_backoff_does_not_stall_unrelated_overdue_save() {
+    let mut p = capped_draft_backoff();
+    let calls = p
+        .host
+        .fs
+        .calls
+        .iter()
+        .filter(|&&c| c == Phase::DraftSync)
+        .count();
+    pump(&mut p);
+    assert_eq!(
+        p.host.fs.files["graph/b.md"].as_ref(),
+        b"healthy b",
+        "healthy b save is blocked until unrelated draft retry at 74400, now 44400"
+    );
+    assert!(p.host.pages["b.md"].clean());
+    assert!(p.host.worker.is_some());
+    assert_eq!(p.draft_retry_at(), Some(74_400));
+    assert!(p.host.busy("a.md"));
+    assert!(p.notice("a.md").draft_error);
+    assert_eq!(
+        p.host
+            .fs
+            .calls
+            .iter()
+            .filter(|&&c| c == Phase::DraftSync)
+            .count(),
+        calls
+    );
+    time(&p, 74_400);
+    pump(&mut p);
+    assert!(p.host.worker.is_none());
+    assert!(!p.notice("a.md").draft_error);
+}
+
+#[test]
+fn review_r3_backoff_does_not_stall_an_already_running_unrelated_save() {
+    let mut p = capped_draft_backoff();
+    p.with_host(|h| assert_eq!(h.start_save("b.md"), Disposition::Pending));
+    pump(&mut p);
+    assert!(
+        p.host.job.is_none(),
+        "running save must finish during draft backoff"
+    );
+    assert_eq!(p.host.fs.files["graph/b.md"].as_ref(), b"healthy b");
+    assert_eq!(p.draft_retry_at(), Some(74_400));
+    assert_eq!(
+        p.host.worker.as_ref().unwrap().task.stage,
+        Stage::CleanupSync
+    );
+}
+
 fn applied_delete(p: &mut Timed) {
     assert_eq!(p.with_host(|h| h.delete("a.md")), Disposition::Pending);
     for _ in 0..4 {

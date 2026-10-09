@@ -41,9 +41,13 @@ MUTATIONS = [
     ("H-durable-before-apply", "drafts.rs", "Stage::Rename if result.is_ok() => Stage::Sync,", "Stage::Rename if result.is_ok() => Stage::Present,", "install directory witness"),
     ("H-live-readable", "mod.rs", "self.fs.draft_files(self.alive)", "self.fs.draft_files(true)", "stopped readable recovery"),
     ("H-switch-ready-lifecycle", "mod.rs", "fn switch_ready(&mut self, consumed_last_id: u64) -> Disposition {\n        if !self.alive {", "fn switch_ready(&mut self, consumed_last_id: u64) -> Disposition {\n        if false {", "late confirmation after stop"),
-    ("H-draft-backoff", "progress.rs", "if self.draft_retry.is_some_and(|due| now < due) {", "if false {", "early cleanup/copy/retirement polls"),
+    ("H-draft-backoff", "progress.rs", "let draft_ready = self.draft_retry.is_none_or(|due| now >= due);", "let draft_ready = true;", "early cleanup/copy/retirement polls"),
     ("H-save-fairness", "progress.rs", "due.sort();", "due.sort_by(|a, b| a.1.cmp(&b.1));", "recurring first-page input while another is overdue"),
     ("H-replaced-copy-failures", "mod.rs", "worker.failures = worker\n                .failures\n                .checked_add(worker.task.failures - failures)\n                .expect(\"draft failure count exhausted\");", "worker.failures = worker.task.failures;", "repeated failed fresh explosion vehicles"),
+    ("H-error-obligation", "progress.rs", "self.draft_errors.remove(effect);", "self.draft_errors.clear();", "failed move cannot recover an earlier refresh"),
+    ("H-error-abandonment", "progress.rs", "self.host.pages.get(key).is_some_and(|page| page.risk)", "true", "Discard after terminal failed refresh"),
+    ("H-backoff-independent-saves", "progress.rs", "if let Some(w) = self.host.worker.as_ref().filter(|_| draft_ready) {", "if self.host.worker.is_some() && !draft_ready { return Disposition::Disabled; }\n        if let Some(w) = self.host.worker.as_ref().filter(|_| draft_ready) {", "unrelated overdue/running save during capped draft backoff"),
+    ("H-retryable-sync-notice", "mod.rs", "worker.task.stage == Stage::Absent && worker.refresh.is_some()", "worker.task.failures > 0 && worker.refresh.is_some()", "first retryable sync failure must stay silent"),
 ]
 
 
@@ -51,10 +55,11 @@ def main():
     import argparse
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--only")
+    ap.add_argument("--output", type=Path, help="explicit hand-run artifact directory")
     args = ap.parse_args()
     harness.WORK = ROOT / "scratch/page-host/hand-harness"
     work = harness.prepare()
-    output = ROOT / "scratch/page-host" / ("hand-rerun-" + args.only if args.only else "hand-census")
+    output = args.output or ROOT / "scratch/page-host" / ("hand-rerun-" + args.only if args.only else "hand-census")
     output.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "TINE_HOST_REPO_ROOT": str(ROOT),
            "CARGO_TARGET_DIR": str(ROOT / "target/page-host-hand")}

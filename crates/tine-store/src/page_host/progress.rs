@@ -24,6 +24,12 @@ struct Timing {
     notice: Notice,
 }
 
+struct DraftFailure {
+    pages: BTreeSet<PageKey>,
+    refresh: Option<PageKey>,
+    terminal: bool,
+}
+
 fn backoff(failures: u32) -> u64 {
     let delays = [100, 300, 1000, 3000, 10000, 30000];
     delays[(failures as usize - 1).min(delays.len() - 1)]
@@ -48,6 +54,7 @@ pub(super) struct Progress<F: HostIo, C: Clock> {
     incarnation: u64,
     draft_retry: Option<u64>,
     draft_retries: u32,
+    draft_errors: BTreeMap<String, DraftFailure>,
 }
 
 impl<F: HostIo, C: Clock> Progress<F, C> {
@@ -62,6 +69,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             incarnation,
             draft_retry: None,
             draft_retries: 0,
+            draft_errors: BTreeMap::new(),
         };
         result.reconcile();
         result
@@ -92,6 +100,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             self.incarnation = self.host.incarnation;
             self.draft_retry = None;
             self.draft_retries = 0;
+            self.draft_errors.clear();
         }
         self.times
             .retain(|key, _| self.host.pages.contains_key(key));
@@ -151,17 +160,44 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                     t.retry = Some(now.checked_add(delay).expect("clock exhausted"));
                     t.notice.save_error = t.notice.failures >= 3;
                 }
-                Event::DraftError { pages, .. } => {
-                    for key in pages {
-                        if let Some(t) = self.times.get_mut(key) {
-                            t.notice.draft_error = true;
-                        }
-                    }
+                Event::DraftError {
+                    effect,
+                    pages,
+                    refresh,
+                    ..
+                } => {
+                    self.draft_errors.insert(
+                        effect.clone(),
+                        DraftFailure {
+                            pages: pages.clone(),
+                            refresh: refresh.clone(),
+                            terminal: false,
+                        },
+                    );
                 }
-                Event::DraftRecovered(pages) => {
-                    for key in pages {
-                        if let Some(t) = self.times.get_mut(key) {
-                            t.notice.draft_error = false;
+                Event::DraftFinished {
+                    effect,
+                    pages,
+                    refresh,
+                    recovered,
+                } => {
+                    self.draft_errors.remove(effect);
+                    if let Some(key) = refresh {
+                        // A completed refresh replaces earlier terminal failed
+                        // attempts at that desired record. Pending physical
+                        // obligations, and unrelated operations, remain distinct.
+                        self.draft_errors.retain(|_, failure| {
+                            !failure.terminal || failure.refresh.as_ref() != Some(key)
+                        });
+                        if !recovered {
+                            self.draft_errors.insert(
+                                effect.clone(),
+                                DraftFailure {
+                                    pages: pages.clone(),
+                                    refresh: refresh.clone(),
+                                    terminal: true,
+                                },
+                            );
                         }
                     }
                 }
@@ -169,8 +205,19 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             }
         }
         self.events_seen = self.host.events.len();
+        // Discard/resolution can abandon a failed refresh's desired record.
+        // Only terminal work can disappear here; logical equality alone never
+        // recovers a physical failure (in particular, explosion/retirement).
+        self.draft_errors.retain(|_, failure| {
+            !failure.terminal
+                || failure
+                    .refresh
+                    .as_ref()
+                    .is_none_or(|key| self.host.pages.get(key).is_some_and(|page| page.risk))
+        });
         let drafts = self.host.logical_drafts();
         for (key, t) in &mut self.times {
+            t.notice.draft_error = self.draft_errors.values().any(|f| f.pages.contains(key));
             let applied = drafts.get(key).is_some_and(|r| {
                 r.bytes == t.page.buf && r.base == t.page.base && r.version == t.page.version
             });
@@ -190,11 +237,9 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         if !self.host.alive {
             return Disposition::Disabled;
         }
-        if let Some(w) = &self.host.worker {
-            let now = self.clock.now_ms();
-            if self.draft_retry.is_some_and(|due| now < due) {
-                return Disposition::Disabled;
-            }
+        let now = self.clock.now_ms();
+        let draft_ready = self.draft_retry.is_none_or(|due| now >= due);
+        if let Some(w) = self.host.worker.as_ref().filter(|_| draft_ready) {
             self.draft_retry = None;
             let failures = w.failures;
             let stage = w.task.stage;
@@ -202,9 +247,6 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 && matches!(w.application, Some(Application::Refresh(_)));
             let keys = w.pages.clone();
             let result = self.host.advance_draft();
-            let failed = self.host.worker.as_ref().is_some_and(|w| {
-                w.task.failures > 0 && matches!(w.application, Some(Application::Refresh(_)))
-            });
             if let Some(w) = &self.host.worker {
                 if w.failures > failures && !(stage == Stage::Sync && w.task.stage == Stage::Sync) {
                     self.draft_retries = self
@@ -224,13 +266,6 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 for key in &keys {
                     if let Some(t) = self.times.get_mut(key) {
                         t.last_draft = Some(written_at);
-                    }
-                }
-            }
-            if failed {
-                for key in keys {
-                    if let Some(t) = self.times.get_mut(&key) {
-                        t.notice.draft_error = true;
                     }
                 }
             }
@@ -297,6 +332,12 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 .with_locks(&BTreeSet::from([key.clone()]), |h| h.close_clean(&key));
             self.reconcile();
             return Disposition::Applied;
+        }
+        // The worker's wakeup delays its effect alone. Independent graph jobs
+        // above use the existing busy/allocator guards and remain serialized.
+        // Keep request execution deferred while the physical worker is waiting.
+        if self.host.worker.is_some() {
+            return Disposition::Disabled;
         }
         // A stream of admitted requests must not postpone an overdue save.
         // Starting it preserves any already-dequeued request's custody; that

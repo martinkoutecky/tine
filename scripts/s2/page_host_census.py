@@ -16,6 +16,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--extra", type=Path, help="additional new-source census")
     ap.add_argument("--current", type=Path, help="completed full current-source runtime census, without historic artifacts")
+    ap.add_argument("--hand-current", type=Path, help="explicit current hand-run outcomes (required with --current)")
     args = ap.parse_args()
     artifact = ROOT / "scratch/page-host"
     if args.current:
@@ -45,10 +46,14 @@ def main():
             counts["unviable"] += 1
         else:
             unresolved.append((name,o["summary"]))
-    hand = {o["name"]:o for o in json.loads((artifact / "hand-census/outcomes.json").read_text())}
-    for rerun in sorted(artifact.glob("hand-rerun-*/outcomes.json")):
-        for o in json.loads(rerun.read_text()):
-            hand[o["name"]] = o
+    if args.current:
+        assert args.hand_current is not None, "--current requires an explicit --hand-current run"
+    selected_hand = args.hand_current or artifact / "hand-census/outcomes.json"
+    hand = {o["name"]:o for o in json.loads(selected_hand.read_text())}
+    if not args.current and not args.hand_current:
+        for rerun in sorted(artifact.glob("hand-rerun-*/outcomes.json")):
+            for o in json.loads(rerun.read_text()):
+                hand[o["name"]] = o
     assert set(hand) == {m[0] for m in MUTATIONS} and all(o["status"] == "killed" for o in hand.values()), hand
     result = {"core": {"total":len(latest), **counts}, "hand": {"total":len(hand), "killed":len(hand)}, "unresolved":unresolved}
     if args.extra:
