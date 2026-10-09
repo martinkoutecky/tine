@@ -57,6 +57,9 @@ pub(super) struct ModelFs {
     pub budget: Option<usize>,
     /// Durable draft entries as last reported by `draft_changes`.
     pub reported: BTreeMap<String, Arc<[u8]>>,
+    /// Adapter memory (STEP3 §2), lost at a crash. A model entry is named by
+    /// its key; a spelling only orders the driver's path locks.
+    pub spellings: BTreeMap<String, String>,
 }
 
 /// One power outcome for readable trash names that are not yet durable.
@@ -189,6 +192,7 @@ impl ModelFs {
         self.faults.clear();
         self.publications.clear();
         self.owed.clear();
+        self.spellings.clear();
     }
 
     /// The least surviving outcome: only forced trash names, with their data.
@@ -321,6 +325,17 @@ fn set(files: &mut BTreeMap<String, Arc<[u8]>>, key: &str, bytes: Text) {
 }
 
 impl HostIo for ModelFs {
+    fn spelling(&self, key: &str) -> String {
+        self.spellings
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| key.into())
+    }
+
+    fn spell(&mut self, key: &str, spelling: &str) {
+        self.spellings.insert(key.into(), spelling.into());
+    }
+
     /// The graph launch's best-effort source-directory syncs: every page's
     /// latest namespace operation, and every existing trash chain entry,
     /// becomes durable where the witness is. Trash payload names are left

@@ -4,6 +4,7 @@
 use super::drafts::{self, Stage, Vehicle};
 use super::io::{HostIo, Phase, Witness};
 use super::production::ProductionIo;
+use super::tests::text;
 use super::*;
 use std::fs;
 use std::io;
@@ -1531,4 +1532,153 @@ fn r2_marker_temp_crash_cuts_do_not_accumulate() {
         assert!(!relaunch(&mut f).contains(&dir));
         let _ = synced;
     }
+}
+
+/// A new binding over the same graph and app data (STEP3 §2): no keys
+/// until the binding registers them.
+fn binding(f: &Fixture) -> Host<ProductionIo> {
+    let io = ProductionIo::new(&f.graph, &f.app, "test-graph", &f.trash).unwrap();
+    Host::new(io, BTreeMap::new())
+}
+
+/// A failed save puts the page at risk; its draft is then written.
+fn draft_after_failed_save(f: &mut Fixture, key: &str) {
+    f.host
+        .fs
+        .faults
+        .insert(Phase::PageTemp, [io::ErrorKind::Other].into());
+    assert_eq!(f.host.start_save(key), Disposition::Pending);
+    f.host.advance_save(0);
+    assert!(f.host.job.is_none() && f.host.pages[key].risk);
+    if f.host.begin_draft(key) == Disposition::Pending {
+        f.drain();
+    }
+    assert!(!f.host.fs.draft_files(true).is_empty());
+}
+
+fn relaunch_as(f: &mut Fixture, spellings: &[(&str, &str)]) {
+    f.host.stop();
+    f.host = binding(f);
+    f.host.stop();
+    let recovered = f.host.recovered_keys();
+    for key in &recovered {
+        let spelling = spellings
+            .iter()
+            .find(|(k, _)| k == key)
+            .map_or(key.as_str(), |(_, s)| s);
+        f.host
+            .register(key.clone(), spelling, Arc::new(Mutex::new(())));
+    }
+    assert!(matches!(
+        f.host.launch(),
+        Disposition::Applied | Disposition::Pending
+    ));
+    f.drain();
+}
+
+/// STEP3 §2 / Q4, folding semantics. On a folding volume the store's
+/// case-alias resolution spells a recovered `Foo.md` as its entry `foo.md`;
+/// Linux cannot fold, so the test registers that spelling. The draft and the
+/// custody marker name the old spelling and recover to the same key, and no
+/// I/O goes through the old spelling: here that would create a second file.
+#[test]
+fn an_old_spelling_draft_and_custody_marker_recover_through_the_entry_spelling() {
+    let mut f = Fixture::new();
+    fs::write(f.graph.join("foo.md"), b"disk").unwrap();
+    f.host = binding(&f);
+    f.host
+        .register("Foo.md".into(), "foo.md", Arc::new(Mutex::new(())));
+    f.edit("Foo.md", "draft");
+    assert_eq!(f.host.pages["Foo.md"].base, Base::Known(text("disk")));
+    draft_after_failed_save(&mut f, "Foo.md");
+    // A crash before the save: the draft names `Foo.md`.
+    relaunch_as(&mut f, &[("Foo.md", "foo.md")]);
+    let page = &f.host.pages["Foo.md"];
+    assert!(!page.conflict && page.buf == text("draft"), "{page:?}");
+    assert_eq!(f.save("Foo.md"), Outcome::Published);
+    assert_eq!(fs::read(f.graph.join("foo.md")).unwrap(), b"draft");
+    assert!(!f.graph.join("Foo.md").exists());
+    // Delete through the move, then crash holding the custody marker.
+    assert_eq!(f.host.delete("Foo.md"), Disposition::Pending);
+    f.drain();
+    assert_eq!(f.host.start_save("Foo.md"), Disposition::Pending);
+    f.host.advance_save(0); // guard
+    f.host.advance_save(0); // marker
+    f.host.advance_save(0); // move
+    assert!(!f.graph.join("foo.md").exists());
+    assert_eq!(markers(&mut f), 1);
+    relaunch_as(&mut f, &[("Foo.md", "foo.md")]);
+    assert!(f.host.custody.is_empty());
+    assert_eq!(markers(&mut f), 0);
+    assert!(trash_holds(&f, b"draft"));
+    assert_eq!(f.host.pages["Foo.md"].buf, None);
+    assert_eq!(f.host.observe("Foo.md"), Disposition::Applied);
+    assert_eq!(f.save("Foo.md"), Outcome::Published);
+    assert!(!f.graph.join("foo.md").exists() && !f.graph.join("Foo.md").exists());
+}
+
+/// Q4, case-sensitive semantics: a case-only rename to an absent distinct
+/// entry is a host rename between two keys with its operation custody. An
+/// old-spelling draft does not recover a separate `Foo.md` after a crash.
+#[test]
+fn a_case_only_rename_to_a_distinct_entry_is_a_two_key_host_rename() {
+    let mut f = Fixture::new();
+    fs::write(f.graph.join("Foo.md"), b"disk").unwrap();
+    f.host = binding(&f);
+    for key in ["Foo.md", "foo.md"] {
+        f.host.register(key.into(), key, Arc::new(Mutex::new(())));
+    }
+    f.edit("Foo.md", "edited");
+    draft_after_failed_save(&mut f, "Foo.md");
+    assert_eq!(f.save("Foo.md"), Outcome::Published);
+    let identity = |bytes: &Text, _: &str, _: bool| Ok(bytes.clone());
+    assert_eq!(
+        f.host
+            .rename_with("Foo.md", "foo.md", &BTreeSet::new(), identity),
+        Disposition::Pending
+    );
+    f.drain();
+    // A crash before either save of the operation.
+    relaunch_as(&mut f, &[]);
+    assert_eq!(f.host.pages["foo.md"].buf, text("edited"));
+    assert_eq!(f.host.pages["Foo.md"].buf, None);
+    assert_eq!(f.save("foo.md"), Outcome::Published);
+    assert_eq!(f.save("Foo.md"), Outcome::Published);
+    assert_eq!(fs::read(f.graph.join("foo.md")).unwrap(), b"edited");
+    assert!(!f.graph.join("Foo.md").exists());
+    assert!(trash_holds(&f, b"edited"));
+}
+
+/// STEP3 §2: a request queued before the alias spelling move applies to the
+/// same page after it, and the page's I/O follows the new spelling.
+#[test]
+fn a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it() {
+    let mut f = Fixture::new();
+    f.send("a.md", RequestKind::Open);
+    let version = f.host.pages["a.md"].version;
+    let request = Request {
+        id: f.host.last_admitted + 1,
+        generation: f.host.generation,
+        page: "a.md".into(),
+        kind: RequestKind::Submit {
+            bytes: text("typed"),
+            version,
+            resolve: None,
+        },
+    };
+    assert_eq!(f.host.admit(request), Disposition::Applied);
+    // The retained writer: reserve, move the entry, respell, release.
+    let keys = BTreeSet::from(["a.md".to_string()]);
+    assert_eq!(f.host.reserve(&keys), Disposition::Applied);
+    fs::rename(f.graph.join("a.md"), f.graph.join("A.md")).unwrap();
+    f.host.respell("a.md", "A.md", Arc::new(Mutex::new(())));
+    assert_eq!(f.host.release(&keys), Disposition::Applied);
+    let page = &f.host.pages["a.md"];
+    assert!(!page.conflict && page.buf == text("A"), "{page:?}");
+    assert_eq!(f.host.dequeue(), Disposition::Pending);
+    assert_eq!(f.host.apply_request(), Disposition::Applied);
+    assert_eq!(f.host.pages["a.md"].buf, text("typed"));
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    assert_eq!(fs::read(f.graph.join("A.md")).unwrap(), b"typed");
+    assert!(!f.graph.join("a.md").exists());
 }

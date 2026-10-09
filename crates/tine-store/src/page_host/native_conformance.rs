@@ -212,6 +212,13 @@ impl ConformanceIo for NativeFs {
 }
 
 impl HostIo for NativeFs {
+    fn spelling(&self, key: &str) -> String {
+        self.native.spelling(key)
+    }
+    fn spell(&mut self, key: &str, spelling: &str) {
+        self.ledger.spell(key, spelling);
+        self.native.spell(key, spelling);
+    }
     fn graph_launch(&mut self, pages: &BTreeSet<String>) {
         self.native.graph_launch(pages);
     }

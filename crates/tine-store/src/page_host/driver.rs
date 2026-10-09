@@ -40,8 +40,6 @@ pub(super) struct State<F: HostIo, C: Clock> {
     stopping: bool,
     /// Keys whose disk state the driver owes the host an observation of.
     pub observe: BTreeMap<PageKey, Observation>,
-    /// Current spelling of each key (§2); locks are taken in this order.
-    pub spellings: BTreeMap<PageKey, String>,
     #[cfg(test)]
     pub polls: u64,
 }
@@ -155,14 +153,12 @@ where
 {
     pub fn spawn(mut host: Host<F>, clock: C, mut sink: impl Sink + 'static) -> Self {
         host.held = Some(BTreeSet::new());
-        let spellings = host.keys.iter().map(|k| (k.clone(), k.clone())).collect();
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
                 progress: Progress::new(host, clock),
                 wake_seq: 0,
                 stopping: false,
                 observe: BTreeMap::new(),
-                spellings,
                 #[cfg(test)]
                 polls: 0,
             }),
@@ -242,12 +238,10 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
         let mut result = state.step();
         while let Some(keys) = state.progress.host.lock_request.take() {
             // Lock, in canonical spelling order, holding nothing else.
+            let host = &state.progress.host;
             let mut handles: Vec<_> = keys
                 .iter()
-                .map(|key| {
-                    let spelling = state.spellings.get(key).unwrap_or(key).clone();
-                    (spelling, state.progress.host.locks[key].clone())
-                })
+                .map(|key| (host.fs.spelling(key), host.locks[key].clone()))
                 .collect();
             handles.sort_by(|a, b| a.0.cmp(&b.0));
             drop(state);
@@ -256,19 +250,32 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
             if state.stopping {
                 return;
             }
-            // Revalidate: the next legal step, with these locks held.
-            state.progress.host.held = Some(keys);
-            result = state.step();
-            if state.progress.host.lock_request.is_none() {
-                let delivery = collect(&mut state);
-                drop(state);
-                drop(guards);
-                deliver(sink, delivery);
-                continue 'steps;
+            // An alias spelling move (§2) may have replaced a key's lock
+            // while this thread waited; the old spelling's lock does not
+            // exclude writers of the new one.
+            let host = &state.progress.host;
+            let current = keys.iter().all(|key| {
+                let lock = &host.locks[key];
+                handles.iter().any(|(_, held)| Arc::ptr_eq(held, lock))
+            });
+            if current {
+                // Revalidate: the next legal step, with these locks held.
+                state.progress.host.held = Some(keys);
+                result = state.step();
+                if state.progress.host.lock_request.is_none() {
+                    let delivery = collect(&mut state);
+                    drop(state);
+                    drop(guards);
+                    deliver(sink, delivery);
+                    continue 'steps;
+                }
             }
-            // Another key set: release everything and replan.
+            // Another key set or lock: release everything and replan.
             state.progress.host.held = Some(BTreeSet::new());
             drop(guards);
+            if !current {
+                result = state.step();
+            }
         }
         let delivery = collect(&mut state);
         // A finished job or worker step may unblock a waiting reservation;

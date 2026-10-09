@@ -27,6 +27,10 @@ pub(super) struct ProductionIo {
     unsynced: std::collections::BTreeSet<String>,
     changes: Vec<(String, Option<Vec<u8>>)>,
     paths: BTreeMap<String, PathBuf>,
+    /// Each page key's current graph-relative spelling (STEP3 §2), when it
+    /// differs from the key: a key resolved through a case alias at
+    /// registration, or moved by the alias spelling move (Q4).
+    spellings: BTreeMap<String, String>,
     quarantines: BTreeMap<String, (PathBuf, u8)>,
     directories: BTreeMap<PathBuf, durability::DirectoryCreation>,
     pub(super) launch_warnings: Vec<(PathBuf, io::ErrorKind)>,
@@ -87,6 +91,7 @@ impl ProductionIo {
             unsynced: Default::default(),
             changes: vec![],
             paths,
+            spellings: BTreeMap::new(),
             quarantines: BTreeMap::new(),
             directories: BTreeMap::new(),
             launch_warnings: vec![],
@@ -113,6 +118,12 @@ impl ProductionIo {
         durability::sync_directory_witness(dir)
             .map(witness)
             .map_err(sync_failure)
+    }
+
+    /// The page's file, through its key's current spelling.
+    fn page_path(&self, key: &str) -> PathBuf {
+        self.graph
+            .join(self.spellings.get(key).map_or(key, String::as_str))
     }
 
     fn draft_path(&self, name: &str) -> PathBuf {
@@ -184,6 +195,21 @@ fn sync_failure(error: io::Error) -> IoFailure {
 }
 
 impl HostIo for ProductionIo {
+    fn spelling(&self, key: &str) -> String {
+        self.spellings
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| key.into())
+    }
+
+    fn spell(&mut self, key: &str, spelling: &str) {
+        if key == spelling {
+            self.spellings.remove(key);
+        } else {
+            self.spellings.insert(key.into(), spelling.into());
+        }
+    }
+
     fn graph_launch(&mut self, pages: &std::collections::BTreeSet<String>) {
         // Every existing ancestor up to the graph root: an interrupted nested
         // page-directory creation leaves entries no later leaf sync covers.
@@ -193,7 +219,7 @@ impl HostIo for ProductionIo {
         // (REVIEW-2b-r2 R1). A trash directory that does not exist is skipped.
         let mut directories = std::collections::BTreeSet::from([self.graph.clone()]);
         for page in pages {
-            let path = self.graph.join(page);
+            let path = self.page_path(page);
             directories.extend(chain(&self.graph, path.parent().unwrap()).map(Path::to_path_buf));
         }
         directories.extend(
@@ -216,7 +242,7 @@ impl HostIo for ProductionIo {
 
     fn read_page(&mut self, page: &str) -> IoResult<Text> {
         self.before(super::io::Phase::Read)?;
-        match fs::read(self.graph.join(page)) {
+        match fs::read(self.page_path(page)) {
             Ok(bytes) => {
                 self.creates.insert(page.into(), false);
                 Ok(Some(bytes.into()))
@@ -231,7 +257,7 @@ impl HostIo for ProductionIo {
 
     fn page_temp(&mut self, page: &str, bytes: &Text) -> IoResult<()> {
         self.before(super::io::Phase::PageTemp)?;
-        let target = self.graph.join(page);
+        let target = self.page_path(page);
         self.graph_directory(target.parent().unwrap())?;
         let prepared = PreparedWrite::new(
             &target,
@@ -257,14 +283,14 @@ impl HostIo for ProductionIo {
     }
 
     fn page_sync(&mut self, page: &str) -> IoResult<Witness> {
-        let path = self.graph.join(page);
+        let path = self.page_path(page);
         self.graph_sync(super::io::Phase::PageSync, path.parent().unwrap())
     }
 
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult {
         let result = (|| {
             self.before(super::io::Phase::TrashMove)?;
-            let source = self.graph.join(page);
+            let source = self.page_path(page);
             if !source.try_exists().map_err(failure)? {
                 return Ok(None);
             }

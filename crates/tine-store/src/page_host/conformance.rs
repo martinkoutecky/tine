@@ -66,6 +66,38 @@ fn key(p: usize) -> String {
     format!("{p:04}.md")
 }
 
+/// Pages a model action names through the host: the window's own page,
+/// an operation's endpoints and referrers. External writes, faults and
+/// whole-host actions name none.
+fn named(name: &str, args: &[Value]) -> Vec<usize> {
+    let at = |i: usize| args[i].as_u64().unwrap() as usize;
+    let flag = |i: usize| {
+        args[i]
+            .as_bool()
+            .unwrap_or_else(|| args[i].as_i64() == Some(1))
+    };
+    match name {
+        "wOpen" | "wSend" | "wDiscard" | "wClose" | "wRecv" | "flush" | "observe" | "draftSync"
+        | "wEdit" | "wResolve" | "opDelete" | "flushDel" | "load" => vec![at(0)],
+        "wOp" => vec![at(0), 1 - at(0)],
+        "wOpTo" => vec![at(0), at(1)],
+        "opRename" => {
+            let refs: Vec<usize> = serde_json::from_value(args[2].clone()).unwrap();
+            [at(0), at(1)].into_iter().chain(refs).collect()
+        }
+        "opRenameRaw" | "opRenamePacked" => [at(0), at(1)]
+            .into_iter()
+            .chain((0..3).filter(|&i| flag(2 + i)))
+            .collect(),
+        _ => vec![],
+    }
+}
+
+/// The model page a harness key names.
+fn index(key: &str) -> usize {
+    key.trim_end_matches(".md").parse().unwrap()
+}
+
 fn text(label: i64) -> Text {
     (label != ABSENT).then(|| Arc::from(label.to_string().into_bytes()))
 }
@@ -144,14 +176,12 @@ impl Driver<ModelFs> {
 
 impl<F: ConformanceIo> Driver<F> {
     fn new_with_io(profile: &str, count: usize) -> Self {
-        let locks = (0..count)
-            .map(|p| (key(p), Arc::new(Mutex::new(()))))
-            .collect();
         let fs = F::fresh(profile, count);
         let oracle = Oracle::new(profile, count);
         let observed = oracle.state(); // Only the model's fixed init state.
         Self {
-            host: Host::new(fs, locks),
+            // STEP3 §2: keys register dynamically, as the binding opens them.
+            host: Host::new(fs, BTreeMap::new()),
             oracle,
             windows: vec![Window::default(); count],
             pending_ids: vec![None; count],
@@ -242,7 +272,24 @@ impl<F: ConformanceIo> Driver<F> {
             .unwrap()
     }
 
-    fn register_versions(&mut self, previous_inc: u64, previous: u64) {
+    /// STEP2-DESIGN §2's version abstraction, as STEP3 §2 refines it: an
+    /// order- and equality-preserving map from `(incarnation, raw)` to model
+    /// versions, learned where the host first shows a version (a held page,
+    /// its mail, the job) from the model's value in the same position. Host
+    /// ranks count registered keys while the model reserves `PAGES.size()`
+    /// (L524/L547), so allocation gaps differ and literal numbering cannot be
+    /// compared once keys register dynamically (STEP3-REVIEW-1 F8). Every
+    /// shown version must map, no model version may have two host versions,
+    /// and the map must be strictly increasing; a version a host step shows
+    /// that the model did not allocate there fails one of these.
+    fn register_versions(&mut self, name: &str, args: &[Value], previous_inc: u64) {
+        let model = self.oracle.next(name, args).expect("enabled").state();
+        self.learn_versions(&model, previous_inc, name);
+    }
+
+    /// A physical step the model sees as a stutter learns against its
+    /// current state.
+    fn learn_versions(&mut self, model: &Value, previous_inc: u64, name: &str) {
         if previous_inc != self.host.incarnation {
             let surviving: BTreeSet<_> = drafts::scan(self.host.fs.draft_files(false))
                 .files
@@ -253,25 +300,48 @@ impl<F: ConformanceIo> Driver<F> {
             self.record_versions
                 .retain(|seq, _| surviving.contains(seq));
         }
-        let start = if previous_inc == self.host.incarnation {
-            previous
-        } else {
-            // Launch seeds from every readable record and allocates for held
-            // pages in key order; record tokens keep their earlier identity.
-            drafts::scan(self.host.fs.draft_files(false)).max_version
-        };
-        for raw in start + 1..=self.host.version {
-            if self.versions.contains_key(&(self.host.incarnation, raw)) {
+        let inc = self.host.incarnation;
+        let mut shown: Vec<(u64, &Value)> = vec![];
+        for p in 0..self.windows.len() {
+            if let Some(pg) = self.host.pages.get(&key(p)) {
+                shown.push((pg.version, &model["s"]["pages"][p]["ver"]));
+            }
+            if let Some(m) = self.host.outbox.get(&key(p)) {
+                if let Some(pg) = &m.page {
+                    shown.push((pg.version, &model["s"]["mb"][p]["ver"]));
+                }
+                if let Some(a) = &m.answer {
+                    shown.push((a.version, &model["s"]["mb"][p]["ack"]));
+                }
+            }
+        }
+        if let Some(j) = &self.host.job {
+            shown.push((j.version, &model["s"]["job"]["ver"]));
+        }
+        for (raw, value) in shown {
+            let v = value.as_i64().expect("model version");
+            if raw == 0 || self.versions.contains_key(&(inc, raw)) {
                 continue;
             }
-            self.counter += 1;
-            self.versions
-                .insert((self.host.incarnation, raw), self.counter);
+            assert!(
+                !self.versions.values().any(|&mapped| mapped == v),
+                "{name}: model version {v} already has a host version"
+            );
+            self.versions.insert((inc, raw), v);
         }
+        let mut last = 0;
+        for (&(i, raw), &v) in &self.versions {
+            assert!(
+                v > last,
+                "{name}: version map not order-preserving at ({i}, {raw})"
+            );
+            last = v;
+        }
+        self.counter = model["g"]["vc"].as_i64().expect("model vc");
         for records in drafts::scan(self.host.fs.draft_files(false)).files.values() {
             for r in records {
                 if !self.record_versions.contains_key(&r.wseq) {
-                    if let Some(&v) = self.versions.get(&(self.host.incarnation, r.version)) {
+                    if let Some(&v) = self.versions.get(&(inc, r.version)) {
                         self.record_versions.insert(r.wseq, v);
                     }
                 }
@@ -331,7 +401,7 @@ impl<F: ConformanceIo> Driver<F> {
             .abstract_queue()
             .iter()
             .map(|r| {
-                let p = self.host.keys.iter().position(|k| k == &r.page).unwrap();
+                let p = index(&r.page);
                 let mut u = json!({"kind":"open","p":p,"q":0,"t":0,"t2":0,
                 "bv":0,"bv2":0,"ro":NONE,"cur":r.generation==self.host.generation});
                 match &r.kind {
@@ -359,7 +429,7 @@ impl<F: ConformanceIo> Driver<F> {
                         receiver_version,
                     } => {
                         u["kind"] = json!("op");
-                        u["q"] = json!(self.host.keys.iter().position(|k| k == receiver).unwrap());
+                        u["q"] = json!(index(receiver));
                         u["t"] = json!(label(source_text));
                         u["t2"] = json!(label(receiver_text));
                         u["bv"] = json!(self.version(*source_version));
@@ -371,7 +441,7 @@ impl<F: ConformanceIo> Driver<F> {
             .collect();
         let job = self.host.job.as_ref().map_or_else(
             || json!({"on":false,"p":0,"bytes":0,"base":0,"ver":0,"phase":0,"ep":0}),
-            |j| json!({"on":true,"p":self.host.keys.iter().position(|k| k==&j.page).unwrap(),
+            |j| json!({"on":true,"p":index(&j.page),
                 "bytes":label(&j.bytes),"base":base(&j.base),"ver":self.version(j.version),
                 "phase":match j.phase { SavePhase::Custody|SavePhase::Temp|SavePhase::Check=>1,
                     SavePhase::Marker|SavePhase::Rename=>2,SavePhase::TrashSync|SavePhase::DirectorySync=>3 },"ep":j.epoch})
@@ -464,7 +534,7 @@ impl<F: ConformanceIo> Driver<F> {
             self.pending_ids[p] = Some(id);
         }
         if let RequestKind::Move { receiver, .. } = &kind {
-            let q = self.host.keys.iter().position(|k| k == receiver).unwrap();
+            let q = index(receiver);
             self.pending_ids[q] = Some(id);
         }
         assert_eq!(
@@ -476,6 +546,20 @@ impl<F: ConformanceIo> Driver<F> {
             }),
             Disposition::Applied
         );
+    }
+
+    /// The binding registers a key when the window opens it or an operation
+    /// names it (STEP3 §2), in trace order, not key order.
+    fn register(&mut self, p: usize) {
+        self.host
+            .register(key(p), &key(p), Arc::new(Mutex::new(())));
+    }
+
+    /// A process fault ends the binding: the next one registers afresh,
+    /// its recovered keys first (§2).
+    fn fresh_binding(&mut self) {
+        self.host.keys.clear();
+        self.host.locks.clear();
     }
 
     fn receive(&mut self, p: usize) {
@@ -544,7 +628,7 @@ impl<F: ConformanceIo> Driver<F> {
             self.host.advance_draft();
             if application {
                 assert!(!applied);
-                self.register_versions(old_inc, old_version);
+                self.register_versions(name, args, old_inc);
                 self.finish(name, args);
                 applied = true;
             } else {
@@ -593,6 +677,9 @@ impl<F: ConformanceIo> Driver<F> {
         let successor = self.oracle.next(name, args);
         if successor.is_none() {
             return false;
+        }
+        for q in named(name, args) {
+            self.register(q);
         }
         let p = args.first().and_then(Value::as_u64).unwrap_or(0) as usize;
         let v = |i: usize| args[i].as_i64().unwrap();
@@ -829,6 +916,7 @@ impl<F: ConformanceIo> Driver<F> {
             "crash" => {
                 self.host.fs.crash();
                 self.host.stop();
+                self.fresh_binding();
                 self.windows.fill(Window::default());
                 self.pending_ids.fill(None);
             }
@@ -842,12 +930,16 @@ impl<F: ConformanceIo> Driver<F> {
                 self.refine_power_cuts(&keep, &successor.as_ref().unwrap().state()["s"]["trash"]);
                 self.host.fs.power(&keep, false);
                 self.host.stop();
+                self.fresh_binding();
                 self.windows.fill(Window::default());
                 self.pending_ids.fill(None);
             }
             "launch" => {
+                for recovered in self.host.recovered_keys() {
+                    self.register(index(&recovered));
+                }
                 self.host.launch();
-                self.register_versions(old_inc, old_version);
+                self.register_versions(name, args, old_inc);
                 self.finish(name, args);
                 while !self.stepped && self.host.worker.is_some() {
                     self.host.advance_draft();
@@ -857,7 +949,7 @@ impl<F: ConformanceIo> Driver<F> {
             }
             _ => panic!("unsupported host action {name}"),
         }
-        self.register_versions(old_inc, old_version);
+        self.register_versions(name, args, old_inc);
         self.finish(name, args);
         true
     }
@@ -1029,14 +1121,14 @@ impl<F: ConformanceIo> Driver<F> {
                     bytes,
                     version,
                 } => {
-                    let p = self.host.keys.iter().position(|k| k == &page).unwrap();
+                    let p = index(&page);
                     insert(
                         &mut g["wrote"][p],
                         json!([label(&bytes), self.version(version)]),
                     );
                 }
                 Event::Draft(r) => {
-                    let p = self.host.keys.iter().position(|k| k == &r.page).unwrap();
+                    let p = index(&r.page);
                     let v = self.record_versions[&r.wseq];
                     insert(&mut g["wrote"][p], json!([label(&r.bytes), v]));
                     promise(&mut g["promise"][p], label(&r.bytes), v, false, 0);
@@ -1047,7 +1139,7 @@ impl<F: ConformanceIo> Driver<F> {
                     version,
                     epoch,
                 } => {
-                    let p = self.host.keys.iter().position(|k| k == &page).unwrap();
+                    let p = index(&page);
                     promise(
                         &mut g["promise"][p],
                         label(&bytes),
@@ -1057,11 +1149,11 @@ impl<F: ConformanceIo> Driver<F> {
                     );
                 }
                 Event::Removed { page, bytes } => {
-                    let p = self.host.keys.iter().position(|k| k == &page).unwrap();
+                    let p = index(&page);
                     insert(&mut g["removed"][p], json!(label(&bytes)));
                 }
                 Event::DeleteDurable { page, .. } => {
-                    let p = self.host.keys.iter().position(|k| k == &page).unwrap();
+                    let p = index(&page);
                     // The physical witness may leave surplus durable trash.
                     // Model dirSync L431/L439 certifies deletion only while
                     // its path still contains the job's absent payload. This
@@ -1083,7 +1175,7 @@ impl<F: ConformanceIo> Driver<F> {
                     }
                 }
                 Event::OperationRead { page, base: read } => {
-                    let p = self.host.keys.iter().position(|k| k == &page).unwrap();
+                    let p = index(&page);
                     insert(&mut g["opRead"][p], json!(base(&read)));
                 }
                 _ => {}
@@ -1199,6 +1291,52 @@ fn run(d: &mut Driver, actions: &[(&str, Value)]) {
         assert!(d.step(name, args.as_array().unwrap()), "{name}/{args}");
         d.prepare_operations = preparing;
     }
+}
+
+/// STEP3 §2 / §14: keys register in trace order. Lexically earlier keys
+/// joining after the first allocations, and across a crash, still refine the
+/// model under the order-preserving version map (STEP3-REVIEW-1 F8).
+#[test]
+fn lexically_earlier_keys_register_between_operations_and_across_a_crash() {
+    // Four model pages, three registered at the rename: host ranks leave
+    // fewer gaps than the model's PAGES.size() reservation (L524, L547).
+    let mut d = Driver::new("base", 4);
+    let keys = |d: &Driver| d.host.keys.iter().map(|k| index(k)).collect::<Vec<_>>();
+    run(
+        &mut d,
+        &[
+            ("wOpen", json!([2])),
+            ("deliverUp", json!([true])),
+            ("wRecv", json!([2])),
+        ],
+    );
+    assert_eq!(keys(&d), [2]);
+    run(
+        &mut d,
+        &[("opDelete", json!([1])), ("flushDel", json!([1]))],
+    );
+    assert_eq!(keys(&d), [1, 2]);
+    // A references-only rename allocates by rank over all three keys.
+    run(&mut d, &[("opRename", json!([1, 0, [2], [[2, 3]]]))]);
+    assert_eq!(keys(&d), [0, 1, 2]);
+    assert!(d.host.pages[&key(2)].risk);
+    run(&mut d, &[("crash", json!([])), ("launch", json!([]))]);
+    // The next binding registered its recovered keys only, the rewritten
+    // referrer among them; the window then opens a lexically earlier key.
+    assert!(
+        keys(&d).contains(&2) && !keys(&d).contains(&0),
+        "{:?}",
+        keys(&d)
+    );
+    run(
+        &mut d,
+        &[
+            ("wOpen", json!([0])),
+            ("deliverUp", json!([true])),
+            ("wRecv", json!([0])),
+        ],
+    );
+    assert!(keys(&d).contains(&0));
 }
 
 #[test]

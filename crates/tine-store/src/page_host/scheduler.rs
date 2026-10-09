@@ -19,22 +19,25 @@ impl Driver {
         let present = worker.task.stage == Stage::Present;
         let removal = matches!(worker.application, Some(Application::Removal(_)));
         let inc = self.host.incarnation;
-        let version = self.host.version;
         self.host.advance_draft();
-        self.register_versions(inc, version);
+        let stutter = |d: &mut Self, context: &str| {
+            let model = d.oracle.state();
+            d.learn_versions(&model, inc, context);
+            d.compare(context);
+        };
         if application {
-            let (name, mut args, inc, ver) = self.effect.take().unwrap();
-            self.register_versions(inc, ver);
+            let (name, mut args, inc, _) = self.effect.take().unwrap();
             if present || removal || name == "deliverUp" {
                 if name == "deliverUp" {
                     args[0] = json!(present);
                 }
+                self.register_versions(&name, &args, inc);
                 self.finish(&name, &args);
             } else {
-                self.compare("failed fresh install stutters");
+                stutter(self, "failed fresh install stutters");
             }
         } else {
-            self.compare("physical draft barrier");
+            stutter(self, "physical draft barrier");
         }
     }
 
@@ -91,6 +94,7 @@ impl Driver {
         }
         self.host.fs = survivor;
         self.host.stop();
+        self.fresh_binding();
         self.windows.fill(Window::default());
         self.pending_ids.fill(None);
         self.finish(
@@ -106,6 +110,10 @@ impl Driver {
     // Dispositions are fixed by the host contract, not chosen from the oracle.
     fn attempt(&mut self, name: &str, args: &[Value]) -> bool {
         let p = args.first().and_then(Value::as_u64).unwrap_or(0) as usize;
+        // The command registers what it names before the host decides (§2).
+        for q in named(name, args) {
+            self.register(q);
+        }
         // One host start_save API represents the model's two payload kinds.
         // A mismatched model spelling has no separate backend action to probe.
         if matches!(name, "flush" | "flushDel")

@@ -49,6 +49,12 @@ pub(super) struct MoveResult {
 /// One invocation exposes one publication phase. No filesystem access escapes
 /// this seam. The 2b adapter must extend the existing audited primitives.
 pub(super) trait HostIo {
+    /// The key's current spelling (STEP3 §2): page I/O and the key's path
+    /// lock use it. A key is its own spelling until `spell` says otherwise.
+    fn spelling(&self, key: &str) -> String;
+    /// Registration, or the alias spelling move (Q4), names the directory
+    /// entry `spelling`. Adapter memory only: a new binding re-registers.
+    fn spell(&mut self, key: &str, spelling: &str);
     /// Best effort only; it is not a publication or promise.
     fn graph_launch(&mut self, _pages: &std::collections::BTreeSet<String>) {}
     /// Release only this save's unpublished temporary vehicle at completion.

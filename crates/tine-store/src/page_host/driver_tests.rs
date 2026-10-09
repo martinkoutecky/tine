@@ -1,5 +1,5 @@
 //! STEP3 §1/§14: the driver thread, its lock protocol and its wakeups.
-use super::io::Phase;
+use super::io::{HostIo, Phase};
 use super::model_fs::{Fault, ModelFs};
 use super::tests::{draft, edit, host, open, risk, saved, text};
 use super::*;
@@ -202,6 +202,74 @@ fn revalidation_drops_a_planned_step_that_a_reservation_made_illegal() {
             Instant::now() < deadline,
             "the release never woke the observation"
         );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    d.join();
+}
+
+/// STEP3 §2: an alias spelling move replaces the key's path lock while the
+/// driver waits on the old one; the driver replans on the new lock instead
+/// of running the step under a lock that no longer excludes the new name.
+#[test]
+fn a_spelling_move_while_the_driver_waits_replans_on_the_new_lock() {
+    let mut h = host();
+    open(&mut h, "a.md");
+    let lock_a = h.locks["a.md"].clone();
+    let lock_b = Arc::new(Mutex::new(()));
+    let (mut d, _, _receive) = spawn(h);
+    settle(&d);
+    // The spelling move's transaction holds both spellings' locks.
+    let old = lock_a.lock().unwrap();
+    let new = lock_b.lock().unwrap();
+    let before = polls(&d);
+    d.shared.with_state(|s| {
+        s.progress.host.fs.external("a.md", text("theirs"), true);
+        s.observe.insert("a.md".into(), Default::default());
+    });
+    let blocked = Instant::now() + Duration::from_secs(5);
+    while d
+        .shared
+        .state
+        .lock()
+        .unwrap()
+        .progress
+        .host
+        .lock_request
+        .is_some()
+        || polls(&d) < before + 1
+    {
+        assert!(Instant::now() < blocked);
+        std::thread::yield_now();
+    }
+    std::thread::sleep(Duration::from_millis(50));
+    // Under its reservation the writer moves the entry and respells the key,
+    // then releases the reservation and the old spelling's lock.
+    d.shared.with_state(|s| {
+        let keys = BTreeSet::from(["a.md".to_string()]);
+        assert_eq!(s.progress.host.reserve(&keys), Disposition::Applied);
+        s.progress.host.respell("a.md", "A.md", lock_b.clone());
+        s.progress.host.retained.clear();
+    });
+    drop(old);
+    std::thread::sleep(Duration::from_millis(150));
+    let state = d.shared.state.lock().unwrap();
+    assert_eq!(
+        state.progress.host.pages["a.md"].buf,
+        text("A"),
+        "the observation ran under the old spelling's lock"
+    );
+    assert_eq!(state.progress.host.fs.spelling("a.md"), "A.md");
+    drop(state);
+    drop(new);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let state = d.shared.state.lock().unwrap();
+        if state.observe.is_empty() {
+            assert_eq!(state.progress.host.pages["a.md"].buf, text("theirs"));
+            break;
+        }
+        drop(state);
+        assert!(Instant::now() < deadline, "the new lock never ran the step");
         std::thread::sleep(Duration::from_millis(5));
     }
     d.join();

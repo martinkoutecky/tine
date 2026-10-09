@@ -680,6 +680,41 @@ fn launch_seeds_all_readable_versions_and_canonical_unknown_base() {
         .all(|(name, _)| name.starts_with("p-")));
 }
 
+/// STEP3 §1: launch plans its path locks before any side effect, so the
+/// driver's revalidating poll is the first to quarantine or report.
+#[test]
+fn launch_takes_its_locks_before_quarantining_an_unreadable_vehicle() {
+    let mut h = host();
+    let record = Record {
+        page: "a.md".into(),
+        wseq: 1,
+        version: 1,
+        base: Base::Unknown,
+        bytes: text("one"),
+    };
+    let name = drafts::page_name("a.md");
+    h.fs.draft_temp(&name, &drafts::encode(&[record])).unwrap();
+    h.fs.draft_rename(&name).unwrap();
+    h.fs.files.insert(
+        "draft/p-corrupt.draft".into(),
+        Arc::from(b"torn".as_slice()),
+    );
+    h.stop();
+    h.fs.crash();
+    h.held = Some(BTreeSet::new());
+    assert_eq!(h.launch(), Disposition::Waiting);
+    assert_eq!(h.lock_request, Some(BTreeSet::from(["a.md".into()])));
+    assert!(h.fs.files.contains_key("draft/p-corrupt.draft"));
+    assert!(h.events.is_empty());
+    h.held = h.lock_request.take();
+    assert!(matches!(
+        h.launch(),
+        Disposition::Applied | Disposition::Pending
+    ));
+    assert!(!h.fs.files.contains_key("draft/p-corrupt.draft"));
+    assert_eq!(h.pages["a.md"].buf, text("one"));
+}
+
 #[test]
 fn unreadable_files_are_preserved_and_equal_wseq_disagreement_is_quarantined() {
     let mut h = host();

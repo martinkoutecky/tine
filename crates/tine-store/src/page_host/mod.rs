@@ -1461,6 +1461,43 @@ impl<F: HostIo> Host<F> {
         }
     }
 
+    /// STEP3 §2 registration: a key with no page, the model's state of a
+    /// path with no file and no buffer, so no transition; it widens the key
+    /// set the proof quantifies over. Keys are never unregistered within a
+    /// binding, and a registered key keeps its spelling and lock handle.
+    /// `spelling` names the key's directory entry (the store's case-alias
+    /// resolution) and `lock` is `Graph::page_lock` of that spelling.
+    fn register(&mut self, key: PageKey, spelling: &str, lock: Arc<Mutex<()>>) {
+        if self.keys.insert(key.clone()) {
+            self.fs.spell(&key, spelling);
+            self.locks.insert(key, lock);
+        }
+    }
+
+    /// The alias spelling move (STEP3 §2, Q4): on a folding volume the
+    /// retained writer moved the key's entry to `spelling`, which the old
+    /// spelling still names. The key, its page, drafts and every queued
+    /// request stay; I/O and the path lock follow the new spelling. A move
+    /// to an absent distinct path is a host rename between two keys instead.
+    fn respell(&mut self, key: &str, spelling: &str, lock: Arc<Mutex<()>>) {
+        assert!(
+            self.retained.contains(key),
+            "a spelling move runs under the key's reservation"
+        );
+        self.fs.spell(key, spelling);
+        self.locks.insert(key.into(), lock);
+    }
+
+    /// The keys `launch` recovers from the readable draft census; the
+    /// binding registers them first. Custody markers name exact key strings
+    /// and their settling takes no page lock, so they need no registration.
+    fn recovered_keys(&self) -> BTreeSet<PageKey> {
+        drafts::scan(self.fs.draft_files(false))
+            .logical
+            .into_keys()
+            .collect()
+    }
+
     fn reserve(&mut self, keys: &BTreeSet<PageKey>) -> Disposition {
         if !keys.is_subset(&self.keys) {
             return Disposition::Refused;
@@ -1603,19 +1640,20 @@ impl<F: HostIo> Host<F> {
             return Disposition::Disabled;
         }
         let scan = drafts::scan(self.fs.draft_files(false));
-        for name in &scan.unreadable {
-            self.events.push(Event::Unreadable(name.clone()));
-            if self.fs.quarantine(name).is_err() {
-                return Disposition::Pending;
-            }
-        }
         if !scan.logical.keys().all(|key| self.keys.contains(key)) {
             // Caller must provide shared locks for every recovered key.
             return Disposition::Refused;
         }
         let keys = scan.logical.keys().cloned().collect();
+        // Plan before the first side effect (STEP3 §1): quarantine included.
         if self.lacks_locks(&keys) {
             return Disposition::Waiting;
+        }
+        for name in &scan.unreadable {
+            self.events.push(Event::Unreadable(name.clone()));
+            if self.fs.quarantine(name).is_err() {
+                return Disposition::Pending;
+            }
         }
         self.version = scan.max_version;
         self.wseq = scan.max_wseq;
