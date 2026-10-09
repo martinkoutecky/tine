@@ -8,6 +8,7 @@ mod io;
 #[cfg(test)]
 mod model_fs;
 mod operations;
+mod progress;
 #[cfg(test)]
 mod tests;
 
@@ -150,6 +151,10 @@ enum Outcome {
 /// Events originate here, never from an oracle's expected successor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Event {
+    Loaded {
+        page: PageKey,
+        version: u64,
+    },
     Answer {
         page: PageKey,
         answer: Answer,
@@ -447,6 +452,32 @@ impl<F: HostIo> Host<F> {
         }
     }
 
+    fn load(&mut self, key: &str) -> Disposition {
+        if !self.alive || !self.keys.contains(key) || self.pages.contains_key(key) {
+            return Disposition::Disabled;
+        }
+        if self.busy(key) || self.allocator_busy() {
+            return Disposition::Waiting;
+        }
+        self.with_locks(&BTreeSet::from([key.into()]), |host| host.load_locked(key))
+    }
+
+    fn load_locked(&mut self, key: &str) -> Disposition {
+        if self.pages.contains_key(key) {
+            return Disposition::Disabled;
+        }
+        let Ok(bytes) = self.fs.read_page(key) else {
+            return Disposition::Refused;
+        };
+        self.version = self.next_version();
+        self.set_page(key, Some(Self::initial_page(bytes, self.version)));
+        self.events.push(Event::Loaded {
+            page: key.into(),
+            version: self.version,
+        });
+        Disposition::Applied
+    }
+
     /// Dequeue is a distinct barrier, retaining the entry in abstract_queue.
     fn dequeue(&mut self) -> Disposition {
         if !self.alive || self.applying.is_some() {
@@ -611,7 +642,10 @@ impl<F: HostIo> Host<F> {
     /// Logical entries are computed from durable files and the actual worker.
     /// Pending removal retains its previous entry; pending install is excluded.
     fn logical_drafts(&self) -> BTreeMap<PageKey, Record> {
-        let mut files = self.fs.draft_files(true);
+        // While stopped, recovery's readable directory is the projection. A
+        // process crash may retain a renamed vehicle without a sync witness;
+        // launch will make those recovered names durable before retirement.
+        let mut files = self.fs.draft_files(self.alive);
         if let Some(worker) = &self.worker {
             if worker.application.is_some() && worker.task.bytes.is_some() {
                 files.retain(|(name, _)| name != &worker.task.name);

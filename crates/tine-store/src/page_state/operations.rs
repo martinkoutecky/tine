@@ -33,6 +33,28 @@ pub(super) fn op_edit(s: &Sys, p: usize, t: Text, v: i64) -> Page {
 pub(super) fn op_clean(s: &Sys, p: usize) -> bool {
     !s.pages[p].held || clean(&s.pages[p])
 }
+/// Quint s3.1: load — one path, no window request or draft effect.
+pub(super) fn load(x: &State, p: usize) -> Option<State> {
+    if !x.s.alive || x.s.pages[p].held {
+        return None;
+    }
+    let mut s = x.s.clone();
+    let mut g = x.g.clone();
+    g.vc = next(g.vc);
+    s.pages[p] = Page {
+        held: true,
+        buf: s.disk[p],
+        base: s.disk[p],
+        obs: s.disk[p],
+        ver: g.vc,
+        ..nopage()
+    };
+    commit(x, s, g, "load")
+}
+/// Quint s3.1: opHeld; MUL deliberately restores read-inside-operation.
+fn op_held(x: &State, ps: &BTreeSet<usize>) -> bool {
+    x.config.mutant("MUL") || ps.iter().all(|p| x.s.pages[*p].held)
+}
 /// Quint: opFree
 pub(super) fn op_free(x: &State, ps: &BTreeSet<usize>) -> bool {
     !(x.s.job.on && ps.contains(&x.s.job.p))
@@ -56,6 +78,7 @@ pub(super) fn op_rename(
     if !x.s.alive
         || src == dst
         || !op_free(x, &all3)
+        || !op_held(x, &all3.union(&BTreeSet::from([src])).copied().collect())
         || !refs.iter().all(|r| *r != src && *r != dst)
         || (full && !op_clean(&x.s, src))
         || (full
@@ -145,6 +168,7 @@ pub(super) fn op_delete(x: &State, p: usize) -> Option<State> {
     let pg = &x.s.pages[p];
     if !x.s.alive
         || !op_free(x, &BTreeSet::from([p]))
+        || !op_held(x, &BTreeSet::from([p]))
         || !op_clean(&x.s, p)
         || op_cur(&x.s, p) == ABSENT
     {

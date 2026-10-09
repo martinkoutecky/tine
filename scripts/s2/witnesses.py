@@ -276,8 +276,9 @@ GUARDS = {
 
 
 GUARDS.update({
+    "load": "s.alive and not(s.pages.get(p).held)",
     "wOpTo": "s.alive and p != q and s.w.get(p).on and s.w.get(q).on and not(s.w.get(p).pend) and not(s.w.get(p).sent) and not(s.w.get(q).pend) and not(s.w.get(q).sent) and ds != s.w.get(p).text and dd != s.w.get(q).text",
-    "opDelete": "s.alive and opFree(Set(p)) and opClean(s, p) and opCur(s, p) != ABSENT",
+    "opDelete": "s.alive and opHeld(Set(p)) and opFree(Set(p)) and opClean(s, p) and opCur(s, p) != ABSENT",
     "flushDel": "s.alive and not(s.job.on) and s.pages.get(p).held and not(s.pages.get(p).conflict) and s.pages.get(p).buf == ABSENT and dirty(s.pages.get(p))",
 })
 # Short s3 witnesses exercise page-operation custody, historical exemptions,
@@ -287,7 +288,7 @@ WITNESSES["observe-last-read-after-own-save"] = {
     "predicate": "s.pages.get(0).buf == 1 and s.pages.get(0).obs == 1",
 }
 WITNESSES["cli-rename-trash-and-launch"] = {
-    "profile": "base", "actions": [("opRenameRaw", [0,2,0,1,0,3,3,3]),
+    "profile": "base", "actions": [("load",[0]),("load",[1]),("load",[2]),("opRenameRaw", [0,2,0,1,0,3,3,3]),
         ("flushDel",[0]),("check",[]),("rename",[]),("dirSync",[1]),("draftSync",[0]),
         ("crash",[]),("launch",[]),("observe",[1]),("observe",[2]),
         ("flush",[2]),("check",[]),("rename",[]),("dirSync",[1]),
@@ -295,35 +296,36 @@ WITNESSES["cli-rename-trash-and-launch"] = {
     "predicate": "s.disk.get(2) == 1 and s.disk.get(1) == 3 and s.trash.get(0) == Set(1)",
 }
 WITNESSES["cli-delete-r1-unflushed-trash"] = {
-    "profile": "R1", "actions": [("opDelete",[0]),("flushDel",[0]),("check",[]),
+    "profile": "R1", "actions": [("load",[0]),("opDelete",[0]),("flushDel",[0]),("check",[]),
         ("extWriteD",[0,3,0]),("rename",[]),("dirSync",[0]),("powerKBits",[1,0,0])],
     "predicate": "s.trash.get(0) == Set(3) and g.removed.get(0) == Set(3)",
 }
 WITNESSES["delete-rollback-trash"] = {
-    "profile": "base", "actions": [("opDelete",[1]),("flushDel",[1]),("check",[]),
+    "profile": "base", "actions": [("load",[1]),("opDelete",[1]),("flushDel",[1]),("check",[]),
         ("rename",[]),("powerKBits",[0,0,0]),("launch",[]),("observe",[1])],
     "predicate": "s.disk.get(1) == 2 and s.trash.get(1) == Set() and s.pages.get(1).risk",
 }
 WITNESSES["delete-keep-third-path"] = {
-    "profile": "base", "actions": [("extWriteD",[2,3,0]),("opDelete",[2]),
+    "profile": "base", "actions": [("extWriteD",[2,3,0]),("load",[2]),("opDelete",[2]),
         ("flushDel",[2]),("check",[]),("rename",[]),("powerKBits",[0,0,1])],
     "predicate": "s.disk.get(2) == ABSENT and s.trash.get(2) == Set(3)",
 }
 WITNESSES["rename-refs-only-no-source"] = {
-    "profile": "base", "actions": [("opRenameRaw",[2,0,0,1,0,1,3,1])],
-    "predicate": "s.pages.get(1).buf == 3 and s.pages.get(0) == NOPAGE and g.vc == 3",
+    "profile": "base", "actions": [("load",[2]),("load",[1]),("opRenameRaw",[2,0,0,1,0,1,3,1])],
+    "predicate": "s.pages.get(1).buf == 3 and s.pages.get(0) == NOPAGE and g.vc == 5",
 }
 WITNESSES["rename-clean-held-absent-destination"] = {
     "profile": "base", "actions": [("wOpen",[2]),("deliverUp",[1]),("wRecv",[2]),
+        ("load",[0]),("load",[1]),
         ("opRenameRaw",[0,2,0,1,0,3,3,3])],
     "predicate": "s.pages.get(2).buf == 1 and s.pages.get(2).base == ABSENT",
 }
 WITNESSES["rename-clobbered-held-target-fault"] = {
-    "profile": "base", "mutant": "MRN3", "actions": OPEN + [("opRenameRaw",[1,0,0,0,0,3,3,3])],
+    "profile": "base", "mutant": "MRN3", "actions": OPEN + [("load",[1]),("opRenameRaw",[1,0,0,0,0,3,3,3])],
     "predicate": "g.bad.contains(\"rename-clobbered-target\")",
 }
 WITNESSES["rename-dirty-referrer-fault"] = {
-    "profile": "base", "mutant": "MRN2", "actions": OPEN + EDIT + [("opRenameRaw",[1,2,1,0,0,3,3,3])],
+    "profile": "base", "mutant": "MRN2", "actions": OPEN + EDIT + [("load",[1]),("load",[2]),("opRenameRaw",[1,2,1,0,0,3,3,3])],
     "predicate": "g.bad.contains(\"D4-unclean-page-changed\")",
 }
 WITNESSES["delete-stale-window"] = {
@@ -332,36 +334,36 @@ WITNESSES["delete-stale-window"] = {
 }
 WITNESSES["one-path-delete-and-restore"] = {
     "profile": "base", "pages": 1,
-    "actions": [("opDelete",[0]),("crash",[]),("launch",[]),("flushDel",[0]),
+    "actions": [("load",[0]),("opDelete",[0]),("crash",[]),("launch",[]),("flushDel",[0]),
         ("check",[]),("rename",[]),("dirSync",[1])],
     "predicate": "s.disk.get(0) == ABSENT and s.trash.get(0) == Set(1)", "guards": False,
 }
 WITNESSES["two-path-rename-and-restore"] = {
     "profile": "base", "pages": 2,
-    "actions": [("extWriteD",[1,-1,1]),("opRenameRaw",[0,1,0,0,0,3,3,3]),
+    "actions": [("extWriteD",[1,-1,1]),("load",[0]),("load",[1]),("opRenameRaw",[0,1,0,0,0,3,3,3]),
         ("crash",[]),("launch",[])],
-    "predicate": "s.pages.get(0).buf == ABSENT and s.pages.get(1).buf == 1 and g.vc == 4", "guards": False,
+    "predicate": "s.pages.get(0).buf == ABSENT and s.pages.get(1).buf == 1 and g.vc == 6", "guards": False,
 }
 WITNESSES["five-path-sparse-launch-versions"] = {
     "profile": "base", "pages": 5,
-    "actions": [("opRenameRaw",[0,4,0,1,0,3,3,3]),("crash",[]),("launch",[])],
-    "predicate": "s.pages.get(0).ver == 6 and s.pages.get(1).ver == 7 and s.pages.get(4).ver == 8 and g.vc == 8", "guards": False,
+    "actions": [("load",[0]),("load",[1]),("load",[4]),("opRenameRaw",[0,4,0,1,0,3,3,3]),("crash",[]),("launch",[])],
+    "predicate": "s.pages.get(0).ver == 9 and s.pages.get(1).ver == 10 and s.pages.get(4).ver == 11 and g.vc == 11", "guards": False,
 }
 WITNESSES["fault-trash-disk-fallback"] = {
     "profile": "base", "mutant": "MDT",
-    "actions": [("opDelete",[0]),("flushDel",[0]),("check",[]),("rename",[]),
+    "actions": [("load",[0]),("opDelete",[0]),("flushDel",[0]),("check",[]),("rename",[]),
         ("dirSync",[1]),("extWriteD",[0,1,1])],
     "predicate": "trashed and s.trash.get(0) == Set() and g.removed.get(0) == Set(1)",
 }
 WITNESSES["ended-deletion-promise-watermark-has-old-bytes"] = {
     "profile": "base",
-    "actions": [("opDelete",[0]),("flushDel",[0]),("check",[]),("rename",[]),("dirSync",[1])]
+    "actions": [("load",[0]),("opDelete",[0]),("flushDel",[0]),("check",[]),("rename",[]),("dirSync",[1])]
         + OPEN + EDIT + [("wRecv",[0]),("flush",[0]),("check",[]),("rename",[]),("dirSync",[0]),
             ("wDiscard",[0]),("deliverUp",[1]),("flush",[0])],
     "predicate": "s.job.on and not(g.promise.get(0).on) and g.promise.get(0).saved and g.promise.get(0).ver == s.job.ver and g.promise.get(0).bytes != s.job.bytes",
 }
 WITNESSES["delete-conflict-blocks-flush-del"] = {
-    "profile": "base", "actions": [("opDelete",[0]),("extWriteD",[0,3,1]),("observe",[0])],
+    "profile": "base", "actions": [("load",[0]),("opDelete",[0]),("extWriteD",[0,3,1]),("observe",[0])],
     "predicate": "s.pages.get(0).buf == ABSENT and s.pages.get(0).conflict and s.disk.get(0) == 3",
 }
 for label, k0, k1, expected in [("keeps-second",0,1,3),("reverts-second",0,0,2),("keeps-first-only",1,0,2)]:
@@ -381,7 +383,7 @@ def guard_oracle():
                    [range(3), [-1, 1, 2, 3], [0, 1]] if name == "extWriteD" else
                    [[0, 1], [0, 1]] if name == "power" else
                    [[0, 1]] if name in ["deliverUp", "dirSync"] else
-                   [range(3)] if name in ["wOpen", "wSend", "wDiscard", "wClose", "wRecv", "observe", "flush", "draftSync", "opDelete", "flushDel"] else [])
+                   [range(3)] if name in ["wOpen", "wSend", "wDiscard", "wClose", "wRecv", "observe", "load", "flush", "draftSync", "opDelete", "flushDel"] else [])
         for args in itertools.product(*domains):
             params = (["p", "v"] if name in ["wEdit", "wResolve", "extWriteD"] else
                       ["p", "ds", "dd"] if name == "wOp" else ["p","q","ds","dd"] if name == "wOpTo" else ["p"])
@@ -406,7 +408,7 @@ def guard_oracle():
     val full = opCur(sys, src) != ABSENT
     val named = if (full) Set(src, dst) else Set()
     val all3 = named.union(refs)
-    sys.alive and src != dst and opFree(all3) and refs.forall(r => r != src and r != dst)
+    sys.alive and src != dst and opHeld(all3.union(Set(src))) and opFree(all3) and refs.forall(r => r != src and r != dst)
       and (not(full) or opClean(sys, src))
       and (not(full) or (opCur(sys, dst) == ABSENT and opClean(sys, dst)))
       and refs.forall(r => opClean(sys, r)) and all3 != Set()

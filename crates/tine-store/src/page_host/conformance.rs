@@ -69,6 +69,9 @@ struct Driver {
     profile: String,
     barriers: usize,
     actions: usize,
+    stepped: bool,
+    prepare_operations: bool,
+    effect: Option<(String, Vec<Value>, u64, u64)>,
 }
 
 impl Driver {
@@ -98,6 +101,9 @@ impl Driver {
             profile: profile.into(),
             barriers: 0,
             actions: 0,
+            stepped: false,
+            prepare_operations: false,
+            effect: None,
         }
     }
 
@@ -140,6 +146,9 @@ impl Driver {
             drafts::scan(self.host.fs.draft_files(false)).max_version
         };
         for raw in start + 1..=self.host.version {
+            if self.versions.contains_key(&(self.host.incarnation, raw)) {
+                continue;
+            }
             self.counter += 1;
             self.versions
                 .insert((self.host.incarnation, raw), self.counter);
@@ -365,6 +374,11 @@ impl Driver {
     }
 
     fn drain(&mut self, name: &str, args: &[Value], old_inc: u64, old_version: u64) {
+        if self.stepped {
+            assert!(self.effect.is_none());
+            self.effect = Some((name.into(), args.to_vec(), old_inc, old_version));
+            return;
+        }
         let mut applied = false;
         for _ in 0..200 {
             let Some(worker) = &self.host.worker else {
@@ -388,6 +402,41 @@ impl Driver {
     }
 
     fn step(&mut self, name: &str, args: &[Value]) -> bool {
+        if self.prepare_operations
+            && self.host.alive
+            && matches!(
+                name,
+                "opDelete" | "opRename" | "opRenameRaw" | "opRenamePacked"
+            )
+        {
+            let p = args[0].as_u64().unwrap() as usize;
+            if !self.host.pages.contains_key(&key(p)) {
+                assert!(self.step("load", &[json!(p)]));
+            }
+            if name != "opDelete" {
+                let q = args[1].as_u64().unwrap() as usize;
+                let mut needed: BTreeSet<usize> = if name == "opRename" {
+                    serde_json::from_value(args[2].clone()).unwrap()
+                } else {
+                    (0..3)
+                        .filter(|&i| {
+                            args[2 + i]
+                                .as_bool()
+                                .unwrap_or_else(|| args[2 + i].as_i64() == Some(1))
+                                && (name == "opRenameRaw" || i != p && i != q)
+                        })
+                        .collect()
+                };
+                if self.host.pages[&key(p)].buf.is_some() {
+                    needed.insert(q);
+                }
+                for r in needed {
+                    if !self.host.pages.contains_key(&key(r)) {
+                        assert!(self.step("load", &[json!(r)]));
+                    }
+                }
+            }
+        }
         let successor = self.oracle.next(name, args);
         if successor.is_none() {
             return false;
@@ -398,6 +447,9 @@ impl Driver {
         let old_inc = self.host.incarnation;
         let old_version = self.host.version;
         match name {
+            "load" => {
+                assert_eq!(self.host.load(&key(p)), Disposition::Applied);
+            }
             "wOpen" => {
                 self.windows[p].sent = true;
                 self.admit(p, RequestKind::Open);
@@ -460,7 +512,7 @@ impl Driver {
             }
             "wRecv" => self.receive(p),
             "deliverUp" => {
-                let kind = self.host.queue.front().unwrap().kind.clone();
+                let kind = self.host.abstract_queue()[0].kind.clone();
                 if !b(0) {
                     let phase = if matches!(kind, RequestKind::Move { .. }) {
                         Phase::DraftTemp
@@ -471,7 +523,9 @@ impl Driver {
                         self.host.fs.inject(phase, [Fault::Before]);
                     }
                 }
-                assert_eq!(self.host.dequeue(), Disposition::Pending);
+                if self.host.applying.is_none() {
+                    assert_eq!(self.host.dequeue(), Disposition::Pending);
+                }
                 self.compare("dequeue");
                 self.host.apply_request();
                 if self.host.worker.is_none() {
@@ -479,7 +533,7 @@ impl Driver {
                     // move performs no read/install and consumes no fault.
                     self.host.fs.faults.clear();
                 }
-                if self.host.worker.is_some() {
+                if self.host.applying.is_some() && self.host.worker.is_some() {
                     self.compare("install pending");
                     self.drain(name, args, old_inc, old_version);
                     return true;
@@ -490,7 +544,7 @@ impl Driver {
             }
             "flush" | "flushDel" => {
                 assert_eq!(self.host.start_save(&key(p)), Disposition::Pending);
-                if name == "flush" {
+                if name == "flush" && !self.stepped {
                     self.host.advance_save(0);
                 }
             }
@@ -624,7 +678,7 @@ impl Driver {
                 self.host.launch();
                 self.register_versions(old_inc, old_version);
                 self.finish(name, args);
-                while self.host.worker.is_some() {
+                while !self.stepped && self.host.worker.is_some() {
                     self.host.advance_draft();
                     self.compare("launch representation");
                 }
@@ -918,9 +972,15 @@ impl Driver {
     }
 }
 
+#[path = "scheduler.rs"]
+mod scheduler;
+
 fn run(d: &mut Driver, actions: &[(&str, Value)]) {
     for (name, args) in actions {
+        let preparing = d.prepare_operations;
+        d.prepare_operations = true;
         assert!(d.step(name, args.as_array().unwrap()), "{name}/{args}");
+        d.prepare_operations = preparing;
     }
 }
 
@@ -1127,7 +1187,7 @@ fn all_s3_scenarios_in_four_profiles() {
             comparisons += 1;
         }
     }
-    assert_eq!(comparisons, 480);
+    assert_eq!(comparisons, 572);
     eprintln!("host scenarios: {comparisons} outcomes / {actions} actions / {barriers} barriers");
 }
 
@@ -1188,4 +1248,20 @@ fn committed_witnesses_through_host() {
     let (traces, actions, barriers) = replay(&fixture);
     assert!(traces > 0);
     eprintln!("host witnesses: {traces} traces / {actions} actions / {barriers} barriers");
+}
+
+#[test]
+#[cfg(test)]
+fn short_witnesses_through_host() {
+    // Keep the diagnostic-bound traces in the ordinary full replay. Mutation
+    // sweeps use this subset to avoid repeating 8,000 counter-only actions.
+    let mut fixture: Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/s2/witnesses.json")).unwrap();
+    fixture["traces"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|trace| trace["states"].as_array().unwrap().len() <= 100);
+    let (traces, actions, barriers) = replay(&fixture);
+    assert_eq!(traces, 38);
+    eprintln!("short host witnesses: {traces} traces / {actions} actions / {barriers} barriers");
 }

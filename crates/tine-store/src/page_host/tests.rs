@@ -2,6 +2,11 @@ use super::io::Phase;
 use super::model_fs::{Fault, ModelFs};
 use super::*;
 
+#[path = "mutation_tests.rs"]
+mod mutation_tests;
+#[path = "progress_tests.rs"]
+mod progress_tests;
+
 fn text(bytes: &str) -> Text {
     Some(Arc::from(bytes.as_bytes()))
 }
@@ -680,7 +685,9 @@ fn retained_reservation_blocks_save_and_reconciles_undo_or_publication() {
 
 #[test]
 fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = option_env!("TINE_HOST_REPO_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     fn visit(root: &std::path::Path, dir: &std::path::Path) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
@@ -718,6 +725,7 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
         include_str!("mod.rs"),
         include_str!("drafts.rs"),
         include_str!("operations.rs"),
+        include_str!("progress.rs"),
         include_str!("io.rs"),
     ] {
         for line in source

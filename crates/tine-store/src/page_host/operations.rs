@@ -8,14 +8,25 @@ impl<F: HostIo> Host<F> {
         if let Some(page) = self.pages.get(key) {
             Ok(page.clone())
         } else {
-            self.fs
-                .read_page(key)
-                .map(|bytes| Self::initial_page(bytes, 0))
-                .map_err(|_| ())
+            // s3.1: the read is a visible load before operation capture.
+            if self.load_locked(key) == Disposition::Applied {
+                Ok(self.pages[key].clone())
+            } else {
+                Err(())
+            }
         }
     }
 
     pub(super) fn delete(&mut self, key: &str) -> Disposition {
+        self.delete_with_load(key, true)
+    }
+
+    #[cfg(test)]
+    pub(super) fn delete_loaded(&mut self, key: &str) -> Disposition {
+        self.delete_with_load(key, false)
+    }
+
+    fn delete_with_load(&mut self, key: &str, load: bool) -> Disposition {
         if !self.alive || !self.keys.contains(key) {
             return Disposition::Disabled;
         }
@@ -23,6 +34,9 @@ impl<F: HostIo> Host<F> {
             return Disposition::Waiting;
         }
         self.with_locks(&BTreeSet::from([key.into()]), |host| {
+            if !load && !host.pages.contains_key(key) {
+                return Disposition::Refused;
+            }
             let Ok(mut page) = host.operation_page(key) else {
                 return Disposition::Refused;
             };
@@ -124,34 +138,36 @@ impl<F: HostIo> Host<F> {
                 }
             }
         }
-        // Read source under its own lock first; the complete key set is then
-        // acquired in canonical order and re-read before allocation/install.
+        // A known dirty referrer already disproves the operation guard;
+        // refuse before loading any other path.
+        if refs
+            .iter()
+            .any(|key| self.pages.get(key).is_some_and(|p| !p.clean()))
+        {
+            return Disposition::Refused;
+        }
+        // Acquire the possible operation paths before the first load. An
+        // absent source may make source/target unchanged; no path read for the
+        // unused target is required in that branch.
         if self.retained.contains(source) {
             return Disposition::Waiting;
         }
-        let initial = self.with_locks(&BTreeSet::from([source.into()]), |host| {
-            host.operation_page(source)
-        });
-        let Ok(source_page) = initial else {
-            return Disposition::Refused;
-        };
-        let full = source_page.buf.is_some();
-        let mut keys = refs.clone();
-        if full {
-            keys.extend([source.into(), target.into()]);
-        }
-        if keys.is_empty() {
-            return Disposition::Refused;
-        }
-        if keys.iter().any(|key| self.busy(key)) {
-            return Disposition::Waiting;
-        }
-        self.with_locks(&keys, |host| {
+        let mut locks = refs.clone();
+        locks.extend([source.into(), target.into()]);
+        self.with_locks(&locks, |host| {
             let Ok(src) = host.operation_page(source) else {
                 return Disposition::Refused;
             };
-            if src.buf.is_some() != full {
+            let full = src.buf.is_some();
+            let mut keys = refs.clone();
+            if full {
+                keys.extend([source.into(), target.into()]);
+            }
+            if keys.is_empty() {
                 return Disposition::Refused;
+            }
+            if keys.iter().any(|key| host.busy(key)) {
+                return Disposition::Waiting;
             }
             let mut pages = BTreeMap::new();
             let mut reads = BTreeMap::new();

@@ -139,6 +139,7 @@ pub(super) fn action(name: &str, args: &[Value]) -> Action {
         "wOp" => Action::WOp(p(), v(1), v(2)),
         "wOpTo" => Action::WOpTo(p(), v(1) as usize, v(2), v(3)),
         "opDelete" => Action::OpDelete(p()),
+        "load" => Action::Load(p()),
         "flushDel" => Action::FlushDel(p()),
         "opRename" => Action::OpRename(
             p(),
@@ -194,6 +195,62 @@ pub(super) fn action(name: &str, args: &[Value]) -> Action {
     }
 }
 
+#[test]
+fn s31_load_is_one_unheld_path_and_keeps_the_loaded_snapshot() {
+    let x = init(config("base", "none"));
+    let loaded = step(&x, Action::Load(0)).unwrap();
+    assert_eq!(
+        loaded.s.pages[0],
+        Page {
+            held: true,
+            buf: 1,
+            base: 1,
+            obs: 1,
+            ver: 1,
+            ..nopage()
+        }
+    );
+    assert!(step(&loaded, Action::Load(0)).is_none());
+    let external = step(&loaded, Action::ExtWriteD(0, 3, true)).unwrap();
+    assert_eq!(external.s.pages[0], loaded.s.pages[0]);
+    let absent = step(&external, Action::Load(2)).unwrap();
+    assert_eq!(
+        absent.s.pages[2],
+        Page {
+            held: true,
+            buf: ABSENT,
+            base: ABSENT,
+            obs: ABSENT,
+            ver: 2,
+            ..nopage()
+        }
+    );
+    assert!(guarantee(&absent));
+    assert!(step(&step(&absent, Action::Crash).unwrap(), Action::Load(1)).is_none());
+}
+
+#[test]
+fn s31_delete_and_rename_refuse_missing_held_pages() {
+    let x = init(config("base", "none"));
+    assert!(step(&x, Action::OpDelete(0)).is_none());
+    assert!(step(&step(&x, Action::Load(0)).unwrap(), Action::OpDelete(0)).is_some());
+    let refs = BTreeSet::from([1]);
+    let rt = std::collections::BTreeMap::from([(1, 3)]);
+    for missing in 0..3 {
+        let mut partial = x.clone();
+        for p in (0..3).filter(|p| *p != missing) {
+            partial = step(&partial, Action::Load(p)).unwrap();
+        }
+        assert!(step(&partial, Action::OpRename(0, 2, refs.clone(), rt.clone())).is_none());
+        partial = step(&partial, Action::Load(missing)).unwrap();
+        assert!(step(&partial, Action::OpRename(0, 2, refs.clone(), rt.clone())).is_some());
+    }
+    let mut refs_only = step(&x, Action::Load(2)).unwrap();
+    refs_only = step(&refs_only, Action::Load(1)).unwrap();
+    assert!(step(&refs_only, Action::OpRename(2, 0, refs, rt)).is_some());
+    assert!(!refs_only.s.pages[0].held);
+}
+
 fn program(ops: &[Value], x: &mut State) -> Result<(), &'static str> {
     for op in ops {
         match op[0].as_str().unwrap() {
@@ -244,10 +301,10 @@ fn scenario_outcomes_equal_quint_in_all_profiles_and_mutants() {
     assert_eq!(fixture["model_sha256"], MODEL_SHA);
     assert_eq!(
         fixture["scenario_sha256"],
-        "b446ab25e60e140c16ebd1bf4e73054e3de78928f0087ed712ed4151d2cdf530"
+        "4b4e2720a645afbb0ca71d034ff639a557bcf4f62abb886a105aec566b8504a5"
     );
     let scenarios = fixture["scenarios"].as_object().unwrap();
-    assert_eq!(scenarios.len(), 120);
+    assert_eq!(scenarios.len(), 143);
     assert_eq!(fixture["oracles"].as_array().unwrap().len(), 31);
     let mut comparisons = 0;
     for oracle in fixture["oracles"].as_array().unwrap() {
@@ -266,7 +323,7 @@ fn scenario_outcomes_equal_quint_in_all_profiles_and_mutants() {
             comparisons += 1;
         }
     }
-    assert_eq!(comparisons, 3720);
+    assert_eq!(comparisons, 4433);
 }
 
 #[test]

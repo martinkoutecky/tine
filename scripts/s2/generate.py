@@ -7,6 +7,8 @@ All generated models, logs and ITF files stay in this worktree's scratch/.
 import argparse, ast, hashlib, json, os, re, subprocess
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+
 def lex(s):
     return re.findall(r'"[^"]*"|\d+|[A-Za-z_][\w\x27]*|==|!=|>=|<=|->|=>|[^\s]', s)
 
@@ -52,8 +54,9 @@ def name(e):
     return e[1] if e[0]=='id' else None
 
 
-SHA = "baaaeab459890ea8b09c49dbd0ab506489c372c944c71aec8b12f43e3ebba557"
-SCENARIO_SHA = "b446ab25e60e140c16ebd1bf4e73054e3de78928f0087ed712ed4151d2cdf530"
+SHA = "614f82a83d61007d6e1a90747c71b350caa407e0c908699510b74ddba88c883f"
+SCENARIO_SHA = "4b4e2720a645afbb0ca71d034ff639a557bcf4f62abb886a105aec566b8504a5"
+SCENARIO_COUNT = 143
 PROFILES = {
     "base": 'Set("crash", "power")',
     "R1": 'Set("crash", "power", "R1")',
@@ -71,7 +74,7 @@ def scenarios(source):
         body = source[m.end():matches[i+1].start() if i+1 < len(matches) else len(source)].strip()
         definitions[n] = (re.findall(r"(\w+)\s*:", params or ""), parse(body))
         if kind == "run": runs.append(n)
-    assert len(runs) == 120
+    assert len(runs) == SCENARIO_COUNT
     def predicate(e):
         if isinstance(e, list): return [predicate(a) for a in e]
         if not isinstance(e, tuple): return e
@@ -104,6 +107,9 @@ def scenarios(source):
     return {n: expand(("id", n)) for n in runs}
 
 def command(args, log, env):
+    if Path(str(args[0])).name == "quint":
+        agents = Path(env.get("TINE_AGENTS", ROOT.parent / "tine-agents"))
+        args = ["flock", agents / "og/.tlc.lock", *args]
     r = subprocess.run(["rtk", "proxy", *map(str, args)], text=True, capture_output=True, env=env)
     log.write_text(r.stdout+r.stderr)
     return r
@@ -137,7 +143,7 @@ def traced_model(model):
         call = n + ("(" + ", ".join(args) + ")" if args else "")
         group = bind + ' all { ' + call + ', traceAction\' = { name: "' + n + '", args: List(' + ", ".join(encoded) + ') } }'
         groups.extend([group] * weights.get(n, 1))
-    for n in ["wOpen", "wSend", "wDiscard", "wClose", "wRecv", "flush", "observe", "draftSync"]:
+    for n in ["wOpen", "wSend", "wDiscard", "wClose", "wRecv", "flush", "observe", "draftSync", "load"]:
         emit(n, ["p"], "nondet p = PAGES.oneOf()")
     for n in ["wEdit", "wResolve"]:
         emit(n, ["p", "v"], "nondet p = PAGES.oneOf() nondet v = TEXTS.oneOf()")
@@ -163,6 +169,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("model_dir", type=Path)
     ap.add_argument("--quint", type=Path)
+    ap.add_argument("--scenario-source", type=Path, required=True, help="authoritative s3.1 scenarios (og/merged/scenarios-s3.inc; hash-pinned)")
     ap.add_argument("--traces-per-profile", type=int, default=64)
     ap.add_argument("--steps", type=int, default=40)
     ap.add_argument("--sample", type=int, default=8, help="committed traces per profile; all generated traces are also replayed")
@@ -174,7 +181,7 @@ def main():
     fixture = root/"crates/tine-store/tests/fixtures/s2"; fixture.mkdir(parents=True, exist_ok=True)
     model = (args.model_dir/"storage-s3.qnt").read_text()
     assert hashlib.sha256(model.encode()).hexdigest() == SHA
-    source = (args.model_dir/"scenarios-s3.inc").read_text()
+    source = args.scenario_source.read_text()
     assert hashlib.sha256(source.encode()).hexdigest() == SCENARIO_SHA
     muts = ast.literal_eval(re.search(r"// SWEEP-MUTS: (\{.*\})", model).group(1))
     quint = args.quint or args.model_dir.parent/"model/tools/node_modules/.bin/quint"
@@ -193,7 +200,7 @@ def main():
         statuses = {n: "pass" for n in re.findall(r"ok (\w+) passed", out)}
         errors = dict(re.findall(r"\n\s+\d+\) (\w+):\n\s+Error \[(QNT\d+)\]", out))
         statuses.update({n: {"QNT508": "assertion", "QNT507": "disabled", "QNT513": "disabled", "QNT511": "false"}.get(e, e) for n, e in errors.items()})
-        assert len(statuses) == 120, (p, m, len(statuses), out)
+        assert len(statuses) == SCENARIO_COUNT, (p, m, len(statuses), out)
         assert m != "none" or set(statuses.values()) == {"pass"}
         assert m == "none" or statuses["m"+m] == "assertion"
         outcomes.append({"profile": p, "mutant": m, "outcomes": statuses})
@@ -219,7 +226,7 @@ def main():
     seen = {s["action"]["name"] for t in traces for s in t["states"]}
     required = {"wOpen", "wSend", "wDiscard", "wClose", "wRecv", "flush", "observe", "draftSync",
                 "wEdit", "wResolve", "wOpTo", "opRenamePacked", "opDelete", "flushDel", "check", "rename", "saveFail", "switchReq", "switchFin",
-                "crash", "windowCrash", "launch", "dirSync", "deliverUp", "extWriteD", "powerKBits"}
+                "crash", "windowCrash", "launch", "dirSync", "deliverUp", "extWriteD", "powerKBits", "load"}
     assert required <= seen, ("random corpus omitted actions", required-seen)
     all_data = {"model_sha256": SHA, "seeds": seeds, "max_steps": args.steps,
                 "driver": "weighted-original-choices", "pages": 3, "traces": traces}

@@ -3,7 +3,7 @@
 
 #[cfg(test)]
 use operations::op_clean;
-use operations::{flush_del, op_delete, op_rename};
+use operations::{flush_del, load, op_delete, op_rename};
 use std::collections::BTreeSet;
 
 mod operations;
@@ -11,7 +11,7 @@ mod operations;
 const ABSENT: i64 = -1;
 const NONE: i64 = -2;
 const UNKNOWN: i64 = -3;
-const MODEL_SHA: &str = "baaaeab459890ea8b09c49dbd0ab506489c372c944c71aec8b12f43e3ebba557";
+const MODEL_SHA: &str = "614f82a83d61007d6e1a90747c71b350caa407e0c908699510b74ddba88c883f";
 type Text = i64; // Opaque equality labels, never arithmetic operands.
 type Pairs = BTreeSet<(usize, Text)>;
 
@@ -1280,6 +1280,7 @@ enum Action {
         std::collections::BTreeMap<usize, Text>,
     ),
     OpDelete(usize),
+    Load(usize),
     FlushDel(usize),
     PowerK(BTreeSet<usize>),
     WClose(usize),
@@ -1317,6 +1318,7 @@ fn step(x: &State, a: Action) -> Option<State> {
         }
         Action::PowerK(keep) => keep.iter().all(|p| *p < n),
         Action::OpDelete(p)
+        | Action::Load(p)
         | Action::FlushDel(p)
         | Action::WOpen(p)
         | Action::WSend(p)
@@ -1341,6 +1343,7 @@ fn step(x: &State, a: Action) -> Option<State> {
         Action::WOpTo(p, q, a, b) => w_op_to(x, p, q, a, b),
         Action::OpRename(p, q, refs, rt) => op_rename(x, p, q, &refs, &rt),
         Action::OpDelete(p) => op_delete(x, p),
+        Action::Load(p) => load(x, p),
         Action::FlushDel(p) => flush_del(x, p),
         Action::PowerK(keep) => power_k(x, &keep),
         Action::WClose(p) => w_close(x, p),

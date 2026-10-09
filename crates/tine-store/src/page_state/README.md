@@ -1,9 +1,9 @@
-# s3 executable storage model
+# s3.1 executable storage model
 
 This private, unwired module transcribes `storage-s3.qnt`, SHA-256
-`baaaeab459890ea8b09c49dbd0ab506489c372c944c71aec8b12f43e3ebba557`.
-The scenario source is `scenarios-s3.inc`, SHA-256
-`b446ab25e60e140c16ebd1bf4e73054e3de78928f0087ed712ed4151d2cdf530`.
+`614f82a83d61007d6e1a90747c71b350caa407e0c908699510b74ddba88c883f`.
+The scenario source is the repaired lane's `scenarios-s3x.inc`, SHA-256
+`4b4e2720a645afbb0ca71d034ff639a557bcf4f62abb886a105aec566b8504a5`.
 It performs no I/O and has no clock, async tasks or production consumers.
 Replay establishes transcription evidence, not backend or native I/O conformance.
 
@@ -12,6 +12,8 @@ On two paths without the new actions, its rules are s2.1. Every read goes throug
 `table`; `observe` is enabled when that read changes the page, even if the bytes
 equal the last read. `opRename`, `opDelete` and `flushDel` include the literal
 draft/promise, trash, `opRead`, D4 and no-clobber rules and `trashed` guarantee.
+`load` holds one previously unheld path with its read snapshot and a version;
+operations require their changed pages and source to be held before capture.
 
 `Config.pages` selects any positive count of contiguous page IDs. Vec implements
 total page maps; BTreeSet implements sets; BTreeMap implements operation rewrite
@@ -27,18 +29,20 @@ The existing `scripts/s2/` and `tests/fixtures/s2/` paths are retained to avoid
 unrelated path/reference changes; their contents now describe s3. All generated
 models, logs, ITF and larger corpora stay under ignored `scratch/s3/`.
 Generators never write into the supplied model directory or proof lanes.
+Quint calls take `$TINE_AGENTS/og/.tlc.lock`; `TINE_AGENTS` defaults to the
+repository's sibling `tine-agents` directory.
 
-Regenerate the 120 scenarios, four profile oracles, 27 model-mutant oracles and
+Regenerate the 143 scenarios, four profile oracles, 27 model-mutant oracles and
 three-path random traces from the repository root:
 
 ```sh
-rtk proxy python3 -B scripts/s2/generate.py /path/to/og/merged --quint /path/to/og/model/tools/node_modules/.bin/quint
+rtk proxy python3 -B scripts/s2/generate.py /path/to/og/merged --scenario-source /path/to/og/merged/scenarios-s3.inc --quint /path/to/og/model/tools/node_modules/.bin/quint
 rtk proxy python3 -B scripts/s2/witnesses.py /path/to/og/merged --quint /path/to/og/model/tools/node_modules/.bin/quint
 rtk proxy bash -c 'source scripts/env.sh; export CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target S3_TRACE_FIXTURE=$PWD/scratch/s3/traces.json; rtk cargo test -p tine-store'
 ```
 
 The generator checks both pinned source hashes, expands intermediate assertions,
-conditionals and refusal checks, and compares 3,720 scenario outcomes. It
+conditionals and refusal checks, and compares 4,433 scenario outcomes. It
 distinguishes pass, disabled action (QNT507/QNT513), failed assertion (QNT508)
 and test returned false (QNT511). All 27 sweep mutants fail their own scenario.
 MRN5 violates the restored-deletion completion assertion rather than the guarantee;
