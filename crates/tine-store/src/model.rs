@@ -2846,12 +2846,33 @@ impl Graph {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
         };
-        let mut doc = parse_doc(&abs, &content);
+        Ok(Some(Self::dto_of(&entry, abs, &content)))
+    }
+
+    /// The DTO of `bytes` as the page file at `abs`, as a read of that file
+    /// would give it: the page host's mail carries its buffers this way
+    /// (STEP3 §3.2). None when `abs` is no page path.
+    pub(crate) fn page_dto_for_bytes(
+        &self,
+        abs: &Path,
+        bytes: &[u8],
+    ) -> io::Result<Option<PageDto>> {
+        let Some(entry) = self.entry_for_path(abs) else {
+            return Ok(None);
+        };
+        validate_parse_bytes_for_path(bytes, abs)?;
+        let content = std::str::from_utf8(bytes)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        Ok(Some(Self::dto_of(&entry, abs, content)))
+    }
+
+    fn dto_of(entry: &PageEntry, abs: &Path, content: &str) -> PageDto {
+        let mut doc = parse_doc(abs, content);
         assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
-        let mut dto = page_dto(&entry, &doc);
-        dto.read_only = read_only_org(&abs, &content);
-        dto.rev = Some(content_rev(&content));
-        Ok(Some(dto))
+        let mut dto = page_dto(entry, &doc);
+        dto.read_only = read_only_org(abs, content);
+        dto.rev = Some(content_rev(content));
+        dto
     }
 
     /// Read+parse every page from disk (skipping unreadable files). Used to build

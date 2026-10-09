@@ -10,6 +10,7 @@
 //! legal step from the current state, so an admission, reservation or
 //! observation that arrived meanwhile is honoured; a step needing other locks
 //! releases everything and replans.
+use super::binding::{Book, Delivery};
 use super::progress::{Clock, Progress};
 use super::*;
 use std::sync::{Condvar, MutexGuard};
@@ -17,12 +18,11 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 /// Where a driver step's results go, called on the driver thread after it
-/// has released the state mutex and every path lock.
+/// has released the state mutex and every path lock: host events in host
+/// order (the publication consumer, §5) and the mail the host delivered to
+/// the window (the page-mail bridge, §3.3).
 pub(super) trait Sink: Send {
-    /// Host events in host order (the publication consumer, §5).
-    fn events(&mut self, events: Vec<Event>);
-    /// Mail the host delivered to the window (the page-mail bridge, §3.3).
-    fn mail(&mut self, page: PageKey, mail: Mail);
+    fn deliver(&mut self, delivery: Delivery);
 }
 
 /// A watcher read or a released reservation the driver must observe (§5, §7).
@@ -40,6 +40,8 @@ pub(super) struct State<F: HostIo, C: Clock> {
     stopping: bool,
     /// Keys whose disk state the driver owes the host an observation of.
     pub observe: BTreeMap<PageKey, Observation>,
+    /// The binding's bookkeeping beside the host (handoffs, notices sent).
+    pub book: Book,
     #[cfg(test)]
     pub polls: u64,
 }
@@ -129,6 +131,17 @@ impl<F: HostIo, C: Clock> Shared<F, C> {
         result
     }
 
+    /// Run one host step on a command thread as plan, lock, revalidate
+    /// (§1), then wake the driver. None once the driver is stopping.
+    pub fn locked_step<R>(&self, step: impl FnMut(&mut State<F, C>) -> R) -> Option<R> {
+        let state = self.state.lock().unwrap();
+        let (mut state, result, _) = locked(self, state, step)?;
+        state.wake();
+        drop(state);
+        self.condition.notify_all();
+        Some(result)
+    }
+
     /// Wait on the host condition, under no lock but the state mutex
     /// (a reservation that found its keys busy, §7). The driver notifies
     /// after every step, so a finished job wakes the waiter.
@@ -159,6 +172,7 @@ where
                 wake_seq: 0,
                 stopping: false,
                 observe: BTreeMap::new(),
+                book: Book::default(),
                 #[cfg(test)]
                 polls: 0,
             }),
@@ -200,91 +214,84 @@ impl<F: HostIo, C: Clock> Drop for Driver<F, C> {
     }
 }
 
-type Delivery = (Vec<Event>, Vec<(PageKey, Mail)>);
+/// The state mutex, a step's result, and whether it ran under path locks.
+type Locked<'a, F, C, R> = (MutexGuard<'a, State<F, C>>, R, bool);
 
-/// Take what this step produced, under the state mutex: the events (drained
-/// once progress has read them) and every mail the host delivered.
-fn collect<F: HostIo, C: Clock>(state: &mut State<F, C>) -> Delivery {
+/// Plan, lock, revalidate (§1), for the driver and for command threads:
+/// run `step` holding no path lock; while it names path locks it lacks, take
+/// them in canonical spelling order holding nothing else, retake the state
+/// mutex and run it again, now the next legal step under those locks. An
+/// alias spelling move (§2) may replace a key's lock while this thread
+/// waits; the old spelling's lock does not exclude writers of the new one,
+/// so everything is released and the step replanned. Returns with the state
+/// mutex held, no path lock and `held` empty, plus whether a step ran under
+/// path locks; None once the driver is stopping.
+pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
+    shared: &'a Shared<F, C>,
+    mut state: MutexGuard<'a, State<F, C>>,
+    mut step: impl FnMut(&mut State<F, C>) -> R,
+) -> Option<Locked<'a, F, C, R>> {
     state.progress.host.held = Some(BTreeSet::new());
-    let events = state.progress.take_events();
-    let pages: Vec<_> = state.progress.host.outbox.keys().cloned().collect();
-    let mail = pages
-        .into_iter()
-        .filter_map(|page| Some((page.clone(), state.progress.host.receive(&page)?)))
-        .collect();
-    (events, mail)
-}
-
-fn deliver(sink: &mut impl Sink, (events, mail): Delivery) {
-    if !events.is_empty() {
-        sink.events(events);
+    let mut result = step(&mut state);
+    while let Some(keys) = state.progress.host.lock_request.take() {
+        let host = &state.progress.host;
+        let mut handles: Vec<_> = keys
+            .iter()
+            .map(|key| (host.fs.spelling(key), host.locks[key].clone()))
+            .collect();
+        handles.sort_by(|a, b| a.0.cmp(&b.0));
+        drop(state);
+        let guards: Vec<_> = handles.iter().map(|(_, l)| l.lock().unwrap()).collect();
+        state = shared.state.lock().unwrap();
+        if state.stopping {
+            return None;
+        }
+        let host = &state.progress.host;
+        let current = keys.iter().all(|key| {
+            let lock = &host.locks[key];
+            handles.iter().any(|(_, held)| Arc::ptr_eq(held, lock))
+        });
+        if current {
+            state.progress.host.held = Some(keys);
+            result = step(&mut state);
+            state.progress.host.held = Some(BTreeSet::new());
+            if state.progress.host.lock_request.is_none() {
+                drop(guards);
+                return Some((state, result, true));
+            }
+        }
+        // Another key set or lock: release everything and replan.
+        drop(guards);
+        if !current {
+            result = step(&mut state);
+        }
     }
-    for (page, mail) in mail {
-        sink.mail(page, mail);
-    }
+    Some((state, result, false))
 }
 
 fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
-    'steps: loop {
+    loop {
         // Every step retakes the state mutex, so admission, watcher reads
         // and reservations interleave with a long run of driver steps.
-        let mut state = shared.state.lock().unwrap();
+        let state = shared.state.lock().unwrap();
         if state.stopping {
             return;
         }
-        // Plan, holding no path lock.
         let seq = state.wake_seq;
-        state.progress.host.held = Some(BTreeSet::new());
-        let mut result = state.step();
-        while let Some(keys) = state.progress.host.lock_request.take() {
-            // Lock, in canonical spelling order, holding nothing else.
-            let host = &state.progress.host;
-            let mut handles: Vec<_> = keys
-                .iter()
-                .map(|key| (host.fs.spelling(key), host.locks[key].clone()))
-                .collect();
-            handles.sort_by(|a, b| a.0.cmp(&b.0));
-            drop(state);
-            let guards: Vec<_> = handles.iter().map(|(_, l)| l.lock().unwrap()).collect();
-            state = shared.state.lock().unwrap();
-            if state.stopping {
-                return;
-            }
-            // An alias spelling move (§2) may have replaced a key's lock
-            // while this thread waited; the old spelling's lock does not
-            // exclude writers of the new one.
-            let host = &state.progress.host;
-            let current = keys.iter().all(|key| {
-                let lock = &host.locks[key];
-                handles.iter().any(|(_, held)| Arc::ptr_eq(held, lock))
-            });
-            if current {
-                // Revalidate: the next legal step, with these locks held.
-                state.progress.host.held = Some(keys);
-                result = state.step();
-                if state.progress.host.lock_request.is_none() {
-                    let delivery = collect(&mut state);
-                    drop(state);
-                    drop(guards);
-                    deliver(sink, delivery);
-                    continue 'steps;
-                }
-            }
-            // Another key set or lock: release everything and replan.
-            state.progress.host.held = Some(BTreeSet::new());
-            drop(guards);
-            if !current {
-                result = state.step();
-            }
-        }
-        let delivery = collect(&mut state);
+        let Some((mut state, result, stepped)) = locked(shared, state, State::step) else {
+            return;
+        };
+        let delivery = {
+            let state = &mut *state;
+            state.book.collect(&mut state.progress)
+        };
         // A finished job or worker step may unblock a waiting reservation;
         // every step chain ends here.
         shared.condition.notify_all();
-        let idle = matches!(result, Disposition::Waiting | Disposition::Disabled);
-        if !delivery.0.is_empty() || !delivery.1.is_empty() {
+        let idle = !stepped && matches!(result, Disposition::Waiting | Disposition::Disabled);
+        if !delivery.is_empty() {
             drop(state);
-            deliver(sink, delivery);
+            sink.deliver(delivery);
             state = shared.state.lock().unwrap();
         }
         if idle {

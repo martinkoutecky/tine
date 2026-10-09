@@ -151,7 +151,7 @@ pub(super) fn saved(host: &mut Host<ModelFs>, key: &str) {
     assert!(host.pages[key].clean());
 }
 
-fn restart(host: &mut Host<ModelFs>, power: bool, keep_drafts: bool) {
+pub(super) fn restart(host: &mut Host<ModelFs>, power: bool, keep_drafts: bool) {
     host.stop();
     if power {
         host.fs.power(&BTreeSet::new(), keep_drafts);
@@ -838,6 +838,7 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
         include_str!("progress.rs"),
         include_str!("io.rs"),
         include_str!("driver.rs"),
+        include_str!("binding.rs"),
     ] {
         for line in source
             .lines()

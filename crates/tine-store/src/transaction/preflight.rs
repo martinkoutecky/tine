@@ -335,6 +335,25 @@ impl Transaction<'_> {
         self.unreadable_owner(file, &[name])
     }
 
+    /// The page host's open of `file` (STEP3 §2): an eligible page target;
+    /// with no file there, the page is being created, so the create-only
+    /// checks run, as they run for a `CreateNew` save. A file that appears
+    /// meanwhile makes it an ordinary open.
+    pub(crate) fn page_open_checks(&self, file: &FileId, name: &str) -> Result<(), Why> {
+        if !self.page(file) {
+            return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
+        }
+        match self.absent(file) {
+            Ok(()) => {}
+            Err(Why::Conflict { .. }) => return Ok(()),
+            Err(why) => return Err(why),
+        }
+        match self.page_create_checks(file, name) {
+            Err(Why::Conflict { .. }) => Ok(()),
+            result => result,
+        }
+    }
+
     /// Serialize `doc` over `old`, the bytes it replaces (None creates), with
     /// every content firewall: parse validation of both sides, VCS markers
     /// (unless `resolving` them), the page-header and Org round-trip

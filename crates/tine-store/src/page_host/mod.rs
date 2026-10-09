@@ -1,6 +1,7 @@
 //! Unwired page owner. Runtime code is independent of the page_state oracle.
 #![allow(dead_code)]
 
+mod binding;
 #[cfg(test)]
 mod command_tests;
 #[cfg(test)]

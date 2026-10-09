@@ -1,7 +1,7 @@
 //! STEP3 §3: typed outcomes and the save's twin checks (Q9).
 use super::io::Phase;
 use super::model_fs::Fault;
-use super::tests::{drain, edit, host, open, send, text};
+use super::tests::{draft, drain, edit, host, open, restart, send, text};
 use super::*;
 
 fn refusals(h: &Host<model_fs::ModelFs>) -> Vec<(PageKey, Refusal)> {
@@ -202,4 +202,30 @@ fn delete_and_rename_plan_their_locks_before_any_side_effect() {
     h.held = Some(wanted);
     assert_eq!(rename(&mut h), Disposition::Pending);
     assert!(h.lock_request.is_none());
+}
+
+/// Q9: a twin found after the rename is no evidence of durability. When the
+/// directory sync then fails, the save stays Uncertain with its recovery
+/// custody, beside the twin notice, and a power cut recovers the input.
+#[test]
+fn a_twin_after_the_rename_keeps_a_failed_sync_uncertain() {
+    let mut h = host();
+    open(&mut h, "c.md");
+    edit(&mut h, "c.md", "created");
+    assert_eq!(h.start_save("c.md"), Disposition::Pending);
+    while h.job.as_ref().unwrap().phase != SavePhase::Rename {
+        h.advance_save(0);
+    }
+    h.fs.twins.insert("c.md".into(), "c.org".into());
+    h.fs.inject(Phase::PageSync, [Fault::Before]);
+    while h.job.is_some() {
+        h.advance_save(0);
+    }
+    assert_eq!(outcome(&h), Some(Outcome::Uncertain));
+    assert_eq!(twins(&h), vec!["c.org".to_string()]);
+    assert!(h.pages["c.md"].risk);
+    draft(&mut h, "c.md");
+    restart(&mut h, true, true);
+    assert_eq!(h.pages["c.md"].buf, text("created"));
+    assert!(h.pages["c.md"].risk);
 }
