@@ -34,6 +34,15 @@ struct DraftFailure {
     terminal: bool,
 }
 
+/// A stop in progress (STEP3 §6, §7): admission closed, and each dirty
+/// page that can be saved is saved at once, before any draft of it.
+pub(super) struct Stopping {
+    /// Restore mode: no fallback draft is ever written (§7 step 3).
+    pub restore: bool,
+    /// Pages whose save failed during this stop: drafted now (a switch).
+    pub failed: BTreeSet<PageKey>,
+}
+
 pub(super) fn backoff(failures: u32) -> u64 {
     let delays = [100, 300, 1000, 3000, 10000, 30000];
     delays[(failures as usize - 1).min(delays.len() - 1)]
@@ -64,6 +73,9 @@ pub(super) struct Progress<F: HostIo, C: Clock> {
     custody_retries: u32,
     /// Round-robin among due saves (STEP3 §1): the page started last.
     save_cursor: Option<PageKey>,
+    /// Set by the binding when a switch or restore closes admission; ends
+    /// with the switch confirmation (abort or stop).
+    pub stopping: Option<Stopping>,
 }
 
 impl<F: HostIo, C: Clock> Progress<F, C> {
@@ -82,6 +94,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             custody_retry: None,
             custody_retries: 0,
             save_cursor: None,
+            stopping: None,
         };
         result.reconcile();
         result
@@ -104,6 +117,14 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 .get(key)
                 .map_or(Notice::default(), |t| t.notice.clone())
         }
+    }
+
+    /// Pages a surfaced draft failure names (§6 step 5).
+    pub fn draft_error_pages(&self) -> BTreeSet<PageKey> {
+        self.draft_errors
+            .values()
+            .flat_map(|failure| failure.pages.iter().cloned())
+            .collect()
     }
 
     /// Graph-level sticky error while trash custody cannot be listed (V1).
@@ -134,7 +155,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                     r.bytes == t.page.buf && r.base == t.page.base && r.version == t.page.version
                 });
             t.last_draft
-                .filter(|_| differs && self.host.worker.is_none())
+                .filter(|_| differs && self.host.worker.is_none() && !self.held_back(key, &t.page))
                 .map(|last| last.checked_add(500).expect("clock exhausted"))
         });
         saves
@@ -146,6 +167,24 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
 
     /// Every event since the last call, removed from the host after this
     /// progress tracker has read them (D-10: the vector does not grow).
+    /// During a stop, a dirty page that can be saved is saved at once and
+    /// before any draft of it; it is drafted only if that save fails, so a
+    /// page that cannot be saved (conflict, reserved) never waits (§6 step 3).
+    fn save_first(&self, key: &str, page: &Page) -> bool {
+        self.stopping
+            .as_ref()
+            .is_some_and(|s| !s.failed.contains(key))
+            && !page.clean()
+            && !page.conflict
+            && !self.host.retained.contains(key)
+    }
+
+    /// A stop drafts a page only once it cannot be saved, and a restore
+    /// never writes a fallback draft (§6 step 3, §7 step 3).
+    fn held_back(&self, key: &str, page: &Page) -> bool {
+        self.save_first(key, page) || self.stopping.as_ref().is_some_and(|s| s.restore)
+    }
+
     pub fn take_events(&mut self) -> Vec<Event> {
         self.reconcile();
         self.events_seen = 0;
@@ -163,6 +202,9 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             self.draft_errors.clear();
             self.custody_retry = None;
             self.custody_retries = 0;
+        }
+        if self.host.switch_confirmation.is_none() {
+            self.stopping = None;
         }
         self.times
             .retain(|key, _| self.host.pages.contains_key(key));
@@ -221,6 +263,9 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                     let delay = backoff(t.notice.failures);
                     t.retry = Some(now.checked_add(delay).expect("clock exhausted"));
                     t.notice.save_error = t.notice.failures >= 3;
+                    if let Some(stopping) = &mut self.stopping {
+                        stopping.failed.insert(page.clone());
+                    }
                 }
                 Event::DraftError {
                     effect,
@@ -375,7 +420,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 t.last_draft
                     .is_none_or(|last| now >= last.checked_add(500).expect("clock exhausted"))
             });
-            if differs && due {
+            if differs && due && !desired.is_some_and(|t| self.held_back(key, &t.page)) {
                 let result = self.host.begin_draft(key);
                 if self.host.lock_request.is_some() {
                     return Disposition::Waiting;
@@ -393,9 +438,10 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         let due: Vec<_> = self
             .times
             .iter()
-            .filter(|(_, t)| {
-                t.deadline()
-                    .is_some_and(|deadline| !t.page.clean() && !t.page.conflict && now >= deadline)
+            .filter(|(key, t)| {
+                let due = self.save_first(key, &t.page)
+                    || t.deadline().is_some_and(|deadline| now >= deadline);
+                due && !t.page.clean() && !t.page.conflict
             })
             .map(|(key, _)| key.clone())
             .collect();

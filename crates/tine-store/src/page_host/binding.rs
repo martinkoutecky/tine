@@ -5,7 +5,7 @@
 //! the app saves through the old engine.
 use super::driver::{Driver, Owner, Sink, SystemClock};
 use super::production::ProductionIo;
-use super::progress::{backoff, Clock, Notice, Progress};
+use super::progress::{backoff, Clock, Notice, Progress, Stopping};
 use super::*;
 use crate::model::{bytes_hold_block_id, content_rev};
 use crate::store::PublishedObservations;
@@ -87,6 +87,33 @@ impl From<Why> for PageRefusal {
             },
         }
     }
+}
+
+/// How the host stops (§6, §7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StopMode {
+    /// A graph switch, quit or last-window close: a page that cannot be
+    /// saved is drafted.
+    Switch,
+    /// A backup restore: no fallback draft; every drained edit is saved and
+    /// published, and every draft and custody debt retired, first.
+    Restore,
+}
+
+/// Where a stop stands (§6 steps 4–5, §7 step 3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StopState {
+    /// Saves, drafts, cleanup or publications are still running, or no
+    /// stop has begun.
+    Waiting,
+    /// `stop_finish` stops the host now.
+    Ready,
+    /// The stop cannot complete without losing custody: a draft failure
+    /// (both modes), or in a restore a failed save, a conflict, a custody
+    /// or index failure. These pages are affected (none: trash custody
+    /// cannot be listed). The caller aborts (`stop_abort`), unfreezes and
+    /// shows them; nothing closes over missing custody.
+    Aborted(BTreeSet<PageKey>),
 }
 
 /// The disk state a window was shown, named by revision: a Keep-mine
@@ -1214,6 +1241,97 @@ impl PageHost {
 
     /// Stop the host (see `Drop`).
     pub fn stop(self) {}
+
+    /// Begin a switch or restore stop (§6 step 3, §7 step 3) once the
+    /// window has consumed every answer up to `consumed_last_id`: admission
+    /// closes and the driver saves every dirty page it can at once, before
+    /// any draft of it. A failed save puts the page at risk, which drafts it
+    /// in a switch (the model's switchReq, needed by no page a save-first
+    /// order leaves dirty). False: the window has more to drain.
+    pub fn stop_begin(&self, consumed_last_id: u64, mode: StopMode) -> bool {
+        self.driver.shared.with_state(|state| {
+            let closed = state
+                .progress
+                .with_host(|host| host.switch_ready(consumed_last_id));
+            let closed = closed == Disposition::Applied;
+            if closed {
+                state.progress.stopping = Some(Stopping {
+                    restore: mode == StopMode::Restore,
+                    failed: BTreeSet::new(),
+                });
+            }
+            closed
+        })
+    }
+
+    /// The stop's barrier (§6 step 4) and its abort condition (step 5).
+    pub fn stop_state(&self) -> StopState {
+        let state = self.driver.shared.state.lock().unwrap();
+        stop_state(&state.progress, &state.book)
+    }
+
+    /// Abort the stop: admission reopens and the pages keep their state.
+    pub fn stop_abort(&self) {
+        self.driver
+            .shared
+            .with_state(|state| state.progress.with_host(|host| host.switch_abort()));
+    }
+
+    /// Stop the host if the stop is ready, then join the driver (§7 step
+    /// 4): a delivery in flight finishes first (with admission closed, every
+    /// host step runs on the driver and is delivered with it), and the
+    /// watcher indexes every page again. The binding holds no host until a
+    /// fresh `start` (the "restoring" state). Otherwise the host is handed
+    /// back.
+    pub fn stop_finish(self) -> Result<(), Self> {
+        let stopped = self.driver.shared.with_state(|state| {
+            stop_state(&state.progress, &state.book) == StopState::Ready
+                && state.progress.with_host(|host| host.switch_finish()) == Disposition::Applied
+        });
+        if stopped {
+            drop(self);
+            Ok(())
+        } else {
+            Err(self)
+        }
+    }
+}
+
+pub(super) fn stop_state<F: HostIo, C: Clock>(progress: &Progress<F, C>, book: &Book) -> StopState {
+    let host = &progress.host;
+    let Some(stopping) = &progress.stopping else {
+        return StopState::Waiting;
+    };
+    let mut affected = progress.draft_error_pages();
+    if stopping.restore {
+        // A restore aborts where its flush would fail today (§7 step 3).
+        affected.extend(stopping.failed.iter().cloned());
+        let keys = host.pages.keys().chain(host.custody.keys());
+        affected.extend(
+            keys.filter(|key| {
+                host.pages.get(*key).is_some_and(|page| page.conflict)
+                    || !host.custody_errors(key).is_empty()
+                    || book.index_error(key)
+            })
+            .cloned(),
+        );
+        if affected.is_empty() && host.custody_unknown.is_some() {
+            return StopState::Aborted(affected);
+        }
+    }
+    if !affected.is_empty() {
+        return StopState::Aborted(affected);
+    }
+    // A restore closes only over completed work: no draft (can_switch: no
+    // page at risk), custody debt or index retry is left. A clean page
+    // needs no save (Q5).
+    let complete = !stopping.restore
+        || (host.custody.is_empty() && host.retire.is_empty() && book.retry.is_empty());
+    if host.can_switch() && complete {
+        StopState::Ready
+    } else {
+        StopState::Waiting
+    }
 }
 
 impl Drop for PageHost {

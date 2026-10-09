@@ -1,5 +1,6 @@
 use super::*;
-use crate::page_host::progress::{Clock, Progress};
+use crate::page_host::binding::{stop_state, Book, StopState};
+use crate::page_host::progress::{Clock, Progress, Stopping};
 use std::cell::Cell;
 
 struct ManualClock(Cell<u64>);
@@ -1182,4 +1183,184 @@ fn r2_unknown_custody_is_retried_on_the_backoff_until_listed() {
     assert!(lists[1] - lists[0] > lists[0], "backoff grows: {lists:?}");
     assert!(p.host.custody.is_empty(), "adopted and settled");
     assert_eq!(custody_entries(&p), 0);
+}
+
+// ---- STEP3 §6/§7: switch and restore stops ----
+
+/// Close admission at the window's last answer and begin a stop.
+fn begin_stop(p: &mut Timed, restore: bool) {
+    p.with_host(|h| assert_eq!(h.switch_ready(h.last_applied), Disposition::Applied));
+    p.stopping = Some(Stopping {
+        restore,
+        failed: BTreeSet::new(),
+    });
+}
+
+fn first(p: &Timed, phase: Phase) -> Option<usize> {
+    p.host.fs.calls.iter().position(|c| *c == phase)
+}
+
+fn state(p: &Timed) -> StopState {
+    stop_state(p, &Book::default())
+}
+
+/// §6 step 3: a stop saves a dirty page at once (inside its debounce) and
+/// never drafts it when that save succeeds.
+#[test]
+fn a_switch_saves_a_dirty_page_at_once_before_any_draft_of_it() {
+    let mut p = timed();
+    begin_edit(&mut p);
+    begin_stop(&mut p, false);
+    p.host.fs.calls.clear();
+    pump(&mut p);
+    assert!(first(&p, Phase::PageTemp).is_some(), "the save ran at once");
+    assert_eq!(
+        first(&p, Phase::DraftTemp),
+        None,
+        "no draft before the save"
+    );
+    assert!(p.host.pages["a.md"].clean());
+    assert_eq!(state(&p), StopState::Ready);
+}
+
+/// §6 step 3: a page whose stop save fails is drafted then, and the switch
+/// completes over the draft.
+#[test]
+fn a_switch_drafts_a_page_only_after_its_save_fails() {
+    let mut p = timed();
+    begin_edit(&mut p);
+    begin_stop(&mut p, false);
+    p.host.fs.calls.clear();
+    p.host.fs.inject(Phase::PageTemp, [Fault::Before]);
+    pump(&mut p);
+    let (save, draft) = (first(&p, Phase::PageTemp), first(&p, Phase::DraftTemp));
+    assert!(
+        save.is_some() && draft.is_some() && save < draft,
+        "{:?}",
+        p.host.fs.calls
+    );
+    assert!(p.host.pages["a.md"].risk);
+    assert_eq!(state(&p), StopState::Ready);
+}
+
+/// §6 step 3: a page already at risk (an earlier failed save, drafted) and
+/// typed on is saved before its draft is refreshed.
+#[test]
+fn a_switch_saves_an_at_risk_page_before_refreshing_its_draft() {
+    let mut p = timed();
+    begin_edit(&mut p);
+    p.with_host(|h| {
+        risk(h, "a.md");
+        draft(h, "a.md");
+        edit(h, "a.md", "second");
+    });
+    begin_stop(&mut p, false);
+    time(&p, 1000);
+    p.host.fs.calls.clear();
+    pump(&mut p);
+    assert!(first(&p, Phase::PageTemp).is_some(), "the save ran");
+    assert_eq!(first(&p, Phase::DraftTemp), None, "no refresh before it");
+    assert!(p.host.pages["a.md"].clean());
+    assert_eq!(state(&p), StopState::Ready);
+}
+
+/// §6 step 3: a page that cannot be saved (conflict) is drafted at once and
+/// never blocks the switch.
+#[test]
+fn a_switch_drafts_a_conflicted_page_at_once() {
+    let mut p = timed();
+    begin_edit(&mut p);
+    p.with_host(|h| {
+        h.fs.external("a.md", text("theirs"), true);
+        assert_eq!(h.observe("a.md"), Disposition::Applied);
+    });
+    begin_stop(&mut p, false);
+    p.host.fs.calls.clear();
+    pump(&mut p);
+    assert_eq!(first(&p, Phase::PageTemp), None);
+    assert!(p.host.pages["a.md"].conflict);
+    assert_eq!(state(&p), StopState::Ready);
+}
+
+/// §6 step 5: a draft that cannot reach a terminal state aborts the switch
+/// with the affected page; aborting reopens admission.
+#[test]
+fn a_switch_aborts_on_a_draft_failure() {
+    let mut p = timed();
+    begin_edit(&mut p);
+    begin_stop(&mut p, false);
+    p.host.fs.inject(Phase::PageTemp, [Fault::Before; 10]);
+    p.host.fs.inject(Phase::DraftTemp, [Fault::Before; 10]);
+    for now in [0, 100, 400, 1400, 4400] {
+        time(&p, now);
+        pump(&mut p);
+    }
+    assert_eq!(
+        state(&p),
+        StopState::Aborted(BTreeSet::from(["a.md".into()]))
+    );
+    assert!(!p.host.can_switch());
+    p.with_host(|h| h.switch_abort());
+    assert!(p.stopping.is_none());
+    assert!(p.host.admission_open, "the window may type again");
+}
+
+/// §7 step 3: a restore never writes a fallback draft; a failed save
+/// aborts it.
+#[test]
+fn a_restore_writes_no_fallback_draft_and_aborts_on_a_failed_save() {
+    let mut p = timed();
+    begin_edit(&mut p);
+    begin_stop(&mut p, true);
+    p.host.fs.calls.clear();
+    p.host.fs.inject(Phase::PageTemp, [Fault::Before]);
+    pump(&mut p);
+    assert!(first(&p, Phase::PageTemp).is_some());
+    assert_eq!(first(&p, Phase::DraftTemp), None, "no fallback draft");
+    assert!(p.host.logical_drafts().is_empty());
+    assert_eq!(
+        state(&p),
+        StopState::Aborted(BTreeSet::from(["a.md".into()]))
+    );
+}
+
+/// §7 step 3: a restore aborts on a conflict and closes only once an
+/// earlier draft is retired; it saves the page and removes its draft.
+#[test]
+fn a_restore_retires_an_earlier_draft_and_aborts_on_a_conflict() {
+    let mut p = timed();
+    begin_edit(&mut p);
+    p.with_host(|h| {
+        risk(h, "a.md");
+        draft(h, "a.md");
+        open(h, "b.md");
+        edit(h, "b.md", "mine");
+        h.fs.external("b.md", text("theirs"), true);
+        assert_eq!(h.observe("b.md"), Disposition::Applied);
+    });
+    assert!(p.host.logical_drafts().contains_key("a.md"));
+    begin_stop(&mut p, true);
+    time(&p, 500);
+    pump(&mut p);
+    assert!(p.host.pages["a.md"].clean());
+    assert!(
+        !p.host.logical_drafts().contains_key("a.md"),
+        "draft retired"
+    );
+    assert_eq!(
+        state(&p),
+        StopState::Aborted(BTreeSet::from(["b.md".into()]))
+    );
+}
+
+/// Q5 (REVIEW-3): a restore over clean pages saves nothing and is ready.
+#[test]
+fn q5_a_restore_over_clean_pages_manufactures_no_save() {
+    let mut p = timed();
+    p.with_host(|h| open(h, "a.md"));
+    begin_stop(&mut p, true);
+    p.host.fs.calls.clear();
+    pump(&mut p);
+    assert_eq!(first(&p, Phase::PageTemp), None);
+    assert_eq!(state(&p), StopState::Ready);
 }

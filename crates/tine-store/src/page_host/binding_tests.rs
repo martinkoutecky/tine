@@ -682,3 +682,177 @@ fn q5_a_clean_open_page_is_published_without_a_save() {
     assert_eq!(modified(), before, "no save of an untouched page");
     live.host.stop();
 }
+
+// ---- STEP3 §6/§7: switch and restore through the binding ----
+
+impl Live {
+    fn app(&self) -> PathBuf {
+        self._dir.path().join("app")
+    }
+
+    /// Page draft vehicles in the binding's draft directory.
+    fn drafts(&self) -> Vec<String> {
+        let dir = self.app().join("drafts-v2").join("test-graph");
+        let mut names: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .filter(|entry| entry.file_type().unwrap().is_file())
+            .map(|entry| entry.file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Fail the next `n` calls of `phase` in the host's file adapter.
+    fn faults(&self, phase: super::io::Phase, n: usize) {
+        self.host.driver.shared.with_state(|state| {
+            let queue = state.progress.host.fs.faults.entry(phase).or_default();
+            queue.extend(std::iter::repeat_n(std::io::ErrorKind::Other, n));
+        });
+    }
+
+    /// The stop's outcome, once it is not Waiting.
+    fn until_stop(&self) -> StopState {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            match self.host.stop_state() {
+                StopState::Waiting => {
+                    assert!(Instant::now() < deadline, "the stop never settled");
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                state => return state,
+            }
+        }
+    }
+}
+
+/// §6: a switch saves the unsaved edit and stops with no draft; stopping
+/// joins the driver and the watcher indexes the page again.
+#[test]
+fn a_switch_saves_an_unsaved_edit_and_stops_with_no_draft() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let id = live
+        .submit(&key, "- one\n- two\n", page.version, None)
+        .unwrap();
+    live.answer(&key, id);
+    assert!(live.host.stop_begin(id, StopMode::Switch));
+    assert_eq!(
+        live.submit(&key, "- late\n", page.version, None),
+        Err(PageRefusal::NotAdmitted)
+    );
+    assert_eq!(live.until_stop(), StopState::Ready);
+    assert_eq!(live.drafts(), Vec::<String>::new());
+    assert_eq!(live.disk(&key), "- one\n- two\n");
+    let path = live.root.join(&key);
+    let Live { host, store, .. } = live;
+    assert!(host.stop_finish().is_ok());
+    assert!(!store.watch.holds(&path));
+    assert_eq!(
+        store.graph.cached_rev(&path),
+        Some(content_rev("- one\n- two\n"))
+    );
+    fs::write(&path, "- three\n").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while store.graph.cached_rev(&path) != Some(content_rev("- three\n")) {
+        assert!(Instant::now() < deadline, "the watcher indexes it again");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// §7 restore: the stop saves every drained edit, writes no draft and
+/// saves no untouched page (Q5); a fresh host then serves the restored
+/// tree.
+#[test]
+fn a_restore_stop_saves_every_edit_and_a_fresh_host_reads_the_restored_tree() {
+    let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- bee\n")]);
+    let modified = |live: &Live| {
+        fs::metadata(live.root.join("pages/b.md"))
+            .unwrap()
+            .modified()
+            .unwrap()
+    };
+    let before = modified(&live);
+    let (a, page) = live.open("pages/a.md");
+    live.open("pages/b.md");
+    let id = live
+        .submit(&a, "- one\n- two\n", page.version, None)
+        .unwrap();
+    live.answer(&a, id);
+    assert!(live.host.stop_begin(id, StopMode::Restore));
+    assert_eq!(live.until_stop(), StopState::Ready);
+    assert_eq!(live.disk(&a), "- one\n- two\n");
+    assert_eq!(live.drafts(), Vec::<String>::new());
+    assert_eq!(modified(&live), before, "Q5: no save of an untouched page");
+    let app = live.app();
+    let Live {
+        _dir,
+        root,
+        store,
+        host,
+        ..
+    } = live;
+    assert!(host.stop_finish().is_ok());
+    // The restore, under the writer, while no host exists.
+    {
+        let _writer = store.writer.lock().unwrap();
+        fs::write(root.join(&a), "- restored\n").unwrap();
+    }
+    let (sender, mail) = mpsc::channel();
+    let host = PageHost::start(&store, &app, "test-graph", 7, move |mail| {
+        let _ = sender.send(mail);
+    })
+    .unwrap();
+    let live = Live {
+        _dir,
+        root,
+        store,
+        host,
+        mail,
+        id: std::cell::Cell::new(100),
+    };
+    let (_, page) = live.open("pages/a.md");
+    assert_eq!(page.disk, Some(token("- restored\n")));
+    live.host.stop();
+}
+
+/// §7 restore step 3: a conflict aborts the restore with the affected
+/// page; aborting reopens admission and nothing is stopped.
+#[test]
+fn a_restore_stop_aborts_on_a_conflict_and_reopens_admission() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- mine\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    fs::write(live.root.join(&key), "- theirs\n").unwrap();
+    assert!(live.host.stop_begin(id, StopMode::Restore));
+    assert_eq!(
+        live.until_stop(),
+        StopState::Aborted(BTreeSet::from([key.clone()]))
+    );
+    live.host.stop_abort();
+    assert_eq!(live.host.stop_state(), StopState::Waiting);
+    assert!(live.submit(&key, "- again\n", page.version, None).is_ok());
+    assert_eq!(live.disk(&key), "- theirs\n");
+    live.host.stop();
+}
+
+/// §6 step 5: when the page cannot be saved and its draft cannot be
+/// written, the switch aborts with that page instead of closing over it.
+#[test]
+fn a_switch_aborts_when_neither_the_save_nor_the_draft_can_be_written() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    live.faults(super::io::Phase::PageTemp, 100);
+    live.faults(super::io::Phase::DraftTemp, 100);
+    assert!(live.host.stop_begin(id, StopMode::Switch));
+    assert_eq!(
+        live.until_stop(),
+        StopState::Aborted(BTreeSet::from([key.clone()]))
+    );
+    live.host.stop_abort();
+    assert_eq!(live.host.stop_state(), StopState::Waiting);
+    live.host.stop();
+}
