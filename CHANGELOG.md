@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-08
+
+### Changed
+
+- Security: updated HTML sanitizers and desktop updater TLS dependencies, plus compatible dependency fixes from the review in discussion #564.
+
 ## [0.7.0] - 2026-10-08
 
 Tine 0.7.0 makes the Tine Beta line stable. It is Tine Beta 0.7.0-beta.2 (the

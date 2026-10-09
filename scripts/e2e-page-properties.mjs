@@ -265,9 +265,11 @@ async function preparePageHeaderArrowDown(expectedValue) {
             ?? null,
         } : null,
       };
-      queueMicrotask(() => {
+      // A microtask queued from a capture listener runs before the app's
+      // delegated bubble handler; read defaultPrevented after dispatch ends.
+      setTimeout(() => {
         window.__tinePageArrowDownKeyWitness = { ...witness, defaultPrevented: event.defaultPrevented };
-      });
+      }, 0);
     }, { capture: true, once: true });
     return preKey;
   }, expectedValue);
@@ -444,6 +446,12 @@ try {
   if ((await headerEditor.getValue()) !== editedHeader) {
     throw new Error(`native page-header replacement did not preserve the intended value: ${JSON.stringify({ replacementTrace, actual: await headerEditor.getValue() })}`);
   }
+  // Typing inside [[...]] opens page completion after a short debounce, and a
+  // programmatic caret move does not close it, so ArrowDown would go to the
+  // popup. Wait for it and dismiss it like a user before moving the caret.
+  await browser.$(".autocomplete .ac-item").waitForExist({ timeout: 5_000 });
+  await browser.keys(["Escape"]);
+  await browser.$(".autocomplete").waitForExist({ reverse: true, timeout: 5_000 });
   const arrowDownPreKey = await preparePageHeaderArrowDown(editedHeader);
   if (
     !arrowDownPreKey.isPageHeader

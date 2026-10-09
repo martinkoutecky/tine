@@ -1186,6 +1186,34 @@ mod mobile_drawer_policy_tests {
     }
 }
 
+#[cfg(all(test, feature = "custom-protocol"))]
+mod packaged_csp_tests {
+    #[test]
+    fn production_context_embeds_the_configured_csp_and_frontend() {
+        let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        let source: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let embedded = context
+            .config()
+            .app
+            .security
+            .csp
+            .as_ref()
+            .expect("packaged CSP");
+        assert!(
+            !tauri::is_dev(),
+            "test must exercise the production protocol"
+        );
+        assert_eq!(
+            serde_json::to_value(embedded).unwrap(),
+            source["app"]["security"]["csp"],
+            "the compiled context must carry every configured directive"
+        );
+        assert!(context.assets().get(&"index.html".into()).is_some());
+        assert!(context.assets().get(&"capture.html".into()).is_some());
+    }
+}
+
 #[cfg(test)]
 mod platform_lifecycle_guard_tests {
     fn lib_source() -> String {
