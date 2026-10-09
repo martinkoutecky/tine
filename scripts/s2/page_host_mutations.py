@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import re
@@ -75,7 +76,15 @@ def main():
         filters.append(args.only)
     if filters:
         command[command.index("--"):command.index("--")] = ["--re", "(?:" + "|".join(filters) + ")"]
-    raise SystemExit(subprocess.run(command, cwd=ROOT).returncode)
+    env = {**os.environ, "TINE_HOST_REPO_ROOT": str(ROOT)}
+    # Parallel mutant crates have the same Cargo artifact names. An inherited
+    # shared target can run another worker's binary or call a mutation Fresh.
+    # Let cargo-mutants give every worker its own build directory instead.
+    env.pop("CARGO_TARGET_DIR", None)
+    temporary = ROOT / "scratch/page-host/tmp"
+    temporary.mkdir(parents=True, exist_ok=True)
+    env["TMPDIR"] = str(temporary)
+    raise SystemExit(subprocess.run(command, cwd=ROOT, env=env).returncode)
 
 
 if __name__ == "__main__":

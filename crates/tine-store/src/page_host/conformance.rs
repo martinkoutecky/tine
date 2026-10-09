@@ -891,7 +891,13 @@ impl Driver {
                 }
                 Event::DeleteDurable { page, .. } => {
                     let p = self.host.keys.iter().position(|k| k == &page).unwrap();
-                    g["delDurable"][p] = g["removed"][p].clone();
+                    // The physical witness may leave surplus durable trash.
+                    // Model dirSync L431/L439 certifies deletion only while
+                    // its path still contains the job's absent payload. This
+                    // is a test-side projection, never another host path read.
+                    if !self.host.fs.files.contains_key(&format!("graph/{page}")) {
+                        g["delDurable"][p] = g["removed"][p].clone();
+                    }
                 }
                 Event::OperationRead { page, base: read } => {
                     let p = self.host.keys.iter().position(|k| k == &page).unwrap();

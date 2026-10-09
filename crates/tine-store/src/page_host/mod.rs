@@ -192,6 +192,7 @@ enum Event {
         pages: BTreeSet<PageKey>,
         failures: u32,
     },
+    DraftRecovered(BTreeSet<PageKey>),
     Unreadable(String),
 }
 
@@ -221,6 +222,9 @@ struct DraftWorker {
     retry_copy: bool,
     records: Vec<Record>,
     tidied: bool,
+    /// Pending-effect failures outlive replacement representation vehicles.
+    failures: u32,
+    recover_notice: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -526,9 +530,7 @@ impl<F: HostIo> Host<F> {
                 self.answer(request, key, false);
             }
             RequestKind::Close => {
-                if self.pages.get(key).is_some_and(Page::clean) {
-                    self.set_page(key, None);
-                }
+                self.close_clean(key);
             }
             RequestKind::Submit {
                 bytes,
@@ -615,6 +617,12 @@ impl<F: HostIo> Host<F> {
         Disposition::Refused
     }
 
+    fn close_clean(&mut self, key: &str) {
+        if self.pages.get(key).is_some_and(Page::clean) {
+            self.set_page(key, None);
+        }
+    }
+
     fn observe(&mut self, key: &str) -> Disposition {
         if !self.alive || !self.pages.contains_key(key) {
             return Disposition::Disabled;
@@ -692,6 +700,8 @@ impl<F: HostIo> Host<F> {
                     retry_copy: false,
                     records: vec![record],
                     tidied: false,
+                    failures: 0,
+                    recover_notice: true,
                 });
             } else {
                 if previous.is_none() {
@@ -714,6 +724,8 @@ impl<F: HostIo> Host<F> {
                     retry_copy: false,
                     records: vec![],
                     tidied: false,
+                    failures: 0,
+                    recover_notice: true,
                 });
             }
             Disposition::Pending
@@ -750,6 +762,8 @@ impl<F: HostIo> Host<F> {
             retry_copy: false,
             records,
             tidied: false,
+            failures: 0,
+            recover_notice: true,
         });
     }
 
@@ -760,13 +774,18 @@ impl<F: HostIo> Host<F> {
         };
         let terminal = matches!(worker.task.stage, Stage::Present | Stage::Absent);
         if !terminal {
+            let failures = worker.task.failures;
             self.with_locks(&worker.pages.clone(), |host| {
                 worker.task.advance(&mut host.fs)
             });
-            if worker.task.failures >= 3 {
+            worker.failures = worker
+                .failures
+                .checked_add(worker.task.failures - failures)
+                .expect("draft failure count exhausted");
+            if worker.failures >= 3 && worker.task.failures != failures {
                 self.events.push(Event::DraftError {
                     pages: worker.pages.clone(),
-                    failures: worker.task.failures,
+                    failures: worker.failures,
                 });
             }
             self.worker = Some(worker);
@@ -822,6 +841,9 @@ impl<F: HostIo> Host<F> {
             self.worker = Some(worker);
             Disposition::Pending
         } else {
+            if worker.recover_notice {
+                self.events.push(Event::DraftRecovered(worker.pages));
+            }
             Disposition::Applied
         }
     }
@@ -890,7 +912,8 @@ impl<F: HostIo> Host<F> {
                 // Keep the allocator through explosion (§4), never acquire
                 // another page or wait for a version allocator while holding it.
             }
-            Application::Refresh(_) | Application::Representation => {}
+            Application::Refresh(_) => worker.recover_notice = false,
+            Application::Representation => {}
         }
     }
 
@@ -1121,6 +1144,9 @@ impl<F: HostIo> Host<F> {
     }
 
     fn switch_ready(&mut self, consumed_last_id: u64) -> Disposition {
+        if !self.alive {
+            return Disposition::Disabled;
+        }
         if consumed_last_id != self.last_admitted
             || consumed_last_id != self.last_applied
             || self.outbox.values().any(|mail| mail.answer.is_some())
@@ -1287,6 +1313,8 @@ impl<F: HostIo> Host<F> {
                 remaining: tasks,
                 allocator: true,
                 tidied: false,
+                failures: 0,
+                recover_notice: true,
             });
             Disposition::Pending
         } else {

@@ -11,6 +11,67 @@ fn text(bytes: &str) -> Text {
     Some(Arc::from(bytes.as_bytes()))
 }
 
+#[test]
+fn review_f6_late_switch_ready_after_stop_cannot_apply() {
+    let mut h = host();
+    h.stop();
+    assert_eq!(h.switch_ready(0), Disposition::Disabled);
+    assert!(h.switch_confirmation.is_none());
+    assert!(h.admission_open);
+    assert!(!h.can_switch());
+    h.switch_abort();
+    assert_eq!(h.switch_ready(0), Disposition::Disabled);
+    assert!(!h.can_switch());
+    assert_eq!(h.launch(), Disposition::Applied);
+    assert_eq!(h.switch_ready(0), Disposition::Applied);
+    assert!(h.can_switch());
+    assert_eq!(h.switch_finish(), Disposition::Applied);
+    assert_eq!(h.switch_ready(0), Disposition::Disabled);
+    assert!(!h.can_switch());
+}
+
+#[test]
+fn review_f8_production_rename_rebinds_title_with_durable_custody_and_recovery() {
+    for power in [false, true] {
+        let mut h = host();
+        h.fs.external("a.md", text("title:: A\n- body\n"), true);
+        h.fs.external("b.md", text("title:: Referrer\n- [[A]]\n"), true);
+        assert_eq!(
+            h.rename(
+                "a.md",
+                "c.md",
+                &BTreeSet::from(["b.md".into()]),
+                "A",
+                "C",
+                tine_core::config::FileNameFormat::TripleLowbar
+            ),
+            Disposition::Pending
+        );
+        assert!(h.pages.values().all(Page::clean));
+        assert_eq!(h.start_save("c.md"), Disposition::Waiting);
+        for _ in 0..3 {
+            h.advance_draft();
+        }
+        assert!(
+            h.pages.values().all(Page::clean),
+            "durable but unapplied vehicle retains old buffers"
+        );
+        h.advance_draft();
+        assert_eq!(h.pages["c.md"].buf, text("title:: C\n- body\n"));
+        assert_eq!(h.pages["a.md"].buf, None);
+        assert_eq!(h.pages["b.md"].buf, text("title:: Referrer\n- [[C]]\n"));
+        let records = h.logical_drafts();
+        assert_eq!(records["c.md"].bytes, h.pages["c.md"].buf);
+        assert_eq!(records["b.md"].bytes, h.pages["b.md"].buf);
+        assert_eq!(h.start_save("c.md"), Disposition::Waiting);
+        restart(&mut h, power, false);
+        drain(&mut h);
+        assert_eq!(h.pages["c.md"].buf, text("title:: C\n- body\n"));
+        saved(&mut h, "c.md");
+        assert_eq!(h.fs.files["graph/c.md"].as_ref(), b"title:: C\n- body\n");
+    }
+}
+
 fn host() -> Host<ModelFs> {
     let mut fs = ModelFs::default();
     fs.external("a.md", text("A"), true);

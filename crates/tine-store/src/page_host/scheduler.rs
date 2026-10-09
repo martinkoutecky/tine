@@ -258,6 +258,44 @@ fn open(d: &mut Driver, p: usize) {
     );
 }
 
+#[test]
+fn review_f2_external_recreation_before_and_after_trash_sync_then_power() {
+    for before_trash_sync in [true, false] {
+        let mut d = Driver::stepped("base");
+        run(&mut d, &[("load", json!([0])), ("opDelete", json!([0]))]);
+        d.settle();
+        run(
+            &mut d,
+            &[
+                ("flushDel", json!([0])),
+                ("check", json!([])),
+                ("rename", json!([])),
+            ],
+        );
+        if !before_trash_sync {
+            assert!(d.attempt("dirSync", &[json!(true)]));
+            assert_eq!(d.host.job.as_ref().unwrap().phase, SavePhase::DirectorySync);
+        }
+        run(&mut d, &[("extWriteD", json!([0, 3, true]))]);
+        if before_trash_sync {
+            assert!(d.attempt("dirSync", &[json!(true)]));
+        }
+        assert!(d.attempt("dirSync", &[json!(true)]));
+        assert_eq!(d.observed["g"]["delDurable"][0], json!([]));
+        d.fault(true, false);
+        assert_eq!(
+            d.host.fs.files[&format!("graph/{}", key(0))],
+            text(3).unwrap()
+        );
+        assert!(d
+            .host
+            .fs
+            .files
+            .iter()
+            .any(|(k, v)| k.starts_with("trash/") && *v == text(1).unwrap()));
+    }
+}
+
 fn edit(d: &mut Driver, p: usize, t: i64) {
     run(
         d,

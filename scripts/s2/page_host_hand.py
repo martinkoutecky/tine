@@ -40,6 +40,10 @@ MUTATIONS = [
     ("H-cleanup-sync-retry", "drafts.rs", "Stage::CleanupSync if result.is_ok() => Stage::Absent,", "Stage::CleanupSync if result.is_ok() => Stage::Absent,\n            Stage::CleanupSync => Stage::CleanupUnlink,", "cleanup sync retry"),
     ("H-durable-before-apply", "drafts.rs", "Stage::Rename if result.is_ok() => Stage::Sync,", "Stage::Rename if result.is_ok() => Stage::Present,", "install directory witness"),
     ("H-live-readable", "mod.rs", "self.fs.draft_files(self.alive)", "self.fs.draft_files(true)", "stopped readable recovery"),
+    ("H-switch-ready-lifecycle", "mod.rs", "fn switch_ready(&mut self, consumed_last_id: u64) -> Disposition {\n        if !self.alive {", "fn switch_ready(&mut self, consumed_last_id: u64) -> Disposition {\n        if false {", "late confirmation after stop"),
+    ("H-draft-backoff", "progress.rs", "if self.draft_retry.is_some_and(|due| now < due) {", "if false {", "early cleanup/copy/retirement polls"),
+    ("H-save-fairness", "progress.rs", "due.sort();", "due.sort_by(|a, b| a.1.cmp(&b.1));", "recurring first-page input while another is overdue"),
+    ("H-replaced-copy-failures", "mod.rs", "worker.failures = worker\n                .failures\n                .checked_add(worker.task.failures - failures)\n                .expect(\"draft failure count exhausted\");", "worker.failures = worker.task.failures;", "repeated failed fresh explosion vehicles"),
 ]
 
 

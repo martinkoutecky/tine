@@ -7,6 +7,14 @@ The scenario source is the repaired lane's `scenarios-s3x.inc`, SHA-256
 It performs no I/O and has no clock, async tasks or production consumers.
 Replay establishes transcription evidence, not backend or native I/O conformance.
 
+The page-host byte-label lockstep substitutes an opaque pure reference rewrite
+and preserves the moving source label. Production rename also calls the existing
+deterministic title rebinder; those changed destination bytes are outside this
+equality certificate by design (SPEC-s3 §2 / STEP2-DESIGN §3). A separate host
+semantic test exercises title rebinding together with durable draft custody,
+publication and crash recovery. Scenario `.fail()` outcomes alone do not prove
+backend refusals: direct host API tests independently cover those guards.
+
 There is one s3 model; no separate s2 mode or s2-only fixture remains.
 On two paths without the new actions, its rules are s2.1. Every read goes through
 `table`; `observe` is enabled when that read changes the page, even if the bytes

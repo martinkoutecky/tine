@@ -2,6 +2,185 @@ use super::*;
 use sha2::{Digest, Sha256};
 
 #[test]
+fn review_f7_missing_backend_refusal_guards_are_called_directly() {
+    // Neither the scenario decoder nor the oracle is involved in these calls.
+    let mut h = host();
+    h.fs.inject(Phase::Read, [Fault::Before]);
+    assert_eq!(h.load("a.md"), Disposition::Refused);
+    assert!(h.pages.is_empty());
+    open(&mut h, "a.md");
+    let pages = h.pages.clone();
+    h.fs.inject(Phase::Read, [Fault::Before]);
+    assert_eq!(h.observe("a.md"), Disposition::Refused);
+    assert_eq!(h.pages, pages);
+    assert_eq!(
+        h.reserve(&BTreeSet::from(["unknown.md".into()])),
+        Disposition::Refused
+    );
+    assert_eq!(
+        h.release(&BTreeSet::from(["a.md".into()])),
+        Disposition::Refused
+    );
+    assert!(h.retained.is_empty());
+
+    let mut h = host();
+    assert_eq!(
+        send(
+            &mut h,
+            "a.md",
+            RequestKind::Submit {
+                bytes: text("unheld"),
+                version: 0,
+                resolve: None
+            }
+        ),
+        Disposition::Refused
+    );
+    assert!(!h.receive("a.md").unwrap().answer.unwrap().took);
+    assert!(h.pages.is_empty());
+
+    for missing in ["a.md", "b.md"] {
+        let mut h = host();
+        open(&mut h, if missing == "a.md" { "b.md" } else { "a.md" });
+        let files = h.fs.files.clone();
+        let source_version = h_version(&h, "a.md");
+        let receiver_version = h_version(&h, "b.md");
+        assert_eq!(
+            send(
+                &mut h,
+                "a.md",
+                RequestKind::Move {
+                    receiver: "b.md".into(),
+                    source_text: text("new source"),
+                    receiver_text: text("new receiver"),
+                    source_version,
+                    receiver_version
+                }
+            ),
+            Disposition::Refused
+        );
+        assert!(h.worker.is_none());
+        assert_eq!(h.fs.files, files);
+        for key in ["a.md", "b.md"] {
+            assert!(!h.receive(key).unwrap().answer.unwrap().took);
+        }
+    }
+    for stale_source in [true, false] {
+        let mut h = host();
+        open(&mut h, "a.md");
+        open(&mut h, "b.md");
+        let pages = h.pages.clone();
+        let sv = h.pages["a.md"].version;
+        let rv = h.pages["b.md"].version;
+        assert_eq!(
+            send(
+                &mut h,
+                "a.md",
+                RequestKind::Move {
+                    receiver: "b.md".into(),
+                    source_text: text("new source"),
+                    receiver_text: text("new receiver"),
+                    source_version: if stale_source { sv + 1 } else { sv },
+                    receiver_version: if stale_source { rv } else { rv + 1 }
+                }
+            ),
+            Disposition::Refused
+        );
+        assert_eq!(h.pages, pages);
+        assert!(h.worker.is_none());
+    }
+
+    let mut h = host();
+    assert_eq!(h.load("c.md"), Disposition::Applied);
+    assert_eq!(h.delete("c.md"), Disposition::Refused);
+    assert_eq!(h.delete("unknown.md"), Disposition::Disabled);
+    assert_eq!(
+        h.rename_with("c.md", "a.md", &BTreeSet::new(), |b, _, _| Ok(b.clone())),
+        Disposition::Refused
+    );
+    assert!(h.worker.is_none());
+
+    for failure_site in ["discovery", "moving", "referrer"] {
+        let mut h = host();
+        if failure_site == "discovery" {
+            open(&mut h, "b.md");
+        }
+        assert_eq!(
+            h.rename_with(
+                "a.md",
+                "c.md",
+                &BTreeSet::from(["b.md".into()]),
+                |b, key, moving| {
+                    if (failure_site == "moving" && moving)
+                        || (failure_site != "moving" && key == "b.md")
+                    {
+                        Err(())
+                    } else {
+                        Ok(b.clone())
+                    }
+                }
+            ),
+            Disposition::Refused
+        );
+        assert!(h.worker.is_none());
+        assert_eq!(h.fs.files["graph/a.md"].as_ref(), b"A");
+        assert!(h.pages.values().all(Page::clean));
+    }
+    for fail_source in [true, false] {
+        let mut h = host();
+        if !fail_source {
+            assert_eq!(h.load("a.md"), Disposition::Applied);
+        }
+        h.fs.inject(Phase::Read, [Fault::Before]);
+        assert_eq!(
+            h.rename_with(
+                "a.md",
+                "c.md",
+                &BTreeSet::from(["b.md".into()]),
+                |b, _, _| Ok(b.clone())
+            ),
+            Disposition::Refused
+        );
+        assert!(h.worker.is_none());
+        assert!(h.pages.values().all(Page::clean));
+    }
+
+    let mut h = host();
+    assert_eq!(h.switch_ready(0), Disposition::Applied);
+    assert_eq!(
+        h.admit(Request {
+            id: 1,
+            generation: h.generation,
+            page: "a.md".into(),
+            kind: RequestKind::Open
+        }),
+        Disposition::Refused
+    );
+    assert!(h.queue.is_empty());
+
+    let mut h = host();
+    h.stop();
+    let record = Record {
+        page: "unknown.md".into(),
+        wseq: 1,
+        version: 1,
+        base: Base::Known(None),
+        bytes: text("recover"),
+    };
+    h.fs.draft_temp("p-unknown.draft", &drafts::encode(&[record]))
+        .unwrap();
+    h.fs.draft_rename("p-unknown.draft").unwrap();
+    assert_eq!(h.launch(), Disposition::Refused);
+    assert!(!h.alive);
+    assert!(h.pages.is_empty());
+    assert!(h.fs.files.contains_key("draft/p-unknown.draft"));
+}
+
+fn h_version(h: &Host<ModelFs>, key: &str) -> u64 {
+    h.pages.get(key).map_or(0, |p| p.version)
+}
+
+#[test]
 fn clean_and_conflicted_pages_independently_disable_saving() {
     let mut h = host();
     open(&mut h, "a.md");
