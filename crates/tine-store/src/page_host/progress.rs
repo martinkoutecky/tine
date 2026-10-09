@@ -7,12 +7,16 @@ pub(super) trait Clock {
     fn now_ms(&self) -> u64;
 }
 
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub(super) struct Notice {
     pub failures: u32,
     pub save_error: bool,
     pub draft_error: bool,
     pub conflict_reported: bool,
+    /// Trash payloads whose custody error is sticky (REVIEW-2b-r2 V3): set by
+    /// the escape or a third failed retirement, kept across later saves and
+    /// Discard, cleared only when that marker is retired.
+    pub custody_error: BTreeSet<String>,
 }
 
 struct Timing {
@@ -55,6 +59,9 @@ pub(super) struct Progress<F: HostIo, C: Clock> {
     draft_retry: Option<u64>,
     draft_retries: u32,
     draft_errors: BTreeMap<String, DraftFailure>,
+    /// Backoff for the custody listing and retire-only markers (V1, V2).
+    custody_retry: Option<u64>,
+    custody_retries: u32,
 }
 
 impl<F: HostIo, C: Clock> Progress<F, C> {
@@ -70,6 +77,8 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             draft_retry: None,
             draft_retries: 0,
             draft_errors: BTreeMap::new(),
+            custody_retry: None,
+            custody_retries: 0,
         };
         result.reconcile();
         result
@@ -85,12 +94,24 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
     }
 
     pub fn notice(&self, key: &str) -> Notice {
-        self.times.get(key).map_or(Notice::default(), |t| t.notice)
+        Notice {
+            custody_error: self.host.custody_errors(key),
+            ..self
+                .times
+                .get(key)
+                .map_or(Notice::default(), |t| t.notice.clone())
+        }
     }
 
-    /// Wakeup required for a pending draft retry; repeated early polls stutter.
+    /// Graph-level sticky error while trash custody cannot be listed (V1).
+    pub fn custody_unknown(&self) -> Option<&str> {
+        self.host.custody_unknown.as_deref()
+    }
+
+    /// Wakeup required for a pending draft or custody retry; repeated early
+    /// polls stutter.
     pub fn draft_retry_at(&self) -> Option<u64> {
-        self.draft_retry
+        self.draft_retry.into_iter().chain(self.custody_retry).min()
     }
 
     fn reconcile(&mut self) {
@@ -101,6 +122,8 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             self.draft_retry = None;
             self.draft_retries = 0;
             self.draft_errors.clear();
+            self.custody_retry = None;
+            self.custody_retries = 0;
         }
         self.times
             .retain(|key, _| self.host.pages.contains_key(key));
@@ -276,6 +299,22 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             let result = self.host.advance_save(epoch);
             self.reconcile();
             return result;
+        }
+        if self.host.custody_unknown.is_none() && self.host.retire.is_empty() {
+            self.custody_retry = None;
+            self.custody_retries = 0;
+        } else if self.custody_retry.is_some_and(|due| now >= due) {
+            self.custody_retry = None;
+            self.host.recover_custody();
+            self.reconcile();
+            return Disposition::Applied;
+        } else if self.custody_retry.is_none() {
+            self.custody_retries = self
+                .custody_retries
+                .checked_add(1)
+                .expect("retry count exhausted");
+            let delay = backoff(self.custody_retries);
+            self.custody_retry = Some(now.checked_add(delay).expect("clock exhausted"));
         }
         let now = self.clock.now_ms();
         let drafts = self.host.logical_drafts();

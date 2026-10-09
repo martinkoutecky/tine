@@ -451,8 +451,9 @@ fn recapture_after_source_sync_error_does_not_revive_finished_trash_debt() {
     );
 }
 
+/// Physical entries in the custody directory, temps included (V2 census).
 fn markers(f: &mut Fixture) -> usize {
-    f.host.fs.custody_markers().unwrap().len()
+    fs::read_dir(custody_dir(f)).map_or(0, Iterator::count)
 }
 
 fn syncs() -> u64 {
@@ -646,6 +647,50 @@ fn launch_syncs_every_ancestor_of_a_nested_page() {
     }
 }
 
+/// REVIEW-2b-r2 R1: launch also syncs every existing directory of the trash
+/// chain, because a crash between a deletion's mkdirs and their parent syncs
+/// loses the obligation and the next creation sees the entries. A trash
+/// directory that does not exist is skipped, not a warning.
+#[cfg(feature = "test-faults")]
+#[test]
+fn launch_syncs_the_existing_trash_chain() {
+    let mut f = Fixture::new();
+    let chain = ["logseq", "logseq/.tine-trash", "logseq/.tine-trash/pages"];
+    let synced = relaunch(&mut f);
+    for dir in chain {
+        assert!(synced.contains(&f.graph.join(dir)), "{dir}: {synced:?}");
+    }
+    fs::remove_dir_all(f.graph.join(chain[1])).unwrap();
+    let synced = relaunch(&mut f);
+    assert!(synced.contains(&f.graph.join(chain[0])), "{synced:?}");
+    for dir in &chain[1..] {
+        assert!(!synced.contains(&f.graph.join(dir)), "{dir}: {synced:?}");
+    }
+    assert!(
+        f.host.fs.launch_warnings.is_empty(),
+        "{:?}",
+        f.host.fs.launch_warnings
+    );
+}
+
+/// The no-crash neighbour: a failed parent sync in the trash chain creation is
+/// retained in the process, and the next move redoes it before moving, even
+/// though every chain directory now exists.
+#[cfg(feature = "test-faults")]
+#[test]
+fn a_failed_trash_chain_sync_is_redone_before_the_next_move() {
+    let f = &mut Fixture::new();
+    fs::remove_dir_all(f.graph.join("logseq")).unwrap();
+    crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
+    assert!(f.host.fs.trash_move("a.md", "p1").result.is_err());
+    assert!(f.trash.is_dir() && f.graph.join("a.md").exists());
+    crate::directory_durability::take_synced_directories();
+    assert!(f.host.fs.trash_move("a.md", "p1").result.is_ok());
+    let owed = ["", "logseq", "logseq/.tine-trash"].map(|dir| f.graph.join(dir));
+    assert_eq!(crate::directory_durability::take_synced_directories(), owed);
+    assert_eq!(fs::read(f.trash.join("p1")).unwrap(), b"A");
+}
+
 /// Malformed imported state: a checksummed marker that names no page, or a
 /// payload outside the trash directory, is quarantined, never acted on, and
 /// the graph still opens.
@@ -653,6 +698,7 @@ fn launch_syncs_every_ancestor_of_a_nested_page() {
 fn malformed_custody_markers_are_quarantined_not_acted_on() {
     let mut f = Fixture::new();
     let cases = [("", "x__a.md"), ("a.md", "../a.md"), ("a.md", "sub/a.md")];
+    fs::create_dir_all(custody_dir(&f)).unwrap();
     for (i, (page, payload)) in cases.iter().enumerate() {
         let marker = drafts::Marker {
             page: page.to_string(),
@@ -1049,7 +1095,7 @@ fn the_adapter_never_lists_the_graph_or_its_trash() {
         listings,
         [
             "for entry in fs::read_dir(&drafts)? {",
-            "for entry in fs::read_dir(self.drafts.join(CUSTODY)).map_err(failure)? {"
+            "for entry in fs::read_dir(&dir).map_err(report)? {"
         ],
         "only app-data directories are listed (REVIEW-A3 R1)"
     );
@@ -1323,4 +1369,166 @@ fn real_operation_install_explosion_and_restart_keep_all_records() {
     assert!(files.iter().all(|(name, _)| name.starts_with("p-")));
     assert_eq!(f.save("c.md"), Outcome::Published);
     assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"A");
+}
+
+/// REVIEW-2b-r2 R2, hosted Windows only: under a plain (non-verbatim) app-data
+/// root whose marker path passes MAX_PATH, the marker publish (the shared
+/// no-replace move) succeeds and the deletion it guards completes.
+#[cfg(windows)]
+#[test]
+fn windows_marker_publish_under_a_long_app_data_root() {
+    let root = tempfile::tempdir().unwrap();
+    let graph = root.path().join("graph");
+    let mut app = root.path().join("app");
+    while app.as_os_str().len() < 280 {
+        app.push("a-long-app-data-directory-name");
+    }
+    let trash = graph.join("logseq/.tine-trash/pages");
+    fs::create_dir_all(&trash).unwrap();
+    fs::create_dir_all(&app).unwrap();
+    fs::write(graph.join("a.md"), b"A").unwrap();
+    let io = ProductionIo::new(&graph, &app, "test-graph", &trash).unwrap();
+    let locks = ["a.md"]
+        .into_iter()
+        .map(|key| (key.into(), Arc::new(Mutex::new(()))))
+        .collect();
+    let mut f = Fixture {
+        root,
+        graph,
+        app,
+        trash,
+        host: Host::new(io, locks),
+    };
+    assert!(custody_dir(&f).join("x".repeat(40)).as_os_str().len() > 300);
+    f.send("a.md", RequestKind::Open);
+    assert_eq!(f.host.delete("a.md"), Disposition::Pending);
+    f.drain();
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    assert!(!f.graph.join("a.md").exists());
+    assert!(trash_holds(&f, b"A"));
+    assert_eq!(markers(&mut f), 0);
+}
+
+/// REVIEW-2b-r2 V1: a regular file named `trash-custody` (imported or left by
+/// a crash; malformed state) is quarantined with its bytes preserved, the
+/// directory is recreated, and the graph opens.
+#[test]
+fn r2_listing_error_never_blocks_launch() {
+    let mut f = Fixture::new();
+    f.host.stop();
+    let dir = custody_dir(&f);
+    let _ = fs::remove_dir(&dir);
+    fs::write(&dir, b"not a directory").unwrap();
+    f.host.fs = ProductionIo::new(&f.graph, &f.app, "test-graph", &f.trash).unwrap();
+    assert_eq!(f.host.launch(), Disposition::Applied);
+    assert!(f.host.alive);
+    assert!(dir.is_dir());
+    assert_eq!(f.host.custody_unknown, None);
+    let event = Event::Unreadable("trash-custody".into());
+    assert!(f.host.events.contains(&event));
+    let unreadable = f.app.join("drafts-v2/test-graph/unreadable");
+    let kept: Vec<_> = fs::read_dir(unreadable)
+        .unwrap()
+        .map(|entry| fs::read(entry.unwrap().path()).unwrap())
+        .collect();
+    assert_eq!(kept, [b"not a directory".to_vec()]);
+    f.drain();
+    f.edit("a.md", "after");
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    // The reviewer's order: the swap happens after the adapter's scan, so
+    // launch's listing meets it; the graph still opens, custody unknown.
+    f.host.stop();
+    f.host.fs = ProductionIo::new(&f.graph, &f.app, "test-graph", &f.trash).unwrap();
+    fs::remove_dir(&dir).unwrap();
+    fs::write(&dir, b"swapped").unwrap();
+    assert_eq!(f.host.launch(), Disposition::Applied);
+    assert!(f.host.alive && f.host.custody_unknown.is_some());
+}
+
+/// REVIEW-2b-r2 V1: any other listing error (disk error) opens the graph with
+/// a sticky custody-unknown condition that is never read as "no debt"; saves
+/// proceed (R-STORAGE-ERROR), and a later successful listing adopts and
+/// settles the debt as launch would, then clears the condition.
+#[test]
+fn r2_listing_failure_opens_the_graph_until_a_retry_settles_the_debt() {
+    let mut f = Fixture::new();
+    delete_through_move(&mut f);
+    f.host.stop();
+    f.host.fs = ProductionIo::new(&f.graph, &f.app, "test-graph", &f.trash).unwrap();
+    f.host
+        .fs
+        .faults
+        .insert(Phase::CustodyList, [io::ErrorKind::Other; 2].into());
+    assert_eq!(f.host.launch(), Disposition::Applied);
+    f.drain();
+    let unknown = f.host.custody_unknown.clone().unwrap();
+    assert!(unknown.contains("trash-custody"), "{unknown}");
+    assert_eq!(markers(&mut f), 1, "unknown is not an empty listing");
+    f.edit("b.md", "saved while unknown");
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    f.host.recover_custody();
+    assert!(
+        f.host.custody_unknown.is_some(),
+        "a failed retry stays unknown"
+    );
+    assert_eq!(markers(&mut f), 1);
+    f.host.recover_custody();
+    assert_eq!(f.host.custody_unknown, None);
+    assert!(f.host.custody.is_empty());
+    assert_eq!(markers(&mut f), 0);
+    assert!(trash_holds(&f, b"A"));
+}
+
+/// REVIEW-2b-r2 V2: a reported retirement error after completed custody is
+/// retire-only debt. Four delete/recreate cycles publish normally; once the
+/// disk recovers, progress's backoff retry leaves no marker on disk.
+#[test]
+fn r2_retirement_errors_do_not_turn_into_history() {
+    let mut f = Fixture::new();
+    for cycle in 0..4 {
+        f.send("a.md", RequestKind::Open);
+        assert_eq!(f.host.delete("a.md"), Disposition::Pending);
+        f.drain();
+        let fault = [io::ErrorKind::Other].into();
+        f.host.fs.faults.insert(Phase::CustodyRetire, fault);
+        assert_eq!(f.save("a.md"), Outcome::Published);
+        f.edit("a.md", &format!("recreated {cycle}"));
+        assert_eq!(f.save("a.md"), Outcome::Published, "never blocks a save");
+    }
+    assert_eq!(markers(&mut f), 4);
+    assert!(f.host.custody.is_empty(), "no custody is owed");
+    let dir = custody_dir(&f);
+    let Fixture { root, host, .. } = f;
+    let clock = super::native_cost::ManualClock(std::cell::Cell::new(0));
+    let mut p = super::progress::Progress::new(host, clock);
+    for now in (0..=1000).step_by(100) {
+        p.clock.0.set(now);
+        p.poll(0);
+    }
+    assert!(p.host.retire.is_empty());
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+    drop(root);
+}
+
+/// REVIEW-2b-r2 V2: a process cut between the marker temp's write and its
+/// rename leaves an unpublished temp (no destructor runs). Launch reclaims
+/// it, so repeated cuts never accumulate physical entries.
+#[test]
+fn r2_marker_temp_crash_cuts_do_not_accumulate() {
+    let mut f = Fixture::new();
+    for i in 0..4 {
+        let dir = custody_dir(&f);
+        fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join(format!("{i}.tcm"));
+        std::mem::forget(crate::atomic_file::PreparedWrite::new(&marker, b"M").unwrap());
+        assert_eq!(markers(&mut f), 1);
+        let synced = relaunch(&mut f);
+        assert_eq!(markers(&mut f), 0);
+        // The unlink is made durable; a launch with no temp owes no sync.
+        #[cfg(feature = "test-faults")]
+        assert!(synced.contains(&dir), "{synced:?}");
+        #[cfg(feature = "test-faults")]
+        assert!(!relaunch(&mut f).contains(&dir));
+        let _ = synced;
+    }
 }

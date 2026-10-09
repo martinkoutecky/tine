@@ -11,6 +11,7 @@ pub(super) enum Phase {
     TrashSync,
     CustodyWrite,
     CustodyRetire,
+    CustodyList,
     DraftTemp,
     DraftRename,
     DraftUnlink,
@@ -66,8 +67,11 @@ pub(super) trait HostIo {
     fn custody_write(&mut self, name: &str, bytes: &[u8]) -> IoResult<()>;
     /// Unlink a custody marker and sync its app-data directory.
     fn custody_retire(&mut self, name: &str) -> IoResult<()>;
-    /// Launch only: this device's markers. Never a listing of the trash.
-    fn custody_markers(&mut self) -> IoResult<Vec<(String, Vec<u8>)>>;
+    /// This device's markers, at launch and on progress's retry while the
+    /// listing is unknown; never a listing of the trash. Unpublished marker
+    /// temps are unlinked first (no move followed them). The error names the
+    /// filesystem's failure (REVIEW-2b-r2 V1).
+    fn custody_markers(&mut self) -> Result<Vec<(String, Vec<u8>)>, String>;
     fn draft_files(&self, durable: bool) -> Vec<(String, Vec<u8>)>;
     fn draft_temp(&mut self, name: &str, bytes: &[u8]) -> IoResult<()>;
     fn draft_rename(&mut self, name: &str) -> IoResult<()>;

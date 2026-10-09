@@ -212,11 +212,9 @@ thread_local! {
 
 #[cfg(windows)]
 fn move_windows(src: &Path, dest: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    let mut src: Vec<u16> = src.as_os_str().encode_wide().collect();
-    let mut dest: Vec<u16> = dest.as_os_str().encode_wide().collect();
-    src.push(0);
-    dest.push(0);
+    // The shared path form: past MAX_PATH as `\\?\` (REVIEW-2b-r2 R2).
+    let src = super::atomic_file::native_path(src);
+    let dest = super::atomic_file::native_path(dest);
     // Rust std::fs::rename uses MOVEFILE_REPLACE_EXISTING on Windows. This
     // write-through move omits that flag, so an existing target is refused.
     // Windows has no supported directory fsync; this also makes publication

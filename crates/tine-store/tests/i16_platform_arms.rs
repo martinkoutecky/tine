@@ -87,6 +87,7 @@ fn selects(cfg: &Cfg, target: &str) -> Option<bool> {
 /// of its domain (the targets its enclosing cfg'd item compiles for) exactly
 /// once, and a `not(any(target_os = …))` stub must select none of them: it
 /// means "not a Tine platform", never a shipped target's Unsupported outage.
+/// A standalone arm must select a whole platform family of its domain.
 fn family_errors(file: &str, source: &str) -> (usize, Vec<String>) {
     let bytes = source.as_bytes();
     // (enclosing block, item) -> [(domain, predicate text, predicate)]
@@ -131,8 +132,14 @@ fn family_errors(file: &str, source: &str) -> (usize, Vec<String>) {
             }
             // The attributed item: skip further attributes, then name it.
             let mut item = source[i..].trim_start();
+            let mut test = false;
             while item.starts_with("#[") {
+                test |= item.starts_with("#[test]");
                 item = item[item.find(']').unwrap() + 1..].trim_start();
+            }
+            if test {
+                // Where a test can run is not a shipped target's outage.
+                continue;
             }
             for vis in ["pub(crate) ", "pub(super) ", "pub "] {
                 item = item.strip_prefix(vis).unwrap_or(item);
@@ -175,9 +182,33 @@ fn family_errors(file: &str, source: &str) -> (usize, Vec<String>) {
     }
     let mut checked = 0;
     let mut errors = vec![];
-    for ((_, name), arms) in families.iter().filter(|(_, arms)| arms.len() >= 2) {
+    for ((_, name), arms) in &families {
         checked += 1;
         let domain = &arms[0].0;
+        if let [(_, text, cfg)] = arms.as_slice() {
+            // A standalone arm (REVIEW-2b-r2 V4: `move_at`'s outer cfg) must
+            // select a whole platform family of its domain: none (a stub), all,
+            // every Unix target, or Windows; a lone `target_os` names one
+            // deliberate platform. An `any(…)` that lost a member selects none
+            // of these.
+            let chosen: Vec<_> = domain
+                .iter()
+                .copied()
+                .filter(|t| selects(cfg, t) == Some(true))
+                .collect();
+            let unix: Vec<_> = domain.iter().copied().filter(|t| *t != "windows").collect();
+            if !(chosen.is_empty()
+                || chosen == *domain
+                || chosen == unix
+                || chosen == ["windows"]
+                || matches!(cfg, Cfg::Os(_)))
+            {
+                errors.push(format!(
+                    "{file} `{name}`: standalone `{text}` selects {chosen:?}, not a platform family"
+                ));
+            }
+            continue;
+        }
         for target in domain {
             let count = arms
                 .iter()
@@ -216,16 +247,19 @@ fn host_publication_witnesses_cover_exactly_the_five_shipped_targets() {
              exemplar atomic_file.rs rename_replace: {errors:#?}"
         );
     }
-    // Positive property: the families named in I-16's exemplars are checked.
-    for (file, family) in [
-        ("src/atomic_file.rs", 2),
+    // Positive property: the families named in I-16's exemplars (paired and
+    // standalone) are checked.
+    let pinned = [
+        ("src/atomic_file.rs", 3),
         ("src/directory_durability.rs", 2),
-        ("src/no_replace.rs", 4),
-    ] {
+        ("src/no_replace.rs", 8),
+    ];
+    let found = pinned.map(|(file, _)| {
         let source = fs::read_to_string(root.join(file)).unwrap();
-        assert_eq!(family_errors(file, &source), (family, vec![]), "{file}");
-    }
-    assert!(checked >= 8);
+        (file, family_errors(file, &source).0)
+    });
+    assert_eq!(found, pinned);
+    assert!(checked >= pinned.iter().map(|(_, n)| n).sum());
     let atomic = fs::read_to_string(root.join("src/atomic_file.rs")).unwrap();
     assert!(atomic.contains("MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH"));
     let directory = fs::read_to_string(root.join("src/directory_durability.rs")).unwrap();
@@ -253,6 +287,51 @@ fn platform_family_guard_rejects_a_dropped_ios_arm() {
     let (_, errors) = family_errors("mutant", &outage);
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(errors[0].contains("fallback"), "{errors:?}");
+}
+
+/// REVIEW-2b-r2 V4: dropping iOS from ANY positive platform cfg in the three
+/// primitive files, paired or standalone (`move_at`, the flag-refusal probe),
+/// must be rejected by the same guard the real check runs.
+#[test]
+fn every_positive_ios_cfg_omission_is_rejected() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut probed = 0;
+    for file in [
+        "src/atomic_file.rs",
+        "src/directory_durability.rs",
+        "src/no_replace.rs",
+    ] {
+        let source = fs::read_to_string(root.join(file)).unwrap();
+        let mut at = 0;
+        while let Some(start) = source[at..].find("#[cfg(").map(|i| i + at) {
+            let end = start + source[start..].find(")]").unwrap() + 2;
+            at = end;
+            let attribute = &source[start..end];
+            let cfg = parse_cfg(&attribute[6..attribute.len() - 2]);
+            if selects(&cfg, "ios") != Some(true) || !attribute.contains("\"ios\"") {
+                continue;
+            }
+            let token = "target_os = \"ios\"";
+            let i = attribute.find(token).unwrap();
+            let after = attribute[i + token.len()..].trim_start();
+            let dropped = if let Some(rest) = after.strip_prefix(',') {
+                format!("{}{}", &attribute[..i], rest.trim_start())
+            } else {
+                let before = attribute[..i].trim_end().strip_suffix(',').unwrap();
+                format!("{before}{}", &attribute[i + token.len()..])
+            };
+            let mutant = format!("{}{dropped}{}", &source[..start], &source[end..]);
+            let (_, errors) = family_errors(file, &mutant);
+            let line = source[..start].lines().count() + 1;
+            assert!(
+                !errors.is_empty(),
+                "I-16: iOS dropped at {file}:{line} went undetected"
+            );
+            probed += 1;
+        }
+    }
+    // atomic 1, directory 1, no_replace 6 (four paired, two standalone).
+    assert_eq!(probed, 8);
 }
 
 fn walk(dir: &Path) -> Vec<std::path::PathBuf> {

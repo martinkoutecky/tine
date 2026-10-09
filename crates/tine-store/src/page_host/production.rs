@@ -41,14 +41,12 @@ impl ProductionIo {
         trash: &Path,
     ) -> io::Result<Self> {
         let drafts = app_data.join("drafts-v2").join(graph_id);
-        let custody = drafts.join(CUSTODY);
-        durability::create_dir_all_with_sync(&custody, durability::sync_private_directory)?;
+        // The custody directory is not created here: a malformed one must not
+        // stop the graph from opening (REVIEW-2b-r2 V1). The listing creates it.
+        durability::create_dir_all_with_sync(&drafts, durability::sync_private_directory)?;
         // Also cover a directory chain left readable by an interrupted earlier
         // creation attempt. Constructor failure is retryable, never weak success.
-        for dir in custody
-            .ancestors()
-            .filter(|dir| !dir.as_os_str().is_empty())
-        {
+        for dir in drafts.ancestors().filter(|dir| !dir.as_os_str().is_empty()) {
             durability::sync_private_directory(dir)?;
         }
         let mut readable = BTreeMap::new();
@@ -118,6 +116,13 @@ impl ProductionIo {
             .unwrap_or_else(|| self.drafts.join(name))
     }
 
+    /// The custody directory, created with the strict app-data recipe.
+    fn custody(&self) -> io::Result<PathBuf> {
+        let dir = self.drafts.join(CUSTODY);
+        durability::create_dir_all_with_sync(&dir, durability::sync_private_directory)?;
+        Ok(dir)
+    }
+
     fn graph_directory(&mut self, dir: &Path) -> IoResult<()> {
         self.directories
             .entry(dir.to_path_buf())
@@ -132,10 +137,16 @@ impl ProductionIo {
 /// A4 custody markers: only this device's unfinished deletions (D-10).
 const CUSTODY: &str = "trash-custody";
 
+/// `dir` and each of its ancestors up to and including the graph root.
+fn chain<'a>(graph: &'a Path, dir: &'a Path) -> impl Iterator<Item = &'a Path> {
+    dir.ancestors()
+        .take_while(move |dir| dir.starts_with(graph))
+}
+
 /// Unlink; an already absent file is the requested state.
-fn remove_present(path: &Path) -> IoResult<()> {
+fn remove_present(path: &Path) -> io::Result<()> {
     match fs::remove_file(path) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(failure(error)),
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
     }
 }
@@ -170,16 +181,20 @@ impl HostIo for ProductionIo {
     fn graph_launch(&mut self, pages: &std::collections::BTreeSet<String>) {
         // Every existing ancestor up to the graph root: an interrupted nested
         // page-directory creation leaves entries no later leaf sync covers.
+        // The same holds for the trash chain: a crash between a deletion's
+        // mkdirs and their parent syncs loses the retained obligation, and the
+        // next deletion's creation sees the entries and owes nothing
+        // (REVIEW-2b-r2 R1). A trash directory that does not exist is skipped.
         let mut directories = std::collections::BTreeSet::from([self.graph.clone()]);
         for page in pages {
             let path = self.graph.join(page);
-            directories.extend(
-                path.ancestors()
-                    .skip(1)
-                    .take_while(|dir| dir.starts_with(&self.graph))
-                    .map(Path::to_path_buf),
-            );
+            directories.extend(chain(&self.graph, path.parent().unwrap()).map(Path::to_path_buf));
         }
+        directories.extend(
+            chain(&self.graph, &self.trash)
+                .filter(|dir| dir.try_exists().unwrap_or(true))
+                .map(Path::to_path_buf),
+        );
         self.launch_warnings.clear();
         for directory in directories {
             if let Err(error) = durability::sync_directory_witness(&directory) {
@@ -279,23 +294,20 @@ impl HostIo for ProductionIo {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Witness::Durable),
             Err(error) => return Err(failure(error)),
         }
-        self.trash
-            .ancestors()
-            .take_while(|dir| dir.starts_with(&self.graph))
-            .try_fold(Witness::Durable, |result, dir| {
-                let synced = durability::sync_directory_witness(dir).map_err(sync_failure)?;
-                let synced = witness(synced);
-                Ok(if synced == Witness::Unsupported {
-                    synced
-                } else {
-                    result
-                })
+        chain(&self.graph, &self.trash).try_fold(Witness::Durable, |result, dir| {
+            let synced = durability::sync_directory_witness(dir).map_err(sync_failure)?;
+            let synced = witness(synced);
+            Ok(if synced == Witness::Unsupported {
+                synced
+            } else {
+                result
             })
+        })
     }
 
     fn custody_write(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {
         self.before(super::io::Phase::CustodyWrite)?;
-        let dir = self.drafts.join(CUSTODY);
+        let dir = self.custody().map_err(failure)?;
         PreparedWrite::new(&dir.join(name), bytes)
             .and_then(|prepared| prepared.publish(true))
             .and_then(|()| durability::sync_private_directory(&dir))
@@ -305,19 +317,35 @@ impl HostIo for ProductionIo {
     fn custody_retire(&mut self, name: &str) -> IoResult<()> {
         self.before(super::io::Phase::CustodyRetire)?;
         let dir = self.drafts.join(CUSTODY);
-        remove_present(&dir.join(name))?;
+        remove_present(&dir.join(name)).map_err(failure)?;
         durability::sync_private_directory(&dir).map_err(failure)
     }
 
-    fn custody_markers(&mut self) -> IoResult<Vec<(String, Vec<u8>)>> {
-        let mut markers = vec![];
-        for entry in fs::read_dir(self.drafts.join(CUSTODY)).map_err(failure)? {
-            let entry = entry.map_err(failure)?;
+    fn custody_markers(&mut self) -> Result<Vec<(String, Vec<u8>)>, String> {
+        let report = |error: io::Error| format!("{CUSTODY}: {error}");
+        self.before(super::io::Phase::CustodyList)
+            .map_err(|_| report(io::Error::other("injected listing failure")))?;
+        // A non-directory here was already quarantined by launch's draft scan
+        // (it is no draft); the strict creation then succeeds.
+        let dir = self.custody().map_err(report)?;
+        let (mut markers, mut temps) = (vec![], false);
+        for entry in fs::read_dir(&dir).map_err(report)? {
+            let entry = entry.map_err(report)?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !name.ends_with(".tmp") {
+            if name.ends_with(".tmp") {
+                // V2: an unpublished marker temp was never installed, so no
+                // move followed it and no custody is owed. Best effort: one
+                // that survives is reclaimed at the next listing. A second
+                // instance's in-flight temp would make its deletion fail and
+                // retry, never lose bytes (F7, step 3).
+                temps |= remove_present(&entry.path()).is_ok();
+            } else {
                 // Unreadable means malformed: quarantined, never acted on.
                 markers.push((name, fs::read(entry.path()).unwrap_or_default()));
             }
+        }
+        if temps {
+            let _ = durability::sync_private_directory(&dir);
         }
         Ok(markers)
     }
@@ -372,7 +400,7 @@ impl HostIo for ProductionIo {
         self.before(super::io::Phase::DraftUnlink)?;
         self.draft_temps.remove(name);
         self.draft_payloads.remove(name);
-        remove_present(&self.draft_path(name))?;
+        remove_present(&self.draft_path(name)).map_err(failure)?;
         self.readable.remove(name);
         // NotFound is only readable absence. Vehicle still requires DraftSync.
         Ok(())

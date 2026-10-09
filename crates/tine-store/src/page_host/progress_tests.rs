@@ -1014,3 +1014,172 @@ fn queued_requests_dequeue_apply_answer_and_then_save_on_the_clock() {
     pump(&mut p);
     assert!(p.host.pages["a.md"].clean());
 }
+
+/// Polls every 100 ms of clock time for `ms`.
+fn run_for(p: &mut Timed, ms: u64) {
+    let end = p.clock.now_ms() + ms;
+    while p.clock.now_ms() < end {
+        time(p, p.clock.now_ms() + 100);
+        poll(p);
+    }
+}
+
+/// Deletes A through its move, then fails the deletion's own custody (a
+/// reported error), leaving the marker as debt. Returns its payload.
+fn moved_with_unfinished_custody(h: &mut Host<ModelFs>) -> String {
+    open(h, "a.md");
+    assert_eq!(h.delete("a.md"), Disposition::Pending);
+    drain(h);
+    assert_eq!(h.start_save("a.md"), Disposition::Pending);
+    for _ in 0..3 {
+        h.advance_save(0); // guard, marker, move
+    }
+    assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::TrashSync);
+    h.fs.inject(Phase::TrashSync, [Fault::Before]);
+    h.advance_save(0);
+    assert!(h.job.is_none());
+    let debt = &h.custody["a.md"];
+    debt.markers.values().next().unwrap().clone()
+}
+
+fn custody_entries(p: &Timed) -> usize {
+    let custody = |k: &&String| k.starts_with("draft/trash-custody/");
+    p.host.fs.files.keys().filter(custody).count()
+}
+
+/// REVIEW-2b-r2 V1: unknown custody is relisted only on an idle host. A
+/// deletion in flight has published its marker but not moved yet; adopting
+/// that marker would settle it (nothing moved yet) and retire it before the
+/// move, leaving the moved payload without custody.
+#[test]
+fn r2_unknown_custody_is_not_relisted_under_a_running_deletion() {
+    let mut h = host();
+    h.stop();
+    h.fs.inject(Phase::CustodyList, [Fault::Before]);
+    assert_eq!(h.launch(), Disposition::Applied);
+    assert!(h.custody_unknown.is_some());
+    open(&mut h, "a.md");
+    assert_eq!(h.delete("a.md"), Disposition::Pending);
+    drain(&mut h);
+    assert_eq!(h.start_save("a.md"), Disposition::Pending);
+    h.advance_save(0); // guard
+    h.advance_save(0); // marker
+    assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::Rename);
+    h.recover_custody();
+    let custody = |k: &&String| k.starts_with("draft/trash-custody/");
+    assert_eq!(h.fs.files.keys().filter(custody).count(), 1);
+    assert!(h.custody_unknown.is_some(), "not relisted while busy");
+}
+
+/// REVIEW-2b-r2 V3: the escape's custody error is a sticky notice naming the
+/// payload. It survives later successful saves and Discard, and clears only
+/// when that marker retires.
+#[test]
+fn r2_escaped_custody_has_a_sticky_progress_notice() {
+    let mut h = host();
+    let payload = moved_with_unfinished_custody(&mut h);
+    assert_eq!(h.observe("a.md"), Disposition::Applied);
+    edit(&mut h, "a.md", "C");
+    let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    p.host.fs.inject(Phase::TrashSync, [Fault::Before; 64]);
+    run_for(&mut p, 10_000);
+    assert_eq!(p.host.fs.files["graph/a.md"].as_ref(), b"C");
+    let sticky = BTreeSet::from([payload]);
+    assert_eq!(p.notice("a.md").custody_error, sticky, "after publication");
+    p.with_host(|h| edit(h, "a.md", "D"));
+    run_for(&mut p, 10_000);
+    assert_eq!(p.host.fs.files["graph/a.md"].as_ref(), b"D");
+    assert_eq!(p.notice("a.md").custody_error, sticky, "after a later save");
+    p.with_host(|h| {
+        edit(h, "a.md", "E");
+        let version = h.pages["a.md"].version;
+        send(h, "a.md", RequestKind::Discard { version });
+    });
+    run_for(&mut p, 10_000);
+    assert_eq!(p.notice("a.md").custody_error, sticky, "after Discard");
+    p.host.fs.faults.clear();
+    p.with_host(|h| edit(h, "a.md", "F"));
+    run_for(&mut p, 10_000);
+    assert_eq!(p.host.fs.files["graph/a.md"].as_ref(), b"F");
+    assert!(p.notice("a.md").custody_error.is_empty(), "retired");
+    // V3 clears the error at retirement; it does not linger out of sight.
+    assert!(
+        p.host.custody_errors.is_empty(),
+        "{:?}",
+        p.host.custody_errors
+    );
+    assert_eq!(custody_entries(&p), 0);
+}
+
+/// REVIEW-2b-r2 V2/V3: retire-only debt never blocks a save; progress retries
+/// it with backoff, the third reported failure is a sticky notice naming the
+/// payload, and a later successful retirement clears it.
+#[test]
+fn r2_third_failed_retirement_is_sticky_until_retired() {
+    let mut h = host();
+    open(&mut h, "a.md");
+    assert_eq!(h.delete("a.md"), Disposition::Pending);
+    drain(&mut h);
+    h.fs.inject(Phase::CustodyRetire, [Fault::Before; 3]);
+    assert_eq!(h.start_save("a.md"), Disposition::Pending);
+    while h.job.is_some() {
+        h.advance_save(0);
+    }
+    assert!(h.custody.is_empty());
+    let payload = h.retire.values().next().unwrap().payload.clone();
+    let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    assert!(p.notice("a.md").custody_error.is_empty(), "one failure");
+    p.with_host(|h| edit(h, "a.md", "C"));
+    let failing = |p: &Timed| p.host.fs.faults[&Phase::CustodyRetire].len();
+    for _ in 0..200 {
+        if failing(&p) == 0 {
+            break;
+        }
+        assert!(p.notice("a.md").custody_error.is_empty(), "under three");
+        run_for(&mut p, 100);
+    }
+    assert_eq!(failing(&p), 0, "progress retries the retirement");
+    let sticky = BTreeSet::from([payload]);
+    assert_eq!(p.notice("a.md").custody_error, sticky, "third failure");
+    assert_eq!(custody_entries(&p), 1);
+    run_for(&mut p, 1_000);
+    assert_eq!(p.host.fs.files["graph/a.md"].as_ref(), b"C", "not blocked");
+    run_for(&mut p, 10_000);
+    assert!(p.notice("a.md").custody_error.is_empty());
+    assert_eq!(custody_entries(&p), 0);
+}
+
+/// REVIEW-2b-r2 V1: a failed launch listing opens the graph with a sticky
+/// custody-unknown condition; polls retry it with backoff, and the first
+/// successful listing adopts and settles the debt, then clears it.
+#[test]
+fn r2_unknown_custody_is_retried_on_the_backoff_until_listed() {
+    let mut h = host();
+    moved_with_unfinished_custody(&mut h);
+    h.stop();
+    h.fs.crash();
+    h.fs.inject(Phase::CustodyList, [Fault::Before; 3]);
+    assert_eq!(h.launch(), Disposition::Applied);
+    let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    assert!(p.custody_unknown().unwrap().contains("trash-custody"));
+    assert!(p.host.custody.is_empty());
+    let mut lists = vec![];
+    for _ in 0..200 {
+        let before = p.host.fs.calls.len();
+        run_for(&mut p, 100);
+        if p.host.fs.calls[before..].contains(&Phase::CustodyList) {
+            lists.push(p.clock.now_ms());
+        }
+        if p.custody_unknown().is_none() {
+            break;
+        }
+    }
+    assert_eq!(
+        lists.len(),
+        3,
+        "two failed retries, then success: {lists:?}"
+    );
+    assert!(lists[1] - lists[0] > lists[0], "backoff grows: {lists:?}");
+    assert!(p.host.custody.is_empty(), "adopted and settled");
+    assert_eq!(custody_entries(&p), 0);
+}

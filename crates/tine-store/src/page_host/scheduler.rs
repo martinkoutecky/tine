@@ -319,8 +319,14 @@ fn delete_through_move(d: &mut Driver) {
     assert_eq!(d.host.custody[&key(0)].markers.len(), 1);
 }
 
+/// Physical entries in the custody directory, temps included (V2 census).
 fn markers(d: &mut Driver) -> usize {
-    d.host.fs.custody_markers().unwrap().len()
+    d.host
+        .fs
+        .files
+        .keys()
+        .filter(|k| k.starts_with("draft/trash-custody/"))
+        .count()
 }
 
 /// REVIEW-A2 B2 / A3 B2 / F9: a crash after the move and before custody (b);
@@ -338,7 +344,11 @@ fn restart_redoes_custody_before_marker_retires_and_before_recreation() {
         d.host.fs.calls.clear();
         run(&mut d, &[("launch", json!([]))]);
         let launch = d.host.fs.calls.clone();
-        assert_eq!(launch.first(), Some(&Phase::TrashSync), "custody first");
+        assert_eq!(
+            launch[..2],
+            [Phase::CustodyList, Phase::TrashSync],
+            "custody first"
+        );
         assert_eq!(markers(&mut d), usize::from(launch_fails));
         assert_eq!(d.host.custody.contains_key(&key(0)), launch_fails);
         run(&mut d, &[("observe", json!([0]))]);
@@ -1080,4 +1090,108 @@ fn loaded_delete_new_open_during_install_gets_a_modelled_push() {
     );
     assert!(d.windows[0].on);
     assert!(!d.windows[0].sent);
+}
+
+/// The system calls inside each custody HostIo call of a deletion on a fresh
+/// trash chain: marker temp, rename, directory sync; three mkdirs, three
+/// parent syncs, the move; payload data, `pages/` and three ancestor syncs;
+/// marker unlink and its directory sync (REVIEW-2b-r2 R1).
+const CUSTODY_CALLS: [(Phase, usize); 4] = [
+    (Phase::CustodyWrite, 3),
+    (Phase::TrashMove, 7),
+    (Phase::TrashSync, 5),
+    (Phase::CustodyRetire, 2),
+];
+
+/// Drives page 0's deletion and fails its `phase` call after `k` system calls.
+fn cut_deletion(d: &mut Driver, phase: Phase, k: usize) {
+    run(d, &[("load", json!([0])), ("opDelete", json!([0]))]);
+    d.settle();
+    run(d, &[("flushDel", json!([0])), ("check", json!([]))]);
+    match phase {
+        Phase::CustodyWrite | Phase::TrashMove => {
+            if phase == Phase::TrashMove {
+                d.host.advance_save(0);
+                d.compare("marker is a stutter");
+            }
+            d.cut = Some(k);
+            run(d, &[("saveFail", json!([]))]);
+        }
+        Phase::TrashSync => {
+            run(d, &[("rename", json!([]))]);
+            // The process stops inside this call; nobody sees its outcome.
+            d.host.fs.inject(phase, [Fault::Cut(k)]);
+            let events = d.host.events.len();
+            d.host.advance_save(0);
+            d.host.events.truncate(events);
+        }
+        _ => {
+            run(d, &[("rename", json!([]))]);
+            assert!(d.attempt("dirSync", &[json!(true)]));
+            d.host.fs.inject(phase, [Fault::Cut(k)]);
+            assert!(d.attempt("dirSync", &[json!(true)]));
+        }
+    }
+}
+
+/// Every permitted power outcome, keeping or reverting page 0's source, must
+/// keep the oracle's trash unless a named residual applies.
+fn probe_power(d: &Driver) {
+    for keep in [false, true] {
+        let mut probe = d.clone();
+        assert!(probe.step("power", &[json!(keep), json!(false)]));
+    }
+}
+
+/// Finishes page 0's deletion, probing a power cut after every step.
+fn finish_deletion(d: &mut Driver, context: &str) {
+    let steps = [
+        ("flushDel", json!([0])),
+        ("check", json!([])),
+        ("rename", json!([])),
+        ("dirSync", json!([true])),
+    ];
+    for _ in 0..12 {
+        let progressed = steps
+            .iter()
+            .any(|(name, args)| d.attempt(name, args.as_array().unwrap()));
+        if !progressed {
+            break;
+        }
+        probe_power(d);
+    }
+    assert!(d.host.job.is_none(), "{context}: deletion finished");
+}
+
+/// R1: cut between the system calls of every custody call of a deletion;
+/// then lose power at once, or finish the deletion in the same process, or
+/// crash, relaunch and finish it, probing a power cut after every later step.
+#[test]
+fn r1_every_constituent_cut_of_a_deletion_refines_the_oracle() {
+    for profile in ["base", "weak"] {
+        for (phase, calls) in CUSTODY_CALLS {
+            for k in 0..calls {
+                let context = format!("{profile} {phase:?} cut after {k} calls");
+                // Name the failing cut in the panic (production-stderr guard I-5).
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut d = Driver::stepped(profile);
+                    cut_deletion(&mut d, phase, k);
+                    probe_power(&d);
+                    if phase != Phase::TrashSync {
+                        // No crash: the retained obligations are discharged first.
+                        finish_deletion(&mut d.clone(), &format!("{context}, no crash"));
+                    }
+                    d.fault(false, false);
+                    run(&mut d, &[("launch", json!([]))]);
+                    d.settle();
+                    probe_power(&d);
+                    finish_deletion(&mut d, &context);
+                }));
+                if let Err(panic) = outcome {
+                    let message = panic.downcast_ref::<String>().cloned().unwrap_or_default();
+                    panic!("{context}: {message}");
+                }
+            }
+        }
+    }
 }

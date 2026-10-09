@@ -69,7 +69,8 @@ impl NativeFs {
         assert_eq!(real_trash, ledger_trash, "native trash bytes");
         let real_markers: BTreeMap<_, _> =
             fs::read_dir(self.app.join("drafts-v2/native/trash-custody"))
-                .unwrap()
+                .into_iter()
+                .flatten()
                 .map(|entry| entry.unwrap())
                 .map(|entry| {
                     (
@@ -287,7 +288,7 @@ impl HostIo for NativeFs {
             |fs| fs.custody_retire(name),
         )
     }
-    fn custody_markers(&mut self) -> IoResult<Vec<(String, Vec<u8>)>> {
+    fn custody_markers(&mut self) -> Result<Vec<(String, Vec<u8>)>, String> {
         let expected = self.ledger.custody_markers();
         let actual = self.native.custody_markers();
         assert_eq!(

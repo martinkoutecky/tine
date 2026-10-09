@@ -125,6 +125,9 @@ struct Driver<F: ConformanceIo = ModelFs> {
     effect: Option<(String, Vec<Value>, u64, u64)>,
     /// Trash keys whose custody a save escaped (R-STORAGE-ERROR).
     escaped: BTreeMap<String, i64>,
+    /// The next saveFail lands after this many system calls of its HostIo
+    /// call instead of before the call (REVIEW-2b-r2 R1).
+    cut: Option<usize>,
 }
 
 impl Clone for Driver<ModelFs> {
@@ -163,6 +166,7 @@ impl<F: ConformanceIo> Driver<F> {
             prepare_operations: false,
             effect: None,
             escaped: BTreeMap::new(),
+            cut: None,
         }
     }
 
@@ -171,6 +175,9 @@ impl<F: ConformanceIo> Driver<F> {
         Some(Self {
             host: Host {
                 custody: h.custody.clone(),
+                retire: h.retire.clone(),
+                custody_errors: h.custody_errors.clone(),
+                custody_unknown: h.custody_unknown.clone(),
                 fs: h.fs.fork()?,
                 keys: h.keys.clone(),
                 locks: h.locks.clone(),
@@ -208,6 +215,7 @@ impl<F: ConformanceIo> Driver<F> {
             prepare_operations: self.prepare_operations,
             effect: self.effect.clone(),
             escaped: self.escaped.clone(),
+            cut: self.cut,
         })
     }
 
@@ -736,7 +744,8 @@ impl<F: ConformanceIo> Driver<F> {
                     SavePhase::Rename => Phase::TrashMove,
                     _ => panic!("late saveFail"),
                 };
-                self.host.fs.physical_mut().inject(phase, [Fault::Before]);
+                let fault = self.cut.take().map_or(Fault::Before, Fault::Cut);
+                self.host.fs.physical_mut().inject(phase, [fault]);
                 self.host.advance_save(0);
             }
             "draftSync" => {

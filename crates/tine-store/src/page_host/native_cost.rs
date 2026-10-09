@@ -7,7 +7,7 @@ use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-struct ManualClock(Cell<u64>);
+pub(super) struct ManualClock(pub(super) Cell<u64>);
 impl Clock for ManualClock {
     fn now_ms(&self) -> u64 {
         self.0.get()

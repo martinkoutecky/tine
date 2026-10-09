@@ -85,22 +85,19 @@ fn fit_name(prefix: &str, stem: &str, tail: &str, limit: usize) -> String {
 pub(crate) fn rename_replace(src: &Path, dst: &Path) -> io::Result<()> {
     #[cfg(target_os = "windows")]
     {
-        // std's own call plus MOVEFILE_WRITE_THROUGH, on std's verbatim path
-        // form. Any failure takes std's rename itself, so its long-path
-        // handling and ACCESS_DENIED -> FileRenameInfoEx retry stay exactly
-        // Beta's behaviour (REVIEW-2b F10).
+        // std's own call plus MOVEFILE_WRITE_THROUGH, on the shared native
+        // path form. Any failure takes std's rename itself, so its long-path
+        // handling and ACCESS_DENIED -> FileRenameInfoEx retry stay Beta's
+        // behaviour (REVIEW-2b F10).
         use windows_sys::Win32::Storage::FileSystem::{
             MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
         };
-        let moved = match (verbatim(src), verbatim(dst)) {
-            (Ok(src), Ok(dst)) => unsafe {
-                MoveFileExW(
-                    src.as_ptr(),
-                    dst.as_ptr(),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-                ) != 0
-            },
-            _ => false,
+        let moved = unsafe {
+            MoveFileExW(
+                native_path(src).as_ptr(),
+                native_path(dst).as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            ) != 0
         };
         if moved {
             Ok(())
@@ -133,28 +130,44 @@ pub(crate) fn rename_replace(src: &Path, dst: &Path) -> io::Result<()> {
     }
 }
 
-/// std's `maybe_verbatim` form (library/std/src/sys/path/windows.rs,
-/// `get_long_path` with `prefer_verbatim`): absolute via GetFullPathNameW,
-/// then `\\?\`, `\\?\UNC\` or unchanged, NUL-terminated.
+/// The one Windows path form for Tine's native moves (`rename_replace` and
+/// `no_replace::move_windows`; REVIEW-2b-r2 R2), NUL-terminated. A path that is
+/// already verbatim, or whose absolute form (`std::path::absolute`, i.e.
+/// GetFullPathNameW) is shorter than the 248-unit legacy limit, is passed
+/// exactly as spelled, which is what these calls received before. Only a
+/// longer one becomes `\\?\` + absolute (`\\.\` → `\\?\`, `\\server` →
+/// `\\?\UNC\server`), so the only change is failure → success past MAX_PATH.
+/// This is std's `get_long_path` prefix table, not its exact algorithm: std
+/// also converts short relative paths and skips GetFullPathNameW for short
+/// absolute ones.
 #[cfg(windows)]
-fn verbatim(path: &Path) -> io::Result<Vec<u16>> {
+pub(crate) fn native_path(path: &Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;
-    let absolute: Vec<u16> = std::path::absolute(path)?
-        .as_os_str()
-        .encode_wide()
-        .collect();
+    const LEGACY_MAX_PATH: usize = 248;
+    let spelled: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let absolute: Vec<u16> = match std::path::absolute(path) {
+        Ok(absolute)
+            if !spelled.starts_with(&[0x5c, 0x5c, 0x3f, 0x5c])
+                && !spelled.starts_with(&[0x5c, 0x3f, 0x3f, 0x5c]) =>
+        {
+            absolute.as_os_str().encode_wide().collect()
+        }
+        _ => vec![],
+    };
+    if absolute.len() < LEGACY_MAX_PATH {
+        return spelled.into_iter().chain(Some(0)).collect();
+    }
     let (prefix, rest): (&str, &[u16]) = match absolute.as_slice() {
         [_, 0x3a, 0x5c, ..] => ("\\\\?\\", &absolute),
         [0x5c, 0x5c, 0x2e, 0x5c, rest @ ..] => ("\\\\?\\", rest),
-        [0x5c, 0x5c, 0x3f, 0x5c, ..] | [0x5c, 0x3f, 0x3f, 0x5c, ..] => ("", &absolute),
         [0x5c, 0x5c, rest @ ..] => ("\\\\?\\UNC\\", rest),
         _ => ("", &absolute),
     };
-    Ok(prefix
+    prefix
         .encode_utf16()
         .chain(rest.iter().copied())
         .chain(Some(0))
-        .collect())
+        .collect()
 }
 
 /// The existing atomic-write protocol split at its synced-temp barrier. The
@@ -339,6 +352,68 @@ mod tests {
             outcomes.push((result.is_ok(), std::fs::read(&dst).unwrap(), src.exists()));
         }
         assert_eq!(outcomes[0], outcomes[1]);
+    }
+
+    /// REVIEW-2b-r2 R2, hosted Windows only: the shared form keeps every
+    /// spelling under the legacy limit exactly and extends only long ones.
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_path_keeps_short_spellings_and_extends_long_ones() {
+        let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+        for short in [
+            r"C:\g\pages\a.md",
+            r"pages\a.md",
+            r"\\server\share\a.md",
+            r"\\?\C:\g\a.md",
+        ] {
+            assert_eq!(native_path(Path::new(short)), wide(short), "{short}");
+        }
+        let long = format!(r"C:\{}\a.md", "d".repeat(300));
+        assert_eq!(native_path(Path::new(&long)), wide(&format!(r"\\?\{long}")));
+        let unc = format!(r"\\server\share\{}\a.md", "d".repeat(300));
+        assert_eq!(
+            native_path(Path::new(&unc)),
+            wide(&format!(r"\\?\UNC\{}", &unc[2..]))
+        );
+    }
+
+    /// REVIEW-2b-r2 R2, hosted Windows only: no-replace and replace moves on
+    /// short absolute, short relative, long (>300) and, where the admin
+    /// share is reachable, UNC paths.
+    #[cfg(windows)]
+    #[test]
+    fn windows_moves_short_relative_long_and_unc_paths() {
+        fn both(dir: &Path) {
+            let (src, dst) = (dir.join("src.md"), dir.join("dst.md"));
+            fs::write(&src, b"one").unwrap();
+            crate::no_replace::move_file_noreplace(&src, &dst).unwrap();
+            fs::write(&src, b"two").unwrap();
+            let refused = crate::no_replace::move_file_noreplace(&src, &dst).unwrap_err();
+            assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists, "{dir:?}");
+            rename_replace(&src, &dst).unwrap();
+            assert_eq!(fs::read(&dst).unwrap(), b"two", "{dir:?}");
+            assert!(!src.exists());
+            fs::remove_file(&dst).unwrap();
+        }
+        let root = tempfile::tempdir().unwrap();
+        both(root.path());
+        let here = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        both(Path::new(here.path().file_name().unwrap()));
+        let mut long = root.path().to_path_buf();
+        while long.as_os_str().len() < 300 {
+            long.push("a-directory-name-that-makes-the-path-long");
+        }
+        fs::create_dir_all(&long).unwrap();
+        both(&long);
+        let absolute = root.path().to_string_lossy().into_owned();
+        if let [drive, b':', ..] = absolute.as_bytes() {
+            let unc = format!(r"\\localhost\{}$\{}", *drive as char, &absolute[3..]);
+            if Path::new(&unc).is_dir() {
+                both(Path::new(&unc));
+            } else {
+                eprintln!("UNC admin share unavailable: {unc}");
+            }
+        }
     }
 
     #[test]

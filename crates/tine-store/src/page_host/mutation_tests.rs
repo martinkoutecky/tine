@@ -767,7 +767,7 @@ fn trash_collision_retries_with_a_fresh_name_without_removal() {
     assert_eq!(h.advance_save(0), Disposition::Pending); // check
     assert_eq!(h.advance_save(0), Disposition::Pending); // marker
     let (marker, payload) = h.job.as_ref().unwrap().marker.clone().unwrap();
-    assert_eq!(h.fs.custody_markers().unwrap().len(), 1);
+    assert_eq!(custody_entries(&h), 1);
     h.fs.inject(Phase::TrashMove, [Fault::Collision]);
     assert_eq!(h.advance_save(0), Disposition::Pending);
     assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::Marker);
@@ -775,7 +775,7 @@ fn trash_collision_retries_with_a_fresh_name_without_removal() {
         h.custody.is_empty(),
         "the unused marker {marker} is retired"
     );
-    assert!(h.fs.custody_markers().unwrap().is_empty());
+    assert!(custody_entries(&h) == 0);
     assert!(h.worker.is_none(), "a collision rewrites no draft");
     assert_eq!(h.fs.files["graph/a.md"].as_ref(), b"A");
     assert!(!h.events.iter().any(|e| matches!(e, Event::Removed { .. })));
@@ -786,7 +786,7 @@ fn trash_collision_retries_with_a_fresh_name_without_removal() {
         h.advance_save(0);
     }
     assert!(h.pages["a.md"].clean());
-    assert!(h.fs.custody_markers().unwrap().is_empty());
+    assert!(custody_entries(&h) == 0);
     let trash: Vec<_> =
         h.fs.files
             .keys()
@@ -864,4 +864,12 @@ fn draft_error_is_surfaced_on_the_third_failure_and_custody_terminates() {
     drain(&mut h);
     assert!(h.worker.is_none());
     assert!(h.lock_ownership.is_empty());
+}
+
+/// Physical entries in the custody directory, temps included (V2 census).
+fn custody_entries(h: &Host<ModelFs>) -> usize {
+    h.fs.files
+        .keys()
+        .filter(|k| k.starts_with("draft/trash-custody/"))
+        .count()
 }

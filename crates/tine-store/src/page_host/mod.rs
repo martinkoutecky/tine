@@ -35,6 +35,16 @@ struct Debt {
     failures: u32,
 }
 
+/// REVIEW-2b-r2 V2: a marker whose custody completed but whose unlink and
+/// directory sync failed. Only retirement is owed; it never blocks a save.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Retire {
+    page: PageKey,
+    payload: String,
+    /// Filesystem-reported retirement failures.
+    failures: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum Base {
     Known(Text),
@@ -280,6 +290,13 @@ struct Host<F: HostIo> {
     lock_ownership: BTreeSet<PageKey>,
     pages: BTreeMap<PageKey, Page>,
     custody: BTreeMap<PageKey, Debt>,
+    retire: BTreeMap<String, Retire>,
+    /// Markers with a sticky custody error (the escape, or a third failed
+    /// retirement); each clears only when that marker is retired (V3).
+    custody_errors: BTreeSet<String>,
+    /// REVIEW-2b-r2 V1: the custody listing failed with this error. Never an
+    /// empty listing: it clears only when a later listing succeeds.
+    custody_unknown: Option<String>,
     queue: VecDeque<Request>,
     applying: Option<Request>,
     outbox: BTreeMap<PageKey, Mail>,
@@ -308,6 +325,9 @@ impl<F: HostIo> Host<F> {
             lock_ownership: BTreeSet::new(),
             pages: BTreeMap::new(),
             custody: BTreeMap::new(),
+            retire: BTreeMap::new(),
+            custody_errors: BTreeSet::new(),
+            custody_unknown: None,
             queue: VecDeque::new(),
             applying: None,
             outbox: BTreeMap::new(),
@@ -385,17 +405,115 @@ impl<F: HostIo> Host<F> {
     }
 
     /// Custody phases (a) and (b) for every marker the page owes; each
-    /// completed marker is retired (a failed unlink leaves only a marker
-    /// whose custody launch redoes idempotently). True when nothing is owed.
+    /// completed marker is retired. True when nothing is owed.
     fn settle(&mut self, key: &str) -> bool {
         let markers = self.custody.get(key).map(|d| d.markers.clone());
         for (marker, payload) in markers.unwrap_or_default() {
             if self.fs.trash_sync(key, &payload).is_ok() {
-                let _ = self.fs.custody_retire(&marker);
-                self.settle_marker(key, &marker);
+                self.retire_marker(key, &marker, payload);
             }
         }
         !self.custody.contains_key(key)
+    }
+
+    /// A4 rule 2.5, once no custody is owed for `marker`: unlink it and sync
+    /// the custody directory. A failure keeps it as retire-only debt that
+    /// progress retries (REVIEW-2b-r2 V2); the page owes nothing more.
+    fn retire_marker(&mut self, key: &str, marker: &str, payload: String) {
+        if let Some(debt) = self.custody.get_mut(key) {
+            debt.markers.remove(marker);
+            if debt.markers.is_empty() {
+                self.custody.remove(key);
+            }
+        }
+        if self.fs.custody_retire(marker).is_ok() {
+            self.custody_errors.remove(marker);
+        } else {
+            let (page, failures) = (key.into(), 1);
+            self.retire.insert(
+                marker.into(),
+                Retire {
+                    page,
+                    payload,
+                    failures,
+                },
+            );
+        }
+    }
+
+    /// Progress's backoff retry (V1, V2): relist custody while it is unknown,
+    /// adopting and settling its debts as launch does, then retry every
+    /// retire-only marker; the third failed retirement is a sticky error.
+    fn recover_custody(&mut self) {
+        if self.custody_unknown.is_some() && self.job.is_none() {
+            let before: BTreeSet<_> = self.custody.keys().cloned().collect();
+            self.list_custody();
+            let adopted: Vec<_> = self
+                .custody
+                .keys()
+                .filter(|key| !before.contains(*key))
+                .cloned()
+                .collect();
+            for key in adopted {
+                self.settle(&key);
+            }
+        }
+        for (marker, retire) in self.retire.clone() {
+            if self.fs.custody_retire(&marker).is_ok() {
+                self.retire.remove(&marker);
+                self.custody_errors.remove(&marker);
+            } else {
+                let failures = retire.failures + 1;
+                self.retire.get_mut(&marker).unwrap().failures = failures;
+                if failures >= 3 {
+                    self.custody_errors.insert(marker);
+                }
+            }
+        }
+    }
+
+    /// A4 rule 3's listing. A marker owing only retirement stays there; a
+    /// malformed one is quarantined, never acted on. A failed listing is
+    /// recorded, never read as "no debt" (REVIEW-2b-r2 V1).
+    fn list_custody(&mut self) {
+        let markers = match self.fs.custody_markers() {
+            Ok(markers) => markers,
+            Err(error) => {
+                self.custody_unknown = Some(error);
+                return;
+            }
+        };
+        self.custody_unknown = None;
+        for (name, bytes) in markers {
+            if self.retire.contains_key(&name) {
+                continue;
+            }
+            if let Ok(marker) = drafts::decode_marker(&bytes) {
+                let debt = self.custody.entry(marker.page).or_default();
+                debt.markers.insert(name, marker.payload);
+            } else {
+                let name = format!("trash-custody/{name}");
+                self.events.push(Event::Unreadable(name.clone()));
+                let _ = self.fs.quarantine(&name);
+            }
+        }
+    }
+
+    /// Payloads with a sticky custody error on this page (V3).
+    fn custody_errors(&self, key: &str) -> BTreeSet<String> {
+        self.custody_errors
+            .iter()
+            .filter_map(|marker| {
+                let owed = self.custody.get(key).and_then(|d| d.markers.get(marker));
+                owed.or_else(|| {
+                    self.retire
+                        .get(marker)
+                        .filter(|r| r.page == key)
+                        .map(|r| &r.payload)
+                })
+                .cloned()
+            })
+            .collect()
     }
 
     fn allocator_busy(&self) -> bool {
@@ -1051,6 +1169,11 @@ impl<F: HostIo> Host<F> {
             // A failure is saveFail (L442-445): nothing was renamed. After three
             // consecutive filesystem errors the save goes ahead, the error stays
             // visible and the marker is retried at the next launch (R-STORAGE-ERROR).
+            // While the custody listing is unknown (REVIEW-2b-r2 V1) a save
+            // with no known debt never enters this phase and proceeds: the
+            // listing error is the filesystem's report, the sticky
+            // custody-unknown notice keeps it visible, and A4 rule 4's barrier
+            // covers known markers only. That is R-STORAGE-ERROR.
             SavePhase::Custody => {
                 if self.settle(&key) {
                     job.phase = Self::first_phase(&job.bytes);
@@ -1059,7 +1182,8 @@ impl<F: HostIo> Host<F> {
                     let debt = self.custody.get_mut(&key).unwrap();
                     debt.failures += 1;
                     if debt.failures >= 3 {
-                        for payload in debt.markers.values() {
+                        for (marker, payload) in &debt.markers {
+                            self.custody_errors.insert(marker.clone());
                             self.events.push(Event::CustodyError {
                                 page: key.clone(),
                                 payload: payload.clone(),
@@ -1178,17 +1302,13 @@ impl<F: HostIo> Host<F> {
                         None
                     }
                     // The occupied target is never adopted: retire the unused
-                    // marker, then retry under a fresh one. A failed unlink
-                    // leaves it as debt and fails this save before any move.
+                    // marker (it owes no custody; a failed unlink is
+                    // retire-only debt), then retry under a fresh one.
                     Err(e) if e.kind == ErrorKind::Collision => {
-                        if self.fs.custody_retire(&marker).is_ok() {
-                            self.settle_marker(&key, &marker);
-                            job.marker = None;
-                            job.phase = SavePhase::Marker;
-                            None
-                        } else {
-                            Some(Outcome::Failed)
-                        }
+                        self.retire_marker(&key, &marker, payload);
+                        job.marker = None;
+                        job.phase = SavePhase::Marker;
+                        None
                     }
                     Err(e) if e.completed => {
                         self.events.push(Event::Renamed {
@@ -1227,9 +1347,8 @@ impl<F: HostIo> Host<F> {
         };
         if result.is_some() && job.phase == SavePhase::DirectorySync {
             // Rule 2.5: custody (a)+(b) completed before this phase.
-            if let Some((marker, _)) = &job.marker {
-                let _ = self.fs.custody_retire(marker);
-                self.settle_marker(&key, marker);
+            if let Some((marker, payload)) = job.marker.clone() {
+                self.retire_marker(&key, &marker, payload);
             }
         }
         if let Some(outcome) = result {
@@ -1254,15 +1373,6 @@ impl<F: HostIo> Host<F> {
         } else {
             self.job = Some(job);
             Disposition::Pending
-        }
-    }
-
-    fn settle_marker(&mut self, key: &str, marker: &str) {
-        if let Some(debt) = self.custody.get_mut(key) {
-            debt.markers.remove(marker);
-            if debt.markers.is_empty() {
-                self.custody.remove(key);
-            }
         }
     }
 
@@ -1387,6 +1497,9 @@ impl<F: HostIo> Host<F> {
         self.alive = false;
         self.pages.clear();
         self.custody.clear();
+        self.retire.clear();
+        self.custody_errors.clear();
+        self.custody_unknown = None;
         self.queue.clear();
         self.applying = None;
         self.outbox.clear();
@@ -1422,20 +1535,9 @@ impl<F: HostIo> Host<F> {
         self.last_admitted = 0;
         self.last_applied = 0;
         // A4 rule 3, destination first: every marker's custody runs before the
-        // graph's best-effort source-directory syncs. Debt never blocks opening.
-        let Ok(markers) = self.fs.custody_markers() else {
-            return Disposition::Pending;
-        };
-        for (name, bytes) in markers {
-            if let Ok(marker) = drafts::decode_marker(&bytes) {
-                let debt = self.custody.entry(marker.page).or_default();
-                debt.markers.insert(name, marker.payload);
-            } else {
-                let name = format!("trash-custody/{name}");
-                self.events.push(Event::Unreadable(name.clone()));
-                let _ = self.fs.quarantine(&name);
-            }
-        }
+        // graph's best-effort source-directory syncs. Neither debt nor a failed
+        // listing blocks opening (V1).
+        self.list_custody();
         for key in self.custody.keys().cloned().collect::<Vec<_>>() {
             self.settle(&key);
         }
