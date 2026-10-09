@@ -165,19 +165,26 @@ fn measure_anonymized_draft_unit_cost() {
         let drafts = app.path().join("drafts-v2/cost");
         let disk_bytes: u64 = fs::read_dir(&drafts)
             .unwrap()
-            .map(|entry| entry.unwrap().metadata().unwrap().len())
+            .map(|entry| entry.unwrap().metadata().unwrap())
+            .filter(fs::Metadata::is_file) // not the trash-custody directory
+            .map(|metadata| metadata.len())
             .sum();
         assert_eq!(first["files_written"], 1);
         assert_eq!(first["bytes_written"], disk_bytes);
-        // Same current codec, never an old-format reader. Measure the amended
-        // deletion fields using a real fresh vehicle in a separate private
-        // directory; graph bytes in the corpus copy remain untouched.
-        let mut deletion = host.logical_drafts()[page].clone();
-        deletion.bytes = None;
-        let without_pending = drafts::encode(std::slice::from_ref(&deletion)).len();
-        let name = *uuid::Uuid::new_v4().as_bytes();
-        deletion.trash = Some(name);
-        deletion.pending_trash = vec![name];
+        // A4 cost line: one checksummed marker per deletion, written strictly
+        // (temp + fsync + no-replace rename + directory sync) before the move
+        // and retired (unlink + directory sync) after publication. Measured on
+        // a separate private app-data directory; the corpus copy is untouched.
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let file = std::path::Path::new(page)
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let marker = drafts::encode_marker(&drafts::Marker {
+            page: page.to_string(),
+            payload: crate::atomic_file::prefixed_name(&format!("{id}__"), file),
+        });
         let custody_store = tempfile::tempdir().unwrap();
         let mut custody_io = ProductionIo::new(
             &corpus,
@@ -187,22 +194,15 @@ fn measure_anonymized_draft_unit_cost() {
         )
         .unwrap();
         reset_counts();
-        let mut vehicle = Vehicle::write(drafts::page_name(page), std::slice::from_ref(&deletion));
-        for _ in 0..3 {
-            vehicle.advance(&mut custody_io);
-        }
-        assert_eq!(vehicle.stage, Stage::Present);
-        let deletion_bytes = fs::metadata(
-            custody_store
-                .path()
-                .join("drafts-v2/cost")
-                .join(&vehicle.name),
-        )
-        .unwrap()
-        .len();
-        let custody_cost = serde_json::json!({"deletion_draft_bytes": deletion_bytes,
-            "candidate_and_one_pending_name_bytes": deletion_bytes as usize - without_pending,
-            "empty_custody_fields_bytes": 2, "write": counts()});
+        custody_io
+            .custody_write(&format!("{id}.tcm"), &marker)
+            .unwrap();
+        let write = counts();
+        reset_counts();
+        custody_io.custody_retire(&format!("{id}.tcm")).unwrap();
+        let retire = counts();
+        let custody_cost = serde_json::json!({"marker_bytes": marker.len(),
+            "write": write, "retire": retire});
         reset_counts();
         bytes.push(b'x');
         let version = host.pages[page].version;

@@ -123,6 +123,8 @@ struct Driver<F: ConformanceIo = ModelFs> {
     stepped: bool,
     prepare_operations: bool,
     effect: Option<(String, Vec<Value>, u64, u64)>,
+    /// Trash keys whose custody a save escaped (R-STORAGE-ERROR).
+    escaped: BTreeMap<String, i64>,
 }
 
 impl Clone for Driver<ModelFs> {
@@ -160,6 +162,7 @@ impl<F: ConformanceIo> Driver<F> {
             stepped: false,
             prepare_operations: false,
             effect: None,
+            escaped: BTreeMap::new(),
         }
     }
 
@@ -167,8 +170,7 @@ impl<F: ConformanceIo> Driver<F> {
         let h = &self.host;
         Some(Self {
             host: Host {
-                trash: BTreeMap::new(),
-                fresh_trash: BTreeSet::new(),
+                custody: h.custody.clone(),
                 fs: h.fs.fork()?,
                 keys: h.keys.clone(),
                 locks: h.locks.clone(),
@@ -205,6 +207,7 @@ impl<F: ConformanceIo> Driver<F> {
             stepped: self.stepped,
             prepare_operations: self.prepare_operations,
             effect: self.effect.clone(),
+            escaped: self.escaped.clone(),
         })
     }
 
@@ -359,29 +362,60 @@ impl<F: ConformanceIo> Driver<F> {
             || json!({"on":false,"p":0,"bytes":0,"base":0,"ver":0,"phase":0,"ep":0}),
             |j| json!({"on":true,"p":self.host.keys.iter().position(|k| k==&j.page).unwrap(),
                 "bytes":label(&j.bytes),"base":base(&j.base),"ver":self.version(j.version),
-                "phase":match j.phase { SavePhase::Temp|SavePhase::Check=>1,
-                    SavePhase::Rename=>2,SavePhase::TrashSync|SavePhase::DirectorySync=>3 },"ep":j.epoch})
+                "phase":match j.phase { SavePhase::Custody|SavePhase::Temp|SavePhase::Check=>1,
+                    SavePhase::Marker|SavePhase::Rename=>2,SavePhase::TrashSync|SavePhase::DirectorySync=>3 },"ep":j.epoch})
         );
         let disk = |files: &BTreeMap<String, Arc<[u8]>>| -> Vec<_> {
             (0..self.windows.len())
                 .map(|p| label(&files.get(&format!("graph/{}", key(p))).cloned()))
                 .collect()
         };
-        let trash = |files: &BTreeMap<String, Arc<[u8]>>| -> Vec<_> {
-            (0..self.windows.len())
-                .map(|p| {
-                    files
-                        .iter()
-                        .filter(|(k, _)| k.starts_with(&format!("trash/{}/", key(p))))
-                        .map(|(_, b)| label(&Some(b.clone())))
-                        .collect::<BTreeSet<_>>()
-                })
-                .collect()
-        };
+        let trash = |files| self.trash_labels(files);
         json!({"alive":self.host.alive,"disk":disk(&self.host.fs.physical().files),
             "stable":disk(&self.host.fs.physical().stable),"drafts":records,"pages":pages,
             "mb":mail,"up":up,"job":job,"w":self.windows,
             "trash":trash(&self.host.fs.physical().files),"trashStable":trash(&self.host.fs.physical().stable)})
+    }
+
+    fn trash_labels(&self, files: &BTreeMap<String, Arc<[u8]>>) -> Vec<BTreeSet<i64>> {
+        (0..self.windows.len())
+            .map(|p| {
+                files
+                    .iter()
+                    .filter(|(k, _)| k.starts_with(&format!("trash/{}/", key(p))))
+                    .map(|(_, b)| label(&Some(b.clone())))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Every power outcome ModelFs permits must keep the oracle's trash (L604,
+    /// L695), unless the missing bytes are a named A4 residual. Anything else
+    /// is a structural hole in A4: this panics and the lane stops.
+    fn refine_power_cuts(&self, keep: &BTreeSet<String>, expected: &Value) {
+        let fs = self.host.fs.physical();
+        for cut in fs.cuts(keep) {
+            let mut after = fs.clone();
+            after.power_cut(keep, false, &cut);
+            let actual = self.trash_labels(&after.files);
+            for (p, labels) in expected.as_array().unwrap().iter().enumerate() {
+                for t in labels.as_array().unwrap() {
+                    let t = t.as_i64().unwrap();
+                    if actual[p].contains(&t) {
+                        continue;
+                    }
+                    let residual = fs.files.iter().any(|(k, b)| {
+                        k.starts_with(&format!("trash/{}/", key(p)))
+                            && label(&Some(b.clone())) == t
+                            && (cut.lose.contains(k) || self.escaped.contains_key(k))
+                    });
+                    assert!(
+                        residual,
+                        "A4 hole: power keep={keep:?} cut={cut:?} loses trash {t} of page {p}"
+                    );
+                }
+            }
+        }
     }
 
     fn compare(&mut self, context: &str) {
@@ -391,10 +425,17 @@ impl<F: ConformanceIo> Driver<F> {
             if matches!(name.as_str(), "trash" | "trashStable") {
                 // The declared trash inclusion simulation permits a copy
                 // synced before the source directory has been synced.
+                // R-STORAGE-ERROR: an escaped payload's stability claim is
+                // not kept, so a power cut may lose it; nothing else is exempt.
+                let escaped = |p: usize, t: &Value| {
+                    self.escaped.iter().any(|(k, label)| {
+                        k.starts_with(&format!("trash/{}/", key(p))) && t.as_i64() == Some(*label)
+                    })
+                };
                 for (p, set) in expected["s"][name].as_array().unwrap().iter().enumerate() {
                     for t in set.as_array().unwrap() {
                         assert!(
-                            value[p].as_array().unwrap().contains(t),
+                            value[p].as_array().unwrap().contains(t) || escaped(p, t),
                             "{context}/{name}/{p}"
                         );
                     }
@@ -645,6 +686,7 @@ impl<F: ConformanceIo> Driver<F> {
             }
             "flush" | "flushDel" => {
                 assert_eq!(self.host.start_save(&key(p)), Disposition::Pending);
+                self.custody_stutter();
                 if name == "flush" && !self.stepped {
                     self.host.advance_save(0);
                 }
@@ -662,6 +704,10 @@ impl<F: ConformanceIo> Driver<F> {
                     .get(&page)
                     .copied()
                     .unwrap_or(0);
+                if self.host.job.as_ref().unwrap().phase == SavePhase::Marker {
+                    self.host.advance_save(ep);
+                    self.compare("custody marker");
+                }
                 self.host.advance_save(ep);
             }
             "dirSync" => {
@@ -680,6 +726,8 @@ impl<F: ConformanceIo> Driver<F> {
             }
             "saveFail" => {
                 let phase = match self.host.job.as_ref().unwrap().phase {
+                    SavePhase::Custody => Phase::TrashSync,
+                    SavePhase::Marker => Phase::CustodyWrite,
                     SavePhase::Temp => Phase::PageTemp,
                     SavePhase::Check => Phase::Read,
                     SavePhase::Rename if self.host.job.as_ref().unwrap().bytes.is_some() => {
@@ -778,9 +826,9 @@ impl<F: ConformanceIo> Driver<F> {
                     "powerKBits" => (0..3).filter(|&i| b(i)).collect(),
                     _ => serde_json::from_value(args[0].clone()).unwrap(),
                 };
-                self.host
-                    .fs
-                    .power(&keep.into_iter().map(key).collect(), false);
+                let keep = keep.into_iter().map(key).collect();
+                self.refine_power_cuts(&keep, &successor.as_ref().unwrap().state()["s"]["trash"]);
+                self.host.fs.power(&keep, false);
                 self.host.stop();
                 self.windows.fill(Window::default());
                 self.pending_ids.fill(None);
@@ -1016,6 +1064,12 @@ impl<F: ConformanceIo> Driver<F> {
                         g["delDurable"][p] = g["removed"][p].clone();
                     }
                 }
+                Event::CustodyError { page, payload } => {
+                    let k = format!("trash/{page}/{payload}");
+                    if let Some(bytes) = self.host.fs.physical().files.get(&k) {
+                        self.escaped.insert(k, label(&Some(bytes.clone())));
+                    }
+                }
                 Event::OperationRead { page, base: read } => {
                     let p = self.host.keys.iter().position(|k| k == &page).unwrap();
                     insert(&mut g["opRead"][p], json!(base(&read)));
@@ -1042,6 +1096,14 @@ impl<F: ConformanceIo> Driver<F> {
             "{name}/guarantee"
         );
         self.actions += 1;
+    }
+
+    /// Earlier trash custody before a save is internal to the flush step
+    /// (A4 rule 4): Custody and Temp are both abstract phase 1.
+    fn custody_stutter(&mut self) {
+        if self.host.job.as_ref().unwrap().phase == SavePhase::Custody {
+            self.host.advance_save(0);
+        }
     }
 
     fn program(&mut self, program: &[Value]) -> Result<(), &'static str> {

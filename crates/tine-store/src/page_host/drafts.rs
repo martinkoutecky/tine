@@ -12,31 +12,46 @@ pub(super) struct Record {
     pub version: u64,
     pub base: Base,
     pub bytes: Text,
-    pub trash: Option<[u8; 16]>,
-    pub pending_trash: Vec<[u8; 16]>,
 }
 
-const MAGIC: &[u8; 8] = b"TINEDRF2";
+/// A4 trash custody marker: the exact page key and payload basename.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct Marker {
+    pub page: String,
+    pub payload: String,
+}
 
-/// One current encoding, using the repository's existing postcard serializer.
-pub(super) fn encode(records: &[Record]) -> Vec<u8> {
-    let mut bytes = MAGIC.to_vec();
+const DRAFT: &[u8; 8] = b"TINEDRF2";
+const MARKER: &[u8; 8] = b"TINETCM2";
+
+/// One envelope for every app-data record: magic, version 2, the repository's
+/// existing postcard serializer, SHA-256 of everything before it.
+fn seal(magic: &[u8; 8], value: &impl Serialize) -> Vec<u8> {
+    let mut bytes = magic.to_vec();
     bytes.push(2);
-    bytes.extend(postcard::to_stdvec(records).expect("draft serialization"));
+    bytes.extend(postcard::to_stdvec(value).expect("app-data serialization"));
     let checksum = Sha256::digest(&bytes);
     bytes.extend_from_slice(&checksum);
     bytes
 }
 
-pub(super) fn decode(bytes: &[u8]) -> Result<Vec<Record>, ()> {
-    if bytes.len() < 41 || bytes.get(..8) != Some(MAGIC.as_slice()) || bytes[8] != 2 {
+fn open<T: serde::de::DeserializeOwned>(magic: &[u8; 8], bytes: &[u8]) -> Result<T, ()> {
+    if bytes.len() < 41 || bytes.get(..8) != Some(magic.as_slice()) || bytes[8] != 2 {
         return Err(());
     }
     let end = bytes.len() - 32;
     if Sha256::digest(&bytes[..end]).as_slice() != &bytes[end..] {
         return Err(());
     }
-    let records: Vec<Record> = postcard::from_bytes(&bytes[9..end]).map_err(|_| ())?;
+    postcard::from_bytes(&bytes[9..end]).map_err(|_| ())
+}
+
+pub(super) fn encode(records: &[Record]) -> Vec<u8> {
+    seal(DRAFT, &records)
+}
+
+pub(super) fn decode(bytes: &[u8]) -> Result<Vec<Record>, ()> {
+    let records: Vec<Record> = open(DRAFT, bytes)?;
     let mut pages = BTreeSet::new();
     if records.is_empty()
         || records
@@ -46,6 +61,21 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Vec<Record>, ()> {
         return Err(());
     }
     Ok(records)
+}
+
+pub(super) fn encode_marker(marker: &Marker) -> Vec<u8> {
+    seal(MARKER, marker)
+}
+
+/// A marker names one file directly inside the trash directory, or it is
+/// malformed and quarantined, never acted on.
+pub(super) fn decode_marker(bytes: &[u8]) -> Result<Marker, ()> {
+    let marker: Marker = open(MARKER, bytes)?;
+    let mut parts = std::path::Path::new(&marker.payload).components();
+    match (parts.next(), parts.next()) {
+        (Some(std::path::Component::Normal(_)), None) if !marker.page.is_empty() => Ok(marker),
+        _ => Err(()),
+    }
 }
 
 #[derive(Default)]

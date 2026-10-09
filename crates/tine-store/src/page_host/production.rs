@@ -41,17 +41,22 @@ impl ProductionIo {
         trash: &Path,
     ) -> io::Result<Self> {
         let drafts = app_data.join("drafts-v2").join(graph_id);
-        durability::create_dir_all_with_sync(&drafts, durability::sync_private_directory)?;
+        let custody = drafts.join(CUSTODY);
+        durability::create_dir_all_with_sync(&custody, durability::sync_private_directory)?;
         // Also cover a directory chain left readable by an interrupted earlier
         // creation attempt. Constructor failure is retryable, never weak success.
-        for dir in drafts.ancestors().filter(|dir| !dir.as_os_str().is_empty()) {
+        for dir in custody
+            .ancestors()
+            .filter(|dir| !dir.as_os_str().is_empty())
+        {
             durability::sync_private_directory(dir)?;
         }
         let mut readable = BTreeMap::new();
         let mut paths = BTreeMap::new();
         for entry in fs::read_dir(&drafts)? {
             let entry = entry?;
-            if (entry.file_name() == "unreadable" && entry.file_type()?.is_dir())
+            if ((entry.file_name() == "unreadable" || entry.file_name() == CUSTODY)
+                && entry.file_type()?.is_dir())
                 || entry.file_name().to_string_lossy().ends_with(".tmp")
             {
                 continue;
@@ -124,6 +129,17 @@ impl ProductionIo {
     }
 }
 
+/// A4 custody markers: only this device's unfinished deletions (D-10).
+const CUSTODY: &str = "trash-custody";
+
+/// Unlink; an already absent file is the requested state.
+fn remove_present(path: &Path) -> IoResult<()> {
+    match fs::remove_file(path) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(failure(error)),
+        _ => Ok(()),
+    }
+}
+
 fn witness(value: DirectoryWitness) -> Witness {
     match value {
         DirectoryWitness::Durable => Witness::Durable,
@@ -152,9 +168,17 @@ fn sync_failure(error: io::Error) -> IoFailure {
 
 impl HostIo for ProductionIo {
     fn graph_launch(&mut self, pages: &std::collections::BTreeSet<String>) {
+        // Every existing ancestor up to the graph root: an interrupted nested
+        // page-directory creation leaves entries no later leaf sync covers.
         let mut directories = std::collections::BTreeSet::from([self.graph.clone()]);
         for page in pages {
-            directories.insert(self.graph.join(page).parent().unwrap().to_path_buf());
+            let path = self.graph.join(page);
+            directories.extend(
+                path.ancestors()
+                    .skip(1)
+                    .take_while(|dir| dir.starts_with(&self.graph))
+                    .map(Path::to_path_buf),
+            );
         }
         self.launch_warnings.clear();
         for directory in directories {
@@ -216,7 +240,7 @@ impl HostIo for ProductionIo {
         self.graph_sync(super::io::Phase::PageSync, path.parent().unwrap())
     }
 
-    fn trash_move(&mut self, page: &str, name: &str) -> MoveResult {
+    fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult {
         let result = (|| {
             self.before(super::io::Phase::TrashMove)?;
             let source = self.graph.join(page);
@@ -224,11 +248,7 @@ impl HostIo for ProductionIo {
                 return Ok(None);
             }
             self.graph_directory(&self.trash.clone())?;
-            let filename = source.file_name().unwrap().to_string_lossy();
-            let target = self.trash.join(crate::atomic_file::prefixed_name(
-                &format!("{name}__"),
-                &filename,
-            ));
+            let target = self.trash.join(payload);
             crate::no_replace::move_file_noreplace(&source, &target).map_err(failure)?;
             // Read the actual moved bytes, including an R1 external replacement
             // between the guard and move; never claim the guard's stale bytes.
@@ -251,31 +271,55 @@ impl HostIo for ProductionIo {
         }
     }
 
-    fn trash_sync(&mut self, page: &str, names: &[[u8; 16]]) -> IoResult<Witness> {
+    fn trash_sync(&mut self, _page: &str, payload: &str) -> IoResult<Witness> {
         self.before(super::io::Phase::TrashSync)?;
-        let filename = self.graph.join(page);
-        let filename = filename.file_name().unwrap().to_string_lossy();
-        let mut present = false;
-        for name in names {
-            let path = self.trash.join(crate::atomic_file::prefixed_name(
-                &format!("{}__", super::trash_name(*name)),
-                &filename,
-            ));
-            match crate::atomic_file::sync_file_bytes(&path) {
-                Ok(()) => present = true,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(failure(error)),
+        // The recorded basename locates the payload; the trash is never listed.
+        match crate::atomic_file::sync_file_bytes(&self.trash.join(payload)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Witness::Durable),
+            Err(error) => return Err(failure(error)),
+        }
+        self.trash
+            .ancestors()
+            .take_while(|dir| dir.starts_with(&self.graph))
+            .try_fold(Witness::Durable, |result, dir| {
+                let synced = durability::sync_directory_witness(dir).map_err(sync_failure)?;
+                let synced = witness(synced);
+                Ok(if synced == Witness::Unsupported {
+                    synced
+                } else {
+                    result
+                })
+            })
+    }
+
+    fn custody_write(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {
+        self.before(super::io::Phase::CustodyWrite)?;
+        let dir = self.drafts.join(CUSTODY);
+        PreparedWrite::new(&dir.join(name), bytes)
+            .and_then(|prepared| prepared.publish(true))
+            .and_then(|()| durability::sync_private_directory(&dir))
+            .map_err(failure)
+    }
+
+    fn custody_retire(&mut self, name: &str) -> IoResult<()> {
+        self.before(super::io::Phase::CustodyRetire)?;
+        let dir = self.drafts.join(CUSTODY);
+        remove_present(&dir.join(name))?;
+        durability::sync_private_directory(&dir).map_err(failure)
+    }
+
+    fn custody_markers(&mut self) -> IoResult<Vec<(String, Vec<u8>)>> {
+        let mut markers = vec![];
+        for entry in fs::read_dir(self.drafts.join(CUSTODY)).map_err(failure)? {
+            let entry = entry.map_err(failure)?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".tmp") {
+                // Unreadable means malformed: quarantined, never acted on.
+                markers.push((name, fs::read(entry.path()).unwrap_or_default()));
             }
         }
-        // No move happened for absent recorded names. In particular there may
-        // be no trash directory after a crash before the move; no scan needed.
-        if !present {
-            return Ok(Witness::Durable);
-        }
-        let result = durability::sync_directory_witness(&self.trash)
-            .map(witness)
-            .map_err(sync_failure)?;
-        Ok(result)
+        Ok(markers)
     }
 
     fn draft_files(&self, durable: bool) -> Vec<(String, Vec<u8>)> {
@@ -328,11 +372,7 @@ impl HostIo for ProductionIo {
         self.before(super::io::Phase::DraftUnlink)?;
         self.draft_temps.remove(name);
         self.draft_payloads.remove(name);
-        match fs::remove_file(self.draft_path(name)) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(failure(error)),
-        }
+        remove_present(&self.draft_path(name))?;
         self.readable.remove(name);
         // NotFound is only readable absence. Vehicle still requires DraftSync.
         Ok(())
@@ -357,7 +397,7 @@ impl HostIo for ProductionIo {
             loop {
                 let target = unreadable.join(crate::atomic_file::prefixed_name(
                     &format!("{}-", uuid::Uuid::new_v4().simple()),
-                    name,
+                    &source.file_name().unwrap().to_string_lossy(),
                 ));
                 match crate::no_replace::move_file_noreplace(&source, &target) {
                     Ok(()) => {
@@ -374,7 +414,8 @@ impl HostIo for ProductionIo {
             durability::sync_private_directory(&unreadable).map_err(failure)?;
             *phase = 1;
         }
-        durability::sync_private_directory(&self.drafts).map_err(failure)?;
+        let source = self.draft_path(name);
+        durability::sync_private_directory(source.parent().unwrap()).map_err(failure)?;
         self.readable.remove(name);
         self.durable.remove(name);
         self.paths.remove(name);

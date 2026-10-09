@@ -394,8 +394,6 @@ fn post_unlink_sync_failure_retries_sync_only_for_cleanup_retirement_and_removal
             version: 1,
             base: Base::Unknown,
             bytes: text("mine"),
-            trash: None,
-            pending_trash: vec![],
         };
         let mut task = Vehicle::write(drafts::page_name("a.md"), &[record]);
         for _ in 0..3 {
@@ -511,9 +509,10 @@ fn deletion_durably_copies_trash_before_source_removal_at_power_cut() {
     assert_eq!(h.delete("a.md"), Disposition::Pending);
     drain(&mut h);
     h.start_save("a.md");
-    h.advance_save(0);
-    h.advance_save(0);
-    h.advance_save(0);
+    h.advance_save(0); // guard
+    h.advance_save(0); // marker
+    h.advance_save(0); // move
+    h.advance_save(0); // custody (a)+(b)
     assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::DirectorySync);
     assert!(h.fs.stable.contains_key("graph/a.md"));
     assert!(h.fs.stable.keys().any(|k| k.starts_with("trash/a.md/")));
@@ -529,7 +528,8 @@ fn completed_trash_move_error_keeps_observed_removal_and_reports_uncertain() {
     h.delete("a.md");
     drain(&mut h);
     h.start_save("a.md");
-    h.advance_save(0);
+    h.advance_save(0); // guard
+    h.advance_save(0); // marker
     h.fs.inject(Phase::TrashMove, [Fault::After]);
     h.advance_save(0);
     assert!(h.job.is_none());
@@ -653,8 +653,6 @@ fn launch_seeds_all_readable_versions_and_canonical_unknown_base() {
             version: 80,
             base: Base::Unknown,
             bytes: text("mine"),
-            trash: None,
-            pending_trash: vec![],
         },
         Record {
             page: "c.md".into(),
@@ -662,8 +660,6 @@ fn launch_seeds_all_readable_versions_and_canonical_unknown_base() {
             version: 50,
             base: Base::Known(None),
             bytes: None,
-            trash: None,
-            pending_trash: vec![],
         },
     ];
     let name = drafts::op_name();
@@ -693,8 +689,6 @@ fn unreadable_files_are_preserved_and_equal_wseq_disagreement_is_quarantined() {
         version: 1,
         base: Base::Unknown,
         bytes: text("one"),
-        trash: None,
-        pending_trash: vec![],
     };
     let mut two = one.clone();
     two.bytes = text("two");

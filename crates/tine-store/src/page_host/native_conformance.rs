@@ -67,6 +67,29 @@ impl NativeFs {
         real_trash.sort();
         ledger_trash.sort();
         assert_eq!(real_trash, ledger_trash, "native trash bytes");
+        let real_markers: BTreeMap<_, _> =
+            fs::read_dir(self.app.join("drafts-v2/native/trash-custody"))
+                .unwrap()
+                .map(|entry| entry.unwrap())
+                .map(|entry| {
+                    (
+                        entry.file_name().into_string().unwrap(),
+                        fs::read(entry.path()).unwrap(),
+                    )
+                })
+                .collect();
+        let ledger_markers: BTreeMap<_, _> = self
+            .ledger
+            .files
+            .iter()
+            .filter_map(|(key, bytes)| {
+                Some((
+                    key.strip_prefix("draft/trash-custody/")?.to_string(),
+                    bytes.to_vec(),
+                ))
+            })
+            .collect();
+        assert_eq!(real_markers, ledger_markers, "native custody markers");
         assert!(self.root.path().exists());
     }
 
@@ -95,6 +118,8 @@ impl NativeFs {
         }
         let expected = model(&mut self.ledger);
         let actual = native(&mut self.native);
+        // The one-shot seam must not leak into a later phase that did not use it.
+        crate::directory_durability::SYNC_ERROR.with(|error| error.set(None));
         assert_eq!(
             actual.as_ref().map_err(|e| e.kind),
             expected.as_ref().map_err(|e| e.kind),
@@ -241,12 +266,36 @@ impl HostIo for NativeFs {
             result: result.unwrap().1,
         }
     }
-    fn trash_sync(&mut self, page: &str, names: &[[u8; 16]]) -> IoResult<Witness> {
+    fn trash_sync(&mut self, page: &str, payload: &str) -> IoResult<Witness> {
         self.phase(
             Phase::TrashSync,
-            |fs| fs.trash_sync(page, names),
-            |fs| fs.trash_sync(page, names),
+            |fs| fs.trash_sync(page, payload),
+            |fs| fs.trash_sync(page, payload),
         )
+    }
+    fn custody_write(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {
+        self.phase(
+            Phase::CustodyWrite,
+            |fs| fs.custody_write(name, bytes),
+            |fs| fs.custody_write(name, bytes),
+        )
+    }
+    fn custody_retire(&mut self, name: &str) -> IoResult<()> {
+        self.phase(
+            Phase::CustodyRetire,
+            |fs| fs.custody_retire(name),
+            |fs| fs.custody_retire(name),
+        )
+    }
+    fn custody_markers(&mut self) -> IoResult<Vec<(String, Vec<u8>)>> {
+        let expected = self.ledger.custody_markers();
+        let actual = self.native.custody_markers();
+        assert_eq!(
+            actual.as_ref().ok(),
+            expected.as_ref().ok(),
+            "custody markers"
+        );
+        actual
     }
     fn draft_files(&self, durable: bool) -> Vec<(String, Vec<u8>)> {
         self.native.draft_files(durable)

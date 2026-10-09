@@ -166,8 +166,6 @@ fn review_f7_missing_backend_refusal_guards_are_called_directly() {
         version: 1,
         base: Base::Known(None),
         bytes: text("recover"),
-        trash: None,
-        pending_trash: vec![],
     };
     h.fs.draft_temp("p-unknown.draft", &drafts::encode(&[record]))
         .unwrap();
@@ -207,8 +205,6 @@ fn draft_envelopes_reject_each_invalid_header_record_and_vehicle_name() {
         version: 1,
         base: Base::Known(text("A")),
         bytes: text("A"),
-        trash: None,
-        pending_trash: vec![],
     };
     let encoded = drafts::encode(std::slice::from_ref(&record));
     assert_eq!(drafts::decode(&encoded).unwrap(), vec![record.clone()]);
@@ -271,8 +267,6 @@ fn retirement_selects_only_older_single_page_vehicles_in_order() {
             version: seq,
             base: Base::Unknown,
             bytes: text("A"),
-            trash: None,
-            pending_trash: vec![],
         };
         files.push((format!("p-{seq}.draft"), drafts::encode(&[record])));
     }
@@ -304,8 +298,6 @@ fn draft_phase_failures_preserve_whether_the_file_step_completed() {
                 version: 1,
                 base: Base::Unknown,
                 bytes: text("A"),
-                trash: None,
-                pending_trash: vec![],
             };
             let mut v = Vehicle::write("p-a.draft".into(), &[record]);
             if initial != Stage::Temp {
@@ -772,15 +764,21 @@ fn trash_collision_retries_with_a_fresh_name_without_removal() {
     assert_eq!(h.delete("a.md"), Disposition::Pending);
     drain(&mut h);
     assert_eq!(h.start_save("a.md"), Disposition::Pending);
-    assert_eq!(h.advance_save(0), Disposition::Pending);
-    let name = h.job.as_ref().unwrap().trash_name.clone();
+    assert_eq!(h.advance_save(0), Disposition::Pending); // check
+    assert_eq!(h.advance_save(0), Disposition::Pending); // marker
+    let (marker, payload) = h.job.as_ref().unwrap().marker.clone().unwrap();
+    assert_eq!(h.fs.custody_markers().unwrap().len(), 1);
     h.fs.inject(Phase::TrashMove, [Fault::Collision]);
     assert_eq!(h.advance_save(0), Disposition::Pending);
-    assert_ne!(h.job.as_ref().unwrap().trash_name, name);
+    assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::Marker);
+    assert!(
+        h.custody.is_empty(),
+        "the unused marker {marker} is retired"
+    );
+    assert!(h.fs.custody_markers().unwrap().is_empty());
+    assert!(h.worker.is_none(), "a collision rewrites no draft");
     assert_eq!(h.fs.files["graph/a.md"].as_ref(), b"A");
     assert!(!h.events.iter().any(|e| matches!(e, Event::Removed { .. })));
-    assert_eq!(h.advance_save(0), Disposition::Waiting);
-    drain(&mut h);
     for _ in 0..8 {
         if h.job.is_none() {
             break;
@@ -788,6 +786,14 @@ fn trash_collision_retries_with_a_fresh_name_without_removal() {
         h.advance_save(0);
     }
     assert!(h.pages["a.md"].clean());
+    assert!(h.fs.custody_markers().unwrap().is_empty());
+    let trash: Vec<_> =
+        h.fs.files
+            .keys()
+            .filter(|k| k.starts_with("trash/"))
+            .collect();
+    assert_eq!(trash.len(), 1);
+    assert!(!trash[0].ends_with(&payload), "fresh payload name");
 }
 
 #[test]

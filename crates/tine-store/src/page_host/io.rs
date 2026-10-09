@@ -9,6 +9,8 @@ pub(super) enum Phase {
     PageSync,
     TrashMove,
     TrashSync,
+    CustodyWrite,
+    CustodyRetire,
     DraftTemp,
     DraftRename,
     DraftUnlink,
@@ -54,8 +56,18 @@ pub(super) trait HostIo {
     fn page_temp(&mut self, page: &str, bytes: &Text) -> IoResult<()>;
     fn page_rename(&mut self, page: &str) -> IoResult<()>;
     fn page_sync(&mut self, page: &str) -> IoResult<Witness>;
-    fn trash_move(&mut self, page: &str, name: &str) -> MoveResult;
-    fn trash_sync(&mut self, page: &str, names: &[[u8; 16]]) -> IoResult<Witness>;
+    /// No-replace move of the page's file to the graph trash as `payload`.
+    fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult;
+    /// Custody phases (A4): (a) the payload's data, then (b) the trash
+    /// directory and each existing ancestor up to the graph root. A payload
+    /// that no longer exists owes nothing (R-PURGE).
+    fn trash_sync(&mut self, page: &str, payload: &str) -> IoResult<Witness>;
+    /// Strict new-file write of a custody marker into app data.
+    fn custody_write(&mut self, name: &str, bytes: &[u8]) -> IoResult<()>;
+    /// Unlink a custody marker and sync its app-data directory.
+    fn custody_retire(&mut self, name: &str) -> IoResult<()>;
+    /// Launch only: this device's markers. Never a listing of the trash.
+    fn custody_markers(&mut self) -> IoResult<Vec<(String, Vec<u8>)>>;
     fn draft_files(&self, durable: bool) -> Vec<(String, Vec<u8>)>;
     fn draft_temp(&mut self, name: &str, bytes: &[u8]) -> IoResult<()>;
     fn draft_rename(&mut self, name: &str) -> IoResult<()>;

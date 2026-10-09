@@ -1,4 +1,6 @@
 //! Faultable files, with independent readable and durable directory entries.
+//! Trash payload data, trash names and source names persist independently at
+//! a power cut, constrained only by single-move atomicity and A4 rule 5.
 use super::io::{ErrorKind, HostIo, IoFailure, IoResult, MoveResult, Phase, Witness};
 use super::Text;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -23,6 +25,21 @@ pub(super) struct ModelFs {
     /// Payload already synced by Tine's temp phase (or a deletion). A graph
     /// directory sync cannot promise unsynced bytes from an external writer.
     pub publications: BTreeMap<String, Text>,
+    /// Readable files whose data an external writer has not flushed.
+    pub volatile: BTreeSet<String>,
+    /// Issue order of each readable graph or trash name's latest operation.
+    pub order: BTreeMap<String, u64>,
+    /// Pages whose latest namespace operation is the move to this trash key.
+    pub moved: BTreeMap<String, String>,
+}
+
+/// One power outcome for readable trash names that are not yet durable.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Cut {
+    /// Unforced names that survive anyway (a surplus copy).
+    pub survive: BTreeSet<String>,
+    /// Surviving names whose unflushed external data is lost (R-UNFLUSHED).
+    pub lose: BTreeSet<String>,
 }
 
 impl ModelFs {
@@ -31,8 +48,95 @@ impl ModelFs {
         set(&mut self.files, &key, bytes.clone());
         if durable {
             set(&mut self.stable, &key, bytes);
+            self.volatile.remove(&key);
+        } else {
+            self.volatile.insert(key.clone());
         }
+        self.issue(page, None);
         *self.epochs.entry(page.into()).or_default() += 1;
+    }
+
+    /// One namespace operation on the graph filesystem, in issue order.
+    fn issue(&mut self, page: &str, trash: Option<&str>) {
+        let next = self.order.values().max().map_or(1, |n| n + 1);
+        self.order.insert(format!("graph/{page}"), next);
+        if let Some(trash) = trash {
+            self.order.insert(trash.into(), next);
+            self.moved.insert(page.into(), trash.into());
+        } else {
+            self.moved.remove(page);
+        }
+    }
+
+    /// Readable trash names that a power cut must keep, and those it may drop.
+    /// Single-move atomicity: a kept page whose latest operation is its move
+    /// keeps the destination. Rule 5 (only where the witness is Unsupported):
+    /// a persisted namespace operation implies every earlier one.
+    fn trash_outcomes(&self, keep: &BTreeSet<String>) -> (BTreeSet<String>, BTreeSet<String>) {
+        let pending: BTreeSet<String> = self
+            .files
+            .iter()
+            .filter(|(key, bytes)| {
+                key.starts_with("trash/") && self.stable.get(*key) != Some(bytes)
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        let mut forced: BTreeSet<String> = keep
+            .iter()
+            .filter_map(|page| self.moved.get(page))
+            .filter(|key| pending.contains(*key))
+            .cloned()
+            .collect();
+        if self.weak_graph {
+            let changed = keep
+                .iter()
+                .map(|page| format!("graph/{page}"))
+                .filter(|key| self.files.get(key) != self.stable.get(key));
+            let latest = changed
+                .chain(forced.iter().cloned())
+                .filter_map(|key| self.order.get(&key).copied())
+                .max();
+            if let Some(latest) = latest {
+                forced.extend(
+                    pending
+                        .iter()
+                        .filter(|key| self.order.get(*key).is_some_and(|n| *n < latest))
+                        .cloned(),
+                );
+            }
+        }
+        let free = pending.difference(&forced).cloned().collect();
+        (forced, free)
+    }
+
+    /// Every outcome a power cut permits, for an exhaustive refinement check.
+    pub fn cuts(&self, keep: &BTreeSet<String>) -> Vec<Cut> {
+        let (forced, free) = self.trash_outcomes(keep);
+        let free: Vec<_> = free.into_iter().collect();
+        let mut cuts = vec![];
+        for mask in 0..1usize << free.len() {
+            let survive: BTreeSet<_> = (0..free.len())
+                .filter(|i| mask >> i & 1 == 1)
+                .map(|i| free[i].clone())
+                .collect();
+            let unflushed: Vec<_> = forced
+                .iter()
+                .chain(&survive)
+                .filter(|key| self.volatile.contains(*key))
+                .cloned()
+                .collect();
+            for lost in 0..1usize << unflushed.len() {
+                let lose = (0..unflushed.len())
+                    .filter(|i| lost >> i & 1 == 1)
+                    .map(|i| unflushed[i].clone())
+                    .collect();
+                cuts.push(Cut {
+                    survive: survive.clone(),
+                    lose,
+                });
+            }
+        }
+        cuts
     }
 
     pub fn inject(&mut self, phase: Phase, faults: impl IntoIterator<Item = Fault>) {
@@ -46,22 +150,26 @@ impl ModelFs {
         self.publications.clear();
     }
 
-    /// Choose which readable graph paths survive, including their trash. Draft
-    /// metadata is strong and reverts to its last directory-sync witness.
+    /// The least surviving outcome: only forced trash names, with their data.
     pub fn power(&mut self, keep: &BTreeSet<String>, keep_draft_directory: bool) {
+        self.power_cut(keep, keep_draft_directory, &Cut::default());
+    }
+
+    /// Choose which readable graph paths survive (current or stable, §2a rule
+    /// 8) and which pending trash names survive. Draft metadata is strong and
+    /// reverts to its last directory-sync witness.
+    pub fn power_cut(&mut self, keep: &BTreeSet<String>, keep_draft_directory: bool, cut: &Cut) {
+        let (forced, _) = self.trash_outcomes(keep);
         let readable = self.files.clone();
         self.files = self.stable.clone();
         for page in keep {
             let graph = format!("graph/{page}");
             set(&mut self.files, &graph, readable.get(&graph).cloned());
-            let prefix = format!("trash/{page}/");
-            self.files.retain(|key, _| !key.starts_with(&prefix));
-            self.files.extend(
-                readable
-                    .iter()
-                    .filter(|(key, _)| key.starts_with(&prefix))
-                    .map(|(key, bytes)| (key.clone(), bytes.clone())),
-            );
+        }
+        for key in forced.iter().chain(&cut.survive) {
+            if !cut.lose.contains(key) {
+                self.files.insert(key.clone(), readable[key].clone());
+            }
         }
         if keep_draft_directory {
             self.files.retain(|key, _| !key.starts_with("draft/"));
@@ -72,6 +180,9 @@ impl ModelFs {
             );
         }
         self.stable = self.files.clone();
+        self.volatile.clear();
+        self.order.clear();
+        self.moved.clear();
         self.crash();
     }
 
@@ -147,6 +258,8 @@ impl HostIo for ModelFs {
             let bytes = fs.files.remove(&format!("temp/page/{page}"));
             fs.publications.insert(page.into(), bytes.clone());
             set(&mut fs.files, &format!("graph/{page}"), bytes);
+            fs.volatile.remove(&format!("graph/{page}"));
+            fs.issue(page, None);
             Ok(())
         })
     }
@@ -168,23 +281,28 @@ impl HostIo for ModelFs {
         })
     }
 
-    fn trash_move(&mut self, page: &str, name: &str) -> MoveResult {
+    fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult {
         let removed = self.files.get(&format!("graph/{page}")).cloned();
         let result = self.run(Phase::TrashMove, |fs| {
-            if !fs.files.contains_key(&format!("graph/{page}")) {
+            let source = format!("graph/{page}");
+            if !fs.files.contains_key(&source) {
                 fs.publications.insert(page.into(), None);
                 return Ok(());
             }
-            let key = format!("trash/{page}/{name}");
+            let key = format!("trash/{page}/{payload}");
             if fs.files.contains_key(&key) {
                 return Err(IoFailure {
                     kind: ErrorKind::Collision,
                     completed: false,
                 });
             }
-            let bytes = fs.files.remove(&format!("graph/{page}"));
+            let bytes = fs.files.remove(&source);
             fs.publications.insert(page.into(), None);
-            set(&mut fs.files, &key, bytes.clone());
+            set(&mut fs.files, &key, bytes);
+            if fs.volatile.remove(&source) {
+                fs.volatile.insert(key.clone());
+            }
+            fs.issue(page, Some(&key));
             Ok(())
         });
         let completed = result.is_ok() || result.as_ref().is_err_and(|e| e.completed);
@@ -194,18 +312,47 @@ impl HostIo for ModelFs {
         }
     }
 
-    fn trash_sync(&mut self, page: &str, names: &[[u8; 16]]) -> IoResult<Witness> {
-        if self.weak_graph {
-            self.calls.push(Phase::TrashSync);
-            return Ok(Witness::Unsupported);
-        }
+    fn trash_sync(&mut self, page: &str, payload: &str) -> IoResult<Witness> {
         self.run(Phase::TrashSync, |fs| {
-            for name in names {
-                let key = format!("trash/{page}/{}", super::trash_name(*name));
-                set(&mut fs.stable, &key, fs.files.get(&key).cloned());
+            let key = format!("trash/{page}/{payload}");
+            fs.volatile.remove(&key); // (a) is a file sync, real on every filesystem
+            if fs.weak_graph && fs.files.contains_key(&key) {
+                return Ok(Witness::Unsupported);
+            }
+            if let Some(bytes) = fs.files.get(&key).cloned() {
+                fs.stable.insert(key, bytes);
             }
             Ok(Witness::Durable)
         })
+    }
+
+    fn custody_write(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {
+        self.run(Phase::CustodyWrite, |fs| {
+            let key = format!("draft/trash-custody/{name}");
+            fs.files.insert(key.clone(), Arc::from(bytes));
+            fs.stable.insert(key, Arc::from(bytes));
+            Ok(())
+        })
+    }
+
+    fn custody_retire(&mut self, name: &str) -> IoResult<()> {
+        self.run(Phase::CustodyRetire, |fs| {
+            let key = format!("draft/trash-custody/{name}");
+            fs.files.remove(&key);
+            fs.stable.remove(&key);
+            Ok(())
+        })
+    }
+
+    fn custody_markers(&mut self) -> IoResult<Vec<(String, Vec<u8>)>> {
+        Ok(self
+            .files
+            .iter()
+            .filter_map(|(key, bytes)| {
+                key.strip_prefix("draft/trash-custody/")
+                    .map(|name| (name.into(), bytes.to_vec()))
+            })
+            .collect())
     }
 
     fn draft_files(&self, durable: bool) -> Vec<(String, Vec<u8>)> {
@@ -214,6 +361,7 @@ impl HostIo for ModelFs {
             .iter()
             .filter_map(|(key, bytes)| {
                 key.strip_prefix("draft/")
+                    .filter(|name| !name.contains('/'))
                     .map(|name| (name.into(), bytes.to_vec()))
             })
             .collect()

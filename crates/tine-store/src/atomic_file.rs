@@ -85,22 +85,28 @@ fn fit_name(prefix: &str, stem: &str, tail: &str, limit: usize) -> String {
 pub(crate) fn rename_replace(src: &Path, dst: &Path) -> io::Result<()> {
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::ffi::OsStrExt;
+        // std's own call plus MOVEFILE_WRITE_THROUGH, on std's verbatim path
+        // form. Any failure takes std's rename itself, so its long-path
+        // handling and ACCESS_DENIED -> FileRenameInfoEx retry stay exactly
+        // Beta's behaviour (REVIEW-2b F10).
         use windows_sys::Win32::Storage::FileSystem::{
             MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
         };
-        let src: Vec<_> = src.as_os_str().encode_wide().chain(Some(0)).collect();
-        let dst: Vec<_> = dst.as_os_str().encode_wide().chain(Some(0)).collect();
-        let result = unsafe {
-            MoveFileExW(
-                src.as_ptr(),
-                dst.as_ptr(),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-            )
+        let moved = match (verbatim(src), verbatim(dst)) {
+            (Ok(src), Ok(dst)) => unsafe {
+                MoveFileExW(
+                    src.as_ptr(),
+                    dst.as_ptr(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+                ) != 0
+            },
+            _ => false,
         };
-        (result != 0)
-            .then_some(())
-            .ok_or_else(io::Error::last_os_error)
+        if moved {
+            Ok(())
+        } else {
+            fs::rename(src, dst)
+        }
     }
     #[cfg(any(
         target_os = "linux",
@@ -125,6 +131,30 @@ pub(crate) fn rename_replace(src: &Path, dst: &Path) -> io::Result<()> {
             "replace unavailable on this target",
         ))
     }
+}
+
+/// std's `maybe_verbatim` form (library/std/src/sys/path/windows.rs,
+/// `get_long_path` with `prefer_verbatim`): absolute via GetFullPathNameW,
+/// then `\\?\`, `\\?\UNC\` or unchanged, NUL-terminated.
+#[cfg(windows)]
+fn verbatim(path: &Path) -> io::Result<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+    let absolute: Vec<u16> = std::path::absolute(path)?
+        .as_os_str()
+        .encode_wide()
+        .collect();
+    let (prefix, rest): (&str, &[u16]) = match absolute.as_slice() {
+        [_, 0x3a, 0x5c, ..] => ("\\\\?\\", &absolute),
+        [0x5c, 0x5c, 0x2e, 0x5c, rest @ ..] => ("\\\\?\\", rest),
+        [0x5c, 0x5c, 0x3f, 0x5c, ..] | [0x5c, 0x3f, 0x3f, 0x5c, ..] => ("", &absolute),
+        [0x5c, 0x5c, rest @ ..] => ("\\\\?\\UNC\\", rest),
+        _ => ("", &absolute),
+    };
+    Ok(prefix
+        .encode_utf16()
+        .chain(rest.iter().copied())
+        .chain(Some(0))
+        .collect())
 }
 
 /// The existing atomic-write protocol split at its synced-temp barrier. The
@@ -267,6 +297,49 @@ pub(crate) fn atomic_write_with_check(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// REVIEW-2b F10, hosted Windows only: a path past MAX_PATH takes the
+    /// write-through call on std's verbatim form and replaces the target.
+    #[cfg(windows)]
+    #[test]
+    fn windows_replace_handles_long_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let mut dir = root.path().to_path_buf();
+        while dir.as_os_str().len() < 300 {
+            dir.push("a-directory-name-that-makes-the-path-long");
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        let (src, dst) = (dir.join("src.md"), dir.join("dst.md"));
+        std::fs::write(&src, b"new").unwrap();
+        std::fs::write(&dst, b"old").unwrap();
+        super::rename_replace(&src, &dst).unwrap();
+        assert_eq!(std::fs::read(&dst).unwrap(), b"new");
+        assert!(!src.exists());
+    }
+
+    /// REVIEW-2b F10, hosted Windows only: a read-only destination gets
+    /// exactly std's outcome (its ACCESS_DENIED -> FileRenameInfoEx retry).
+    #[cfg(windows)]
+    #[test]
+    fn windows_replace_matches_std_on_a_read_only_destination() {
+        let mut outcomes = vec![];
+        for ours in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let (src, dst) = (root.path().join("src.md"), root.path().join("dst.md"));
+            std::fs::write(&src, b"new").unwrap();
+            std::fs::write(&dst, b"old").unwrap();
+            let mut permissions = std::fs::metadata(&dst).unwrap().permissions();
+            permissions.set_readonly(true);
+            std::fs::set_permissions(&dst, permissions).unwrap();
+            let result = if ours {
+                super::rename_replace(&src, &dst)
+            } else {
+                std::fs::rename(&src, &dst)
+            };
+            outcomes.push((result.is_ok(), std::fs::read(&dst).unwrap(), src.exists()));
+        }
+        assert_eq!(outcomes[0], outcomes[1]);
+    }
 
     #[test]
     fn temp_name_never_outgrows_a_long_target_and_keeps_the_page_extension() {

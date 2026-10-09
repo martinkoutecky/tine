@@ -13,10 +13,7 @@ impl Driver {
     fn tick_draft(&mut self) {
         let worker = self.host.worker.as_ref().unwrap();
         let application = worker.application.is_some()
-            && !matches!(
-                worker.application,
-                Some(Application::Representation | Application::TrashCustody(_))
-            )
+            && !matches!(worker.application, Some(Application::Representation))
             && matches!(worker.task.stage, Stage::Present | Stage::Absent)
             && (worker.task.bytes.is_some() || worker.remaining.is_empty());
         let present = worker.task.stage == Stage::Present;
@@ -88,6 +85,10 @@ impl Driver {
             }
         }
         // Apply the selected physical directory outcome; graph keep=false.
+        if power {
+            let expected = self.oracle.next("power", &[json!(false), json!(false)]);
+            self.refine_power_cuts(&BTreeSet::new(), &expected.unwrap().state()["s"]["trash"]);
+        }
         self.host.fs = survivor;
         self.host.stop();
         self.windows.fill(Window::default());
@@ -302,72 +303,65 @@ fn review_f2_external_recreation_before_and_after_trash_sync_then_power() {
     }
 }
 
+/// Delete page 0 through its move; the marker is written, custody is owed.
+fn delete_through_move(d: &mut Driver) {
+    run(d, &[("load", json!([0])), ("opDelete", json!([0]))]);
+    d.settle();
+    run(
+        d,
+        &[
+            ("flushDel", json!([0])),
+            ("check", json!([])),
+            ("rename", json!([])),
+        ],
+    );
+    assert_eq!(d.host.job.as_ref().unwrap().phase, SavePhase::TrashSync);
+    assert_eq!(d.host.custody[&key(0)].markers.len(), 1);
+}
+
+fn markers(d: &mut Driver) -> usize {
+    d.host.fs.custody_markers().unwrap().len()
+}
+
+/// REVIEW-A2 B2 / A3 B2 / F9: a crash after the move and before custody (b);
+/// launch redoes (a)+(b) before the marker retires, and a recreation of the
+/// page never renames before that custody completes.
 #[test]
-fn restart_trash_custody_and_non_delete_sync_refine_s31() {
-    for recreated in [false, true] {
+fn restart_redoes_custody_before_marker_retires_and_before_recreation() {
+    for launch_fails in [false, true] {
         let mut d = Driver::stepped("base");
-        run(&mut d, &[("load", json!([0])), ("opDelete", json!([0]))]);
-        d.settle();
-        run(
-            &mut d,
-            &[
-                ("flushDel", json!([0])),
-                ("check", json!([])),
-                ("rename", json!([])),
-            ],
-        );
+        delete_through_move(&mut d);
         d.fault(false, false); // L175: removal ghosts survive process crash
-        run(&mut d, &[("launch", json!([])), ("observe", json!([0]))]);
+        if launch_fails {
+            d.host.fs.inject(Phase::TrashSync, [Fault::Before]);
+        }
+        d.host.fs.calls.clear();
+        run(&mut d, &[("launch", json!([]))]);
+        let launch = d.host.fs.calls.clone();
+        assert_eq!(launch.first(), Some(&Phase::TrashSync), "custody first");
+        assert_eq!(markers(&mut d), usize::from(launch_fails));
+        assert_eq!(d.host.custody.contains_key(&key(0)), launch_fails);
+        run(&mut d, &[("observe", json!([0]))]);
         d.settle();
-        if recreated {
-            run(
-                &mut d,
-                &[
-                    ("wOpen", json!([0])),
-                    ("deliverUp", json!([true])),
-                    ("wRecv", json!([0])),
-                ],
-            );
-            edit(&mut d, 0, 2);
-            run(&mut d, &[("draftSync", json!([0]))]);
-            d.settle();
-        }
-        run(
-            &mut d,
-            &[(if recreated { "flush" } else { "flushDel" }, json!([0]))],
-        );
-        while d.host.job.as_ref().unwrap().phase == SavePhase::Temp {
-            assert!(d.attempt("check", &[]));
-        }
-        run(&mut d, &[("check", json!([])), ("rename", json!([]))]);
-        assert_eq!(d.host.job.as_ref().unwrap().phase, SavePhase::TrashSync);
-        // A failed additional trash witness is model dirSync(false), L433–439,
-        // after the model rename. No oracle rule or expected state is changed.
-        d.host.fs.inject(Phase::TrashSync, [Fault::Before]);
-        let inc = d.host.incarnation;
-        let version = d.host.version;
-        d.host.advance_save(0);
-        d.register_versions(inc, version);
-        d.finish("dirSync", &[json!(false)]);
-        assert!(d.host.pages[&key(0)].risk);
-        d.attempt("observe", &[json!(0)]);
+        open(&mut d, 0);
+        edit(&mut d, 0, 2);
         run(&mut d, &[("draftSync", json!([0]))]);
         d.settle();
-        d.fault(false, false);
-        run(&mut d, &[("launch", json!([])), ("observe", json!([0]))]);
-        d.settle();
-        run(
-            &mut d,
-            &[(if recreated { "flush" } else { "flushDel" }, json!([0]))],
-        );
+        d.host.fs.calls.clear();
+        run(&mut d, &[("flush", json!([0]))]);
         while d.host.job.as_ref().unwrap().phase == SavePhase::Temp {
             assert!(d.attempt("check", &[]));
         }
         run(&mut d, &[("check", json!([])), ("rename", json!([]))]);
-        assert!(d.attempt("dirSync", &[json!(true)])); // physical stutter
-        assert!(d.attempt("dirSync", &[json!(true)])); // abstract publication
-                                                       // L695: the removed bytes survive with a strong witness even after a
-                                                       // non-delete save and power; physical trash may contain a surplus copy.
+        let calls = &d.host.fs.calls;
+        let rename = calls.iter().position(|p| *p == Phase::PageRename).unwrap();
+        assert!(
+            !launch_fails || calls[..rename].contains(&Phase::TrashSync),
+            "recreation renamed before custody: {calls:?}"
+        );
+        assert_eq!(markers(&mut d), 0);
+        assert!(d.attempt("dirSync", &[json!(true)]));
+        // Every permitted power outcome keeps the removed bytes (L695).
         d.fault(true, false);
         assert!(d
             .host
@@ -378,34 +372,90 @@ fn restart_trash_custody_and_non_delete_sync_refine_s31() {
     }
 }
 
+/// F5 / R-STORAGE-ERROR: custody that keeps failing fails the save (model
+/// saveFail) twice; the third filesystem error lets the save go ahead with a
+/// sticky error, and only that named residual may lose the payload.
 #[test]
-fn collision_custody_rewrite_stutters_at_every_physical_cut() {
-    for cut in 0..8 {
+fn failing_custody_fails_saves_until_the_three_failure_escape() {
+    let mut d = Driver::stepped("base");
+    delete_through_move(&mut d);
+    d.fault(false, false);
+    d.host.fs.inject(Phase::TrashSync, [Fault::Before]);
+    run(&mut d, &[("launch", json!([])), ("observe", json!([0]))]);
+    d.settle();
+    open(&mut d, 0);
+    edit(&mut d, 0, 2);
+    for attempt in 1..=3 {
+        d.host.fs.inject(Phase::TrashSync, [Fault::Before]);
+        assert_eq!(d.host.start_save(&key(0)), Disposition::Pending);
+        d.finish("flush", &[json!(0)]);
+        d.host.advance_save(0);
+        if attempt < 3 {
+            d.finish("saveFail", &[]);
+            assert!(d.host.job.is_none());
+        } else {
+            d.compare("escaped custody is a stutter");
+        }
+    }
+    assert!(d
+        .host
+        .events
+        .iter()
+        .any(|e| matches!(e, Event::CustodyError { .. })));
+    while d.host.job.as_ref().unwrap().phase == SavePhase::Temp {
+        assert!(d.attempt("check", &[]));
+    }
+    run(
+        &mut d,
+        &[
+            ("check", json!([])),
+            ("rename", json!([])),
+            ("dirSync", json!([true])),
+        ],
+    );
+    assert!(d.host.pages[&key(0)].clean());
+    assert_eq!(markers(&mut d), 1, "the marker stays for the next launch");
+    assert!(!d.escaped.is_empty());
+    d.fault(true, false); // the escaped payload may be lost: R-STORAGE-ERROR only
+    run(&mut d, &[("launch", json!([]))]);
+    assert_eq!(markers(&mut d), 0);
+}
+
+/// REVIEW-A3: a trash collision leaves no unused marker and rewrites no
+/// draft, at every physical cut, before and after a restart (F3).
+#[test]
+fn collision_retires_its_unused_marker_at_every_cut() {
+    for cut in 0..4 {
         let mut d = Driver::stepped("base");
         run(&mut d, &[("load", json!([0])), ("opDelete", json!([0]))]);
         d.settle();
+        if cut % 2 == 1 {
+            d.fault(false, false);
+            run(&mut d, &[("launch", json!([]))]);
+            d.settle();
+        }
+        let drafts = d.host.fs.draft_files(true);
         run(&mut d, &[("flushDel", json!([0])), ("check", json!([]))]);
+        d.host.advance_save(0);
+        d.compare("marker is a stutter");
+        assert_eq!(markers(&mut d), 1);
         d.host.fs.inject(Phase::TrashMove, [Fault::Collision]);
         d.host.advance_save(0);
         d.compare("collision leaves graph and abstract job unchanged");
-        for _ in 0..cut {
-            if d.host.worker.is_some() {
-                d.tick_draft();
-            }
+        assert_eq!(d.host.job.as_ref().unwrap().phase, SavePhase::Marker);
+        assert_eq!(markers(&mut d), 0, "unused marker retired");
+        assert!(d.host.worker.is_none(), "no draft rewrite");
+        assert_eq!(d.host.fs.draft_files(true), drafts);
+        if cut >= 2 {
+            d.fault(false, false);
+            run(&mut d, &[("launch", json!([]))]);
+            d.settle();
+            run(&mut d, &[("flushDel", json!([0])), ("check", json!([]))]);
         }
-        d.fault(false, false);
-        run(&mut d, &[("launch", json!([]))]);
-        d.settle();
-        run(
-            &mut d,
-            &[
-                ("flushDel", json!([0])),
-                ("check", json!([])),
-                ("rename", json!([])),
-            ],
-        );
+        run(&mut d, &[("rename", json!([]))]);
         assert!(d.attempt("dirSync", &[json!(true)]));
         assert!(d.attempt("dirSync", &[json!(true)]));
+        assert_eq!(markers(&mut d), 0);
         d.fault(true, false);
         assert!(d
             .host
@@ -416,8 +466,10 @@ fn collision_custody_rewrite_stutters_at_every_physical_cut() {
     }
 }
 
+/// Discard has no trash barrier (A4 rule 4); the owed custody of an earlier
+/// R1 payload is completed by launch, never by the draft removal.
 #[test]
-fn discard_trash_witness_before_record_retirement_refines_s31() {
+fn discard_has_no_trash_barrier_and_launch_completes_custody() {
     let mut d = Driver::stepped("R1");
     run(&mut d, &[("load", json!([0])), ("opDelete", json!([0]))]);
     d.settle();
@@ -443,26 +495,17 @@ fn discard_trash_witness_before_record_retirement_refines_s31() {
             ("wDiscard", json!([0])),
             ("deliverUp", json!([true])),
             ("wRecv", json!([0])),
-            ("draftSync", json!([0])),
         ],
     );
-    d.host.fs.inject(Phase::TrashSync, [Fault::Before; 3]);
-    for _ in 0..3 {
-        d.tick_draft();
-    }
-    assert!(d.host.worker.is_some());
-    assert!(d.host.logical_drafts().contains_key(&key(0)));
-    d.settle(); // every extra witness is a physical stutter; removal is NODRAFT
+    d.host.fs.calls.clear();
+    run(&mut d, &[("draftSync", json!([0]))]);
+    d.settle();
+    assert!(!d.host.fs.calls.contains(&Phase::TrashSync));
+    assert_eq!(markers(&mut d), 1);
     d.fault(false, false);
-    run(
-        &mut d,
-        &[
-            ("launch", json!([])),
-            ("wOpen", json!([0])),
-            ("deliverUp", json!([true])),
-            ("wRecv", json!([0])),
-        ],
-    );
+    run(&mut d, &[("launch", json!([]))]);
+    assert_eq!(markers(&mut d), 0);
+    open(&mut d, 0);
     edit(&mut d, 0, 1);
     run(&mut d, &[("flush", json!([0]))]);
     assert!(d.attempt("check", &[])); // temp barrier
@@ -481,6 +524,16 @@ fn discard_trash_witness_before_record_retirement_refines_s31() {
         .files
         .iter()
         .any(|(key, bytes)| key.starts_with("trash/") && *bytes == text(3).unwrap()));
+}
+
+/// REVIEW-2b F6: a speculative fork copies the custody state it may act on.
+#[test]
+fn speculative_fork_preserves_custody() {
+    let mut d = Driver::stepped("base");
+    delete_through_move(&mut d);
+    let fork = d.fork().unwrap();
+    assert_eq!(fork.host.custody, d.host.custody);
+    assert_eq!(fork.escaped, d.escaped);
 }
 
 fn edit(d: &mut Driver, p: usize, t: i64) {
