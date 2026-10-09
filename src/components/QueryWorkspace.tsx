@@ -1,3 +1,4 @@
+import { createMembershipResource } from "../resultMembership";
 import {
   For,
   Match,
@@ -763,7 +764,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const pageView = createMemo(() => queryDisplaySettings(pageDisplay(), {}, pagePresentation() ?? presentation()));
   const blockView = createMemo(() => queryDisplaySettings(blockDisplay(), {}, blockPresentation() ?? presentation()));
   const executionScope = {};
-  const [execution] = createResource(
+  const [execution] = createMembershipResource(
     () => ({
       id: props.route.id,
       source: source().trim(),
@@ -773,6 +774,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       pageView: pageView(),
       blockView: blockView(),
     }),
+    () => JSON.stringify([props.route.id, source().trim(), sourceKind(), explain(), pageMatchScope(), pageView(), blockView()]),
     async (request): Promise<QueryExecution> => {
       if (!request.source) {
         return { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false };
@@ -801,7 +803,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         : undefined;
       if (explanation?.kind === "stale" || !owner()) return cancelled;
       return irToExecution(result.value, explanation?.value);
-    }
+    },
+    (value, id) => value.hits.some((hit) => hit.entity === "block" && hit.block.id === id),
   );
 
   // Failure is drawn from `execution.error` below; a read never throws into render.

@@ -110,6 +110,7 @@ pageLoadRefusalMessage  # why: a surface shows why its page did not load inline;
 pageRoots
 pageVisibleOrder
 pasteClipboardPayload
+pendingDataRevision  # why: query and reference membership waits for the ordinary final save revision without changing autosave; batchog-w5-refs
 persistBlockRefTarget
 pinPageWhileDrafting  # why: a draft outside the block editor (sheet prop cell) pins the page its commit writes, so eviction cannot drop it (K17a); batch15a
 prevVisible

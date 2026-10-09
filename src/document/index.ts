@@ -89,6 +89,7 @@
 export { blockIsGridView, collapseEpochOf, node, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName } from "./model";
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
 export { conflictReason, conflicts, createPage, CreatePageRefusal, flushAll, flushPage, groupedPages, installAliasDraftRouteHandler, installDraftKeeper, installLiveResolution, isConflicted, liveConflictDraft, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, sameLiveDraft, trackAssetWrite, unsavedDrafts, unsavedPageCount, waitingFor, waitingOn, type UnsavedState } from "./save/engine";
+export { pendingDataRevision } from "./save/engine";
 export { applyGraphChange, applyGraphChangesBulk, installExternalChangeUiHandler } from "./external";
 export { replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";
 export { admitPageFile, appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, pageLoadRefusalMessage, pinPageWhileDrafting, registerPaneRouteProvider, reloadHlsIfLoaded, reportPageLoadRefusal, resetStore, restoreTodayJournalInFeed, type PageLoadRefusal } from "./workingSet";

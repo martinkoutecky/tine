@@ -960,6 +960,9 @@ function scheduleDataRev() {
   }, 700);
 }
 
+/** Read-only: derived membership waits for the ordinary coalesced save revision. */
+export function pendingDataRevision(): boolean { return dataRevTimer !== null; }
+
 function cutSourceMatches(expected: ClipboardSourcePage): boolean {
   const page = pageByName(expected.name);
   return !!page

@@ -19,6 +19,8 @@ import { pageIdentityKey } from "../pageIdentity";
 import { mergeReferenceGroups } from "../referenceGroups";
 import { sectionOverride, setSectionOverride } from "../referenceSectionState";
 import { readOr } from "../resourceRead";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 
 // One identity fold for chips, filters and group merging: the old private `norm`
 // (trim + toLowerCase) split NFC/NFD and boundary-slash spellings of one page
@@ -105,7 +107,8 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   let alive = true;
   onCleanup(() => { alive = false; });
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
-  const [groupsResource] = createResource(
+  const [groupsResource] = createMembershipResource(
+    () => props.name,
     () => props.name,
     async (n) => {
       const owner = latestOwner(readScope, "backlinks", graphOwner(() => alive && props.name === n));
@@ -117,7 +120,8 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
         if (owner()) setLoadError(classifyReferenceLoadError(error));
         return [];
       }
-    }
+    },
+    groupsContainEdit,
   );
   // The resource loader reports failures through loadError; readOr covers reads.
   const groups = () => readOr(groupsResource, undefined, "linked references");
@@ -314,11 +318,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
       </Show>
       <div class="linked-references">
         <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
-          <span class="ref-collapse" classList={{ collapsed: collapsed() }}>
-            <svg viewBox="0 0 24 24" class="triangle">
-              <path d="M8 5l8 7-8 7z" />
-            </svg>
-          </span>
+          <ReferenceDisclosure collapsed={collapsed()} />
           Linked References <span class="references-count">{count()}</span>
           <button
             type="button"
@@ -434,7 +434,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                     aria-label={`${groupCollapsed(group()) ? "Expand" : "Collapse"} references from ${group().page}`}
                     onClick={() => setGroupCollapsed(group(), !groupCollapsed(group()))}
                   >
-                    {groupCollapsed(group()) ? "▸" : "▾"}
+                    <ReferenceDisclosure collapsed={groupCollapsed(group())} />
                   </button>
                   <button
                     ref={pageButton}

@@ -1743,6 +1743,12 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     });
   };
 
+  const textareaValue = createMemo(() => isCalc() ? (calcLive() ?? "") : (codeShown()?.body ?? editorValue()));
+  // GH #668: document-driven changes (planning dates, undo, external updates)
+  // bypass commit/onInput. Resize from the same visible buffer bound to the DOM,
+  // after Solid has assigned it, using the existing coalesced layout frame.
+  createEffect(() => { textareaValue(); if (ref) autosize(); });
+  onCleanup(() => autosizeRaf?.());
   createEffect(() => { codeWrapping(); if (ref && codeEditing()) autosize(); });
   // A `wrap="off"` editor (a code card) mounts with its whole value assigned,
   // which parks the selection at the end; focusing reveals that end and the
@@ -3120,7 +3126,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         classList={{ [`h${editorHeadingLevel()}`]: editorHeadingLevel() != null, "code-edit": codeEditing() }}
         wrap={codeEditing() && !codeWrapping() ? "off" : "soft"}
         spellcheck={spellcheckEnabled()}
-        value={isCalc() ? (calcLive() ?? "") : (codeShown()?.body ?? editorValue())}
+        value={textareaValue()}
         placeholder={cap?.bulletHint?.()}
         onInput={onInput}
         onCompositionStart={onCompositionStart}

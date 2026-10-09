@@ -14,7 +14,8 @@ import {
   type MaterializeQueryDependencies,
   type QueryWorkspaceDependencies,
 } from "./QueryWorkspace";
-import { bumpGraphEpoch, pageInventoryRev } from "../graphSession";
+import { bumpDataRev, bumpGraphEpoch, pageInventoryRev } from "../graphSession";
+import { startEditing, endEdit } from "../editorController";
 import { backend } from "../backend";
 import { resetStore } from "../document";
 import { contextMenu, closeAllRightSidebarItems, rightSidebar } from "../ui";
@@ -351,6 +352,23 @@ async function waitFor(check: () => void): Promise<void> {
 }
 
 describe("QueryWorkspace", () => {
+  it("GH #660: a saved revision refreshes routed query membership after editing finishes", async () => {
+    const route: QueryRoute = { kind: "query", id: "membership", sourceKind: "search", source: "alpha", presentation: "search" };
+    const deps = workspaceDeps();
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(root.textContent).toContain("An alpha result"));
+      startEditing("block-1");
+      vi.mocked(deps.runGraphSearch).mockResolvedValue({ hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false });
+      bumpDataRev();
+      await Promise.resolve(); await Promise.resolve();
+      expect(root.textContent).toContain("An alpha result");
+      endEdit("blur");
+      await waitFor(() => expect(root.textContent).not.toContain("An alpha result"));
+      expect(deps.runGraphSearch).toHaveBeenCalledTimes(2);
+    } finally { endEdit("blur"); dispose(); }
+  });
   it("sends both effective Display views to live friendly search", async () => {
     const route: QueryRoute = { kind: "query", id: "live-display", sourceKind: "search", source: "alpha",
       presentation: "search", pagePresentation: "board", blockPresentation: "list",
