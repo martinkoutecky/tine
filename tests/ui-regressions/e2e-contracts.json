@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-editor-content-height.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Applying a planning date leaves the original text and inserted planning lines visible in the open editor before blur, on a routed named page, journal feed and right sidebar.","blocking":true}],
+      "acceptableVariations":["Editor dimensions, typography, layout-frame timing and date picker presentation may vary while the editor covers its content."],
+      "nonRequirements":["Exact pixels, DOM nesting, date-picker help wording or certification outside Linux WebKitGTK."],
+      "stability":"stable"
+    },
     "scripts/e2e-result-membership.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"On a routed named page, editing TODO to CANCELED in a query answer retains the editor across a saved-revision recomputation, saves the completed text, and removes the disqualified answer after blur.","blocking":true}],
       "acceptableVariations":["Query presentation, row ordering outside the edited occurrence, layout and save latency may vary."],

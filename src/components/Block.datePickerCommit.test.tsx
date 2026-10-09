@@ -6,7 +6,7 @@ import { startEditing, endEdit } from "../editorController";
 import { journalTitle, localCalendarDate, setJournalTitleFormat } from "../journal";
 import { initParser } from "../render/parse";
 import { loadSingle } from "../document/workingSet";
-import { readSchedule, resetStore, node } from "../document";
+import { readSchedule, resetStore, node, setRaw } from "../document";
 import { closeDatePicker, datePicker } from "../ui";
 import { clearTransientLayersForTest } from "../transientLayers";
 
@@ -46,9 +46,18 @@ const addTime = () => {
   const repeat = document.querySelector<HTMLSelectElement>(".dp-rep-unit")!;
   repeat.value = "w"; repeat.dispatchEvent(new Event("change", { bubbles: true }));
 };
+// jsdom has no layout. Supply content-dependent geometry to verify that the
+// mounted editor remeasures after model writes; native E2E verifies visibility.
+async function measuredEditor(textarea: HTMLTextAreaElement) {
+  Object.defineProperty(textarea, "scrollHeight", { configurable: true,
+    get: () => textarea.value.split("\n").length * 24 });
+  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  textarea.style.height = "24px";
+}
 describe("date picker draft commits (GH #30 / #485)", () => {
   it.each(["Scheduled", "Deadline"].flatMap(label => ["done", "outside", "enter"].map(method => [label, method] as const)))("/%s selects a day then %s writes time and repeat", async (label, method) => {
-    await slash(label as "Scheduled" | "Deadline");
+    const { textarea } = await slash(label as "Scheduled" | "Deadline");
+    await measuredEditor(textarea);
     clickDay(12);
     expect(datePicker()).not.toBeNull();
     expect(readSchedule("task", label.toLowerCase() as "scheduled" | "deadline")).toBeNull();
@@ -56,6 +65,17 @@ describe("date picker draft commits (GH #30 / #485)", () => {
     if (method === "done") done(); else if (method === "outside") outside(); else { document.querySelector<HTMLInputElement>(".dp-time-input")!.focus(); key("Enter"); }
     expect(readSchedule("task", label.toLowerCase() as "scheduled" | "deadline")).toMatchObject({ d: 12, time: "10:00", repeater: "+1w" });
     expect(datePicker()).toBeNull();
+    await vi.waitFor(() => expect(parseFloat(textarea.style.height), "GH #668: programmatic planning writes must resize the open editor").toBeGreaterThanOrEqual(textarea.scrollHeight));
+  });
+  it("remeasures model-driven multiline insertion and removal in the same editor (GH #668)", async () => {
+    const { textarea } = await slash("Deadline");
+    key("Escape");
+    await measuredEditor(textarea);
+    setRaw("task", "Original\nInserted\nThird line");
+    await vi.waitFor(() => expect(textarea.style.height).toBe("72px"));
+    expect(document.querySelector("textarea.block-editor")).toBe(textarea);
+    setRaw("task", "Original");
+    await vi.waitFor(() => expect(textarea.style.height).toBe("24px"));
   });
   it.each(["Scheduled", "Deadline"] as const)("existing %s chip commits edited time and repeat on outside click", async label => {
     loadSingle({ name: "P", kind: "page", title: "P", format: "md", pre_block: null,

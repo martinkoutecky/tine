@@ -26,6 +26,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Block text stays visible immediately after applying a deadline or scheduled date; open editors resize after programmatic content changes (GH #668).
 - Query results keep an edited block in place until editing finishes, so replacing TODO with CANCELED can complete and save normally (GH #659).
 - Linked and Unlinked References, block reference panels, embeds and routed query results refresh membership after settled edits through one shared lifecycle (GH #660).
 - Linked and Unlinked References, their page groups, and query headers use the same collapse triangle size and alignment (GH #658).
