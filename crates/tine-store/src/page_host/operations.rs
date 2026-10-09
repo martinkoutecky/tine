@@ -78,6 +78,28 @@ impl<F: HostIo> Host<F> {
         to: &str,
         format: FileNameFormat,
     ) -> Disposition {
+        self.rename_with(source, target, referrers, |bytes, key, moving| {
+            if !moving {
+                return Self::rewrite(bytes, key, from, to, format);
+            }
+            let Some(raw) = bytes else { return Ok(None) };
+            let text = std::str::from_utf8(raw).map_err(|_| ())?;
+            let syntax = Format::from_path(std::path::Path::new(source));
+            Ok(tine_core::model::rebind_page_title(text, syntax, from, to)
+                .map(|text| Some(Arc::from(text.into_bytes())))
+                .unwrap_or_else(|| bytes.clone()))
+        })
+    }
+
+    // The model deliberately abstracts the pure rewrite. Tests substitute
+    // opaque labels here; all locks, guards, allocation and I/O remain shared.
+    pub(super) fn rename_with(
+        &mut self,
+        source: &str,
+        target: &str,
+        referrers: &BTreeSet<PageKey>,
+        rewrite: impl Fn(&Text, &str, bool) -> Result<Text, ()>,
+    ) -> Disposition {
         if !self.alive
             || source == target
             || !self.keys.contains(source)
@@ -94,7 +116,7 @@ impl<F: HostIo> Host<F> {
         let mut refs = referrers.clone();
         for (key, page) in &self.pages {
             if key != source && key != target {
-                let Ok(rewritten) = Self::rewrite(&page.buf, key, from, to, format) else {
+                let Ok(rewritten) = rewrite(&page.buf, key, false) else {
                     return Disposition::Refused;
                 };
                 if rewritten != page.buf {
@@ -104,7 +126,7 @@ impl<F: HostIo> Host<F> {
         }
         // Read source under its own lock first; the complete key set is then
         // acquired in canonical order and re-read before allocation/install.
-        if self.busy(source) {
+        if self.retained.contains(source) {
             return Disposition::Waiting;
         }
         let initial = self.with_locks(&BTreeSet::from([source.into()]), |host| {
@@ -147,26 +169,15 @@ impl<F: HostIo> Host<F> {
                 return Disposition::Refused;
             }
             if full {
-                let mut bytes = src.buf.clone();
-                // Reuse the title treatment already shared by transaction
-                // validation; no local title parser or rewrite twin.
-                if let Some(raw) = bytes.as_ref() {
-                    let Ok(text) = std::str::from_utf8(raw) else {
-                        return Disposition::Refused;
-                    };
-                    let syntax = Format::from_path(std::path::Path::new(source));
-                    if let Some(rebound) =
-                        tine_core::model::rebind_page_title(text, syntax, from, to)
-                    {
-                        bytes = Some(Arc::from(rebound.into_bytes()));
-                    }
-                }
+                let Ok(bytes) = rewrite(&src.buf, source, true) else {
+                    return Disposition::Refused;
+                };
                 pages.get_mut(target).unwrap().buf = bytes;
                 pages.get_mut(source).unwrap().buf = None;
             }
             for key in &refs {
                 let page = pages.get_mut(key).unwrap();
-                let Ok(bytes) = Self::rewrite(&page.buf, key, from, to, format) else {
+                let Ok(bytes) = rewrite(&page.buf, key, false) else {
                     return Disposition::Refused;
                 };
                 page.buf = bytes;

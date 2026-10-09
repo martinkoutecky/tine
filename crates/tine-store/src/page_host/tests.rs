@@ -388,7 +388,7 @@ fn oldest_first_removal_never_uncovers_older_record_and_abs_retains_newest() {
         }
         // User discard ends the current draft obligation when disk differs.
         h.fs.external("a.md", text("different"), true);
-        send(&mut h, "a.md", RequestKind::Discard);
+        send(&mut h, "a.md", RequestKind::Discard { version: 0 });
         assert!(!h.pages["a.md"].risk);
         h.begin_draft("a.md");
         for _ in 0..cut {

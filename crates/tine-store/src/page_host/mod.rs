@@ -1,6 +1,8 @@
 //! Unwired page owner. Runtime code is independent of the page_state oracle.
 #![allow(dead_code)]
 
+#[cfg(test)]
+mod conformance;
 mod drafts;
 mod io;
 #[cfg(test)]
@@ -82,7 +84,9 @@ enum RequestKind {
         version: u64,
         resolve: Option<Text>,
     },
-    Discard,
+    Discard {
+        version: u64,
+    },
     Move {
         receiver: PageKey,
         source_text: Text,
@@ -158,6 +162,11 @@ enum Event {
         version: u64,
         epoch: u64,
     },
+    Renamed {
+        page: PageKey,
+        bytes: Text,
+        version: u64,
+    },
     SaveOutcome {
         page: PageKey,
         outcome: Outcome,
@@ -181,6 +190,7 @@ enum Event {
     Unreadable(String),
 }
 
+#[cfg_attr(test, derive(Clone))]
 enum Application {
     Refresh(Record),
     Removal(PageKey),
@@ -194,6 +204,7 @@ enum Application {
     Representation,
 }
 
+#[cfg_attr(test, derive(Clone))]
 struct DraftWorker {
     pages: BTreeSet<PageKey>,
     before: BTreeMap<PageKey, Record>,
@@ -216,6 +227,7 @@ enum Disposition {
     Disabled,
 }
 
+#[cfg_attr(test, derive(Clone))]
 struct Host<F: HostIo> {
     fs: F,
     keys: BTreeSet<PageKey>,
@@ -357,6 +369,9 @@ impl<F: HostIo> Host<F> {
         if matches!(request.kind, RequestKind::Open) {
             self.subscriptions.insert(request.page.clone());
         }
+        if matches!(request.kind, RequestKind::Close) {
+            self.subscriptions.remove(&request.page);
+        }
         self.queue.push_back(request);
         Disposition::Applied
     }
@@ -411,7 +426,13 @@ impl<F: HostIo> Host<F> {
     }
 
     fn receive(&mut self, page: &str) -> Option<Mail> {
-        self.outbox.remove(page)
+        let mail = self.outbox.remove(page)?;
+        // Until the failed-open answer is consumed the window is still sent,
+        // so intervening page applications must coalesce into that answer.
+        if mail.page.is_none() && mail.answer.is_some() {
+            self.subscriptions.remove(page);
+        }
+        Some(mail)
     }
 
     fn initial_page(bytes: Text, version: u64) -> Page {
@@ -477,7 +498,6 @@ impl<F: HostIo> Host<F> {
                 if self.pages.get(key).is_some_and(Page::clean) {
                     self.set_page(key, None);
                 }
-                self.subscriptions.remove(key);
             }
             RequestKind::Submit {
                 bytes,
@@ -504,7 +524,7 @@ impl<F: HostIo> Host<F> {
                 self.set_page(key, Some(page));
                 self.answer(request, key, true);
             }
-            RequestKind::Discard => {
+            RequestKind::Discard { .. } => {
                 if let (Some(mut page), Ok(bytes)) =
                     (self.pages.get(key).cloned(), self.fs.read_page(key))
                 {
@@ -612,7 +632,7 @@ impl<F: HostIo> Host<F> {
     }
 
     fn begin_draft(&mut self, key: &str) -> Disposition {
-        if !self.alive || self.worker.is_some() || self.busy(key) {
+        if !self.alive || self.worker.is_some() || self.retained.contains(key) {
             return Disposition::Waiting;
         }
         let keys = BTreeSet::from([key.into()]);
@@ -876,6 +896,13 @@ impl<F: HostIo> Host<F> {
         let Some(job) = &self.job else {
             return Disposition::Disabled;
         };
+        if self
+            .worker
+            .as_ref()
+            .is_some_and(|w| w.pages.contains(&job.page))
+        {
+            return Disposition::Waiting;
+        }
         let keys = BTreeSet::from([job.page.clone()]);
         self.with_locks(&keys, |host| host.advance_save_locked(epoch))
     }
@@ -915,11 +942,23 @@ impl<F: HostIo> Host<F> {
             },
             SavePhase::Rename if job.bytes.is_some() => match self.fs.page_rename(&key) {
                 Ok(()) => {
+                    self.events.push(Event::Renamed {
+                        page: key.clone(),
+                        bytes: job.bytes.clone(),
+                        version: job.version,
+                    });
                     job.phase = SavePhase::DirectorySync;
                     job.epoch = epoch;
                     None
                 }
-                Err(e) if e.completed => Some(Outcome::Uncertain),
+                Err(e) if e.completed => {
+                    self.events.push(Event::Renamed {
+                        page: key.clone(),
+                        bytes: job.bytes.clone(),
+                        version: job.version,
+                    });
+                    Some(Outcome::Uncertain)
+                }
                 Err(_) => Some(Outcome::Failed),
             },
             SavePhase::Rename => {
@@ -933,6 +972,11 @@ impl<F: HostIo> Host<F> {
                 }
                 match movement.result {
                     Ok(()) => {
+                        self.events.push(Event::Renamed {
+                            page: key.clone(),
+                            bytes: job.bytes.clone(),
+                            version: job.version,
+                        });
                         job.phase = SavePhase::TrashSync;
                         job.epoch = epoch;
                         None
@@ -941,7 +985,14 @@ impl<F: HostIo> Host<F> {
                         job.trash_name = uuid::Uuid::new_v4().simple().to_string();
                         None
                     }
-                    Err(e) if e.completed => Some(Outcome::Uncertain),
+                    Err(e) if e.completed => {
+                        self.events.push(Event::Renamed {
+                            page: key.clone(),
+                            bytes: job.bytes.clone(),
+                            version: job.version,
+                        });
+                        Some(Outcome::Uncertain)
+                    }
                     Err(_) => Some(Outcome::Failed),
                 }
             }
@@ -1048,7 +1099,7 @@ impl<F: HostIo> Host<F> {
     }
 
     fn switch_request(&mut self) -> Disposition {
-        if self.job.is_some() || self.worker.is_some() || !self.retained.is_empty() {
+        if self.worker.is_some() || !self.retained.is_empty() {
             return Disposition::Waiting;
         }
         let keys = self.pages.keys().cloned().collect();

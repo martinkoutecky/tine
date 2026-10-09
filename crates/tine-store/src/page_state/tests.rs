@@ -12,7 +12,7 @@ fn config(profile: &str, mutant: &str) -> Config {
 
 // Evaluate the original scenario predicates, including intermediate expects.
 // Unsupported syntax is a harness error, never a passing assertion.
-fn eval(e: &Value, x: &State) -> Value {
+pub(super) fn eval(e: &Value, x: &State) -> Value {
     let tag = e[0].as_str().unwrap();
     match tag {
         "id" => {
@@ -126,7 +126,7 @@ fn eval(e: &Value, x: &State) -> Value {
     }
 }
 
-fn action(name: &str, args: &[Value]) -> Action {
+pub(super) fn action(name: &str, args: &[Value]) -> Action {
     let p = || args[0].as_u64().unwrap() as usize;
     let v = |i: usize| args[i].as_i64().unwrap();
     let b = |i: usize| args[i].as_bool().unwrap_or_else(|| v(i) == 1);

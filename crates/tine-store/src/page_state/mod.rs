@@ -1365,3 +1365,62 @@ fn step(x: &State, a: Action) -> Option<State> {
 
 #[cfg(test)]
 mod tests;
+
+/// Test-only access to the existing oracle and scenario expression evaluator.
+/// The host cannot reach this module in a non-test build.
+#[cfg(test)]
+pub(crate) mod conformance {
+    use super::*;
+    use serde_json::Value;
+
+    #[derive(Clone)]
+    pub(crate) struct Oracle(State);
+
+    impl Oracle {
+        pub(crate) fn model_sha() -> &'static str {
+            MODEL_SHA
+        }
+
+        pub(crate) fn new(profile: &str, pages: usize) -> Self {
+            Self(init(Config {
+                pages,
+                r1: profile == "R1" || profile == "all",
+                weak: profile == "weak" || profile == "all",
+                mutant: "none".into(),
+            }))
+        }
+
+        pub(crate) fn state(&self) -> Value {
+            serde_json::to_value(&self.0).unwrap()
+        }
+
+        pub(crate) fn next(&self, name: &str, args: &[Value]) -> Option<Self> {
+            step(&self.0, tests::action(name, args)).map(Self)
+        }
+
+        pub(crate) fn eval(&self, expression: &Value) -> Value {
+            tests::eval(expression, &self.0)
+        }
+
+        pub(crate) fn observed_guarantee(&self, observed: &Value) -> bool {
+            let mut state: State = serde_json::from_value(observed.clone()).unwrap();
+            state.config = self.0.config.clone();
+            guarantee(&state)
+        }
+
+        /// Run only the guarantee instrumentation on observed states. No
+        /// action rule or expected successor supplies any observed field.
+        pub(crate) fn observed_commit(&self, before: &Value, after: &Value, tag: &str) -> Value {
+            let mut before: State = serde_json::from_value(before.clone()).unwrap();
+            before.config = self.0.config.clone();
+            let after: State = serde_json::from_value(after.clone()).unwrap();
+            serde_json::to_value(commit(&before, after.s, after.g, tag).unwrap()).unwrap()
+        }
+
+        pub(crate) fn eval_observed(&self, expression: &Value, observed: &Value) -> Value {
+            let mut state: State = serde_json::from_value(observed.clone()).unwrap();
+            state.config = self.0.config.clone();
+            tests::eval(expression, &state)
+        }
+    }
+}

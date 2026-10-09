@@ -20,6 +20,9 @@ pub(super) struct ModelFs {
     pub calls: Vec<Phase>,
     pub weak_graph: bool,
     pub epochs: BTreeMap<String, u64>,
+    /// Payload already synced by Tine's temp phase (or a deletion). A graph
+    /// directory sync cannot promise unsynced bytes from an external writer.
+    pub publications: BTreeMap<String, Text>,
 }
 
 impl ModelFs {
@@ -40,6 +43,7 @@ impl ModelFs {
     pub fn crash(&mut self) {
         self.files.retain(|key, _| !key.starts_with("temp/"));
         self.faults.clear();
+        self.publications.clear();
     }
 
     /// Choose which readable graph paths survive, including their trash. Draft
@@ -137,19 +141,25 @@ impl HostIo for ModelFs {
     fn page_rename(&mut self, page: &str) -> IoResult<()> {
         self.run(Phase::PageRename, |fs| {
             let bytes = fs.files.remove(&format!("temp/page/{page}"));
+            fs.publications.insert(page.into(), bytes.clone());
             set(&mut fs.files, &format!("graph/{page}"), bytes);
             Ok(())
         })
     }
 
     fn page_sync(&mut self, page: &str) -> IoResult<Witness> {
-        if self.weak_graph {
-            self.calls.push(Phase::PageSync);
-            return Ok(Witness::Unsupported);
-        }
         self.run(Phase::PageSync, |fs| {
+            if fs.weak_graph {
+                return Ok(Witness::Unsupported);
+            }
             let key = format!("graph/{page}");
-            set(&mut fs.stable, &key, fs.files.get(&key).cloned());
+            let current = fs.files.get(&key).cloned();
+            // Model dirSync L421: stable advances only when the path still
+            // contains the job's synced payload. External durable writes have
+            // already advanced stable in external().
+            if fs.publications.get(page) == Some(&current) {
+                set(&mut fs.stable, &key, current);
+            }
             Ok(Witness::Durable)
         })
     }
@@ -165,6 +175,7 @@ impl HostIo for ModelFs {
                 });
             }
             let bytes = fs.files.remove(&format!("graph/{page}"));
+            fs.publications.insert(page.into(), None);
             set(&mut fs.files, &key, bytes.clone());
             Ok(())
         });
