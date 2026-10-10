@@ -2,8 +2,6 @@ package page.tine.app
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Rule
@@ -14,7 +12,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 
-/** ADR 0073 Android producer; review round 1 findings 4, 5, 6, 9, 10. */
+/** ADR 0073 Android producer; review round 1 findings 4, 5, 6, 10 and round 2 R2-2/3/4. */
 class ShareIntakeTest {
   @get:Rule
   val temp = TemporaryFolder()
@@ -154,48 +152,84 @@ class ShareIntakeTest {
     assertEquals(setOf("item.json"), File(root, "id1").list()!!.toSet())
   }
 
-  // ---- Finding 9: publication state survives the process. ----
+  @Test
+  fun aSyncFailureAfterThePublishingRenameLeavesTheItemPublished() {
+    val recorder = Recorder()
+    val root = File(temp.root, "share-inbox")
+    recorder.failSyncOf = "share-inbox"
+    val writer = InboxWriter(root, recorder.files)
+    // Not reported as unsaved: the item is visible and will be ingested.
+    writer.publish("id1", 7, "t", null, emptyList())
+    assertTrue(writer.published("id1"))
+    assertFalse(File(root, ".tmp-id1").exists())
+  }
+
+  // ---- Review round 2 (R2-2, R2-3, R2-4): one item per share occurrence. ----
+
+  private fun deliver(id: String, writer: InboxWriter, published: MutableList<String>) =
+    ShareIntake.deliver(id, writer) {
+      published.add(id)
+      writer.publish(id, 7, "same text", null, emptyList())
+    }
 
   @Test
-  fun aRecordReadsBackAcrossInstancesAndPendingOnesAreListed() {
-    val dir = File(temp.root, "share-state")
-    val files = Recorder().files
-    ShareState(dir, files).mark("fp1", ShareState.Status.PENDING, "id1", 100)
-    ShareState(dir, files).mark("fp2", ShareState.Status.PENDING, "id2", 100)
-    ShareState(dir, files).mark("fp2", ShareState.Status.PUBLISHED, "id2", 200)
-    val fresh = ShareState(dir, files) // a new process
-    assertEquals(ShareState.Record("fp1", ShareState.Status.PENDING, "id1", 100), fresh.lookup("fp1"))
-    assertEquals(ShareState.Status.PUBLISHED, fresh.lookup("fp2")!!.status)
-    assertEquals(listOf("fp1"), fresh.pending().map { it.fingerprint })
-    assertNull(fresh.lookup("fp3"))
-    assertFalse(File(dir, ".tmp-fp1").exists())
+  fun aRedeliveredOccurrenceWithNoItemAndNoTombstoneIsPublishedAgain() {
+    val root = File(temp.root, "share-inbox")
+    val published = mutableListOf<String>()
+    // A restored intent whose first delivery died before publishing.
+    assertTrue(deliver("occ-1", InboxWriter(root, Recorder().files), published))
+    assertEquals(listOf("occ-1"), published)
+    assertTrue(File(root, "occ-1").isDirectory)
   }
 
   @Test
-  fun pruningDropsOnlyOldSettledRecords() {
-    val dir = File(temp.root, "share-state")
-    val state = ShareState(dir, Recorder().files)
-    state.mark("old", ShareState.Status.PUBLISHED, "a", 0)
-    state.mark("oldAbandoned", ShareState.Status.ABANDONED, "b", 0)
-    state.mark("oldPending", ShareState.Status.PENDING, "c", 0)
-    state.mark("new", ShareState.Status.PUBLISHED, "d", 900)
-    state.prune(1000, 500)
-    assertNull(state.lookup("old"))
-    assertNull(state.lookup("oldAbandoned"))
-    assertEquals(ShareState.Status.PENDING, state.lookup("oldPending")!!.status)
-    assertEquals(ShareState.Status.PUBLISHED, state.lookup("new")!!.status)
+  fun aPublishedOrCommittedOccurrenceIsAnnouncedAfterAnInboxSyncNotRepublished() {
+    val root = File(temp.root, "share-inbox").apply { mkdirs() }
+    File(root, "occ-1").mkdir() // renamed; its inbox sync may have been cut short
+    File(root, ".committed-occ-2").writeText("") // ingested and removed
+    for (id in listOf("occ-1", "occ-2")) {
+      val recorder = Recorder()
+      val published = mutableListOf<String>()
+      assertTrue(deliver(id, InboxWriter(root, recorder.files), published))
+      assertEquals(emptyList<String>(), published)
+      assertEquals(listOf("sync share-inbox"), recorder.log)
+    }
+    assertFalse(File(root, "occ-2").exists())
   }
 
   @Test
-  fun theFingerprintIsStableAndSeparatesFields() {
-    val a = ShareIntake.fingerprint("SEND", "text/plain", "ab", null, emptyList())
-    assertEquals(a, ShareIntake.fingerprint("SEND", "text/plain", "ab", null, emptyList()))
-    assertNotEquals(a, ShareIntake.fingerprint("SEND", "text/plain", "a", "b", emptyList()))
-    assertNotEquals(a, ShareIntake.fingerprint("SEND", "text/plain", "ab", "", emptyList()))
-    assertNotEquals(
-      ShareIntake.fingerprint("SEND_MULTIPLE", "image/*", null, null, listOf("content://x/1", "content://x/2")),
-      ShareIntake.fingerprint("SEND_MULTIPLE", "image/*", null, null, listOf("content://x/2", "content://x/1")),
-    )
+  fun twoOccurrencesWithEqualContentAreTwoItems() {
+    val root = File(temp.root, "share-inbox")
+    val writer = InboxWriter(root, Recorder().files)
+    val published = mutableListOf<String>()
+    deliver("occ-1", writer, published)
+    deliver("occ-2", writer, published)
+    assertEquals(listOf("occ-1", "occ-2"), published)
+    assertEquals(setOf("occ-1", "occ-2"), root.list()!!.filter { !it.startsWith(".") }.toSet())
+  }
+
+  @Test
+  fun aConcurrentDeliveryOfTheSameOccurrenceDoesNotCopyItAgain() {
+    val root = File(temp.root, "share-inbox")
+    val writer = InboxWriter(root, Recorder().files)
+    var inner: Boolean? = null
+    val outer = ShareIntake.deliver("occ-1", writer) {
+      // A second delivery of the same occurrence arrives mid-copy.
+      inner = ShareIntake.deliver("occ-1", writer) { fail("copied twice") }
+      writer.publish("occ-1", 7, "t", null, emptyList())
+    }
+    assertTrue(outer)
+    assertEquals(false, inner)
+    // Once the first finished, a later delivery finds the item.
+    assertTrue(ShareIntake.deliver("occ-1", writer) { fail("republished") })
+  }
+
+  @Test
+  fun occurrenceIdsAreValidInboxNames() {
+    assertTrue(ShareIntake.validId(java.util.UUID.randomUUID().toString()))
+    assertFalse(ShareIntake.validId(""))
+    assertFalse(ShareIntake.validId("../x"))
+    assertFalse(ShareIntake.validId("a".repeat(65)))
   }
 
   @Test

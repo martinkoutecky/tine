@@ -17,6 +17,11 @@
 //!   a crash re-appends anything not `written` (see `src/shareIngest.ts` and
 //!   ADR 0073);
 //! - `.trash-<id>/`: a committed item between its rename and its removal;
+//! - `.committed-<id>`: an empty tombstone each commit leaves, removed by a
+//!   listing after [`TOMBSTONE_AGE`]. Android redelivers a share intent
+//!   (restored Activity, Recents) carrying the occurrence id its item was
+//!   published under; the tombstone tells its producer that occurrence was
+//!   already ingested, so it is not published again;
 //! - `.rejected-<id>/`: an item that could not be read, kept for the user.
 //!
 //! Refusals (ADR 0073 refusal table; the threat model is
@@ -43,6 +48,9 @@ const MAX_RESOURCES: usize = 32;
 /// A producer finishes an item in well under a second; one that is still a
 /// `.tmp-` directory after a day was interrupted.
 const STALE_TMP: Duration = Duration::from_secs(24 * 60 * 60);
+/// How long a commit tombstone outlives its item (Android redelivery window).
+const TOMBSTONE_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const TOMBSTONE_PREFIX: &str = ".committed-";
 
 /// One resource as the producer described it (`SharedResource` in OG's
 /// `ios/App/ShareViewController/SharedData.swift`).
@@ -248,6 +256,9 @@ pub(crate) fn list(root: &Path) -> Result<Listing, String> {
         };
         let path = entry.path();
         if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            if name.starts_with(TOMBSTONE_PREFIX) && older_than(&path, TOMBSTONE_AGE) {
+                let _ = std::fs::remove_file(&path);
+            }
             continue;
         }
         if name.starts_with(".trash-") {
@@ -300,9 +311,14 @@ pub(crate) fn prepare(root: &Path, id: &str, prepared: &Prepared) -> Result<(), 
 }
 
 /// Remove item `id` after its journal write reached disk. Idempotent: an
-/// item that is already gone is committed.
+/// item that is already gone is committed. Its tombstone is durable before
+/// the item leaves, so no moment shows neither.
 pub(crate) fn commit(root: &Path, id: &str) -> Result<(), String> {
     let dir = item_dir(root, id)?;
+    if dir.exists() {
+        crate::device_io::atomic_write(&root.join(format!("{TOMBSTONE_PREFIX}{id}")), b"")
+            .map_err(|error| format!("share inbox item {id}: {error}"))?;
+    }
     let trash = root.join(format!(".trash-{id}"));
     if trash.exists() {
         std::fs::remove_dir_all(&trash).map_err(|error| error.to_string())?;
@@ -543,6 +559,36 @@ mod tests {
         commit(root, "a").unwrap();
         assert!(list(root).unwrap().items.is_empty());
         assert!(commit(root, "../etc").is_err());
+    }
+
+    #[test]
+    fn a_commit_leaves_a_tombstone_that_listing_ignores_and_prunes_after_thirty_days() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        for id in ["a", "b"] {
+            publish(
+                root,
+                id,
+                r#"{"version":1,"source":"android","text":"t"}"#,
+                &[],
+            );
+            commit(root, id).unwrap();
+        }
+        // The Android producer reads these to skip a redelivered occurrence.
+        assert!(root.join(".committed-a").is_file());
+        assert!(root.join(".committed-b").is_file());
+        let old = SystemTime::now() - TOMBSTONE_AGE - Duration::from_secs(60);
+        fs::File::options()
+            .write(true)
+            .open(root.join(".committed-a"))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        let listing = list(root).unwrap();
+        assert!(listing.items.is_empty());
+        assert_eq!(listing.rejected, 0);
+        assert!(!root.join(".committed-a").exists());
+        assert!(root.join(".committed-b").is_file());
     }
 
     #[test]
