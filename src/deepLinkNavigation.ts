@@ -16,7 +16,7 @@ import { admitPageFile, captureEmptyPage, pageByName, reportPageLoadRefusal } fr
 import { journalTitle, appNow } from "./journal";
 import { openSwitcher } from "./ui";
 import { focusPageTrailing } from "./components/pageTrailing";
-import type { Owner } from "./owned";
+import { resolvedTarget, refreshPageIndex } from "./pageIndex";
 import { chooseLinkGraph } from "./components/DeepLinkGraphChoice";
 
 export interface LinkTarget {
@@ -41,7 +41,7 @@ export async function openTineLink(delivery: LinkDelivery, alive: () => boolean 
     const api = backend();
     let target: LinkTarget;
     const app = delivery.kind === "url" ? parseAppRoute(delivery.url) : null;
-    if (app) return await openAppRoute(app, owner);
+    if (app) return await openAppRoute(app, current);
     if (delivery.kind === "url") {
       const request = parseTineLink(delivery.url);
       if (!api.tineLinks?.scanKnownGraphs) throw new Error("External links are available in the Tine app");
@@ -103,25 +103,25 @@ export async function openTineLink(delivery: LinkDelivery, alive: () => boolean 
 /** Open a current-graph route (ADR 0073) in the focused pane. Never creates
  * a page: an unknown page name is an error, and today's journal stays the
  * usual phantom day until the user types. O(1) backend reads. */
-async function openAppRoute(app: AppRoute, owner: Owner): Promise<void> {
+async function openAppRoute(app: AppRoute, current: () => boolean): Promise<void> {
   if (!graphMeta()) throw new Error("open a graph first");
+  const owner = ownedWhen(current);
   const router = focusedRouter();
   if (app.route === "search") { openSwitcher(app.query ? { prefill: app.query } : undefined); return; }
   const today = journalTitle(appNow());
   if (app.route === "page") {
-    const api = backend();
-    for (const kind of ["page", "journal"] as const) {
-      const resolved = await readOwned(owner, api.resolvePage(app.page, kind));
-      if (resolved.kind === "stale") return;
-      const id = resolved.value.kind === "existing" ? resolved.value.id : null;
-      const read = id ? await readOwned(owner, api.getPageByPath(id)) : null;
-      if (read?.kind === "stale") return;
-      if (read?.value) {
-        router.openInNewTab({ kind: "page", name: read.value.name, pageKind: read.value.kind, path: read.value.id }, true);
-        return;
-      }
-    }
-    throw new Error(`the page "${app.page}" doesn't exist in the open graph`);
+    // The one frontend name answerer (pageIndex.ts); a cold launch waits for it.
+    const fileId = () => (["page", "journal"] as const).map((kind) => resolvedTarget(app.page, kind))
+      .map((target) => target?.kind === "existing" ? target.id : target?.kind === "alias" ? target.owners[0] : null)
+      .find((id) => !!id);
+    if (!fileId()) await refreshPageIndex();
+    if (!current()) return;
+    const id = fileId();
+    const read = id ? await readOwned(owner, backend().getPageByPath(id)) : null;
+    if (read?.kind === "stale") return;
+    if (!read?.value) throw new Error(`the page "${app.page}" doesn't exist in the open graph`);
+    router.openInNewTab({ kind: "page", name: read.value.name, pageKind: read.value.kind, path: read.value.id }, true);
+    return;
   }
   router.openPage(today, "journal");
   if (app.route === "today") return;
