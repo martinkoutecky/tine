@@ -428,6 +428,8 @@ pub struct Transaction<'a> {
     // Exact names sampled once per directory per commit phase.
     spelling_entries:
         std::cell::RefCell<BTreeMap<PathBuf, BTreeMap<std::ffi::OsString, std::ffi::OsString>>>,
+    /// The planning context [`Self::expect_view`] requires at commit.
+    view: Option<(crate::GraphRev, std::sync::Arc<tine_core::config::Config>)>,
 }
 
 /// A page file's alternate-extension twin (`.md` ↔ `.org`) on disk, from one
@@ -457,6 +459,7 @@ impl Store {
             steps: Vec::new(),
             kinds: kind.into_iter().collect(),
             spelling_entries: Default::default(),
+            view: None,
         }
     }
 }
@@ -571,6 +574,19 @@ impl<'a> Transaction<'a> {
             file: file.clone(),
             expected,
         });
+        self
+    }
+
+    /// Commit only in the context `view` was planned in (STEP3 A-W1, B2): under
+    /// the writer, before any step is prepared, the published graph revision
+    /// and the config must still be `view`'s, or commit returns `Why::Conflict`
+    /// naming `logseq/config.edn` and writes nothing. It covers every step,
+    /// including moves and trashes whose output depends on the filename format,
+    /// so a plan that read the graph or encoded names under an older context
+    /// is replanned rather than applied. Any later publication counts, so a
+    /// caller retries a bounded number of times. Cost O(1) when it holds.
+    pub fn expect_view(&mut self, view: &crate::WholeGraph) -> &mut Self {
+        self.view = Some((view.rev(), std::sync::Arc::clone(&view.config.config)));
         self
     }
 
@@ -1582,6 +1598,9 @@ impl<'a> Transaction<'a> {
         }
         if let Some(failure) = self.config_write_failure() {
             return failure;
+        }
+        if let Some(stale) = self.stale_view() {
+            return stale;
         }
         let starting_rev = self.store.graph.cache_generation();
         let mut names = Vec::new();

@@ -677,6 +677,41 @@ impl<F: HostIo> Host<F> {
         self.worker.as_ref().is_some_and(|w| w.allocator)
     }
 
+    /// The rename's effective referrers (STEP3 A-W1, R3/R4): the caller's,
+    /// less a held one that is dirty or busy and whose buffer the rewrite
+    /// leaves unchanged (the rename has nothing to write there, and its input
+    /// is not the rename's to flush or refuse), plus every other held buffer
+    /// the rewrite changes, including pages no index lists. Err when the
+    /// rewrite fails on a held buffer. Model refinement: `conformance.rs`.
+    pub(super) fn rename_refs(
+        &self,
+        source: &str,
+        target: &str,
+        referrers: &BTreeSet<PageKey>,
+        rewrite: &impl Fn(&Text, &str, bool) -> Result<Text, ()>,
+    ) -> Result<BTreeSet<PageKey>, ()> {
+        let unchanged = |key: &PageKey, page: &Page| {
+            (!page.clean() || self.busy(key))
+                && rewrite(&page.buf, key, false).is_ok_and(|bytes| bytes == page.buf)
+        };
+        let mut refs: BTreeSet<PageKey> = referrers
+            .iter()
+            .filter(|key| {
+                !self
+                    .pages
+                    .get(*key)
+                    .is_some_and(|page| unchanged(key, page))
+            })
+            .cloned()
+            .collect();
+        for (key, page) in &self.pages {
+            if key != source && key != target && rewrite(&page.buf, key, false)? != page.buf {
+                refs.insert(key.clone());
+            }
+        }
+        Ok(refs)
+    }
+
     fn busy(&self, page: &str) -> bool {
         self.retained.contains(page)
             || self.job.as_ref().is_some_and(|job| job.page == page)

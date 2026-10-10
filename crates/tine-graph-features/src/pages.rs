@@ -483,9 +483,12 @@ fn rename_page_after_inventory(
     })
 }
 
-/// What one rename attempt writes, planned from one refreshed view.
+/// What one rename attempt writes, planned from one refreshed view and the
+/// config captured with it; commit and the host admit it only while both are
+/// current (A-W1, B2).
 struct RenamePlan {
     graph: tine_store::WholeGraph,
+    config: tine_store::ConfigState,
     map: RenameMap,
     lookup: HashMap<String, String>,
     moves: HashMap<PageId, FileId>,
@@ -496,6 +499,8 @@ struct RenamePlan {
     /// The candidates `pages` read to find the plan's write set, reused by
     /// the commit so it writes exactly what was reserved (A-R3).
     reads: HashMap<PageId, (String, FileRev)>,
+    /// Referrers `pages` leaves byte-identical for their VCS conflict markers.
+    skipped: Vec<PageId>,
 }
 
 impl RenamePlan {
@@ -506,7 +511,7 @@ impl RenamePlan {
     /// markers) is not written, so its unsaved input blocks nothing. The
     /// reads are kept for the commit, which decides on the same bytes.
     fn pages(&mut self, store: &Store) -> io::Result<Vec<PageId>> {
-        let format = store.config().file_name_format;
+        let format = self.config.file_name_format;
         let mut pages = Vec::new();
         for id in &self.candidates {
             if self.moves.contains_key(id) || self.moved_titles_to_rebind.contains(id) {
@@ -524,10 +529,12 @@ impl RenamePlan {
                 .is_some_and(|ext| ext == "org");
             let syntax = Format::from_path(id.as_str().as_ref());
             let changed = refs::rename_rewrite(&content, org, &self.map.0, format) != content;
-            if changed
-                && tine_core::concord_queue::vcs_conflict_markers(&content, syntax).is_empty()
-            {
-                pages.push(id.clone());
+            let marked =
+                !tine_core::concord_queue::vcs_conflict_markers(&content, syntax).is_empty();
+            match (changed, marked) {
+                (true, false) => pages.push(id.clone()),
+                (true, true) => self.skipped.push(id.clone()),
+                _ => {}
             }
             self.reads.insert(id.clone(), (content, rev));
         }
@@ -565,7 +572,7 @@ impl RenamePlan {
         let spelled = |name: &str| {
             let rel = format!(
                 "{}.md",
-                tine_core::model::encode_page_name(name, store.config().file_name_format)
+                tine_core::model::encode_page_name(name, self.config.file_name_format)
             );
             store.file_id(Area::Pages, &rel).map_err(store_error)
         };
@@ -595,6 +602,9 @@ fn plan_rename(
     #[cfg(test)] after_inventory: &dyn Fn(),
 ) -> io::Result<RenamePlan> {
     let graph = refreshed_view(store)?;
+    // The planning context: every format decision below uses this config,
+    // and commit checks it is still the view's (B2).
+    let config = store.config();
     let old_key = refs::normalize(old);
     // Only file-claimed names move: the full inventory's alias and
     // reference-only name discovery is not needed here (GH #623).
@@ -646,7 +656,7 @@ fn plan_rename(
         let ext = Format::from_path(id.as_str().as_ref()).ext();
         let rel = format!(
             "{}.{}",
-            tine_core::model::encode_page_name(&new_name, store.config().file_name_format),
+            tine_core::model::encode_page_name(&new_name, config.file_name_format),
             ext
         );
         let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
@@ -719,6 +729,7 @@ fn plan_rename(
     candidates.dedup();
     Ok(RenamePlan {
         graph,
+        config,
         map,
         lookup,
         moves,
@@ -727,6 +738,7 @@ fn plan_rename(
         ref_merge,
         candidates,
         reads: HashMap::new(),
+        skipped: Vec::new(),
     })
 }
 
@@ -740,6 +752,7 @@ fn commit_rename(
 ) -> io::Result<Option<RenameReport>> {
     let RenamePlan {
         graph,
+        config,
         map,
         lookup,
         moves,
@@ -748,8 +761,11 @@ fn commit_rename(
         ref_merge,
         candidates,
         mut reads,
+        skipped: _,
     } = plan;
     let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+    // Every step, rewrite or not, commits only in the planning context.
+    tx.expect_view(&graph);
     // Crash order (I-2): survivor, then referrer rewrites, then namespace
     // descendant moves, then the source trash, then config.edn LAST. The
     // survivor is queued first because referrer rewrites are queued as the
@@ -770,7 +786,7 @@ fn commit_rename(
             &survivor.doc,
         );
     }
-    let name_format = store.config().file_name_format;
+    let name_format = config.file_name_format;
     let mut edits = Vec::new();
     let mut skipped = Vec::new();
     for id in candidates {
@@ -908,17 +924,16 @@ fn host_rename(
     store: &Store,
     host: &PageHost,
     (source, target): (PageId, PageId),
-    first: RenamePlan,
+    mut first: RenamePlan,
     plan: &dyn Fn() -> io::Result<RenamePlan>,
     unsaved_paths: &[String],
 ) -> io::Result<Option<RenameReport>> {
-    let referrers: Vec<PageId> = first
-        .candidates
-        .iter()
-        .filter(|id| **id != source)
-        .cloned()
-        .collect();
-    let (changed, skipped) = match host.rename(&source, &target, &referrers, &first.map) {
+    // The planner's value (R3): referrers whose file the rewrite changes;
+    // the host adds held buffers and fixes the final pages under its lock.
+    let mut referrers = first.pages(store)?;
+    referrers.retain(|id| *id != source && *id != target);
+    let renamed = host.rename(&source, &target, &referrers, &first.map, &first.graph);
+    let (changed, mut skipped) = match renamed {
         Ok(done) => done,
         Err(RenameRefusal::Alias) => {
             let last = std::cell::Cell::new(None);
@@ -956,6 +971,9 @@ fn host_rename(
         }
         Err(RenameRefusal::Refused) => return Ok(None),
     };
+    skipped.extend(first.skipped.iter().cloned());
+    skipped.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
+    skipped.dedup();
     if changed.is_empty() && first.moves.is_empty() {
         let skipped = skipped.iter().map(|id| id.as_str().to_owned()).collect();
         return Ok(Some(RenameReport {

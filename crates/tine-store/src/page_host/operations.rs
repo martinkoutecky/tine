@@ -132,17 +132,9 @@ impl<F: HostIo> Host<F> {
         if self.worker.is_some() || self.allocator_busy() {
             return Disposition::Waiting;
         }
-        let mut refs = referrers.clone();
-        for (key, page) in &self.pages {
-            if key != source && key != target {
-                let Ok(rewritten) = rewrite(&page.buf, key, false) else {
-                    return Disposition::Refused;
-                };
-                if rewritten != page.buf {
-                    refs.insert(key.clone());
-                }
-            }
-        }
+        let Ok(refs) = self.rename_refs(source, target, referrers, &rewrite) else {
+            return Disposition::Refused;
+        };
         // A known dirty referrer already disproves the operation guard;
         // refuse before loading any other path.
         if refs

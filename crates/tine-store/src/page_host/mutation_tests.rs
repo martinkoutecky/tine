@@ -873,3 +873,82 @@ fn custody_entries(h: &Host<ModelFs>) -> usize {
         .filter(|k| k.starts_with("draft/trash-custody/"))
         .count()
 }
+
+/// R3a/R5 (A-W1): a caller referrer that is dirty or busy, and whose
+/// buffer the rewrite leaves unchanged, is not part of the rename. The
+/// operation runs over its effective set (the endpoints), and the referrer
+/// keeps its buffer, version, risk, save job and reservation; nothing of it
+/// is drafted or written. A referrer whose bytes the rewrite changes still
+/// refuses while dirty (saving or not) and waits while only busy.
+#[test]
+fn an_unchanged_dirty_or_busy_referrer_is_left_out_of_a_rename() {
+    let refs = BTreeSet::from(["b.md".into()]);
+    let unchanged = |bytes: &Text, _: &str, _: bool| Ok(bytes.clone());
+    let changes = |bytes: &Text, key: &str, moving: bool| {
+        Ok(if key == "b.md" && !moving {
+            text("B renamed")
+        } else {
+            bytes.clone()
+        })
+    };
+    for state in ["dirty", "saving", "reserved"] {
+        let setup = || {
+            let mut h = host();
+            open(&mut h, "b.md");
+            match state {
+                "dirty" => edit(&mut h, "b.md", "B typed"),
+                "saving" => {
+                    edit(&mut h, "b.md", "B typed");
+                    assert_eq!(h.start_save("b.md"), Disposition::Pending);
+                }
+                _ => assert_eq!(h.reserve(&refs), Disposition::Applied),
+            }
+            h
+        };
+        let mut h = setup();
+        let page = h.pages["b.md"].clone();
+        let job = h.job.as_ref().map(|job| job.page.clone());
+        assert_eq!(
+            h.rename_with("a.md", "c.md", &refs, unchanged),
+            Disposition::Pending,
+            "{state}"
+        );
+        let operation = &h.worker.as_ref().unwrap().pages;
+        assert_eq!(
+            *operation,
+            BTreeSet::from(["a.md".into(), "c.md".into()]),
+            "{state}"
+        );
+        assert_eq!(h.pages["b.md"], page, "{state}");
+        assert_eq!(h.job.as_ref().map(|job| job.page.clone()), job, "{state}");
+        assert_eq!(h.retained.contains("b.md"), state == "reserved", "{state}");
+        assert!(!h.logical_drafts().contains_key("b.md"), "{state}");
+        // Absent source, references only: an empty effective set is the
+        // model's disabled step, never an applied operation (the source's
+        // visible load is the model's load step).
+        let mut h = setup();
+        let before = (h.pages["b.md"].clone(), h.fs.files.clone());
+        assert_eq!(
+            h.rename_with("c.md", "a.md", &refs, unchanged),
+            Disposition::Refused,
+            "{state}"
+        );
+        assert!(h.worker.is_none(), "{state}");
+        let after = (h.pages["b.md"].clone(), h.fs.files.clone());
+        assert_eq!(after, before, "{state}");
+        assert!(h.pages.get("c.md").is_none_or(Page::clean), "{state}");
+        // The negative neighbour: the rewrite changes the referrer.
+        let mut h = setup();
+        let expected = if state == "reserved" {
+            Disposition::Waiting
+        } else {
+            Disposition::Refused
+        };
+        assert_eq!(
+            h.rename_with("a.md", "c.md", &refs, changes),
+            expected,
+            "{state}"
+        );
+        assert!(h.worker.is_none(), "{state}");
+    }
+}

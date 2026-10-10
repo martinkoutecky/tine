@@ -444,6 +444,42 @@ fn a_journal_migration_waits_for_a_reservation_of_its_page() {
     );
 }
 
+/// R3a(1) (A-W1): a single page's rename is the host's operation, and its
+/// final pages are the ones it changes. A referrer left byte-identical for
+/// its VCS conflict markers is not one of them, so a writer holding it
+/// never blocks the rename; the report names it skipped, and the ordinary
+/// referrer is rewritten.
+#[test]
+fn a_host_rename_does_not_wait_for_a_referrer_it_skips() {
+    let marked = "- [[Old]]\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n";
+    let (dir, app_data, store, host) = hosted(
+        "r3a-host-rename",
+        &[
+            ("pages/Old.md", "- old\n"),
+            ("pages/m.md", marked),
+            ("pages/r.md", "- see [[Old]]\n"),
+        ],
+    );
+    let report = finishes_while_held(&host, "pages/m.md", || {
+        pages::rename_or_merge_page(&store, Some(&host), "Old", "New", None, None, &[]).unwrap()
+    });
+    assert_eq!(report.skipped_conflicted_referrers, ["pages/m.md"]);
+    assert_eq!(
+        fs::read_to_string(dir.join("pages/New.md")).unwrap(),
+        "- old\n"
+    );
+    assert!(!dir.join("pages/Old.md").exists());
+    assert_eq!(fs::read_to_string(dir.join("pages/m.md")).unwrap(), marked);
+    assert_eq!(
+        fs::read_to_string(dir.join("pages/r.md")).unwrap(),
+        "- see [[New]]\n"
+    );
+    drop(host);
+    store.close();
+    let _ = fs::remove_dir_all(dir);
+    let _ = fs::remove_dir_all(app_data);
+}
+
 /// A-R3, the Refuse neighbour (`RenamePlan::pages`): an interrupted title
 /// completion refuses unsaved input on the pages it writes, and reserves
 /// only those: a referrer it leaves byte-identical for its VCS conflict

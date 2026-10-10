@@ -434,3 +434,171 @@ fn a_hosted_rename_routes_by_the_plan_shape() {
     store.close();
     let _ = disk::remove_dir_all(root);
 }
+
+/// A graph under a temp dir: `files` relative to the graph root.
+fn b2_graph(files: &[(&str, &str)]) -> (tempfile::TempDir, std::path::PathBuf, Arc<Store>) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("graph");
+    for sub in ["pages", "logseq"] {
+        disk::create_dir_all(root.join(sub)).unwrap();
+    }
+    for (path, text) in files {
+        disk::write(root.join(path), text).unwrap();
+    }
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    (dir, root, store)
+}
+
+/// Deliver a `config.edn` the way the watcher does: write it, then refresh.
+fn b2_deliver(store: &Store, root: &std::path::Path, config: &str) {
+    disk::write(root.join("logseq/config.edn"), config).unwrap();
+    store.refresh(tine_store::Depth::Bytes).unwrap();
+}
+
+fn b2_tree(root: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    disk::read_dir(root.join("pages"))
+        .unwrap()
+        .map(|entry| {
+            let entry = entry.unwrap();
+            let name = entry.file_name().into_string().unwrap();
+            (name, disk::read_to_string(entry.path()).unwrap())
+        })
+        .collect()
+}
+
+const B2_LEGACY: &str = "{}\n";
+const B2_LOWBAR: &str = "{:file/name-format :triple-lowbar}\n";
+
+/// H-Q3 (A-W1, B2): every write kind commits only in the context it was
+/// planned in. A config change between plan and commit, for a namespace
+/// move whose destinations the old format spelled, a title rebind and a
+/// merge's survivor alike, commits nothing: the attempt replans.
+#[test]
+fn a_rename_planned_before_a_config_change_commits_nothing() {
+    for (case, old, new, into) in [
+        ("move", "Ns", "Space", None),
+        ("rebind", "Half", "Done", None),
+        ("survivor", "Merged", "Into", Some("pages/Into.md")),
+    ] {
+        let (_dir, root, store) = b2_graph(&[
+            ("logseq/config.edn", B2_LEGACY),
+            ("pages/Ns.md", "- ns [[Merged]] [[Half]]\n"),
+            ("pages/Ns%2Fchild.md", "- child\n"),
+            ("pages/Into.md", "- into\n"),
+            ("pages/Merged.md", "- merged\n"),
+            ("pages/Done.md", "title:: Half\n\n- interrupted\n"),
+        ]);
+        let plan = plan_rename(&store, old, new, None, into, &|| {}).unwrap();
+        b2_deliver(&store, &root, B2_LOWBAR);
+        let before = b2_tree(&root);
+        assert!(
+            commit_rename(&store, old, plan, &[]).unwrap().is_none(),
+            "{case}: a stale plan replans"
+        );
+        assert_eq!(b2_tree(&root), before, "{case}: nothing written");
+        store.close();
+    }
+}
+
+/// H-Q3 (A-W1, B2): the pause between building the targets and capturing
+/// the write set. The write set comes from the stale plan, but the commit
+/// still refuses it; a full rerun spells the destinations in the new format.
+#[test]
+fn a_config_change_between_targets_and_write_set_replans() {
+    let (_dir, root, store) = b2_graph(&[
+        ("logseq/config.edn", B2_LEGACY),
+        ("pages/Ns.md", "- ns\n"),
+        ("pages/Ns%2Fchild.md", "- child\n"),
+    ]);
+    let mut plan = plan_rename(&store, "Ns", "Space", None, None, &|| {}).unwrap();
+    b2_deliver(&store, &root, B2_LOWBAR);
+    let pages = plan.pages(&store).unwrap();
+    assert!(
+        pages
+            .iter()
+            .any(|id| id.as_str() == "pages/Space%2Fchild.md"),
+        "the stale plan spells the old format: {pages:?}"
+    );
+    let before = b2_tree(&root);
+    assert!(commit_rename(&store, "Ns", plan, &[]).unwrap().is_none());
+    assert_eq!(b2_tree(&root), before);
+    rename_page_expected(&store, None, "Ns", "Space", None).unwrap();
+    let after = b2_tree(&root);
+    assert!(after.contains_key("Space___child.md"), "{after:?}");
+    assert!(!after.contains_key("Space%2Fchild.md"), "{after:?}");
+    store.close();
+}
+
+/// H-Q3 (A-W1, B2), the retry bound: a config that changes during every
+/// plan exhausts the existing four attempts with no write; once it is
+/// stable the rename goes through, in the format it was planned in.
+#[test]
+fn a_config_changing_during_every_plan_exhausts_the_retries() {
+    let (_dir, root, store) = b2_graph(&[
+        ("logseq/config.edn", B2_LEGACY),
+        ("pages/Ns.md", "- ns\n"),
+        ("pages/Ns%2Fchild.md", "- child\n"),
+        ("pages/Ref.md", "- see [[Ns/child]]\n"),
+    ]);
+    let before = b2_tree(&root);
+    let flips = std::cell::Cell::new(0);
+    let toggle = || {
+        flips.set(flips.get() + 1);
+        let config = if flips.get() % 2 == 1 {
+            B2_LOWBAR
+        } else {
+            B2_LEGACY
+        };
+        b2_deliver(&store, &root, config);
+    };
+    let err = rename_page_after_inventory(&store, None, "Ns", "Space", None, None, &[], toggle)
+        .unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+    assert_eq!(err.to_string(), "page changed repeatedly during rename");
+    assert_eq!(flips.get(), 4, "the existing bound: four plans");
+    assert_eq!(b2_tree(&root), before, "no write");
+    rename_page_after_inventory(&store, None, "Ns", "Space", None, None, &[], || {}).unwrap();
+    let after = b2_tree(&root);
+    assert!(after.contains_key("Space%2Fchild.md"), "{after:?}");
+    assert_eq!(after["Ref.md"], "- see [[Space/child]]\n");
+    store.close();
+}
+
+/// H-Q3 (A-W1, B2), the host path: a config change during the first plan
+/// fails the host's admission check before anything is written; the
+/// replan's single-page rename uses the new format.
+#[test]
+fn a_hosted_rename_planned_before_a_config_change_replans() {
+    let (dir, root, store) = b2_graph(&[
+        ("logseq/config.edn", B2_LEGACY),
+        ("pages/Start.md", "- start\n"),
+        ("pages/Ref.md", "- see [[Start]]\n"),
+    ]);
+    let app = dir.path().join("app");
+    disk::create_dir_all(&app).unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, &app).unwrap();
+    let delivered = AtomicBool::new(false);
+    rename_page_after_inventory(
+        &store,
+        Some(&host),
+        "Start",
+        "Begin/x",
+        None,
+        None,
+        &[],
+        || {
+            if !delivered.swap(true, Ordering::AcqRel) {
+                b2_deliver(&store, &root, B2_LOWBAR);
+            }
+        },
+    )
+    .unwrap();
+    let after = b2_tree(&root);
+    assert!(after.contains_key("Begin___x.md"), "{after:?}");
+    assert!(!after.contains_key("Begin%2Fx.md"), "{after:?}");
+    assert!(!after.contains_key("Start.md"), "{after:?}");
+    assert_eq!(after["Ref.md"], "- see [[Begin/x]]\n");
+    drop(host);
+    store.close();
+}

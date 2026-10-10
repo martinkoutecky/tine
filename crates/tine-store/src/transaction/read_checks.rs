@@ -27,6 +27,26 @@ impl Transaction<'_> {
                 graph_rev: self.store.changes.rev(),
             })
     }
+    /// The [`Transaction::expect_view`] precondition, under the writer: a
+    /// publication or a config delivery since the plan's view is a conflict
+    /// (in-scope scenario: an external editor or sync service changes a
+    /// referrer or `config.edn` between plan and commit; the caller replans).
+    pub(super) fn stale_view(&self) -> Option<TxOutcome> {
+        let (rev, config) = self.view.as_ref()?;
+        let current = self.store.changes.rev();
+        if *rev == current && std::sync::Arc::ptr_eq(config, &self.store.config().config) {
+            return None;
+        }
+        let file = FileId::from("logseq/config.edn".to_owned());
+        let disk = FileRev::from_file(&self.store.graph.root.join(file.as_str())).ok();
+        Some(TxOutcome::NotCommitted {
+            step: 0,
+            why: Why::Conflict { file, disk },
+            rollback: Rollback::default(),
+            publication_errors: Vec::new(),
+            graph_rev: current,
+        })
+    }
     // Disk/permission failures or a published external reference invalidate an
     // orphan claim. The caller holds the writer, so publication cannot race
     // this check and trash; unobserved external edits remain outside this lock.

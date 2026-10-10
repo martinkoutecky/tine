@@ -166,15 +166,22 @@ impl PageHost {
     /// rewritten, a changed Org file that does not round-trip refuses the
     /// whole operation, and a page carrying VCS conflict markers is left
     /// byte-identical (moved verbatim) and reported. A `source` with no file
-    /// rewrites references only. Waits while a page is busy, then until the
-    /// operation's writes complete. Returns the rewritten referrers and the
-    /// pages left for their markers.
+    /// rewrites references only. Admitted only while the graph and config are
+    /// still `view`'s, the context the caller planned in (A-W1, B2); otherwise
+    /// `Refused`, and the caller replans. The operation's final pages are
+    /// decided under the host lock from `referrers` and the held buffers
+    /// (`rename_refs`); its drafts, flush and report cover exactly those.
+    /// Waits while a page is busy, then until the operation's writes
+    /// complete. Returns the rewritten referrers and the pages left for their
+    /// markers; with nothing to write (a references-only rerun whose
+    /// referrers already say the new name), both are empty.
     pub fn rename(
         &self,
         source: &PageId,
         target: &PageId,
         referrers: &[PageId],
         map: &RenameMap,
+        view: &crate::WholeGraph,
     ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
         let (src, src_spelling, _) = self.identify(source);
         let (dst, dst_spelling, _) = self.identify(target);
@@ -187,11 +194,20 @@ impl PageHost {
         refs.remove(&src);
         refs.remove(&dst);
         let root = self.store.graph.root.clone();
-        let format = self.store.config().file_name_format;
+        let format = view.config.file_name_format;
         let destination = root.join(dst_spelling.as_str());
-        let seen = loop {
+        let (seen, written) = loop {
             let outcome = self.driver.shared.locked_step(|state| {
-                let (disposition, seen, written) = state.progress.with_host(|host| {
+                // Admission in the planner's context (B2); a stale view
+                // replans. In-scope scenario: a sync service or external
+                // editor changed a page or `config.edn` since the plan.
+                let config = self.store.config().config;
+                if self.store.changes.rev() != view.rev()
+                    || !Arc::ptr_eq(&config, &view.config.config)
+                {
+                    return None;
+                }
+                let (disposition, seen, pages) = state.progress.with_host(|host| {
                     // The keys the policy is called on: the operation's
                     // pages and every held buffer (A-R5: not every key
                     // ever registered).
@@ -233,21 +249,36 @@ impl PageHost {
                         Ok(Some(Arc::from(new)))
                     };
                     let disposition = host.rename_with(&src, &dst, &refs, policy);
-                    let written = host.worker.as_ref().map(|w| w.pages.clone());
-                    (disposition, record.into_inner().unwrap(), written)
+                    // The final value (R3/R4): the operation's pages, or for
+                    // a refusal the pages it would have written; empty when
+                    // a references-only rerun has nothing left to write.
+                    let pages = match &host.worker {
+                        Some(worker) if disposition == Disposition::Pending => worker.pages.clone(),
+                        _ => {
+                            let mut pages = host
+                                .rename_refs(&src, &dst, &refs, &policy)
+                                .unwrap_or_default();
+                            if !pages.is_empty()
+                                || host.pages.get(&src).is_none_or(|p| p.buf.is_some())
+                            {
+                                pages.extend([src.clone(), dst.clone()]);
+                            }
+                            pages
+                        }
+                    };
+                    (disposition, record.into_inner().unwrap(), pages)
                 });
                 // OG-RULES Rule 8 (A-K1): the operation's writes are renames.
                 if disposition == Disposition::Pending {
-                    let written = written.unwrap_or_default();
-                    state.book.took(written, EditKind::RenamePage);
+                    state.book.took(pages.clone(), EditKind::RenamePage);
                 }
-                (disposition, seen)
+                Some((disposition, seen, pages))
             });
-            let Some((disposition, seen)) = outcome else {
+            let Some((disposition, seen, pages)) = outcome.flatten() else {
                 return Err(RenameRefusal::Refused);
             };
             match disposition {
-                Disposition::Pending => break seen,
+                Disposition::Pending => break (seen, pages),
                 Disposition::Waiting => {
                     let shared = &self.driver.shared;
                     let state = shared.state.lock().unwrap();
@@ -257,19 +288,16 @@ impl PageHost {
                     if let Some(page) = seen.unwritable {
                         return Err(RenameRefusal::Unwritable(PageId::from(page)));
                     }
-                    let mut touched = refs.clone();
-                    touched.extend(seen.changed.iter().cloned());
-                    touched.extend([src.clone(), dst.clone()]);
-                    return Err(match self.unsaved(&touched).into_iter().next() {
+                    if pages.is_empty() {
+                        return Ok((Vec::new(), Vec::new()));
+                    }
+                    return Err(match self.unsaved(&pages).into_iter().next() {
                         Some(page) => RenameRefusal::Unsaved(self.spelling(&page)),
                         None => RenameRefusal::Refused,
                     });
                 }
             }
         };
-        let mut written = refs;
-        written.extend(seen.changed.iter().cloned());
-        written.extend([src, dst]);
         if let Err(stuck) = self.flush(&written) {
             let page = stuck.into_iter().next().unwrap();
             return Err(RenameRefusal::Unwritten(self.spelling(&page)));

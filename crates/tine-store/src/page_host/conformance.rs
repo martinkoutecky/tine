@@ -851,6 +851,20 @@ impl<F: ConformanceIo> Driver<F> {
                 self.drain(name, args, old_inc, old_version);
                 return true;
             }
+            // R5 (A-W1): the model's `refs` is the implementation's choice of
+            // referrers, which the spec leaves open. The concrete operation
+            // refines `opRename(src, dst, E, rt|E)` for its EFFECTIVE set E
+            // (`Host::rename_refs`): the caller's candidates, less a held one
+            // that is dirty or busy and whose rewrite leaves its buffer
+            // unchanged (untouched: no draft, version or write), plus each
+            // held buffer the rewrite changes. Endpoints and changed refs keep
+            // every model guard (clean, free, version checks, receiver-first
+            // drafting); a dirty or busy ref whose bytes change still refuses
+            // or waits. An empty E with an absent source is the model's
+            // `all3 != Set()` guard failing: a no-op, never an applied step.
+            // Enabled traces have only clean, free refs, so E is the trace's
+            // own `refs` here; the newly enabled concrete schedules are pinned
+            // by `mutation_tests` (R3a) against that effective-set step.
             "opRename" | "opRenamePacked" | "opRenameRaw" => {
                 let q = v(1) as usize;
                 let refs: BTreeSet<usize> = if name == "opRename" {

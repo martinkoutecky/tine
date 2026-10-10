@@ -125,7 +125,7 @@ enum store::SavePagesOutcome
 enum store::StoreError
 fn store::Store::save_pages
 
-## Transaction steps (ceiling: 29)
+## Transaction steps (ceiling: 30)
 enum transaction::Content
 enum transaction::Refusal
 enum transaction::StepResult
@@ -147,6 +147,10 @@ fn transaction::Transaction::create
 fn transaction::Transaction::create_unique
 # Read-only revision dependency for a later step; avoids mutating sidecars to force a guard.
 fn transaction::Transaction::expect
+# A-W1 (B2): a rename commits only in the view and config it was planned in.
+# `expect` guards one file's revision; a planning context is the whole
+# graph's revision plus the config the plan read, which no file revision names.
+fn transaction::Transaction::expect_view
 fn transaction::Transaction::move_file
 fn transaction::Transaction::replace
 # GH #623: the rename planner asks the transaction whether a reference rewrite
