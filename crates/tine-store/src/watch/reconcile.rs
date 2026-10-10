@@ -329,6 +329,8 @@ impl Core {
         }
         let mut pages = Vec::new();
         let mut forwarded = Vec::new();
+        // One identity pass for the cycle (REVIEW-3a4 #6).
+        let mut identities = crate::model::entry_identity::Memo::default();
         for path in names {
             let before = snapshot.get(&path);
             if before.is_some() && !now.contains_key(&path) {
@@ -397,9 +399,13 @@ impl Core {
             // STEP3 §5: the owner observes, indexes and publishes this read.
             // B1: a path of unknown identity against the held keys is never
             // installed from disk; each candidate's owner observes its page.
-            let owners = match self.graph.held_identity(&path) {
+            let owners = match self.graph.held_identity_in(&mut identities, &path) {
                 crate::model::entry_identity::Identity::Key(key) => vec![key],
-                crate::model::entry_identity::Identity::Unknown { candidates, .. } => candidates,
+                crate::model::entry_identity::Identity::Unknown { candidates, .. } => {
+                    // Reread from disk when they release it (REVIEW-3a4 #3).
+                    self.graph.note_withheld(&candidates, &path);
+                    candidates
+                }
                 _ => Vec::new(),
             };
             if !owners.is_empty() {

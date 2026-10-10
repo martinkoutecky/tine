@@ -325,13 +325,15 @@ impl PageHost {
         });
         if let Some(key) = moved {
             graph.respelled(&key, &graph.root.join(page.as_str()));
+            self.store.publish_retired();
         }
     }
 
     /// The key naming `page`'s directory entry (§2), by the one identity
     /// rule (B1, [`crate::model::Graph::identify`]): a registered key the
     /// path names, or whose entry it reaches as an alias (Q4's test: the
-    /// same file, not listed apart); else the entry's spelling as a key.
+    /// same file, not listed apart); else a key for the new entry
+    /// ([`super::Host::key_for`]: never a live key spelling another entry).
     /// Also whether the host holds that page.
     pub(super) fn identify(&self, page: &PageId) -> (PageKey, PageId, bool) {
         let graph = &self.store.graph;
@@ -360,11 +362,7 @@ impl PageHost {
         let host = &state.progress.host;
         let (key, spelling) = match named {
             Some(key) => (key.clone(), PageId::from(host.fs.spelling(&key))),
-            None => (
-                host.key_spelled(disk.as_str())
-                    .unwrap_or_else(|| disk.as_str().into()),
-                disk,
-            ),
+            None => (host.key_for(disk.as_str()), disk),
         };
         let held = host.pages.contains_key(&key);
         (key, spelling, held)

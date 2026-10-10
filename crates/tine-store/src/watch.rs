@@ -960,9 +960,26 @@ impl WatchHandle {
     /// against the owner's last publication at once. The caller holds the
     /// writer.
     pub(crate) fn release_hold(&self, key: &str) {
-        if let Some(path) = self.core.graph.release(key) {
-            self.reconcile_raced(&HashSet::from([path]));
+        let paths = self.core.graph.release(key);
+        self.reread_released(paths);
+    }
+
+    /// Reconcile released paths at once; one with no installed row (the
+    /// owner never published it, or it was withheld) is reread whatever
+    /// its stamp, so its disk row returns (REVIEW-3a4 #3).
+    fn reread_released(&self, paths: Vec<PathBuf>) {
+        let paths: HashSet<PathBuf> = paths.into_iter().collect();
+        {
+            let mut snapshot = self.core.snapshot.lock().unwrap();
+            for path in &paths {
+                if self.core.graph.cached_rev(path).is_none() {
+                    if let Some(stamp) = snapshot.get_mut(path) {
+                        stamp.rev = None;
+                    }
+                }
+            }
         }
+        self.reconcile_raced(&paths);
     }
 
     #[cfg(test)]
@@ -974,8 +991,8 @@ impl WatchHandle {
     /// caller holds the writer.
     pub(crate) fn release_holds(&self) {
         *self.core.forward.lock().unwrap() = None;
-        let paths: HashSet<PathBuf> = self.core.graph.release_all().into_iter().collect();
-        self.reconcile_raced(&paths);
+        let paths = self.core.graph.release_all();
+        self.reread_released(paths);
     }
 
     pub(crate) fn reconcile_raced(&self, paths: &HashSet<PathBuf>) {

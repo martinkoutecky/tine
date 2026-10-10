@@ -105,16 +105,27 @@ consumer, or a reservation's transaction, is the page's only index writer
 cache document, revision, anchor, file time, error rows, listing entry and
 claimants, and the published snapshot's roots) comes from the bytes that
 writer last published, and its name and document come from those same bytes.
-A held page's row is installed only from those bytes; one held but not yet
-published, published absent, or whose identity is unknown (B1) has no row,
-and a new hold retires its current one. A disk disappearance never removes
-a held page's row; an owner's absent publication does. One identity rule
-(`Graph::identify`: the canonical existing parent, then the exact leaf; a
-folded collision is distinct only when both names are listed apart and are
-different files) decides which held key a path names, for the held map, the
-host and the watcher. The installing critical section decides authority, so
-a build that read files before a hold, release, respelling or owner
-publication declines its install. A snapshot removal is named by its path
+A held page's row is installed only from those bytes, and only their parse:
+a Document the owner supplies contributes its runtime identities alone, and
+only when its content is exactly that parse (R8). One held but not yet
+published, published absent, or whose identity is unknown (B1) has no row.
+Every ownership change (hold, release, respelling, owner absence, a first
+publication that fails) is one transition under the cache lock: it settles
+every row whose authority it changes, the key's spellings and the colliding
+entries that become unknown, with their error rows, and the writer section
+that ran it publishes a snapshot when it settled any, so a view acquired
+after it never shows the old row. A release rereads the files it withheld.
+A disk disappearance never removes a held page's row; an owner's absent
+publication does. One identity
+rule (`Graph::identify`: the canonical existing parent, `Outside` when it
+leaves the root, then the exact leaf; a folded collision is distinct only
+when both names are listed apart and are different files) decides which held
+key a path names, for the held map, the host and the watcher; one pass
+resolves each parent and lists each directory once. A new entry whose
+spelling is another entry's key gets a key of its own. Discovery, error and
+build installs decide authority inside the installing critical section
+(cache, then held, then the collection), so nothing decided before a
+transition lands after it. A snapshot removal is named by its path
 and the previous snapshot's name, with no file read. A launch checkpoint's
 rows carry no owner provenance: while any page is held, the whole
 checkpoint is declined and the launch builds. `page()` answers the bytes the

@@ -217,3 +217,113 @@ fn macos_nfd_spelling_of_a_held_page_names_it() {
     assert!(is_held(store.graph.source(&alias)));
     store.close();
 }
+
+/// REVIEW-3a4 #3: a colliding hard link already installed from disk when
+/// its sibling is held becomes unknown at the hold, and the hold retires
+/// its row and its claim in the published snapshot.
+#[cfg(unix)]
+#[test]
+fn a_hold_retires_an_installed_colliding_entry() {
+    let (temp, store) = graph(&[("pages/a.md", b"- a\n")]);
+    if folds_case(&temp.path().join("pages")) {
+        eprintln!("SKIP: pages/ folds case on this volume");
+        store.close();
+        return;
+    }
+    let root = store.graph.root.clone();
+    let alias = root.join("pages/A.md");
+    fs::hard_link(root.join("pages/a.md"), &alias).unwrap();
+    store.refresh(crate::Depth::Rebuild).unwrap();
+    assert_eq!(store.graph.cached_rev(&alias), Some(content_rev("- a\n")));
+    store.hold_page(&PageId::from("pages/a.md")).unwrap();
+    assert!(is_held(store.graph.source(&alias)));
+    assert_eq!(
+        store.graph.cached_rev(&alias),
+        None,
+        "REVIEW-3a4 #3: the hold left an unknown entry's disk row installed"
+    );
+    let claimants = match store.whole_graph().unwrap().resolve("a", false) {
+        crate::Resolved::Existing { id, others } => (id, others),
+        _ => panic!("the held page is unnamed"),
+    };
+    assert_eq!(claimants, (PageId::from("pages/a.md"), Vec::new()));
+    store.close();
+}
+
+/// REVIEW-3a4 #6: one pass lists a directory once, however many of its
+/// entries collide with held keys: 500 held pages, each with a separately
+/// listed colliding hard link.
+#[cfg(unix)]
+#[test]
+fn a_pass_lists_a_colliding_directory_once() {
+    let files: Vec<(String, Vec<u8>)> = (0..500)
+        .map(|i| (format!("pages/a{i}.md"), format!("- {i}\n").into_bytes()))
+        .collect();
+    let files: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|(rel, bytes)| (rel.as_str(), bytes.as_slice()))
+        .collect();
+    let (temp, store) = graph(&files);
+    if folds_case(&temp.path().join("pages")) {
+        eprintln!("SKIP: pages/ folds case on this volume");
+        store.close();
+        return;
+    }
+    let root = store.graph.root.clone();
+    {
+        let _writer = store.writer.lock().unwrap();
+        for i in 0..500 {
+            store.graph.hold_unhosted(&format!("pages/a{i}.md"));
+        }
+    }
+    for i in 0..500 {
+        fs::hard_link(
+            root.join(format!("pages/a{i}.md")),
+            root.join(format!("pages/A{i}.md")),
+        )
+        .unwrap();
+    }
+    let listed = crate::model::page_identity::list_graph_pages(&store.graph);
+    let listings = |pass: &dyn Fn()| {
+        LISTINGS.with(|n| n.set(0));
+        pass();
+        LISTINGS.with(|n| n.get())
+    };
+    let withheld = listings(&|| assert_eq!(store.graph.withheld(&listed).len(), 1000));
+    assert_eq!(
+        withheld, 1,
+        "REVIEW-3a4 #6: one withheld pass listed pages/ {withheld} times"
+    );
+    let rebuild = listings(&|| assert!(store.graph.rebuild_cache_cancellable(|| false)));
+    // A build runs a few identity passes (its filter, its certificate),
+    // each listing pages/ once; a per-lookup listing would be 500 a pass.
+    assert!(
+        rebuild < 10,
+        "REVIEW-3a4 #6: a rebuild listed pages/ {rebuild} times"
+    );
+    store.close();
+}
+
+/// REVIEW-3a4 #7: a path whose parent resolves outside the root is
+/// `Outside` also when no registered key collides with its leaf.
+#[cfg(unix)]
+#[test]
+fn a_parent_outside_the_root_is_outside_without_a_collision() {
+    let temp = tempfile::tempdir().unwrap();
+    let (root, away) = (temp.path().join("graph"), temp.path().join("away"));
+    fs::create_dir_all(root.join("pages")).unwrap();
+    fs::create_dir_all(&away).unwrap();
+    fs::write(away.join("b.md"), "- b\n").unwrap();
+    std::os::unix::fs::symlink(&away, root.join("pages/link")).unwrap();
+    let graph = Graph::open(&root);
+    let none = |_: &str| Vec::new();
+    assert_eq!(
+        graph.identify(&graph.root.join("pages/link/b.md"), &none),
+        Identity::Outside,
+        "REVIEW-3a4 #7: an escaping parent was identified without resolving it"
+    );
+    assert_eq!(
+        graph.identify(&graph.root.join("pages/b.md"), &none),
+        Identity::New
+    );
+}

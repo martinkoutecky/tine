@@ -763,6 +763,7 @@ impl Sink for Bridge {
                     store.watch.release_hold(&key);
                 }
             }
+            store.publish_retired();
         }
         for (key, mail, facts) in delivery.mail {
             let mail = page_mail(store, self.binding, key, mail, facts);
@@ -1000,7 +1001,7 @@ impl PageHost {
         host.stop();
         let mut recovered = Vec::new();
         for key in host.recovered_keys() {
-            let id = PageId::from(key.as_str());
+            let id = PageId::from(super::production::key_base(&key));
             let spelling = store.disk_spelling(&id).unwrap_or(id);
             let lock = graph.page_lock(&graph.root.join(spelling.as_str()));
             host.register(key.clone(), spelling.as_str(), lock);
@@ -1049,6 +1050,7 @@ impl PageHost {
             for (key, _) in &recovered {
                 store.watch.hold(key.clone());
             }
+            store.publish_retired();
             this.driver.shared.with_state(|state| {
                 state
                     .book
@@ -1169,6 +1171,7 @@ impl PageHost {
         {
             store.watch.release_hold(&key);
         }
+        store.publish_retired();
         admitted.map(|()| key)
     }
 

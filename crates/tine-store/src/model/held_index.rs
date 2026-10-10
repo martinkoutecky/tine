@@ -9,7 +9,7 @@
 //! no host running nothing is held, every source is the file, and builds
 //! and reads do the I/O they did before.
 
-use super::entry_identity::{fold_leaf, Identity};
+use super::entry_identity::{fold_leaf, Identity, Memo};
 use super::*;
 use std::collections::HashSet;
 
@@ -31,13 +31,18 @@ impl Graph {
     /// What `path` names among the held keys (B1, [`Graph::identify`]).
     /// With nothing held, `New` at no cost.
     pub(crate) fn held_identity(&self, path: &Path) -> Identity {
+        self.held_identity_in(&mut Memo::default(), path)
+    }
+
+    /// [`Self::held_identity`] within the pass whose memo is `memo`.
+    pub(crate) fn held_identity_in(&self, memo: &mut Memo, path: &Path) -> Identity {
         if self.held.is_empty() {
             return Identity::New;
         }
         let found = path
             .file_name()
             .map_or_else(Vec::new, |leaf| self.held.candidates(&fold_leaf(leaf)));
-        self.identify(path, &|_| found.clone())
+        self.identify_in(memo, path, &|_| found.clone())
     }
 
     /// The held key `path` names, if it names one.
@@ -74,9 +79,10 @@ impl Graph {
         if self.held.is_empty() {
             return HashSet::new();
         }
+        let mut memo = Memo::default();
         listed
             .iter()
-            .filter(|entry| !self.disk_sourced(&entry.path))
+            .filter(|entry| !self.disk_sourced_in(&mut memo, &entry.path))
             .map(|entry| entry.path.clone())
             .collect()
     }

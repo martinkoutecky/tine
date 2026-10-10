@@ -403,6 +403,57 @@ fn the_host_and_the_held_index_agree_on_an_alias_spelling() {
     live.host.stop();
 }
 
+/// REVIEW-3a4 #1 (B1): a key moved to another spelling is never reused for
+/// a new, distinct entry at its old spelling. After `a.md`'s key follows
+/// its entry to `A.md` (Q4), a separate `a.md` gets its own key, buffer
+/// and lock: an edit to it writes `a.md`, never `A.md`. (A case-sensitive
+/// directory stands in for a folding volume whose flag later changed.)
+#[test]
+fn a_new_entry_never_takes_a_respelled_key() {
+    let live = Live::new(&[("pages/a.md", "- old\n")]);
+    if folds_case(&live.root) {
+        live.host.stop();
+        return;
+    }
+    let (old, _) = live.open("pages/a.md");
+    let reservation = live
+        .host
+        .reserve(|| vec![PageId::from("pages/a.md")], Input::Refuse)
+        .unwrap();
+    fs::rename(live.root.join("pages/a.md"), live.root.join("pages/A.md")).unwrap();
+    live.host
+        .respell(&PageId::from("pages/a.md"), &PageId::from("pages/A.md"));
+    drop(reservation);
+    fs::write(live.root.join("pages/a.md"), "- new distinct entry\n").unwrap();
+    let (new, page) = live.open("pages/a.md");
+    assert_ne!(new, old, "B1: the new entry reused the respelled key");
+    let MailText::Page { dto } = &page.text else {
+        panic!("an open answer carries the page: {:?}", page.text);
+    };
+    assert_eq!(dto.blocks[0].raw, "new distinct entry");
+    let id = live.id();
+    let generation = live.host.generation();
+    let edit = live.dto("pages/a.md", "- typed for new a\n");
+    live.host
+        .submit(
+            generation,
+            id,
+            &new,
+            &edit,
+            page.version,
+            None,
+            &[EditKind::SaveBlock],
+        )
+        .unwrap();
+    live.until_disk("pages/a.md", "- typed for new a\n");
+    assert_eq!(
+        live.disk("pages/A.md"),
+        "- old\n",
+        "B1: the other entry changed"
+    );
+    live.host.stop();
+}
+
 /// The host page `key` as the driver holds it now.
 fn held_page(live: &Live, key: &str) -> Option<Page> {
     let state = live.host.driver.shared.state.lock().unwrap();
