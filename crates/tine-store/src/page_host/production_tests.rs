@@ -1998,3 +1998,80 @@ fn b_q1_m2_an_unsynced_census_retires_nothing_until_retry_keeps_newer_input() {
     assert_eq!(f.save("a.md"), Outcome::Published);
     assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"newest typed");
 }
+
+/// REVIEW-3b-P1 R2: a recovered page published while launch could not sync
+/// the draft census. Its vehicle is known on disk and still unsynced:
+/// cleanup debt, not recovery evidence. No switch may finish over it until
+/// a Retry (S3) syncs the census, which then retires the vehicle.
+#[test]
+fn review_p1_m2_published_page_cannot_finish_with_known_unsynced_vehicle() {
+    let mut f = Fixture::new();
+    vehicles(&mut f, &[(1, "recovered")]);
+    let before = draft_dir(&f);
+    start_over(&mut f, &[(Phase::DraftSync, io::ErrorKind::Other)]);
+    assert_eq!(
+        f.host.pages["a.md"].buf.as_deref(),
+        Some(b"recovered".as_slice())
+    );
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    assert!(f.host.pages["a.md"].clean());
+    assert!(f.host.fs.draft_status().unavailable.is_some());
+    assert_eq!(draft_dir(&f), before, "the vehicle survives byte-identical");
+    let last = f.host.last_admitted;
+    assert_eq!(f.host.switch_ready(last), Disposition::Applied);
+    assert!(
+        !f.host.can_switch(),
+        "R2: the known vehicle is cleanup debt"
+    );
+    f.host.switch_abort();
+    // Draft I/O repaired: Retry syncs the census and retires the copy.
+    assert!(f.host.drafts_retry().is_ok());
+    f.drain();
+    assert_eq!(f.host.fs.draft_status(), DraftStatus::default());
+    // The clean page's draft retires as progress schedules it (its logical
+    // draft exists, the page is not at risk).
+    assert_eq!(f.host.begin_draft("a.md"), Disposition::Pending);
+    f.drain();
+    assert!(
+        draft_dir(&f).is_empty(),
+        "the published page's copy retired"
+    );
+    let last = f.host.last_admitted;
+    assert_eq!(f.host.switch_ready(last), Disposition::Applied);
+    assert!(f.host.can_switch());
+}
+
+/// R2: an operation vehicle names several pages, and each is debt until
+/// the census syncs, whichever of them was saved; Retry explodes the
+/// vehicle and each clean page's copy then retires.
+#[test]
+fn review_p1_m2_an_operation_vehicle_keeps_each_page_it_names_as_debt() {
+    let mut f = Fixture::new();
+    let mut b = record(2, "b recovered");
+    b.page = "b.md".into();
+    b.base = Base::Known(Some(Arc::from(b"B".as_slice())));
+    let mut vehicle = Vehicle::write(drafts::op_name(), &[record(1, "a recovered"), b]);
+    for _ in 0..3 {
+        vehicle.advance(&mut f.host.fs);
+    }
+    assert_eq!(vehicle.stage, Stage::Present);
+    start_over(&mut f, &[(Phase::DraftSync, io::ErrorKind::Other)]);
+    for page in ["a.md", "b.md"] {
+        assert_eq!(f.save(page), Outcome::Published);
+        assert!(f.host.pages[page].clean());
+    }
+    let last = f.host.last_admitted;
+    assert_eq!(f.host.switch_ready(last), Disposition::Applied);
+    assert!(!f.host.can_switch(), "R2: the operation vehicle is debt");
+    f.host.switch_abort();
+    assert!(f.host.drafts_retry().is_ok());
+    f.drain();
+    for page in ["a.md", "b.md"] {
+        assert_eq!(f.host.begin_draft(page), Disposition::Pending);
+        f.drain();
+    }
+    assert!(draft_dir(&f).is_empty(), "every copy retired");
+    let last = f.host.last_admitted;
+    assert_eq!(f.host.switch_ready(last), Disposition::Applied);
+    assert!(f.host.can_switch());
+}

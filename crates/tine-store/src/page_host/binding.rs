@@ -664,7 +664,7 @@ impl Book {
 
     /// Owned keys the host no longer holds, with nothing left to publish:
     /// no page, job, reservation or unobserved release, queued request,
-    /// retry or `pending` publication (Q6: a dirty page closed by the window stays held until
+    /// vehicle debt (R2), retry or `pending` publication (Q6: a dirty page closed by the window stays held until
     /// its save and cleanup finish).
     fn evictable<F: HostIo>(&self, host: &Host<F>, pending: &[Publication]) -> Vec<PageKey> {
         self.owned
@@ -672,6 +672,7 @@ impl Book {
             .filter(|key| {
                 !host.pages.contains_key(*key)
                     && !host.busy(key)
+                    && !host.vehicle_debt.contains(*key)
                     && !host.queue.iter().any(|request| &request.page == *key)
                     && !self.retry.contains_key(*key)
                     && !self.handover.contains(*key)
@@ -1307,6 +1308,8 @@ pub(super) fn stop_state<F: HostIo, C: Clock>(progress: &Progress<F, C>, book: &
         return StopState::Waiting;
     };
     let mut affected = progress.draft_error_pages();
+    // R2: known vehicles draft I/O cannot clear while it is down.
+    affected.extend(host.vehicle_debt.iter().cloned());
     if stopping.restore {
         // A restore aborts where its flush would fail today (§7 step 3).
         affected.extend(stopping.failed.iter().cloned());

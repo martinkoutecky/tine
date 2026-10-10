@@ -215,3 +215,154 @@ fn a_restore_stop_names_an_unsaved_page_by_its_spelling() {
     );
     host.stop();
 }
+
+/// A binding over `pages/a.md` (`- one`) whose launch recovered a copy
+/// (`- recovered`) but could not sync the draft census (M2): draft I/O is
+/// down and the copy is known on disk, unsynced.
+fn launched_over_an_unsynced_copy() -> Live {
+    use crate::page_host::{drafts, io::Phase, production::ATTACH_FAULTS};
+    let Live {
+        _dir,
+        root,
+        store,
+        host,
+        ..
+    } = Live::new(&[("pages/a.md", "- one\n")]);
+    host.stop();
+    let record = Record {
+        page: "pages/a.md".into(),
+        wseq: 1,
+        version: 1,
+        base: Base::Known(Some(Arc::from(b"- one\n".as_slice()))),
+        bytes: Some(Arc::from(b"- recovered\n".as_slice())),
+    };
+    let dir = _dir.path().join("app/drafts-v2/test-graph");
+    fs::write(
+        dir.join(drafts::page_name("pages/a.md")),
+        drafts::encode(&[record]),
+    )
+    .unwrap();
+    ATTACH_FAULTS.with(|faults| {
+        let mut faults = faults.borrow_mut();
+        faults
+            .entry(Phase::DraftSync)
+            .or_default()
+            .push_back(std::io::ErrorKind::Other);
+    });
+    let (sender, mail) = mpsc::channel();
+    let app = _dir.path().join("app");
+    let host = PageHost::start(&store, &app, "test-graph", move |mail| {
+        let _ = sender.send(mail);
+    })
+    .unwrap();
+    assert!(
+        host.draft_status().unavailable.is_some(),
+        "M2: draft I/O down"
+    );
+    Live {
+        _dir,
+        root,
+        store,
+        host,
+        mail,
+        id: std::cell::Cell::new(0),
+    }
+}
+
+/// REVIEW-3b-P1 R2: a restore stop over a known, unsynced copy aborts at
+/// once naming its page (never waiting under the restore lock), so the next
+/// host cannot recover the copy over the restored file; once draft I/O is
+/// repaired (Retry), the stop saves the page, retires the copy and closes.
+#[test]
+fn review_p1_m2_a_restore_stop_aborts_over_a_known_unsynced_copy() {
+    let live = launched_over_an_unsynced_copy();
+    let copies = live.drafts();
+    assert_eq!(copies.len(), 1);
+    let Live {
+        _dir,
+        root,
+        store,
+        host,
+        mail,
+        ..
+    } = live;
+    let Err((host, pages)) = host.stop_saved(0, StopMode::Restore) else {
+        panic!("R2: the restore stop closed over a known copy");
+    };
+    assert_eq!(pages, BTreeSet::from([PageId::from("pages/a.md")]));
+    let live = Live {
+        _dir,
+        root,
+        store,
+        host: *host,
+        mail,
+        id: std::cell::Cell::new(100),
+    };
+    assert_eq!(live.drafts(), copies, "nothing retired while down");
+    assert_eq!(live.host.drafts_retry(), Ok(()));
+    // The draft refresh that failed while I/O was down surfaced an error
+    // naming the page; once the driver redoes it, the restore may close.
+    let Live { mut host, root, .. } = live;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let stopped = loop {
+        match host.stop_saved(0, StopMode::Restore) {
+            Ok(stopped) => break stopped,
+            Err((back, pages)) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the restore never closed: {pages:?}"
+                );
+                host = *back;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
+    assert_eq!(
+        fs::read_to_string(root.join("pages/a.md")).unwrap(),
+        "- recovered\n"
+    );
+    drop(stopped);
+}
+
+/// R2: an orphaned host (its window gone) over a known, unsynced copy
+/// aborts its stop while draft I/O stays down, and re-probes on each pass:
+/// once the filesystem is repaired, the stop saves, retires the copy and
+/// finishes, with no window to press Retry.
+#[test]
+fn review_p1_m2_an_orphan_stop_finishes_once_draft_io_is_repaired() {
+    let live = launched_over_an_unsynced_copy();
+    live.faults(crate::page_host::io::Phase::DraftSync, 1);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let pages = loop {
+        match live.host.orphan_stop() {
+            StopState::Aborted(pages) => break pages,
+            StopState::Ready => panic!("R2: the orphan stop finished over a known copy"),
+            StopState::Waiting => {
+                assert!(Instant::now() < deadline, "the stop never settled");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
+    assert_eq!(pages, BTreeSet::from(["pages/a.md".into()]));
+    live.host.stop_abort();
+    assert_eq!(live.drafts().len(), 1, "nothing retired while down");
+    loop {
+        match live.host.orphan_stop() {
+            StopState::Ready => break,
+            StopState::Aborted(pages) => {
+                live.host.stop_abort();
+                assert!(Instant::now() < deadline, "still aborted: {pages:?}");
+            }
+            StopState::Waiting => assert!(Instant::now() < deadline, "never ready"),
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let Live { host, root, .. } = live;
+    let Ok(_stopped) = host.stop_finish() else {
+        panic!("the orphan stop finishes");
+    };
+    assert_eq!(
+        fs::read_to_string(root.join("pages/a.md")).unwrap(),
+        "- recovered\n"
+    );
+}

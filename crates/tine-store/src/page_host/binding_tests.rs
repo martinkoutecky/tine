@@ -1647,3 +1647,35 @@ fn b_q1_a_restore_relaunches_into_unavailable_drafts_and_retry_restores_them() {
     assert_eq!(live.host.drafts_retry(), Ok(()));
     assert_eq!(live.host.draft_status(), DraftStatus::default());
 }
+
+/// REVIEW-3b-P1 R2: a key named by a known, unsynced draft copy is not
+/// evicted (its index stays with the host) until the census syncs.
+#[test]
+fn review_p1_m2_a_key_with_vehicle_debt_is_not_evicted() {
+    let mut host = super::super::tests::host();
+    let mut book = Book::default();
+    book.owned.insert("b.md".into());
+    assert_eq!(book.evictable(&host, &[]), ["b.md"]);
+    host.vehicle_debt.insert("b.md".into());
+    assert!(book.evictable(&host, &[]).is_empty());
+}
+
+/// R2: a restore over a key with vehicle debt aborts naming it at once,
+/// even with every page saved and no surfaced draft failure, so it never
+/// waits under the restore lock for draft I/O to come back.
+#[test]
+fn review_p1_m2_a_restore_aborts_on_vehicle_debt_alone() {
+    let mut u = Unit::new();
+    u.progress.with_host(|h| {
+        h.vehicle_debt.insert("a.md".into());
+        assert_eq!(h.switch_ready(h.last_applied), Disposition::Applied);
+    });
+    u.progress.stopping = Some(Stopping {
+        restore: true,
+        failed: BTreeSet::new(),
+    });
+    assert_eq!(
+        stop_state(&u.progress, &u.book),
+        StopState::Aborted(BTreeSet::from(["a.md".into()]))
+    );
+}

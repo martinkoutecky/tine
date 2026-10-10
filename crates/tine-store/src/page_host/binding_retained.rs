@@ -491,8 +491,17 @@ impl PageHost {
     /// (a stale request's answer never enters the outbox, so none is owed).
     /// Returns where the stop stands: the caller calls `stop_finish` once
     /// the stop may complete, or `stop_abort` on `Aborted` and asks again
-    /// later.
+    /// later. While known draft vehicles are cleanup debt (REVIEW-3b-P1
+    /// R2), each call first re-probes draft I/O, the Retry no window is
+    /// left to press, so a repaired filesystem lets the stop complete.
     pub fn orphan_stop(&self) -> StopState {
+        let debt = self
+            .driver
+            .shared
+            .with_state(|state| !state.progress.host.vehicle_debt.is_empty());
+        if debt {
+            let _ = self.drafts_retry();
+        }
         self.driver.shared.with_state(|state| {
             if state.progress.host.switch_confirmation.is_none() {
                 if !state.book.orphaned {

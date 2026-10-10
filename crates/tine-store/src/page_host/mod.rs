@@ -395,6 +395,13 @@ struct Host<F: HostIo> {
     /// D-10: decoded durable draft vehicles, kept in step with the adapter's
     /// durable census through `draft_changes`, never rescanned per call.
     drafts: BTreeMap<String, Vec<Record>>,
+    /// REVIEW-3b-P1 R2: pages named by draft vehicles on disk whose census
+    /// launch could not make durable (M2). Cleanup debt, never recovery
+    /// evidence: no stop finishes and no key is evicted over it until a
+    /// re-probe syncs the census (`drafts_retry`); a stop aborts naming
+    /// them meanwhile, so the next host never recovers a copy the stop
+    /// should have retired (a restore's in particular).
+    vehicle_debt: BTreeSet<PageKey>,
     pages: BTreeMap<PageKey, Page>,
     custody: BTreeMap<PageKey, Debt>,
     retire: BTreeMap<String, Retire>,
@@ -436,6 +443,7 @@ impl<F: HostIo> Host<F> {
             lock_request: None,
             contended: BTreeSet::new(),
             drafts,
+            vehicle_debt: BTreeSet::new(),
             pages: BTreeMap::new(),
             custody: BTreeMap::new(),
             retire: BTreeMap::new(),
@@ -1171,6 +1179,7 @@ impl<F: HostIo> Host<F> {
 
     fn can_switch(&self) -> bool {
         if !self.alive
+            || !self.vehicle_debt.is_empty()
             || self.admission_open
             || self.switch_confirmation != Some(self.last_applied)
             || !self.queue.is_empty()
@@ -1288,6 +1297,12 @@ impl<F: HostIo> Host<F> {
             self.fs.drafts_unsynced();
         }
         self.drafts = drafts::scan(self.fs.draft_files(true)).files;
+        self.vehicle_debt = if synced {
+            BTreeSet::new()
+        } else {
+            let known = drafts::scan(self.fs.draft_files(false)).files;
+            known.into_values().flatten().map(|r| r.page).collect()
+        };
         self.fs.draft_changes();
         self.alive = true;
         if synced {
@@ -1310,6 +1325,8 @@ impl<F: HostIo> Host<F> {
             return Ok(Disposition::Waiting);
         }
         self.fs.drafts_reprobe()?;
+        // The census is durable now: the vehicles are ordinary drafts.
+        self.vehicle_debt.clear();
         for name in &status.unreadable {
             let _ = self.fs.quarantine(name);
         }

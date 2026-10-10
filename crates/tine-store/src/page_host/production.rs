@@ -78,7 +78,7 @@ impl ProductionIo {
             down: None,
             untouchable: Default::default(),
             #[cfg(test)]
-            faults: BTreeMap::new(),
+            faults: ATTACH_FAULTS.with(|faults| faults.take()),
         };
         match listing {
             // A listed vehicle is readable, not yet durable: a process crash
@@ -308,6 +308,11 @@ pub(super) fn key_base(key: &str) -> &str {
 #[cfg(test)]
 thread_local! {
     pub(super) static SPELLING_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Faults the next `attach` on this thread starts with: a binding's
+    /// launch then fails as the filesystem would (R2's launch tests).
+    pub(super) static ATTACH_FAULTS: std::cell::RefCell<
+        BTreeMap<super::io::Phase, std::collections::VecDeque<io::ErrorKind>>,
+    > = const { std::cell::RefCell::new(BTreeMap::new()) };
 }
 
 impl HostIo for ProductionIo {

@@ -208,6 +208,7 @@ impl<F: ConformanceIo> Driver<F> {
                 retire: h.retire.clone(),
                 custody_errors: h.custody_errors.clone(),
                 custody_unknown: h.custody_unknown.clone(),
+                vehicle_debt: h.vehicle_debt.clone(),
                 fs: h.fs.fork()?,
                 keys: h.keys.clone(),
                 locks: h.locks.clone(),
@@ -963,7 +964,10 @@ impl<F: ConformanceIo> Driver<F> {
             //   at once; while draft I/O is down every draft effect fails
             //   untouched, the model's failed draft write (:446-455), so a
             //   switch waits as `canSwitch` (:462-467) says (`tests::m2_an_
-            //   unsynced_launch..`, `production_tests::b_q1_m2_..`).
+            //   unsynced_launch..`, `production_tests::b_q1_m2_..`). Its known
+            //   vehicles stay cleanup debt until that sync: a stop aborts
+            //   naming their pages, where the model has none left
+            //   (REVIEW-3b-P1 R2, `production_tests::review_p1_m2_..`).
             "launch" => {
                 for recovered in self.host.recovered_keys() {
                     self.register(index(&recovered));
