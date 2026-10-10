@@ -386,6 +386,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       "export-pdf",
       "show-in-folder",
       "open-default-app",
+      "seen-mark",
       "page-properties",
       "rename-page",
       "delete-page",
@@ -414,7 +415,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     expect(activeId()).toBe("delete-page");
     press("Home");
     expect(activeId()).toBe("open");
-    expect(menu.querySelectorAll('[role="menuitem"]')).toHaveLength(14);
+    expect(menu.querySelectorAll('[role="menuitem"]')).toHaveLength(15);
     dispose();
   });
 
@@ -516,7 +517,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
       "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
-      "show-in-folder", "open-default-app",
+      "show-in-folder", "open-default-app", "seen-mark",
     ]);
     closeContextMenu();
 
@@ -528,7 +529,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
       "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
-      "show-in-folder", "open-default-app", "page-properties",
+      "show-in-folder", "open-default-app", "seen-mark", "page-properties",
       "carry-unfinished", "delete-journal",
     ]);
     dispose();
