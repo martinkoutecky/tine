@@ -109,9 +109,23 @@ impl Index {
         queue.jobs.push_back((generation, work));
     }
 
-    /// Start a new generation whose first update is `work`.
-    fn restart(&self, bound: Option<Binding>, indexed: bool, work: Work) {
+    /// Under ONE lock acquisition: if `admit` accepts the current binding,
+    /// start a new generation bound to `bound` whose first update is `work`.
+    /// Validating and replacing in one critical section means a caller that a
+    /// newer bind overtook can never overwrite it (review round 2, R2-5).
+    fn restart(
+        &self,
+        site: &'static str,
+        admit: impl FnOnce(&Queue) -> bool,
+        bound: Option<Binding>,
+        indexed: bool,
+        work: Work,
+    ) {
         let mut queue = self.queue.lock().unwrap();
+        if !admit(&queue) {
+            return;
+        }
+        pause_at(self, site);
         queue.generation += 1;
         queue.bound = bound;
         queue.indexed = indexed;
@@ -120,13 +134,19 @@ impl Index {
         self.wake.notify_one();
     }
 
-    fn clear_all(&self, bound: Option<Binding>) {
-        self.restart(bound, false, Box::new(|| vec![Update::Clear]));
+    fn clear_all(&self, site: &'static str, admit: impl FnOnce(&Queue) -> bool) {
+        self.restart(site, admit, None, false, Box::new(|| vec![Update::Clear]));
     }
 
     /// A graph binding became the window's: drop the old pages now.
     fn bound(&self, binding: Binding) {
-        self.clear_all(Some(binding));
+        self.restart(
+            "bound",
+            |_| true,
+            Some(binding),
+            false,
+            Box::new(|| vec![Update::Clear]),
+        );
     }
 
     /// Replace the index with `binding`'s pages, if it is still the bound one.
@@ -135,10 +155,9 @@ impl Index {
         binding: &Binding,
         entries: impl FnOnce() -> Option<Vec<Entry>> + Send + 'static,
     ) {
-        if self.queue.lock().unwrap().bound.as_ref() != Some(binding) {
-            return;
-        }
         self.restart(
+            "reindex",
+            |queue| queue.bound.as_ref() == Some(binding),
             Some(binding.clone()),
             true,
             Box::new(move || {
@@ -162,31 +181,20 @@ impl Index {
 
     /// The binding left the window (`None`: whatever is bound).
     fn released(&self, binding_generation: Option<u64>) {
-        let releases = {
-            let queue = self.queue.lock().unwrap();
+        self.clear_all("released", |queue| {
             binding_generation.is_none_or(|generation| {
                 queue
                     .bound
                     .as_ref()
                     .is_some_and(|bound| bound.1 == generation)
             })
-        };
-        if releases {
-            self.clear_all(None);
-        }
+        });
     }
 
     fn forget(&self, root: &str) {
-        let forgets = self
-            .queue
-            .lock()
-            .unwrap()
-            .bound
-            .as_ref()
-            .is_some_and(|bound| bound.0 == root);
-        if forgets {
-            self.clear_all(None);
-        }
+        self.clear_all("forget", |queue| {
+            queue.bound.as_ref().is_some_and(|bound| bound.0 == root)
+        });
     }
 }
 
@@ -314,7 +322,7 @@ fn binding_of(slot: &crate::state::GraphSlot) -> Binding {
 /// this launch never binds.
 pub(crate) fn launched(app: &tauri::AppHandle) {
     if INDEXES {
-        index(app).clear_all(None);
+        index(app).clear_all("launched", |_| true);
     }
 }
 
@@ -437,6 +445,39 @@ const INDEXES: bool = false;
     target_os = "macos"
 ))]
 fn publish(_app: &tauri::AppHandle, _update: &Update) {}
+
+// ---- Test seam (after the platform split, whose guard reads only the
+// source above the first test attribute). ----
+
+#[cfg(not(test))]
+fn pause_at(_index: &Index, _site: &'static str) {}
+
+/// Test seam: one index, one site, parked inside the validate-to-enqueue
+/// section so a test can race a newer bind against an overtaken caller.
+#[cfg(test)]
+type Pause = (
+    usize,
+    &'static str,
+    std::sync::mpsc::Sender<()>,
+    std::sync::mpsc::Receiver<()>,
+);
+
+#[cfg(test)]
+static PAUSE: Mutex<Vec<Pause>> = Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn pause_at(index: &Index, site: &'static str) {
+    let key = index as *const Index as usize;
+    let armed = {
+        let mut pauses = PAUSE.lock().unwrap();
+        let at = pauses.iter().position(|p| p.0 == key && p.1 == site);
+        at.map(|at| pauses.remove(at))
+    };
+    if let Some((_, _, entered, resume)) = armed {
+        entered.send(()).unwrap();
+        resume.recv().unwrap();
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -575,6 +616,75 @@ mod tests {
         }
     }
 
+    /// Park the next `site` call on `index` inside its critical section.
+    fn pause(index: &Arc<Index>, site: &'static str) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered, wait) = mpsc::channel();
+        let (resume, gate) = mpsc::channel();
+        let key = Arc::as_ptr(index) as usize;
+        PAUSE.lock().unwrap().push((key, site, entered, gate));
+        (wait, resume)
+    }
+
+    /// An index with no worker: the tests read its queue directly.
+    fn idle() -> Arc<Index> {
+        Arc::new(Index {
+            queue: Mutex::new(Queue::default()),
+            wake: Condvar::new(),
+        })
+    }
+
+    /// Review round 2 (R2-5): `stale` validated its binding, then a newer
+    /// bind for B ran before it acted. The newer bind must not land inside
+    /// the stale caller's validate-to-enqueue section, and B stays bound.
+    fn overtaken(stale: impl FnOnce(&Index) + Send + 'static, site: &'static str) {
+        let index = idle();
+        index.bound(a());
+        let (wait, resume) = pause(&index, site);
+        let old = index.clone();
+        let caller = std::thread::spawn(move || stale(&old));
+        wait.recv().unwrap();
+        let (done, finished) = mpsc::channel();
+        let newer = index.clone();
+        let rebind = std::thread::spawn(move || {
+            newer.bound(b());
+            newer.reindex(&b(), || Some(vec![page("B1")]));
+            done.send(()).unwrap();
+        });
+        let inside = finished.recv_timeout(Duration::from_millis(300)).is_ok();
+        resume.send(()).unwrap();
+        caller.join().unwrap();
+        rebind.join().unwrap();
+        assert!(
+            !inside,
+            "a newer bind ran between the {site} check and its enqueue"
+        );
+        let queue = index.queue.lock().unwrap();
+        assert_eq!(
+            queue.bound,
+            Some(b()),
+            "the overtaken {site} replaced the newer binding"
+        );
+        assert!(queue.indexed, "the overtaken {site} dropped B's reindex");
+    }
+
+    #[test]
+    fn round2_an_overtaken_reindex_never_overwrites_a_newer_binding() {
+        overtaken(
+            |index| index.reindex(&a(), || Some(vec![page("A1")])),
+            "reindex",
+        );
+    }
+
+    #[test]
+    fn round2_an_overtaken_release_never_clears_a_newer_binding() {
+        overtaken(|index| index.released(Some(1)), "released");
+    }
+
+    #[test]
+    fn round2_an_overtaken_forget_never_clears_a_newer_binding() {
+        overtaken(|index| index.forget("/graphs/a"), "forget");
+    }
+
     fn page(name: &str) -> Entry {
         entry(name, &document("- text\n"))
     }
@@ -701,7 +811,7 @@ mod tests {
     fn release_forget_and_launch_clear_the_index() {
         let (index, log) = recorder();
         let now = |log: &Arc<Mutex<Vec<String>>>| contents(&log.lock().unwrap());
-        index.clear_all(None); // launched
+        index.clear_all("launched", |_| true);
         drain(&index);
         assert_eq!(*log.lock().unwrap(), ["clear"]);
         index.bound(a());
