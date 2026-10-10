@@ -14,14 +14,8 @@ use tine_core::model::{
 use tine_graph_features::journals::{self, JournalFilenameMigration};
 use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
 use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
-#[cfg(test)]
-use tine_store::{SaveOutcome, SavePagesOutcome};
 mod discovery;
-mod save_wire;
 use discovery::{page_inventory_wire, resolve_name, PageInventoryWire};
-use save_wire::SavePagesWire;
-#[cfg(test)]
-use save_wire::{save_outcome_to_wire, save_pages_outcome_to_wire};
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     tine_graph_features::assets::error_for_user(&slot.store, error)
@@ -423,198 +417,13 @@ pub(crate) async fn graph_source_files(
     .map_err(|error| error.to_string())?
 }
 
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SavePageEntry {
-    id: String,
-    page: PageDto,
-    base_rev: Option<String>,
-    #[serde(default)]
-    force: bool,
-    kinds: Vec<tine_store::EditKind>,
-}
-
-fn log_save_kinds(entries: &[SavePageEntry]) {
-    if crate::debug::debug_enabled() {
-        for entry in entries {
-            crate::debug::diag_private(
-                "edit-kinds",
-                format!("{}: {:?}", entry.page.name, entry.kinds),
-            );
-        }
-    }
-}
-
-/// Require a current graph binding and nonempty edit kinds, then prepare
-/// bases and run one ordered guarded page transaction. A missing/stale
-/// binding or empty kinds returns command Err; preparation and transaction
-/// failures return a Failed wire value. Force reads current UTF-8 bytes for
-/// each affected base. Empty input returns Failed at placeholder index 0.
-/// A failed or slow call is recorded as a fixed-shape `direct.save` event.
-///
-/// The transaction takes the store writer, which waits behind a watcher cycle
-/// or a checkpoint capture, so it runs on the blocking pool (R3, og-flow3; the
-/// shape of 96531bd2a). Save ordering is unchanged: the frontend serializes
-/// each page's saves (and a group behind its members) and issues `save_pages`
-/// through its ordered lane, and the per-page base-revision guard inside
-/// `save_pages_wire` is untouched.
-#[tauri::command]
-pub(crate) async fn save_pages(
-    entries: Vec<SavePageEntry>,
-    state: GraphContext<'_>,
-) -> Result<SavePagesWire, String> {
-    let slot = slot_for_context(&state)?;
-    if entries.iter().any(|entry| entry.kinds.is_empty()) {
-        return Err("OG-RULES Rule 8: every page write declares a non-empty edit kind list; exemplar src/document/save/engine.ts".into());
-    }
-    log_save_kinds(&entries);
-    let entries: Vec<_> = entries
-        .into_iter()
-        .map(|entry| {
-            (
-                PageId::from(entry.id),
-                entry.page,
-                entry.base_rev,
-                entry.force,
-                entry.kinds,
-            )
-        })
-        .collect();
-    crate::state::off_ui(move || {
-        Ok(save_wire::save_pages_wire(
-            &slot.store,
-            &entries,
-            tine_graph_features::pages::save_pages,
-        ))
-    })
-    .await
-}
-
 #[cfg(test)]
-mod save_wire_tests {
+mod wire_family_tests {
     use super::*;
 
     #[test]
-    fn save_wire_families_are_distinct() {
-        const RULE: &str = "I-9: save failure families stay fixed while recovery locations remain explicit; exemplar commands::save_outcome_to_wire";
-        assert_eq!(
-            save_outcome_to_wire(SaveOutcome::Conflict {
-                disk: String::from("rev").into()
-            }),
-            Err("conflict".into()),
-            "{RULE}"
-        );
-        assert_eq!(
-            save_outcome_to_wire(SaveOutcome::Deleted),
-            Err("deleted".into()),
-            "{RULE}"
-        );
-        assert_eq!(
-            save_outcome_to_wire(SaveOutcome::Twin {
-                existing: PageId::from("pages/secret.md".to_string())
-            }),
-            Err("twin".into()),
-            "{RULE}"
-        );
-        assert_eq!(
-            save_outcome_to_wire(SaveOutcome::Io(
-                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/secret/path").into()
-            )),
-            Err("io:PermissionDenied".into()),
-            "{RULE}"
-        );
-        let wire = save_pages_outcome_to_wire(SavePagesOutcome::Failed {
-            index: 2,
-            outcome: SaveOutcome::Repeated,
-            undo_failed: vec![tine_store::FileId::from("pages/A.md".to_string())],
-            publication_errors: Vec::new(),
-        });
-        let encoded = serde_json::to_string(&wire).unwrap();
-        assert_eq!(
-            encoded, r#"{"failed":{"index":2,"family":"repeated","undoFailed":["pages/A.md"]}}"#,
-            "{RULE}"
-        );
-        let incomplete = save_pages_outcome_to_wire(SavePagesOutcome::Failed {
-            index: 0,
-            outcome: SaveOutcome::Io(std::io::Error::other("publication failed").into()),
-            undo_failed: Vec::new(),
-            publication_errors: vec![tine_store::FileId::from("pages/A.md".to_string())],
-        });
-        assert_eq!(
-            serde_json::to_string(&incomplete).unwrap(),
-            r#"{"failed":{"index":0,"family":"publication-incomplete","undoFailed":[],"publicationErrors":["pages/A.md"]}}"#,
-            "{RULE}"
-        );
-        let families = [
-            (
-                SaveOutcome::Conflict {
-                    disk: "private-rev".to_string().into(),
-                },
-                "conflict",
-            ),
-            (SaveOutcome::Deleted, "deleted"),
-            (
-                SaveOutcome::Twin {
-                    existing: PageId::from("pages/private-title.md"),
-                },
-                "twin",
-            ),
-            (SaveOutcome::Repeated, "repeated"),
-            (SaveOutcome::ReadOnly("private title".into()), "read-only"),
-            (
-                SaveOutcome::InvalidTarget("/private/path".into()),
-                "invalid-target",
-            ),
-            (SaveOutcome::Closed, "closed"),
-            (
-                SaveOutcome::Io(
-                    std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/private/path")
-                        .into(),
-                ),
-                "io:PermissionDenied",
-            ),
-        ];
-        // R-CREATE-UNREADABLE-OWNER: its own family, and the unreadable file
-        // travels as an explicit recovery location the toast can name.
-        let owner = serde_json::to_string(&save_pages_outcome_to_wire(SavePagesOutcome::Failed {
-            index: 0,
-            outcome: SaveOutcome::UnreadableOwner {
-                file: tine_store::FileId::from("pages/Other.md".to_string()),
-            },
-            undo_failed: Vec::new(),
-            publication_errors: Vec::new(),
-        }))
-        .unwrap();
-        assert_eq!(
-            owner,
-            r#"{"failed":{"index":0,"family":"unreadable-owner","undoFailed":[],"unreadableOwner":"pages/Other.md"}}"#,
-            "{RULE}"
-        );
-        let mut seen = std::collections::HashSet::new();
-        assert!(seen.insert("unreadable-owner"), "{RULE}");
-        for (outcome, family) in families {
-            let encoded =
-                serde_json::to_string(&save_pages_outcome_to_wire(SavePagesOutcome::Failed {
-                    index: 1,
-                    outcome,
-                    undo_failed: vec![tine_store::FileId::from("pages/A.md".to_string())],
-                    publication_errors: Vec::new(),
-                }))
-                .unwrap();
-            let rev_field = if family == "conflict" {
-                r#","diskRev":"private-rev""#
-            } else {
-                ""
-            };
-            assert_eq!(
-                encoded,
-                format!(
-                    r#"{{"failed":{{"index":1,"family":"{family}"{rev_field},"undoFailed":["pages/A.md"]}}}}"#
-                ),
-                "{RULE}"
-            );
-            assert!(seen.insert(family), "{RULE}");
-        }
+    fn failure_families_are_distinct() {
+        const RULE: &str = "I-9: failure families stay fixed while recovery locations remain explicit; exemplar commands::sync_conflict_error";
         assert_eq!(
             asset_error(StoreError::TooLarge { limit: 12, len: 13 }),
             "asset-too-large",
@@ -780,29 +589,6 @@ pub(crate) async fn block_referrers(
 }
 
 #[tauri::command]
-pub(crate) async fn delete_page(
-    name: String,
-    kind: PageKind,
-    expected_path: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<(), String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pages::delete_page_expected(
-            &slot.store,
-            slot.host_slot()?.running(),
-            &name,
-            kind,
-            expected_path.as_deref(),
-            None,
-        )
-        .map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
 pub(crate) async fn rename_page(
     old: String,
     new: String,
@@ -813,9 +599,12 @@ pub(crate) async fn rename_page(
 ) -> Result<tine_graph_features::pages::RenameReport, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
+        // A rename is the page host's (STEP3 §7): a revoked slot is the
+        // stale-binding refusal, an off one refuses with no write. One
+        // statement-temporary guard (A-K3, `host_slot_guard_tests.rs`).
         tine_graph_features::pages::rename_or_merge_page(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running().ok_or("no page host")?,
             &old,
             &new,
             expected_path.as_deref(),
@@ -837,7 +626,6 @@ mod graph_wide_command_boundary_tests {
             "get_backlinks",
             "get_unlinked_refs",
             "rename_page",
-            "delete_page",
             "merge_pages",
             "rename_file_to_page",
         ] {
@@ -1341,7 +1129,7 @@ mod capture_quick_switch_tests {
     fn capture_binding_never_grants_generic_graphcontext_mutation_access() {
         let (state, base) = state_with_selected_graph();
         let generation = state.capture_graph_binding().unwrap().binding_generation;
-        // `save_pages` and other mutations resolve through GraphContext, which
+        // `page_submit` and other mutations resolve through GraphContext, which
         // uses this normal window-slot path and therefore has no capture fallback.
         assert_eq!(
             slot_for_bound_window(&state, "capture", Some(generation))

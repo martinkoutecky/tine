@@ -56,10 +56,11 @@ After applying a transaction, the store reads each final file before declaring
 its publication complete. A failed read or revision check returns
 `TxOutcome::PublicationIncomplete` with graph-relative file locations; disk
 steps may already have landed. An apply failure keeps any publication errors in
-`TxOutcome::NotCommitted`. `Store::save_pages` carries rollback failures in
+`TxOutcome::NotCommitted`. A transaction carries rollback failures in
 `undo_failed` and omitted final-state files in `publication_errors`, both as
-graph-relative locations. The frontend keeps unsaved edits, marks matching
-pages conflicted, and tells the user which files need inspection before retry.
+graph-relative locations, and its caller tells the user which files need
+inspection. Page saves are the page host's single-file renames (STEP3 §3.2),
+which have no multi-file rollback; a failed one keeps the input in custody.
 
 A held `WholeGraph` view does not wait for later writers. Acquiring the first
 view with `whole_graph()` can wait for the initial parse. The public operation
@@ -114,7 +115,11 @@ publication that fails) is one transition under the cache lock: it settles
 every row whose authority it changes, the key's spellings and the colliding
 entries that become unknown, with their error rows, and the writer section
 that ran it publishes a snapshot when it settled any, so a view acquired
-after it never shows the old row. A release rereads the files it withheld.
+after it never shows the old row. A release rereads the files it withheld,
+and a released page's file unless its installed row is the revision the
+watcher last observed there, unchanged since; a change the watcher observed
+while the page was held always rereads (GH #623: a rename releases every
+referrer).
 A disk disappearance never removes a held page's row; an owner's absent
 publication does. One identity
 rule (`Graph::identify`: the canonical existing parent, `Outside` when it
@@ -157,11 +162,55 @@ rewrite and no work proportional to the graph. Proof:
 
 ## Page host binding (step 3b)
 
-No production page host starts before step 3b P2b: `PageHost::start` is
-crate-private and `start_for_tests` is test-gated, so everything below is
-reachable only with a test host until then. Unit cost: none; no persisted
-record changes (sessions, the orphan flag and the retirement map are memory
-only).
+Every graph window binding runs a page host (step 3b P2b,
+`src-tauri/src/graph.rs` `start_host`): the window's page edits, moves,
+renames and deletions go through it, and its crash drafts live under
+`<app data>/drafts-v2/<graph id>`. A host that cannot start fails the open
+and the Store closes. Scenario: a concurrent honest instance already runs a
+host over this graph and holds its draft locks; two hosts would race each
+other's drafts. Unit cost: none beyond the drafts below; sessions, the orphan
+flag, the retirement map, a caller's reply slot and a running rename's order
+are memory only.
+
+**Rename order (option 2, SPEC-s3 s3.2).** While Tine runs, a host rename
+publishes its destination first, then its rewritten referrers, then its
+source's deletion. A referrer's save waits until the destination's own save
+has published durably (directory sync) at the operation's version, and the
+deletion waits for every other page (`page_host/order.rs`). Scenario: a disk
+error (a full disk, an I/O error) keeps failing the destination's save; the
+old file and every `[[Old]]` link keep resolving, and the rename finishes
+once the write succeeds. The order is memory only:
+- A stop saves nothing gated; the operation's draft carries those pages.
+- A launch completes the rename from its drafts, with no order. Across a
+  crash only no loss and completion hold. Accepted effect: a crash while the
+  destination's write is also failing can leave the page with no file until
+  the write succeeds; its bytes are in the trash or the drafts.
+- No chaining: an operation over any page of a running order waits until
+  that order ends. A deletion answers `Waiting`. A rename waits up to
+  `OPERATION_WAIT` (10 s) and is then refused `Busy`, changing nothing.
+  Scenario: the destination's save keeps failing (disk error), or a
+  referrer is conflicted (an external editor or sync delivery changed it).
+- A Discard of the destination before its witness cancels the rename in
+  memory: the source takes its disk bytes again and is never trashed, and
+  newer input typed into it stays. The caller hears `Superseded`.
+- A caller's wait ends `Uncertain`, never success, when its window session
+  changes or the host fails; the operation still completes once it can.
+  Every caller exit removes its reply slot.
+Unit cost: none (memory only). Proof
+`crates/tine-store/src/page_host/binding_order_tests.rs`, the model's
+`orderHolds` (`storage-s3.qnt` s3.2, mutants MDF, MRD, MPR).
+
+**Ordinary edit unit cost (I-25, step 3b P2b).** An ordinary `page_submit`
+applies in memory with no draft record (a submit is not at risk; only a
+conflict, a failed save or a host operation drafts). One guarded save
+publishes it: one temporary file of exactly the page's bytes (10/541 B on the
+1-/60-block fixtures), renamed over the page, and two syncs (temp file and
+directory). No app-data file, no directory walk, no transport bytes. Submits
+answered before the save starts coalesce into that one save (five back-to-back
+submits on the 60-block page: 1 file, 541 B, 2 syncs). Measured by
+`crates/tine-store/tests/host_edit_cost.rs` with every host write, byte and
+sync counted at the `HostIo` seam. A save also costs 2 whole-file reads and
+3 parses (1 of the old source) per edit.
 
 **Sessions.** Every host launch and every `page_window_reloaded` draws a
 process-unique session; the reload answers it with `next_id`, one past the
@@ -190,7 +239,17 @@ the restore lock; a retiring host's stop re-probes on each pass). Scenario:
 power loss before the census sync leaves the copy unsynced, and closing
 over it would let the next launch recover a stale copy over a newer or
 restored file. M1 (an unlisted census) is unchanged. `load_graph`
-replies with `draft_status` (`{unavailable, unreadable}`; none with no host).
+replies with `draft_status` (`{unavailable, unreadable, unsaved}`; none with
+no host). `unsaved` is the persistent indicator at each open (SPEC-s2 §4.11,
+STEP3 §9): every page whose text is not on disk, by spelling, with
+`recovered` (launch installed it from a draft and it is still at that
+version), `conflict` (changed on disk) and `failing` (its save fails). The
+window names recovered pages in a sticky notice ("Recovered unsaved edits …
+Tine is saving them") and any other held page with why, as an error when one
+needs the user. Wire-only; unit cost: none (nothing persisted). Proof
+`crates/tine-store/src/page_host/binding_tests.rs`
+`s9_draft_status_names_recovered_and_unsaved_pages`,
+`src/graphDraftStatus.test.tsx`.
 `page_drafts_retry` re-probes draft I/O in the running host, keeping the
 census and live input, and finishes the cleanup launch skipped. Vehicles
 first listed by a Retry are not recovered into the running host: draft I/O
@@ -220,7 +279,9 @@ retirement waiter's (`exit_after_retirement`; scenario: quitting while a
 host still holds unsaved input). Closing the last graph window first
 unbinds its graph, retiring its host, and the window stays until the exit
 (GH #28). The exit waits for every retirement, 30 s at most; past that Tine
-keeps running with the host alive (the stuck-graph window is P2b). The exit
+never exits over the input (B-QA): it keeps the host and opens a window on
+each graph still saving, which adopts its host and names the pages not on
+disk and why (`unsaved` above; `b_qa_*`), before the closed window goes. The exit
 is then decided under the open lock (`graph_load`): a graph bound or
 adopted meanwhile, an open still inside its load, or any other graph
 window, loaded or not, cancels it (`state::exit_when_unowned`; the guard
@@ -269,9 +330,6 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::content_refusal::InvalidTarget` | 1 | Existing or serialized page content exceeds the byte or nesting parse bound; refuse while retaining unsaved edits. |
 | `transaction.rs::validate_page_content::InvalidTarget` | 1 | A raw page stream exceeds its cap; refuse before creating an unreadable page. |
 | `transaction.rs::validate_config_bytes::InvalidTarget` | 1 | A config edit or create names a directory outside the graph; refuse before changing disk. |
-| `store.rs::save_pages::Closed` | 1 | A queued page-save request arrives after graph close; return the closed family without writing. |
-| `store.rs::save_pages::InvalidTarget` | 2 | An empty page-save request or an entry without edit kinds is refused before opening a transaction (`store_save.rs`). |
-| `store.rs::save_pages::GuideEphemeral` | 1 | A bundled Guide page has no graph file; refuse the request before disk access. |
 | `store.rs::from_failed_step::Closed` | 1 | A transaction closes before commit; retain all unsaved page snapshots. |
 | `store.rs::from_failed_step::Conflict` | 1 | An external edit makes an entry's target revision stale; return its current disk revision for resolution. |
 | `store.rs::from_failed_step::Deleted` | 1 | Sync deletes an entry's page while its editor buffer is open; retain the buffer and report deletion. |
@@ -292,6 +350,9 @@ by I-9's typed failure paths.
 | `tine-store::model` path and graph acquisition | A configured graph or asset directory is retargeted, malformed, or resolves outside the approved root after sync or external editing; refuse reads and writes through that path. |
 | `tine-store::store` read, scan and handoff | Graph close revokes queued requests; a symlink, non-file (for the asset opener: neither file nor directory), or escaped path appears after the caller selected it, or sync retargets `assets/`; refuse stale bytes and OS handoff. A failed initial parse withholds an unpublished view. |
 | `tine-store::model::configured_hidden` scope (og T2, master `hidden_parse_failed_closed`) | A torn or hand-broken `config.edn` (sync-service delivery, an external-editor race or crash) leaves `:hidden` malformed or over its limits (unterminated vector, bad string escape, over 256 entries or 64 KiB, nesting over 32): graph-text scope hides all graph text instead of reading "nothing hidden", which would list, index, snapshot and export text the owner excluded. Recovery is fixing `config.edn`; the watcher's config reload restores the scope. A snapshot taken meanwhile holds no graph text and records `hidden_parse_failed_closed`, so its restore retires none (proof `crates/tine-store/tests/store_read.rs` `malformed_hidden_value_hides_all_graph_text`, `src-tauri/src/backup/restore.rs` `failed_closed_hidden_snapshot_records_scope_and_retires_nothing`). A missing `:hidden`, or a non-vector value, hides nothing (OG). |
+| `tine-store::page_host` request answers (step 3b, `Refusal`) | A submit or Discard for a page the host does not hold (`NotHeld`; a frontend or plugin defect, or a request from an earlier window state): refuse and change nothing. A Discard whose disk read fails (`ReadFailed`, SPEC-s2 §4.11 "discard failed"; a disk error), including the read of a running rename's source that the Discard would revert: refuse whole, change neither page, keep the rename's order (proof `crates/tine-store/src/page_host/command_tests.rs` `an_answer_that_did_not_take_its_request_names_why`, `a_discard_whose_partner_source_read_fails_changes_nothing`). A move whose versions are no longer current (`Stale`; newer input in this window raced it): refuse both pages. A move whose receiver draft cannot be written (`DraftFailed`; a full disk or an app-data disk error): refuse and change nothing. |
+| `tine-store::page_host` operations (step 3b P2b, `RenameRefusal`, `PageOperation`) | An operation's draft cannot be written (a full disk or an app-data disk error): the rename, merge move or deletion answers `DraftFailed`, nothing changed on disk or in memory, no order is installed and no reply slot is left (proof `binding_order_tests.rs` `a_rename_whose_draft_fails_changes_nothing`). An operation over a running rename's pages is `Waiting` or `Busy` (above, "Rename order"). A page the rename would rewrite has unsaved input (`Unsaved`; an honest edit in this window races it) or cannot be rewritten (`Unwritable`; malformed imported Org or non-UTF-8 bytes): refuse before anything changes. |
+| `tine-store::page_host::delete` target (step 3b, `page_host/binding.rs`) | Web content, a plugin or a frontend defect passes `page_delete` a path that is not a page file of this graph (outside the root, not a graph text file): refuse before the deletion is registered or anything is written, as `page_open_checks::InvalidTarget` does for an open (proof `crates/tine-graph-features/tests/page_delete_missing.rs` `a_delete_outside_the_graph_refuses_without_writes`). |
 | `tine-store::watch` reconcile | A graph closes, its root disappears, or an external config edit changes directory layout; stop reconciliation rather than publishing a false view. |
 | `tine-store::watch` OS watch setup (og 22a) | The OS refuses live file notifications for the graph (inotify's per-user watch limit is spent by other apps, a network or FUSE mount without events, a root replaced while open); degrade to a 3-second poll that runs the same reconcile, retry the live watch every cycle, and report the refusal and its restoration (`Subscription::observe_watch_status`, `graph-watch-refused` / `graph-watch-restored`, flight event `watcher.refused`). The graph is never silently stale (I-9). |
 | `tine-store::transaction` undo of a replaced file | Disk full, a disk error, or a crash while rolling back a failed multi-file save (C3 L07): undo stages the file's pre-transaction bytes as a `tx-old` conflict-trash copy before it withdraws the transaction's bytes, and removes that copy once the old bytes are back live. If the copy cannot be written it withdraws nothing, leaves the transaction's bytes live and reports the file in `undo_failed` (proof `c3s_content_loss.rs`). |
@@ -304,8 +365,8 @@ by I-9's typed failure paths.
 | `tine-store::publish` staged site | An external writer retargets output or stage paths or wins the destination name; refuse replacement and retain the previous site. |
 | `tine-graph-features::pages` rename, rescue, merge and delete | A referrer carrying VCS conflict markers (an external merge or sync left it mid-conflict) is skipped, not rewritten, and reported (`skipped_conflicted_referrers`; R-VCS-MARKERS). Sync or an external editor changes a revision, creates a twin, occupies a destination, or makes Org non-round-tripping; refuse the affected transaction and retain source bytes. A rescue also refuses a name already carried by a retained non-portable legacy filename (`pages/A:B.md` from OG on Linux/macOS), which OG would load as a second file for that page. Delete refuses a stale path if an external editor changed its title or replaced its claimant; confirmed file absence succeeds without writes (GH #620). A rename commits every step only in the view and config it was planned in (`Transaction::expect_view`): sync or an external editor delivering a referrer or `config.edn` between plan and commit makes the attempt replan, within the existing four attempts, then `WouldBlock` (A-W1 B2; proof `crates/tine-graph-features/src/pages_snapshot_tests.rs`). |
 | `tine-graph-features::conflicts` resolve | A sync conflict winner or copy changes or disappears during resolution, or an Org member is not editable; preserve both sides and require retry. A `"merged"` row whose reviewed Concord-ledger base (`merge_base_rev`) is gone or different at apply time (sync delivery or an honest concurrent instance moved the ledger, or the ledger became unreadable) refuses with `merge base changed since the review` and writes nothing; every other decision never reads the base, so a ledger failure refuses nothing else (ADR 0056). |
-| `tine-graph-features::live_conflict` merge and resolve (og 8e; the merge is read-only, the old engine's resolve writes its result guarded by the reviewed revision) | The file changed after the review (external-editor race, sync-service delivery, an honest concurrent instance), including a file that reappeared after an `absent` review: refuse with `live conflict changed on disk`, write nothing, and the resolver refreshes its review; the draft stays in the editor and in the draft store. A `"merged"` row whose reviewed ledger base (named by its sha256) is no longer retained refuses with `merge base changed since the review`; other decisions never read the base. An Org file on disk that does not round-trip refuses (malformed imported content). |
-| `tine-graph-features::retained` census writers under a page host (STEP3 §7, R6) | Only with a running page host (none in production until lane 3b's switch). Each writer keeps today's input rule (Q3), checked under its final reservation. A refusing writer (sync-copy and duplicate-day fold, sync-copy trash, VCS-marker and live-conflict resolve, an interrupted title completion) meets a hosted page with unsaved input as today's changed-on-disk refusal (an honest edit in this instance races the writer as an external editor would) and writes nothing; a refusal names each page by its current spelling (a host key is opaque, REVIEW-3a5). A flush-first writer (rename, merge, delete, rescue, journal migration and trash, PDF highlights, the Guide copy) saves that input first, and refuses naming the page only when its save cannot complete (a conflict or a persistent disk error), as today's stuck pages refuse. A writer reserves only the pages it writes (A-R3): a journal migration reserves each still-eligible proposal on its own and skips one whose page cannot be saved, naming it, while the others migrate; a rename reserves the referrers it rewrites, not one it leaves byte-identical (unchanged, or carrying VCS conflict markers). A single page's rename is the host's operation: an Org page that does not round-trip refuses as today; a page the admitted operation could not yet write (disk error) is reported, and the operation finishes once it can. The host admits it only while the planning view and config are current, else the rename replans (B2). Its final pages are the referrers whose bytes the rename changes, held buffers included, which the planner may not list: a held referrer the rename leaves byte-identical (it already says the new name, or carries VCS conflict markers, which the report lists as skipped) is not one of them: its unsaved input or a writer holding it neither blocks nor refuses the rename, and it is not written (A-W1 R3, R4). Proof `crates/tine-graph-features/tests/retained_host.rs`, `crates/tine-store/src/page_host/binding_rename_tests.rs`. |
+| `tine-graph-features::live_conflict` merge (og 8e; read-only: the window submits the merged page through its page host with the reviewed disk revision, STEP3 R6) | The file changed after the review (external-editor race, sync-service delivery, an honest concurrent instance), including a file that reappeared after an `absent` review: the merge refuses with `live conflict changed on disk` and the resolver refreshes its review; a submit whose reviewed revision is no longer the disk's leaves the page conflicted, and its save's base-revision guard writes nothing. The draft stays in the editor and in the page host's drafts. A `"merged"` row whose reviewed ledger base (named by its sha256) is no longer retained refuses with `merge base changed since the review`; other decisions never read the base. An Org file on disk that does not round-trip refuses (malformed imported content). |
+| `tine-graph-features::retained` census writers under a page host (STEP3 §7, R6) | With the binding's running page host (every graph window binding runs one). Each writer keeps today's input rule (Q3), checked under its final reservation. A refusing writer (sync-copy and duplicate-day fold, sync-copy trash, VCS-marker and live-conflict resolve, an interrupted title completion) meets a hosted page with unsaved input as today's changed-on-disk refusal (an honest edit in this instance races the writer as an external editor would) and writes nothing; a refusal names each page by its current spelling (a host key is opaque, REVIEW-3a5). A flush-first writer (rename, merge, delete, rescue, journal migration and trash, PDF highlights, the Guide copy) saves that input first, and refuses naming the page only when its save cannot complete (a conflict or a persistent disk error), as today's stuck pages refuse. A writer reserves only the pages it writes (A-R3): a journal migration reserves each still-eligible proposal on its own and skips one whose page cannot be saved, naming it, while the others migrate; a rename reserves the referrers it rewrites, not one it leaves byte-identical (unchanged, or carrying VCS conflict markers). A single page's rename is the host's operation: an Org page that does not round-trip refuses as today; a page the admitted operation could not yet write (disk error) is reported, and the operation finishes once it can. The host admits it only while the planning view and config are current, else the rename replans (B2). Its final pages are the referrers whose bytes the rename changes, held buffers included, which the planner may not list: a held referrer the rename leaves byte-identical (it already says the new name, or carries VCS conflict markers, which the report lists as skipped) is not one of them: its unsaved input or a writer holding it neither blocks nor refuses the rename, and it is not written (A-W1 R3, R4). Proof `crates/tine-graph-features/tests/retained_host.rs`, `crates/tine-store/src/page_host/binding_rename_tests.rs`. |
 | `tine-graph-features::journals` migration and trash | A journal disappears or changes after selection; refuse that item and leave other journals intact. |
 | `tine-graph-features::pdf` highlight and sidecar | Sidecar or notes bytes change concurrently, a malformed imported sidecar appears, or Org notes cannot round-trip; retain the source and refuse or retry within the bounded loop. |
 | `tine-graph-features::config` and `assets` | Config or an asset changes repeatedly while applying a user update; stop before overwriting the external winner. |
@@ -315,7 +376,7 @@ by I-9's typed failure paths.
 | `src-tauri::state` graph binding | Two windows try to own overlapping roots, or a queued command carries an old binding generation, or a queued worker holds a binding a reopen has since adopted (`review_p1_late_old_slot_writer_cannot_bypass_adopted_reservation`, `review_p1_a_queued_restore_cannot_enter_after_slot_adoption`); refuse a wrong-graph write. A graph whose page host is still retiring (saving after its window closed) owns its root too: an open of an overlapping root first waits for it outside the registry lock, up to 10 s, telling the window it waits (`graph-open-waiting`), and is refused only past that bound, naming the graph still saving (`host_retirement` `a_stuck_retirement_refuses_an_overlapping_open_naming_the_saving_graph`). The same root is adopted, never waited for. |
 | `src::carry` destination day and capture destination (og I1e, og J1, master 7bd793bd0 family) | Sync-service delivery or a journal date-format change leaves two files for today (a duplicate day), and the second one is open path-pinned under today's name. Carry and capture (quick capture, `appendToTodayJournal`, capture into a page) load the file the name resolves to (`admitPageFile`): a second file holding the name with no unsaved input is replaced by it and the write lands in the real file; one WITH unsaved input (the in-scope harm: replacing it would discard that input) refuses before any block moves or is appended, naming both files. A refused capture keeps its text in the capture window. A source page whose replacement the working set declines stops carry the same way. The duplicate-day resolver folds the pair. |
 | `src::document::workingSet` name slot (og J1, master 7bd793bd0) | The working set is keyed by name, so a second file holding a name — a duplicate day left by sync-service delivery or a journal date-format change, or a same-named page opened by path — can occupy the slot while it has uncommitted input (an edit, a save in flight, a conflict, an active editor, a component draft). `ensurePageLoaded`, `loadRoutedPage`, `loadSingle`, `loadFeed`, `appendFeed` and `restoreTodayJournalInFeed` then return a typed `PageLoadRefusal` instead of replacing it, and nothing is published under the requested name: the journals feed keeps its previous window (on first load it shows why in place) and fills in place once the holder is replaceable (`whenPageReplaceable`), a sidebar item says why and retries, a route shows why. Replacing would discard that input; publishing would show, and save edits into, the wrong file. The PDF-notes refresh declined for an active editor, a move or a draft pin waits the same way instead of being dropped. Consumption is guarded by `src/refusedReplacement.guard.test.ts`. |
-| `src::persistence` frontend save gate | A page is tombstoned, conflicted, held as the source of a cross-page move, or the graph switch still has pending writes; retain the editor buffer and refuse the unsafe completion. An alias draft already appended to its owner page is retried by replacing that landed tail, never by appending again; when the owner's tail no longer matches what landed (an external editor or sync client changed the owner in between), refuse with `conflict` (grouped path: `alias-owner-busy`) and keep the draft (og 22a, L13). A watcher observation of a page with unsaved edits still raises a disk-changed conflict unconditionally; an existing disk-changed conflict is lifted when the file provably returns to the baseline the editor loaded (an external editor's temp+rename or a mid-delivery sync gap): the frozen edit is re-armed and saved against the baseline (`applyObservedDivergence`, og I1c, master c68c0b6e7). |
+| `src::document::host` window writes (step 3b P2b: the page host is the only writer of page edits; the frontend save engine is gone) | An alias draft (a page with no file whose name became an alias, L13) lands in its owner only while the owner is open in the host, idle and not conflicted, and no editor is open on it (an IME composition is DOM-local input the store does not hold yet); otherwise it stays, unsaved and listed. A retry after a mid-save edit replaces the landed copy instead of appending the draft again; when the owner's text no longer holds that copy (an external editor or sync client changed the owner meanwhile) the landing refuses, says so, and keeps the draft (proof `src/document/save/aliasDraft.test.ts`). A watcher observation of a page with unsaved input conflicts in the host; the conflict lifts when the file provably returns to the baseline the editor loaded (an external editor's temp+rename or a mid-delivery sync gap), and the frozen edit is saved against it (og I1c, master c68c0b6e7; proof `src/document/conflictLift.test.ts`). |
 
 Watcher reconciliation distinguishes a successful page read, an intentionally
 excluded nonregular or escaped path, and a failed read. A successful read can
@@ -467,10 +528,17 @@ publication error reporting, path locks, ordered writes and undo remain the same
 literal feature/store entry. The frontend matches touched paths against loaded
 pages once; it still reloads only clean rewritten pages and discards moved pages.
 
-Unit cost: unchanged full referrer payload per file, one temporary payload file
-and two syncs per rewritten referrer, plus the source move's directory sync.
-The 1-/60-block referrer fixtures write 22/1,320 bytes respectively, measured by
-the temporary-payload counter; no new persisted record or transport bytes.
+Unit cost (step 3b P2b, a single page's rename through the page host, Q-P2b-2):
+the 1-/60-block referrer fixtures write 7 files and 552/6,928 bytes with 25–26
+syncs: the operation draft, three page draft records, the referrer, the
+destination page and the source's custody marker. The referrer's old and new
+payloads are each written into the operation draft and into its draft record,
+and the new one into the page (about five payload copies); each extra referrer
+adds two files (its page and its
+draft record). Measured by `rename_cost.rs` with every host write, byte and
+sync counted at the `HostIo` seam (`page_host/production.rs`, `cost_counters`);
+the draft worker may batch two draft-directory syncs, hence the range. No
+transport bytes.
 
 ### Rename reads (GH #623, QF3b)
 

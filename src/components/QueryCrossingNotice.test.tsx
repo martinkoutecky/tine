@@ -25,6 +25,7 @@ import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { flushPage, resetStore, setRaw, toggleUndoRedoMode, undo } from "../document";
+import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
 import { historyPageOnlyMode } from "../document/history";
 import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import { resetCrossingNoticeForTests as resetDismissedNoticesForTests } from "./Macro";
@@ -523,12 +524,13 @@ describe("C5: the notice is one instance that changes host with the sheet", () =
 // itself is temp+fsync+rename (the audited path); this pins that the two edits
 // reach it in the same page payload, and that undo takes both back together.
 describe("the crossing save is one page write", () => {
-  it("persists the renamed macro and its tine.* view key in a single savePages payload", async () => {
+  it("persists the renamed macro and its tine.* view key in a single page submit", async () => {
     // The OG text carries the sort; TQL cannot, so the crossing moves it to
     // `tine.sort` on the same block.
     load("{{query (task TODO) (sort-by priority desc)}}");
     arrangeCrossing();
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-2"] });
+    await bindTestHost();
+    const save = vi.spyOn(backend(), "pageSubmit");
     vi.spyOn(backend(), "parseQuery").mockImplementation(async (source: string) => ({
       ...parsedAs(source), view: { sort: [["priority", "desc"]] },
     }));
@@ -548,7 +550,7 @@ describe("the crossing save is one page write", () => {
 
       expect(await flushPage("Sheet")).toBe(true);
       expect(save).toHaveBeenCalledTimes(1);
-      const written = JSON.stringify(save.mock.calls[0][0]);
+      const written = JSON.stringify(submittedPages(save, "Sheet")[0]);
       expect(written).toContain("{{tine-query -- task DONE}}");
       expect(written).toContain("tine.sort:: priority desc");
 

@@ -12,6 +12,9 @@ import { setGraphMeta } from "../graphSession";
 import { OUTLINE_MAX_DEPTH } from "../editor/outline";
 import type { ClipboardBlock, ClipboardPayloadSlot } from "../clipboard";
 import type { BlockDto, PageDto } from "../types";
+import { answerOpensFromDocument } from "./host/documentHost.test.support";
+import { bindTestHost } from "./host/wiring.test.support";
+import { transferInProgress } from "./host/wiring";
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
 const block = (id: string, raw: string, children: BlockDto[] = []): BlockDto => ({ id, raw, collapsed: false, children });
@@ -34,13 +37,16 @@ function chainClipboard(levels: number): ClipboardBlock[] {
 }
 
 beforeAll(() => initParser());
-beforeEach(() => {
+beforeEach(async () => {
   resetStore();
   setToasts([]);
-  vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map((_, i) => `saved-${i}`) }));
+  answerOpensFromDocument(await bindTestHost());
   vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) => ids.map(() => null));
 });
-afterEach(() => {
+afterEach(async () => {
+  // A multi-page move keeps persisting after its intent returns: let it finish
+  // before the store is reset under it.
+  await vi.waitFor(() => expect(transferInProgress()).toBe(false));
   setGraphMeta(null);
   resetStore();
   setToasts([]);

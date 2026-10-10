@@ -2,6 +2,14 @@ use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs as disk, sync::Arc};
 
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(store: &Arc<Store>, run: impl FnOnce(&PageHost) -> T) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
 #[test]
 fn rename_plan_keeps_its_view_during_concurrent_referrer_write() {
     let root = std::env::temp_dir().join(format!(
@@ -14,28 +22,30 @@ fn rename_plan_keeps_its_view_during_concurrent_referrer_write() {
     disk::write(root.join("pages/Referrer.md"), "- [[Old]] before\n").unwrap();
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let written = AtomicBool::new(false);
-    rename_page_after_inventory(&store, None, "Old", "New", None, None, &[], || {
-        if written.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        let writer = Arc::clone(&store);
-        std::thread::spawn(move || {
-            let id = PageId::from("pages/Referrer.md");
-            let read = writer.page(&id).unwrap();
-            let mut doc = read.doc;
-            doc.blocks[0].raw = "[[Old]] concurrent".into();
-            assert!(matches!(
-                writer.save(
-                    tine_store::EditKind::ReplacePage,
-                    &id,
-                    SaveBase::Existing(read.rev),
-                    &doc
-                ),
-                SaveOutcome::Saved(_)
-            ));
+    hosted(&store, |host| {
+        rename_page_after_inventory(&store, host, "Old", "New", None, None, &[], || {
+            if written.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            let writer = Arc::clone(&store);
+            std::thread::spawn(move || {
+                let id = PageId::from("pages/Referrer.md");
+                let read = writer.page(&id).unwrap();
+                let mut doc = read.doc;
+                doc.blocks[0].raw = "[[Old]] concurrent".into();
+                assert!(matches!(
+                    writer.save(
+                        tine_store::EditKind::ReplacePage,
+                        &id,
+                        SaveBase::Existing(read.rev),
+                        &doc
+                    ),
+                    SaveOutcome::Saved(_)
+                ));
+            })
+            .join()
+            .unwrap();
         })
-        .join()
-        .unwrap();
     })
     .unwrap();
     assert!(root.join("pages/New.md").is_file());
@@ -56,18 +66,23 @@ fn delete_detects_an_external_twin_before_selecting_a_file() {
     ));
     disk::create_dir_all(root.join("pages")).unwrap();
     disk::write(root.join("pages/Old.md"), "- markdown\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let _ = store.whole_graph().unwrap();
     disk::write(root.join("pages/Old.org"), "* org\n").unwrap();
 
-    assert!(delete_page_expected(
-        &store,
-        None,
-        "Old",
-        tine_core::model::PageKind::Page,
-        None,
-        None
-    )
+    assert!(hosted(&store, |host| {
+        let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
+            .as_u64()
+            .unwrap();
+        delete_page_expected(
+            &store,
+            host,
+            session,
+            "Old",
+            tine_core::model::PageKind::Page,
+            None,
+        )
+    })
     .is_err());
     assert!(root.join("pages/Old.md").exists());
     assert!(root.join("pages/Old.org").exists());
@@ -523,7 +538,10 @@ fn a_config_change_between_targets_and_write_set_replans() {
     let before = b2_tree(&root);
     assert!(commit_rename(&store, "Ns", plan, &[]).unwrap().is_none());
     assert_eq!(b2_tree(&root), before);
-    rename_page_expected(&store, None, "Ns", "Space", None).unwrap();
+    hosted(&store, |host| {
+        rename_page_expected(&store, host, "Ns", "Space", None)
+    })
+    .unwrap();
     let after = b2_tree(&root);
     assert!(after.contains_key("Space___child.md"), "{after:?}");
     assert!(!after.contains_key("Space%2Fchild.md"), "{after:?}");
@@ -532,7 +550,9 @@ fn a_config_change_between_targets_and_write_set_replans() {
 
 /// H-Q3 (A-W1, B2), the retry bound: a config that changes during every
 /// plan exhausts the existing four attempts with no write; once it is
-/// stable the rename goes through, in the format it was planned in.
+/// stable the rename goes through, in the format it was planned in. Each
+/// attempt now plans more than once (the retained writer's discovery under
+/// its reservation, Q-P2b-1), so the bound is counted in attempts.
 #[test]
 fn a_config_changing_during_every_plan_exhausts_the_retries() {
     let (_dir, root, store) = b2_graph(&[
@@ -552,13 +572,27 @@ fn a_config_changing_during_every_plan_exhausts_the_retries() {
         };
         b2_deliver(&store, &root, config);
     };
-    let err = rename_page_after_inventory(&store, None, "Ns", "Space", None, None, &[], toggle)
-        .unwrap_err();
+    crate::ATTEMPTS.with(|n| n.set(0));
+    let err = hosted(&store, |host| {
+        rename_page_after_inventory(&store, host, "Ns", "Space", None, None, &[], toggle)
+    })
+    .unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
     assert_eq!(err.to_string(), "page changed repeatedly during rename");
-    assert_eq!(flips.get(), 4, "the existing bound: four plans");
+    assert_eq!(
+        crate::ATTEMPTS.with(|n| n.get()),
+        4,
+        "the existing bound: four attempts"
+    );
+    assert!(
+        flips.get() >= 4,
+        "every attempt planned under a changed config"
+    );
     assert_eq!(b2_tree(&root), before, "no write");
-    rename_page_after_inventory(&store, None, "Ns", "Space", None, None, &[], || {}).unwrap();
+    hosted(&store, |host| {
+        rename_page_after_inventory(&store, host, "Ns", "Space", None, None, &[], || {})
+    })
+    .unwrap();
     let after = b2_tree(&root);
     assert!(after.contains_key("Space%2Fchild.md"), "{after:?}");
     assert_eq!(after["Ref.md"], "- see [[Space/child]]\n");
@@ -579,20 +613,11 @@ fn a_hosted_rename_planned_before_a_config_change_replans() {
     disk::create_dir_all(&app).unwrap();
     let host = tine_store::PageHost::start_for_tests(&store, &app).unwrap();
     let delivered = AtomicBool::new(false);
-    rename_page_after_inventory(
-        &store,
-        Some(&host),
-        "Start",
-        "Begin/x",
-        None,
-        None,
-        &[],
-        || {
-            if !delivered.swap(true, Ordering::AcqRel) {
-                b2_deliver(&store, &root, B2_LOWBAR);
-            }
-        },
-    )
+    rename_page_after_inventory(&store, &host, "Start", "Begin/x", None, None, &[], || {
+        if !delivered.swap(true, Ordering::AcqRel) {
+            b2_deliver(&store, &root, B2_LOWBAR);
+        }
+    })
     .unwrap();
     let after = b2_tree(&root);
     assert!(after.contains_key("Begin___x.md"), "{after:?}");

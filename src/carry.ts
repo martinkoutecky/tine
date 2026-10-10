@@ -39,7 +39,9 @@ async function ensureToday(owner: Owner): Promise<string | null> {
   return pageByName(t) ? t : null;
 }
 
-async function report(n: number, today: string, owner: Owner): Promise<void> {
+async function report({ moved: n, persisted }: { moved: number; persisted: Promise<boolean> }, today: string, owner: Owner): Promise<void> {
+  // A move the host refused was restored and already told the user (P12).
+  if (!(await persisted) || !owner()) return;
   // If a touched page couldn't be saved (conflict / disk error), DON'T reload the
   // journals feed — that would re-read the old files and drop the carried blocks
   // from memory. Leave the move in memory and surface the failure.
@@ -95,8 +97,7 @@ export async function carryDay(pageName: string): Promise<void> {
     if (!(await ensureLoaded(pageName, "journal", owner))) return;
     if (!owner()) return;
     if (refuseConflictedMove([today, pageName])) return;
-    const n = carryUnfinished([pageName], carryKeepsContext(), carryHeaderText());
-    await report(n, today, owner);
+    await report(carryUnfinished([pageName], carryKeepsContext(), carryHeaderText()), today, owner);
   } catch (error) {
     if (owner()) pushToast(`Could not carry tasks: ${String(error)}`, "error");
   }
@@ -123,8 +124,7 @@ export async function carryDaysBack(days: number): Promise<void> {
     if (!owner()) return;
     const titles = candidates.filter((_, i) => loaded[i]); // skip days with no file
     if (refuseConflictedMove([today, ...titles])) return;
-    const n = carryUnfinished(titles, carryKeepsContext(), carryHeaderText());
-    await report(n, today, owner);
+    await report(carryUnfinished(titles, carryKeepsContext(), carryHeaderText()), today, owner);
   } catch (error) {
     if (owner()) pushToast(`Could not carry tasks: ${String(error)}`, "error");
   }

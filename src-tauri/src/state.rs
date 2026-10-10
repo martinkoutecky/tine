@@ -57,8 +57,9 @@ pub(crate) struct GraphSlot {
     pub(crate) host: RwLock<PageHostSlot>,
 }
 
-/// Where the binding's page host stands. `Off` until lane 3b's switch
-/// starts one.
+/// Where the binding's page host stands. `Off` before the open starts it,
+/// and after a restore whose fresh host could not start (writers then run
+/// as with no host).
 #[derive(Default)]
 pub(crate) enum PageHostSlot {
     #[default]
@@ -244,19 +245,19 @@ pub(crate) fn release_window_graph(graphs: &RwLock<GraphRegistry>, window: &str)
 /// (`windows`, which leaves out the window whose close left this exit). An
 /// open that adopted or bound meanwhile, an open still inside its load, or
 /// a window created during the wait (loaded or not) cancels the exit; the
-/// last close after it leaves its own. True when it exited.
+/// last close after it leaves its own. Whether it exited, or the roots whose
+/// hosts are still saving past `bound`: Tine never exits over them, and
+/// keeps their hosts (STEP3-DESIGN B-QA).
 pub(crate) fn exit_when_unowned(
     state: &AppState,
     bound: Duration,
     windows: impl FnOnce() -> bool,
     exit: impl FnOnce(),
-) -> bool {
+) -> Result<bool, Vec<PathBuf>> {
     let retirement = state.graphs.read().unwrap().retirement.clone();
-    if retirement.wait_idle(bound).is_err() {
-        // The host keeps its pages and Tine keeps running; the stuck-graph
-        // window is P2b (STEP3-DESIGN B-QA).
+    if let Err(stuck) = retirement.wait_idle(bound) {
         crate::debug::diag("page-host-retirement-stuck-at-exit");
-        return false;
+        return Err(stuck);
     }
     let _opens = state.graph_load.lock().unwrap();
     let unowned = {
@@ -267,7 +268,7 @@ pub(crate) fn exit_when_unowned(
     if exits {
         exit();
     }
-    exits
+    Ok(exits)
 }
 
 /// Whether one graph root contains the other: two Stores and hosts must
@@ -282,6 +283,31 @@ fn still_saving(root: &Path, saving: &Path) -> String {
         root.display(),
         saving.display()
     )
+}
+
+/// Before `window` opens `root` (REVIEW-3b-P1 F6): a window switching to a
+/// root nested in or enclosing its own graph's releases that graph first, so
+/// its page host retires (saving what it holds) before the open's host
+/// starts; the open then waits for it like any retiring overlap. Two hosts
+/// never hold the same page files. True when it released.
+pub(crate) fn release_own_overlap(
+    graphs: &RwLock<GraphRegistry>,
+    window: &str,
+    root: &Path,
+) -> bool {
+    let released = {
+        let mut registry = graphs.write().unwrap();
+        let overlaps = registry
+            .slot(window)
+            .is_some_and(|slot| slot.root_key != root && roots_overlap(&slot.root_key, root));
+        if !overlaps {
+            return false;
+        }
+        registry.remove(window)
+    };
+    // A slot with no host closes its Store here, outside the registry lock.
+    drop(released);
+    true
 }
 
 /// Before an open of `root`: wait, outside the registry lock, up to `bound`
@@ -559,7 +585,7 @@ pub(crate) fn slot_for_context(ctx: &GraphContext<'_>) -> Result<Arc<GraphSlot>,
 /// the frontend issues these commands through its ordered lane (`ORDERED_COMMANDS`
 /// in src/orderedWrites.ts) and the shared state each touches keeps its own lock
 /// (store writer, SETTINGS_LOCK, DRAFTS_LOCK, NOTICES_LOCK, WORKSPACES_LOCK).
-/// Exemplar: commands.rs `save_pages`. A panicking job returns its join error.
+/// Exemplar: commands/concord.rs `resolve_sync_conflict`. A panicking job returns its join error.
 pub(crate) async fn off_ui<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {

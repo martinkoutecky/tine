@@ -677,6 +677,15 @@ impl Core {
             }
             let observed = SystemTime::now();
             let current = match observed_before.get(id) {
+                // The watcher already holds exactly this observation (the
+                // publication read a file the watcher had stamped, unchanged):
+                // nothing is left to prove, and no open is needed (GH #623).
+                Some(before)
+                    if before.rev.as_ref() == expected.as_ref()
+                        && snapshot.get(&path) == Some(before) =>
+                {
+                    Some(before.clone())
+                }
                 // Publication stamped this file before reading the bytes it
                 // published (`expected`). Unchanged metadata since then proves
                 // those bytes are still on disk as well as a re-hash would,
@@ -967,19 +976,36 @@ impl WatchHandle {
     /// Reconcile released paths at once; one with no installed row (the
     /// owner never published it, or it was withheld) is reread whatever
     /// its stamp, so its disk row returns (REVIEW-3a4 #3).
+    ///
+    /// A path whose installed row is the revision the watcher last observed
+    /// on disk needs no reread (GH #623: a rename releases every referrer).
+    /// A change observed while held was forwarded and left a retry baseline
+    /// (`retry_baseline`), and an own write that raced is reconciled by its
+    /// publisher before the release; a change not yet observed reaches the
+    /// watcher as usual, now unheld, and a racy stamp stays in `racy` for
+    /// the next full diff (§5.4).
     fn reread_released(&self, paths: Vec<PathBuf>) {
-        let paths: HashSet<PathBuf> = paths.into_iter().collect();
+        let mut stale = HashSet::new();
         {
             let mut snapshot = self.core.snapshot.lock().unwrap();
-            for path in &paths {
-                if self.core.graph.cached_rev(path).is_none() {
-                    if let Some(stamp) = snapshot.get_mut(path) {
-                        stamp.rev = None;
+            for path in paths {
+                let installed = self.core.graph.cached_rev(&path).map(FileRev::from);
+                match snapshot.get_mut(&path) {
+                    Some(stamp)
+                        if installed.is_some()
+                            && stamp.rev == installed
+                            && stamp.modified.is_some()
+                            && stamp.len != u64::MAX =>
+                    {
+                        continue;
                     }
+                    Some(stamp) if installed.is_none() => stamp.rev = None,
+                    _ => {}
                 }
+                stale.insert(path);
             }
         }
-        self.reconcile_raced(&paths);
+        self.reconcile_raced(&stale);
     }
 
     #[cfg(test)]
@@ -1917,6 +1943,48 @@ mod tests {
                 page.name == "A" && page.document.roots[0].raw().contains("changed again")
             }));
         drop(writer);
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// GH #623 / REVIEW-3a4 #3: a release skips the reread of a path whose
+    /// installed row is the watcher's last observation, but a change the
+    /// watcher observed (and forwarded) while the page was held is not
+    /// that: the release installs the disk bytes. Writer held throughout,
+    /// so no poll can observe the file after the release instead.
+    #[test]
+    fn a_release_rereads_a_change_observed_while_held() {
+        let root = temp_root("release-forwarded");
+        let path = root.join("pages/a.md");
+        fs::write(&path, "- a\n").unwrap();
+        let (store, _, _) = Store::open(
+            &root,
+            OpenOptions {
+                watch: WatchMode::Poll,
+                ..OpenOptions::default()
+            },
+        )
+        .unwrap();
+        store.whole_graph().unwrap();
+        store.hold_page(&crate::PageId::from("pages/a.md")).unwrap();
+        let path = store.graph.root.join("pages/a.md");
+        {
+            let _writer = store.writer.lock().unwrap();
+            fs::write(&path, "- changed while held\n").unwrap();
+            store.watch.reconcile_raced(&HashSet::from([path.clone()]));
+            assert_eq!(
+                store.graph.cached_rev(&path),
+                Some(crate::model::content_rev("- a\n")),
+                "while held, the owner's row stays installed"
+            );
+            store.watch.release_hold("pages/a.md");
+            assert_eq!(
+                store.graph.cached_rev(&path),
+                Some(crate::model::content_rev("- changed while held\n")),
+                "the release kept the owner's row over a change it forwarded"
+            );
+        }
         store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();

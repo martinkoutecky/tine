@@ -20,6 +20,14 @@ pub(crate) fn rewrite(
     Ok(rewritten.into_bytes())
 }
 
+/// [`rewrite`]'s result `new`, which the rename planner computed from exactly
+/// `old` (GH #623): only the Org round-trip refusal is decided again.
+pub(crate) fn prepared(old: &[u8], new: Vec<u8>, path: &Path) -> Result<Vec<u8>, Why> {
+    let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
+    refuse_read_only_org(old, &new, is_org)?;
+    Ok(new)
+}
+
 /// Refuse changing an Org file that does not round-trip. Scenario: malformed
 /// imported Org content that Tine cannot rewrite without losing bytes.
 pub(super) fn refuse_read_only_org(old: &[u8], new: &[u8], is_org: bool) -> Result<(), Why> {

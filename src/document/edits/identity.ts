@@ -3,7 +3,7 @@ import { doc, formatForBlock, pageByName, setDoc } from "../model";
 import { captureBinding, bindingCurrent } from "../../binding";
 import { readOwned, bindingOwner } from "../../owned";
 import { blockWritable } from "./properties";
-import { markDirty, flushPage, isConflicted, persistTogether } from "../save/engine";
+import { isConflicted, markDirty, settleWithWitness } from "../host/wiring";
 import { backend } from "../../backend";
 import { ensurePageLoaded } from "../workingSet";
 import { editBlock, type BlockIdentityFacts } from "../../render/parse";
@@ -146,9 +146,9 @@ export async function ensureBlockId(id: string): Promise<string | null> {
     setDoc("byId", id, "raw", rawWithBlockId(node.raw, uuid, fmt));
     markDirty(node.page, "save-block");
   }
-  // Even a pre-existing id may not be on disk yet (added in-memory, not flushed);
-  // flush and only hand back the uuid if the write actually landed.
-  const ok = await flushPage(node.page);
+  // Even a pre-existing id may not be on disk yet (added in-memory, not flushed):
+  // hand back the uuid only once the page's published bytes carry it (§8, Q2).
+  const ok = await settleWithWitness(node.page, uuid);
   return ok && !isConflicted(node.page) && bindingCurrent(binding) ? uuid : null;
 }
 
@@ -188,7 +188,7 @@ async function stampBlockId(id: string, committed: string): Promise<string | nul
     setDoc("byId", id, "raw", rawWithBlockId(node.raw, uuid, fmt));
     markDirty(node.page, "save-block");
   }
-  const ok = await flushPage(node.page);
+  const ok = await settleWithWitness(node.page, uuid);
   return ok && !isConflicted(node.page) && bindingCurrent(binding) && doc.byId[id]?.page === node.page
     && existingBlockId(doc.byId[id].raw, fmt) === uuid ? uuid : null;
 }
@@ -229,12 +229,15 @@ export function settleBlockRef(ref: LoadedBlockRef): LoadedBlockRef | null {
  * (GH #373). Backend read errors reject; a missing, stale or unwritable
  * target resolves false. `externalId` is the ID to persist, stamped exactly. Without a callback,
  * flush the target page and resolve true only when its ID reaches disk.
- * With `insertReference`, validate the ID first, then call it synchronously to
- * edit the source and return its page name (null aborts without a write). The
- * grouped save writes the target ID before the source reference, so a crash
- * between files leaves at most an unreferenced ID. A failed save resolves false
- * and leaves both edits visible for conflict resolution. Cost: one page lookup
- * and one page or grouped save, possibly with other pending edits on the pages. */
+ * With `insertReference`, stamp the ID, wait until the target's published bytes
+ * carry it (STEP3 §8, Q2), then call it to edit the source and return its page
+ * name (null aborts). `intended` is the caller's editor intent, checked before
+ * the stamp; `insertReference` checks it again and returns null once it expired
+ * (Q-TS6), so an intent that expired during a lookup or a barrier stamps or
+ * inserts nothing. A crash between the two leaves at most an unreferenced ID.
+ * A failed barrier (conflict, save error) resolves false and leaves the source
+ * unedited. Cost: one page lookup and one target save, possibly with other
+ * pending edits on that page. */
 export async function persistBlockRefTarget(
   uuid: string,
   page: string,
@@ -242,6 +245,7 @@ export async function persistBlockRefTarget(
   path?: string,
   externalId: string = uuid,
   insertReference?: () => string | null,
+  intended: () => boolean = () => true,
 ): Promise<boolean> {
   const owner = bindingOwner();
   const ref: LoadedBlockRef = { uuid: externalId, page, pageKind: kind, ...(path ? { path } : {}) };
@@ -261,18 +265,20 @@ export async function persistBlockRefTarget(
   // `externalId` is the value the caller has committed (or will commit) as the
   // reference, so it is stamped exactly, even when it equals the runtime key.
   if (!insertReference) return (await stampBlockId(id, externalId)) === externalId;
+  if (!intended()) return false;
   const target = doc.byId[id];
   const fmt = formatForBlock(id);
   const existing = existingBlockId(target.raw, fmt);
   const stableId = existing ?? externalId;
   if (stableId !== externalId) return false;
-  const sourcePage = insertReference();
-  if (!sourcePage || !owner()) return false;
-  if (!existing) setDoc("byId", id, "raw", rawWithBlockId(target.raw, stableId, fmt));
-  // A reference may reach disk only after its target ID does. orderedMembers
-  // writes the dependency destination first, independent of page name order.
-  const saved = await persistTogether([sourcePage, target.page], "save-block", [[sourcePage, target.page]]);
-  return saved && !isConflicted(sourcePage) && !isConflicted(target.page)
-    && owner() && doc.byId[id]?.page === target.page
-    && existingBlockId(doc.byId[id].raw, fmt) === stableId;
+  if (!existing) {
+    setDoc("byId", id, "raw", rawWithBlockId(target.raw, stableId, fmt));
+    markDirty(target.page, "save-block");
+  }
+  // A reference may reach disk only after its target ID does (STEP3 §8, Q2):
+  // the source is edited only once the target's published bytes carry the ID
+  // and the live target still holds it. A failed barrier leaves the source as it was.
+  if (!await settleWithWitness(target.page, stableId) || !owner() || doc.byId[id]?.page !== target.page
+    || existingBlockId(doc.byId[id].raw, fmt) !== stableId) return false;
+  return !!insertReference() && !!owner();
 }

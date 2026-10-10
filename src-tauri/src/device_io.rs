@@ -10,6 +10,8 @@ use std::path::Path;
 #[path = "../../crates/tine-store/src/no_replace.rs"]
 mod no_replace;
 
+// The app uses only the atomic writers of this shared source.
+#[allow(dead_code)]
 #[path = "../../crates/tine-store/src/atomic_file.rs"]
 mod atomic_file;
 #[allow(dead_code)]

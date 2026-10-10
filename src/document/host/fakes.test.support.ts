@@ -17,8 +17,8 @@ export function textOf(dto: PageDto | null | undefined): string {
   return (dto?.blocks ?? []).map((block) => block.raw).join("\n");
 }
 
-export const NOTICE: MailNotice = { failures: 0, saveError: false, draftError: false, conflictReported: false,
-  custodyError: false, indexError: false, observeError: false, twin: null };
+export const NOTICE: MailNotice = { failures: 0, saveError: false, operation: null, osError: null, draftError: false, dropped: false,
+  conflictReported: false, custodyError: false, indexError: false, observeError: false, twin: null };
 
 export type Call =
   | { cmd: "open"; id: number; name: string; kind: PageKind; path: string | null }
@@ -128,7 +128,7 @@ export class FakeHost implements HostPort {
   async owed(session: number, paths: readonly string[] | null) {
     this.calls.push({ cmd: "owed", paths });
     if (this.calls.filter((call) => call.cmd === "owed").length > 1) this.onOwed?.();
-    return session === this.session ? [...this.owedPages] : null;
+    return session === this.session && [...this.owedPages];
   }
 
   last<K extends Call["cmd"]>(cmd: K): Extract<Call, { cmd: K }> {
@@ -182,6 +182,9 @@ export class FakeDoc implements DocumentPort {
   holds(name: string): boolean { return this.held.has(name); }
   holdsPush(name: string): boolean { return this.pushHeld.has(name); }
   tombstoned(name: string): boolean { return this.tombs.has(name); }
+  /** Took answers' revisions, in order. */
+  readonly tookRevs: [string, string][] = [];
+  took(name: string, rev: string): void { this.tookRevs.push([name, rev]); }
 }
 
 export class FakeAssets implements AssetWrites {
@@ -274,8 +277,7 @@ export function autoAnswer(ctx: { host: FakeHost; doc: FakeDoc; client: HostClie
         host.owedPages.push({ key: call.source[0], version }, { key: call.receiver[0], version });
         return [call.source[0], call.receiver[0]].map((key) =>
           mail(s, key, mailPage(version, { kind: "unchanged", rev: `r${version}` }), took(call.id, version)));
-      case "close":
-        return [mail(s, call.key, null, applied(call.id, 0))];
+      // A close is never answered (model upClose): the host only unsubscribes.
       default:
         return [];
     }

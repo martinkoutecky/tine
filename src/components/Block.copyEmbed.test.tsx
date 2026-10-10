@@ -2,7 +2,7 @@
 // mirroring the builtin Mod+C block-ref copy. With a live text selection the
 // handler must decline (no preventDefault, no clipboard write) so the
 // platform's ordinary copy keeps its meaning.
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -14,6 +14,8 @@ import { pageByName } from "../document/model";
 import type { BlockDto, PageDto } from "../types";
 import { installKeybindings } from "../keybindings";
 import { Block } from "./Block";
+import { bindTestHost } from "../document/host/wiring.test.support";
+import { openAsLoaded } from "./hostConflict.test.support";
 
 const UUID = "8a67e2b1-70d7-4878-961b-c17dc3dc78bf";
 
@@ -57,6 +59,12 @@ beforeAll(async () => {
 
 afterAll(() => {
   disposeKeys?.();
+});
+
+// Copying a reference publishes the block's ID first, through the page host;
+// the host read the page the window shows (the mock graph has no such page).
+beforeEach(async () => {
+  openAsLoaded(await bindTestHost());
 });
 
 afterEach(() => {

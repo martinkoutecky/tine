@@ -27,8 +27,7 @@ import { pushToast } from "../toasts";
 import { conflictQueue, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, settleArtifactConflict } from "../ui";
 import { openFile } from "../router";
 import { ConflictFileRow } from "./JournalConflictFileRow";
-import { applyGraphChange, conflictReason, flushPage, installLiveResolution, isConflicted, isDirty, isSaving, liveConflictDraft, node, sameLiveDraft } from "../document";
-import { dismissEarlierDraft } from "../draftStore";
+import { applyGraphChange, applyLiveResolution, conflictReason, flushPage, isConflicted, isDirty, isSaving, liveConflictDraft, node } from "../document";
 import { editingId } from "../editorController";
 import { readOr } from "../resourceRead";
 import {
@@ -81,11 +80,10 @@ async function readDiff(c: ConflictObject, alive: () => boolean): Promise<DiffRe
     if (c.source === "live-save") {
       // The exact draft this review shows: Apply writes it only while the
       // editor still holds it, so later typing is never replaced unseen.
-      const open = c.live?.page ? null : liveConflictDraft(c.page_name);
-      const draft = c.live?.page ?? open?.page;
-      if (!c.live || !draft) return { diff: null };
-      const read = await readOwned(owner, backend().liveConflictDiff(c.page_path, draft, open ? open.baseRev : c.live.base_rev));
-      return read.kind === "current" ? { diff: read.value, draft, generation: open?.generation ?? null } : { diff: null };
+      const open = liveConflictDraft(c.page_name);
+      if (!c.live || !open) return { diff: null };
+      const read = await readOwned(owner, backend().liveConflictDiff(c.page_path, open.page, open.baseRev));
+      return read.kind === "current" ? { diff: read.value, draft: open.page, generation: open.generation } : { diff: null };
     }
     if (c.source === "vcs-markers") {
       const parsed = await readOwned(owner, backend().vcsMarkerConflictDiff(c.page_path));
@@ -254,56 +252,19 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     setBusy(true);
     try {
       if (source === "live-save") {
-        if (!live || !reviewed) return;
-        if (live.restored) {
-          // After a restart the editor holds the disk version and the capsule
-          // is the only copy of the draft: never resolve over newer edits.
-          // Newer edits to the reopened page are saved first and the kept draft
-          // is re-reviewed against them (the guarded write would refuse the
-          // stale review anyway); a conflict of their own is settled first.
-          if (isConflicted(pageName)) {
-            pushToast("This reopened page has its own save conflict. Resolve it first, then resolve the kept draft.", "info");
-            return;
-          }
-          if (isDirty(pageName) || isSaving(pageName)) {
-            const ed = editingId();
-            if (ed && node(ed)?.page === pageName) {
-              pushToast("Finish the current edit, then apply this resolution.", "info");
-              return;
-            }
-            await saveThenReview("Your newer edits to this page were saved. Review the kept draft against them, then apply it again.");
-            return;
-          }
-          const result = await writeOwned(owner, backend().resolveLiveConflict(pagePath, reviewed, live.base_rev,
-            current.conflict_rev, current.merge_base_rev, decisions(), preChoice()));
-          if (result.kind === "stale" || !owner()) return;
-          // The guarded commit is the durable resolution; retire the capsule
-          // after it (a crash in between offers an already-resolved draft,
-          // never loses one), then show the result through the ordinary rule.
-          if (live.record_id) await dismissEarlierDraft(live.record_id);
-          if (!owner()) return;
-          await applyGraphChange({ path: pagePath, name: pageName, kind, created: false, removed: false }, true);
-          if (!owner()) return;
-          pushToast(`Resolved your kept draft of “${pageName}”`, "success");
-          return;
-        }
+        if (!live || !reviewed || reviewedGeneration === null) return;
         const ed = editingId();
         if (ed && node(ed)?.page === pageName) {
           pushToast("Finish the current edit, then apply this resolution.", "info");
           return;
         }
-        const now = liveConflictDraft(pageName);
-        if (!now || now.generation !== reviewedGeneration || !sameLiveDraft(now.page, reviewed)) {
-          refresh("Your draft changed. Review the updated comparison, then apply it again.");
-          return;
-        }
-        const result = await writeOwned(owner, backend().resolveLiveConflict(pagePath, reviewed, now.baseRev,
+        // The merge is computed natively from the reviewed draft and submitted
+        // on the reviewed disk state only if no input arrived since the review.
+        const outcome = await writeOwned(owner, applyLiveResolution(pageName, reviewedGeneration, reviewed, pagePath,
           current.conflict_rev, current.merge_base_rev, decisions(), preChoice()));
-        if (result.kind === "stale" || !owner()) return;
-        const installed = await installLiveResolution(pageName, now.generation, reviewed, { ...result.value, id: pagePath });
-        if (!owner()) return;
-        if (installed === "installed") pushToast(`Resolved the conflict in “${pageName}”`, "success");
-        else if (installed === "kept") pushToast(`The resolution was written, and your edits made since the review are kept. Review “${pageName}” again.`, "info");
+        if (outcome.kind === "stale" || !owner()) return;
+        if (outcome.value === "installed") pushToast(`Resolved the conflict in “${pageName}”`, "success");
+        else refresh("Your draft or the file changed. Review the updated comparison, then apply it again.");
         return;
       }
       // The open editor must not autosave its pre-merge text over the result.
@@ -462,7 +423,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
                 <Show when={conflict().source === "sync-copy"}> The copy is safe to discard from the Conflicts overview.</Show>
                 <Show when={conflict().source === "duplicate-journal"}> The other file is safe to trash above.</Show>
                 <Show when={conflict().source === "live-save"}>
-                  {conflict().live?.restored ? " The kept draft can be dismissed from Unsaved changes." : " “Use disk version” above loses nothing."}
+                  {" “Use disk version” above loses nothing."}
                 </Show>
               </div>
             }

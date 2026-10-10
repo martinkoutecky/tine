@@ -5,11 +5,12 @@
 // base-revision guard accepts. These tests drive the real undo()/redo() entry points.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../render/parse";
-import { backend } from "../backend";
 import { deleteBlock, ensurePageLoaded, flushAll, isDirty, loadFeed, pageByName, redo, resetStore, setRaw, splitBlock, undo } from "./index";
 import { doc } from "./model";
 import { setToasts, toasts } from "../toasts";
 import type { BlockDto, PageDto } from "../types";
+import { answerOpensFromDocument } from "./host/documentHost.test.support";
+import { bindTestHost } from "./host/wiring.test.support";
 
 let serial = 0;
 const block = (raw: string): BlockDto => ({ id: `hi-${++serial}`, raw, collapsed: false, children: [] });
@@ -25,11 +26,11 @@ function evict(name: string) {
 }
 
 beforeAll(() => initParser());
-beforeEach(() => {
+beforeEach(async () => {
   serial = 0;
   resetStore();
   setToasts([]);
-  vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map((_, i) => `saved-${i}`) }));
+  answerOpensFromDocument(await bindTestHost());
 });
 afterEach(() => vi.restoreAllMocks());
 

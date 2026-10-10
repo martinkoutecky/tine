@@ -10,7 +10,7 @@ export function revealNode(id: string): void {
 import { applyMarkerTransition } from "../../logbook";
 import { timetrackingEnabled, logbookWithSecondSupport, logicalOutdenting, removeDeletedBlocksFromSidebar } from "../../ui";
 import { pushRawUndo, pushUndo, undo, undoTopTag } from "../history";
-import { markDirty, noteTitleIdentityIntent } from "../save/engine";
+import { markDirty, noteTitleIdentityIntent } from "../host/wiring";
 import { produce } from "solid-js/store";
 import { OUTLINE_MAX_DEPTH, outlineDepth, type OutlineNode } from "../../editor/outline";
 import { splitProps, isBuiltinHidden, joinProps, isPropertiesOnly, readPropertyValue } from "../../editor/properties";

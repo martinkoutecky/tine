@@ -13,6 +13,7 @@
 use super::binding::{Book, Delivery, Indexing, Publication};
 use super::progress::{Clock, Progress};
 use super::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -190,6 +191,8 @@ impl<F: HostIo, C: Clock> State<F, C> {
 pub(super) struct Shared<F: HostIo, C: Clock> {
     pub state: Mutex<State<F, C>>,
     condition: Condvar,
+    /// The driver thread returned or unwound: nothing will answer a caller.
+    ended: AtomicBool,
 }
 
 impl<F: HostIo, C: Clock> Shared<F, C> {
@@ -233,6 +236,32 @@ impl<F: HostIo, C: Clock> Shared<F, C> {
     ) -> MutexGuard<'a, State<F, C>> {
         self.condition.wait_timeout(state, timeout).unwrap().0
     }
+
+    /// [`Self::wait`] for an operation's caller: None once the state is
+    /// poisoned or the driver ended, never a panic (Finding B, R2).
+    pub fn wait_checked<'a>(
+        &self,
+        state: MutexGuard<'a, State<F, C>>,
+        timeout: Duration,
+    ) -> Option<MutexGuard<'a, State<F, C>>> {
+        let state = self.condition.wait_timeout(state, timeout).ok()?.0;
+        (!self.ended.load(Ordering::SeqCst)).then_some(state)
+    }
+
+    pub fn ended(&self) -> bool {
+        self.ended.load(Ordering::SeqCst)
+    }
+}
+
+/// Marks the driver ended on every exit, an unwind included, and wakes
+/// every waiting caller.
+struct Ended<'a, F: HostIo, C: Clock>(&'a Shared<F, C>);
+
+impl<F: HostIo, C: Clock> Drop for Ended<'_, F, C> {
+    fn drop(&mut self) {
+        self.0.ended.store(true, Ordering::SeqCst);
+        self.0.condition.notify_all();
+    }
 }
 
 pub(super) struct Driver<F: HostIo, C: Clock> {
@@ -259,6 +288,7 @@ where
                 polls: 0,
             }),
             condition: Condvar::new(),
+            ended: AtomicBool::new(false),
         });
         let thread = {
             let shared = shared.clone();
@@ -383,6 +413,7 @@ pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
 }
 
 fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
+    let _ended = Ended(shared);
     loop {
         // Every step retakes the state mutex, so admission, watcher reads
         // and reservations interleave with a long run of driver steps.

@@ -142,9 +142,6 @@ Use it to get a before/after curve on the graph-scale perf-audit fixes: a health
 scan is ~flat per-item as scale grows; a fanout (e.g. `find_entry` re-walking the
 dir on every lookup) grows with scale.
 
-There is also `sheets_phase0_bench` (query/edit-cycle costs at 10k–200k blocks) in
-the same examples dir.
-
 ## Deferred
 
 - **Tab-switch** and **per-keystroke typing** metrics — dropped from this pass

@@ -6,13 +6,13 @@
 //! [`Store::read`] and [`Store::open_read`] provide raw file data. These calls
 //! are synchronous and should run off a UI thread.
 //!
-//! Use [`Store::save_pages`] for guarded page edits, or [`Transaction`] for a set
+//! Page edits go through the [`PageHost`]; use [`Transaction`] for a set
 //! of guarded file changes, including a read-only revision expectation that
 //! can precede a dependent write. Structured page saves require an [`EditKind`]; raw
 //! page-file changes use [`Store::transaction`] with `Some(kind)`, while
 //! asset/config changes pass `None`. Restore also declares
-//! `replace-page`. The kinds remain in memory and add no disk bytes. Missing
-//! structured-save kinds are refused before writing. A [`FileRev`] identifies the bytes an edit was
+//! `replace-page`. The kinds remain in memory and add no disk bytes. A
+//! structured save without a kind panics before writing (OG-RULES Rule 8). A [`FileRev`] identifies the bytes an edit was
 //! based on. Creates use a no-clobber rename; replacements use an ordinary
 //! rename after the final revision guard. An external process can replace a
 //! file between that comparison and the rename; an expectation likewise leaves
@@ -93,6 +93,9 @@ mod no_replace;
 #[cfg(test)]
 mod no_replace_tests;
 mod page_host;
+/// Fault and abort plants in the page host's I/O (tests only, Q-P2b-2).
+#[cfg(feature = "test-faults")]
+pub use page_host::faults as host_faults;
 pub use page_host::{
     DiskToken, DraftStatus, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal,
     Reloaded, RenameRefusal, Reservation, StopMode, StopState, Stopped,
@@ -123,8 +126,8 @@ pub use store::{
     Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, Depth, FacetPolicy, FileEntry,
     FileId, FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry,
     InventoryScope, IrAnswer, IrRequest, Listing, LoadError, OpenError, OpenOptions, Origin,
-    PageId, PageRead, QueryError, Resolved, SaveBase, SaveOutcome, SavePagesOutcome, SearchRequest,
-    Store, StoreError, Subscription, SubscriptionEnd, TrashKind, WatchBatch, WatchMode, WholeGraph,
+    PageId, PageRead, QueryError, Resolved, SaveBase, SaveOutcome, SearchRequest, Store,
+    StoreError, Subscription, SubscriptionEnd, TrashKind, WatchBatch, WatchMode, WholeGraph,
 };
 #[cfg(any(test, feature = "test-faults"))]
 pub use store::{QueryDialect, QueryResult};

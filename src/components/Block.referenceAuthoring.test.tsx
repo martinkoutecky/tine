@@ -10,6 +10,9 @@ import { initParser } from "../render/parse";
 import { refreshPageIndex, resetPageIndex } from "../pageIndex";
 import type { BlockDto, PageDto, PageEntry, PageRead } from "../types";
 import { Block } from "./Block";
+import { isConflicted } from "../document/host/wiring";
+import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
+import { openAsLoaded } from "./hostConflict.test.support";
 
 beforeAll(() => initParser());
 
@@ -197,7 +200,8 @@ describe("reference authoring", () => {
       id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null,
       blocks: [{ id: "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add", raw: properties ? `test\nid:: ${expectedId}` : "test", collapsed: false, children: [] }],
     });
-    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
+    openAsLoaded(await bindTestHost());
+    const save = vi.spyOn(backend(), "pageSubmit");
     loadSingle(page("((test"));
     startEditing("reference-authoring", 6);
     const { root, dispose } = mount(() => (
@@ -209,12 +213,14 @@ describe("reference authoring", () => {
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
       accept(textarea);
       await vi.waitFor(() => expect(doc.byId["reference-authoring"].raw).toBe(`((${expectedId})) `));
+      // The target's ID went to the host before the reference (STEP3 §8, Q2).
+      if (!properties) expect(submittedPages(save, "Source")[0].blocks[0].raw).toContain(expectedId);
     } finally {
       dispose();
     }
   });
 
-  it("keeps the paired reference visible for conflict resolution when the grouped save fails", async () => {
+  it("leaves the source unedited and the target conflicted when the target's ID cannot publish", async () => {
     const uuid = "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add";
     vi.spyOn(backend(), "search").mockResolvedValue([{
       page: "Source", kind: "page", blocks: [{ id: uuid, raw: "test", collapsed: false, children: [] }], evidence: [],
@@ -223,7 +229,19 @@ describe("reference authoring", () => {
       id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null,
       blocks: [{ id: uuid, raw: "test", collapsed: false, children: [] }],
     });
-    vi.spyOn(backend(), "savePages").mockResolvedValue({ failed: { index: 0, family: "conflict", undoFailed: [] } });
+    const host = await bindTestHost();
+    openAsLoaded(host);
+    // The target's file changed on disk: the host takes the stamped submit as
+    // a conflict (its answer reports it) instead of publishing it.
+    const submit = backend().pageSubmit.bind(backend());
+    const save = vi.spyOn(backend(), "pageSubmit").mockImplementation(async (...args) => {
+      if (args[2] !== "pages/Source.md") return submit(...args);
+      const [, id, key] = args;
+      queueMicrotask(() => host.deliver({ key, answer: { id, version: 3, took: true, outcome: { kind: "applied" } },
+        notice: { conflictReported: true },
+        page: { version: 3, conflict: true, risk: true, disk: { kind: "file", rev: "disk-2" }, text: { kind: "unchanged" } } }));
+      return null;
+    });
     loadSingle(page("((test"));
     startEditing("reference-authoring", 6);
     const { root, dispose } = mount(() => (
@@ -234,10 +252,13 @@ describe("reference authoring", () => {
       inputAt(textarea, "((test", 6);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
       accept(textarea);
-      await vi.waitFor(() => expect(backend().savePages).toHaveBeenCalled());
-      expect(doc.byId["reference-authoring"].raw).toBe(`((${uuid})) `);
-      expect(vi.mocked(backend().savePages).mock.calls[0][0].map((item) => item.page.name).sort())
-        .toEqual(["Reference authoring", "Source"]);
+      await vi.waitFor(() => expect(isConflicted("Source")).toBe(true));
+      expect(submittedPages(save, "Source")[0].blocks[0].raw).toContain(uuid);
+      // A reference reaches disk only after its target ID does (STEP3 §8, Q2).
+      expect(doc.byId["reference-authoring"].raw).not.toContain(uuid);
+      expect(submittedPages(save, "Reference authoring").some((dto) => JSON.stringify(dto).includes(uuid))).toBe(false);
+      // The stamped target stays in the window for conflict resolution.
+      expect(doc.byId[uuid].raw).toContain(uuid);
     } finally { dispose(); }
   });
 
@@ -248,7 +269,8 @@ describe("reference authoring", () => {
       page: "Source", kind: "page", blocks: [{ id: uuid, raw: "test", collapsed: false, children: [] }], evidence: [],
     }]);
     vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
+    openAsLoaded(await bindTestHost());
+    const save = vi.spyOn(backend(), "pageSubmit");
     loadSingle(page("((test"));
     startEditing("reference-authoring", 6);
     const { root, dispose } = mount(() => (
@@ -264,7 +286,7 @@ describe("reference authoring", () => {
       finish({ id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null,
         blocks: [{ id: uuid, raw: "test", collapsed: false, children: [] }] });
       await vi.waitFor(() => expect(pageByName("Source")).toBeTruthy());
-      expect(save).not.toHaveBeenCalled();
+      expect(submittedPages(save, "Source")).toEqual([]);
       expect(doc.byId[uuid].raw).toBe("test");
     } finally { dispose(); }
   });

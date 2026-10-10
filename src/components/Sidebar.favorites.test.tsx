@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { render } from "solid-js/web";
 import "../graph"; // installs the Favorites page door, as at app start
-import { backend, type SavePageEntry } from "../backend";
+import { backend } from "../backend";
+import type { EditKinds } from "../editKind";
+import type { PageDto } from "../types";
+import { bindTestHost } from "../document/host/wiring.test.support";
 import { favorites, seedFavorites, setRecentPages } from "../ui";
 import { openJournals, route } from "../router";
 import { Sidebar } from "./Sidebar";
@@ -19,14 +22,20 @@ const pointer = (type: string, x: number, y: number) =>
   new ((window as { PointerEvent?: typeof PointerEvent }).PointerEvent ?? MouseEvent)(type,
     { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1 }) as PointerEvent;
 
-let saved: SavePageEntry[];
+/** What the page host was handed: each submitted page and its edit kinds. */
+let saved: { page: PageDto; kinds: EditKinds }[];
 let configWrites: [string[], string | null | undefined][];
-beforeEach(() => {
+beforeEach(async () => {
+  await bindTestHost();
   saved = [];
   configWrites = [];
   vi.spyOn(backend(), "getPage").mockResolvedValue(null);
   vi.spyOn(backend(), "resolvePage").mockImplementation(async (name: string) => ({ kind: "absent", id: `pages/${name}.md` }));
-  vi.spyOn(backend(), "savePages").mockImplementation(async (entries: SavePageEntry[]) => { saved.push(...entries); return { ok: ["r1"] }; });
+  const submit = backend().pageSubmit.bind(backend());
+  vi.spyOn(backend(), "pageSubmit").mockImplementation(async (...args) => {
+    saved.push({ page: args[3], kinds: args[6] });
+    return submit(...args);
+  });
   vi.spyOn(backend(), "setFavorites").mockImplementation(async (names: string[], page?: string | null) => { configWrites.push([names, page]); });
 });
 afterEach(async () => {

@@ -3,7 +3,8 @@ import { splitProps, hideAll, joinProps, isBuiltinHidden } from "../../editor/pr
 import { type ClipboardBlock, type ClipboardPayloadSlot, consumeCutGrant } from "../../clipboard";
 import { doc, Node, formatForPage, freshId, setDoc, hasLoadedIdentityCollision, loadedIdentityCollisions } from "../model";
 import { graphTransitioning } from "../../ui";
-import { pageInstanceGeneration, markDirty, flushCutSourcePages, cutSourcePagesRetired } from "../save/engine";
+import { pageInstanceGeneration } from "../instance";
+import { cutSourcePagesRetired, flushCutSourcePages, markDirty } from "../host/wiring";
 import { graphEpoch, graphMeta } from "../../graphSession";
 import { ownedWhen, readOwned } from "../../owned";
 import { unwrap, produce } from "solid-js/store";

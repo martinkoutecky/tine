@@ -3,12 +3,14 @@
 // the single-block move uses ("Outline is too deep to move"), not vanish.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../render/parse";
-import { backend } from "../backend";
 import { isDirty, loadFeed, moveBlocksRelative, resetStore } from "./index";
 import { doc } from "./model";
 import { setToasts, toasts } from "../toasts";
 import { OUTLINE_MAX_DEPTH } from "../editor/outline";
 import type { BlockDto, PageDto } from "../types";
+import { answerOpensFromDocument } from "./host/documentHost.test.support";
+import { bindTestHost } from "./host/wiring.test.support";
+import { transferInProgress } from "./host/wiring";
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
 const block = (id: string, raw: string, children: BlockDto[] = []): BlockDto => ({ id, raw, collapsed: false, children });
@@ -23,12 +25,15 @@ function chain(levels: number, base: number): BlockDto {
 const tooDeep = () => toasts().filter((t) => /Outline is too deep to move/.test(t.message));
 
 beforeAll(() => initParser());
-beforeEach(() => {
+beforeEach(async () => {
   resetStore();
   setToasts([]);
-  vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map((_, i) => `saved-${i}`) }));
+  answerOpensFromDocument(await bindTestHost());
 });
-afterEach(() => {
+afterEach(async () => {
+  // A multi-page move keeps persisting after its intent returns: let it finish
+  // before the store is reset under it.
+  await vi.waitFor(() => expect(transferInProgress()).toBe(false));
   resetStore();
   setToasts([]);
   vi.restoreAllMocks();

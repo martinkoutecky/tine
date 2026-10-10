@@ -9,7 +9,8 @@ import { ContextMenu } from "./components/ContextMenu";
 import { openPageContextMenu, openContextMenu, closeContextMenu } from "./ui";
 import { initParser } from "./render/parse";
 import { loadSingle } from "./document/workingSet";
-import { resetStore, pageByName } from "./document";
+import { isDirty, resetStore, pageByName } from "./document";
+import { bindTestHost } from "./document/host/wiring.test.support";
 import { setGraphMeta, bumpGraphEpoch } from "./graphSession";
 import { setToasts, toasts } from "./toasts";
 import { invalidateBinding } from "./binding";
@@ -23,7 +24,9 @@ beforeAll(initParser);
 afterEach(() => { dispose(); closeContextMenu(); vi.restoreAllMocks(); delete backend().tineLinks;
   resetStore(); setGraphMeta(null); setToasts([]); document.body.innerHTML = "";
   resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 }); });
-function setup() {
+async function setup() {
+  // Bound: any edit would reach the page host (`pageSubmit`).
+  await bindTestHost();
   setGraphMeta({ root, pages_dir: "pages", journals_dir: "journals", assets_dir: "assets" } as any);
   loadSingle(dto);
   const api = backend();
@@ -37,35 +40,35 @@ function setup() {
 }
 describe("GH #181 literal menu and navigation boundaries", () => {
   it("copies a page link from Page actions without changing its content", async () => {
-    const api = setup(); const write = vi.spyOn(api, "writeText").mockResolvedValue();
-    const save = vi.spyOn(api, "savePages");
+    const api = await setup(); const write = vi.spyOn(api, "writeText").mockResolvedValue();
+    const save = vi.spyOn(api, "pageSubmit");
     const before = JSON.stringify(pageByName(dto.name));
     openPageContextMenu(10, 10, dto.name, "page", true);
     document.querySelector<HTMLButtonElement>('[data-page-action-id="copy-link"]')!.click();
     await vi.waitFor(() => expect(write).toHaveBeenCalledWith(pageLink(dto.name, id)));
-    expect(JSON.stringify(pageByName(dto.name))).toBe(before); expect(save).not.toHaveBeenCalled();
+    expect(JSON.stringify(pageByName(dto.name))).toBe(before); expect(save).not.toHaveBeenCalled(); expect(isDirty(dto.name)).toBe(false);
   });
   it("copies an already identified block from its literal menu", async () => {
-    const api = setup(); const write = vi.spyOn(api, "writeText").mockResolvedValue();
+    const api = await setup(); const write = vi.spyOn(api, "writeText").mockResolvedValue();
     openContextMenu(10, 10, id);
     [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.trim() === "Copy link")!.click();
     await vi.waitFor(() => expect(write).toHaveBeenCalledWith(blockLink(id)));
   });
   it("navigates an existing external page in the real focused router without saving", async () => {
-    const api = setup(); const save = vi.spyOn(api, "savePages");
+    const api = await setup(); const save = vi.spyOn(api, "pageSubmit");
     await openTineLink({ kind: "url", url: pageLink(dto.name, id) });
     expect(focusedRouter().route()).toMatchObject({ kind: "page", name: dto.name, path: dto.id });
-    expect(save).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled(); expect(isDirty(dto.name)).toBe(false);
   });
   it("opens a block by UUID with a zoom route, never changing collapsed content", async () => {
-    const api = setup(); const save = vi.spyOn(api, "savePages");
+    const api = await setup(); const save = vi.spyOn(api, "pageSubmit");
     vi.mocked(api.tineLinks!.scanKnownGraphs).mockResolvedValue([{ root, name: dto.name, pageKind: dto.kind, path: dto.id, block: id }]);
     await openTineLink({ kind: "url", url: blockLink(id) });
     expect(focusedRouter().route()).toMatchObject({ kind: "page", name: dto.name, block: id });
-    expect(save).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled(); expect(isDirty(dto.name)).toBe(false);
   });
   it("opens in the focused split pane while keeping the other pane's route", async () => {
-    setup();
+    await setup();
     const before = paneRouter("main").route();
     const other = splitPane("main", "row")!;
     focusPane(other);
@@ -74,7 +77,7 @@ describe("GH #181 literal menu and navigation boundaries", () => {
     expect(paneRouter("main").route()).toEqual(before);
   });
   it("reports unknown graphs and deleted pages while keeping the current route", async () => {
-    const api = setup(); const before = focusedRouter().route();
+    const api = await setup(); const before = focusedRouter().route();
     vi.mocked(api.tineLinks!.scanKnownGraphs).mockRejectedValueOnce(new Error("Unknown graph"));
     await openTineLink({ kind: "url", url: pageLink("missing", id) });
     expect(focusedRouter().route()).toEqual(before); expect(toasts().at(-1)?.message).toContain("Unknown graph");
@@ -83,7 +86,7 @@ describe("GH #181 literal menu and navigation boundaries", () => {
     expect(focusedRouter().route()).toEqual(before); expect(toasts().at(-1)?.message).toContain("no longer exists");
   });
   it("asks which graph copy to use once, then remembers the explicit selection", async () => {
-    const api = setup();
+    const api = await setup();
     vi.mocked(api.tineLinks!.scanKnownGraphs).mockResolvedValue([{ root: "/copy", graphId: id }, { root, graphId: id }]);
     let remembered = "";
     vi.spyOn(api, "getAppString").mockImplementation(async () => remembered);
@@ -103,13 +106,13 @@ describe("GH #181 literal menu and navigation boundaries", () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull(); expect(remember).toHaveBeenCalledTimes(1);
   });
   it("hands a link to the window that already owns its graph", async () => {
-    const api = setup(); vi.mocked(api.tineLinks!.handoff).mockResolvedValue(true);
+    const api = await setup(); vi.mocked(api.tineLinks!.handoff).mockResolvedValue(true);
     const before = focusedRouter().route();
     await openTineLink({ kind: "url", url: pageLink(dto.name, id) });
     expect(focusedRouter().route()).toEqual(before); expect(api.getPageByPath).not.toHaveBeenCalled();
   });
   it.each([null, "Graph read failed"])("refuses an unavailable target in the remembered graph copy (%s) instead of using another copy", async (error) => {
-    const api = setup();
+    const api = await setup();
     const before = focusedRouter().route();
     vi.mocked(api.tineLinks!.scanKnownGraphs).mockResolvedValue([
       { root: "/another-copy", graphId: id, name: dto.name, path: dto.id },
@@ -125,7 +128,7 @@ describe("GH #181 literal menu and navigation boundaries", () => {
   // and loadGraph's new backend binding generation) and repaints (graphEpoch).
   const switchGraph = () => { invalidateBinding(); bumpGraphEpoch(); };
   it("cancels stale identity copies and resolutions after a graph switch", async () => {
-    const api = setup(); const write = vi.spyOn(api, "writeText");
+    const api = await setup(); const write = vi.spyOn(api, "writeText");
     vi.mocked(api.tineLinks!.identity).mockImplementation(async () => { switchGraph(); return id; });
     await copyTineLink({ page: dto.name }); expect(write).not.toHaveBeenCalled();
     const before = focusedRouter().route();
@@ -133,7 +136,7 @@ describe("GH #181 literal menu and navigation boundaries", () => {
     await openTineLink({ kind: "url", url: pageLink(dto.name, id) }); expect(focusedRouter().route()).toEqual(before);
   });
   it("finishes a link copy across a display-only repaint of the same graph (R4)", async () => {
-    const api = setup(); const write = vi.spyOn(api, "writeText");
+    const api = await setup(); const write = vi.spyOn(api, "writeText");
     vi.mocked(api.tineLinks!.identity).mockImplementation(async () => { bumpGraphEpoch(); return id; });
     await copyTineLink({ page: dto.name });
     expect(write).toHaveBeenCalledWith(pageLink(dto.name, id));

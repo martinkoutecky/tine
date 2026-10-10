@@ -21,7 +21,7 @@ const GROUPS: { source: ConflictSource; title: string }[] = [
 
 export function conflictSourceLabel(conflict: ConflictObject): string {
   const side = (role: "mine" | "theirs") => conflict.sides.find((s) => s.role === role)?.label;
-  if (conflict.source === "live-save") return conflict.live?.restored ? "kept draft from an earlier session" : "unsaved draft";
+  if (conflict.source === "live-save") return "unsaved draft";
   if (conflict.source === "duplicate-journal") return `${conflict.sides.length} files for one day`;
   return conflict.source === "sync-copy"
     ? `sync copy · ${side("theirs") ?? "conflict copy"}`

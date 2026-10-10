@@ -11,9 +11,14 @@ import { loadSingle } from "../workingSet";
 import { doc } from "../model";
 import { backend } from "../../backend";
 import type { BlockDto, PageDto } from "../../types";
+import { transferInProgress } from "../host/wiring";
+import { answerOpensFromDocument } from "../host/documentHost.test.support";
+import { bindTestHost } from "../host/wiring.test.support";
 
 beforeAll(() => initParser());
-afterEach(() => {
+afterEach(async () => {
+  // A multi-page move keeps persisting after its intent returns.
+  await vi.waitFor(() => expect(transferInProgress()).toBe(false));
   vi.restoreAllMocks();
   resetStore();
 });
@@ -22,6 +27,13 @@ const blk = (id: string, children: BlockDto[] = []): BlockDto => ({ id, raw: id,
 const pageDto = (name: string, blocks: BlockDto[], extra: Partial<PageDto> = {}): PageDto => ({
   name, kind: "page", title: name, pre_block: null, blocks, ...extra,
 });
+/** The page with its file, as a graph load installs it (the host opens it by path). */
+const filed = (dto: PageDto): PageDto & { id: string } => ({ ...dto, id: `pages/${dto.name}.md` });
+const ids = (blocks: BlockDto[]): string[] => blocks.flatMap((block) => [block.id!, ...ids(block.children)]);
+type Endpoint = [key: string, dto: PageDto, version: number];
+/** The host moves sent: [source page, receiver page] DTOs per step. */
+const movesOf = (spy: { mock: { calls: unknown[][] } }) =>
+  spy.mock.calls.map((call) => ({ source: (call[2] as Endpoint)[1], receiver: (call[3] as Endpoint)[1] }));
 const snapshot = () => JSON.parse(JSON.stringify({ pages: doc.pages, byId: doc.byId }));
 
 describe("selection heading ownership (GH #240)", () => {
@@ -125,24 +137,26 @@ describe("target-relative multi-root drag (GH #240)", () => {
     expect(doc.pages.some((page) => isDirty(page.name))).toBe(false);
   });
 
-  it("moves subtrees from several pages in captured order, inherits per root, and saves every page as one group", async () => {
+  it("moves subtrees from several pages in captured order, inherits per root, and moves every page through paired host moves", async () => {
     const sourceTwoRaw = "source two\n:PROPERTIES:\n:logseq.order-list-type: number\n:END:";
     const targetRaw = "target\n:PROPERTIES:\n:logseq.order-list-type: number\n:END:";
     loadFeed([
-      pageDto("Source one", [{ id: "source-one", raw: "source one", collapsed: false, children: [
+      filed(pageDto("Source one", [{ id: "source-one", raw: "source one", collapsed: false, children: [
         { id: "child-one", raw: "child one\nbody:: byte-exact", collapsed: false, children: [] },
-      ] }], { format: "md" }),
-      pageDto("Source two", [{ id: "source-two", raw: sourceTwoRaw, collapsed: false, children: [
+      ] }], { format: "md" })),
+      filed(pageDto("Source two", [{ id: "source-two", raw: sourceTwoRaw, collapsed: false, children: [
         { id: "child-two", raw: "child two\n:literal: byte-exact", collapsed: false, children: [] },
-      ] }], { format: "org" }),
-      pageDto("Destination", [
+      ] }], { format: "org" })),
+      filed(pageDto("Destination", [
         { id: "destination-target", raw: targetRaw, collapsed: false, children: [] },
         { id: "destination-tail", raw: "tail", collapsed: false, children: [] },
-      ], { format: "org" }),
+      ], { format: "org" })),
     ]);
+    answerOpensFromDocument(await bindTestHost());
     clearSeededFacets();
     const before = snapshot();
-    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
+    const move = vi.spyOn(backend(), "pageMove");
+    const submit = vi.spyOn(backend(), "pageSubmit");
 
     expect(await moveBlocksRelative(["source-two", "source-one"], "destination-target", "before")).toBe(true);
     expect(pageByName("Source one")!.roots).toEqual([]);
@@ -153,28 +167,39 @@ describe("target-relative multi-root drag (GH #240)", () => {
     expect(doc.byId["child-one"]).toMatchObject({ page: "Destination", raw: "child one\nbody:: byte-exact" });
     expect(doc.byId["child-two"]).toMatchObject({ page: "Destination", raw: "child two\n:literal: byte-exact" });
 
+    await vi.waitFor(() => expect(transferInProgress()).toBe(false));
     expect(await flushAll()).toBe(true);
-    // The whole move is ONE save request: the gaining page and both emptied
-    // sources commit together, so no interleaving save can observe a block on
-    // neither page or on two pages.
-    const moveRequests = save.mock.calls.filter((call) => call[0].some((entry) => entry.page.name === "Destination"));
-    expect(moveRequests).toHaveLength(1);
-    expect(moveRequests[0][0].map((entry) => entry.page.name).sort()).toEqual(["Destination", "Source one", "Source two"]);
+    // Each source's subtree reaches the gaining page in one host move that
+    // commits both endpoints together, so no save can observe a block on
+    // neither page or on two pages; no single-page submit carries the move.
+    const moves = movesOf(move);
+    expect(moves.map(({ source, receiver }) => [source.name, receiver.name]).sort())
+      .toEqual([["Source one", "Destination"], ["Source two", "Destination"]]);
+    for (const { source, receiver } of moves) expect(ids(source.blocks).filter((id) => ids(receiver.blocks).includes(id))).toEqual([]);
+    expect(ids(moves.at(-1)!.receiver.blocks))
+      .toEqual(["source-two", "child-two", "source-one", "child-one", "destination-target", "destination-tail"]);
+    expect(moves.every(({ source }) => source.blocks.length === 0)).toBe(true);
+    expect(submit).not.toHaveBeenCalled();
     const after = snapshot();
 
     undo();
     expect(snapshot()).toEqual(before);
+    // The undo is itself a multi-page move: its endpoints stay frozen until the
+    // host took it, and the redo then applies.
+    await vi.waitFor(() => expect(transferInProgress()).toBe(false));
     redo();
     expect(snapshot()).toEqual(after);
   });
 
-  it("nests a cross-page drop under the target and saves both pages as one group (GH #326)", async () => {
+  it("nests a cross-page drop under the target and saves both pages in one host move (GH #326)", async () => {
     loadFeed([
-      pageDto("Source", [blk("moved", [blk("moved child")])]),
-      pageDto("Destination", [blk("target", [blk("existing")]), blk("tail")]),
+      filed(pageDto("Source", [blk("moved", [blk("moved child")])])),
+      filed(pageDto("Destination", [blk("target", [blk("existing")]), blk("tail")])),
     ]);
     clearSeededFacets();
-    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
+    answerOpensFromDocument(await bindTestHost());
+    const move = vi.spyOn(backend(), "pageMove");
+    const submit = vi.spyOn(backend(), "pageSubmit");
 
     expect(await moveBlocksRelative(["moved"], "target", "child")).toBe(true);
     expect(pageByName("Source")!.roots).toEqual([]);
@@ -183,10 +208,13 @@ describe("target-relative multi-root drag (GH #240)", () => {
     expect(doc.byId.moved.parent).toBe("target");
     expect(doc.byId["moved child"]).toMatchObject({ page: "Destination", parent: "moved" });
 
+    await vi.waitFor(() => expect(transferInProgress()).toBe(false));
     expect(await flushAll()).toBe(true);
-    const requests = save.mock.calls.filter((call) => call[0].some((entry) => entry.page.name === "Destination"));
-    expect(requests).toHaveLength(1);
-    expect(requests[0][0].map((entry) => entry.page.name).sort()).toEqual(["Destination", "Source"]);
+    const moves = movesOf(move);
+    expect(moves.map(({ source, receiver }) => [source.name, receiver.name])).toEqual([["Source", "Destination"]]);
+    expect(moves[0].source.blocks).toEqual([]);
+    expect(ids(moves[0].receiver.blocks)).toEqual(["target", "existing", "moved", "moved child", "tail"]);
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it("refuses to nest a block under its own descendant", async () => {

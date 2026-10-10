@@ -2,7 +2,6 @@
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
-import { readSavePlatformStep } from "./savePlatformStep";
 import { markCommandSlow } from "./slowBackend";
 import { orderedLane } from "./orderedWrites";
 import { timingNamesForCommand } from "./focusTiming";
@@ -27,6 +26,7 @@ import type {
   GuidePage,
   Highlight,
   PageDto,
+  PageKind,
   PageEntry,
   RefGroup,
   BlockPreview,
@@ -47,7 +47,6 @@ import type {
   QueryPublicationRequest,
   QueryPublicationPlan,
   PublicationReceipt,
-  DraftRecord, DraftLoad,
 } from "./types";
 import type { GraphSources, GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus } from "./backendTypes";
 import { dbg } from "./debug";
@@ -57,16 +56,7 @@ import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import { isPublishedExport, publishedBackend } from "./publishedBackend";
 
 import { nativeTineLinks, type NativeTineLinks } from "./nativeTineLinks";
-
-/** Adapt a one-page intent to the shared request while preserving its refusal.
- * Calls observed with its native answer delta before returning the revision;
- * the observer owns graph-binding validation. Cost follows save plus targets. */
-export async function saveOnePage(api: Backend, entry: SavePageEntry, bindingGeneration?: number, observed?: (change: GraphAnswersChange | null | undefined) => void): Promise<string> {
-  const result = await api.savePages([entry], bindingGeneration);
-  if ("failed" in result) throw Object.assign(new Error(result.failed.family), { diskRev: result.failed.diskRev, platformStep: readSavePlatformStep(result.failed), unreadableOwner: result.failed.unreadableOwner });
-  observed?.(result.changes);
-  return result.ok[0];
-}
+import { ASSET_INGRESS_MAX_BYTES, clipboardImageToPng } from "./clipboardImage";
 
 // Encode asset bytes as one base64 string for the save_*/copy_image IPC. The old
 // `Array.from(bytes)` produced a JSON number[] — ~4-5x the payload + a multi-MB
@@ -81,41 +71,6 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
   }
   return btoa(binary);
-}
-
-export const CLIPBOARD_IMAGE_MAX_PIXELS = 32 * 1024 * 1024;
-export const CLIPBOARD_IMAGE_MAX_RGBA_BYTES = 128 * 1024 * 1024;
-export const ASSET_INGRESS_MAX_BYTES = 64 * 1024 * 1024;
-
-type ClipboardImage = {
-  size(): Promise<{ width: number; height: number }>;
-  rgba(): Promise<Uint8Array>;
-};
-
-export async function clipboardImageToPng(img: ClipboardImage): Promise<Uint8Array | null> {
-  // Dimensions are metadata: validate them before asking the native plugin to
-  // materialize an attacker-controlled RGBA allocation on the WebView thread.
-  const { width, height } = await img.size();
-  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) return null;
-  const pixels = width * height;
-  const rgbaBytes = pixels * 4;
-  if (!Number.isSafeInteger(pixels) || pixels > CLIPBOARD_IMAGE_MAX_PIXELS
-      || rgbaBytes > CLIPBOARD_IMAGE_MAX_RGBA_BYTES) {
-    return null;
-  }
-  const rgba = await img.rgba();
-  if (rgba.byteLength !== rgbaBytes) return null;
-  const clamped = new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, rgba.byteLength);
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
-  ctx.putImageData(new ImageData(clamped, width, height), 0, 0);
-  const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-  if (!blob || blob.size > ASSET_INGRESS_MAX_BYTES) return null;
-  const encoded = await blob.arrayBuffer();
-  return encoded.byteLength <= ASSET_INGRESS_MAX_BYTES ? new Uint8Array(encoded) : null;
 }
 
 export interface Backend {
@@ -178,13 +133,40 @@ export interface Backend {
   /** Raw source text of every md/org file in the open graph (+journals when
    *  asked), for the "Help improve Tine" diff panel. Read-only, local. */
   graphSourceFiles(includeJournals: boolean): Promise<GraphSources>;
-  /** Native backend: require a current graph binding, prepare bases (force
-   * reads current UTF-8 bytes), and save ordered entries in one guarded
-   * transaction. Success strings are file revisions; failure paths are
-   * graph-relative. Transaction refusals resolve as failed; binding/invoke
-   * failures reject. An empty request resolves as failed. The mock returns
-   * "mock-rev" per entry without saving or validating. */
-  savePages(entries: SavePageEntry[], bindingGeneration?: number): Promise<SavePagesResult>;
+  /** The page host (STEP3-DESIGN §3; `src-tauri/src/page_commands.rs`): the only
+   * page persistence of a window. Only `src/document/host/wiring.ts` calls these
+   * (I-1). Mutating commands carry the window's session and a request id and go
+   * through the ordered lane (src/orderedWrites.ts); a resolved refusal means
+   * "not admitted". Answers and pushes arrive as `onPageMail`. The mock is a
+   * single-window in-memory host that takes every request. */
+  pageWindowReloaded(): Promise<{ session: number; nextId: number }>;
+  /** A null `path` (no file yet) is resolved with `resolve_page` inside the
+   * ordered lane, so the open keeps its place among the window's requests; an
+   * alias name is refused client side (`alias`) without a command. */
+  pageOpen(session: number, id: number, page: { name: string; kind: "journal" | "page"; path: string | null }):
+    Promise<{ key: string; baselineEntry: boolean } | PageRefusal>;
+  pageSubmit(session: number, id: number, key: string, dto: PageDto, version: number, resolve: DiskToken | null,
+    kinds: EditKinds): Promise<PageRefusal | null>;
+  pageMove(session: number, id: number, source: [string, PageDto, number], receiver: [string, PageDto, number],
+    kinds: EditKinds): Promise<PageRefusal | null>;
+  pageDiscard(session: number, id: number, key: string, version: number): Promise<PageRefusal | null>;
+  pageClose(session: number, id: number, key: string): Promise<PageRefusal | null>;
+  /** Delete page `name` through the host. The backend checks its identity
+   * (twins, a stale `expectedPath`, an external removal) and binds the host's
+   * deletion to the bytes it read (GH #620, Q-P2b-5); a failed check rejects. */
+  pageDelete(session: number, name: string, kind: PageKind, expectedPath?: string): Promise<PageOperation>;
+  /** One bounded wait (≤ 5 s) for these needs to publish; null at the bound. */
+  pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number): Promise<boolean | null>;
+  pageSaveNow(session: number, keys: readonly string[]): Promise<void>;
+  pageOwed(session: number, paths: readonly string[] | null): Promise<OwedPage[] | null>;
+  /** Retry crash-draft storage after the host reported it unavailable. */
+  pageDraftsRetry(): Promise<void>;
+  onPageMail(cb: (mail: PageMail) => void): Promise<() => void>;
+  /** The graph being opened overlaps one that is still saving its pages (F6). */
+  onGraphOpenWaiting(cb: (saving: string) => void): Promise<() => void>;
+  /** The v1 crash-draft file of this graph when one exists (D-1: left untouched
+   * as a backup); read-only, never its content. */
+  legacyDraftsFile(): Promise<string | null>;
   /** Bundled read-only Guide pages, compiled from the same templates as the demo graph. */
   guidePages(): Promise<GuidePage[]>;
   /** Copy the bundled Guide into the real graph under `tine-guide/`. */
@@ -202,7 +184,6 @@ export interface Backend {
   getBlockRefCounts(): Promise<Record<string, number>>;
   /** Blocks that reference block `uuid`, grouped by page (the referrers panel). */
   getBlockReferrers(uuid: string): Promise<RefGroup[]>;
-  deletePage(name: string, kind: "journal" | "page", expectedPath?: string): Promise<void>;
   /** Rename a page and update all [[refs]]/#tags across the graph. `mergeInto`
    *  is the confirmed path of the one page `next` reaches (its file or alias
    *  owner); the backend merges into it in one transaction and refuses if that
@@ -412,12 +393,11 @@ export interface Backend {
    *  now (og 8e); 3-way when the Concord ledger retains the draft's `baseRev`.
    *  Read-only; `conflict_rev` is the disk revision shown, or "absent". */
   liveConflictDiff(path: string, page: PageDto, baseRev: string | null): Promise<SyncConflictDiff>;
-  /** Write the reviewed live resolution in one guarded transaction at
-   *  `conflictRev` ("conflict" if the disk or the reviewed ledger base moved).
-   *  Returns the written page with its new revision. */
-  resolveLiveConflict(path: string, page: PageDto, baseRev: string | null, conflictRev: string,
-    mergeBaseRev: string | undefined, decisions: Record<string, MergeDecision>,
-    preChoice: "mine" | "theirs" | "union"): Promise<PageDto>;
+  /** Merge a reviewed live conflict without writing (read-only): the page the
+   *  window then submits with `resolve` = the reviewed disk token (S7).
+   *  "conflict" when the disk or the reviewed ledger base moved. */
+  mergeLiveConflict(path: string, page: PageDto, conflictRev: string, mergeBaseRev: string | undefined,
+    decisions: Record<string, MergeDecision>, preChoice: "mine" | "theirs" | "union"): Promise<PageDto>;
   /** Subscribe to the backend's `conflicts-changed` event (the derived
    *  conflict queue changed). Returns an unlisten fn. */
   onConflictsChanged(cb: () => void): Promise<() => void>;
@@ -596,22 +576,19 @@ export interface Backend {
   /** Available snapshots for the current graph, newest first. */
   listBackups(): Promise<BackupInfo[]>;
   /** Restore a snapshot (graph text at original paths, config, and sidecars; snapshots current
-   *  state first). Destructive — confirm before calling. */
-  restoreBackup(stamp: string, kind: "replace-page"): Promise<void>;
+   *  state first). Destructive — confirm before calling. `consumedLastId`: the
+   *  last page-host answer the window consumed. `reloaded` is the session of the
+   *  host relaunched after the restore, on success and on a partial failure
+   *  alike (the window rebinds either way, S8); null when the stop refused (the
+   *  host keeps running) or without a host. `error` says why it failed. */
+  restoreBackup(stamp: string, kind: "replace-page", consumedLastId: number):
+    Promise<{ error: string | null; reloaded: { session: number; nextId: number } | null }>;
   /** Load the persisted UI session JSON (open tabs / active tab / zoom), or null.
    *  Stored atomically in a backend file so structured session state is independent
    *  of a particular WebView/origin and can be shared across windows. */
   loadSession(): Promise<string | null>;
   /** Persist the UI session JSON. */
   saveSession(data: string): Promise<void>;
-  /** This graph's crash-surviving draft records (og ADR 0061); absent where drafts cannot be
-   *  kept (published export). `set_aside`: where an unreadable store's bytes went (§8.5). */
-  loadDrafts?(): Promise<DraftLoad>;
-  /** Replace one draft record; refused past the store's bound. `graphRoot` names another
-   *  graph's store (a graph switch). Resolves to a set-aside path, as for `loadDrafts`. */
-  storeDraft?(record: DraftRecord, graphRoot?: string): Promise<string | null>;
-  /** Remove one draft record by id (a missing id is no error); a set-aside path as above. */
-  retireDraft?(id: string): Promise<string | null>;
   /** Load the current graph's device-local named-workspace registry JSON. */
   loadWorkspaces(): Promise<string>;
   /** Replace the registry atomically. A failed post-rename directory sync reports
@@ -691,8 +668,9 @@ export interface Backend {
   watcherLatencyRecent(): Promise<unknown[]>;
 }
 
-export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, SavePageEntry, GraphAnswersChange, SavePagesResult, GraphSourceFile, GraphSources, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
-import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, SavePageEntry, GraphAnswersChange, SavePagesResult } from "./backendTypes";
+export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange, GraphSourceFile, GraphSources, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
+import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
+import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed } from "./document";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -931,8 +909,52 @@ class TauriBackend implements Backend {
   graphSourceFiles(includeJournals: boolean) {
     return this.call<GraphSources>("graph_source_files", { includeJournals });
   }
-  savePages(entries: SavePageEntry[], bindingGeneration = this.bindingGeneration) {
-    return this.call<SavePagesResult>("save_pages", { entries }, bindingGeneration);
+  pageWindowReloaded() {
+    return this.call<{ session: number; nextId: number }>("page_window_reloaded");
+  }
+  pageOpen(session: number, id: number, page: { name: string; kind: "journal" | "page"; path: string | null }) {
+    const generation = this.bindingGeneration;
+    return this.ordered("page_open", async (): Promise<{ key: string; baselineEntry: boolean } | PageRefusal> => {
+      let path = page.path;
+      if (path === null) {
+        const resolved = await this.issue<import("./types").ResolvedPage>("resolve_page", { name: page.name, kind: page.kind }, generation);
+        if (resolved.kind === "alias") return { reason: "alias", owners: resolved.owners };
+        path = resolved.id;
+      }
+      return this.issue("page_open", { session, id, path, name: page.name }, generation);
+    });
+  }
+  pageSubmit(session: number, id: number, key: string, dto: PageDto, version: number, resolve: DiskToken | null, kinds: EditKinds) {
+    return this.call<PageRefusal | null>("page_submit", { session, id, key, dto, version, resolve, kinds });
+  }
+  pageMove(session: number, id: number, source: [string, PageDto, number], receiver: [string, PageDto, number], kinds: EditKinds) {
+    return this.call<PageRefusal | null>("page_move", { session, id, source, receiver, kinds });
+  }
+  pageDiscard(session: number, id: number, key: string, version: number) {
+    return this.call<PageRefusal | null>("page_discard", { session, id, key, version });
+  }
+  pageClose(session: number, id: number, key: string) {
+    return this.call<PageRefusal | null>("page_close", { session, id, key });
+  }
+  pageDelete(session: number, name: string, kind: PageKind, expectedPath?: string) {
+    return this.call<PageOperation>("page_delete", { session, name, kind, expectedPath });
+  }
+  pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number) {
+    return this.call<boolean | null>("page_wait", { session, needs, boundMs });
+  }
+  pageSaveNow(session: number, keys: readonly string[]) {
+    return this.call<void>("page_save_now", { session, keys });
+  }
+  pageOwed(session: number, paths: readonly string[] | null) {
+    return this.call<OwedPage[] | null>("page_owed", { session, paths });
+  }
+  pageDraftsRetry() {
+    return this.call<void>("page_drafts_retry");
+  }
+  onPageMail(cb: (mail: PageMail) => void) { return this.on("page-mail", cb); }
+  onGraphOpenWaiting(cb: (saving: string) => void) { return this.on("graph-open-waiting", cb); }
+  legacyDraftsFile() {
+    return this.call<string | null>("legacy_drafts_file");
   }
   guidePages() {
     return this.call<GuidePage[]>("guide_pages");
@@ -960,9 +982,6 @@ class TauriBackend implements Backend {
   }
   getBlockReferrers(uuid: string) {
     return this.call<RefGroup[]>("block_referrers", { uuid });
-  }
-  deletePage(name: string, kind: "journal" | "page", expectedPath?: string) {
-    return this.call<void>("delete_page", { name, kind, expectedPath });
   }
   renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]) {
     return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths });
@@ -1222,9 +1241,9 @@ class TauriBackend implements Backend {
   liveConflictDiff(path: string, page: PageDto, baseRev: string | null) {
     return this.call<SyncConflictDiff>("live_conflict_diff", { path, page, baseRev });
   }
-  resolveLiveConflict(path: string, page: PageDto, baseRev: string | null, conflictRev: string,
-    mergeBaseRev: string | undefined, decisions: Record<string, MergeDecision>, preChoice: "mine" | "theirs" | "union") {
-    return this.call<PageDto>("resolve_live_conflict", { path, page, baseRev, conflictRev, mergeBaseRev, decisions, preChoice });
+  mergeLiveConflict(path: string, page: PageDto, conflictRev: string, mergeBaseRev: string | undefined,
+    decisions: Record<string, MergeDecision>, preChoice: "mine" | "theirs" | "union") {
+    return this.call<PageDto>("merge_live_conflict", { path, page, conflictRev, mergeBaseRev, decisions, preChoice });
   }
   async onConflictsChanged(cb: () => void): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");
@@ -1372,25 +1391,15 @@ class TauriBackend implements Backend {
   listBackups() {
     return this.call<BackupInfo[]>("list_backups");
   }
-  async restoreBackup(stamp: string) {
-    // consumedLastId 0: no page host runs before step 3b P2b, where the rebind on `reloaded` lands (S8).
-    const reply = await this.call<{ error: string | null }>("restore_backup", { stamp, consumedLastId: 0 });
-    if (reply.error) throw reply.error;
+  restoreBackup(stamp: string, _kind: "replace-page", consumedLastId: number) {
+    return this.call<{ error: string | null; reloaded: { session: number; nextId: number } | null }>(
+      "restore_backup", { stamp, consumedLastId });
   }
   loadSession() {
     return this.call<string | null>("load_session");
   }
   saveSession(data: string) {
     return this.call<void>("save_session", { data });
-  }
-  loadDrafts() {
-    return this.call<DraftLoad>("load_drafts");
-  }
-  storeDraft(record: DraftRecord, graphRoot?: string) {
-    return this.call<string | null>("store_draft", graphRoot === undefined ? { record } : { record, graphRoot });
-  }
-  retireDraft(id: string) {
-    return this.call<string | null>("retire_draft", { id });
   }
   loadWorkspaces() {
     return this.call<string>("load_workspaces");

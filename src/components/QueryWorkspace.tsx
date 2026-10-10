@@ -13,7 +13,7 @@ import {
   on,
   type JSX,
 } from "solid-js";
-import { backend, isTauri, type SavePageEntry, type SavePagesResult } from "../backend";
+import { backend, isTauri } from "../backend";
 import { bindingIdentity, captureBinding } from "../binding";
 import { bindingOwner, advanceRevision, currentRevision, graphOwner, latestOwner, ownedWhen, readOwned, revisionOwner, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
@@ -76,7 +76,8 @@ export interface MaterializeQueryInput {
 export interface MaterializeQueryDependencies {
   /** The one name answerer: an existing file, an alias, or where a new page goes. */
   resolvePage(name: string, kind: "page"): Promise<ResolvedPage>;
-  savePages(entries: SavePageEntry[], bindingGeneration?: number): Promise<SavePagesResult>;
+  /** Write the new page through the page host (`createPage`); resolves its file revision when known. */
+  createPage(page: PageDto, bindingGeneration: number): Promise<string | null>;
   /** Rust-authoritative friendly-search validation; required before every nonblank friendly save. */
   /** One graph-scale search; optional page membership is independent of the
    * physical-page restriction. Effective views order and sample their own
@@ -85,7 +86,7 @@ export interface MaterializeQueryDependencies {
 }
 
 export type MaterializeQueryResult =
-  | { ok: true; name: string; page: PageDto; rev: string }
+  | { ok: true; name: string; page: PageDto; rev: string | null }
   | {
       ok: false;
       kind: "invalid-name" | "empty-query" | "invalid-query" | "exists" | "conflict" | "error" | "superseded";
@@ -204,17 +205,9 @@ export async function materializeQueryWorkspace(
     // spelled for it.
     const { query, properties } = savedQuery(input);
     const page = queryWorkspacePage(name, query, properties, /\.org$/i.test(resolved.id) ? "org" : "md");
-    const saved = await writeOwned(owner, deps.savePages([{ id: resolved.id, page, baseRev: null, force: false, kinds: ["create-page"] }], binding.backendGeneration)
-      .then((result) => {
-        if ("failed" in result) {
-          const refusal = result.failed as { family: string };
-          throw Object.assign(new Error(refusal.family), { family: refusal.family });
-        }
-        return result as { ok: string[] };
-      }));
+    const saved = await writeOwned(owner, deps.createPage(page, binding.backendGeneration));
     if (saved.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
-    const result = saved.value;
-    const rev = result.ok[0];
+    const rev = saved.value;
     if (!owner()) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     bumpPageInventoryRev();
     return { ok: true, name, page, rev };
@@ -258,10 +251,7 @@ function defaultDependencies(): QueryWorkspaceDependencies {
       await imported.value.invoke<void>("close_search_workspace", { workspace, bindingGeneration });
     },
     resolvePage: (name, kind) => api.resolvePage(name, kind),
-    savePages: async (entries, bindingGeneration) => {
-      const entry = entries[0];
-      return { ok: [await createPage(entry.page.name, entry.page, { id: entry.id, baseRev: entry.baseRev, bindingGeneration })] };
-    },
+    createPage: (page, bindingGeneration) => createPage(page.name, page, { bindingGeneration }),
     runGraphSearch: (source, pageLimit, blockLimit, lane, explain, scope, pageMatchScope, views) =>
       api.runGraphSearch(source, pageLimit, blockLimit, lane, explain, scope, pageMatchScope, views),
     parseQuery: (source, dialect) => api.parseQuery(source, dialect),

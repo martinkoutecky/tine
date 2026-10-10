@@ -40,7 +40,7 @@ to `~/research/tine`. Martin is unavailable for testing.
   - [x] (B) query — **GO; facet indices STAY v2.** Synthetic graphs (Martin's
         real graph unavailable + off-limits as corpus), release build, local
         disk; bench committed as `crates/tine-store/examples/sheets_phase0_bench.rs`
-        (re-runnable, deterministic). Note: bare `TODO` isn't accepted by the
+        (re-runnable, deterministic; deleted with `Store::save` in og step 3b, in git history). Note: bare `TODO` isn't accepted by the
         simple DSL — `(task TODO)` is; compound = `(and (task TODO DOING) #SomeTag)`.
         | blocks | cold (incl. cache build) | edit→re-scan med/p95 | compound med/p95 | save_page |
         |---|---|---|---|---|

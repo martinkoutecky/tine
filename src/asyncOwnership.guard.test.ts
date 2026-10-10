@@ -67,10 +67,17 @@ describe("async ownership guard", () => {
       /removeEventListener\("lostpointercapture", cancelled\)/,
     ]);
     expect([...inline.matchAll(/\b\w*[wW]indow\.addEventListener\("pointer(?:move|up)"/g)], `${RULE}: media listeners belong to mediaResizeGrip, never component copies`).toHaveLength(2);
-    const save = readFileSync("src/document/save/engine.ts", "utf8");
-    expect([...save.matchAll(/reloadDisposition\((?:target\.)?owner\.name\) !== "reload"/g)],
-      `${RULE}: alias owner replacement must ask reloadDisposition before and after single/group saves; exemplar runGroup`).toHaveLength(4);
-    expect(save, `${RULE}: no alias-owner busy-check copies; exemplar reloadDisposition`).not.toMatch(/is(?:Dirty|Saving|Conflicted)\((?:target\.)?owner\.name\)/);
+    // STEP3 §8 alias drafts: the owner's new text comes from its live client
+    // text after its input drained; the landing proves its graph, the draft's
+    // instance and the owner's client state before replacing anything.
+    check("src/document/host/wiring.ts", "async function landAliasDraft(", "\n}\n", [
+      /readOwned\(bindingOwner\(\), backend\(\)\.getPageByPath\(ownerPath\)\)/,
+      /await c\.drain\(\[owner\]\)/,
+      /host\(\) !== c \|\| pageInstanceGeneration\(name\) !== generation/,
+      /!c\.isOpen\(owner\) \|\| c\.busy\(owner\) \|\| c\.conflicted\(owner\)\) return;\n[^]*installPageContent\(owner, text\)/,
+    ]);
+    expect(section("src/document/host/wiring.ts", "async function landAliasDraft(", "\n}\n"),
+      `${RULE}: no alias-owner busy-check copies; exemplar HostClient.busy`).not.toMatch(/is(?:Dirty|Saving|Conflicted)\(owner\)/);
   });
 
 });

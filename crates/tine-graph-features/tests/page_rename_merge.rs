@@ -6,7 +6,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages;
 use tine_store::Store;
 
-fn fixture(label: &str, files: &[(&str, &str)]) -> (PathBuf, Store) {
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
+fn fixture(label: &str, files: &[(&str, &str)]) -> (PathBuf, std::sync::Arc<Store>) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-rename-merge-{label}-{}-{}",
@@ -21,7 +32,7 @@ fn fixture(label: &str, files: &[(&str, &str)]) -> (PathBuf, Store) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, body).unwrap();
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     (root, store)
 }
 
@@ -63,7 +74,9 @@ fn rename_collision_merges_content_and_rewrites_graph_refs() {
             ("pages/Referrer.md", "- see [[Old]] and #Old\n"),
         ],
     );
-    let plain = pages::rename_page_expected(&store, None, "Old", "New", Some("pages/Old.md"));
+    let plain = hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, "Old", "New", Some("pages/Old.md"))
+    });
     assert_eq!(
         plain.unwrap_err().kind(),
         std::io::ErrorKind::AlreadyExists,
@@ -71,15 +84,17 @@ fn rename_collision_merges_content_and_rewrites_graph_refs() {
     );
     assert_eq!(read(&root, "pages/New.md"), "- new body links [[Old]]\n");
 
-    pages::rename_or_merge_page(
-        &store,
-        None,
-        "Old",
-        "New",
-        Some("pages/Old.md"),
-        Some("pages/New.md"),
-        &[],
-    )
+    hosted(&store, |host| {
+        pages::rename_or_merge_page(
+            &store,
+            host,
+            "Old",
+            "New",
+            Some("pages/Old.md"),
+            Some("pages/New.md"),
+            &[],
+        )
+    })
     .unwrap();
 
     let merged = read(&root, "pages/New.md");
@@ -120,8 +135,10 @@ fn rename_merge_keeps_survivor_identity_and_joins_aliases() {
             ("pages/Ref.md", "- [[Former]] and [[Kept]] and [[Old]]\n"),
         ],
     );
-    pages::rename_or_merge_page(&store, None, "Old", "New", None, Some("pages/New.md"), &[])
-        .unwrap();
+    hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Old", "New", None, Some("pages/New.md"), &[])
+    })
+    .unwrap();
     let merged = read(&root, "pages/New.md");
     assert!(
         merged.starts_with("alias:: Shared, Kept, Former\nicon:: star\n"),
@@ -164,19 +181,22 @@ fn rename_merge_refuses_before_writing_when_its_confirmation_is_stale() {
     ];
     let (root, store) = fixture("stale", &files);
     // The confirmed survivor is not the page that now owns the name.
-    let wrong = pages::rename_or_merge_page(
-        &store,
-        None,
-        "Old",
-        "New",
-        None,
-        Some("pages/Other.md"),
-        &[],
-    );
+    let wrong = hosted(&store, |host| {
+        pages::rename_or_merge_page(
+            &store,
+            host,
+            "Old",
+            "New",
+            None,
+            Some("pages/Other.md"),
+            &[],
+        )
+    });
     assert!(wrong.is_err());
     // A namespace child whose target exists refuses the whole operation.
-    let child =
-        pages::rename_or_merge_page(&store, None, "Old", "New", None, Some("pages/New.md"), &[]);
+    let child = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Old", "New", None, Some("pages/New.md"), &[])
+    });
     assert_eq!(child.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
     for (rel, body) in files {
         assert_eq!(read(&root, rel), body, "{rel} must be untouched");
@@ -191,8 +211,9 @@ fn rename_merge_refuses_mixed_formats() {
         "formats",
         &[("pages/Old.org", "* old\n"), ("pages/New.md", "- new\n")],
     );
-    let result =
-        pages::rename_or_merge_page(&store, None, "Old", "New", None, Some("pages/New.md"), &[]);
+    let result = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Old", "New", None, Some("pages/New.md"), &[])
+    });
     assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
     assert_eq!(read(&root, "pages/Old.org"), "* old\n");
     assert_eq!(read(&root, "pages/New.md"), "- new\n");
@@ -216,7 +237,10 @@ fn namespaced_title_pages_rebind_their_own_title_on_rename() {
             ("pages/Ref.md", "- [[Proj/Sub]] [[Proj/Loose]]\n"),
         ],
     );
-    pages::rename_page_expected(&store, None, "Proj", "Arch", Some("pages/proj.md")).unwrap();
+    hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, "Proj", "Arch", Some("pages/proj.md"))
+    })
+    .unwrap();
     assert_eq!(read(&root, "pages/Arch.md"), "title:: Arch\n\n- parent\n");
     assert_eq!(
         read(&root, "pages/Arch%2FSub.md"),
@@ -280,19 +304,23 @@ fn renaming_onto_an_alias_needs_the_merge_confirmation() {
             ("pages/Ref.md", "- [[Old]]\n"),
         ],
     );
-    let plain = pages::rename_page_expected(&store, None, "Old", "New", Some("pages/Old.md"));
+    let plain = hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, "Old", "New", Some("pages/Old.md"))
+    });
     assert_eq!(plain.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
     assert_eq!(read(&root, "pages/Old.md"), "- old body\n");
     assert!(!root.join("pages/New.md").exists());
-    let outcome = pages::rename_or_merge_page(
-        &store,
-        None,
-        "Old",
-        "New",
-        None,
-        Some("pages/Owner.md"),
-        &[],
-    )
+    let outcome = hosted(&store, |host| {
+        pages::rename_or_merge_page(
+            &store,
+            host,
+            "Old",
+            "New",
+            None,
+            Some("pages/Owner.md"),
+            &[],
+        )
+    })
     .unwrap();
     assert_eq!(outcome.outcome, pages::RenameOutcome::Merged);
     assert_eq!(
@@ -317,28 +345,34 @@ fn reference_only_rename_onto_an_existing_page_needs_the_confirmation() {
             ("pages/Ref.md", "- [[Ghost]] and [[New]]\n"),
         ],
     );
-    let plain = pages::rename_page_expected(&store, None, "Ghost", "New", None);
+    let plain = hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, "Ghost", "New", None)
+    });
     assert_eq!(plain.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
     assert_eq!(read(&root, "pages/Ref.md"), "- [[Ghost]] and [[New]]\n");
-    let stale = pages::rename_or_merge_page(
-        &store,
-        None,
-        "Ghost",
-        "New",
-        None,
-        Some("pages/Other.md"),
-        &[],
-    );
+    let stale = hosted(&store, |host| {
+        pages::rename_or_merge_page(
+            &store,
+            host,
+            "Ghost",
+            "New",
+            None,
+            Some("pages/Other.md"),
+            &[],
+        )
+    });
     assert_eq!(stale.unwrap_err().kind(), std::io::ErrorKind::NotFound);
-    let outcome = pages::rename_or_merge_page(
-        &store,
-        None,
-        "Ghost",
-        "New",
-        None,
-        Some("pages/New.md"),
-        &[],
-    )
+    let outcome = hosted(&store, |host| {
+        pages::rename_or_merge_page(
+            &store,
+            host,
+            "Ghost",
+            "New",
+            None,
+            Some("pages/New.md"),
+            &[],
+        )
+    })
     .unwrap();
     assert_eq!(outcome.outcome, pages::RenameOutcome::Merged);
     assert_eq!(read(&root, "pages/Ref.md"), "- [[New]] and [[New]]\n");
@@ -351,11 +385,24 @@ fn reference_only_rename_onto_an_existing_page_needs_the_confirmation() {
 #[test]
 fn case_only_rename_reports_renamed() {
     let (root, store) = fixture("case-only", &[("pages/Old.md", "- body\n")]);
-    let outcome = pages::rename_or_merge_page(&store, None, "Old", "old", None, None, &[]).unwrap();
+    let outcome = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Old", "old", None, None, &[])
+    })
+    .unwrap();
     assert_eq!(outcome.outcome, pages::RenameOutcome::Renamed);
     assert_eq!(read(&root, "pages/old.md"), "- body\n");
-    let renamed =
-        pages::rename_or_merge_page(&store, None, "Old", "Fresh", None, None, &[]).unwrap();
+    // The listing, not `exists()`/`read`, which fold case on Windows/macOS:
+    // a folding volume must respell the entry too (Q4 alias respell).
+    let listed: Vec<String> = fs::read_dir(root.join("pages"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.eq_ignore_ascii_case("old.md"))
+        .collect();
+    assert_eq!(listed, ["old.md"]);
+    let renamed = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Old", "Fresh", None, None, &[])
+    })
+    .unwrap();
     assert_eq!(renamed.outcome, pages::RenameOutcome::Renamed);
     drop(store);
     fs::remove_dir_all(root).unwrap();
@@ -379,8 +426,10 @@ fn org_merge_keeps_the_source_directives() {
             ),
         ],
     );
-    pages::rename_or_merge_page(&store, None, "Old", "New", None, Some("pages/New.org"), &[])
-        .unwrap();
+    hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Old", "New", None, Some("pages/New.org"), &[])
+    })
+    .unwrap();
     let merged = read(&root, "pages/New.org");
     assert_eq!(
         merged,

@@ -18,8 +18,9 @@ import type { JournalFeedPage, PageDto, PageRead, RefGroup } from "../types";
 import { TagPageTable, TagTableToggle } from "./Page";
 import { PageView, reloadJournalsFeedFromStart, withToday } from "./Page";
 import { focusBlock, mainPaneRouter, resetTabsToJournals, tabRoute } from "../router";
-import { clearConflict } from "../document/save/engine";
-import { markConflict } from "../document/save/engine";
+import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
+import { isSaving } from "../document/host/wiring";
+import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
 import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRecentPages, setRightSidebar } from "../ui";
 import { bumpGraphEpoch, graphEpoch, setGraphMeta } from "../graphSession";
 import { setToasts, toasts } from "../toasts";
@@ -200,7 +201,6 @@ describe("Journals feed generation lifecycle", () => {
     const first = journalDto(today, "Visible today");
     const second = journalDto(older, "Move me");
     vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([first, second]));
-    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["today-r2", "older-r2"] });
     const mounted = mount(() => <PageView />);
     try {
       await vi.waitFor(() => expect(mounted.root.querySelector(`[data-block-id="${second.blocks[0].id}"]`)).not.toBeNull());
@@ -225,6 +225,7 @@ describe("Journals feed generation lifecycle", () => {
   });
 
   it("writes a configured template before reading each new local day into the feed", async () => {
+    await bindTestHost();
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2030, 6, 15, 12));
     setGraphMeta({
@@ -238,9 +239,10 @@ describe("Journals feed generation lifecycle", () => {
       blocks: [{ id: "template", raw: "Template body", collapsed: false, children: [] }],
     }]);
     vi.spyOn(backend(), "resolvePage").mockImplementation(async () => ({ kind: "absent", id: `journals/${localDay()}.md` }));
-    vi.spyOn(backend(), "savePages").mockImplementation(async () => {
+    const submit = backend().pageSubmit.bind(backend());
+    vi.spyOn(backend(), "pageSubmit").mockImplementation(async (...args) => {
       order.push(`save:${localDay()}`);
-      return { ok: ["revision"] };
+      return submit(...args);
     });
     vi.spyOn(backend(), "journalFeedPage").mockImplementation(async () => {
       order.push(`feed:${localDay()}`);
@@ -498,27 +500,39 @@ describe("Journals feed generation lifecycle", () => {
   });
 
   it.each(["active edit", "dirty", "saving", "conflict", "moving"] as const)("defers a %s feed gate then retries on its real release", async (gate) => {
+    const host = await bindTestHost();
     const api = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([journalDto("initial")]))
     const mounted = mount(() => <PageView />);
     await flushMicrotasks();
     api.mockClear();
     const today = journalTitle(new Date());
+    const key = `journals/${today}.md`;
     setDoc({
       byId: { feed: node("feed", "original", today) },
       pages: [page(today, "journal", ["feed"])], feed: [today], loaded: true,
     });
     const oldPage = pageByName(today);
     api.mockResolvedValue(feedResponse([journalDto(`released-${gate}`)]));
+    // The host read the file the window shows (the mock graph has no such day).
+    openAsLoaded(host);
+    if (gate === "conflict") await conflictedInHost(host, today, key);
     if (gate === "active edit") startEditing("feed", 0);
-    if (gate === "dirty" || gate === "saving") setRaw("feed", "dirty");
-    if (gate === "conflict") markConflict(today);
-    if (gate === "moving") setBlockMoving(true, today);
     let saved: Promise<boolean> | null = null;
     let releaseSave: (() => void) | null = null;
     if (gate === "saving") {
-      vi.spyOn(backend(), "savePages").mockImplementation(() => new Promise((resolve) => { releaseSave = () => resolve({ ok: ["rev"] }); }));
+      // The host admits the submit only on release: the page is in flight.
+      const submit = backend().pageSubmit.bind(backend());
+      vi.spyOn(backend(), "pageSubmit").mockImplementation(async (...args) => {
+        releaseSave = () => { void submit(...args); };
+        return null;
+      });
+    }
+    if (gate === "dirty" || gate === "saving") setRaw("feed", "dirty");
+    if (gate === "moving") setBlockMoving(true, today);
+    if (gate === "saving") {
       saved = flushPage(today);
-      await flushMicrotasks();
+      await vi.waitFor(() => expect(releaseSave).not.toBeNull());
+      expect(isSaving(today)).toBe(true);
     }
     try {
       await reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => true });
@@ -527,24 +541,18 @@ describe("Journals feed generation lifecycle", () => {
       expect(pageByName(today)).toBe(oldPage);
       expect(doc.feed).toEqual([today]);
       if (gate === "active edit") endEdit("blur");
-      if (gate === "dirty") {
-        // Saving is the real dirty release and bumps dataRev after the backend
-        // accepts it; leave the PageView retry effect to consume that event.
-        vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
-        await flushPage(today);
-        await new Promise<void>((resolve) => setTimeout(resolve, 750));
-      }
+      // Saving is the real dirty release and bumps dataRev after the host
+      // publishes it; the PageView retry effect consumes that event.
+      if (gate === "dirty") await flushPage(today);
       if (gate === "saving") {
         releaseSave!();
         await saved!;
-        await new Promise<void>((resolve) => setTimeout(resolve, 750));
       }
-      if (gate === "conflict") clearConflict(today);
+      if (gate === "conflict") host.deliver({ key, answer: null,
+        page: { version: 3, conflict: false, risk: false, disk: { kind: "file", rev: "disk-2" }, text: { kind: "unchanged" } } });
       if (gate === "moving") setBlockMoving(false);
-      await flushMicrotasks();
-      await flushMicrotasks();
-      expect(api).toHaveBeenCalledTimes(1);
-      expect(doc.feed).toContain(`released-${gate}`);
+      await vi.waitFor(() => expect(api).toHaveBeenCalledTimes(1), { timeout: 2000 });
+      await vi.waitFor(() => expect(doc.feed).toContain(`released-${gate}`));
     } finally {
       mounted.dispose();
     }
@@ -678,6 +686,8 @@ describe("Journals feed generation lifecycle", () => {
 
 describe("tag-page table", () => {
   it("toggles a query-sourced table and adds new rows to today's journal", async () => {
+    // The host read the journal the window shows (the mock graph has no such day).
+    openAsLoaded(await bindTestHost());
     const todayName = journalTitle(new Date());
     setDoc({
       byId: {
@@ -717,7 +727,6 @@ describe("tag-page table", () => {
       anchor: "block", groups, diagnostics: [],
       report: { ran: ["tag"], ignored: [], supported: true }, total: 1, exceeded: false,
     });
-    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev1"] });
 
     const tagPage = pageByName("Tag")!;
     const { root, dispose } = mount(() => (
@@ -1943,7 +1952,8 @@ describe("Markdown preamble content", () => {
     setDoc("byId", header, "originatedFromPageHeader", true);
     vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/Repair header.md" });
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["repaired"] });
+    openAsLoaded(await bindTestHost());
+    const save = vi.spyOn(backend(), "pageSubmit");
     mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
     const disposeKeys = installKeybindings();
     const { root, dispose } = mount(() => <PageView />);
@@ -1977,7 +1987,7 @@ describe("Markdown preamble content", () => {
       const repaired = pageToDto(dto.name)!;
       await flushPage(dto.name);
       expect(save).toHaveBeenCalledTimes(1);
-      expect(save.mock.calls[0][0][0].page).toEqual(repaired);
+      expect(submittedPages(save)[0]).toEqual(repaired);
       expect(isDirty(dto.name)).toBe(false);
       undo();
       await tick();

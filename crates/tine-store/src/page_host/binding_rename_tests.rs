@@ -19,7 +19,10 @@ fn rename(
 ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
     for _ in 0..20 {
         let view = live.store.whole_graph().unwrap();
-        match live.host.rename(source, target, referrers, map, &view) {
+        match live
+            .host
+            .rename(source, target, referrers, map, &view, &|_, _, _| None)
+        {
             Err(RenameRefusal::Refused) => continue,
             done => return done,
         }
@@ -87,10 +90,21 @@ fn host_rename_and_delete_publish_their_edit_kinds() {
         &map("Old", "New"),
     );
     assert!(renamed.is_ok(), "{renamed:?}");
-    let deleted = live
-        .host
-        .delete(live.host.session(), &PageId::from("pages/gone.md"));
-    assert_eq!(deleted, PageOperation::Pending);
+    // Waiting means the host is still finishing the rename (D4): the
+    // window retries once settled (`wiring.ts`), and so does this test.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deleted = loop {
+        let deleted = live.host.delete(
+            live.host.session(),
+            &PageId::from("pages/gone.md"),
+            b"- gone\n",
+        );
+        if deleted != PageOperation::Waiting || std::time::Instant::now() > deadline {
+            break deleted;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert_eq!(deleted, PageOperation::Applied);
     let expected = [
         ("pages/New.md", EditKind::RenamePage),
         ("pages/Old.md", EditKind::RenamePage),
@@ -349,6 +363,7 @@ fn rename_and_reserve_cost_is_independent_of_registered_keys() {
                 &[PageId::from("pages/r.md")],
                 &map("Old", "New"),
                 &view,
+                &|_, _, _| None,
             )
             .unwrap();
         let lookups = super::super::production::SPELLING_LOOKUPS.with(|n| n.get());
@@ -491,6 +506,34 @@ fn a_new_entry_never_takes_a_respelled_key() {
         "- old\n",
         "B1: the other entry changed"
     );
+    live.host.stop();
+}
+
+/// Q-P2b-1: a discovery that alternates between two page sets (a config
+/// flipping between plans) ends: the restart fences the union and never
+/// shrinks it, so the reservation covers both sets.
+#[test]
+fn q_p2b_1_an_alternating_discovery_terminates_with_the_union_reserved() {
+    let live = Live::new(&[("pages/a.md", "- a\n"), ("pages/b.md", "- b\n")]);
+    let calls = std::cell::Cell::new(0);
+    let alternating = || {
+        calls.set(calls.get() + 1);
+        let page = if calls.get() % 2 == 1 {
+            "pages/a.md"
+        } else {
+            "pages/b.md"
+        };
+        vec![PageId::from(page)]
+    };
+    let reservation = live.host.reserve(alternating, Input::Refuse).unwrap();
+    let reserved: BTreeSet<&str> = reservation.keys().iter().map(String::as_str).collect();
+    assert_eq!(reserved, BTreeSet::from(["pages/a.md", "pages/b.md"]));
+    assert_eq!(
+        calls.get(),
+        3,
+        "discover, rediscover (grows), rediscover (covered)"
+    );
+    drop(reservation);
     live.host.stop();
 }
 
@@ -721,6 +764,7 @@ fn a_rename_planned_before_a_config_change_is_refused_unwritten() {
         &[PageId::from("pages/r.md")],
         &map("Old", "New"),
         &view,
+        &|_, _, _| None,
     );
     assert_eq!(renamed, Err(RenameRefusal::Refused));
     assert_eq!(live.disk("pages/Old.md"), "- old\n");

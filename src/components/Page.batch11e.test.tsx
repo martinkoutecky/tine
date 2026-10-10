@@ -15,6 +15,8 @@ import { clearRecent, recentPages, setRecentPages } from "../ui";
 import { graphEpoch, setGraphMeta } from "../graphSession";
 import { installKeybindings } from "../keybindings";
 import { setToasts, toasts } from "../toasts";
+import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
+import { STALE_VERSION } from "../document/host/protocol";
 
 beforeAll(async () => { await initParser(); });
 afterEach(() => {
@@ -63,7 +65,6 @@ describe("batch 11e page identity and journal continuity", () => {
     const first = journalDto(today, "Visible today");
     const second = journalDto(older, "Move me");
     vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([first, second]));
-    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["today-r2", "older-r2"] });
     const mounted = mount(() => <PageView />);
     try {
       const id = second.blocks[0].id;
@@ -108,7 +109,8 @@ describe("batch 11e page identity and journal continuity", () => {
       pages: [{ ...page("Physical", "page", ["body"], "title:: Physical"), id }], feed: ["Physical"], loaded: true });
     setRecentPages([{ name: "Physical", kind: "page", path: id }]);
     mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Physical", pageKind: "page", path: id });
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["effective-rev"] });
+    await bindTestHost();
+    const save = vi.spyOn(backend(), "pageSubmit");
     vi.spyOn(backend(), "getPageByPath").mockImplementation(async () => ({ name: save.mock.calls.length ? "Effective" : "Physical",
       kind: "page", title: save.mock.calls.length ? "Effective" : "Physical", id,
       rev: save.mock.calls.length ? "effective-rev" : "physical-rev",
@@ -121,7 +123,7 @@ describe("batch 11e page identity and journal continuity", () => {
       expect(pageToDto("Physical")?.pre_block).toContain("title:: Effective");
       expect(await flushPage("Physical")).toBe(true);
       expect(save).toHaveBeenCalled();
-      expect(save.mock.calls[0][0][0].page.pre_block).toContain("title:: Effective");
+      expect(submittedPages(save)[0].pre_block).toContain("title:: Effective");
       expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "Effective", path: id });
       expect(recentPages()).toContainEqual({ name: "Effective", kind: "page", path: id });
       expect(pageByName("Effective")?.id).toBe(id);
@@ -131,7 +133,13 @@ describe("batch 11e page identity and journal continuity", () => {
       expect(isDirty("Effective")).toBe(true);
       expect(await flushPage("Effective")).toBe(true);
       expect(save).toHaveBeenCalledTimes(2);
-      expect(save.mock.calls.at(-1)?.[0][0]).toMatchObject({ id, baseRev: "effective-rev" });
+      // The later edit goes to the same file on the version the title save
+      // produced (not stale): the host key is the file, the version is the answer's.
+      const [first, second] = save.mock.calls;
+      expect(second[2]).toBe(id);
+      expect(submittedPages(save)[1]).toMatchObject({ name: "Effective" });
+      expect(second[4]).toBeGreaterThan(first[4]);
+      expect(second[4]).not.toBe(STALE_VERSION);
     } finally { mounted.dispose(); clearRecent(); }
   });
 
@@ -140,7 +148,8 @@ describe("batch 11e page identity and journal continuity", () => {
     setDoc({ byId: { body: node("body", "Body", "Effective") },
       pages: [{ ...page("Effective", "page", ["body"], "title:: Effective"), id }], feed: ["Effective"], loaded: true });
     mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Effective", pageKind: "page", path: id });
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["removed-rev"] });
+    await bindTestHost();
+    const save = vi.spyOn(backend(), "pageSubmit");
     vi.spyOn(backend(), "getPageByPath").mockImplementation(async () => ({ name: save.mock.calls.length ? "Physical" : "Effective",
       kind: "page", title: save.mock.calls.length ? "Physical" : "Effective", id,
       pre_block: save.mock.calls.length ? null : "title:: Effective",
@@ -150,7 +159,8 @@ describe("batch 11e page identity and journal continuity", () => {
       await vi.waitFor(() => expect(mounted.root.textContent).toContain("Body"));
       setPageProperty("Effective", "title", null);
       expect(await flushPage("Effective")).toBe(true);
-      expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "Physical", path: id });
+      // The file's effective name is read once the host published the edit.
+      await vi.waitFor(() => expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "Physical", path: id }));
       expect(pageByName("Physical")?.id).toBe(id);
       expect(pageByName("Effective")).toBeUndefined();
     } finally { mounted.dispose(); }

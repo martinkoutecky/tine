@@ -13,7 +13,8 @@ import { backend } from "../backend";
 import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";
 import { setToasts, toasts } from "../toasts";
 import { focusedRouter } from "../panes";
-import { clearConflict, markConflict } from "../document/save/engine";
+import { bindTestHost } from "../document/host/wiring.test.support";
+import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
 
 describe("PageMenu page-kind availability", () => {
   it("keeps rename page-only but exposes delete for pages and journals", () => {
@@ -186,9 +187,11 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
 
   it("does not delete a colliding page after an old graph confirmation", async () => {
     load();
+    // Bound: a delete could reach the host, so the refusal is the menu's.
+    await bindTestHost();
     let finish!: (confirmed: boolean) => void;
     vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined as never);
+    const remove = vi.spyOn(backend(), "pageDelete");
     const dispose = mount(() => <ContextMenu />);
     openPageContextMenu(10, 10, "P", "page", true);
     const action = [...document.querySelectorAll<HTMLElement>(".ctx-item")]
@@ -206,9 +209,11 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
   it.each([true, false])("pins the page file before Delete confirmation (explicit path %s)", async (explicit) => {
     load();
     setDoc("pages", 0, "id", "pages/one.md");
+    // Bound: a delete could reach the host, so the refusal is the menu's.
+    await bindTestHost();
     let finish!: (confirmed: boolean) => void;
     vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue();
+    const remove = vi.spyOn(backend(), "pageDelete");
     const dispose = mount(() => <ContextMenu />);
     openPageContextMenu(10, 10, { name: "P", pageKind: "page", ...(explicit ? { path: "pages/one.md" } : {}) }, true);
     [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Delete page"))!.click();
@@ -223,7 +228,8 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
 
   it("reopening a page menu replaces the previous file target", async () => {
     load(); setDoc("pages", 0, "id", "pages/one.md");
-    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue();
+    const host = await bindTestHost();
+    const remove = vi.spyOn(backend(), "pageDelete");
     vi.spyOn(backend(), "confirm").mockResolvedValue(true);
     const dispose = mount(() => <ContextMenu />);
     openPageContextMenu(10, 10, { name: "P", pageKind: "page", path: "pages/one.md" }, true);
@@ -232,7 +238,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     const action = document.querySelector<HTMLElement>('[data-page-action-id="delete-page"]');
     expect(action).not.toBeNull();
     action!.click();
-    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith("P", "page", "pages/two.md"));
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(host.session, "P", "page", "pages/two.md"));
     dispose();
   });
 
@@ -687,7 +693,7 @@ describe("page file actions on a conflicted page (GH #490)", () => {
   });
   afterEach(() => {
     vi.restoreAllMocks();
-    clearConflict("P");
+    resetStore();
     closeContextMenu();
     clearTransientLayersForTest();
     document.body.innerHTML = "";
@@ -717,9 +723,11 @@ describe("page file actions on a conflicted page (GH #490)", () => {
   for (const [label, reveal] of [["Open with default app", false], ["Show in folder", true]] as const) {
     it(`${label}: opens the file as it stands on disk and says the draft is not in it`, async () => {
       loadPage();
-      markConflict("P");
+      const host = await bindTestHost();
+      openAsLoaded(host);
+      await conflictedInHost(host, "P", "pages/P.md");
       const open = vi.spyOn(backend(), "openPageFile").mockResolvedValue(undefined as never);
-      const save = vi.spyOn(backend(), "savePages");
+      const save = vi.spyOn(backend(), "pageSubmit");
       setToasts([]);
       const dispose = mount(() => <ContextMenu />);
       openPageContextMenu(10, 10, "P", "page", true);

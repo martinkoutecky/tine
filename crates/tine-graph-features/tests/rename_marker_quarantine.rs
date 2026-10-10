@@ -8,7 +8,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages::{self, RenameOutcome};
 use tine_store::{PageId, RenameMap, Store, TitleRebind, TxOutcome};
 
-fn graph(label: &str, files: &[(&str, &str)]) -> (PathBuf, Store) {
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
+fn graph(label: &str, files: &[(&str, &str)]) -> (PathBuf, std::sync::Arc<Store>) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-rename-markers-{label}-{}-{}",
@@ -26,7 +37,7 @@ fn graph(label: &str, files: &[(&str, &str)]) -> (PathBuf, Store) {
     for (rel, body) in files {
         fs::write(root.join(rel), body).unwrap();
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     (root, store)
 }
 
@@ -43,8 +54,10 @@ fn rename_skips_marker_bearing_referrers_and_reports_them() {
             ("pages/Clean.md", "- clean sees [[Alpha]]\n"),
         ],
     );
-    let report =
-        pages::rename_or_merge_page(&store, None, "Alpha", "Beta", None, None, &[]).unwrap();
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Alpha", "Beta", None, None, &[])
+    })
+    .unwrap();
     assert_eq!(report.outcome, RenameOutcome::Renamed);
     assert_eq!(
         fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(),
@@ -81,8 +94,10 @@ fn namespace_rename_also_skips_marker_bearing_referrers_and_moves_them_verbatim(
             ("pages/Conflicted.md", conflicted),
         ],
     );
-    let report =
-        pages::rename_or_merge_page(&store, None, "Parent", "Ancestor", None, None, &[]).unwrap();
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Parent", "Ancestor", None, None, &[])
+    })
+    .unwrap();
     assert_eq!(
         fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(),
         conflicted

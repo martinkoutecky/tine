@@ -4,7 +4,7 @@ use crate::model::Graph;
 use crate::test_config_client::ConfigClient;
 use std::sync::Arc;
 use tine_core::PageKind;
-use tine_graph_features::{assets, journals, pages, pdf};
+use tine_graph_features::{assets, journals, pdf};
 use tine_store::Store;
 
 fn mk(tag: &str) -> std::path::PathBuf {
@@ -839,7 +839,7 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
 fn delete_page_moves_to_trash_recoverable() {
     let root = mk("deltrash");
     std::fs::write(root.join("pages").join("Doomed.md"), "- keep me\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let cancel = tine_store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
     assert_eq!(
         store
@@ -850,8 +850,10 @@ fn delete_page_moves_to_trash_recoverable() {
             .len(),
         1
     );
-    pages::delete_page_expected(&store, None, "Doomed", PageKind::Page, None, None)
-        .expect("delete");
+    assert_eq!(
+        crate::test_fixture_io::delete(&store, "Doomed", PageKind::Page, None).expect("delete"),
+        (tine_store::PageOperation::Applied, Some(true))
+    );
 
     // Gone from pages/, no longer resolvable...
     assert!(!root.join("pages").join("Doomed.md").exists());
@@ -880,7 +882,7 @@ fn delete_page_errors_when_trash_path_is_file_and_keeps_page_cached() {
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::write(root.join("logseq").join(".tine-trash"), "not a dir").unwrap();
     std::fs::write(root.join("pages").join("Doomed.md"), "- keep me\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let cancel = tine_store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
     assert_eq!(
         store
@@ -892,12 +894,12 @@ fn delete_page_errors_when_trash_path_is_file_and_keeps_page_cached() {
         1
     );
 
-    let err = pages::delete_page_expected(&store, None, "Doomed", PageKind::Page, None, None)
-        .expect_err("trash path is blocked");
-    assert!(
-        err.to_string().contains(".tine-trash"),
-        "error should name the trash path: {err}"
-    );
+    // The host owes the deletion until its trash move lands; a blocked
+    // trash never publishes it (STEP3 §4.4), and the page stays.
+    let (deleted, published) =
+        crate::test_fixture_io::delete(&store, "Doomed", PageKind::Page, None).unwrap();
+    assert_eq!(deleted, tine_store::PageOperation::Pending);
+    assert_ne!(published, Some(true), "a blocked trash must not publish");
     assert!(
         root.join("pages").join("Doomed.md").is_file(),
         "source page survives"

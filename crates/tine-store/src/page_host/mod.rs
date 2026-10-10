@@ -16,12 +16,15 @@ mod drafts;
 mod driver;
 #[cfg(test)]
 mod driver_tests;
+#[cfg(feature = "test-faults")]
+pub mod faults;
 mod io;
 #[cfg(test)]
 mod model_fs;
 #[cfg(test)]
 mod native_cost;
 mod operations;
+mod order;
 mod production;
 #[cfg(test)]
 mod production_tests;
@@ -34,6 +37,7 @@ mod writer_census_tests;
 
 use drafts::{Record, Stage, Vehicle};
 use io::{ErrorKind, HostIo, IoFailure, Witness};
+use order::{Gates, OperationReply, Reply, ReplyId};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -258,6 +262,8 @@ enum Event {
     SaveOutcome {
         page: PageKey,
         outcome: Outcome,
+        /// A failed step's I/O diagnosis, for the notice (Q-P2b-3).
+        cause: Option<IoFailure>,
     },
     Removed {
         page: PageKey,
@@ -298,6 +304,9 @@ enum Event {
         page: PageKey,
         bytes: Text,
     },
+    /// An operation whose caller stopped waiting (Uncertain) ended with its
+    /// draft durably absent: it did not happen (PLAN-P2b-AB v2 Q2).
+    OperationDropped(BTreeSet<PageKey>),
     /// Why request `id` was answered without taking it (STEP3 §3.3).
     Refused {
         page: PageKey,
@@ -338,9 +347,10 @@ enum Application {
     Operation {
         pages: BTreeMap<PageKey, Page>,
         records: Vec<Record>,
-        request: Option<Request>,
+        reply: Reply,
         last_version: u64,
         reads: BTreeMap<PageKey, Base>,
+        gates: Option<Gates>,
     },
     Representation,
 }
@@ -363,6 +373,28 @@ struct DraftWorker {
     /// Pending-effect failures outlive replacement representation vehicles.
     failures: u32,
     recover_notice: bool,
+}
+
+/// A key's logical state (`Host::logical`).
+#[derive(Clone, Copy, Debug)]
+enum Logical<'a> {
+    /// No page held and no admitted input for it.
+    Absent,
+    /// The applied page; nothing admitted for it is still to apply.
+    Settled(&'a Page),
+    /// Admitted input not applied yet, at the version it carries; never
+    /// clean or published. `conflict` is the in-flight page's.
+    Admitted { version: u64, conflict: bool },
+}
+
+impl Logical<'_> {
+    fn conflict(&self) -> bool {
+        match self {
+            Logical::Absent => false,
+            Logical::Settled(page) => page.conflict,
+            Logical::Admitted { conflict, .. } => *conflict,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -419,6 +451,7 @@ struct Host<F: HostIo> {
     job: Option<SaveJob>,
     worker: Option<DraftWorker>,
     retained: BTreeSet<PageKey>,
+    order: order::Order,
     version: u64,
     wseq: u64,
     incarnation: u64,
@@ -428,6 +461,10 @@ struct Host<F: HostIo> {
     admission_open: bool,
     switch_confirmation: Option<u64>,
     alive: bool,
+    /// Test pause (Q-P2b-4's deterministic schedules): no admitted request
+    /// applies and the draft worker does not advance while set.
+    #[cfg(test)]
+    paused: bool,
 }
 
 impl<F: HostIo> Host<F> {
@@ -457,6 +494,7 @@ impl<F: HostIo> Host<F> {
             job: None,
             worker: None,
             retained: BTreeSet::new(),
+            order: Default::default(),
             version: 0,
             wseq: 0,
             incarnation: 1,
@@ -466,6 +504,8 @@ impl<F: HostIo> Host<F> {
             admission_open: true,
             switch_confirmation: None,
             alive: true,
+            #[cfg(test)]
+            paused: false,
         }
     }
 
@@ -766,6 +806,80 @@ impl<F: HostIo> Host<F> {
             .collect()
     }
 
+    /// A key's logical state, the one source of every barrier query
+    /// (`owed`, `pages_published`, `pages_recoverable`, `wait_published`,
+    /// `unsaved`; STEP3-DESIGN "Manager decisions on the P2b checkpoint
+    /// questions", Q-P2b-4). Admitted input not applied yet wins over the
+    /// applied page: the draft worker's in-flight operation (a deletion,
+    /// rename or move, at the version it installs), else a queued or
+    /// applying submit or move (at its version, at least the held one).
+    /// A barrier that read `pages` alone vouched for a deletion before its
+    /// file moved. A census in `tests.rs` keeps barrier code off `pages`.
+    fn logical(&self, key: &str) -> Logical<'_> {
+        let in_flight = self
+            .worker
+            .as_ref()
+            .and_then(|worker| match &worker.application {
+                Some(Application::Operation { pages, .. }) => pages.get(key),
+                _ => None,
+            });
+        if let Some(page) = in_flight {
+            return Logical::Admitted {
+                version: page.version,
+                conflict: page.conflict,
+            };
+        }
+        let held = self.pages.get(key);
+        let queued = self
+            .applying
+            .iter()
+            .chain(&self.queue)
+            .filter_map(|request| match &request.kind {
+                RequestKind::Submit { version, .. } if request.page == key => Some(*version),
+                RequestKind::Move {
+                    receiver,
+                    source_version,
+                    receiver_version,
+                    ..
+                } => (request.page == key)
+                    .then_some(*source_version)
+                    .or((receiver == key).then_some(*receiver_version)),
+                _ => None,
+            })
+            .max();
+        match (queued, held) {
+            (Some(version), held) => Logical::Admitted {
+                version: version.max(held.map_or(0, |page| page.version)),
+                conflict: false,
+            },
+            (None, Some(page)) => Logical::Settled(page),
+            (None, None) => Logical::Absent,
+        }
+    }
+
+    /// Every key whose logical state is not `Absent`: the held pages and
+    /// the keys admitted input names. Bounded by those; no registry walk.
+    fn logical_keys(&self) -> BTreeSet<PageKey> {
+        let mut keys: BTreeSet<PageKey> = self.pages.keys().cloned().collect();
+        if let Some(Application::Operation { pages, .. }) =
+            self.worker.as_ref().and_then(|w| w.application.as_ref())
+        {
+            keys.extend(pages.keys().cloned());
+        }
+        for request in self.applying.iter().chain(&self.queue) {
+            match &request.kind {
+                RequestKind::Submit { .. } => {
+                    keys.insert(request.page.clone());
+                }
+                RequestKind::Move { receiver, .. } => {
+                    keys.extend([request.page.clone(), receiver.clone()]);
+                }
+                _ => {}
+            }
+        }
+        keys
+    }
+
     fn answer(&mut self, request: &Request, key: &str, took: bool) {
         if request.generation != self.generation {
             return;
@@ -890,10 +1004,23 @@ impl<F: HostIo> Host<F> {
         let Some(request) = self.applying.clone() else {
             return Disposition::Disabled;
         };
+        #[cfg(test)]
+        if self.paused {
+            return Disposition::Waiting;
+        }
         if self.busy(&request.page) || self.allocator_busy() {
             return Disposition::Waiting;
         }
         let mut keys = BTreeSet::from([request.page.clone()]);
+        // A Discard of a running rename's destination reverts its source too.
+        if let (RequestKind::Discard { .. }, Some(src)) =
+            (&request.kind, self.order.partner(&request.page))
+        {
+            if self.busy(src) {
+                return Disposition::Waiting;
+            }
+            keys.insert(src.clone());
+        }
         if let RequestKind::Move { receiver, .. } = &request.kind {
             if self.busy(receiver) || self.worker.is_some() {
                 return Disposition::Waiting;
@@ -942,32 +1069,14 @@ impl<F: HostIo> Host<F> {
                 } else {
                     page.submit(bytes.clone(), *version, next);
                 }
+                if page.buf.is_some() && self.pages[key].buf.is_none() {
+                    self.order.supersede(key);
+                }
                 self.version = next;
                 self.set_page(key, Some(page));
                 self.answer(request, key, true);
             }
-            RequestKind::Discard { .. } => {
-                let held = self.pages.get(key).cloned();
-                let read = held.as_ref().map(|_| self.fs.read_page(key));
-                if let (Some(mut page), Some(Ok(bytes))) = (held, read.clone()) {
-                    let drafts = self.logical_drafts();
-                    let hold = page.risk
-                        && (page.buf == bytes
-                            || drafts.get(key).is_some_and(|draft| draft.bytes == bytes));
-                    self.version = self.next_version();
-                    page = Self::initial_page(bytes, self.version);
-                    page.risk = hold;
-                    self.set_page(key, Some(page));
-                    self.answer(request, key, false);
-                } else {
-                    let reason = if read.is_some() {
-                        Refusal::ReadFailed
-                    } else {
-                        Refusal::NotHeld
-                    };
-                    self.refused(request, key, reason);
-                }
-            }
+            RequestKind::Discard { .. } => self.discard(request),
             RequestKind::Move {
                 receiver,
                 source_text,
@@ -995,9 +1104,10 @@ impl<F: HostIo> Host<F> {
                 self.install_operation(
                     BTreeMap::from([(key.clone(), source), (receiver.clone(), target)]),
                     vec![record],
-                    Some(request.clone()),
+                    Reply::Window(request.clone()),
                     vs,
                     BTreeMap::new(),
+                    None,
                 );
                 return Disposition::Pending;
             }
@@ -1231,6 +1341,7 @@ impl<F: HostIo> Host<F> {
         self.job = None;
         self.worker = None;
         self.retained.clear();
+        self.order.stop();
         self.switch_confirmation = None;
     }
 

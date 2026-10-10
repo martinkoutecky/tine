@@ -8,6 +8,17 @@ use tine_core::model::{BlockDto, Format, PageDto, PageKind};
 use tine_graph_features::{conflicts, pages};
 use tine_store::{Area, FaultPoint, OpenOptions, PageId, RenameMap, RestoreFile, SaveBase, Store};
 
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn scratch(label: &str) -> PathBuf {
@@ -22,8 +33,8 @@ fn scratch(label: &str) -> PathBuf {
     root
 }
 
-fn open(root: &Path) -> Store {
-    Store::open(root, OpenOptions::default()).unwrap().0
+fn open(root: &Path) -> std::sync::Arc<Store> {
+    std::sync::Arc::new(Store::open(root, OpenOptions::default()).unwrap().0)
 }
 
 fn page(name: &str, raw: &str) -> PageDto {
@@ -284,7 +295,10 @@ fn rewritten_move_with_preamble_title_retries_after_rename_crash() {
             fs::read_to_string(root.join(format!("pages/New.{ext}"))).unwrap(),
             old
         );
-        pages::rename_page_expected(&reopened, None, "Old", "New", None).unwrap();
+        hosted(&reopened, |host| {
+            pages::rename_page_expected(&reopened, host, "Old", "New", None)
+        })
+        .unwrap();
         let final_bytes = fs::read_to_string(root.join(format!("pages/New.{ext}"))).unwrap();
         assert!(
             final_bytes.contains(new_title),
@@ -509,18 +523,23 @@ fn crash_feature_worker() {
             pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
         }
         "rename" => {
-            pages::rename_page_expected(&store, None, "A", "B", None).unwrap();
+            hosted(&store, |host| {
+                pages::rename_page_expected(&store, host, "A", "B", None)
+            })
+            .unwrap();
         }
         "rename-merge" => {
-            pages::rename_or_merge_page(
-                &store,
-                None,
-                "Old",
-                "New",
-                None,
-                Some("pages/New.md"),
-                &[],
-            )
+            hosted(&store, |host| {
+                pages::rename_or_merge_page(
+                    &store,
+                    host,
+                    "Old",
+                    "New",
+                    None,
+                    Some("pages/New.md"),
+                    &[],
+                )
+            })
             .unwrap();
         }
         "conflict" => {
@@ -687,15 +706,17 @@ fn feature_journeys_kill_reopen_keep_content() {
                 "rename-merge" => {
                     rename_merge_boundary_holds(&root, boundary, false);
                     if root.join("pages/Old.md").exists() {
-                        pages::rename_or_merge_page(
-                            &reopened,
-                            None,
-                            "Old",
-                            "New",
-                            None,
-                            Some("pages/New.md"),
-                            &[],
-                        )
+                        hosted(&reopened, |host| {
+                            pages::rename_or_merge_page(
+                                &reopened,
+                                host,
+                                "Old",
+                                "New",
+                                None,
+                                Some("pages/New.md"),
+                                &[],
+                            )
+                        })
                         .unwrap();
                     }
                     rename_merge_boundary_holds(&root, boundary, true);

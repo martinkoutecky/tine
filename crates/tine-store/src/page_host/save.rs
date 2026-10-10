@@ -16,6 +16,10 @@ impl<F: HostIo> Host<F> {
         if page.clean() || page.conflict {
             return Disposition::Disabled;
         }
+        // A running rename's order (option 2): its witness wakes the driver.
+        if self.order.gated(key) {
+            return Disposition::Waiting;
+        }
         self.job = Some(SaveJob {
             page: key.into(),
             phase: if self.custody.contains_key(key) {
@@ -67,6 +71,8 @@ impl<F: HostIo> Host<F> {
             return Disposition::Disabled;
         };
         let key = job.page.clone();
+        // The failed step's diagnosis for the page's notice (Q-P2b-3).
+        let mut cause = None;
         let result = match job.phase {
             // A failure is saveFail (L442-445): nothing was renamed. After three
             // consecutive filesystem errors the save goes ahead, the error stays
@@ -103,7 +109,10 @@ impl<F: HostIo> Host<F> {
                     job.phase = SavePhase::Check;
                     None
                 }
-                Err(_) => Some(Outcome::Failed),
+                Err(e) => {
+                    cause = Some(e);
+                    Some(Outcome::Failed)
+                }
             },
             SavePhase::Check => match self.fs.read_page(&key) {
                 Ok(bytes) if job.base == Base::Known(bytes.clone()) => {
@@ -130,7 +139,10 @@ impl<F: HostIo> Host<F> {
                             });
                             Some(Outcome::Failed)
                         }
-                        Err(_) => Some(Outcome::Failed),
+                        Err(e) => {
+                            cause = Some(e);
+                            Some(Outcome::Failed)
+                        }
                     }
                 }
                 Ok(bytes) => {
@@ -142,7 +154,10 @@ impl<F: HostIo> Host<F> {
                     self.fs.page_finish(&key);
                     return Disposition::Applied;
                 }
-                Err(_) => Some(Outcome::Failed),
+                Err(e) => {
+                    cause = Some(e);
+                    Some(Outcome::Failed)
+                }
             },
             SavePhase::Rename if job.bytes.is_some() => match self.fs.page_rename(&key) {
                 Ok(()) => {
@@ -167,6 +182,7 @@ impl<F: HostIo> Host<F> {
                     None
                 }
                 Err(e) if e.completed => {
+                    cause = Some(e);
                     self.events.push(Event::Renamed {
                         page: key.clone(),
                         bytes: job.bytes.clone(),
@@ -174,7 +190,10 @@ impl<F: HostIo> Host<F> {
                     });
                     Some(Outcome::Uncertain)
                 }
-                Err(_) => Some(Outcome::Failed),
+                Err(e) => {
+                    cause = Some(e);
+                    Some(Outcome::Failed)
+                }
             },
             SavePhase::Marker => {
                 // One fresh identity names both the marker and its payload.
@@ -199,7 +218,10 @@ impl<F: HostIo> Host<F> {
                         job.phase = SavePhase::Rename;
                         None
                     }
-                    Err(_) => Some(Outcome::Failed),
+                    Err(e) => {
+                        cause = Some(e);
+                        Some(Outcome::Failed)
+                    }
                 }
             }
             SavePhase::Rename => {
@@ -238,6 +260,7 @@ impl<F: HostIo> Host<F> {
                         None
                     }
                     Err(e) if e.completed => {
+                        cause = Some(e);
                         self.events.push(Event::Renamed {
                             page: key.clone(),
                             bytes: job.bytes.clone(),
@@ -245,7 +268,10 @@ impl<F: HostIo> Host<F> {
                         });
                         Some(Outcome::Uncertain)
                     }
-                    Err(_) => Some(Outcome::Failed),
+                    Err(e) => {
+                        cause = Some(e);
+                        Some(Outcome::Failed)
+                    }
                 }
             }
             SavePhase::TrashSync => {
@@ -256,7 +282,10 @@ impl<F: HostIo> Host<F> {
                         job.phase = SavePhase::DirectorySync;
                         None
                     }
-                    Err(_) => Some(Outcome::Uncertain),
+                    Err(e) => {
+                        cause = Some(e);
+                        Some(Outcome::Uncertain)
+                    }
                 }
             }
             SavePhase::DirectorySync => match self.fs.page_sync(&key) {
@@ -269,7 +298,10 @@ impl<F: HostIo> Host<F> {
                     }
                     Some(Outcome::Published)
                 }
-                Err(_) => Some(Outcome::Uncertain),
+                Err(e) => {
+                    cause = Some(e);
+                    Some(Outcome::Uncertain)
+                }
             },
         };
         if result.is_some() && job.phase == SavePhase::DirectorySync {
@@ -285,6 +317,7 @@ impl<F: HostIo> Host<F> {
                 page.base = Base::Known(job.bytes.clone());
                 page.typed = false;
                 page.risk = false;
+                self.order.published(&key, job.version);
                 self.events.push(Event::Published {
                     page: key.clone(),
                     bytes: job.bytes,
@@ -295,7 +328,11 @@ impl<F: HostIo> Host<F> {
                 page.risk = true;
             }
             self.set_page(&key, Some(page));
-            self.events.push(Event::SaveOutcome { page: key, outcome });
+            self.events.push(Event::SaveOutcome {
+                page: key,
+                outcome,
+                cause,
+            });
             Disposition::Applied
         } else {
             self.job = Some(job);

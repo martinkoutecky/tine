@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 194] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 189] = [
     "add_defender_exclusion",
     "app_architecture",
     "app_platform",
@@ -37,7 +37,6 @@ pub(crate) const KNOWN_COMMANDS: [&str; 194] = [
     "debug_log",
     "default_graph_parent",
     "defender_hint",
-    "delete_page",
     "detect_media_editor",
     "diagnostic_frontend_event",
     "diagnostic_ipc_event",
@@ -74,6 +73,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 194] = [
     "install_plugin",
     "journal_content_days",
     "journal_feed_page",
+    "legacy_drafts_file",
     "list_backups",
     "list_installed_plugins",
     "list_journal_conflicts",
@@ -84,7 +84,6 @@ pub(crate) const KNOWN_COMMANDS: [&str; 194] = [
     "list_sync_conflicts",
     "list_templates",
     "live_conflict_diff",
-    "load_drafts",
     "load_graph",
     "load_plugin_registry_cache",
     "load_session",
@@ -139,19 +138,16 @@ pub(crate) const KNOWN_COMMANDS: [&str; 194] = [
     "resolve_block",
     "resolve_blocks",
     "resolve_duplicate_journal_day",
-    "resolve_live_conflict",
     "resolve_page",
     "resolve_sync_conflict",
     "resolve_vcs_marker_conflict",
     "restore_backup",
-    "retire_draft",
     "reveal_known_graph",
     "rollback_pdf_area_image",
     "run_graph_search",
     "save_asset",
     "save_diagnostic_report",
     "save_graph_verification_report",
-    "save_pages",
     "save_pdf_area_image",
     "save_session",
     "save_workspaces",
@@ -181,7 +177,6 @@ pub(crate) const KNOWN_COMMANDS: [&str; 194] = [
     "start_recording",
     "startup_graph_path",
     "stop_recording",
-    "store_draft",
     "store_plugin_registry_cache",
     "stream_asset_path",
     "suggest_graph_name",
@@ -261,7 +256,7 @@ mod tests {
 
     #[test]
     fn free_text_is_not_a_command() {
-        assert!(is_known_command("save_pages"));
+        assert!(is_known_command("page_submit"));
         assert!(!is_known_command("My secret page"));
         assert!(!is_known_command(""));
     }

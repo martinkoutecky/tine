@@ -2,7 +2,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createSignal, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { pageByName, resetStore } from "../document";
+import { isDirty, pageByName, resetStore } from "../document";
+import { bindTestHost } from "../document/host/wiring.test.support";
 import { backend } from "../backend";
 import { loadSingle } from "../document/workingSet";
 import { doc, setDoc } from "../document/model";
@@ -108,7 +109,9 @@ describe("LiveRefGroup reference context", () => {
       ] }],
     };
     loadSingle(page);
-    const save = vi.spyOn(backend(), "savePages");
+    await bindTestHost();
+    const save = vi.spyOn(backend(), "pageSubmit");
+    const move = vi.spyOn(backend(), "pageMove");
     const renderGroup = () => <LiveRefGroup page={page.name} kind="page" blocks={[first, second]} surface={surface} showBreadcrumb eager />;
     let view = mount(renderGroup);
     const clickCrumb = (text: string, shiftKey = false) => {
@@ -134,7 +137,10 @@ describe("LiveRefGroup reference context", () => {
       expect(view.root.querySelector('[data-block-id="parent-a"]')).not.toBeNull();
       expect(doc.byId["outer"].collapsed).toBe(true);
       expect(route()).toEqual(currentRoute);
+      // Context expansion is view state: no page write and no pending input.
       expect(save).not.toHaveBeenCalled();
+      expect(move).not.toHaveBeenCalled();
+      expect(isDirty(page.name)).toBe(false);
       view.dispose();
       view = mount(renderGroup);
       await expect.poll(() => view.root.textContent).toContain("First hit");

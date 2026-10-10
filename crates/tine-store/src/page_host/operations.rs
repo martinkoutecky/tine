@@ -18,22 +18,35 @@ impl<F: HostIo> Host<F> {
     }
 
     pub(super) fn delete(&mut self, key: &str) -> Disposition {
-        self.delete_with_load(key, true)
+        self.delete_with_load(key, true, None)
+    }
+
+    /// `delete`, bound to the bytes the caller's identity check read
+    /// (Q-P2b-5, GH #620): refused when the operation's read differs, so no
+    /// gap separates the check from the deletion. In-scope scenario: an
+    /// external editor or sync service changed the file after the check.
+    pub(super) fn delete_checked(&mut self, key: &str, checked: &[u8]) -> Disposition {
+        self.delete_with_load(key, true, Some(checked))
     }
 
     #[cfg(test)]
     pub(super) fn delete_loaded(&mut self, key: &str) -> Disposition {
-        self.delete_with_load(key, false)
+        self.delete_with_load(key, false, None)
     }
 
-    fn delete_with_load(&mut self, key: &str, load: bool) -> Disposition {
+    fn delete_with_load(&mut self, key: &str, load: bool, checked: Option<&[u8]>) -> Disposition {
         if !self.alive || !self.keys.contains(key) {
             return Disposition::Disabled;
         }
-        if self.worker.is_some() || self.busy(key) || self.allocator_busy() {
+        let keys = BTreeSet::from([key.into()]);
+        // D4 with no chaining: a running rename's pages wait for its end.
+        if self.worker.is_some()
+            || self.busy(key)
+            || self.allocator_busy()
+            || self.order.touches(&keys)
+        {
             return Disposition::Waiting;
         }
-        let keys = BTreeSet::from([key.into()]);
         // Plan before any side effect (STEP3 §1): the caller takes the lock.
         if self.lacks_locks(&keys) {
             return Disposition::Waiting;
@@ -48,6 +61,9 @@ impl<F: HostIo> Host<F> {
             if !page.clean() || page.buf.is_none() {
                 return Disposition::Refused;
             }
+            if checked.is_some_and(|checked| page.buf.as_deref() != Some(checked)) {
+                return Disposition::Refused;
+            }
             let reads = BTreeMap::from([(key.into(), page.base.clone())]);
             page.buf = None;
             page.typed = true;
@@ -55,12 +71,14 @@ impl<F: HostIo> Host<F> {
             page.version = host.next_version();
             let record = host.record(key, &page);
             let version = page.version;
+            let reply = Reply::Caller(host.order.allocate(host.incarnation));
             host.install_operation(
                 BTreeMap::from([(key.into(), page)]),
                 vec![record],
-                None,
+                reply,
                 version,
                 reads,
+                None,
             );
             Disposition::Pending
         })
@@ -151,6 +169,10 @@ impl<F: HostIo> Host<F> {
         }
         let mut locks = refs.clone();
         locks.extend([source.into(), target.into()]);
+        // D4 with no chaining: a running rename's pages wait for its end.
+        if self.order.touches(&locks) {
+            return Disposition::Waiting;
+        }
         if self.lacks_locks(&locks) {
             return Disposition::Waiting;
         }
@@ -212,7 +234,11 @@ impl<F: HostIo> Host<F> {
                 page.risk = true;
                 records.push(host.record(key, page));
             }
-            host.install_operation(pages, records, None, last_version, reads);
+            // While Tine runs: dst, then the referrers, then src's deletion.
+            let versions = pages.iter().map(|(k, p)| (k.clone(), p.version)).collect();
+            let gates = full.then(|| Gates::new(target, source, versions));
+            let reply = Reply::Caller(host.order.allocate(host.incarnation));
+            host.install_operation(pages, records, reply, last_version, reads, gates);
             Disposition::Pending
         })
     }

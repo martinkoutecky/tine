@@ -3,6 +3,7 @@ import { backend } from "./backend";
 import { resetStore, setRaw, isDirty } from "./document";
 import { loadSingle } from "./document/workingSet";
 import { installBackgroundFlush } from "./backgroundFlush";
+import { bindTestHost, submittedPages } from "./document/host/wiring.test.support";
 
 let hidden = false;
 const handlers = new Map<string, () => void>();
@@ -23,16 +24,17 @@ function install(closeInFlight = () => false) {
 
 describe("background durability", () => {
   it("writes a dirty edit on hide before the debounce fires", async () => {
-    const write = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
-    loadSingle({ name: "Hide", kind: "page", title: "Hide", pre_block: null,
+    const write = vi.spyOn(backend(), "pageSubmit");
+    loadSingle({ name: "Hide", kind: "page", title: "Hide", pre_block: null, id: "pages/Hide.md", rev: "r1",
       blocks: [{ id: "leaf", raw: "old", collapsed: false, children: [] }] });
+    await bindTestHost();
     setRaw("leaf", "new");
     expect(isDirty("Hide")).toBe(true);
     const dispose = install();
     hidden = true;
     handlers.get("visibilitychange")!();
     await vi.waitFor(() => expect(write).toHaveBeenCalledOnce());
-    expect(write.mock.calls[0][0][0].page.blocks[0].raw).toBe("new");
+    expect(submittedPages(write)[0].blocks[0].raw).toBe("new");
     dispose();
   });
 

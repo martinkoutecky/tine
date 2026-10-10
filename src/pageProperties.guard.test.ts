@@ -22,8 +22,9 @@ const GRAMMAR_CALLERS: Record<string, readonly string[]> = {
   "src/render/block.ts": ["pagePropertyEntries", "pageProperties"],
   // The one answerer over a loaded page.
   "src/document/edits/properties.ts": ["pagePropertyEntries"],
-  // A save DTO's title, before (or without) a loaded page.
-  "src/document/save/engine.ts": ["pagePropertyEntries"],
+  // A saved DTO's title, before (or without) a loaded page (settleTitleIdentity;
+  // moved from the deleted save engine's settleSavedTitleIdentity, step 3b P2b).
+  "src/document/host/wiring.ts": ["pagePropertyEntries"],
   // A backend search hit (`page_property` block raw); no loaded page exists.
   "src/components/RefBlocks.tsx": ["pageProperties"],
 };

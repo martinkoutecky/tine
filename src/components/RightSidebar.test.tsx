@@ -3,7 +3,8 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { editingId, endEdit } from "../editorController";
 import { initParser } from "../render/parse";
-import { blockRef, blockPositionRef, ensureBlockId, pageByName, resetStore } from "../document";
+import { blockRef, blockPositionRef, ensureBlockId, isDirty, pageByName, resetStore } from "../document";
+import { bindTestHost } from "../document/host/wiring.test.support";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import type { PageDto, PageRead } from "../types";
@@ -83,8 +84,9 @@ describe("right sidebar collection disclosures", () => {
     }
   });
 
-  it("opening a fresh block in the sidebar writes nothing and stores its position, not an id", () => {
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-sidebar"] });
+  it("opening a fresh block in the sidebar writes nothing and stores its position, not an id", async () => {
+    await bindTestHost();
+    const save = vi.spyOn(backend(), "pageSubmit");
     loadSingle({
       ...page,
       blocks: [{ id: "bfresh-sidebar", raw: "Fresh sidebar target", collapsed: false, children: [] }],
@@ -95,12 +97,13 @@ describe("right sidebar collection disclosures", () => {
     expect(rightSidebar()[0]).toMatchObject({ kind: "block", page: page.name, pageKind: "page", blockPos: [0] });
     expect(doc.byId["bfresh-sidebar"].raw).toBe("Fresh sidebar target");
     expect(save).not.toHaveBeenCalled();
+    expect(isDirty(page.name)).toBe(false);
   });
 
   it("Copy block ref on a sidebar block still stamps its durable UUID", async () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
-    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-sidebar"] });
+    await bindTestHost();
     loadSingle({
       ...page,
       blocks: [{ id: "bfresh-sidebar", raw: "Fresh sidebar target", collapsed: false, children: [] }],

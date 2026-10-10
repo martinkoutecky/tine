@@ -10,6 +10,17 @@ use tine_graph_features::pages;
 use tine_store::cost_counters::{self, Counts};
 use tine_store::Store;
 
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
 static CASE_LOCK: Mutex<()> = Mutex::new(());
 
 /// `pages` unrelated pages spread over three folders, `referrers` pages that
@@ -40,10 +51,13 @@ fn rename(pages_count: usize, referrers: usize) -> Counts {
         .unwrap();
     }
     fs::write(root.join("pages/Target.md"), "- the target\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     cost_counters::reset();
-    pages::rename_page_expected(&store, None, "Target", "Renamed", None).unwrap();
+    hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, "Target", "Renamed", None)
+    })
+    .unwrap();
     let counts = cost_counters::snapshot();
     assert!(root.join("pages/Renamed.md").exists());
     assert_eq!(
@@ -74,10 +88,13 @@ fn rename_cost_is_linear_in_referrers_and_flat_in_graph_size() {
         large.full_reads, few.full_reads,
         "I-13: a rename must not re-read unrelated pages"
     );
+    // Re-measured on the host's instrumented I/O (Q-P2b-2): the page's
+    // temporary file and its record in the operation's draft explosion
+    // (STEP3 §4); the transaction path wrote the page alone.
     assert_eq!(
         many.files_written - few.files_written,
-        28,
-        "I-25: each extra referrer costs exactly one file write"
+        2 * 28,
+        "I-25: each extra referrer costs exactly two file writes (its page and its draft record)"
     );
     // Three guarded reads per rewritten referrer, each a base-revision or
     // publication check on the audited save path: preflight stage, the check
@@ -114,7 +131,7 @@ fn rename_publication_parses_only_changed_documents() {
 #[test]
 fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    for (blocks, bytes) in [(1, 22), (60, 1320)] {
+    for (blocks, bytes) in [(1, 552), (60, 6928)] {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir(root.path().join("pages")).unwrap();
         fs::write(root.path().join("pages/Target.md"), "- target\n").unwrap();
@@ -123,16 +140,26 @@ fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
             "- links [[Target]] 0\n".repeat(blocks),
         )
         .unwrap();
-        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(Store::open(root.path(), Default::default()).unwrap().0);
         store.whole_graph().unwrap();
         cost_counters::reset();
-        pages::rename_page_expected(&store, None, "Target", "Renamed", None).unwrap();
+        hosted(&store, |host| {
+            pages::rename_page_expected(&store, host, "Target", "Renamed", None)
+        })
+        .unwrap();
         let cost = cost_counters::snapshot();
-        assert_eq!(cost.files_written, 1);
+        // Measured on the host's instrumented I/O (Q-P2b-2), every write
+        // counted where it is made: the operation draft, three page draft
+        // records, the referrer and the destination page, and the source's
+        // custody marker. The referrer's bytes travel in the operation draft
+        // and in its draft record as base and payload.
+        assert_eq!(cost.files_written, 7);
         assert_eq!(cost.bytes_written, bytes);
-        assert_eq!(
-            cost.fsyncs, 3,
-            "one temp sync + one referrer directory sync + source move directory sync"
+        // The draft worker may sync two retirements of the draft directory
+        // together, so the count is 25 or 26.
+        assert!(
+            (25..=26).contains(&cost.fsyncs),
+            "file, directory and draft syncs of one rename: {cost:?}"
         );
         assert_eq!(
             fs::read_to_string(root.path().join("pages/Ref.md")).unwrap(),
@@ -140,7 +167,7 @@ fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
         );
         // The documented unit-cost values are pinned to this actual write path.
         let contract = include_str!("../../../docs/storage-contract.md");
-        assert!(contract.contains("22/1,320 bytes"));
+        assert!(contract.contains("552/6,928 bytes"));
         store.close();
     }
 }

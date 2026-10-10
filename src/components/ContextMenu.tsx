@@ -839,7 +839,10 @@ function PageMenu(props: {
     const captured = target();
     // Native GTK confirm — window.confirm silently returns true here, which would
     // delete the page with no prompt.
-    const confirmed = await readOwned(owner, backend().confirm(`Delete "${name}"? The file moves to the graph's .tine-trash folder.`));
+    // A conflicted page is deleted through its conflict (master parity): the
+    // prompt says the unsaved changes go too.
+    const unsaved = isConflicted(name) ? " Your unsaved changes to it are discarded too." : "";
+    const confirmed = await readOwned(owner, backend().confirm(`Delete "${name}"? The file moves to the graph's .tine-trash folder.${unsaved}`));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     if (!captured.path && (pageByName(name) !== openedPage || pageByName(name)?.id !== path)) {
       pushToast("This page target changed; reopen the page actions menu.", "error");

@@ -454,6 +454,16 @@
       "acceptableVariations": ["Re-application timing within a few seconds, and which watcher mode delivers the change, may vary while the final style matches the file."],
       "nonRequirements": ["Launching the system editor from Edit custom.css (covered by graph-features and render tests; a native run must not start an editor).", "Exact colors beyond the file's own values, pixels or DOM nesting."],
       "stability": "burn-in"
+    },
+    "scripts/e2e-host-saves.mjs": {
+      "contracts": [
+        { "class": "exact-safety-interoperability", "userOutcome": "Text typed into a block reaches the page file while the editor is still open, with no blur or navigation.", "blocking": true, "authority": "STEP3-DESIGN section 4 (og-s3 step 3b)" },
+        { "class": "exact-safety-interoperability", "userOutcome": "A file changed outside Tine while the page holds unsaved input shows the page's conflict panel; Keep mine writes the user's text over it and Take disk keeps the file's text, and in both cases the page then keeps saving.", "blocking": true, "authority": "STEP3-DESIGN section 9" },
+        { "class": "exact-safety-interoperability", "userOutcome": "Input the disk refused before a crash comes back on relaunch, the page is named in a Recovered unsaved edits notice, and the text is saved to the file.", "blocking": true, "authority": "STEP3-DESIGN section 9" }
+      ],
+      "acceptableVariations": ["Save timing within the host's debounce and backoff, notice wording beyond the named phrases, and which watcher mode delivers the outside change may vary."],
+      "nonRequirements": ["Exact toast placement, pixels, DOM nesting, or certification outside Linux WebKitGTK (the disk error is a read-only pages folder and the crash is SIGKILL)."],
+      "stability": "burn-in"
     }
   }
 }

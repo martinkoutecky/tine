@@ -4,14 +4,19 @@
 #[cfg(test)]
 use operations::op_clean;
 use operations::{flush_del, load, op_delete, op_rename};
+use order::{
+    discarded, discharge, gated, obl_discarded, obl_published, order_holds, partner,
+    rename_resolves, revert_partner, started, unrename, Obligations,
+};
 use std::collections::BTreeSet;
 
 mod operations;
+mod order;
 
 const ABSENT: i64 = -1;
 const NONE: i64 = -2;
 const UNKNOWN: i64 = -3;
-const MODEL_SHA: &str = "614f82a83d61007d6e1a90747c71b350caa407e0c908699510b74ddba88c883f";
+const MODEL_SHA: &str = "1e6ec36c29ec8fd1b7a1ebdce099e82509c0ff59fa6c137cf6f0ef3d1e0d2bd4";
 type Text = i64; // Opaque equality labels, never arithmetic operands.
 type Pairs = BTreeSet<(usize, Text)>;
 
@@ -76,7 +81,13 @@ record!(Up {
     ro: Text,
     cur: bool
 });
-record!(Sys { alive: bool, disk: Vec<Text>, stable: Vec<Text>, drafts: Vec<Draft>, trash: Vec<BTreeSet<Text>>, #[cfg_attr(test, serde(rename = "trashStable"))] trash_stable: Vec<BTreeSet<Text>>, pages: Vec<Page>, job: Job, w: Vec<W>, mb: Vec<Mail>, up: Vec<Up> });
+record!(Gate {
+    dst: usize,
+    src: usize,
+    vers: Vec<i64>,
+    open: BTreeSet<usize>
+});
+record!(Sys { alive: bool, disk: Vec<Text>, stable: Vec<Text>, drafts: Vec<Draft>, trash: Vec<BTreeSet<Text>>, #[cfg_attr(test, serde(rename = "trashStable"))] trash_stable: Vec<BTreeSet<Text>>, pages: Vec<Page>, job: Job, w: Vec<W>, mb: Vec<Mail>, up: Vec<Up>, gates: Vec<Gate> });
 record!(Promise {
     on: bool,
     bytes: Text,
@@ -84,7 +95,7 @@ record!(Promise {
     saved: bool,
     ep: i64
 });
-record!(Ghost { vc: i64, promise: Vec<Promise>, ext: Vec<i64>, wrote: Vec<BTreeSet<(Text, i64)>>, owed: Pairs, guard: bool, seen: Vec<BTreeSet<Text>>, mine: BTreeSet<usize>, #[cfg_attr(test, serde(rename = "opRead"))] op_read: Vec<BTreeSet<Text>>, removed: Vec<BTreeSet<Text>>, #[cfg_attr(test, serde(rename = "delDurable"))] del_durable: Vec<BTreeSet<Text>>, bad: BTreeSet<String> });
+record!(Ghost { vc: i64, promise: Vec<Promise>, ext: Vec<i64>, wrote: Vec<BTreeSet<(Text, i64)>>, owed: Pairs, guard: bool, seen: Vec<BTreeSet<Text>>, mine: BTreeSet<usize>, #[cfg_attr(test, serde(rename = "opRead"))] op_read: Vec<BTreeSet<Text>>, removed: Vec<BTreeSet<Text>>, #[cfg_attr(test, serde(rename = "delDurable"))] del_durable: Vec<BTreeSet<Text>>, obl: Obligations, renamed: BTreeSet<(usize, usize)>, #[cfg_attr(test, serde(rename = "orderOk"))] order_ok: bool, bad: BTreeSet<String> });
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Config {
@@ -211,6 +222,7 @@ fn init(config: Config) -> State {
             trash: vec![BTreeSet::new(); count],
             trash_stable: vec![BTreeSet::new(); count],
             up: vec![],
+            gates: vec![],
         },
         g: Ghost {
             vc: 0,
@@ -224,6 +236,9 @@ fn init(config: Config) -> State {
             op_read: vec![BTreeSet::new(); count],
             removed: vec![BTreeSet::new(); count],
             del_durable: vec![BTreeSet::new(); count],
+            obl: BTreeSet::new(),
+            renamed: BTreeSet::new(),
+            order_ok: true,
             bad: BTreeSet::new(),
         },
     }
@@ -333,6 +348,7 @@ fn down(sys: &Sys) -> Sys {
         w: vec![now(); sys.pages.len()],
         mb: vec![nomail(); sys.pages.len()],
         up: vec![],
+        gates: vec![],
         ..sys.clone()
     }
 }
@@ -341,6 +357,8 @@ fn g_down(g: &Ghost) -> Ghost {
     Ghost {
         owed: BTreeSet::new(),
         guard: false,
+        obl: BTreeSet::new(),
+        renamed: BTreeSet::new(),
         ..g.clone()
     }
 }
@@ -707,10 +725,13 @@ fn up_discard(x: &State, mut s: Sys, m: &Up, ok: bool, rok: bool) -> Option<Stat
             typed: false,
             ..pg
         };
-        ack_mail(&mut s, p, ok, v1, false);
         g.vc = v1;
         g.promise[p] = npr;
         g.mine = BTreeSet::from([p]);
+        revert_partner(x, &mut s, &mut g, p, v1);
+        discarded(&mut s, p);
+        obl_discarded(&mut g.obl, p);
+        ack_mail(&mut s, p, ok, v1, false);
     }
     commit(
         x,
@@ -847,7 +868,10 @@ fn deliver_up(x: &State, rok: bool) -> Option<State> {
         return None;
     }
     let m = x.s.up[0].clone();
-    if locked(x, m.p) || (m.kind == "op" && locked(x, m.q)) {
+    if locked(x, m.p)
+        || (m.kind == "op" && locked(x, m.q))
+        || (m.kind == "discard" && partner(&x.s, m.p).is_some_and(|q| locked(x, q)))
+    {
         return None;
     }
     let mut s = x.s.clone();
@@ -881,10 +905,18 @@ fn observe(x: &State, p: usize) -> Option<State> {
 /// Quint: flush
 fn flush(x: &State, p: usize) -> Option<State> {
     let pg = &x.s.pages[p];
-    if !x.s.alive || x.s.job.on || !pg.held || pg.conflict || pg.buf == ABSENT || !dirty(pg) {
+    if !x.s.alive
+        || x.s.job.on
+        || !pg.held
+        || pg.conflict
+        || pg.buf == ABSENT
+        || !dirty(pg)
+        || gated(x, p)
+    {
         return None;
     }
     let mut s = x.s.clone();
+    let mut g = x.g.clone();
     s.job = Job {
         on: true,
         p,
@@ -894,7 +926,8 @@ fn flush(x: &State, p: usize) -> Option<State> {
         phase: 1,
         ep: 0,
     };
-    commit(x, s, x.g.clone(), "flush")
+    started(&mut g, p);
+    commit(x, s, g, "flush")
 }
 /// Quint: check
 fn check(x: &State) -> Option<State> {
@@ -914,6 +947,9 @@ fn check(x: &State) -> Option<State> {
         }
         s.pages[p] = nw;
         s.job = nojob();
+        if x.config.mutant("MCV") {
+            discharge(&mut s, p, j.ver);
+        }
         "mismatch"
     } else {
         s.job.phase = 2;
@@ -947,6 +983,9 @@ fn rename(x: &State) -> Option<State> {
     s.disk[p] = j.bytes;
     s.job.phase = 3;
     s.job.ep = g.ext[p];
+    if x.config.mutant("MPR") {
+        discharge(&mut s, p, j.ver);
+    }
     g.guard = false;
     g.wrote[p].insert((j.bytes, j.ver));
     if violates {
@@ -993,6 +1032,11 @@ fn dir_sync(x: &State, ok: bool) -> Option<State> {
     s.job = nojob();
     if ok {
         g.promise[p] = ack(&g.promise[p], j.bytes, j.ver, true, j.ep);
+        obl_published(&mut g.obl, p, j.ver);
+    }
+    // s3.2: Published is the witness (MPR took it at the file step; MCV at any end).
+    if (ok && !x.config.mutant("MPR")) || x.config.mutant("MCV") {
+        discharge(&mut s, p, j.ver);
     }
     commit(x, s, g, "dirSync")
 }
@@ -1007,6 +1051,9 @@ fn save_fail(x: &State) -> Option<State> {
     s.pages[j.p] = on_reply(x, &s.pages[j.p], "Failed", j.bytes);
     s.job = nojob();
     g.guard = false;
+    if x.config.mutant("MCV") {
+        discharge(&mut s, j.p, j.ver);
+    }
     commit(x, s, g, "saveFail")
 }
 /// Quint: draftSync
@@ -1079,6 +1126,7 @@ fn ext_write_d(x: &State, p: usize, v: Text, dur: bool) -> Option<State> {
         s.stable[p] = v;
     }
     g.ext[p] = next(g.ext[p]);
+    unrename(&mut g.renamed, &[p]);
     commit(x, s, g, "extWrite")
 }
 /// Quint: extWrite
@@ -1239,6 +1287,10 @@ fn trashed(x: &State) -> bool {
 /// Quint: guarantee
 fn guarantee(x: &State) -> bool {
     no_loss(x) && transitions(x) && accepted(x) && trashed(x)
+}
+/// Quint s3.2: every invariant the runner checks.
+fn checked(x: &State) -> bool {
+    guarantee(x) && order_holds(x) && rename_resolves(x)
 }
 /// Quint: C, history recorded by rename.
 fn clause_c(x: &State) -> bool {
@@ -1408,7 +1460,7 @@ pub(crate) mod conformance {
         pub(crate) fn observed_guarantee(&self, observed: &Value) -> bool {
             let mut state: State = serde_json::from_value(observed.clone()).unwrap();
             state.config = self.0.config.clone();
-            guarantee(&state)
+            checked(&state)
         }
 
         /// Run only the guarantee instrumentation on observed states. No

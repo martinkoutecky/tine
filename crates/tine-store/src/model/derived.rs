@@ -66,6 +66,10 @@ pub(crate) struct HeldPages {
     /// Per held key, the paths withheld as `Unknown` with it a candidate:
     /// its release rereads them (REVIEW-3a4 #3). Lock order keys → this.
     withheld: Mutex<HashMap<String, BTreeSet<PathBuf>>>,
+    /// Per held key, the disk row its hold retired (R1), until the owner's
+    /// first publication: reused when those bytes are the row's, so the
+    /// claim parses nothing again (GH #623). Bounded by the held keys.
+    claims: Mutex<HashMap<String, Row>>,
 }
 
 impl HeldPages {
@@ -204,7 +208,7 @@ enum Authority {
     Withheld,
 }
 
-type Row = (PageEntry, Arc<Document>, DiskObs);
+pub(super) type Row = (PageEntry, Arc<Document>, DiskObs);
 
 /// A row derived from an owner's bytes, bound to them.
 struct Owned {
@@ -274,7 +278,7 @@ impl Graph {
     /// `key`'s listing entry named from its owner's `bytes`, at the key's
     /// spelling; None when that path is no cacheable page or the bytes are
     /// not a page's.
-    fn owned_entry(&self, key: &str, bytes: &[u8]) -> Option<PageEntry> {
+    pub(super) fn owned_entry(&self, key: &str, bytes: &[u8]) -> Option<PageEntry> {
         let path = self.root.join(self.held.spellings().spelling(key));
         let config = self.current_config();
         if path_is_sync_conflict(&path) || !graph_text_eligible(&self.root, &path, &config) {
@@ -304,7 +308,12 @@ impl Graph {
     /// identities are kept, and only when its content is exactly what
     /// `bytes` parse to; its content never reaches the row (REVIEW-3a4 #5,
     /// E126).
-    fn owned_row(&self, key: &str, bytes: &[u8], saved: Option<&Document>) -> Option<Row> {
+    pub(super) fn owned_row(
+        &self,
+        key: &str,
+        bytes: &[u8],
+        saved: Option<&Document>,
+    ) -> Option<Row> {
         let entry = self.owned_entry(key, bytes)?;
         let content = std::str::from_utf8(bytes).ok()?;
         let (mut doc, disk) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1300,9 +1309,21 @@ impl Graph {
     /// owner already indexed. The caller holds the writer.
     pub(crate) fn hold(&self, key: String) {
         let path = self.root.join(self.held.spellings().spelling(&key));
+        let row = self.with_cached(&path, |row| row.cloned()).flatten();
+        let disk = self.cached_rev(&path).map(|rev| DiskObs {
+            rev,
+            anchored: self.derived.vcs_anchored.read().unwrap().contains(&path),
+        });
         self.transition(&[path], || {
             let mut keys = self.held.keys.write().unwrap();
-            !keys.contains_key(&key) && keys.insert(key, None).is_none()
+            if keys.contains_key(&key) {
+                return false;
+            }
+            if let (Some((entry, doc)), Some(disk)) = (row, disk) {
+                let claim = (entry, doc, disk);
+                self.held.claims.lock().unwrap().insert(key.clone(), claim);
+            }
+            keys.insert(key, None).is_none()
         });
     }
 
@@ -1324,6 +1345,7 @@ impl Graph {
             if self.held.keys.write().unwrap().remove(key).is_none() {
                 return false;
             }
+            self.held.claims.lock().unwrap().remove(key);
             let withheld = self.held.withheld.lock().unwrap().remove(key);
             reread.push(path.clone());
             reread.extend(withheld.into_iter().flatten());
@@ -1341,6 +1363,7 @@ impl Graph {
             let keys: Vec<String> = (self.held.keys.write().unwrap().drain())
                 .map(|(key, _)| key)
                 .collect();
+            self.held.claims.lock().unwrap().clear();
             let spellings = std::mem::take(&mut *self.held.spellings.write().unwrap());
             reread.extend(
                 keys.iter()
@@ -1390,10 +1413,11 @@ impl Graph {
         // Bytes the installed row was already derived from change nothing
         // but the index (an owner's observation of its own save).
         let mut row = None;
+        let mut claim = self.held.claims.lock().unwrap().remove(key);
         if self.cache_built() && self.cached_rev(&path) != rev {
             row = bytes
                 .as_deref()
-                .and_then(|bytes| self.owned_row(key, bytes, doc));
+                .and_then(|bytes| self.claimed_row(key, bytes, doc, claim.take()));
         }
         let mut guard = self.derived.cache.write().unwrap();
         {
@@ -1413,7 +1437,7 @@ impl Graph {
                 if row.is_none() {
                     row = bytes
                         .as_deref()
-                        .and_then(|bytes| self.owned_row(key, bytes, doc));
+                        .and_then(|bytes| self.claimed_row(key, bytes, doc, claim.take()));
                 }
                 match row.take() {
                     Some(row) => {

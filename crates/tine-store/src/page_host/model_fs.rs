@@ -258,6 +258,8 @@ impl ModelFs {
             return Err(IoFailure {
                 kind: ErrorKind::Io,
                 completed: false,
+                operation: None,
+                os_error: None,
             });
         }
         let fault = self.faults.get_mut(&phase).and_then(VecDeque::pop_front);
@@ -265,10 +267,14 @@ impl ModelFs {
             Some(Fault::Before | Fault::Unsupported) => Err(IoFailure {
                 kind: ErrorKind::Io,
                 completed: false,
+                operation: None,
+                os_error: None,
             }),
             Some(Fault::Collision) => Err(IoFailure {
                 kind: ErrorKind::Collision,
                 completed: false,
+                operation: None,
+                os_error: None,
             }),
             Some(Fault::Cut(calls)) => {
                 self.budget = Some(calls);
@@ -283,6 +289,8 @@ impl ModelFs {
                     Err(IoFailure {
                         kind: ErrorKind::Io,
                         completed: true,
+                        operation: None,
+                        os_error: None,
                     })
                 } else {
                     Ok(result)
@@ -300,6 +308,8 @@ impl ModelFs {
                 Err(IoFailure {
                     kind: ErrorKind::Io,
                     completed: false,
+                    operation: None,
+                    os_error: None,
                 })
             }
             Some(left) => {
@@ -447,6 +457,8 @@ impl HostIo for ModelFs {
                 return Err(IoFailure {
                     kind: ErrorKind::Collision,
                     completed: false,
+                    operation: None,
+                    os_error: None,
                 });
             }
             let bytes = fs.files.remove(&source);
@@ -594,6 +606,8 @@ impl HostIo for ModelFs {
                 return Err(IoFailure {
                     kind: ErrorKind::Collision,
                     completed: false,
+                    operation: None,
+                    os_error: None,
                 });
             }
             let bytes = fs
@@ -602,6 +616,8 @@ impl HostIo for ModelFs {
                 .ok_or(IoFailure {
                     kind: ErrorKind::Io,
                     completed: false,
+                    operation: None,
+                    os_error: None,
                 })?;
             fs.files.insert(key, bytes);
             Ok(())
@@ -639,6 +655,7 @@ impl HostIo for ModelFs {
         DraftStatus {
             unavailable: self.down.then(|| "drafts unsynced".into()),
             unreadable: vec![],
+            unsaved: vec![],
         }
     }
 

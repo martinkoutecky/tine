@@ -15,6 +15,8 @@ import { doc } from "../document/model";
 import type { BlockDto } from "../types";
 import { setGraphMeta } from "../graphSession";
 import { Block } from "./Block";
+import { bindTestHost } from "../document/host/wiring.test.support";
+import { openAsLoaded } from "./hostConflict.test.support";
 
 beforeAll(() => initParser());
 
@@ -79,6 +81,9 @@ describe("private block payload paste necessity", () => {
   it("preserves a cut id and resolves a seeded live reference through the renderer path", async () => {
     const host = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const preserved = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    // A cut keeps its ids only once the cut source is published, through the
+    // page host; the host read the pages the window shows.
+    openAsLoaded(await bindTestHost());
     seedHost(host);
     ensurePageLoaded({
       name: "Source", kind: "page", title: "Source", pre_block: null, format: "md",

@@ -240,7 +240,6 @@ describe("S5 edit-intent acquisition and baseline provenance", () => {
     before?.();
     release();
     await tick();
-    ctx.client.receive(mail(7, KEY, null, applied(ctx.host.last("close").id, 3)));
   }
 
   it("a reopen the host still holds at the text's version grants it", async () => {
@@ -459,15 +458,37 @@ describe("S8 session rebind", () => {
 });
 
 describe("close and move edges", () => {
-  it("a close answered while the host keeps the page is still a closed view (no close loop)", async () => {
+  it("mail after a close while the host keeps the page leaves a closed view (no close loop)", async () => {
     const ctx = await setup();
     const { host, client } = ctx;
     const release = await opened(ctx, "P", 3);
     release();
     await tick();
-    client.receive(mail(7, KEY, mailPage(3, { kind: "unchanged" }, { risk: true }), applied(host.last("close").id, 3)));
+    client.receive(mail(7, KEY, mailPage(3, { kind: "unchanged" }, { risk: true })));
     await tick();
     expect([client.isOpen("P"), host.count("close"), client.names()]).toEqual([false, 1, []]);
+  });
+
+  it("a close is never answered (model wClose): admitted, the view ends, and later input reopens and is sent", async () => {
+    const ctx = await setup();
+    const { host, doc, client } = ctx;
+    const release = await opened(ctx, "P", 3, "a", "r3");
+    release();
+    await tick();
+    expect(host.count("close")).toBe(1);
+    // No mail follows a close: the real host only unsubscribes (upClose).
+    expect([client.isOpen("P"), client.busy("P"), client.names()]).toEqual([false, false, []]);
+    const editing = client.acquire("P");
+    doc.type("P", "later");
+    client.noteEdit("P", "save-block", false);
+    await tick();
+    expect(host.count("open")).toBe(2);
+    client.receive(mail(7, KEY, mailPage(3, { kind: "page", dto: page("P", "a", "r3") }, { disk: { kind: "file", rev: "r3" } }),
+      applied(host.last("open").id, 3)));
+    client.sendNow("P");
+    await tick();
+    expect(textOf(host.last("submit").dto)).toBe("later");
+    editing();
   });
 
   it("a move the host does not admit restores both endpoints, clean, so no half is ever sent", async () => {

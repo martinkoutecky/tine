@@ -42,7 +42,10 @@ describe("read-only published snapshot", () => {
 
   it("refuses a write while keeping public permalink identity stable", async () => {
     const api = publishedBackend(async () => snapshot);
-    await expect(api.savePages([])).rejects.toThrow("read-only published export");
+    const dto = { name: "Public", kind: "page" as const, title: "Public", pre_block: null, blocks: [] };
+    await expect(api.pageSubmit(1, 1, "pages/Public.md", dto, 1, null, ["replace-page"])).rejects.toThrow("read-only published export");
+    await expect(api.pageMove(1, 2, ["pages/Public.md", dto, 1], ["pages/Other.md", dto, 1], ["move-blocks"])).rejects.toThrow("read-only published export");
+    await expect(api.pageDelete(1, "Public", "page")).rejects.toThrow("read-only published export");
     const page = publishedPermalinkHash({ kind: "page", page: "Public" });
     const block = publishedPermalinkHash({ kind: "block", block: "one" });
     expect(parsePublishedPermalinkHash(page)).toEqual({ kind: "page", page: "Public" });

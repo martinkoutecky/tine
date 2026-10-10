@@ -5,7 +5,8 @@ import { journalTitle } from "./journal";
 import { flushPage, pageByName, resetStore, setRaw } from "./document";
 import { loadSingle } from "./document/workingSet";
 import { setGraphMeta } from "./graphSession";
-import type { GraphMeta, PageDto, PageRead } from "./types";
+import type { GraphMeta, PageRead } from "./types";
+import { bindFileHost } from "./components/fileHost.test.support";
 
 // This seam tests journal revisions after creation; the prompt's render/flow
 // tests cover interaction. Submit the backend suggestion here.
@@ -28,9 +29,8 @@ afterEach(() => { vi.restoreAllMocks(); resetStore(); setGraphMeta(null); localS
 
 describe("graph creators that bypass the save engine", () => {
   for (const [label, template] of [["journal template", "Daily"], ["demo seed", null]] as const) {
-    it(`${label} creates today's journal file; a subsequent loaded edit saves against its revision`, async () => {
+    it(`${label} creates today's journal file; a subsequent loaded edit saves on its created version`, async () => {
       const api = backend();
-      const files = new Map<string, { dto: PageDto; rev: string }>();
       vi.spyOn(api, "inspectGraphAccess").mockResolvedValue({ graph_root: ROOT, external_assets_path: null, approved: true });
       vi.spyOn(api, "loadGraph").mockResolvedValue({ kind: "loaded", meta: meta(template), binding_generation: 1 });
       vi.spyOn(api, "getPage").mockResolvedValue(null);
@@ -40,11 +40,7 @@ describe("graph creators that bypass the save engine", () => {
       vi.spyOn(api, "pickFolder").mockResolvedValue("/tmp");
       vi.spyOn(api, "suggestGraphName").mockResolvedValue("creator-pin-graph");
       vi.spyOn(api, "createGraph").mockResolvedValue(ROOT);
-      const save = vi.spyOn(api, "savePages").mockImplementation(async (entries) => { const { id: id, page: dto } = entries[0];
-        const rev = files.has(id) ? "edited-rev" : "created-rev";
-        files.set(id, { dto: structuredClone(dto), rev });
-        return { ok: [rev] };
-      });
+      const { files, versions, submit: save } = await bindFileHost((_key, n) => (n === 1 ? "created-rev" : "edited-rev"));
       const result = template ? await loadGraphPath(ROOT) : await createNewGraph();
       expect(result.kind).toBe("loaded");
       if (!template) expect(api.createGraph).toHaveBeenCalledWith("/tmp", "creator-pin-graph");
@@ -55,12 +51,16 @@ describe("graph creators that bypass the save engine", () => {
       expect(created.dto.kind).toBe("journal");
       expect(created.dto.blocks).toHaveLength(1);
       expect(created.dto.blocks[0].raw).toContain(template ? "Template body" : "today's journal");
-      expect(save.mock.calls[0][0][0].baseRev).toBeNull();
+      // A create: sent on the Open of a missing file.
+      const [, , key, , , resolve, kinds] = save.mock.calls[0];
+      expect([key, resolve, kinds]).toEqual([id, null, ["create-page"]]);
+      const createdVersion = versions.get(id)!;
       const loaded: PageRead = { ...created.dto, id, rev: created.rev };
       loadSingle(loaded);
       setRaw(pageByName(loaded.name)!.roots[0], "following edit");
       expect(await flushPage(loaded.name)).toBe(true);
-      expect(save.mock.calls.at(-1)?.[0][0].baseRev).toBe("created-rev");
+      // Authored on the created file's version: not stale, so never a conflict.
+      expect(save.mock.calls.at(-1)?.[4]).toBe(createdVersion);
       expect(files.get(id)!.dto.blocks.map((b) => b.raw)).toEqual(["following edit"]);
     });
   }

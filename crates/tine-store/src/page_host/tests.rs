@@ -539,10 +539,10 @@ fn completed_trash_move_error_keeps_observed_removal_and_reports_uncertain() {
         page: "a.md".into(),
         bytes: text("A")
     }));
-    assert!(h.events.contains(&Event::SaveOutcome {
-        page: "a.md".into(),
-        outcome: Outcome::Uncertain
-    }));
+    assert!(h.events.iter().any(|e| matches!(
+        e,
+        Event::SaveOutcome { page, outcome: Outcome::Uncertain, .. } if page == "a.md"
+    )));
 }
 
 #[test]
@@ -828,7 +828,8 @@ fn retained_reservation_blocks_save_and_reconciles_undo_or_publication() {
 
 /// The production files that name the page host surface: the census
 /// writers (STEP3 §7), the binding's host slot, restore and retirement, the
-/// page commands and the `load_graph` reply (step 3b P1).
+/// page commands, and the graph-window binding that starts the host and
+/// answers `load_graph` (step 3b P1, P2b).
 const CENSUS_CALL_SITES: &[&str] = &[
     "crates/tine-graph-features/src/retained.rs",
     "crates/tine-graph-features/src/pages.rs",
@@ -844,8 +845,64 @@ const CENSUS_CALL_SITES: &[&str] = &[
     "src-tauri/src/graph.rs",
 ];
 
+/// Production `PageHost::start(` lines the census below saw.
+static PRODUCTION_STARTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Q-P2b-4 (STEP3-DESIGN, "Manager decisions on the P2b checkpoint
+/// questions"): a barrier query reads a key's logical state through
+/// `Host::logical`, never the applied `pages` map, which lags admitted input
+/// (an in-flight deletion vouched for before its file moved). Shape plus
+/// guard: no `pages` read in the barrier files outside the listed planners.
+/// Exemplar: `binding_publication.rs` `owed`.
 #[test]
-fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
+fn barrier_queries_read_the_logical_state() {
+    // (file, enclosing fn, why it may read the applied pages)
+    const PLANNERS: &[(&str, &str, &str)] = &[
+        (
+            "binding_retained.rs",
+            "rename",
+            "the rename's own plan inside its driver step, over the pages it rewrites",
+        ),
+        (
+            "binding_retained.rs",
+            "identify",
+            "whether `open` still runs its create checks; not a barrier answer",
+        ),
+    ];
+    for (file, source) in [
+        (
+            "binding_publication.rs",
+            include_str!("binding_publication.rs"),
+        ),
+        ("binding_retained.rs", include_str!("binding_retained.rs")),
+    ] {
+        let mut function = "";
+        for line in source.lines() {
+            let code = line.trim_start();
+            if code.starts_with("//") {
+                continue;
+            }
+            for prefix in ["pub fn ", "pub(crate) fn ", "pub(super) fn ", "fn "] {
+                if let Some(rest) = code.strip_prefix(prefix) {
+                    function = rest.split(['(', '<']).next().unwrap_or("");
+                }
+            }
+            if line.contains("host.pages") {
+                assert!(
+                    PLANNERS
+                        .iter()
+                        .any(|(f, name, _)| *f == file && *name == function),
+                    "Q-P2b-4: barrier code reads a key's logical state through \
+                     `Host::logical`, not the applied pages (exemplar \
+                     binding_publication.rs `owed`): {file} `{function}`: {line}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesystem_escape() {
     let root = option_env!("TINE_HOST_REPO_ROOT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
@@ -915,12 +972,20 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
                 }
                 // The retained-writer surface (approved by Martin 2026-10-10) is named only
                 // where a census writer reserves from a host or the binding
-                // keeps one (STEP3 §7), and no production path starts a host
-                // while the switch is off (lane 3b owns the switch).
+                // keeps one (STEP3 §7). Exactly one production path starts a
+                // host: every graph-window binding (`load_graph_for_label`,
+                // step 3b P2b). A second would be a second driver on the
+                // graph's drafts.
+                if !test_code && line.contains("PageHost::start(") {
+                    assert_eq!(
+                        relative, "src-tauri/src/graph.rs",
+                        "a page host starts outside the graph-window binding: {relative}: {line}"
+                    );
+                    PRODUCTION_STARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 assert!(
-                    test_code
-                        || (!line.contains("start_for_tests") && !line.contains("PageHost::start")),
-                    "a production path starts a page host: {relative}: {line}"
+                    test_code || !line.contains("start_for_tests"),
+                    "a production path starts a test page host: {relative}: {line}"
                 );
                 let exported = [
                     "DiskToken",
@@ -963,6 +1028,9 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
                         "mod page_host;",
                         // The Page host export (concept approved by Martin 2026-10-10).
                         "pub use page_host::{",
+                        // Fault plants for other crates' tests only, behind
+                        // `#[cfg(feature = "test-faults")]` (Q-P2b-2).
+                        "pub use page_host::faults as host_faults;",
                     ]
                     .contains(&line.trim())
                 {
@@ -977,6 +1045,11 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
     }
     visit(&root, &root.join("crates"));
     visit(&root, &root.join("src-tauri/src"));
+    assert_eq!(
+        PRODUCTION_STARTS.load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "every graph-window binding starts its page host in one place (graph.rs load_graph_for_label)"
+    );
     let runtime = [
         ("mod.rs", include_str!("mod.rs")),
         ("binding.rs", include_str!("binding.rs")),
@@ -989,8 +1062,11 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
         ("draft_worker.rs", include_str!("draft_worker.rs")),
         ("drafts.rs", include_str!("drafts.rs")),
         ("driver.rs", include_str!("driver.rs")),
+        // Built under the `test-faults` feature only, but scanned as runtime.
+        ("faults.rs", include_str!("faults.rs")),
         ("io.rs", include_str!("io.rs")),
         ("operations.rs", include_str!("operations.rs")),
+        ("order.rs", include_str!("order.rs")),
         ("progress.rs", include_str!("progress.rs")),
         ("save.rs", include_str!("save.rs")),
     ];

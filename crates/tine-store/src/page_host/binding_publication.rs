@@ -1,27 +1,31 @@
 //! The page host's publication queries (§4.4): what a barrier waits on
 //! (`pages_published`, `pages_recoverable`), the wait itself, the hurry
-//! (`save_now`) and the publication debt list (`owed`).
+//! (`save_now`) and the publication debt list (`owed`). Each reads a
+//! key's logical state through `Host::logical`, never the applied pages
+//! (Q-P2b-4; census `barrier_queries_read_the_logical_state`).
 use super::*;
 
 impl PageHost {
     /// `pages_recoverable` (§4.4): every listed page is clean at or past
     /// that version, or its durable draft holds a version at or past it. A
-    /// page the host does not hold has nothing to recover.
+    /// page the host does not hold has nothing to recover; admitted input
+    /// not applied yet (Q-P2b-4) is recoverable only through its draft.
     pub(crate) fn pages_recoverable(&self, pages: &[(String, u64)]) -> bool {
         let state = self.driver.shared.state.lock().unwrap();
         let host = &state.progress.host;
         let drafts = host.logical_drafts();
-        pages
-            .iter()
-            .all(|(key, version)| match host.pages.get(key) {
-                None => true,
-                Some(page) => {
-                    (page.clean() && page.version >= *version)
-                        || drafts
-                            .get(key)
-                            .is_some_and(|draft| draft.version >= *version)
-                }
-            })
+        let drafted = |key: &String, version: u64| {
+            drafts
+                .get(key)
+                .is_some_and(|draft| draft.version >= version)
+        };
+        pages.iter().all(|(key, version)| match host.logical(key) {
+            Logical::Absent => true,
+            Logical::Settled(page) => {
+                (page.clean() && page.version >= *version) || drafted(key, *version)
+            }
+            Logical::Admitted { .. } => drafted(key, *version),
+        })
     }
 
     /// `pages_published` (§4.4): every listed page the host holds is clean
@@ -30,18 +34,21 @@ impl PageHost {
     /// witness block id (a block reference's target, §8), the page's last
     /// indexed bytes must also hold that block (Q2): a later version without
     /// it does not do, nor does an unsent local restoration. A page the
-    /// host does not hold has no save owed, but cannot witness a block.
+    /// host does not hold has no save owed, but cannot witness a block. A
+    /// page with admitted input not applied yet (Q-P2b-4) is unpublished.
     pub(crate) fn pages_published(&self, pages: &[(String, u64, Option<String>)]) -> bool {
         let mut witnesses = Vec::new();
         {
             let state = self.driver.shared.state.lock().unwrap();
             let host = &state.progress.host;
             for (key, version, witness) in pages {
-                let Some(page) = host.pages.get(key) else {
-                    if witness.is_some() || state.book.owned.contains(key) {
+                let page = match host.logical(key) {
+                    Logical::Admitted { .. } => return false,
+                    Logical::Absent if witness.is_some() || state.book.owned.contains(key) => {
                         return false;
                     }
-                    continue;
+                    Logical::Absent => continue,
+                    Logical::Settled(page) => page,
                 };
                 let Some((indexed, watermark)) = state.book.index.get(key) else {
                     return false;
@@ -62,45 +69,45 @@ impl PageHost {
     }
 
     /// `page_wait` (§4.4) for window `session` (REVIEW-3b-P1 F1): wait
-    /// until `pages_published` holds for `needs` (`Some(true)`), or
-    /// `Some(false)` once a needed page cannot publish without the user (a
-    /// conflict, a third failed save, a third failed index publication) or
-    /// the session is not current, so a result never vouches for another
-    /// session's pages. `None` at `bound`: never success at a bound (S1);
-    /// the window asks again.
+    /// until `pages_published` holds for `needs` (`Applied`), or `Refused`
+    /// once a needed page cannot publish without the user (a conflict, a
+    /// third failed save, a third failed index publication) or the session
+    /// is not current, so a result never vouches for another session's
+    /// pages. `Pending` at `bound`: never success at a bound (S1); the
+    /// window asks again.
     pub fn wait_published(
         &self,
         session: u64,
         needs: &[(String, u64, Option<String>)],
         bound: std::time::Duration,
-    ) -> Option<bool> {
+    ) -> PageOperation {
         let deadline = std::time::Instant::now() + bound;
         let current = || self.driver.shared.state.lock().unwrap().book.session == session;
         loop {
             if !current() {
-                return Some(false);
+                return PageOperation::Refused;
             }
             if self.pages_published(needs) {
-                return Some(current());
+                return if current() {
+                    PageOperation::Applied
+                } else {
+                    PageOperation::Refused
+                };
             }
             let shared = &self.driver.shared;
             let state = shared.state.lock().unwrap();
             let progress = &state.progress;
             let stuck = needs.iter().any(|(key, ..)| {
-                progress
-                    .host
-                    .pages
-                    .get(key)
-                    .is_some_and(|page| page.conflict)
+                progress.host.logical(key).conflict()
                     || progress.notice(key).save_error
                     || state.book.index_error(key)
             });
             if stuck {
-                return Some(false);
+                return PageOperation::Refused;
             }
             let now = std::time::Instant::now();
             if now >= deadline {
-                return None;
+                return PageOperation::Pending;
             }
             let pause = (deadline - now).min(std::time::Duration::from_millis(100));
             drop(shared.wait(state, pause));
@@ -118,11 +125,14 @@ impl PageHost {
     }
 
     /// `page_owed` (§4.4, R2): every held page whose text or index is not
-    /// published at its current version, with that version, and each key
+    /// published at its current version, with that version; every key with
+    /// admitted input not applied yet (Q-P2b-4: an in-flight deletion,
+    /// rename or move, a queued submit), at the version it carries; and each key
     /// whose index the consumer still owes after the host let it go (version
     /// 0). A draft still to retire is not publication debt. `paths` limits
     /// the list to the keys those paths name (the shared entry identity);
-    /// None lists every key. Bounded by the held pages; no filesystem scan.
+    /// None lists every key. Bounded by the held pages and admitted input;
+    /// no filesystem scan.
     /// None when `session` is not the current window session (F1): an
     /// empty list would claim no debt.
     pub fn owed(&self, session: u64, paths: Option<&[PageId]>) -> Option<Vec<(PageKey, u64)>> {
@@ -135,17 +145,22 @@ impl PageHost {
         if book.session != session {
             return None;
         }
-        let held = host.pages.iter().filter_map(|(key, page)| {
-            let indexed = book.index.get(key);
-            let published = indexed.is_some_and(|(bytes, watermark)| {
-                (page.clean() && *bytes == page.buf) || *watermark >= page.version
-            });
-            (!published).then(|| (key.clone(), page.version))
+        let logical = host.logical_keys();
+        let held = logical.iter().filter_map(|key| match host.logical(key) {
+            Logical::Settled(page) => {
+                let indexed = book.index.get(key);
+                let published = indexed.is_some_and(|(bytes, watermark)| {
+                    (page.clean() && *bytes == page.buf) || *watermark >= page.version
+                });
+                (!published).then(|| (key.clone(), page.version))
+            }
+            Logical::Admitted { version, .. } => Some((key.clone(), version)),
+            Logical::Absent => None,
         });
         let released = book
             .owned
             .iter()
-            .filter(|key| !host.pages.contains_key(*key))
+            .filter(|key| !logical.contains(*key))
             .map(|key| (key.clone(), 0));
         Some(
             held.chain(released)

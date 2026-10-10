@@ -218,6 +218,8 @@ impl Vehicle {
                 Ok(Witness::Unsupported) => Err(super::io::IoFailure {
                     kind: super::io::ErrorKind::Io,
                     completed: false,
+                    operation: None,
+                    os_error: None,
                 }),
                 Err(error) => Err(error),
             },

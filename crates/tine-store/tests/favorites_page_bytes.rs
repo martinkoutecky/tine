@@ -1,12 +1,13 @@
 //! Family 22 byte differential: the Favorites arrangement page, as the
 //! frontend's `favoritesArrangementPage` sends it (same DTO shape as master's
 //! `layoutPageDto`, with collapse carried in the raw as every og block does),
-//! written through the real save path.
+//! written through the store's page serializer (`Store::save`, the same
+//! transaction serializer the page host's submit uses).
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::PageDto;
-use tine_store::{EditKind, PageId, SaveBase, SavePagesOutcome, Store};
+use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
 
 #[test]
 fn favorites_arrangement_page_bytes() {
@@ -30,11 +31,8 @@ fn favorites_arrangement_page_bytes() {
     }))
     .unwrap();
     let id = PageId::from("pages/Favorites.md");
-    let outcome = store.save_pages(&[(id, SaveBase::CreateNew, dto, vec![EditKind::CreatePage])]);
-    assert!(
-        matches!(outcome, SavePagesOutcome::Ok { .. }),
-        "{outcome:?}"
-    );
+    let outcome = store.save(EditKind::CreatePage, &id, SaveBase::CreateNew, &dto);
+    assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
     assert_eq!(
         fs::read_to_string(root.join("pages/Favorites.md")).unwrap(),
         "tine/favorites:: true\n\n- [[Alpha]]\n\t- [[Beta]]\n- Work\n  collapsed:: true\n\t- [[Gamma]]\n"
@@ -82,16 +80,8 @@ fn favorites_arrangement_page_in_an_org_preferred_graph() {
         ],
     }))
     .unwrap();
-    let outcome = store.save_pages(&[(
-        id.clone(),
-        SaveBase::CreateNew,
-        dto,
-        vec![EditKind::CreatePage],
-    )]);
-    assert!(
-        matches!(outcome, tine_store::SavePagesOutcome::Ok { .. }),
-        "{outcome:?}"
-    );
+    let outcome = store.save(EditKind::CreatePage, &id, SaveBase::CreateNew, &dto);
+    assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
     let files: Vec<_> = fs::read_dir(root.join("pages"))
         .unwrap()
         .map(|e| e.unwrap().file_name())

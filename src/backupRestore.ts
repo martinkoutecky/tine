@@ -8,7 +8,7 @@
  * snapshot file counts and bytes, and graph reload. */
 import { backend, type BackupInfo } from "./backend";
 import { bindingOwner, ownedWhen, readOwned, writeOwned } from "./owned";
-import { flushAll } from "./document";
+import { consumedAnswer, flushAll } from "./document";
 import { loadGraphPath } from "./graph";
 import { graphMeta } from "./graphSession";
 import { pushToast } from "./toasts";
@@ -47,12 +47,21 @@ export async function restoreBackupFromSettings(
       return;
     }
     if (!owner()) return;
-    const restored = await writeOwned(owner, backend().restoreBackup(backup.stamp, "replace-page"));
+    const restored = await writeOwned(owner, backend().restoreBackup(backup.stamp, "replace-page", consumedAnswer()));
     if (restored.kind === "stale") return;
+    const { error, reloaded } = restored.value;
+    // A stop that could not save every page restores nothing (the host keeps running).
+    if (error && !reloaded) throw error;
+    // The page host relaunched on the tree as it now is (after a partial
+    // failure too): reload, which rebinds this window to it.
     const outcome = await loadGraphPath(root, { forceRefresh: true, transitionHeld: true });
     if (!ownsTransition()) return;
     if (outcome.kind !== "loaded" && outcome.kind !== "already_current") {
       pushToast("Snapshot restored, but the graph couldn't be reloaded. Reopen it to see the restored files.", "error");
+      return;
+    }
+    if (error) {
+      pushToast(`Restore failed part-way: ${error}`, "error", { sticky: true });
       return;
     }
     pushToast(`Restored snapshot from ${when}`, "success");

@@ -11,6 +11,7 @@ import { openContextMenu, closeContextMenu, closeExportModal, exportModal } from
 import { setGraphMeta } from "../graphSession";
 import { clearTransientLayersForTest } from "../transientLayers";
 import type { BlockDto } from "../types";
+import { bindTestHost } from "../document/host/wiring.test.support";
 
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
@@ -18,10 +19,11 @@ const child = "33333333-3333-4333-8333-333333333333";
 const block = (id: string, raw: string, children: BlockDto[] = [], collapsed = false): BlockDto => ({ id, raw, children, collapsed });
 let dispose: (() => void) | undefined;
 beforeAll(() => initParser());
-beforeEach(() => {
+beforeEach(async () => {
+  // Edits reach the page host once the window is bound (graph load).
+  await bindTestHost();
   vi.spyOn(backend(), "writeRich").mockResolvedValue();
   vi.spyOn(backend(), "writeText").mockResolvedValue();
-  vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["revision"] });
   vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) => ids.map(() => null));
 });
 afterEach(() => {

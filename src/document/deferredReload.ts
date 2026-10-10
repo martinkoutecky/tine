@@ -30,6 +30,7 @@ import { captureBinding, clearOnBindingInvalidated, bindingCurrent, type Binding
 import { editingId } from "../editorController";
 import { dataRev } from "../graphSession";
 import { isBlockMoving } from "./edits/moves";
+import { hostState } from "./host/wiring";
 
 interface Deferred { change: GraphChange; binding: Binding }
 interface Replay { ready(page: string): boolean; run(change: GraphChange): void }
@@ -83,13 +84,14 @@ export function replayDeferredExternalReloads(): void {
 
 clearOnBindingInvalidated(() => { deferred.clear(); waiters.clear(); });
 
-// Editing ending (or moving to another block), a move settling and a save
-// settling (the data revision) each change a signal read here; the pin release calls `replayDeferredExternalReloads` itself.
+// Editing ending (or moving to another block), a move settling, a save
+// settling (the data revision) and the page host letting go of a page (its
+// state revision) each change a signal read here; the pin release calls `replayDeferredExternalReloads` itself.
 // Created on the first deferral, not at module load: the moves module is still
 // initialising while this one is imported, and nothing is watched until then.
 let watching = false;
 function watchTransitions(): void {
   if (watching) return;
   watching = true;
-  createRoot(() => createEffect(on([editingId, () => isBlockMoving(), dataRev], replayDeferredExternalReloads, { defer: true })));
+  createRoot(() => createEffect(on([editingId, () => isBlockMoving(), dataRev, hostState], replayDeferredExternalReloads, { defer: true })));
 }

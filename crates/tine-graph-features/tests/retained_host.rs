@@ -1,7 +1,7 @@
 //! Census writers with a page host (STEP3 §7, R6). With no unsaved input, a
-//! writer under the host's reservations (or, for a single page's rename,
-//! the host's own operation) leaves the graph byte-for-byte as the plain
-//! write does and returns the same result; and a page another reservation
+//! writer under the host's reservations leaves the graph byte-for-byte as
+//! the plain write does and returns the same result; a rename, which always
+//! has a host, writes the renamed graph; and a page another reservation
 //! holds blocks the writer until it is released.
 
 use std::collections::{BTreeMap, HashMap};
@@ -11,7 +11,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
-use tine_core::model::PageKind;
 use tine_core::pdf::{self, Highlight};
 use tine_graph_features::{conflicts, guide, journals, pages, pdf as features_pdf};
 use tine_store::{Input, PageHost, PageId, Store};
@@ -123,8 +122,36 @@ fn highlight(id: &str) -> Highlight {
     }
 }
 
+/// Run a rename `op` through a running host on a fresh copy of `files`;
+/// its result and the graph's bytes after it.
+fn with_a_host(
+    label: &str,
+    files: &[(&str, &str)],
+    op: impl Fn(&Store, &PageHost) -> String,
+) -> (String, BTreeMap<String, Vec<u8>>) {
+    let dir = graph(label, files);
+    let app_data = scratch(&format!("{label}-app"));
+    fs::create_dir_all(&app_data).unwrap();
+    let store = Arc::new(Store::open(&dir, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let host = PageHost::start_for_tests(&store, &app_data).unwrap();
+    let got = op(&store, &host);
+    drop(host);
+    store.close();
+    let bytes = tree(&dir);
+    for dir in [dir, app_data] {
+        let _ = fs::remove_dir_all(dir);
+    }
+    (got, bytes)
+}
+
+/// Every rename is the page host's (STEP3 §7, the plain no-host rename is
+/// deleted): a single page with a file is the host's own operation, then
+/// `config.edn`; a name with no file, a namespace and a merge are retained
+/// transactions under reservations. Each writes exactly these bytes (the
+/// plain rename's, which they were pinned equal to before its deletion).
 #[test]
-fn page_renames_with_a_host_write_what_the_plain_rename_writes() {
+fn page_renames_with_a_host_write_the_renamed_graph() {
     let files = [
         ("pages/Start.md", "- home [[Other]]\n"),
         (
@@ -137,39 +164,90 @@ fn page_renames_with_a_host_write_what_the_plain_rename_writes() {
         ("pages/Merged.md", "alias:: Joined\n\n- merged body\n"),
     ];
     let rename = |old: &'static str, new: &'static str, into: Option<&'static str>| {
-        move |store: &Store, host: Option<&PageHost>| {
+        move |store: &Store, host: &PageHost| {
             format!(
                 "{:?}",
                 pages::rename_or_merge_page(store, host, old, new, None, into, &[])
             )
         }
     };
+    let original = with_a_host("unchanged", &files, |_, _| String::new()).1;
+    let after = |changes: &[(&str, Option<&str>)]| {
+        let mut tree = original.clone();
+        for (rel, text) in changes {
+            match text {
+                Some(text) => tree.insert((*rel).into(), text.as_bytes().to_vec()),
+                None => tree.remove(*rel),
+            };
+        }
+        tree
+    };
+    let home = |page: &str| CONFIG.replace("\"Start\"", &format!("\"{page}\""));
     // A single page with a file: the host's own operation, then config.edn.
-    let report = same_with_a_host("single", &files, rename("Start", "Begin", None));
+    let (report, bytes) = with_a_host("single", &files, rename("Start", "Begin", None));
     assert!(
         report.contains("Renamed") && report.contains("Begin"),
         "{report}"
     );
+    let begin = home("Begin");
+    assert_eq!(
+        bytes,
+        after(&[
+            ("pages/Start.md", None),
+            ("pages/Begin.md", Some("- home [[Other]]\n")),
+            (
+                "pages/Other.md",
+                Some("- see [[Begin]] and [[Ghost]] and [[Ns/child]]\n"),
+            ),
+            ("logseq/config.edn", Some(&begin)),
+        ])
+    );
     // A name with no file: references only.
-    ok(same_with_a_host(
-        "ghost",
-        &files,
-        rename("Ghost", "Spirit", None),
-    ));
+    let (report, bytes) = with_a_host("ghost", &files, rename("Ghost", "Spirit", None));
+    ok(report);
+    assert_eq!(
+        bytes,
+        after(&[(
+            "pages/Other.md",
+            Some("- see [[Start]] and [[Spirit]] and [[Ns/child]]\n"),
+        )])
+    );
     // A namespace and a merge: retained transactions under reservations.
-    ok(same_with_a_host(
-        "namespace",
-        &files,
-        rename("Ns", "Space", None),
-    ));
-    ok(same_with_a_host(
+    let (report, bytes) = with_a_host("namespace", &files, rename("Ns", "Space", None));
+    ok(report);
+    assert_eq!(
+        bytes,
+        after(&[
+            ("pages/Ns.md", None),
+            ("pages/Ns___child.md", None),
+            ("pages/Space.md", Some("- ns\n")),
+            ("pages/Space___child.md", Some("- child of [[Space]]\n")),
+            (
+                "pages/Other.md",
+                Some("- see [[Start]] and [[Ghost]] and [[Space/child]]\n"),
+            ),
+        ])
+    );
+    let (report, bytes) = with_a_host(
         "merge",
         &files,
         rename("Merged", "Into", Some("pages/Into.md")),
-    ));
-    // A target another page owns refuses alike.
-    let refused = same_with_a_host("owned", &files, rename("Start", "Other", None));
+    );
+    ok(report);
+    assert_eq!(
+        bytes,
+        after(&[
+            ("pages/Merged.md", None),
+            (
+                "pages/Into.md",
+                Some("alias:: Joined\n\n- into\n- merged body\n"),
+            ),
+        ])
+    );
+    // A target another page owns refuses and writes nothing.
+    let (refused, bytes) = with_a_host("owned", &files, rename("Start", "Other", None));
     assert!(refused.starts_with("Err"), "{refused}");
+    assert_eq!(bytes, original);
 }
 
 #[test]
@@ -194,12 +272,6 @@ fn other_census_writers_with_a_host_write_what_the_plain_writers_write() {
         format!(
             "{:?}",
             pages::merge_pages(store, host, "pages/A.md", "pages/B.md")
-        )
-    }));
-    ok(same_with_a_host("delete", &files, |store, host| {
-        format!(
-            "{:?}",
-            pages::delete_page_expected(store, host, "Gone", PageKind::Page, None, None)
         )
     }));
     ok(same_with_a_host("rescue", &files, |store, host| {
@@ -461,7 +533,7 @@ fn a_host_rename_does_not_wait_for_a_referrer_it_skips() {
         ],
     );
     let report = finishes_while_held(&host, "pages/m.md", || {
-        pages::rename_or_merge_page(&store, Some(&host), "Old", "New", None, None, &[]).unwrap()
+        pages::rename_or_merge_page(&store, &host, "Old", "New", None, None, &[]).unwrap()
     });
     assert_eq!(report.skipped_conflicted_referrers, ["pages/m.md"]);
     assert_eq!(
@@ -497,7 +569,7 @@ fn a_refusing_rename_does_not_reserve_a_referrer_it_skips() {
         ],
     );
     let report = finishes_while_held(&host, "pages/m.md", || {
-        pages::rename_or_merge_page(&store, Some(&host), "Old", "New", None, None, &[]).unwrap()
+        pages::rename_or_merge_page(&store, &host, "Old", "New", None, None, &[]).unwrap()
     });
     assert_eq!(report.skipped_conflicted_referrers, ["pages/m.md"]);
     assert!(!fs::read_to_string(dir.join("pages/New.md"))

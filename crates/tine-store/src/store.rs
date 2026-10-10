@@ -33,6 +33,7 @@
 
 use crate::path_identity::canonical_existing_path;
 mod page_identity;
+#[cfg(any(test, feature = "test-faults"))]
 mod save_failure;
 use std::collections::{BTreeMap, VecDeque};
 use std::collections::{HashMap, HashSet};
@@ -2365,6 +2366,7 @@ pub enum SaveOutcome {
 }
 
 impl SaveOutcome {
+    #[cfg(any(test, feature = "test-faults"))]
     fn from_failed_step(why: crate::Why, id: &PageId) -> Self {
         match why {
             crate::Why::Conflict {
@@ -2400,29 +2402,6 @@ impl SaveOutcome {
             crate::Why::Failed(error) => SaveOutcome::Io(error),
         }
     }
-}
-
-/// Result of one ordered page-save request.
-#[derive(Debug)]
-pub enum SavePagesOutcome {
-    /// One result per input entry, in the same order.
-    Ok {
-        /// One Saved or Unchanged revision per entry.
-        outcomes: Vec<SaveOutcome>,
-        /// The save's published answer delta, or None for unchanged/unpublished saves.
-        change: Option<Change>,
-    },
-    /// The failed entry and any entries whose rollback could not restore disk.
-    Failed {
-        /// Zero-based failed input entry.
-        index: usize,
-        /// Refusal or I/O failure for that entry.
-        outcome: SaveOutcome,
-        /// Graph-relative file locations whose earlier bytes could not be restored.
-        undo_failed: Vec<FileId>,
-        /// Graph-relative locations omitted from the final publication.
-        publication_errors: Vec<FileId>,
-    },
 }
 
 /// Parsed page and the raw-byte revision used for a guarded save.

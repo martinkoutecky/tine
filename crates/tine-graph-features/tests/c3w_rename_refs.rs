@@ -9,7 +9,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages;
 use tine_store::Store;
 
-fn fixture(files: &[(&str, &str)]) -> (PathBuf, Store) {
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
+fn fixture(files: &[(&str, &str)]) -> (PathBuf, std::sync::Arc<Store>) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-c3w-w3-{}-{}",
@@ -28,7 +39,7 @@ fn fixture(files: &[(&str, &str)]) -> (PathBuf, Store) {
     for (rel, body) in files {
         fs::write(root.join(rel), body).unwrap();
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     (root, store)
 }
@@ -50,7 +61,10 @@ fn w3_rename_rewrites_references_after_an_unmatched_opener_and_fullwidth_tags() 
             "* see [[ x and [[file:./Target.org][Target]] and [[Target]]\n",
         ),
     ]);
-    pages::rename_or_merge_page(&store, None, "Target", "Renamed", None, None, &[]).unwrap();
+    hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Target", "Renamed", None, None, &[])
+    })
+    .unwrap();
     assert!(root.join("pages/Renamed.md").exists());
     let referrer = fs::read_to_string(root.join("pages/Referrer.md")).unwrap();
     assert_eq!(

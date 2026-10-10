@@ -11,6 +11,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages;
 use tine_store::{FaultPoint, Store};
 
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
 fn scratch(label: &str, config: &str) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
@@ -25,8 +36,8 @@ fn scratch(label: &str, config: &str) -> PathBuf {
     dir
 }
 
-fn open(dir: &Path) -> Store {
-    let store = Store::open(dir, Default::default()).unwrap().0;
+fn open(dir: &Path) -> std::sync::Arc<Store> {
+    let store = std::sync::Arc::new(Store::open(dir, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     store
 }
@@ -43,8 +54,10 @@ fn renaming_the_home_page_moves_default_home_with_it() {
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     fs::write(dir.join("pages/Ref.md"), "- see [[Start]]\n").unwrap();
     let store = open(&dir);
-    let report =
-        pages::rename_or_merge_page(&store, None, "Start", "Begin", None, None, &[]).unwrap();
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Start", "Begin", None, None, &[])
+    })
+    .unwrap();
     assert_eq!(report.home_page.as_deref(), Some("Begin"));
     assert_eq!(config(&dir), HOME.replace("\"Start\"", "\"Begin\""));
     assert_eq!(store.config().config.default_home.as_deref(), Some("Begin"));
@@ -61,8 +74,10 @@ fn a_home_named_by_case_or_as_a_namespace_child_follows_the_rename() {
     let dir = scratch("case", &HOME.replace("\"Start\"", "\"start\""));
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     let store = open(&dir);
-    let report =
-        pages::rename_or_merge_page(&store, None, "Start", "Begin", None, None, &[]).unwrap();
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Start", "Begin", None, None, &[])
+    })
+    .unwrap();
     assert_eq!(report.home_page.as_deref(), Some("Begin"));
     assert_eq!(store.config().config.default_home.as_deref(), Some("Begin"));
 
@@ -70,7 +85,10 @@ fn a_home_named_by_case_or_as_a_namespace_child_follows_the_rename() {
     fs::write(dir.join("pages/Work.md"), "- parent\n").unwrap();
     fs::write(dir.join("pages/Work___Log.md"), "- child\n").unwrap();
     let store = open(&dir);
-    let report = pages::rename_or_merge_page(&store, None, "Work", "Job", None, None, &[]).unwrap();
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Work", "Job", None, None, &[])
+    })
+    .unwrap();
     assert_eq!(report.home_page.as_deref(), Some("Job/Log"));
     assert_eq!(
         store.config().config.default_home.as_deref(),
@@ -85,8 +103,10 @@ fn renaming_another_page_leaves_config_untouched() {
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     fs::write(dir.join("pages/Starter.md"), "- other\n").unwrap();
     let store = open(&dir);
-    let report =
-        pages::rename_or_merge_page(&store, None, "Starter", "Kit", None, None, &[]).unwrap();
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Starter", "Kit", None, None, &[])
+    })
+    .unwrap();
     assert_eq!(report.home_page, None);
     assert_eq!(config(&dir), HOME);
 }
@@ -98,15 +118,17 @@ fn merging_the_home_page_into_another_keeps_default_home() {
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     fs::write(dir.join("pages/Other.md"), "- other body\n").unwrap();
     let store = open(&dir);
-    let report = pages::rename_or_merge_page(
-        &store,
-        None,
-        "Start",
-        "Other",
-        None,
-        Some("pages/Other.md"),
-        &[],
-    )
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(
+            &store,
+            host,
+            "Start",
+            "Other",
+            None,
+            Some("pages/Other.md"),
+            &[],
+        )
+    })
     .unwrap();
     assert_eq!(report.home_page, None);
     assert_eq!(config(&dir), HOME);
@@ -120,8 +142,10 @@ fn a_malformed_config_neither_blocks_the_rename_nor_is_rewritten() {
     let dir = scratch("malformed", truncated);
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     let store = open(&dir);
-    let report =
-        pages::rename_or_merge_page(&store, None, "Start", "Begin", None, None, &[]).unwrap();
+    let report = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Start", "Begin", None, None, &[])
+    })
+    .unwrap();
     assert_eq!(report.home_page, None);
     assert_eq!(config(&dir), truncated);
     assert!(dir.join("pages/Begin.md").exists());
@@ -132,61 +156,89 @@ fn crash_home_rename_worker() {
     let Ok(root) = std::env::var("TINE_HOME_CRASH_ROOT") else {
         return;
     };
-    let boundary: usize = std::env::var("TINE_HOME_CRASH_BOUNDARY")
-        .unwrap()
-        .parse()
-        .unwrap();
+    use tine_store::host_faults::{abort_before, Phase};
     let store = open(Path::new(&root));
-    store.inject_fault(FaultPoint::AbortAfterStep(boundary));
-    let _ = pages::rename_or_merge_page(&store, None, "Start", "Begin", None, None, &[]);
+    match std::env::var("TINE_HOME_CRASH_POINT").unwrap().as_str() {
+        "dst" => abort_before(Phase::PageRename, 0),
+        "referrer" => abort_before(Phase::PageRename, 1),
+        "trash" => abort_before(Phase::TrashMove, 0),
+        "config" => store.inject_fault(FaultPoint::AbortAfterStep(0)),
+        _ => unreachable!(),
+    }
+    let app_data = std::env::var("TINE_HOME_CRASH_APP_DATA").unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, Path::new(&app_data)).unwrap();
+    let _ = pages::rename_or_merge_page(&store, &host, "Start", "Begin", None, None, &[]);
     panic!("I-2: home rename fault did not abort; exemplar pages::rename_page_expected");
 }
 
-/// I-2: steps are the referrer rewrite (0), the page move (1) and config.edn
-/// (2). At every boundary each file is whole old or new bytes, the config
-/// parses, and home names a page that is live or is the renamed one.
+/// I-2, restated for the page host (STEP3-DESIGN's restated rollback tests,
+/// SPEC-s3 s3.2): the rename is one host operation (destination, then the
+/// referrer, then the source's deletion while Tine runs), and `config.edn`'s
+/// home moves in its own transaction after it completes. Killed at each
+/// boundary: every file is whole old or new bytes, the config parses and is
+/// new only once the operation completed, and the home names a live page
+/// (the source stays live until the destination and the referrer
+/// published). A relaunch on the same app data completes the operation from
+/// its drafts; a home the kill left on the old name stays there, as a kill
+/// between the old transaction's move and config steps left it.
 #[test]
 fn a_home_rename_killed_at_each_step_reopens_whole() {
-    for boundary in 0..3 {
+    let new = HOME.replace("\"Start\"", "\"Begin\"");
+    for point in ["dst", "referrer", "trash", "config"] {
         let dir = scratch("crash", HOME);
+        let app_data = tempfile::tempdir().unwrap();
         fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
         fs::write(dir.join("pages/Ref.md"), "- see [[Start]]\n").unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "crash_home_rename_worker", "--nocapture"])
             .env("TINE_HOME_CRASH_ROOT", &dir)
-            .env("TINE_HOME_CRASH_BOUNDARY", boundary.to_string())
+            .env("TINE_HOME_CRASH_POINT", point)
+            .env("TINE_HOME_CRASH_APP_DATA", app_data.path())
             .output()
             .unwrap();
         assert!(
             !output.status.success(),
-            "I-2: child must abort after step {boundary}: {}",
+            "I-2: child must abort at {point}: {}",
             String::from_utf8_lossy(&output.stdout)
         );
         let reopened = open(&dir);
         let text = config(&dir);
-        let new = HOME.replace("\"Start\"", "\"Begin\"");
         assert!(
             text == HOME || text == new,
-            "I-2: config.edn whole at step {boundary}:\n{text}"
+            "I-2: config.edn whole at {point}:\n{text}"
         );
-        assert_eq!(text == new, boundary == 2, "config is the last step");
+        assert_eq!(text == new, point == "config", "config is the last step");
         let reference = fs::read_to_string(dir.join("pages/Ref.md")).unwrap();
         assert!(reference == "- see [[Start]]\n" || reference == "- see [[Begin]]\n");
-        let live = if dir.join("pages/Begin.md").exists() {
-            "Begin"
-        } else {
-            "Start"
-        };
-        assert_eq!(
-            fs::read_to_string(dir.join(format!("pages/{live}.md"))).unwrap(),
-            "- home body\n",
-            "I-2: home page content kept at step {boundary}"
-        );
+        for page in ["Start", "Begin"] {
+            if let Ok(body) = fs::read_to_string(dir.join(format!("pages/{page}.md"))) {
+                assert_eq!(body, "- home body\n", "I-2: whole at {point}");
+            }
+        }
         let home = reopened.config().config.default_home.clone().unwrap();
         assert!(
-            home == live || boundary < 2,
-            "home names the live page once the rename completed"
+            dir.join(format!("pages/{home}.md")).exists(),
+            "I-2: home names a live page at {point}"
         );
+        // Relaunch: the operation completes from its drafts.
+        let host = tine_store::PageHost::start_for_tests(&reopened, app_data.path()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while dir.join("pages/Start.md").exists()
+            || fs::read_to_string(dir.join("pages/Ref.md")).unwrap() != "- see [[Begin]]\n"
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the relaunch never completed at {point}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(
+            fs::read_to_string(dir.join("pages/Begin.md")).unwrap(),
+            "- home body\n",
+            "I-2: home page content kept at {point}"
+        );
+        assert!(config(&dir) == HOME || config(&dir) == new);
+        drop(host);
         drop(reopened);
         fs::remove_dir_all(dir).unwrap();
     }

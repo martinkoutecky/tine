@@ -4,7 +4,9 @@
 // setFavorites.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "./graph"; // installs the Favorites page door, as at app start
-import { backend, type SavePageEntry } from "./backend";
+import { backend } from "./backend";
+import { installDiskHost } from "./diskHost.test.support";
+import { bindTestHost } from "./document/host/wiring.test.support";
 import { bumpDataRev, graphMeta, setGraphMeta } from "./graphSession";
 import {
   addFavoriteGroup, deleteFavoriteGroup, favorites, favoritesLayout, moveFavoriteRow,
@@ -28,12 +30,14 @@ const fromDisk = (bs: BlockDto[], f: Format = "md"): BlockDto[] =>
   bs.map((x) => ({ ...x, collapsed: COLLAPSED[f].test(x.raw), children: fromDisk(x.children, f) }));
 // As the store: a new page takes the graph's preferred format (pages/<name>.org in an Org graph).
 const preferred = (): Format => graphMeta()?.preferred_format ?? "md";
-const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); };
+// A page write is a page-host round trip (open, submit, publication, close), so
+// let several task turns pass, not one.
+const settle = async () => { for (let turn = 0; turn < 8; turn++) { for (let i = 0; i < 30; i++) await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); } };
 const md = () => layoutToMarkdown(favoritesLayout());
 const line = (x: BlockDto, d: number): string => `${"\t".repeat(d)}- ${x.raw}\n${x.children.map((c) => line(c, d + 1)).join("")}`;
 const shape = (page: DiskPage) => ({ pre: page.pre_block, text: page.blocks.map((x) => line(x, 0)).join("") });
 
-beforeEach(() => {
+beforeEach(async () => {
   disk = new Map();
   config = { names: [], page: null };
   writes = [];
@@ -44,14 +48,22 @@ beforeEach(() => {
   });
   vi.spyOn(api, "resolvePage").mockImplementation(async (name: string) =>
     disk.has(name) ? { kind: "existing", id: `pages/${name}.${disk.get(name)!.format ?? "md"}`, others: [] } : { kind: "absent", id: `pages/${name}.${preferred()}` });
-  vi.spyOn(api, "savePages").mockImplementation(async (entries: SavePageEntry[]) => {
-    const [entry] = entries;
-    const current = disk.get(entry.page.name);
-    if (String(current?.rev ?? null) !== String(entry.baseRev)) return { failed: { index: 0, family: "conflict", undoFailed: [] } };
-    const rev = (current?.rev ?? 0) + 1;
-    disk.set(entry.page.name, { pre_block: entry.page.pre_block, blocks: toDisk(entry.page.blocks), rev, format: current?.format ?? preferred() });
-    writes.push(`page:${entry.page.name}:${entry.kinds.join(",")}`);
-    return { ok: [String(rev)] };
+  installDiskHost(await bindTestHost(), {
+    read: (_key, name) => {
+      const page = disk.get(name);
+      // The host parses the file: every block gets its own runtime id.
+      let n = 0;
+      const ids = (bs: BlockDto[]): BlockDto[] => bs.map((x) => ({ ...x, id: `${name}-${++n}`, children: ids(x.children) }));
+      return page ? { name, kind: "page", title: name, pre_block: page.pre_block, blocks: ids(fromDisk(page.blocks, page.format)),
+        rev: String(page.rev), format: page.format ?? "md" } : null;
+    },
+    write: (_key, dto, kinds) => {
+      const current = disk.get(dto.name);
+      const rev = (current?.rev ?? 0) + 1;
+      disk.set(dto.name, { pre_block: dto.pre_block, blocks: toDisk(dto.blocks), rev, format: current?.format ?? preferred() });
+      writes.push(`page:${dto.name}:${kinds.join(",")}`);
+      return String(rev);
+    },
   });
   vi.spyOn(api, "setFavorites").mockImplementation(async (names: string[], page?: string | null) => {
     config = { names: [...names], page: page ?? config.page };

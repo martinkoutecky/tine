@@ -6,7 +6,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages;
 use tine_store::Store;
 
-fn fixture(label: &str, files: &[(&str, &str)]) -> (PathBuf, Store) {
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
+fn fixture(label: &str, files: &[(&str, &str)]) -> (PathBuf, std::sync::Arc<Store>) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-og-c5-p2-{label}-{}-{}",
@@ -22,7 +33,7 @@ fn fixture(label: &str, files: &[(&str, &str)]) -> (PathBuf, Store) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, body).unwrap();
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     (root, store)
 }
 
@@ -69,8 +80,10 @@ fn namespace_rename_keeps_the_child_suffix_across_spellings() {
                 ("pages/Ref.md", &format!("- see [[{child_title}]]\n")),
             ],
         );
-        pages::rename_page_expected(&store, None, typed_old, "New", None)
-            .unwrap_or_else(|e| panic!("{label}: {e}"));
+        hosted(&store, |host| {
+            pages::rename_page_expected(&store, host, typed_old, "New", None)
+        })
+        .unwrap_or_else(|e| panic!("{label}: {e}"));
         assert_eq!(
             owner(&store, "New/x").as_deref(),
             Some("pages/New___x.md"),
@@ -111,15 +124,17 @@ fn merge_keeps_a_fenced_preamble_line_inside_its_fence() {
             if plain {
                 pages::merge_pages(&store, None, "pages/Old.md", "pages/New.md").unwrap();
             } else {
-                pages::rename_or_merge_page(
-                    &store,
-                    None,
-                    "Old",
-                    "New",
-                    None,
-                    Some("pages/New.md"),
-                    &[],
-                )
+                hosted(&store, |host| {
+                    pages::rename_or_merge_page(
+                        &store,
+                        host,
+                        "Old",
+                        "New",
+                        None,
+                        Some("pages/New.md"),
+                        &[],
+                    )
+                })
                 .unwrap();
             }
             let merged = read(&root, "pages/New.md");
@@ -166,8 +181,10 @@ fn org_merge_keeps_a_directive_example_inside_its_block() {
             ("pages/New.org", "#+CATEGORY: work\n* survivor block\n"),
         ],
     );
-    pages::rename_or_merge_page(&store, None, "Old", "New", None, Some("pages/New.org"), &[])
-        .unwrap();
+    hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Old", "New", None, Some("pages/New.org"), &[])
+    })
+    .unwrap();
     let merged = read(&root, "pages/New.org");
     assert!(merged.contains(example), "{merged}");
     assert!(merged.starts_with("#+CATEGORY: work\n"), "{merged}");
@@ -189,8 +206,10 @@ fn rename_merge_keeps_a_source_block_equal_to_a_survivor_block() {
             ("pages/New.md", "- only in new\n- repeated\n"),
         ],
     );
-    pages::rename_or_merge_page(&store, None, "Old", "New", None, Some("pages/New.md"), &[])
-        .unwrap();
+    hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Old", "New", None, Some("pages/New.md"), &[])
+    })
+    .unwrap();
     let merged = read(&root, "pages/New.md");
     assert_eq!(merged.matches("- repeated").count(), 2, "{merged}");
     assert!(merged.contains("- only in new"), "{merged}");

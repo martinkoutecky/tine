@@ -1,9 +1,14 @@
-//! The writer call-site guard (STEP3 §7, R6): every production function that
-//! writes graph files through the store runs as a retained writer under a
-//! host reservation (`retained::reserved`), or around the host's restore stop
-//! (`restore_hosted`), or is called only from functions that do; or it writes
-//! no page file and is exempt with its reason. A new writer call site fails
-//! here, naming the rule and an exemplar.
+//! The writer call-site guard (STEP3 §7, R6, A-F1): every store write in a
+//! production function is inside the write closure of a host reservation
+//! (`retained::reserved`) or of the host's restore stop (`restore_hosted`), or
+//! is in a function that runs only under one: every call site of it is in
+//! such a closure or in a function that itself runs only under one (a least
+//! fixed point anchored at real closures, so a reservation elsewhere in the
+//! body, mutual recursion or no caller at all certifies nothing). A function
+//! that writes no page file is exempt with its reason. Calls resolve by their
+//! last path segment; a function the rule depends on that is named as a value
+//! (a callback, an alias, a turbofish call) is rejected as unsupported. A new
+//! writer call site fails here, naming the rule and an exemplar.
 
 use quote::ToTokens;
 use std::collections::{BTreeMap, BTreeSet};
@@ -13,12 +18,11 @@ use syn::visit::Visit;
 const RULE: &str = "STEP3 §7 (R6): a production page writer runs under a page-host reservation";
 const EXEMPLAR: &str = "crates/tine-graph-features/src/conflicts.rs fold_pair";
 /// Store calls that write graph files.
-const WRITES: &[&str] = &["transaction", "save_pages", "restore"];
+const WRITES: &[&str] = &["transaction", "restore"];
 /// Calls that route a writer through the host.
 const ROUTES: &[&str] = &["reserved", "restore_hosted"];
 
-/// Writers of no page file, or old-engine paths lane 3b deletes, by
-/// `file::fn`, each with its reason.
+/// Writers of no page file, by `file::fn`, each with its reason.
 const EXEMPT: &[(&str, &str)] = &[
     (
         "crates/tine-graph-features/src/assets.rs::create_unique",
@@ -45,40 +49,97 @@ const EXEMPT: &[(&str, &str)] = &[
         "writes custom.css; no page",
     ),
     (
-        "crates/tine-graph-features/src/pages.rs::save_pages",
-        "the old engine's save path; lane 3b deletes it (STEP3: no production save_pages)",
+        "crates/tine-graph-features/src/pages.rs::commit_home",
+        "writes logseq/config.edn (the home page setting) after a host rename; no page",
     ),
 ];
 
 #[derive(Default)]
 struct Function {
+    /// A store write anywhere in the body.
     writes: bool,
+    /// A store write outside every route call's write closure (A-F1).
+    unrouted_writes: bool,
+    /// Every call, by its last path segment.
     calls: BTreeSet<String>,
+    /// The calls outside every route call's write closure.
+    unrouted_calls: BTreeSet<String>,
+    /// Identifiers used as values: callbacks, aliases, variables, and
+    /// turbofish calls the call scan does not follow.
+    values: BTreeSet<String>,
     /// The body's tokens, spaced as `quote` prints them.
     body: String,
 }
 
-fn calls(tokens: proc_macro2::TokenStream, out: &mut Function) {
-    use proc_macro2::{Delimiter, TokenTree};
+/// Records `tokens`' calls, writes and value names; `routed` when they are
+/// inside a route call's last argument (its write closure).
+fn calls(tokens: proc_macro2::TokenStream, routed: bool, out: &mut Function) {
+    use proc_macro2::{Delimiter, Spacing, TokenTree};
     let tokens: Vec<_> = tokens.into_iter().collect();
-    for (i, token) in tokens.iter().enumerate() {
-        match token {
-            TokenTree::Group(group) => calls(group.stream(), out),
+    let punct = |i: usize| match tokens.get(i) {
+        Some(TokenTree::Punct(p)) => Some((p.as_char(), p.spacing())),
+        _ => None,
+    };
+    let mut i = 0;
+    while i < tokens.len() {
+        match &tokens[i] {
+            TokenTree::Group(group) => calls(group.stream(), routed, out),
             TokenTree::Ident(name) => {
-                let Some(TokenTree::Group(args)) = tokens.get(i + 1) else {
-                    continue;
-                };
-                if args.delimiter() != Delimiter::Parenthesis {
-                    continue;
-                }
                 let name = name.to_string();
-                let method = matches!(tokens.get(i.wrapping_sub(1)),
-                    Some(TokenTree::Punct(dot)) if dot.as_char() == '.');
-                out.writes |= method && WRITES.contains(&name.as_str());
-                out.calls.insert(name);
+                let method = i > 0 && punct(i - 1) == Some(('.', Spacing::Alone));
+                let declared =
+                    i > 0 && matches!(&tokens[i - 1], TokenTree::Ident(word) if word == "fn");
+                match tokens.get(i + 1) {
+                    Some(TokenTree::Group(args))
+                        if args.delimiter() == Delimiter::Parenthesis && !declared =>
+                    {
+                        let write = method && WRITES.contains(&name.as_str());
+                        out.writes |= write;
+                        out.unrouted_writes |= write && !routed;
+                        if !routed {
+                            out.unrouted_calls.insert(name.clone());
+                        }
+                        if ROUTES.contains(&name.as_str()) {
+                            // The last argument is the write closure.
+                            let mut arguments = vec![proc_macro2::TokenStream::new()];
+                            for token in args.stream() {
+                                match &token {
+                                    TokenTree::Punct(comma) if comma.as_char() == ',' => {
+                                        arguments.push(proc_macro2::TokenStream::new())
+                                    }
+                                    _ => arguments.last_mut().unwrap().extend([token]),
+                                }
+                            }
+                            arguments.retain(|argument| !argument.is_empty());
+                            let last = arguments.pop().unwrap_or_default();
+                            for argument in arguments {
+                                calls(argument, routed, out);
+                            }
+                            calls(last, true, out);
+                        } else {
+                            calls(args.stream(), routed, out);
+                        }
+                        out.calls.insert(name);
+                        i += 2;
+                        continue;
+                    }
+                    // A path prefix (`module::`), a macro, a field or a
+                    // binding's type; a turbofish call is a value: unfollowed.
+                    _ if punct(i + 1) == Some((':', Spacing::Joint)) => {
+                        if punct(i + 3) == Some(('<', Spacing::Alone)) {
+                            out.values.insert(name);
+                        }
+                    }
+                    _ if matches!(punct(i + 1), Some(('!' | ':', _))) => {}
+                    _ if method || declared => {}
+                    _ => {
+                        out.values.insert(name);
+                    }
+                }
             }
             _ => {}
         }
+        i += 1;
     }
 }
 
@@ -109,9 +170,12 @@ impl Scan<'_> {
             .entry(format!("{}::{name}", self.file))
             .or_default();
         let mut found = Function::default();
-        calls(body.to_token_stream(), &mut found);
+        calls(body.to_token_stream(), false, &mut found);
         entry.writes |= found.writes;
+        entry.unrouted_writes |= found.unrouted_writes;
         entry.calls.extend(found.calls);
+        entry.unrouted_calls.extend(found.unrouted_calls);
+        entry.values.extend(found.values);
         entry.body.push_str(&body.to_token_stream().to_string());
     }
 }
@@ -141,39 +205,71 @@ fn scan(file: &str, source: &str, functions: &mut BTreeMap<String, Function>) {
     .visit_file(&parsed);
 }
 
-/// Writers that are neither routed nor exempt.
+/// Writers that are neither routed nor exempt, and value uses of a function
+/// the rule depends on (A-F1).
 fn unrouted(functions: &BTreeMap<String, Function>, exempt: &[(&str, &str)]) -> Vec<String> {
     fn name(key: &str) -> &str {
         key.rsplit("::").next().unwrap()
     }
-    fn routed(
-        key: &str,
-        functions: &BTreeMap<String, Function>,
-        seen: &mut BTreeSet<String>,
-    ) -> bool {
-        if !seen.insert(key.to_owned()) {
-            return true;
-        }
-        if functions[key]
-            .calls
-            .iter()
-            .any(|call| ROUTES.contains(&call.as_str()))
-        {
-            return true;
-        }
-        let callers: Vec<&String> = functions
-            .iter()
-            .filter(|(caller, f)| *caller != key && f.calls.contains(name(key)))
-            .map(|(caller, _)| caller)
+    // Functions that run only under a reservation: the least fixed point of
+    // "called somewhere, and every call outside a write closure is in such a
+    // function". A function's own recursive call is not a call site.
+    let mut under = BTreeSet::new();
+    loop {
+        let grown: Vec<&String> = functions
+            .keys()
+            .filter(|key| !under.contains(*key))
+            .filter(|key| {
+                let callers: Vec<(&String, &Function)> = functions
+                    .iter()
+                    .filter(|(caller, f)| caller != key && f.calls.contains(name(key)))
+                    .collect();
+                !callers.is_empty()
+                    && callers.iter().all(|(caller, f)| {
+                        !f.unrouted_calls.contains(name(key)) || under.contains(*caller)
+                    })
+            })
             .collect();
-        !callers.is_empty() && callers.iter().all(|caller| routed(caller, functions, seen))
+        if grown.is_empty() {
+            break;
+        }
+        under.extend(grown);
     }
-    functions
+    let writers: Vec<&String> = functions
         .iter()
-        .filter(|(key, f)| f.writes && !exempt.iter().any(|(e, _)| e == key))
-        .filter(|(key, _)| !routed(key, functions, &mut BTreeSet::new()))
-        .map(|(key, _)| key.clone())
-        .collect()
+        .filter(|(key, f)| f.unrouted_writes && !exempt.iter().any(|(e, _)| e == key))
+        .map(|(key, _)| key)
+        .collect();
+    // The functions whose call sites the rule reads: the writers, and every
+    // function calling one of these outside a write closure.
+    let mut depended: BTreeSet<&str> = writers.iter().map(|key| name(key)).collect();
+    loop {
+        let grown: Vec<&str> = functions
+            .iter()
+            .filter(|(key, f)| {
+                !depended.contains(name(key))
+                    && f.unrouted_calls
+                        .iter()
+                        .any(|call| depended.contains(call.as_str()))
+            })
+            .map(|(key, _)| name(key))
+            .collect();
+        if grown.is_empty() {
+            break;
+        }
+        depended.extend(grown);
+    }
+    let mut found: Vec<String> = writers
+        .into_iter()
+        .filter(|key| !under.contains(*key))
+        .cloned()
+        .collect();
+    for (key, f) in functions {
+        for value in f.values.iter().filter(|v| depended.contains(v.as_str())) {
+            found.push(format!("{key} names {value} as a value (unsupported)"));
+        }
+    }
+    found
 }
 
 fn rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
@@ -224,14 +320,12 @@ fn every_production_page_writer_runs_under_a_host_reservation() {
         "crates/tine-graph-features/src/pages.rs::host_rename",
         "crates/tine-graph-features/src/pages.rs::merge_pages",
         "crates/tine-graph-features/src/pages.rs::rename_file_to_page",
-        "crates/tine-graph-features/src/pages.rs::delete_page_expected",
         "crates/tine-graph-features/src/conflicts.rs::fold_pair",
         "crates/tine-graph-features/src/conflicts.rs::trash_sync_conflict",
         "crates/tine-graph-features/src/conflicts.rs::resolve_vcs_marker_conflict",
         "crates/tine-graph-features/src/journals.rs::migrate_journal_filenames",
         "crates/tine-graph-features/src/journals.rs::trash_journal_file",
         "crates/tine-graph-features/src/pdf.rs::write_highlights",
-        "crates/tine-graph-features/src/live_conflict.rs::resolve_live_conflict",
         "src-tauri/src/backup/restore.rs::restore_backup",
     ] {
         assert!(
@@ -271,11 +365,73 @@ fn a_planted_writer_outside_a_reservation_fails_the_guard() {
     assert_eq!(unrouted(&functions, &[]), ["planted.rs::helper"]);
 }
 
+/// A-F1 (REVIEW-3a3): the rule is scope-sensitive. A reservation elsewhere in
+/// the body, one unreserved caller, mutual recursion, a callback, an alias or
+/// a turbofish call certifies nothing; a qualified call inside a write closure
+/// and a recursive helper under one do.
+#[test]
+fn a_planted_writer_beside_an_empty_reservation_fails_the_guard() {
+    let planted = r#"
+        pub fn empty(store: &Store) {
+            reserved(None, Input::Flush, d, r, |_| Ok(None));
+            store.transaction(None).commit();
+        }
+        fn shared(store: &Store) { store.transaction(None).commit(); }
+        pub fn kept(store: &Store) { reserved(None, Input::Flush, d, r, |_| shared(store)); }
+        pub fn leaked(store: &Store) { shared(store); }
+        fn ping(store: &Store) { pong(store); store.transaction(None).commit(); }
+        fn pong(store: &Store) { ping(store); }
+        pub fn anchors_ping(store: &Store) {
+            reserved(None, Input::Flush, d, r, |_| ping(store));
+        }
+        fn by_value(store: &Store) { store.transaction(None).commit(); }
+        pub fn callback(store: &Store) { reserved(None, Input::Flush, d, r, by_value); }
+        fn aliased(store: &Store) { store.transaction(None).commit(); }
+        pub fn alias(store: &Store) {
+            let write = aliased;
+            reserved(None, Input::Flush, d, r, |_| aliased(store));
+        }
+        fn generic<T>(store: &Store) { store.transaction(None).commit(); }
+        pub fn turbofish(store: &Store) {
+            reserved(None, Input::Flush, d, r, |_| generic::<u8>(store));
+        }
+        fn nested(store: &Store, n: u8) {
+            if n > 0 { nested(store, n - 1) }
+            store.transaction(None).commit();
+        }
+        pub fn qualified(store: &Store) {
+            crate::retained::reserved(
+                None,
+                Input::Flush,
+                d,
+                r,
+                |_| crate::planted::nested(store, 2),
+            );
+        }
+    "#;
+    let mut functions = BTreeMap::new();
+    scan("planted.rs", planted, &mut functions);
+    assert_eq!(
+        unrouted(&functions, &[]),
+        [
+            "planted.rs::by_value",
+            "planted.rs::empty",
+            "planted.rs::generic",
+            "planted.rs::ping",
+            "planted.rs::shared",
+            "planted.rs::alias names aliased as a value (unsupported)",
+            "planted.rs::callback names by_value as a value (unsupported)",
+            "planted.rs::turbofish names generic as a value (unsupported)",
+        ]
+    );
+}
+
 /// OG-RULES Rule 8 for host operations (A-K1): each operation that writes
 /// page content, and the edit kind it declares in the binding's per-page
 /// kinds (the channel a submit's kinds take).
 const OPERATION_KINDS: &[(&str, &str)] = &[
     ("delete", "DeletePage"),
+    ("delete_checked", "DeletePage"),
     ("rename", "RenamePage"),
     ("rename_with", "RenamePage"),
 ];

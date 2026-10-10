@@ -22,7 +22,10 @@ pub(super) fn eval(e: &Value, x: &State) -> Value {
                 "g" => json!(x.g),
                 "true" => json!(true),
                 "false" => json!(false),
-                "ok" | "guarantee" => json!(guarantee(x)),
+                "ok" => json!(checked(x)),
+                "guarantee" => json!(guarantee(x)),
+                "orderHolds" => json!(order_holds(x)),
+                "renameResolves" => json!(rename_resolves(x)),
                 "canSwitch" => json!(can_switch(x)),
                 "ABSENT" => json!(ABSENT),
                 "NONE" => json!(NONE),
@@ -64,7 +67,7 @@ pub(super) fn eval(e: &Value, x: &State) -> Value {
         "call" => {
             let f = &e[1];
             let args = e[2].as_array().unwrap();
-            if f[0] == "id" && (f[1] == "Set" || f[1] == "Map") {
+            if f[0] == "id" && (f[1] == "Set" || f[1] == "Map" || f[1] == "List") {
                 let mut values: Vec<_> = args.iter().map(|e| eval(e, x)).collect();
                 if f[1] == "Set" {
                     values.sort_by_key(|v| v.to_string());
@@ -301,11 +304,11 @@ fn scenario_outcomes_equal_quint_in_all_profiles_and_mutants() {
     assert_eq!(fixture["model_sha256"], MODEL_SHA);
     assert_eq!(
         fixture["scenario_sha256"],
-        "4b4e2720a645afbb0ca71d034ff639a557bcf4f62abb886a105aec566b8504a5"
+        "92a75904b2da9b43a7bb9c80a0f2fc41b462cef5a60ec41f4d613b67d58ff1c3"
     );
     let scenarios = fixture["scenarios"].as_object().unwrap();
-    assert_eq!(scenarios.len(), 143);
-    assert_eq!(fixture["oracles"].as_array().unwrap().len(), 31);
+    assert_eq!(scenarios.len(), 159);
+    assert_eq!(fixture["oracles"].as_array().unwrap().len(), 36);
     let mut comparisons = 0;
     for oracle in fixture["oracles"].as_array().unwrap() {
         let profile = oracle["profile"].as_str().unwrap();
@@ -323,7 +326,7 @@ fn scenario_outcomes_equal_quint_in_all_profiles_and_mutants() {
             comparisons += 1;
         }
     }
-    assert_eq!(comparisons, 4433);
+    assert_eq!(comparisons, 5724);
 }
 
 #[test]
@@ -353,21 +356,23 @@ fn every_declared_mutant_is_caught() {
             x = power(&x, false, true).unwrap();
         }
         if mutant != "MRN5" {
-            assert!(!guarantee(&x), "{mutant} failed only a scenario predicate");
+            assert!(!checked(&x), "{mutant} failed only a scenario predicate");
         }
         eprintln!(
-            "{mutant}: caught; A={} B={} Bprime={} C={} G={} accepted={} bad={:?}",
+            "{mutant}: caught; A={} B={} Bprime={} C={} G={} accepted={} order={} resolves={} bad={:?}",
             no_loss(&x),
             clause_b(&x),
             clause_b_prime(&x),
             clause_c(&x),
             clause_g(&x),
             accepted(&x),
+            order_holds(&x),
+            rename_resolves(&x),
             x.g.bad
         );
         count += 1;
     }
-    assert_eq!(count, 27);
+    assert_eq!(count, 32);
 }
 
 fn replay_traces(fixture: &Value) -> (usize, usize) {
@@ -421,7 +426,7 @@ fn replay_traces(fixture: &Value) -> (usize, usize) {
             // durable bytes, promises, seen/wrote/owed, and transition tags.
             assert_eq!(json!(x), expected, "{profile}/trace {ti}/step {si}/{name}");
             if mutant == "none" {
-                assert!(guarantee(&x), "{profile}/{ti}/{si}");
+                assert!(checked(&x), "{profile}/{ti}/{si}");
             }
             let bad = expected["g"]["bad"].as_array().unwrap();
             let has = |tag: &str| bad.iter().any(|v| v.as_str() == Some(tag));
@@ -443,6 +448,14 @@ fn replay_traces(fixture: &Value) -> (usize, usize) {
                 assert_eq!(
                     guarantee(&x),
                     entry["predicates"]["guarantee"].as_bool().unwrap()
+                );
+                assert_eq!(
+                    order_holds(&x),
+                    entry["predicates"]["order"].as_bool().unwrap()
+                );
+                assert_eq!(
+                    rename_resolves(&x),
+                    entry["predicates"]["resolves"].as_bool().unwrap()
                 );
             }
             if let Some(expected) = entry["within"].as_bool() {

@@ -19,6 +19,8 @@ import { graphEpoch, setGraphEpoch, setGraphMeta } from "./graphSession";
 import { setGraphTransitioning } from "./ui";
 import { setToasts, toasts } from "./toasts";
 import { parseOutline } from "./editor/outline";
+import { bindTestHost } from "./document/host/wiring.test.support";
+import { installDiskHost } from "./diskHost.test.support";
 
 const HOST = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ID1 = "11111111-1111-4111-8111-111111111111";
@@ -47,10 +49,48 @@ function page(
   };
 }
 
-function seed(pages: (PageDto & { id?: string })[]): void {
+/** The seeded pages' files, by page name, and every write that reached one. */
+let files = new Map<string, PageDto>();
+let writes: PageDto[] = [];
+/** A page whose file refuses the next write(s); see `failWrites`. */
+let failing: (name: string) => boolean = () => false;
+let hostSpies: ReturnType<typeof installDiskHost>;
+
+/** Load `pages`, then bind the window over a disk holding exactly them: a cut
+ *  keeps its identity only once its source pages are retired through the host. */
+async function seed(seeded: (PageDto & { id?: string })[]): Promise<void> {
+  const pages = seeded.map(onDisk);
   loadFeed(pages);
-  setGraphMeta({ root: "/graph" } as any);
+  await bindDisk(pages);
 }
+
+/** The page as read from its file at revision r0. */
+function onDisk(dto: PageDto & { id?: string }): PageDto & { id: string } {
+  return { id: `pages/${dto.name}.md`, rev: "r0", ...dto };
+}
+
+async function bindDisk(pages: PageDto[]): Promise<void> {
+  setGraphMeta({ root: "/graph" } as any);
+  files = new Map(pages.map((dto) => [dto.name, structuredClone(dto)]));
+  writes = [];
+  let rev = 0;
+  hostSpies = installDiskHost(await bindTestHost(), {
+    read: (_key, name) => files.get(name) ?? null,
+    write: (key, dto) => {
+      if (failing(dto.name)) throw new Error("disk full");
+      writes.push(dto);
+      files.set(dto.name, { ...dto, id: key, rev: `w${++rev}` } as PageDto);
+      return `w${rev}`;
+    },
+  });
+}
+
+/** The next `count` writes of any page fail (as a full disk would). */
+function failWrites(count: number): void {
+  failing = () => count-- > 0;
+}
+
+const written = (name?: string) => writes.filter((dto) => name === undefined || dto.name === name);
 
 function roots(name: string): string[] {
   return [...pageByName(name)!.roots];
@@ -72,11 +112,11 @@ async function paste(target = HOST): Promise<string | null> {
 
 beforeEach(() => {
   vi.spyOn(backend(), "writeRich").mockResolvedValue();
-  vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
   vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) => ids.map(() => null));
 });
 
 afterEach(() => {
+  failing = () => false;
   if (historyPageOnlyMode()) toggleUndoRedoMode();
   clearClipboardSlot();
   resetStore();
@@ -89,17 +129,17 @@ afterEach(() => {
 
 describe("clipboard payload insertion and identity validation", () => {
   it("keeps the in-memory key of a cut block without id::", async () => {
-    seed([page("Source", [block("plain-key", "plain")]), page("Target", [block(HOST, "")])]);
+    await seed([page("Source", [block("plain-key", "plain")]), page("Target", [block(HOST, "")])]);
     const payload = buildClipboardPayload(["plain-key"])!;
     await record("cut", "- plain", payload);
     deleteBlock("plain-key");
     await paste();
-    expect(backend().savePages).toHaveBeenCalledTimes(1);
+    expect(written("Source")).toHaveLength(1);
     expect(roots("Target")).toEqual(["plain-key"]);
   });
 
   it("replaces an empty host that only literal code mentions by id (C5 L11 paste.ts:128)", async () => {
-    seed([page("Source", [block("plain-key", "plain")]),
+    await seed([page("Source", [block("plain-key", "plain")]),
       page("Target", [block(HOST, ""), block("sample", `example\n\`\`\`\n((${HOST}))\n\`\`\``)])]);
     await record("copy", "- plain", buildClipboardPayload(["plain-key"])!);
     await paste();
@@ -108,7 +148,7 @@ describe("clipboard payload insertion and identity validation", () => {
   });
 
   it("keeps an empty host that live text references by id", async () => {
-    seed([page("Source", [block("plain-key", "plain")]),
+    await seed([page("Source", [block("plain-key", "plain")]),
       page("Target", [block(HOST, ""), block("ref", `see ((${HOST.toUpperCase()}))`)])]);
     await record("copy", "- plain", buildClipboardPayload(["plain-key"])!);
     await paste();
@@ -117,29 +157,30 @@ describe("clipboard payload insertion and identity validation", () => {
   });
 
   it("warns when a cut must be pasted as a copy", async () => {
-    seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
+    await seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
     const payload = buildClipboardPayload([ID1])!;
     await record("cut", "- source", payload);
     deleteBlock(ID1);
-    vi.mocked(backend().savePages).mockRejectedValueOnce(new Error("disk full"));
+    failWrites(1);
     await paste();
+    expect(written("Source")).toEqual([]);
     expect(toasts().some((toast) => /references.*will not follow/i.test(toast.message))).toBe(true);
   });
 
-  it("strips a live id from plain outline paste and keeps an unused id", () => {
-    seed([page("Target", [block(HOST, `host\nid:: ${ID1}`)])]);
+  it("strips a live id from plain outline paste and keeps an unused id", async () => {
+    await seed([page("Target", [block(HOST, `host\nid:: ${ID1}`)])]);
     insertOutlineAfter(HOST, parseOutline(`- duplicate\n  id:: ${ID1}\n- new\n  id:: ${ID2}`));
     const raws = roots("Target").slice(1).map((id) => doc.byId[id].raw);
     expect(raws).toEqual(["duplicate", `new\nid:: ${ID2}`]);
   });
-  it("keeps an inserted authored id when only literal code mentions it", () => {
-    seed([page("Target", [block(HOST, `host\n\`\`\`\nid:: ${ID1}\n\`\`\``)])]);
+  it("keeps an inserted authored id when only literal code mentions it", async () => {
+    await seed([page("Target", [block(HOST, `host\n\`\`\`\nid:: ${ID1}\n\`\`\``)])]);
     insertOutlineAfter(HOST, [{ raw: `new\nid:: ${ID1}`, children: [] }]);
     const added = roots("Target").slice(1).map((id) => doc.byId[id].raw);
     expect(added).toEqual([`new\nid:: ${ID1}`]);
   });
   it("checks off-screen IDs before ordinary outline insertion", async () => {
-    seed([page("Target", [block(HOST, "host")])]);
+    await seed([page("Target", [block(HOST, "host")])]);
     vi.mocked(backend().resolveBlocks).mockResolvedValueOnce([
       { page: "Offscreen", kind: "page", blocks: [] }, null,
     ]);
@@ -149,14 +190,14 @@ describe("clipboard payload insertion and identity validation", () => {
     expect(backend().resolveBlocks).toHaveBeenCalledWith([ID1, ID2]);
   });
   it("bounds ordinary paste ID lookup and preserves uncertain IDs only when lookup succeeds", async () => {
-    seed([page("Target", [block(HOST, "host")])]);
+    await seed([page("Target", [block(HOST, "host")])]);
     const nodes = Array.from({ length: 129 }, (_, n) => ({ raw: `item\nid:: ${bulkId(n)}`, children: [] }));
     const clean = await sanitizeOutlineIdsForPaste(HOST, nodes);
     expect(clean).toHaveLength(129);
     expect(vi.mocked(backend().resolveBlocks).mock.calls.map(([ids]) => ids.length)).toEqual([128, 1]);
   });
   it("strips all ordinary-paste IDs when a later lookup chunk fails", async () => {
-    seed([page("Target", [block(HOST, "host")])]);
+    await seed([page("Target", [block(HOST, "host")])]);
     const nodes = Array.from({ length: 129 }, (_, n) => ({ raw: `item\nid:: ${bulkId(n)}`, children: [] }));
     vi.mocked(backend().resolveBlocks).mockImplementationOnce(async (ids) => ids.map(() => null))
       .mockRejectedValueOnce(new Error("lookup failed"));
@@ -167,7 +208,7 @@ describe("clipboard payload insertion and identity validation", () => {
 
   it("bounds cut-paste ID lookup before preserving identities", async () => {
     const blocks = Array.from({ length: 129 }, (_, n) => block(bulkId(n), `item ${n}\nid:: ${bulkId(n)}`));
-    seed([page("Source", blocks), page("Target", [block(HOST, "")])]);
+    await seed([page("Source", blocks), page("Target", [block(HOST, "")])]);
     await record("cut", "bulk", buildClipboardPayload(blocks.map((item) => item.id))!);
     blocks.forEach((item) => deleteBlock(item.id));
     await paste();
@@ -185,7 +226,7 @@ describe("clipboard payload insertion and identity validation", () => {
     expect(peekClipboardSlot()?.text).toBe("- new");
   });
   it("retires an immediate cut before the debounce and preserves identity", async () => {
-    seed([page("Paste", [
+    await seed([page("Paste", [
       block(ID1, `source\nid:: ${ID1}`),
       block(HOST, ""),
     ])]);
@@ -195,15 +236,15 @@ describe("clipboard payload insertion and identity validation", () => {
 
     await paste();
 
-    expect(backend().savePages).toHaveBeenCalledTimes(1);
-    const retired = vi.mocked(backend().savePages).mock.calls[0][0][0].page;
+    expect(writes).toHaveLength(1);
+    const retired = writes[0];
     expect(retired.blocks.some((candidate) => candidate.id === ID1)).toBe(false);
     expect(doc.byId[ID1]?.raw).toBe(`source\nid:: ${ID1}`);
     expect(roots("Paste")).toEqual([ID1]);
   });
 
   it("retires every page in a multi-page cut before preserving all ids", async () => {
-    seed([
+    await seed([
       page("One", [block(ID1, `one\nid:: ${ID1}`)], { id: "pages/one.md" }),
       page("Two", [block(ID2, `two\nid:: ${ID2}`)], { id: "pages/two.md" }),
       page("Target", [block(HOST, "")], { id: "pages/target.md" }),
@@ -215,12 +256,12 @@ describe("clipboard payload insertion and identity validation", () => {
 
     await paste();
 
-    expect(vi.mocked(backend().savePages).mock.calls.map(([entries]) => entries[0].page.name).sort()).toEqual(["One", "Two"]);
+    expect(writes.map((dto) => dto.name).sort()).toEqual(["One", "Two"]);
     expect(roots("Target")).toEqual([ID1, ID2]);
   });
 
   it("strips identity when an unsaved raw acquires the cut id during validation", async () => {
-    seed([
+    await seed([
       page("Source", [block(ID1, `source\nid:: ${ID1}`)]),
       page("Collision", [block("collision", "other")]),
       page("Target", [block(HOST, "")]),
@@ -241,9 +282,9 @@ describe("clipboard payload insertion and identity validation", () => {
 
     const ownsIdentity = (raw: string) => new RegExp(`^id::\\s*${ID1}$`, "im").test(raw);
     expect(Object.values(doc.byId).filter((node) => ownsIdentity(node.raw))).toHaveLength(1);
-    const persistedOwners = vi.mocked(backend().savePages).mock.calls.flatMap(([entries]) => {
+    const persistedOwners = writes.flatMap((dto) => {
       const visit = (candidate: BlockDto): BlockDto[] => [candidate, ...candidate.children.flatMap(visit)];
-      return entries[0].page.blocks.flatMap(visit).filter((candidate) => ownsIdentity(candidate.raw));
+      return dto.blocks.flatMap(visit).filter((candidate) => ownsIdentity(candidate.raw));
     });
     expect(persistedOwners).toHaveLength(1);
   });
@@ -256,7 +297,7 @@ describe("clipboard payload insertion and identity validation", () => {
       vi.mocked(backend().resolveBlocks).mockRejectedValue(new Error("offline"));
     }],
   ])("strips every id on %s", async (_label, expectedIds, arrange) => {
-    seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
+    await seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
     const payload = buildClipboardPayload([ID1])!;
     await record("cut", "- source", payload);
     deleteBlock(ID1);
@@ -278,7 +319,7 @@ describe("clipboard payload insertion and identity validation", () => {
     for (const [index, sample] of cases.entries()) {
       resetStore();
       clearClipboardSlot();
-      seed([page("Source", [block(ID1, `old\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
+      await seed([page("Source", [block(ID1, `old\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
       const payload = buildClipboardPayload([ID1])!;
       payload.blocks = [{ raw: sample.raw, sourceFormat: "md", children: sample.child ? [sample.child] : [] }];
       await record("cut", `- root ${index}`, payload);
@@ -296,7 +337,7 @@ describe("clipboard payload insertion and identity validation", () => {
     const run = async (arrange: () => void | Promise<void>) => {
       resetStore();
       clearClipboardSlot();
-      seed([
+      await seed([
         page("Source", [block(ID1, `source\nid:: ${ID1}`)], { id: "pages/source.md" }),
         page("Target", [block(HOST, "")]),
       ]);
@@ -308,8 +349,7 @@ describe("clipboard payload insertion and identity validation", () => {
       expect(doc.byId[ID1]).toBeUndefined();
     };
 
-    vi.mocked(backend().savePages).mockRejectedValueOnce(new Error("disk full"));
-    await run(() => {});
+    await run(() => failWrites(1));
     await run(() => forgetPage("Source"));
     await run(() => {
       forgetPage("Source");
@@ -318,11 +358,13 @@ describe("clipboard payload insertion and identity validation", () => {
   });
 
   it("strips all ids after the actual working-set cap evicts the cut source", async () => {
-    loadSingle(page("Target", [block(HOST, "")]));
-    ensurePageLoaded(page("Source", [
+    const target = onDisk(page("Target", [block(HOST, "")]));
+    const source = onDisk(page("Source", [
       block(ID1, `source\nid:: ${ID1}`, [block(ID2, `child\nid:: ${ID2}`)]),
     ]));
-    setGraphMeta({ root: "/graph" } as any);
+    loadSingle(target);
+    ensurePageLoaded(source);
+    await bindDisk([target, source]);
     const payload = buildClipboardPayload([ID1])!;
     await record("cut", "- source\n\t- child", payload);
     deleteBlock(ID1);
@@ -345,7 +387,7 @@ describe("clipboard payload insertion and identity validation", () => {
   it("strips the whole multi-page payload when only one source flush fails", async () => {
     resetStore();
     clearClipboardSlot();
-    seed([
+    await seed([
       page("One", [block(ID1, `one\nid:: ${ID1}`)]),
       page("Two", [block(ID2, `two\nid:: ${ID2}`)]),
       page("Target", [block(HOST, "")]),
@@ -354,10 +396,7 @@ describe("clipboard payload insertion and identity validation", () => {
     await record("cut", "- one\n- two", payload);
     deleteBlock(ID1);
     deleteBlock(ID2);
-    vi.mocked(backend().savePages).mockImplementation(async (entries) => { const { id: _id, page: dto } = entries[0];
-      if (dto.name === "Two") throw new Error("disk full");
-      return { ok: ["saved-rev"] };
-    });
+    failing = (name) => name === "Two";
 
     await paste();
 
@@ -367,20 +406,23 @@ describe("clipboard payload insertion and identity validation", () => {
   });
 
   it("fails retirement when a source is rebound while its save is in flight", async () => {
-    seed([
+    await seed([
       page("Source", [block(ID1, `source\nid:: ${ID1}`)], { id: "pages/source.md" }),
       page("Target", [block(HOST, "")]),
     ]);
     const payload = buildClipboardPayload([ID1])!;
     await record("cut", "- source", payload);
     deleteBlock(ID1);
-    let finishSave!: (result: { ok: string[] }) => void;
-    vi.mocked(backend().savePages).mockReturnValue(new Promise((resolve) => { finishSave = resolve; }));
+    // Hold the source's submit in flight until the page is rebound.
+    let finishSave!: () => void;
+    const held = new Promise<void>((resolve) => { finishSave = resolve; });
+    const submit = hostSpies.submit.getMockImplementation()!;
+    hostSpies.submit.mockImplementationOnce(async (...args) => { await held; return submit(...args); });
 
     const pending = paste();
-    await vi.waitFor(() => expect(backend().savePages).toHaveBeenCalled());
+    await vi.waitFor(() => expect(hostSpies.submit).toHaveBeenCalled());
     reloadPage(page("Source", [block("replacement", "replacement")], { id: "pages/rebound.md" }));
-    finishSave({ ok: ["stale-rev"] });
+    finishSave();
 
     await pending;
     expect(doc.byId[ID1]).toBeUndefined();
@@ -388,7 +430,7 @@ describe("clipboard payload insertion and identity validation", () => {
   });
 
   it("consumes a cut grant up front and makes a second paste structural-only", async () => {
-    seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
+    await seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
     const payload = buildClipboardPayload([ID1])!;
     await record("cut", "- source", payload);
     deleteBlock(ID1);
@@ -405,7 +447,7 @@ describe("clipboard payload insertion and identity validation", () => {
   });
 
   it("strips identity when undo restores the cut originals before paste", async () => {
-    seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
+    await seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
     const payload = buildClipboardPayload([ID1])!;
     await record("cut", "- source", payload);
     deleteBlock(ID1);
@@ -421,7 +463,7 @@ describe("clipboard payload insertion and identity validation", () => {
   });
 
   it("copy-paste strips every id while preserving exact structure, raws, and collapse", async () => {
-    seed([page("Target", [block(HOST, "")])]);
+    await seed([page("Target", [block(HOST, "")])]);
     await record("copy", "- root", {
       blocks: [{
         raw: `root line\nsecond line\ncollapsed:: true\nid:: ${ID1}`,
@@ -444,7 +486,7 @@ describe("clipboard payload insertion and identity validation", () => {
 
   it("keeps a same-format preserved raw byte-exact, including blank lines and trailing spaces", async () => {
     const exact = `first line  \n\nsecond line\t\nid:: ${ID1}`;
-    seed([page("Source", [block(ID1, exact)]), page("Target", [block(HOST, "")])]);
+    await seed([page("Source", [block(ID1, exact)]), page("Target", [block(HOST, "")])]);
     const payload = buildClipboardPayload([ID1])!;
     await record("cut", "- first line", payload);
     deleteBlock(ID1);
@@ -457,7 +499,7 @@ describe("clipboard payload insertion and identity validation", () => {
   });
 
   it("does not replace an empty host carrying identity or an incoming reference", async () => {
-    seed([page("Target", [
+    await seed([page("Target", [
       block(HOST, `id:: ${HOST}`),
       block("referrer", `((${ID2}))`),
       block(ID2, ""),
@@ -479,7 +521,7 @@ describe("clipboard payload insertion and identity validation", () => {
     ["md", "org", `body\nalpha:: one\nid:: ${ID1}\ncollapsed:: true`, `body\n:PROPERTIES:\n:alpha: one\n:id: ${ID1}\n:collapsed: true\n:END:`],
     ["org", "md", `body\n:PROPERTIES:\n:alpha: one\n:id: ${ID1}\n:collapsed: true\n:END:`, `body\nalpha:: one\nid:: ${ID1}\ncollapsed:: true`],
   ] as const)("translates ordered properties for %s → %s while preserving cut identity", async (sourceFormat, targetFormat, raw, expected) => {
-    seed([
+    await seed([
       page("Source", [block(ID1, raw)], { format: sourceFormat }),
       page("Target", [block(HOST, "")], { format: targetFormat }),
     ]);
@@ -498,7 +540,7 @@ describe("clipboard payload insertion and identity validation", () => {
       ? "body\nklíč:: hodnota\n@custom:: first  \nklíč:: second"
       : "body\n:PROPERTIES:\n:klíč: hodnota\n:@custom: first  \n:klíč: second\n:END:";
     const targetFormat = sourceFormat === "md" ? "org" : "md";
-    seed([page("Source", [block(ID1, raw)], { format: sourceFormat }), page("Target", [block(HOST, "")], { format: targetFormat })]);
+    await seed([page("Source", [block(ID1, raw)], { format: sourceFormat }), page("Target", [block(HOST, "")], { format: targetFormat })]);
     await record("copy", "body", buildClipboardPayload([ID1])!);
     const inserted = await paste();
     expect(doc.byId[inserted!].raw).toBe(targetFormat === "org"
@@ -507,7 +549,7 @@ describe("clipboard payload insertion and identity validation", () => {
   });
 
   it("aborts entirely when graph authority changes during validation", async () => {
-    seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
+    await seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
     const payload = buildClipboardPayload([ID1])!;
     await record("cut", "- source", payload);
     deleteBlock(ID1);
@@ -525,7 +567,7 @@ describe("clipboard payload insertion and identity validation", () => {
   });
 
   it("aborts when the target page instance reloads during validation", async () => {
-    seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
+    await seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
     const payload = buildClipboardPayload([ID1])!;
     await record("cut", "- source", payload);
     deleteBlock(ID1);
@@ -543,7 +585,7 @@ describe("clipboard payload insertion and identity validation", () => {
   });
 
   it("repeats the source clean-state check in the final no-await section", async () => {
-    seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
+    await seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
     const payload = buildClipboardPayload([ID1])!;
     await record("cut", "- source", payload);
     deleteBlock(ID1);
@@ -561,7 +603,7 @@ describe("clipboard payload insertion and identity validation", () => {
   });
 
   it("rechecks the live doc after backend absence validation and strips on an in-app conflict", async () => {
-    seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
+    await seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
     const payload = buildClipboardPayload([ID1])!;
     await record("cut", "- source", payload);
     deleteBlock(ID1);
@@ -591,7 +633,7 @@ describe("clipboard payload insertion and identity validation", () => {
 
 describe("identity-tagged redo", () => {
   async function preservedPaste(): Promise<void> {
-    seed([
+    await seed([
       page("Source", [block(ID1, `source\nid:: ${ID1}`)]),
       page("Target", [block(HOST, "")]),
       page("Other", [block("other", "old")]),
@@ -653,7 +695,7 @@ describe("identity-tagged redo", () => {
   });
 
   it("clears mixed page-only redo entries when the tagged prerequisite is selected from the middle", async () => {
-    seed([
+    await seed([
       page("Source", [block(ID1, `source\nid:: ${ID1}`)]),
       page("Target", [block(HOST, "")]),
       page("Other", [block("other", "old")]),
@@ -688,15 +730,15 @@ describe("OG-P11B literal outline insertion", () => {
     "  #+BEGIN_EXAMPLE\n- literal\n\n  kept spaces\n  #+END_EXAMPLE",
     "```text\n- literal\n\n```",
     "~~~~text\n- literal\n\n~~~~",
-  ])("inserts a parser-owned literal intact: %s", (source) => {
-    seed([page("Target", [block(HOST, "host")])]);
+  ])("inserts a parser-owned literal intact: %s", async (source) => {
+    await seed([page("Target", [block(HOST, "host")])]);
     insertOutlineAfter(HOST, parseOutline(source));
     const inserted = roots("Target").slice(1);
     expect(inserted.map(id => doc.byId[id].raw)).toEqual([source]);
     expect(inserted.map(id => doc.byId[id].children)).toEqual([[]]);
   });
-  it("keeps a bullet's literal continuation and following ordered item", () => {
-    seed([page("Target", [block(HOST, "host")])]);
+  it("keeps a bullet's literal continuation and following ordered item", async () => {
+    await seed([page("Target", [block(HOST, "host")])]);
     const literal = "  ```js\n  - literal\n\n    kept spaces\n  ```";
     insertOutlineAfter(HOST, parseOutline(`- parent\n${literal}\n2) second`));
     const inserted = roots("Target").slice(1);

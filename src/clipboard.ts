@@ -22,6 +22,10 @@ export interface ClipboardSourcePage {
   kind: PageKind;
   path?: string;
   generation: number;
+  /** The page host's key for the page and the window's session at the cut
+   * (`stampCutSource`); a grant without them preserves no IDs (R7). */
+  key?: string | null;
+  session?: number;
 }
 
 export interface ClipboardPayloadData {

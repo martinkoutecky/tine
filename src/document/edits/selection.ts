@@ -13,7 +13,7 @@ import { pushUndo } from "../history";
 import { produce } from "solid-js/store";
 import { cycleMarkerSmart } from "../../editor/repeat";
 import { workflow } from "../../ui";
-import { markDirty, persistTogether } from "../save/engine";
+import { markDirty } from "../host/wiring";
 import { copyStripCollapsed, copyIncludeSubtree } from "../../copySettings";
 import { blockSubtreeMarkdown } from "./serialize";
 import { pushToast } from "../../toasts";
@@ -222,8 +222,8 @@ export function cycleSelectionTasks(): boolean {
       }
     })
   );
-  if (pages.length > 1) void persistTogether(pages, "save-block");
-  else for (const page of pages) markDirty(page, "save-block");
+  // No block changes page: one independent edit per page (STEP3 §8).
+  for (const page of pages) markDirty(page, "save-block");
   return true;
 }
 
@@ -422,8 +422,7 @@ export function deleteSelection() {
   );
   const ed = editingId();
   if (ed && !doc.byId[ed]) endEdit("delete-selection");
-  if (pages.size > 1) void persistTogether(pages, "delete-blocks");
-  else for (const p of pages) markDirty(p, "delete-blocks");
+  for (const p of pages) markDirty(p, "delete-blocks");
   reselectSurvivingBlock(survivor);
   notice.show();
 }
@@ -458,7 +457,7 @@ export function setSelectionHeading(pointerId: string, state: HeadingState): boo
   setDoc(produce((stateDoc) => {
     for (const change of changes) stateDoc.byId[change.id].raw = change.raw;
   }));
-  if (pages.length > 1) void persistTogether(pages, "save-block");
-  else for (const page of pages) markDirty(page, "save-block");
+  // No block changes page: one independent edit per page (STEP3 §8).
+  for (const page of pages) markDirty(page, "save-block");
   return true;
 }

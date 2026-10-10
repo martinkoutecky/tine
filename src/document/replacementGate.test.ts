@@ -14,6 +14,8 @@ import { doc } from "./model";
 import { editingId, endEdit, startEditing } from "../editorController";
 import type { BlockDto, PageDto } from "../types";
 import type { Route } from "../routeTypes";
+import { answerOpensFromDocument } from "./host/documentHost.test.support";
+import { bindTestHost, mailPage, type TestHost } from "./host/wiring.test.support";
 
 let serial = 0;
 const block = (raw: string): BlockDto => ({ id: `rg-${++serial}`, raw, collapsed: false, children: [] });
@@ -23,11 +25,13 @@ const page = (name: string, raws: string[], id = `pages/${name}.md`): PageDto & 
 const raws = (name: string) => pageByName(name)?.roots.map((id) => doc.byId[id].raw) ?? [];
 
 let unpin: (() => void) | null = null;
+let host: TestHost;
 beforeAll(() => initParser());
-beforeEach(() => {
+beforeEach(async () => {
   serial = 0;
   resetStore();
-  vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map((_, i) => `saved-${i}`) }));
+  host = await bindTestHost();
+  answerOpensFromDocument(host);
 });
 afterEach(() => {
   unpin?.(); unpin = null;
@@ -110,43 +114,59 @@ describe.each(slotHolds)("a page holding %s keeps its name slot and stays loaded
 // delivering while Tine is in the background). Every keystroke is already in the
 // store, so the editor holds no input the disk version could clobber: the page
 // reloads and the editor stays on the same block.
+// A page with a block open in the editor is open in the page host (B-Q2): a
+// same-file disk change reaches it as host mail (STEP3 §4.2 Push), installed
+// through the working set's replacement, which carries the editor across.
 describe("a same-file reload while a block is open in the editor", () => {
   const ID = "6f1f0c1e-0000-4000-8000-000000000652";
-  const open = (raws: string[], at: number) => {
+  let version = 5000;
+  const open = async (raws: string[], at: number) => {
     loadFeed([page("Journal", ["j"])]);
     ensurePageLoaded(page("P", raws));
     startEditing(pageByName("P")!.roots[at], 1);
+    await vi.waitFor(() => expect(backend().pageOpen).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+  /** The host's push of P's disk text, as the native host mails it. */
+  const pushed = (raws: string[]) => {
+    const dto = page("P", raws);
+    host.deliver({ key: dto.id, answer: null, page: mailPage(++version, dto) });
   };
   const editingRaw = () => { const id = editingId(); return id ? doc.byId[id]?.raw : null; };
 
-  it.each([
-    ["an external-change reload", () => reloadPageIfStillSafe("P", page("P", ["a", "b on disk"]))],
-    ["navigation to the same page", () => loadSingle(page("P", ["a", "b on disk"]), { endEdit: false })],
-  ])("applies %s and reopens the editor at the same outline position", (_label, apply) => {
-    open(["a", "b"], 1);
-    apply();
+  it("applies an external change (host mail) and reopens the editor at the same outline position", async () => {
+    await open(["a", "b"], 1);
+    pushed(["a", "b on disk"]);
     expect(raws("P")).toEqual(["a", "b on disk"]);
     expect(editingRaw()).toBe("b on disk");
   });
 
-  it("follows a block's id:: when the outline around it changed", () => {
-    open(["a", `b\nid:: ${ID}`], 1);
-    reloadPageIfStillSafe("P", page("P", [`b\nid:: ${ID}`, "new", "a"]));
+  it("navigation to the same page keeps the host's text and the editor on its block", async () => {
+    await open(["a", "b"], 1);
+    loadSingle(page("P", ["a", "b on disk"]), { endEdit: false });
+    expect(raws("P")).toEqual(["a", "b"]);
+    expect(editingRaw()).toBe("b");
+  });
+
+  it("follows a block's id:: when the outline around it changed", async () => {
+    await open(["a", `b\nid:: ${ID}`], 1);
+    pushed([`b\nid:: ${ID}`, "new", "a"]);
     expect(raws("P")).toEqual([`b\nid:: ${ID}`, "new", "a"]);
     expect(editingId()).toBe(pageByName("P")!.roots[0]);
   });
 
-  it("closes the editor when its block is gone", () => {
-    open(["a", `b\nid:: ${ID}`], 1);
-    reloadPageIfStillSafe("P", page("P", ["a"]));
+  it("closes the editor when its block is gone", async () => {
+    await open(["a", `b\nid:: ${ID}`], 1);
+    pushed(["a"]);
     expect(raws("P")).toEqual(["a"]);
     expect(editingId()).toBeNull();
   });
 
-  it("still waits for an IME composition (the page is pinned)", () => {
-    open(["a", "b"], 1);
+  it("still waits for an IME composition (the page is pinned)", async () => {
+    await open(["a", "b"], 1);
     unpin = pinPageWhileDrafting(() => "P");
     expect(reloadPageIfStillSafe("P", page("P", ["a", "b on disk"]))).toBe(false);
+    pushed(["a", "b on disk"]);
     expect(raws("P")).toEqual(["a", "b"]);
   });
 });

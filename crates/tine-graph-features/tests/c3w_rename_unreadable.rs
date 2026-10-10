@@ -9,7 +9,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages;
 use tine_store::Store;
 
-fn fixture(label: &str, child: &[u8]) -> (PathBuf, Store) {
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
+fn fixture(label: &str, child: &[u8]) -> (PathBuf, std::sync::Arc<Store>) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-c3w-w2-{label}-{}-{}",
@@ -32,7 +43,7 @@ fn fixture(label: &str, child: &[u8]) -> (PathBuf, Store) {
         "- links [[Target]] and [[Target/Child]]\n",
     )
     .unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     (root, store)
 }
@@ -63,8 +74,9 @@ fn w2_rename_refuses_when_a_page_it_must_move_is_unreadable() {
     ] {
         let (root, store) = fixture(label, &child);
         let before = snapshot(&root);
-        let result =
-            pages::rename_or_merge_page(&store, None, "Target", "Renamed", None, None, &[]);
+        let result = hosted(&store, |host| {
+            pages::rename_or_merge_page(&store, host, "Target", "Renamed", None, None, &[])
+        });
         let after = snapshot(&root);
         match result {
             Err(error) => {

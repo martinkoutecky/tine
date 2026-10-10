@@ -257,9 +257,9 @@ GUARDS = {
     "wOp": "s.alive and s.w.get(p).on and s.w.get(1-p).on and not(s.w.get(p).pend) and not(s.w.get(p).sent) and not(s.w.get(1-p).pend) and not(s.w.get(1-p).sent) and ds != s.w.get(p).text and dd != s.w.get(1-p).text",
     "wClose": "s.alive and s.w.get(p).on and not(s.w.get(p).pend) and not(s.w.get(p).sent)",
     "wRecv": "s.alive and s.mb.get(p).on",
-    "deliverUp": "s.alive and s.up.length() > 0 and (if (s.up.length() > 0) not(s.job.on and s.job.p == s.up.head().p) and (s.up.head().kind != \"op\" or not(s.job.on and s.job.p == s.up.head().q)) else false)",
+    "deliverUp": "s.alive and s.up.length() > 0 and (if (s.up.length() > 0) not(s.job.on and s.job.p == s.up.head().p) and (s.up.head().kind != \"op\" or not(s.job.on and s.job.p == s.up.head().q)) and (s.up.head().kind != \"discard\" or not(s.job.on and s.job.p == partner(s, s.up.head().p))) else false)",
     "observe": "s.alive and s.pages.get(p).held and not(s.job.on and s.job.p == p) and table(s.pages.get(p), s.disk.get(p), g.vc + 1) != s.pages.get(p)",
-    "flush": "s.alive and not(s.job.on) and s.pages.get(p).held and not(s.pages.get(p).conflict) and s.pages.get(p).buf != ABSENT and dirty(s.pages.get(p))",
+    "flush": "s.alive and not(s.job.on) and s.pages.get(p).held and not(s.pages.get(p).conflict) and s.pages.get(p).buf != ABSENT and dirty(s.pages.get(p)) and not(gated(s, p))",
     "check": "s.alive and s.job.on and s.job.phase == 1",
     "rename": "s.alive and s.job.on and s.job.phase == 2",
     "dirSync": "s.alive and s.job.on and s.job.phase == 3",
@@ -278,8 +278,8 @@ GUARDS = {
 GUARDS.update({
     "load": "s.alive and not(s.pages.get(p).held)",
     "wOpTo": "s.alive and p != q and s.w.get(p).on and s.w.get(q).on and not(s.w.get(p).pend) and not(s.w.get(p).sent) and not(s.w.get(q).pend) and not(s.w.get(q).sent) and ds != s.w.get(p).text and dd != s.w.get(q).text",
-    "opDelete": "s.alive and opHeld(Set(p)) and opFree(Set(p)) and opClean(s, p) and opCur(s, p) != ABSENT",
-    "flushDel": "s.alive and not(s.job.on) and s.pages.get(p).held and not(s.pages.get(p).conflict) and s.pages.get(p).buf == ABSENT and dirty(s.pages.get(p))",
+    "opDelete": "s.alive and opHeld(Set(p)) and opFree(Set(p)) and opClean(s, p) and opCur(s, p) != ABSENT and not(touches(s, Set(p)))",
+    "flushDel": "s.alive and not(s.job.on) and s.pages.get(p).held and not(s.pages.get(p).conflict) and s.pages.get(p).buf == ABSENT and dirty(s.pages.get(p)) and not(gated(s, p))",
 })
 # Short s3 witnesses exercise page-operation custody, historical exemptions,
 # trash durability, rollback and each operation guard in every role.
@@ -287,13 +287,30 @@ WITNESSES["observe-last-read-after-own-save"] = {
     "profile": "base", "actions": SAVED + [("extWriteD", [0, 1, 1]), ("observe", [0])],
     "predicate": "s.pages.get(0).buf == 1 and s.pages.get(0).obs == 1",
 }
+# s3.2: the source's deletion saves before the destination only after a relaunch (no order across a crash).
 WITNESSES["cli-rename-trash-and-launch"] = {
     "profile": "base", "actions": [("load",[0]),("load",[1]),("load",[2]),("opRenameRaw", [0,2,0,1,0,3,3,3]),
+        ("crash",[]),("launch",[]),
         ("flushDel",[0]),("check",[]),("rename",[]),("dirSync",[1]),("draftSync",[0]),
         ("crash",[]),("launch",[]),("observe",[1]),("observe",[2]),
         ("flush",[2]),("check",[]),("rename",[]),("dirSync",[1]),
         ("flush",[1]),("check",[]),("rename",[]),("dirSync",[1]),("powerKBits",[0,0,0])],
     "predicate": "s.disk.get(2) == 1 and s.disk.get(1) == 3 and s.trash.get(0) == Set(1)",
+}
+# s3.2: the in-run order, with an Uncertain destination save and its retry's equal-bytes mismatch (neither is a
+# witness), then the destination's Published, the referrer's, and the source's deletion.
+WITNESSES["rename-order-gates"] = {
+    "profile": "base", "actions": [("load",[0]),("load",[1]),("load",[2]),("opRenameRaw", [0,2,0,1,0,3,3,3]),
+        ("flush",[2]),("check",[]),("rename",[]),("dirSync",[0]),("flush",[2]),("check",[]),
+        ("flush",[2]),("check",[]),("rename",[]),("dirSync",[1]),
+        ("flush",[1]),("check",[]),("rename",[]),("dirSync",[1]),("flushDel",[0]),("check",[]),("rename",[]),("dirSync",[1])],
+    "predicate": "s.disk.get(0) == ABSENT and s.disk.get(2) == 1 and s.disk.get(1) == 3 and s.gates == List() and g.obl == Set() and orderHolds",
+}
+# s3.2: a Discard of the unwitnessed destination reverts the source and ends the order.
+WITNESSES["rename-cancel-by-discard"] = {
+    "profile": "base", "actions": [("load",[0]),("load",[1]),("wOpen",[2]),("deliverUp",[1]),("wRecv",[2]),
+        ("opRenameRaw", [0,2,0,1,0,3,3,3]),("wRecv",[2]),("wDiscard",[2]),("deliverUp",[1]),("flush",[1])],
+    "predicate": "s.pages.get(0).buf == 1 and s.pages.get(2).buf == ABSENT and s.gates == List() and g.obl == Set() and s.job.on and s.job.p == 1",
 }
 WITNESSES["cli-delete-r1-unflushed-trash"] = {
     "profile": "R1", "actions": [("load",[0]),("opDelete",[0]),("flushDel",[0]),("check",[]),
@@ -411,7 +428,7 @@ def guard_oracle():
     sys.alive and src != dst and opHeld(all3.union(Set(src))) and opFree(all3) and refs.forall(r => r != src and r != dst)
       and (not(full) or opClean(sys, src))
       and (not(full) or (opCur(sys, dst) == ABSENT and opClean(sys, dst)))
-      and refs.forall(r => opClean(sys, r)) and all3 != Set()
+      and refs.forall(r => opClean(sys, r)) and all3 != Set() and not(touches(sys, refs.union(Set(src, dst))))
   }
   action powerKBits(k0: bool, k1: bool, k2: bool): bool = powerK(PAGES.filter(p => (p == 0 and k0) or (p == 1 and k1) or (p == 2 and k2)))
   action opRenameRaw(src: int, dst: int, r0: bool, r1: bool, r2: bool, t0: int, t1: int, t2: int): bool =
@@ -448,9 +465,9 @@ def find(model_dir, quint, name, spec, reuse=False):
   var stage: int
   var traceAction: { name: str, args: List[int] }
   var actionEnabled: List[GuardChoice]
-  var predicateValues: { loss: bool, accepted: bool, within: bool, trash: bool, guarantee: bool }
-  val predicateOracle = { loss: noLoss, accepted: accepted, within: within, trash: trashed, guarantee: guarantee }
-  action witnessInit = all { init, stage' = 0, traceAction' = { name: "init", args: List() }, actionEnabled' = [], predicateValues' = { loss: true, accepted: true, within: true, trash: true, guarantee: true } }
+  var predicateValues: { loss: bool, accepted: bool, within: bool, trash: bool, guarantee: bool, order: bool, resolves: bool }
+  val predicateOracle = { loss: noLoss, accepted: accepted, within: within, trash: trashed, guarantee: guarantee, order: orderHolds, resolves: renameResolves }
+  action witnessInit = all { init, stage' = 0, traceAction' = { name: "init", args: List() }, actionEnabled' = [], predicateValues' = { loss: true, accepted: true, within: true, trash: true, guarantee: true, order: true, resolves: true } }
   action witnessSchedule = any {
 ''' + ",\n".join(branches) + f''',
     all {{ stage == {steps}, s' = s, g' = g, stage' = stage + 1, traceAction' = {{ name: "capture", args: List() }} }}

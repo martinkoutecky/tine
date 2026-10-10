@@ -2,9 +2,9 @@ import { afterEach, expect, it, vi } from "vitest";
 
 // R3 (og-flow3 finding 3): write commands now run on the native blocking pool,
 // where two concurrent calls are not ordered. The frontend issues each
-// ORDERED_COMMANDS call only after the previous one settled, so a draft stored
-// and then retired stays retired, and a setter toggled twice ends at the second
-// value, exactly as when the main thread ran them one at a time.
+// ORDERED_COMMANDS call only after the previous one settled, so a page submitted
+// and then closed is closed after its submit, and a setter toggled twice ends at
+// the second value, exactly as when the main thread ran them one at a time.
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke, convertFileSrc: (path: string) => path }));
 
@@ -22,20 +22,22 @@ const issued = () => invoke.mock.calls.map(([cmd]) => cmd as string).filter((cmd
 
 it("issues the second ordered write only after the first one settled", async () => {
   const finish: Array<(value: unknown) => void> = [];
-  invoke.mockImplementation((cmd: string) => cmd === "store_draft" || cmd === "retire_draft"
+  invoke.mockImplementation((cmd: string) => cmd === "page_submit" || cmd === "page_close"
     ? new Promise((resolve) => { finish.push(resolve); })
     : Promise.resolve(null));
   const b = await tauriBackend();
-  const stored = b.storeDraft!({ id: "d1" } as never);
-  const retired = b.retireDraft!("d1");
-  await vi.waitFor(() => expect(issued()).toContain("store_draft"));
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(issued().filter((cmd) => cmd.endsWith("_draft"))).toEqual(["store_draft"]);
+  const pageCommands = () => issued().filter((cmd) => cmd === "page_submit" || cmd === "page_close");
+  const submitted = b.pageSubmit(1, 1, "pages/A.md", { name: "A" } as never, 1, null, ["edit-block"] as never);
+  const closed = b.pageClose(1, 2, "pages/A.md");
+  await vi.waitFor(() => expect(issued()).toContain("page_submit"));
+  // Let the close's issue run if the lane failed to hold it (a macrotask, not a timed wait).
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(pageCommands()).toEqual(["page_submit"]);
   finish[0](null);
-  await stored;
-  await vi.waitFor(() => expect(issued().filter((cmd) => cmd.endsWith("_draft"))).toEqual(["store_draft", "retire_draft"]));
+  await submitted;
+  await vi.waitFor(() => expect(pageCommands()).toEqual(["page_submit", "page_close"]));
   finish[1](null);
-  await retired;
+  await closed;
 });
 
 it("a failed ordered write rejects only its own call and does not jam the lane", async () => {
@@ -52,8 +54,8 @@ it("a failed ordered write rejects only its own call and does not jam the lane",
 });
 
 it("does not hold a read behind a pending ordered write", async () => {
-  invoke.mockImplementation((cmd: string) => cmd === "store_draft" ? new Promise(() => {}) : Promise.resolve(null));
+  invoke.mockImplementation((cmd: string) => cmd === "page_submit" ? new Promise(() => {}) : Promise.resolve(null));
   const b = await tauriBackend();
-  void b.storeDraft!({ id: "d1" } as never);
+  void b.pageSubmit(1, 1, "pages/A.md", { name: "A" } as never, 1, null, ["edit-block"] as never);
   await expect(b.startupGraphPath()).resolves.toBeNull();
 });

@@ -151,10 +151,14 @@ describe("rename's drain (S6)", () => {
       host.owedPages = host.owedPages.filter((owed) => owed.key !== "pages/P.md");
       return !needs.some((need) => need.key === "pages/Q.md");
     };
-    expect(await unpublishedAfterDrain(client)).toEqual([
-      { key: "pages/Q.md", name: "Q", state: "owed", conflict: true },
-      { key: "pages/Recovered.md", name: null, state: "owed", conflict: false },
+    // Rename reads key, name and conflict (graphRewrite.ts `unsavedPathsFor`);
+    // the state label of a conflicted page is not part of that contract.
+    const listed = await unpublishedAfterDrain(client);
+    expect(listed?.map(({ key, name, conflict }) => ({ key, name, conflict }))).toEqual([
+      { key: "pages/Q.md", name: "Q", conflict: true },
+      { key: "pages/Recovered.md", name: null, conflict: false },
     ]);
+    expect(listed?.find((entry) => entry.key === "pages/Recovered.md")?.state).toBe("owed");
     expect(client.busy("P")).toBe(false);
   });
 });

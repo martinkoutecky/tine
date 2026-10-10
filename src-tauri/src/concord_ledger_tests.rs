@@ -758,14 +758,12 @@ fn a_master_layout_ledger_tree_is_byte_identical_after_og_opens_saves_and_prunes
 /// og 8e through the ledger the commands read: the editor loaded "Desktop 5"
 /// (a Tine save the ledger recorded) and deleted " 5"; another editor appended
 /// " kk" on disk. The live review finds the editor's base by revision, is
-/// 3-way with a `merged` proposal, and the resolve writes the composed body at
+/// 3-way with a `merged` proposal, and the apply writes the composed body at
 /// the reviewed disk revision. With an unusable ledger the same review is
 /// 2-way and still resolves (the ledger never blocks a resolve).
 #[test]
 fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
-    use tine_graph_features::live_conflict::{
-        live_conflict_diff, merge_live_conflict, resolve_live_conflict,
-    };
+    use tine_graph_features::live_conflict::{live_conflict_diff, merge_live_conflict};
     for (label, usable) in [("live-ledger", true), ("live-no-ledger", false)] {
         let dir = scratch(label);
         std::fs::write(dir.join("graph/pages/Desk.md"), body("seed")).unwrap();
@@ -814,18 +812,22 @@ fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
             body("Desktop 5 kk"),
             "{label}: the merge wrote"
         );
-        let resolved = resolve_live_conflict(
-            &slot.store,
-            None,
-            "pages/Desk.md",
-            &draft,
-            &diff.conflict_rev,
-            diff.merge_base_rev.as_deref(),
-            &bases,
-            &decisions,
-            "union",
-        )
-        .unwrap();
+        // The apply (STEP3 R6): the window submits the merged page through
+        // its page host guarded by the reviewed disk revision; here the same
+        // guarded write over the transaction.
+        let mut tx = slot
+            .store
+            .transaction(Some(tine_store::EditKind::ReplacePage));
+        tx.save_page(
+            &[tine_store::EditKind::ReplacePage],
+            &PageId::from("pages/Desk.md"),
+            SaveBase::Existing(tine_store::FileRev::from(diff.conflict_rev.clone())),
+            &merged,
+        );
+        assert!(matches!(
+            tx.commit(),
+            tine_store::TxOutcome::Committed { .. }
+        ));
         let written = std::fs::read_to_string(dir.join("graph/pages/Desk.md")).unwrap();
         if usable {
             assert_eq!(written, body("Desktop kk"));
@@ -834,11 +836,11 @@ fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
                 assert!(written.contains(text), "{text:?} lost: {written}");
             }
         }
-        assert!(resolved.rev.is_some());
         let raws = |page: &tine_core::model::PageDto| -> Vec<String> {
             page.blocks.iter().map(|block| block.raw.clone()).collect()
         };
-        assert_eq!(raws(&merged), raws(&resolved), "{label}");
+        let reread = slot.store.page(&PageId::from("pages/Desk.md")).unwrap();
+        assert_eq!(raws(&merged), raws(&reread.doc), "{label}");
         drop(slot);
         let _ = std::fs::remove_dir_all(dir);
     }

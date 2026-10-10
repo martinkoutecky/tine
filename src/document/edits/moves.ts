@@ -1,7 +1,7 @@
 import { doc, setDoc, formatForBlock, formatForPage, pageByName, DocState } from "../model";
 import { blockWritable, pageWritable, orderListTypeFromRaw, rawWithInheritedOrderListType } from "./properties";
 import { produce } from "solid-js/store";
-import { markDirty, persistTogether, refuseConflictedMove } from "../save/engine";
+import { capturePages, markDirty, persistTransfer, refuseConflictedMove } from "../host/wiring";
 import { captureBinding, bindingCurrent } from "../../binding";
 import { pushMoveSelectionUndo, pushUndo } from "../history";
 import { createSignal } from "solid-js";
@@ -53,6 +53,7 @@ export async function moveBlock(
     : rawWithInheritedOrderListType(doc.byId[id].raw, destinationFormat, inheritanceTarget);
   // Drag-move can cross pages → snapshot both source and destination.
   pushUndo("move", [...new Set([oldPage, newPage])]);
+  const before = newPage !== oldPage ? capturePages([oldPage, newPage]) : null;
   setDoc(
     produce((s) => {
       const oldArr =
@@ -76,8 +77,8 @@ export async function moveBlock(
       }
     })
   );
-  if (newPage !== oldPage) {
-    void persistTogether([oldPage, newPage], ["move-blocks", "save-block"], [[oldPage, newPage]]);
+  if (before) {
+    void persistTransfer(before, ["move-blocks", "save-block"], [[oldPage, newPage]]);
   } else {
     markDirty(oldPage, ["move-blocks", "save-block"]);
   }
@@ -164,10 +165,9 @@ function relativeMovePlan(
 
 /** Move captured selection roots together before/after a live target ID, as
  * one transaction (one undo unit, one publication). Cross-page moves persist
- * every touched page through the same `persistTogether` group as `moveBlock`,
- * so the destination and emptied sources are saved as one unit (an honest
- * concurrent instance or external editor sees either the whole move or none);
- * a page with an unresolved conflict refuses the move (`refuseConflictedMove`,
+ * every touched page through the same transfer as `moveBlock` (`persistTransfer`):
+ * one host move per source, so a crash between steps can leave a block in both
+ * pages, never in neither (STEP3 §8); a page with an unresolved conflict refuses the move (`refuseConflictedMove`,
  * same scenario as a single-block drag). */
 export async function moveBlocksRelative(
   capturedIds: readonly string[],
@@ -193,6 +193,7 @@ export async function moveBlocksRelative(
     return [id, raw] as const;
   }));
   pushUndo("move-selection-relative", pages);
+  const before = crossSources.length ? capturePages(pages) : null;
   setDoc(produce((state) => {
     const siblingsFor = (id: string): string[] => {
       const node = state.byId[id];
@@ -218,8 +219,8 @@ export async function moveBlocksRelative(
     destination.splice(targetIndex + (position === "after" ? 1 : 0), 0, ...plan.roots);
     for (const id of plan.roots) reassignPage(state, id, plan.destinationPage);
   }));
-  if (crossSources.length) {
-    void persistTogether(pages, ["move-blocks", "save-block"], crossSources.map((source) => [source, plan.destinationPage] as [string, string]));
+  if (before) {
+    void persistTransfer(before, ["move-blocks", "save-block"], crossSources.map((source) => [source, plan.destinationPage] as const));
   } else {
     markDirty(plan.destinationPage, ["move-blocks", "save-block"]);
   }
@@ -369,6 +370,7 @@ function stillRootsOf(ids: readonly string[], fromPage: string): boolean {
 /** Move root blocks `ids` (document order) to the start (down) / end (up) of
  *  `toPage`, removing them from `fromPage`. Both pages must be loaded. */
 function crossMoveBlocks(ids: string[], fromPage: string, toPage: string, dir: 1 | -1) {
+  const before = capturePages([fromPage, toPage]);
   setDoc(
     produce((s) => {
       const from = s.pages.find((p) => p.name === fromPage);
@@ -385,7 +387,7 @@ function crossMoveBlocks(ids: string[], fromPage: string, toPage: string, dir: 1
       }
     })
   );
-  void persistTogether([fromPage, toPage], "move-blocks", [[fromPage, toPage]]);
+  void persistTransfer(before, "move-blocks", [[fromPage, toPage]]);
 }
 
 /** Resolve the adjacent feed day for a root block at the page boundary, loading
@@ -410,9 +412,9 @@ async function feedNeighbor(page: string, dir: 1 | -1): Promise<string | null> {
  *  neighbour day, which may await the feed extender, and then RE-CHECKS every
  *  fact its plan rested on before writing: the graph binding (twice, around the
  *  conflict check), both pages writable, neither page conflicted, and that `ids`
- *  are still roots of `from`. The write itself is one `persistTogether` group.
+ *  are still roots of `from`. The write itself is one transfer (`persistTransfer`).
  *  A caller may not repeat this list: a caller that did once drifted from its
- *  twin (master eba7c56b2 H1-H5; og answers them through SaveGroups, not a
+ *  twin (master eba7c56b2 H1-H5; og answers them through one host transfer, not a
  *  ported coordinator). Resolves to whether the blocks crossed. */
 async function crossDayMove(
   ids: string[],
@@ -503,8 +505,8 @@ export async function moveSelectionItems(dir: 1 | -1) {
         }
       })
     );
-    if (pages.length > 1) void persistTogether(pages, "move-blocks");
-    else for (const p of pages) markDirty(p, "move-blocks");
+    // Reordering within each page moves no block between pages: one edit per page.
+    for (const p of pages) markDirty(p, "move-blocks");
     return;
   }
   // Boundary: cross the whole group into the adjacent day (only if every

@@ -2,6 +2,17 @@ use std::fs;
 use tine_graph_features::pages;
 use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
 
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
 #[test]
 fn hard_linked_pages_save_and_rename_with_master_bytes() {
     for placement in ["annex", "external"] {
@@ -21,7 +32,7 @@ fn hard_linked_pages_save_and_rename_with_master_bytes() {
         fs::hard_link(&target, &alias).unwrap();
         let referrer_alias = outside.path().join("Referrer.md");
         fs::hard_link(root.path().join("pages/Referrer.md"), &referrer_alias).unwrap();
-        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(Store::open(root.path(), Default::default()).unwrap().0);
         let id = PageId::from("pages/Old.md");
         let mut read = store.page(&id).unwrap();
         read.doc.blocks[0].raw = "after".into();
@@ -41,7 +52,10 @@ fn hard_linked_pages_save_and_rename_with_master_bytes() {
         // link's original bytes; moving the page and rewriting refs both work.
         assert_eq!(fs::read(&target).unwrap(), b"- after\n");
         assert_eq!(fs::read(&alias).unwrap(), b"- before\n");
-        pages::rename_page_expected(&store, None, "Old", "New", None).unwrap();
+        hosted(&store, |host| {
+            pages::rename_page_expected(&store, host, "Old", "New", None)
+        })
+        .unwrap();
         assert!(!target.exists());
         assert_eq!(
             fs::read(root.path().join("pages/New.md")).unwrap(),

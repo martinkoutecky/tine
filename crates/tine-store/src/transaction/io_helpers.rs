@@ -66,8 +66,6 @@ pub(super) fn failed_trash_dir(error: io::Error, parent: &Path) -> Why {
             "could not create trash directory {}: {error}",
             display.display()
         ),
-        operation: None,
-        os_error: None,
     })
 }
 

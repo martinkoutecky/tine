@@ -9,9 +9,10 @@ impl PageHost {
     /// before launch (§2), then the driver, which owns the index of every
     /// page it holds (§5). `mail` runs on the driver thread. Each launch
     /// draws a fresh session (E101). The error says why no host could
-    /// start; the app stays on the old engine (no production start until
-    /// step 3b P2b).
-    pub(crate) fn start(
+    /// start (another live host holds this graph's draft locks); the open
+    /// then fails. Production starts one per graph-window binding
+    /// (`src-tauri/src/graph.rs` `load_graph_for_label`, step 3b P2b).
+    pub fn start(
         store: &Arc<Store>,
         app_data: &Path,
         graph_id: &str,
@@ -27,7 +28,7 @@ impl PageHost {
 
     /// A host for tests outside this crate (retained writers in
     /// tine-graph-features, the app's slot fixtures) under `app_data`, mail
-    /// discarded. Production starts hosts from step 3b P2b.
+    /// discarded.
     #[cfg(any(test, feature = "test-faults"))]
     pub fn start_for_tests(store: &Arc<Store>, app_data: &Path) -> Result<Self, String> {
         Self::start(store, app_data, "test-graph", |_| {})
@@ -49,7 +50,8 @@ impl PageHost {
         let mut host = Host::new(io, BTreeMap::new());
         host.stop();
         let mut recovered = Vec::new();
-        for key in host.recovered_keys() {
+        let keys = host.recovered_keys();
+        for key in keys.iter().cloned() {
             let id = PageId::from(super::super::production::key_base(&key));
             let spelling = store.disk_spelling(&id).unwrap_or(id);
             let lock = graph.page_lock(&graph.root.join(spelling.as_str()));
@@ -84,10 +86,11 @@ impl PageHost {
                 });
             }
         });
-        let this = Self {
+        let mut this = Self {
             driver,
             store: store.clone(),
             launch: launch.clone(),
+            recovered: BTreeMap::new(),
             #[cfg(test)]
             index_faults,
             #[cfg(test)]
@@ -112,18 +115,53 @@ impl PageHost {
         // Draft I/O failures never stop a launch (§4, B-Q1): they leave it
         // down, and `draft_status` says why.
         this.locked(|host| host.launch());
-        if this.driver.shared.state.lock().unwrap().progress.host.alive {
+        let (alive, recovered) = this.driver.shared.with_state(|state| {
+            let host = &state.progress.host;
+            let recovered = host
+                .pages
+                .iter()
+                .filter(|(key, _)| keys.contains(*key))
+                .map(|(key, page)| (key.clone(), page.version))
+                .collect();
+            (host.alive, recovered)
+        });
+        this.recovered = recovered;
+        if alive {
             return Ok(this);
         }
         drop(this);
         Err("the page host did not launch".into())
     }
 
-    /// Crash-recovery availability (§4, B-Q1), for the `load_graph` reply.
+    /// Crash-recovery availability (§4, B-Q1), and the pages whose text is
+    /// not on disk yet (SPEC-s2 §4.11, S9), for the `load_graph` reply: a
+    /// launch names what it recovered, an adopted host (B-QA) what it still
+    /// holds. Bounded by the held pages and admitted input; no I/O.
     pub fn draft_status(&self) -> DraftStatus {
-        self.driver
-            .shared
-            .with_state(|state| state.progress.host.fs.draft_status())
+        self.driver.shared.with_state(|state| {
+            let host = &state.progress.host;
+            let mut status = host.fs.draft_status();
+            status.unsaved = host
+                .logical_keys()
+                .into_iter()
+                .filter_map(|key| {
+                    let (version, conflict) = match host.logical(&key) {
+                        Logical::Settled(page) if !page.clean() || page.conflict => {
+                            (page.version, page.conflict)
+                        }
+                        Logical::Admitted { version, conflict } => (version, conflict),
+                        _ => return None,
+                    };
+                    Some(io::UnsavedPage {
+                        path: host.fs.spelling(&key),
+                        recovered: self.recovered.get(&key) == Some(&version),
+                        conflict,
+                        failing: state.progress.notice(&key).save_error,
+                    })
+                })
+                .collect();
+            status
+        })
     }
 
     /// `page_drafts_retry` (S3): re-probe down draft I/O in the running

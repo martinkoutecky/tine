@@ -248,6 +248,23 @@ export function setUpdateExitGuard(guard: UpdateExitGuard | null): void {
   exitGuard = guard;
 }
 
+/** "Restart Tine" (STEP3 M1, Q-P1-2): drafts a retry could not list are
+ * recovered at launch. The window's exit gate runs first, as for an update;
+ * a rejected gate keeps the window open. Never throws. */
+export async function restartTine(): Promise<void> {
+  let gate: "accepted" | "rejected" | "in_flight" = "rejected";
+  try { gate = exitGuard ? await exitGuard.prepare() : "rejected"; }
+  catch (error) { dbg(`restart exit guard failed: ${String(error)}`); }
+  if (gate !== "accepted") return;
+  try {
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    await relaunch();
+  } catch (error) {
+    exitGuard?.reset();
+    pushToast(`Couldn't restart Tine (${String(error)}). Quit and start it again.`, "error", { sticky: true });
+  }
+}
+
 /** @internal The toast action's body, exported so a test can prove that a
  * stale "Install update" action cannot install on a manual-only surface. */
 export const installUpdateForTest = (): Promise<void> => applyUpdateOrOpen();

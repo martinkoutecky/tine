@@ -118,15 +118,15 @@ impl<F: HostIo> Host<F> {
         &mut self,
         pages: BTreeMap<PageKey, Page>,
         records: Vec<Record>,
-        request: Option<Request>,
+        reply: Reply,
         last_version: u64,
         reads: BTreeMap<PageKey, Base>,
+        gates: Option<Gates>,
     ) {
         let keys = pages.keys().cloned().collect();
-        let name = if request.is_some() {
-            drafts::page_name(&records[0].page)
-        } else {
-            drafts::op_name()
+        let name = match reply {
+            Reply::Window(_) => drafts::page_name(&records[0].page),
+            Reply::Caller(_) => drafts::op_name(),
         };
         self.worker = Some(DraftWorker {
             effect: name.clone(),
@@ -138,9 +138,10 @@ impl<F: HostIo> Host<F> {
             application: Some(Application::Operation {
                 pages,
                 records: records.clone(),
-                request,
+                reply,
                 last_version,
                 reads,
+                gates,
             }),
             allocator: true,
             retry_copy: false,
@@ -156,6 +157,10 @@ impl<F: HostIo> Host<F> {
         let Some(keys) = self.worker.as_ref().map(|w| w.pages.clone()) else {
             return Disposition::Disabled;
         };
+        #[cfg(test)]
+        if self.paused {
+            return Disposition::Waiting;
+        }
         if self.lacks_locks(&keys) {
             return Disposition::Waiting;
         }
@@ -265,11 +270,15 @@ impl<F: HostIo> Host<F> {
             Application::Operation {
                 pages,
                 records,
-                request,
+                reply,
                 last_version,
                 reads,
+                gates,
             } => {
+                let versions: BTreeMap<PageKey, u64> =
+                    pages.iter().map(|(k, p)| (k.clone(), p.version)).collect();
                 if present {
+                    self.order.install(gates);
                     self.version = last_version;
                     for (key, page) in pages {
                         self.set_page(&key, Some(page));
@@ -298,7 +307,19 @@ impl<F: HostIo> Host<F> {
                         );
                     }
                 }
-                if let Some(request) = request {
+                if let Reply::Caller(id) = reply {
+                    let pages: BTreeSet<_> = versions.keys().cloned().collect();
+                    let reply = if present {
+                        OperationReply::Applied(versions)
+                    } else {
+                        OperationReply::DraftFailed
+                    };
+                    // Q2: a caller already told Uncertain learns the outcome
+                    // from its pages' notice.
+                    if !self.order.answer(id, reply) && !present {
+                        self.events.push(Event::OperationDropped(pages));
+                    }
+                } else if let Reply::Window(request) = reply {
                     let mut pages = vec![request.page.clone()];
                     if let RequestKind::Move { receiver, .. } = &request.kind {
                         pages.insert(0, receiver.clone());

@@ -13,6 +13,17 @@ use tine_graph_features::pages;
 use tine_store::cost_counters::{self, Counts};
 use tine_store::Store;
 
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
 static CASE_LOCK: Mutex<()> = Mutex::new(());
 
 /// `pages_count` unrelated pages, `referrers` pages linking `[[Target]]`, and
@@ -51,10 +62,13 @@ fn rename(pages_count: usize, referrers: usize) -> Counts {
             .set_modified(old)
             .unwrap();
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     cost_counters::reset();
-    pages::rename_page_expected(&store, None, "Target", "Renamed", None).unwrap();
+    hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, "Target", "Renamed", None)
+    })
+    .unwrap();
     let counts = cost_counters::snapshot();
     assert!(root.join("pages/Renamed.md").exists());
     assert_eq!(

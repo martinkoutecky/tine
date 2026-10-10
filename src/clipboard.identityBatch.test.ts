@@ -7,6 +7,7 @@ import { clearClipboardSlot, copyBlockOutline, peekClipboardSlot } from "./clipb
 import { buildClipboardPayload, deleteBlock, loadFeed, pasteClipboardPayload, redo, resetStore, undo } from "./document";
 import { doc, hasLoadedIdentityCollision, loadedIdentityCollisions } from "./document/model";
 import { initParser } from "./render/parse";
+import { bindTestHost } from "./document/host/wiring.test.support";
 import { setGraphMeta } from "./graphSession";
 import type { BlockDto, PageDto } from "./types";
 
@@ -16,7 +17,6 @@ const gid = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12
 beforeAll(() => initParser());
 beforeEach(() => {
   vi.spyOn(backend(), "writeRich").mockResolvedValue();
-  vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
   vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) => ids.map(() => null));
 });
 afterEach(() => {
@@ -58,6 +58,8 @@ async function cutPasteSetup(count: number): Promise<string[]> {
     page("Target", [block(HOST, "")]),
   ]);
   setGraphMeta({ root: "/graph" } as never);
+  // A cut's identity is kept only once its source pages are retired through the page host.
+  await bindTestHost();
   await copyBlockOutline("cut", "- source", buildClipboardPayload(ids)!);
   for (const id of ids) deleteBlock(id);
   return ids;

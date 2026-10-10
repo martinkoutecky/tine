@@ -2,7 +2,7 @@
 // the prior Qt attempt got wrong (caret lost on indent/split/merge). No DOM
 // needed; these are pure operations on the store.
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach, vi, type MockInstance } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
 import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
@@ -16,15 +16,63 @@ import { editingId, startEditing, takeCaretFor } from "./editorController";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
 import { setCopyIncludeSubtree, setCopyStripCollapsed } from "./copySettings";
-import { backend, type Backend } from "./backend";
-import { isConflicted, conflicts } from "./document";
-import { clearConflict, forceSave } from "./document/save/engine";
+import { backend } from "./backend";
+import { isConflicted, installAliasDraftRouteHandler, unsavedDrafts } from "./document";
+import { baseRevFor, resolveConflict, unpublishedPages } from "./document/host/wiring";
+import { STALE_VERSION } from "./document/host/protocol";
+import { bindTestHost, submittedPages } from "./document/host/wiring.test.support";
+import { installDiskHost } from "./diskHost.test.support";
 import { favorites, recentPages, setFavorites, setRecentPages, rightSidebar, setRightSidebar, seedFavorites, renamePageInNavigation, setWorkflow } from "./ui";
 import { dataRev, pageInventoryRev, setGraphMeta } from "./graphSession";
 import { toasts, setToasts } from "./toasts";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto, PageRead } from "./types";
 import { resetPaneLayoutToSingle } from "./panes";
+
+/** Bind the window over an in-memory disk holding `initial` (by path): an
+ *  Open reads it, a current submit or move writes it (recorded in `writes`), a
+ *  stale one conflicts (see diskHost.test.support.ts). `fail(path)` returning
+ *  a message makes that write throw (a failed save). */
+/** Whether `promise` has settled yet (read it inside `vi.waitFor`). */
+function settles(promise: Promise<unknown>): () => boolean {
+  let done = false;
+  void promise.then(() => { done = true; }, () => { done = true; });
+  return () => done;
+}
+
+async function bindMemoryDisk(initial: PageRead[] = []) {
+  const files = new Map<string, PageRead>(initial.map((dto) => [dto.id, structuredClone(dto)]));
+  const writes: [path: string, page: PageDto][] = [];
+  let rev = 0;
+  const disk = {
+    files,
+    writes,
+    fail: null as ((path: string) => string | null) | null,
+    spies: null as unknown as ReturnType<typeof installDiskHost>,
+    session: 0,
+    /** The next submit finds `theirs` on disk at its path (an outside edit). */
+    changeBeforeNextSubmit(theirs: PageDto) {
+      const submit = disk.spies.submit.getMockImplementation()!;
+      disk.spies.submit.mockImplementationOnce(async (...args) => {
+        files.set(args[2], { ...structuredClone(theirs), id: args[2], rev: `theirs${++rev}` });
+        return submit(...args);
+      });
+    },
+  };
+  const host = await bindTestHost();
+  disk.session = host.session;
+  disk.spies = installDiskHost(host, {
+    read: (path) => files.get(path) ?? null,
+    write: (path, dto) => {
+      const failure = disk.fail?.(path);
+      if (failure) throw new Error(failure);
+      writes.push([path, structuredClone(dto)]);
+      files.set(path, { ...structuredClone(dto), id: path, rev: `rev${++rev}` });
+      return `rev${rev}`;
+    },
+  });
+  return disk;
+}
 
 let counter = 0;
 function blk(raw: string, children: BlockDto[] = []): BlockDto {
@@ -1030,18 +1078,17 @@ describe("page-scoped structural undo", () => {
     };
     const stray: PageRead = {
       name: "Today", kind: "journal", title: "Today", pre_block: null,
-      blocks: [blk("stray")], id: "journals/Friday, 26-06-2026.md",
+      blocks: [blk("stray")], id: "journals/Friday, 26-06-2026.md", rev: "stray-rev",
     };
     loadSingle(canonical);
     ensurePageLoaded(stray);
     expect(pageByName("Today")!.id).toBe("journals/Friday, 26-06-2026.md");
     expect(doc.byId[pageByName("Today")!.roots[0]].raw).toBe("stray");
     // The next save targets the stray's own file (was: pageToDto echoed `path`).
-    const saveSpy = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
+    const disk = await bindMemoryDisk([canonical, stray]);
     markDirty("Today", "save-block");
     expect(await flushPage("Today")).toBe(true);
-    expect(saveSpy.mock.calls[0][0][0].id).toBe("journals/Friday, 26-06-2026.md");
-    saveSpy.mockRestore();
+    expect(disk.writes.map(([path]) => path)).toEqual(["journals/Friday, 26-06-2026.md"]);
   });
 
   it("undo removes an op-added node from byId entirely (root-walk purge, no leak)", () => {
@@ -1092,31 +1139,33 @@ describe("page-scoped structural undo", () => {
     expect(doc.byId[o1].page).toBe("Older"); // page ownership restored too
   });
 
+  // STEP3 §8: an undo/redo across two pages is one page_move whose receiver is
+  // the page gaining the block; the host writes it receiver first, so a failed
+  // move leaves the block on disk (at worst twice), never nowhere.
+  const filesHolding = (disk: Awaited<ReturnType<typeof bindMemoryDisk>>, raw: string) =>
+    [...disk.files].filter(([, dto]) => dto.blocks.some((b) => b.raw === raw)).map(([path]) => path).sort();
+
   it("undo sends the gaining page first and a failed request leaves the block on disk", async () => {
     setToasts([]);
     const today = journal("Today", [blk("today")]);
     const older = journal("Older", [blk("durable moved block")]);
     loadFeed([today, older]);
     const moved = older.blocks[0].id;
-    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
+    const disk = await bindMemoryDisk();
     await moveBlockFeed(moved, -1);
-    await flushPage("Today"); // establish the block on disk in Today
-    save.mockClear();
-    const disk = new Map([["Today", ["today", "durable moved block"]], ["Older", [] as string[]]]);
-    let finish!: () => void;
-    save.mockImplementationOnce(() => new Promise((resolve) => {
-      finish = () => resolve({ failed: { index: 1, family: "io", undoFailed: [] } });
-    })).mockResolvedValue({ failed: { index: 1, family: "io", undoFailed: [] } });
+    expect(await flushPage("Today")).toBe(true); // establish the block on disk in Today
+    expect(filesHolding(disk, "durable moved block")).toEqual(["journals/Today.md"]);
+    disk.spies.move.mockClear();
+    disk.fail = (path) => path === "journals/Today.md" ? "io" : null;
     undo();
-    const draining = flushAll();
-    await vi.waitFor(() => expect(save).toHaveBeenCalled());
-    expect(save.mock.calls[0][0].map((entry) => entry.page.name)).toEqual(["Older", "Today"]);
-    finish();
-    expect(await draining).toBe(false);
-    expect(disk.get("Today")).toContain("durable moved block");
-    expect(disk.get("Older")).not.toContain("durable moved block");
+    expect(await flushAll()).toBe(false);
+    const [[, , source, receiver]] = disk.spies.move.mock.calls;
+    expect([receiver[1].name, source[1].name]).toEqual(["Older", "Today"]);
+    expect(receiver[1].blocks.map((b) => b.raw)).toEqual(["durable moved block"]);
+    expect(filesHolding(disk, "durable moved block")).toContain("journals/Today.md");
+    // The failed half is still owed to its file, and the user is told.
+    expect((await unpublishedPages())?.map((page) => page.key)).toContain("journals/Today.md");
     expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("Today"))).toBe(true);
-    save.mockRestore();
   });
 
   it("redo sends the gaining page first and a failed request leaves the block on disk", async () => {
@@ -1124,47 +1173,52 @@ describe("page-scoped structural undo", () => {
     const today = journal("Today", [blk("today")]);
     const older = journal("Older", [blk("durable moved block")]);
     loadFeed([today, older]);
-    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
+    const disk = await bindMemoryDisk();
     await moveBlockFeed(older.blocks[0].id, -1);
     expect(await flushAll()).toBe(true);
     undo();
     expect(await flushAll()).toBe(true);
-    save.mockClear();
-    const disk = new Map([["Today", ["today"]], ["Older", ["durable moved block"]]]);
-    let finish!: () => void;
-    save.mockImplementationOnce(() => new Promise((resolve) => {
-      finish = () => resolve({ failed: { index: 1, family: "io", undoFailed: [] } });
-    })).mockResolvedValue({ failed: { index: 1, family: "io", undoFailed: [] } });
+    expect(filesHolding(disk, "durable moved block")).toEqual(["journals/Older.md"]);
+    disk.spies.move.mockClear();
+    disk.fail = (path) => path === "journals/Older.md" ? "io" : null;
     redo();
-    const draining = flushAll();
-    await vi.waitFor(() => expect(save).toHaveBeenCalled());
-    expect(save.mock.calls[0][0].map((entry) => entry.page.name)).toEqual(["Today", "Older"]);
-    finish();
-    expect(await draining).toBe(false);
-    expect(disk.get("Older")).toContain("durable moved block");
-    expect(disk.get("Today")).not.toContain("durable moved block");
+    expect(await flushAll()).toBe(false);
+    const [[, , source, receiver]] = disk.spies.move.mock.calls;
+    expect([receiver[1].name, source[1].name]).toEqual(["Today", "Older"]);
+    expect(receiver[1].blocks.map((b) => b.raw)).toEqual(["today", "durable moved block"]);
+    expect(filesHolding(disk, "durable moved block")).toContain("journals/Older.md");
+    // The failed half is still owed to its file, and the user is told.
+    expect((await unpublishedPages())?.map((page) => page.key)).toContain("journals/Older.md");
     expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("Older"))).toBe(true);
-    save.mockRestore();
   });
 
+  // STEP3 §8: a cross-page move first drains both endpoints, and undo waits
+  // while that transfer runs (it would replay over text the host holds apart).
   it("undo before an earlier single save settles lands as one group after that save", async () => {
     const today = journal("Today", [blk("today")]);
     const older = journal("Older", [blk("moved")]);
     loadFeed([today, older]);
+    const disk = await bindMemoryDisk();
     let finishPrior!: () => void;
-    const save = vi.spyOn(backend(), "savePages").mockImplementationOnce(() =>
-      new Promise((resolve) => { finishPrior = () => resolve({ ok: ["prior-rev"] }); })
-    ).mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
+    const prior = new Promise<void>((resolve) => { finishPrior = resolve; });
+    const submit = disk.spies.submit.getMockImplementation()!;
+    disk.spies.submit.mockImplementationOnce(async (...args) => { await prior; return submit(...args); });
     markDirty("Today", "save-block");
-    const prior = flushPage("Today");
-    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    const priorSave = flushPage("Today");
+    await vi.waitFor(() => expect(disk.spies.submit).toHaveBeenCalledTimes(1));
     await moveBlockFeed(older.blocks[0].id, -1);
-    undo();
+    expect(undo(), "undo waits while the move drains the unsettled save").toBe(false);
+    expect(raws("Today")).toEqual(["today", "moved"]);
     finishPrior();
-    await prior;
+    await priorSave;
     expect(await flushAll()).toBe(true);
-    expect(save.mock.calls.slice(1).some(([entries]) => entries.length === 2 && entries.some((entry) => entry.page.name === "Older" && entry.page.blocks.some((b) => b.raw === "moved")))).toBe(true);
-    save.mockRestore();
+    expect(filesHolding(disk, "moved")).toEqual(["journals/Today.md"]);
+    expect(undo()).toBe(true);
+    expect(await flushAll()).toBe(true);
+    // The undo reached disk as one two-page move putting "moved" back in Older.
+    expect(disk.spies.move.mock.calls.some(([, , , receiver]) =>
+      receiver[1].name === "Older" && receiver[1].blocks.some((b) => b.raw === "moved"))).toBe(true);
+    expect(filesHolding(disk, "moved")).toEqual(["journals/Older.md"]);
   });
 });
 
@@ -1185,7 +1239,7 @@ describe("carry unfinished tasks → today", () => {
       blk("note D", [blk("TODO D1")]), // note containing an open task → moves whole (context)
     ]);
     loadFeed([today, older]);
-    const moved = carryUnfinished(["Older"], true, null);
+    const moved = carryUnfinished(["Older"], true, null).moved;
     expect(moved).toBe(2);
     expect(raws(TODAY)).toEqual(["TODO A", "note D"]); // empty placeholder dropped
     expect(raws("Older")).toEqual(["DONE B", "note C"]);
@@ -1198,7 +1252,7 @@ describe("carry unfinished tasks → today", () => {
     const today = journal(TODAY, [blk("existing")]);
     const older = journal("Older", [blk("note D", [blk("TODO D1", [blk("DONE D1a")])])]);
     loadFeed([today, older]);
-    const moved = carryUnfinished(["Older"], false, null);
+    const moved = carryUnfinished(["Older"], false, null).moved;
     expect(moved).toBe(1);
     expect(raws(TODAY)).toEqual(["existing", "TODO D1"]); // pulled out; note D stays
     expect(raws("Older")).toEqual(["note D"]);
@@ -1219,7 +1273,7 @@ describe("carry unfinished tasks → today", () => {
     const today = journal(TODAY, [blk("")]);
     const older = journal("Older", [blk("DONE x"), blk("just a note")]);
     loadFeed([today, older]);
-    expect(carryUnfinished(["Older"], true, null)).toBe(0);
+    expect(carryUnfinished(["Older"], true, null).moved).toBe(0);
     expect(raws("Older")).toEqual(["DONE x", "just a note"]);
   });
 
@@ -1236,7 +1290,7 @@ describe("carry unfinished tasks → today", () => {
       blk("DONE another thing"),
     ]);
     loadFeed([today, older]);
-    expect(carryUnfinished(["Older"], false, null)).toBe(3);
+    expect(carryUnfinished(["Older"], false, null).moved).toBe(3);
     expect(raws("Older")).toEqual(["DONE something else", "", "DONE another thing"]);
   });
 
@@ -1748,165 +1802,141 @@ describe("selection indent is single-page (ds8-2)", () => {
   });
 });
 
-// Characterization tests for the debounced persistence engine (markDirty →
-// scheduleSave/doSave/flushPage/flushAll/forceSave + the dirty/baseRev/
-// deletedPages/conflict guards). These pin the save behaviour so the R2
-// extraction into a SaveCoordinator is provably behaviour-preserving.
+// Characterization tests for persistence through the page host (markDirty →
+// debounced page_submit, flushPage/flushAll barriers, deletePage, conflicts and
+// failures), over an in-memory disk (bindMemoryDisk). The host's own retry and
+// backoff live in Rust (page_host/progress_tests.rs).
 describe("save engine (persistence)", () => {
-  let saveSpy: MockInstance<Backend["savePages"]>;
-  beforeEach(() => {
-    conflicts()
-      .slice()
-      .forEach(clearConflict); // ui conflicts aren't cleared by resetStore
+  let disk: Awaited<ReturnType<typeof bindMemoryDisk>>;
+  const submitted = () => submittedPages(disk.spies.submit);
+  /** Hold the next page_submit until the returned function is called. */
+  const holdNextSubmit = () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const submit = disk.spies.submit.getMockImplementation()!;
+    disk.spies.submit.mockImplementationOnce(async (...args) => { await held; return submit(...args); });
+    return release;
+  };
+  beforeEach(async () => {
     vi.useFakeTimers();
-    saveSpy = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev1"] });
+    disk = await bindMemoryDisk();
   });
   afterEach(() => {
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
-    saveSpy.mockRestore();
+    vi.restoreAllMocks();
   });
 
   it("debounces dirty pages into one batched save", async () => {
     load([blk("hello")]);
     markDirty("Test", "save-block");
     markDirty("Test", "save-block"); // coalesced into the same 400ms batch
-    expect(saveSpy).not.toHaveBeenCalled();
+    expect(disk.spies.submit).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(400);
-    expect(saveSpy).toHaveBeenCalledTimes(1);
-    expect((saveSpy.mock.calls[0][0][0].page).name).toBe("Test");
+    expect(disk.spies.submit).toHaveBeenCalledTimes(1);
+    expect(submitted()[0].name).toBe("Test");
     expect(isDirty("Test")).toBe(false);
   });
 
   it("flushPage writes immediately and advances the baseline rev", async () => {
     load([blk("x")]);
-    saveSpy.mockResolvedValue({ ok: ["rev2"] });
     markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
-    expect(saveSpy).toHaveBeenCalledTimes(1);
-    // Next save sends the rev returned by the previous one as its baseRev.
+    expect(disk.writes).toHaveLength(1);
+    // The page's baseline is now the revision that save wrote, so the next save is current (it writes).
+    expect(baseRevFor("Test")).toBe(disk.files.get(disk.writes[0][0])!.rev);
     markDirty("Test", "save-block");
-    await flushPage("Test");
-    expect(saveSpy.mock.calls[1][0][0].baseRev).toBe("rev2");
+    expect(await flushPage("Test")).toBe(true);
+    expect(disk.writes).toHaveLength(2);
+    expect(isConflicted("Test")).toBe(false);
+    expect(baseRevFor("Test")).toBe(disk.files.get(disk.writes[1][0])!.rev);
   });
 
   it("a late save does not advance the baseline of a same-name replacement", async () => {
-    let finish!: (result: { ok: string[] }) => void;
-    saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const release = holdNextSubmit();
     load([blk("old instance")]);
     markDirty("Test", "save-block");
     const first = flushPage("Test");
-    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(disk.spies.submit).toHaveBeenCalledTimes(1));
     reloadPage({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [blk("new instance")], rev: "replacement-rev" });
-    finish({ ok: ["old-save-rev"] });
+    release();
     await first;
-    markDirty("Test", "save-block");
-    await flushPage("Test");
-    expect(saveSpy.mock.calls[1][0][0].baseRev).toBe("replacement-rev");
+    expect(baseRevFor("Test")).toBe("replacement-rev");
   });
 
   it("a never-saved page deleted during its first save is deleted after that save", async () => {
-    let finish!: (result: { ok: string[] }) => void;
-    const disk = new Set<string>();
-    saveSpy.mockImplementationOnce((entries) => new Promise((resolve) => { finish = (result) => { disk.add(entries[0].id); resolve(result); }; }));
-    const remove = vi.spyOn(backend(), "deletePage").mockImplementation(async () => { disk.clear(); });
+    const release = holdNextSubmit();
+    const remove = vi.spyOn(backend(), "pageDelete").mockImplementation(async () => { disk.files.clear(); return "applied"; });
     load([blk("new content")]);
     markDirty("Test", "save-block");
     const save = flushPage("Test");
-    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(disk.spies.submit).toHaveBeenCalledTimes(1));
     const deletion = deletePage("Test", "page");
     await Promise.resolve();
     expect(remove).not.toHaveBeenCalled();
-    finish({ ok: ["created-rev"] });
+    release();
     await save;
-    expect(await deletion, "I-11: deletePage drains a first save before removal; exemplar src/store.ts deletePage").toBe(true);
+    expect(await deletion, "I-11: deletePage drains a first save before removal; exemplar src/document/host/wiring.ts deletePageOnDisk").toBe(true);
+    expect(disk.writes).toHaveLength(1);
     expect(remove).toHaveBeenCalledTimes(1);
-    expect(disk.size, "I-11: a deleted never-saved page leaves no file; exemplar src/store.ts deletePage").toBe(0);
-    remove.mockRestore();
+    expect(disk.files.size, "I-11: a deleted never-saved page leaves no file; exemplar src/document/host/wiring.ts deletePageOnDisk").toBe(0);
   });
 
   it("does not delete a same-name page in a new graph after draining the old save (I-20)", async () => {
-    let finish!: (result: { ok: string[] }) => void;
-    saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined);
+    const release = holdNextSubmit();
+    const remove = vi.spyOn(backend(), "pageDelete");
     load([blk("old graph")]);
     markDirty("Test", "save-block");
     const first = flushPage("Test");
-    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(disk.spies.submit).toHaveBeenCalledTimes(1));
     const deletion = deletePage("Test", "page");
     resetStore();
     load([blk("new graph")]);
-    finish({ ok: ["old-rev"] });
+    await bindMemoryDisk();
+    release();
+    const settledDeletion = settles(deletion);
+    await vi.waitFor(() => expect(settledDeletion(), "I-20: the old binding's delete settles after a graph switch").toBe(true));
     await first;
     expect(await deletion).toBe(false);
-    expect(remove, "I-20: old delete must not trash a new graph page; exemplar src/store.ts deletePage").not.toHaveBeenCalled();
+    expect(remove, "I-20: old delete must not trash a new graph page; exemplar src/document/host/wiring.ts deletePageOnDisk").not.toHaveBeenCalled();
     expect(pageToDto("Test")!.blocks[0].raw).toBe("new graph");
-    remove.mockRestore();
   });
 
   it("flushAll drains an in-flight save and the edit made while it was pending (I-11)", async () => {
-    let finish!: (result: { ok: string[] }) => void;
-    saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const release = holdNextSubmit();
     const firstBlock = blk("first");
     load([firstBlock]);
     markDirty("Test", "save-block");
     const first = flushPage("Test");
-    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(disk.spies.submit).toHaveBeenCalledTimes(1));
     let settled = false;
     const all = flushAll().then((ok) => { settled = true; return ok; });
     setRaw(firstBlock.id, "second");
     await Promise.resolve();
     expect(settled).toBe(false);
-    finish({ ok: ["first-rev"] });
+    release();
     await first;
-    expect(await all, "I-11: flushAll counts the saveChain and edits made during a save; exemplar src/persistence.ts flushAll").toBe(true);
-    expect(saveSpy.mock.calls.at(-1)![0][0].page.blocks[0].raw).toBe("second");
-    expect(saveSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it("flushAll refuses completion when a fifth queued save survives its bounded drain (I-11)", async () => {
-    let finishFifth!: (result: { ok: string[] }) => void;
-    let nested: Promise<boolean> | undefined;
-    load([blk("content")]);
-    saveSpy.mockImplementation(() => {
-      const call = saveSpy.mock.calls.length;
-      if (call < 4) {
-        markDirty("Test", "save-block");
-        return Promise.resolve({ ok: [`rev-${call}`] });
-      }
-      if (call === 4) {
-        markDirty("Test", "save-block");
-        nested = flushPage("Test");
-        return Promise.resolve({ ok: ["rev-4"] });
-      }
-      return new Promise((resolve) => { finishFifth = resolve; });
-    });
-    markDirty("Test", "save-block");
-    const draining = flushAll();
-    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(5));
-    expect(isDirty("Test")).toBe(false);
-    try {
-      expect(await draining,
-        "I-11: flushAll must count saveChain after its bounded drain; exemplar src/persistence.ts flushAll").toBe(false);
-    } finally {
-      finishFifth({ ok: ["rev-5"] });
-      await nested;
-    }
+    expect(await all, "I-11: flushAll counts sent input and edits made while it was pending; exemplar src/document/host/settle.ts settle").toBe(true);
+    expect(submitted().at(-1)!.blocks[0].raw).toBe("second");
+    expect(disk.writes.at(-1)![1].blocks[0].raw).toBe("second");
   });
 
   it("shows one toast for repeated identical save failures (I-10)", async () => {
     setToasts([]);
-    load([blk("unsaved")]);
-    saveSpy.mockRejectedValue(new Error("io:Other"));
+    const held = blk("unsaved");
+    load([held]);
+    // The failure is reported on a page the window still holds (the editor is in it).
+    startEditing(held.id);
+    disk.fail = () => "io:Other";
     markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(false);
-    // The automatic transient retries (100 ms, 300 ms) run and fail too.
     await vi.advanceTimersByTimeAsync(1_000);
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(false);
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(saveSpy.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(disk.spies.submit.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(toasts().filter((toast) => toast.kind === "error" && toast.message.includes("Test")),
-      "I-10: identical save failures show one toast; exemplar src/persistence.ts lastSaveFailure").toHaveLength(1);
+      "I-10: identical save failures show one toast; exemplar src/document/host/wiring.ts reportProblems").toHaveLength(1);
   });
 
   it("drops a quick capture read that resolves after a graph switch (I-20)", async () => {
@@ -1917,10 +1947,14 @@ describe("save engine (persistence)", () => {
     await vi.waitFor(() => expect(read).toHaveBeenCalled());
     resetStore();
     load([blk("new graph")]);
+    const fresh = await bindMemoryDisk();
+    fresh.spies.submit.mockClear();
     finish({ name: "Captured", kind: "page", title: "Captured", id: "pages/Captured.md", pre_block: null, blocks: [] });
     expect(await capture).toBe(false);
     expect(pageByName("Captured")).toBeUndefined();
-    expect(saveSpy).not.toHaveBeenCalled();
+    expect(await flushAll()).toBe(true);
+    expect(fresh.spies.submit).not.toHaveBeenCalled();
+    expect(fresh.writes).toEqual([]);
     read.mockRestore();
   });
 
@@ -1970,27 +2004,38 @@ describe("save engine (persistence)", () => {
     await vi.waitFor(() => expect(resolve).toHaveBeenCalled());
     resetStore();
     load([blk("new graph")]);
+    const fresh = await bindMemoryDisk();
     finish({ kind: "absent", id: "pages/Test.md" });
+    const settledSave = settles(save);
+    await vi.waitFor(() => expect(settledSave(), "I-20: the old binding's save settles after a graph switch").toBe(true));
     expect(await save).toBe(false);
-    expect(saveSpy).not.toHaveBeenCalled();
+    expect(await flushAll()).toBe(true);
+    expect(disk.spies.submit).not.toHaveBeenCalled();
+    expect(fresh.writes).toEqual([]);
     expect(pageToDto("Test")!.blocks[0].raw).toBe("new graph");
     resolve.mockRestore();
   });
 
   it("does not run a forced save queued in the old binding against a same-name new graph page (I-20)", async () => {
-    let finish!: (result: { ok: string[] }) => void;
-    saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     load([blk("old graph")]);
+    disk.changeBeforeNextSubmit({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [blk("theirs")] });
     markDirty("Test", "save-block");
-    const first = flushPage("Test");
-    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
-    const queued = forceSave("Test");
+    expect(await flushPage("Test")).toBe(false);
+    expect(isConflicted("Test")).toBe(true);
+    const release = holdNextSubmit();
+    const queued = resolveConflict("Test", "mine");
+    await vi.waitFor(() => expect(disk.spies.submit).toHaveBeenCalledTimes(2));
     resetStore();
     load([blk("new graph")]);
-    finish({ ok: ["old-rev"] });
-    await first;
+    const fresh = await bindMemoryDisk();
+    release();
+    const settledKeep = settles(queued);
+    await vi.waitFor(() => expect(settledKeep(), "I-20: the old binding's keep-mine settles after a graph switch").toBe(true));
     expect(await queued).toBe(false);
-    expect(saveSpy).toHaveBeenCalledTimes(1);
+    // The keep-mine went to the old binding's session only; the new graph's file is untouched.
+    expect(disk.spies.submit.mock.calls[1][0]).toBe(disk.session);
+    expect(fresh.session).not.toBe(disk.session);
+    expect(fresh.writes).toEqual([]);
     expect(pageToDto("Test")!.blocks[0].raw).toBe("new graph");
   });
 
@@ -2096,66 +2141,29 @@ describe("save engine (persistence)", () => {
     load([blk("new")]);
     markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
+    await vi.advanceTimersByTimeAsync(700); // the coalesced publication refresh
     expect(pageInventoryRev()).toBeGreaterThan(before);
 
     const afterCreate = pageInventoryRev();
     markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
+    await vi.advanceTimersByTimeAsync(700);
     expect(pageInventoryRev()).toBe(afterCreate);
   });
 
   it("a conflict marks the page (no clobber) and flushAll reports failure", async () => {
     load([blk("x")]);
     markDirty("Test", "save-block");
-    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    disk.changeBeforeNextSubmit({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [blk("theirs")] });
     expect(await flushAll()).toBe(false);
     expect(isConflicted("Test")).toBe(true);
+    expect(disk.writes).toEqual([]);
+    expect([...disk.files.values()].map((dto) => dto.blocks.map((b) => b.raw))).toEqual([["theirs"]]);
   });
 
-  it("a transient error keeps the page dirty for retry", async () => {
-    load([blk("x")]);
-    markDirty("Test", "save-block");
-    saveSpy.mockRejectedValueOnce(new Error("disk full"));
-    expect(await flushPage("Test")).toBe(false);
-    expect(isDirty("Test")).toBe(true);
-    expect(await flushPage("Test")).toBe(true); // retry succeeds
-  });
-
-  // master 620b88da596c: a transient save failure heals itself (100 ms, then
-  // 300 ms) before the user is told; the page stays dirty until it saves.
-  it("a transient error retries on its own before showing a save failure", async () => {
-    setToasts([]);
-    load([blk("x")]);
-    markDirty("Test", "save-block");
-    saveSpy.mockRejectedValueOnce(new Error("io:StorageFull"));
-    expect(await flushPage("Test")).toBe(false);
-    expect(isDirty("Test")).toBe(true);
-    expect(toasts().filter((t) => t.kind === "error")).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(100);
-    expect(saveSpy).toHaveBeenCalledTimes(2);
-    expect(isDirty("Test")).toBe(false);
-    expect(toasts().filter((t) => t.kind === "error")).toHaveLength(0);
-  });
-
-  it("reports a save failure only after the bounded automatic retries also fail", async () => {
-    setToasts([]);
-    load([blk("x")]);
-    markDirty("Test", "save-block");
-    saveSpy.mockRejectedValue(new Error("persistent failure"));
-    expect(await flushPage("Test")).toBe(false);
-    await vi.advanceTimersByTimeAsync(100);
-    expect(saveSpy).toHaveBeenCalledTimes(2);
-    expect(toasts().filter((t) => t.kind === "error")).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(300);
-    expect(saveSpy).toHaveBeenCalledTimes(3);
-    expect(isDirty("Test")).toBe(true);
-    const errors = toasts().filter((t) => t.kind === "error");
-    expect(errors).toHaveLength(1);
-    expect(errors[0].message).toContain("persistent failure");
-    // Retries are bounded: nothing further is attempted until the next edit/flush.
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(saveSpy).toHaveBeenCalledTimes(3);
-  });
+  // The transient-retry and bounded-backoff tests that were here moved with the
+  // retries into the host: page_host/progress_tests.rs
+  // failed_and_uncertain_saves_retry_on_every_backoff_and_surface_persistent_error.
 
   // R-CREATE-UNREADABLE-OWNER (master 69e0a885ddf9): the backend refuses a new
   // page whose name an unreadable file may already own; the toast names that
@@ -2163,8 +2171,8 @@ describe("save engine (persistence)", () => {
   it("a create refused for an unreadable owner names the file and keeps the edits", async () => {
     setToasts([]);
     load([blk("x")]);
+    disk.spies.open.mockResolvedValue({ reason: "unreadable-owner", file: "pages/Other.md" });
     markDirty("Test", "save-block");
-    saveSpy.mockResolvedValue({ failed: { index: 0, family: "unreadable-owner", undoFailed: [], unreadableOwner: "pages/Other.md" } });
     expect(await flushPage("Test")).toBe(false);
     expect(isDirty("Test")).toBe(true);
     expect(isConflicted("Test")).toBe(false);
@@ -2173,19 +2181,20 @@ describe("save engine (persistence)", () => {
     expect(errors[0].message).toContain("pages/Other.md");
     expect(errors[0].message).toContain("Test");
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(saveSpy.mock.calls.length).toBeLessThanOrEqual(2); // at most the ordinary debounce
+    expect(disk.spies.submit).not.toHaveBeenCalled();
+    expect(disk.spies.open.mock.calls.length).toBeLessThanOrEqual(2); // at most the flush and the ordinary debounce
   });
 
   it("a non-transient save failure is reported at once, without automatic retries", async () => {
     setToasts([]);
     load([blk("x")]);
+    disk.spies.submit.mockResolvedValue({ reason: "failed", message: "publication-incomplete:pages/Test.md" });
     markDirty("Test", "save-block");
-    saveSpy.mockRejectedValue(new Error("publication-incomplete:pages/Test.md"));
     await vi.advanceTimersByTimeAsync(400); // the ordinary debounced save
-    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(disk.spies.submit).toHaveBeenCalledTimes(1);
     expect(toasts().filter((t) => t.kind === "error")).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(disk.spies.submit).toHaveBeenCalledTimes(1);
     expect(isDirty("Test")).toBe(true);
   });
 
@@ -2199,15 +2208,14 @@ describe("save engine (persistence)", () => {
     markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
     expect(resolveSpy).toHaveBeenCalledWith("Test", "page");
-    expect(saveSpy.mock.calls[0][0][0].id).toBe("pages/Test.org");
-    expect(saveSpy.mock.calls[0][0][0].baseRev).toBeNull(); // CreateNew
+    expect(disk.spies.open.mock.calls[0][2].path).toBeNull(); // opened by name: a new file (CreateNew)
+    expect(disk.writes.map(([path]) => path)).toEqual(["pages/Test.org"]);
     expect(pageByName("Test")!.id).toBe("pages/Test.org");
 
     markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
     expect(resolveSpy).toHaveBeenCalledTimes(1); // no extra round trip once it has an id
-    expect(saveSpy.mock.calls[1][0][0].id).toBe("pages/Test.org");
-    resolveSpy.mockRestore();
+    expect(disk.writes.map(([path]) => path)).toEqual(["pages/Test.org", "pages/Test.org"]);
   });
 
   it("a loaded duplicate-day stray saves to its own file id without resolving its name (#21)", async () => {
@@ -2215,32 +2223,35 @@ describe("save engine (persistence)", () => {
     const stray = { name: "Today", kind: "journal" as const, title: "Today", pre_block: null,
       blocks: [blk("stray")], id: "journals/Friday, 26-06-2026.md", rev: "stray-rev" };
     loadFeed([stray]);
+    disk.files.set(stray.id, structuredClone(stray));
     markDirty("Today", "save-block");
     expect(await flushPage("Today")).toBe(true);
     expect(resolveSpy).not.toHaveBeenCalled();
-    expect(saveSpy.mock.calls[0][0][0].id).toBe("journals/Friday, 26-06-2026.md");
-    expect(saveSpy.mock.calls[0][0][0].baseRev).toBe("stray-rev");
-    resolveSpy.mockRestore();
+    // Written to its own file, on the stray's revision (not a stale conflict).
+    expect(disk.writes.map(([path]) => path)).toEqual(["journals/Friday, 26-06-2026.md"]);
+    expect(isConflicted("Today")).toBe(false);
   });
 
   it("a pathless save whose name now exists on disk is a conflict and keeps the content", async () => {
     const resolveSpy = vi.spyOn(backend(), "resolvePage")
       .mockResolvedValue({ kind: "existing", id: "pages/Test.md", others: [] });
-    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    disk.files.set("pages/Test.md", { id: "pages/Test.md", rev: "theirs", name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [blk("theirs")] });
     const [b] = [blk("mine")];
     load([b]);
     markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(false);
-    // CreateNew (null base) onto the existing file: the backend refuses it.
-    expect(saveSpy.mock.calls[0][0][0].id).toBe("pages/Test.md");
-    expect(saveSpy.mock.calls[0][0][0].baseRev).toBeNull();
+    // Input typed with no file under it, sent onto the existing file: stale, so a conflict.
+    expect(disk.spies.submit.mock.calls[0][2]).toBe("pages/Test.md");
+    expect(disk.spies.submit.mock.calls[0][4]).toBe(STALE_VERSION);
+    expect(disk.writes).toEqual([]);
     expect(isConflicted("Test")).toBe(true);
-    expect(pageByName("Test")!.id).toBeUndefined();
+    // The admitted page names the file it conflicts with (its resolution target).
+    expect(pageByName("Test")!.id).toBe("pages/Test.md");
     expect(doc.byId[b.id].raw).toBe("mine");
     resolveSpy.mockRestore();
   });
 
-  it("refuses a content save onto an alias name: no write, conflict surface, content kept", async () => {
+  it("refuses a content save onto an alias name: no write, listed unsaved, content kept", async () => {
     const resolveSpy = vi.spyOn(backend(), "resolvePage")
       .mockResolvedValue({ kind: "alias", owners: ["pages/Owner.md"] });
     // The old HEAD test name stays as a ratchet: an alias owner that vanished
@@ -2250,8 +2261,13 @@ describe("save engine (persistence)", () => {
     load([b]);
     markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(false);
-    expect(saveSpy).not.toHaveBeenCalled();
-    expect(isConflicted("Test")).toBe(true);
+    await vi.waitFor(() => expect(read).toHaveBeenCalled());
+    expect(disk.spies.submit).not.toHaveBeenCalled();
+    expect(disk.spies.move).not.toHaveBeenCalled();
+    expect(disk.writes).toEqual([]);
+    // The draft stays in the editor, unsaved and listed (the host page host's alias landing).
+    expect(isDirty("Test")).toBe(true);
+    expect(unsavedDrafts().map((draft) => draft.name)).toContain("Test");
     expect(pageByName("Test")!.id).toBeUndefined();
     expect(doc.byId[b.id].raw).toBe("typed under an alias name");
     read.mockRestore();
@@ -2262,24 +2278,25 @@ describe("save engine (persistence)", () => {
     const owner = { name: "Owner", kind: "page" as const, title: "Owner", id: "pages/Owner.md", rev: "owner-rev", pre_block: "alias:: Test", blocks: [blk("owner text")] };
     const draft = blk("draft parent", [blk("draft child")]);
     load([draft]);
-    const disk = new Map<string, PageDto>([[owner.id, owner]]);
-    saveSpy.mockImplementation(async (entries) => { const { id, page: dto } = entries[0]; disk.set(id, dto); return { ok: ["saved-owner-rev"] }; });
+    disk.files.set(owner.id, structuredClone(owner));
     const resolve = vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: [owner.id] });
     const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(owner);
+    const routes: [string, string][] = [];
+    installAliasDraftRouteHandler((name, kind) => routes.push([name, kind]));
     markDirty("Test", "save-block");
-    expect(await flushPage("Test")).toBe(true);
-    expect(saveSpy).toHaveBeenCalledTimes(1);
-    expect(saveSpy.mock.calls[0][0][0].id).toBe(owner.id);
-    expect(saveSpy.mock.calls[0][0][0].baseRev).toBe(owner.rev);
-    expect(saveSpy.mock.calls[0][0][0].page.blocks.map((b) => b.raw)).toEqual(["owner text", "draft parent"]);
-    expect(saveSpy.mock.calls[0][0][0].page.blocks[1].children.map((b) => b.raw)).toEqual(["draft child"]);
-    expect([...disk.keys()]).toEqual([owner.id]);
-    expect(disk.get(owner.id)!.blocks.map((b) => b.raw)).toEqual(["owner text", "draft parent"]);
-    expect(disk.get(owner.id)!.blocks[1].children.map((b) => b.raw)).toEqual(["draft child"]);
+    await flushPage("Test");
+    await vi.waitFor(() => expect(pageByName("Test")).toBeUndefined());
+    // One write, to the owner's file, on the owner's revision (not stale).
+    expect(disk.writes.map(([path]) => path)).toEqual([owner.id]);
+    expect(isConflicted("Owner")).toBe(false);
+    expect([...disk.files.keys()]).toEqual([owner.id]);
+    expect(disk.files.get(owner.id)!.blocks.map((b) => b.raw)).toEqual(["owner text", "draft parent"]);
+    expect(disk.files.get(owner.id)!.blocks[1].children.map((b) => b.raw)).toEqual(["draft child"]);
     expect(pageByName("Test")).toBeUndefined();
     expect(pageByName("Owner")!.roots.map((id) => doc.byId[id].raw)).toEqual(["owner text", "draft parent"]);
-    expect(doc.feed).toEqual(["Owner"]);
+    expect(routes, "the draft leaves for its owner's route").toEqual([["Owner", "page"]]);
     expect(toasts().some((t) => t.kind === "info" && t.message.includes("Test") && t.message.includes("Owner"))).toBe(true);
+    installAliasDraftRouteHandler(() => {});
     read.mockRestore();
     resolve.mockRestore();
   });
@@ -2288,13 +2305,16 @@ describe("save engine (persistence)", () => {
     const owner = { name: "Owner", kind: "page" as const, title: "Owner", id: "pages/Owner.md", rev: "owner-rev", pre_block: "alias:: Test", blocks: [blk("owner text")] };
     const draft = blk("draft text");
     load([draft]);
+    disk.files.set(owner.id, structuredClone(owner));
     const resolve = vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: [owner.id] });
     const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(owner);
-    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    disk.changeBeforeNextSubmit({ ...owner, blocks: [blk("owner text"), blk("outside edit")] });
     markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(false);
-    expect(saveSpy.mock.calls[0][0][0].page.blocks.map((b) => b.raw)).toEqual(["owner text", "draft text"]);
-    expect(isConflicted("Test")).toBe(true);
+    await vi.waitFor(() => expect(disk.spies.submit).toHaveBeenCalled());
+    expect(submitted()[0].blocks.map((b) => b.raw)).toEqual(["owner text", "draft text"]);
+    expect(disk.writes).toEqual([]);
+    expect(isConflicted("Test") || isConflicted("Owner")).toBe(true);
     expect(doc.byId[draft.id].raw).toBe("draft text");
     expect(doc.feed).toEqual(["Test"]);
     read.mockRestore();
@@ -2304,12 +2324,15 @@ describe("save engine (persistence)", () => {
   it("keeps a draft page preamble as an appended owner block", async () => {
     const owner = { name: "Owner", kind: "page" as const, title: "Owner", id: "pages/Owner.md", rev: "owner-rev", pre_block: "alias:: Test", blocks: [blk("existing")] };
     loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: "tags:: draft", blocks: [blk("body")] });
+    disk.files.set(owner.id, structuredClone(owner));
     const resolve = vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: [owner.id] });
     const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(owner);
     markDirty("Test", "save-block");
-    expect(await flushPage("Test")).toBe(true);
-    expect(saveSpy.mock.calls[0][0][0].page.pre_block).toBe("alias:: Test");
-    expect(saveSpy.mock.calls[0][0][0].page.blocks.map((b) => b.raw)).toEqual(["existing", "tags:: draft", "body"]);
+    await flushPage("Test");
+    await vi.waitFor(() => expect(disk.writes).toHaveLength(1));
+    expect(disk.writes[0][0]).toBe(owner.id);
+    expect(disk.writes[0][1].pre_block).toBe("alias:: Test");
+    expect(disk.writes[0][1].blocks.map((b) => b.raw)).toEqual(["existing", "tags:: draft", "body"]);
     read.mockRestore();
     resolve.mockRestore();
   });
@@ -2330,18 +2353,23 @@ describe("save engine (persistence)", () => {
     markDirty("Tine-guide/Features/Sheets", "save-block");
 
     expect(await flushPage("Tine-guide/Features/Sheets")).toBe(true);
-    expect(saveSpy).not.toHaveBeenCalled();
+    expect(await flushAll()).toBe(true);
+    expect(disk.spies.open).not.toHaveBeenCalled();
+    expect(disk.spies.submit).not.toHaveBeenCalled();
     expect(isDirty("Tine-guide/Features/Sheets")).toBe(false);
   });
 
   it("a tombstoned (deleted) page is never written", async () => {
     load([blk("x")]);
     markDirty("Test", "save-block");
-    await deletePage("Test", "page"); // tombstones the page
-    saveSpy.mockClear();
+    expect(await deletePage("Test", "page")).toBe(true); // tombstones the page
+    disk.spies.submit.mockClear();
+    const writesBefore = disk.writes.length;
     markDirty("Test", "save-block"); // a stray queued save after delete must not recreate it
     expect(await flushPage("Test")).toBe(true);
-    expect(saveSpy).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(disk.spies.submit).not.toHaveBeenCalled();
+    expect(disk.writes).toHaveLength(writesBefore);
   });
 
   it("deletePage removes journal feed entries plus sidebar favorites and recents", async () => {
@@ -2445,11 +2473,12 @@ describe("save engine (persistence)", () => {
 
     // The placeholder is writable: the delete tombstone was lifted, so the first
     // edit saves a fresh file (not silently swallowed like a still-deleted page).
-    saveSpy.mockClear();
+    disk.spies.submit.mockClear();
     markDirty(today, "save-block");
     expect(await flushPage(today)).toBe(true);
-    expect(saveSpy).toHaveBeenCalledTimes(1);
-    expect((saveSpy.mock.calls[0][0][0].page).name).toBe(today);
+    expect(disk.spies.submit).toHaveBeenCalledTimes(1);
+    expect(submitted()[0].name).toBe(today);
+    expect(disk.writes.at(-1)![1].name).toBe(today);
   });
 
   it("keeps today untouched when an OLDER day is deleted from the feed (#17 no-op)", async () => {
@@ -2466,21 +2495,24 @@ describe("save engine (persistence)", () => {
     expect(doc.byId[pageByName(today)!.roots[0]].raw).toBe("today content");
   });
 
-  it("forceSave resolves a conflicted page through a revision-guarded write", async () => {
+  it("keep-mine resolves a conflicted page through a revision-guarded write", async () => {
     load([blk("x")]);
     markDirty("Test", "save-block");
-    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    disk.changeBeforeNextSubmit({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [blk("theirs")] });
     await flushPage("Test");
     expect(isConflicted("Test")).toBe(true);
-    saveSpy.mockResolvedValue({ ok: ["rev3"] });
-    expect(await forceSave("Test")).toBe(true);
-    expect(saveSpy.mock.calls.at(-1)![0][0].force).toBe(false);
+    const [path, theirs] = [...disk.files][0];
+    expect(await resolveConflict("Test", "mine")).toBe(true);
+    // Guarded: the write names the exact disk revision the conflict showed.
+    expect(disk.spies.submit.mock.calls.at(-1)![5]).toEqual({ kind: "file", rev: theirs.rev });
+    expect(disk.files.get(path)!.blocks.map((b) => b.raw)).toEqual(["x"]);
+    expect(isConflicted("Test")).toBe(false);
   });
 
   it("deletes a CONFLICTED page rather than leaving it undeletable", async () => {
     load([blk("x")]);
     markDirty("Test", "save-block");
-    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    disk.changeBeforeNextSubmit({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [blk("theirs")] });
     await flushPage("Test"); // the save is now refused until the conflict is resolved
     expect(isConflicted("Test")).toBe(true);
     // Regression: deletePage used to flush-first and abort on the (impossible) flush,

@@ -1,21 +1,37 @@
 //! Phase seam shared by ModelFs and the unwired production adapter.
 use super::Text;
 
+/// A physical step of the host's I/O; tests outside the crate name one to
+/// plant a fault there (`super::faults`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Phase {
+pub enum Phase {
+    /// A page file's read.
     Read,
+    /// A page's synced temporary file.
     PageTemp,
+    /// A page temporary's publication (no-replace create or replace).
     PageRename,
+    /// The page directory's sync after a publication.
     PageSync,
+    /// A deleted page's move into the transaction trash.
     TrashMove,
+    /// The trash move's file and directory syncs.
     TrashSync,
+    /// A deletion's custody marker write.
     CustodyWrite,
+    /// A custody marker's removal.
     CustodyRetire,
+    /// The custody directory's listing.
     CustodyList,
+    /// A draft vehicle's temporary file.
     DraftTemp,
+    /// A draft vehicle's publication.
     DraftRename,
+    /// A draft vehicle's removal.
     DraftUnlink,
+    /// The draft directory's sync.
     DraftSync,
+    /// An unreadable draft vehicle's quarantine.
     Quarantine,
 }
 
@@ -36,6 +52,10 @@ pub(super) enum ErrorKind {
 pub(super) struct IoFailure {
     pub kind: ErrorKind,
     pub completed: bool,
+    /// The platform step that failed, a fixed literal (GH #538, I-5), and
+    /// its OS error code: a failed save's notice carries them (Q-P2b-3).
+    pub operation: Option<&'static str>,
+    pub os_error: Option<i32>,
 }
 
 pub(super) type IoResult<T> = Result<T, IoFailure>;
@@ -50,11 +70,29 @@ pub(super) struct MoveResult {
 /// reply and Retry. `unavailable` is why draft I/O is down: while it is,
 /// every draft effect fails without touching the filesystem. `unreadable`
 /// names vehicles launch could not quarantine; they stay in place untouched.
+/// `unsaved` is the persistent indicator at an open (SPEC-s2 §4.11, S9):
+/// the pages the host holds whose text is not on disk yet.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftStatus {
     pub(crate) unavailable: Option<String>,
     pub(crate) unreadable: Vec<String>,
+    pub(crate) unsaved: Vec<UnsavedPage>,
+}
+
+/// A page whose text is not on disk yet, and why (STEP3 §9, B-QA).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnsavedPage {
+    /// Its file, relative to the graph root.
+    pub(crate) path: String,
+    /// Launch recovered it from a crash-recovery copy, and nothing changed
+    /// it since: Tine is saving it.
+    pub(crate) recovered: bool,
+    /// Its file changed on disk; the user chooses.
+    pub(crate) conflict: bool,
+    /// Its saves keep failing (the save-error notice).
+    pub(crate) failing: bool,
 }
 
 /// One invocation exposes one publication phase. No filesystem access escapes
@@ -71,6 +109,13 @@ pub(super) trait HostIo {
     /// Release only this save's unpublished temporary vehicle at completion.
     fn page_finish(&mut self, _page: &str) {}
     fn read_page(&mut self, page: &str) -> IoResult<Text>;
+    /// The page file's metadata as its last read or own write's publication
+    /// read took it from the read's own handle, before the bytes, with
+    /// their revision (GH #623): the publication's pre-read stamp, which
+    /// spares the watcher another open and hash. Taken once.
+    fn take_stamp(&mut self, _page: &str) -> Option<crate::watch::Stamp> {
+        None
+    }
     fn page_temp(&mut self, page: &str, bytes: &Text) -> IoResult<()>;
     fn page_rename(&mut self, page: &str) -> IoResult<()>;
     fn page_sync(&mut self, page: &str) -> IoResult<Witness>;

@@ -132,9 +132,32 @@ fn y2_trashing_a_long_asset_and_page_keeps_a_recoverable_copy() {
     let title = "漢".repeat(84);
     let rel = format!("pages/{title}.md");
     fs::write(root.join(&rel), "- long page\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
-    pages::delete_page_expected(&store, None, &title, PageKind::Page, None, None)
-        .expect("delete an 84-char page");
+    // A page's deletion is the page host's (STEP3 §7): the identity checks,
+    // then page_owed and page_wait until it is published (Q-P2b-5).
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
+        .as_u64()
+        .unwrap();
+    let page = PageId::from(rel.as_str());
+    assert_eq!(
+        pages::delete_page_expected(&store, &host, session, &title, PageKind::Page, None)
+            .expect("delete an 84-char page"),
+        tine_store::PageOperation::Applied
+    );
+    let needs: Vec<_> = host
+        .owed(session, Some(std::slice::from_ref(&page)))
+        .unwrap()
+        .into_iter()
+        .map(|(key, version)| (key, version, None))
+        .collect();
+    let bound = std::time::Duration::from_secs(20);
+    assert_eq!(
+        host.wait_published(session, &needs, bound),
+        tine_store::PageOperation::Applied
+    );
+    drop(host);
     assert!(!root.join(&rel).exists());
     let pages_trash = names(&root.join("logseq/.tine-trash/pages"));
     assert_eq!(pages_trash.len(), 1, "{pages_trash:?}");

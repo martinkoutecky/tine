@@ -859,6 +859,19 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     onGraphWatchStatus: unsubscribed,
     onGraphUnreadablePages: unsubscribed,
     onGraphVerificationProgress: unsubscribed,
+    // A read-only export binds a page host that never holds a page: every page
+    // command is refused, so there is no mail, no debt and no draft file.
+    async pageWindowReloaded() {
+      return { session: 1, nextId: 1 };
+    },
+    async pageOwed() {
+      return [];
+    },
+    onPageMail: unsubscribed,
+    onGraphOpenWaiting: unsubscribed,
+    async legacyDraftsFile() {
+      return null;
+    },
   };
 
   const explicit: Record<string, unknown> = { ...answered, ...constant };
@@ -1005,6 +1018,11 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "onGraphWatchStatus",
   "onGraphUnreadablePages",
   "onGraphVerificationProgress",
+  "pageWindowReloaded",
+  "pageOwed",
+  "onPageMail",
+  "onGraphOpenWaiting",
+  "legacyDraftsFile",
 ] as const;
 
 /** Refused with `PublishedExportReadOnlyError`: writes, sync, install,
@@ -1100,6 +1118,16 @@ export const PUBLISHED_REFUSED_METHODS = [
   "createGraphVerification",
   "cancelGraphVerification",
   "saveGraphVerificationReport",
+  "pageOpen",
+  "pageSubmit",
+  "pageMove",
+  "pageDiscard",
+  "pageClose",
+  "pageDelete",
+  "pageWait",
+  "pageSaveNow",
+  "pageDraftsRetry",
+  "mergeLiveConflict",
 ] as const;
 
 /** Optional `Backend` members a published export leaves absent. */

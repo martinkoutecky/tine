@@ -252,6 +252,45 @@ fn failed_fsync_and_failed_rename_leave_original_bytes_and_report_failed() {
     }
 }
 
+/// Q-P2b-3 (GH #538): a failed save names the platform step and its OS
+/// error, so the notice can tell a refused no-replace rename from a failed
+/// temporary-file write.
+#[test]
+fn a_failed_save_carries_its_platform_step_and_os_error() {
+    let mut f = Fixture::new();
+    f.edit("c.md", "mine");
+    assert_eq!(f.host.start_save("c.md"), Disposition::Pending);
+    f.host.advance_save(0); // synced temp
+    f.host.advance_save(0); // absent base guard
+    fs::write(f.graph.join("c.md"), b"other").unwrap();
+    f.host.advance_save(0); // real EEXIST
+    let cause = f
+        .host
+        .events
+        .iter()
+        .find_map(|e| match e {
+            Event::SaveOutcome {
+                outcome: Outcome::Failed,
+                cause,
+                ..
+            } => Some(*cause),
+            _ => None,
+        })
+        .expect("the save failed")
+        .expect("the failure carries its I/O diagnosis");
+    assert!(cause.os_error.is_some(), "{cause:?}");
+    // The no-replace step each shipped target publishes with (I-16: all five).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let step = "renameat2(RENAME_NOREPLACE)";
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    let step = "renameatx_np(RENAME_EXCL)";
+    #[cfg(target_os = "windows")]
+    let step = "MoveFileExW(MOVEFILE_WRITE_THROUGH)";
+    assert_eq!(cause.operation, Some(step));
+    #[cfg(not(target_os = "windows"))]
+    assert_eq!(cause.os_error, Some(libc::EEXIST));
+}
+
 #[test]
 fn create_race_after_guard_is_no_replace_and_then_observes_conflict() {
     let mut f = Fixture::new();
@@ -262,10 +301,10 @@ fn create_race_after_guard_is_no_replace_and_then_observes_conflict() {
     fs::write(f.graph.join("c.md"), b"other").unwrap();
     f.host.advance_save(0); // real EEXIST
     assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"other");
-    assert!(f.host.events.contains(&Event::SaveOutcome {
-        page: "c.md".into(),
-        outcome: Outcome::Failed
-    }));
+    assert!(f.host.events.iter().any(|e| matches!(
+        e,
+        Event::SaveOutcome { page, outcome: Outcome::Failed, .. } if page == "c.md"
+    )));
     assert_eq!(f.host.observe("c.md"), Disposition::Applied);
     assert!(f.host.pages["c.md"].conflict);
     assert_eq!(
@@ -310,10 +349,10 @@ fn post_rename_sync_error_is_tagged_uncertain_and_retry_preserves_input() {
     assert!(error.completed);
     crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
     f.host.advance_save(0);
-    assert!(f.host.events.contains(&Event::SaveOutcome {
-        page: "a.md".into(),
-        outcome: Outcome::Uncertain
-    }));
+    assert!(f.host.events.iter().any(|e| matches!(
+        e,
+        Event::SaveOutcome { page, outcome: Outcome::Uncertain, .. } if page == "a.md"
+    )));
     assert!(f.host.pages["a.md"].risk);
     assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"mine");
     assert_eq!(f.host.observe("a.md"), Disposition::Applied);
@@ -378,10 +417,10 @@ fn trashed_external_payload_is_file_synced_before_namespace_witness() {
     crate::atomic_file::FAIL_FILE_SYNC.with(|flag| flag.set(true));
     f.host.advance_save(0);
     assert!(f.host.pages["a.md"].risk);
-    assert!(f.host.events.contains(&Event::SaveOutcome {
-        page: "a.md".into(),
-        outcome: Outcome::Uncertain
-    }));
+    assert!(f.host.events.iter().any(|e| matches!(
+        e,
+        Event::SaveOutcome { page, outcome: Outcome::Uncertain, .. } if page == "a.md"
+    )));
     assert!(!f
         .host
         .events
@@ -1056,13 +1095,31 @@ fn k_page_operation_keeps_independent_deletion_custody_after_restart() {
         Disposition::Pending
     );
     f.drain();
-    for page in ["a.md", "b.md"] {
+    // Option 2's order while Tine runs: the destination, then the referrer,
+    // then the source's deletion, each after the previous one published.
+    assert_eq!(f.host.start_save("a.md"), Disposition::Waiting);
+    assert_eq!(f.host.start_save("b.md"), Disposition::Waiting);
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"A");
+    let fault = |f: &mut Fixture| {
         f.host
             .fs
             .faults
             .insert(Phase::TrashSync, [io::ErrorKind::Other].into());
-        assert_eq!(f.save(page), Outcome::Uncertain);
-    }
+    };
+    fault(&mut f);
+    assert_eq!(f.save("b.md"), Outcome::Uncertain);
+    assert_eq!(
+        f.host.start_save("a.md"),
+        Disposition::Waiting,
+        "b is unwitnessed"
+    );
+    // A restart ends the order (completion only): launch's custody for b
+    // fails again, so b's marker stays, and a's recovered deletion runs.
+    fault(&mut f);
+    relaunch(&mut f);
+    fault(&mut f);
+    assert_eq!(f.save("a.md"), Outcome::Uncertain);
     assert_eq!(markers(&mut f), 2);
     reset_syncs();
     relaunch(&mut f);
@@ -1074,7 +1131,6 @@ fn k_page_operation_keeps_independent_deletion_custody_after_restart() {
         assert_eq!(f.save(page), Outcome::Published);
         assert_eq!(syncs(), 1, "only the restored deletion's marker");
     }
-    assert_eq!(f.save("c.md"), Outcome::Published);
     assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"A");
     assert_eq!(fs::read_dir(&f.trash).unwrap().count(), 2);
 }
@@ -1171,6 +1227,9 @@ fn semantic_rename_preserves_unrelated_prose_title_aliases_and_org_literals() {
             f.host.pages["c.md"].buf.as_deref(),
             Some(b"title:: C\nalias:: SourceAlias\n- body\n".as_slice())
         );
+        // Option 2's order: the referrer saves once the destination published.
+        assert_eq!(f.host.start_save(key), Disposition::Waiting);
+        assert_eq!(f.save("c.md"), Outcome::Published);
         assert_eq!(f.save(key), Outcome::Published);
         assert_eq!(fs::read(f.graph.join(key)).unwrap(), expected.as_bytes());
     }
@@ -1520,7 +1579,9 @@ fn r2_marker_temp_crash_cuts_do_not_accumulate() {
         let dir = custody_dir(&f);
         fs::create_dir_all(&dir).unwrap();
         let marker = dir.join(format!("{i}.tcm"));
-        std::mem::forget(crate::atomic_file::PreparedWrite::new(&marker, b"M").unwrap());
+        std::mem::forget(
+            crate::atomic_file::PreparedWrite::with_hooks(&marker, b"M", || {}, || {}).unwrap(),
+        );
         assert_eq!(markers(&mut f), 1);
         let synced = relaunch(&mut f);
         assert_eq!(markers(&mut f), 0);
@@ -1628,7 +1689,7 @@ fn an_old_spelling_draft_and_custody_marker_recover_through_the_entry_spelling()
     f.host.advance_save(0); // guard
     f.host.advance_save(0); // marker
     f.host.advance_save(0); // move
-    assert!(!f.graph.join("foo.md").exists());
+    assert!(spelled(&f.graph, "foo.md").is_empty());
     assert_eq!(markers(&mut f), 1);
     relaunch_as(&mut f, &[("Foo.md", "foo.md")]);
     assert!(f.host.custody.is_empty());
@@ -1637,7 +1698,7 @@ fn an_old_spelling_draft_and_custody_marker_recover_through_the_entry_spelling()
     assert_eq!(f.host.pages["Foo.md"].buf, None);
     assert_eq!(f.host.observe("Foo.md"), Disposition::Applied);
     assert_eq!(f.save("Foo.md"), Outcome::Published);
-    assert!(!f.graph.join("foo.md").exists() && !f.graph.join("Foo.md").exists());
+    assert!(spelled(&f.graph, "foo.md").is_empty());
 }
 
 /// Q4, case-sensitive semantics: a case-only rename to an absent distinct

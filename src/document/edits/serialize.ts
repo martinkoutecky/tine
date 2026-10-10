@@ -1,7 +1,8 @@
 import { doc, formatForBlock, pageByName } from "../model";
 import { splitProps } from "../../editor/properties";
 import { type ClipboardPayloadData, type ClipboardSourcePage, type ClipboardBlock, CLIPBOARD_PAYLOAD_MAX_BLOCKS, CLIPBOARD_PAYLOAD_MAX_RAW_BYTES } from "../../clipboard";
-import { pageInstanceGeneration } from "../save/engine";
+import { pageInstanceGeneration } from "../instance";
+import { stampCutSource } from "../host/wiring";
 import { type ExportNode } from "../../editor/exportText";
 import { type BlockDto } from "../../types";
 
@@ -66,12 +67,12 @@ export function buildClipboardPayload(ids: string[]): ClipboardPayloadData | nul
     const generation = pageInstanceGeneration(node.page);
     if (!page || generation === null) return null;
     if (!pages.has(page.name)) {
-      pages.set(page.name, {
+      pages.set(page.name, stampCutSource({
         name: page.name,
         kind: page.kind,
         ...(page.id ? { path: page.id } : {}),
         generation,
-      });
+      }));
     }
 
     const children: ClipboardBlock[] = [];

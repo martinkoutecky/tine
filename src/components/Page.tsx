@@ -543,6 +543,9 @@ export function PageView(): JSX.Element {
     if (pendingFeedRestart && !unsafe) {
       // This effect deliberately tracks the edit/conflict/save lifecycle.  Do
       // not untrack it with the initial route loader: it is the pending retry.
+      // The retry consumes the flag: a later lifecycle event while it is in
+      // flight starts no second read; a retry that defers again re-arms it.
+      pendingFeedRestart = false;
       void refreshJournalFeedForCurrentDay(journalOwner(route));
     }
   });
@@ -613,15 +616,6 @@ export function PageView(): JSX.Element {
             Tine did not modify the file. Try reopening, or check the file on disk.
           </div>
         </div>
-        {/* GH #541: a draft kept for this page stays reviewable and resolvable
-            even when its file cannot be opened. */}
-        <Show when={(() => { const r = currentRoute(); return r.kind === "page" ? liveConflictForPage(r.name, undefined) : undefined; })()}>
-          {(conflict) => (
-            <FailureBoundary region="The conflict panel">
-              <PageConflictResolution conflict={conflict()} />
-            </FailureBoundary>
-          )}
-        </Show>
       </div>
     }>
     <Show when={contentReady()} fallback={

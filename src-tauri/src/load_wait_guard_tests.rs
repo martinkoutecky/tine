@@ -62,6 +62,7 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
     let listed = commands(source);
     let other_sources = [
         include_str!("graph.rs"),
+        include_str!("page_commands.rs"),
         include_str!("commands/concord.rs"),
         include_str!("backup.rs"),
         include_str!("backup/restore.rs"),
@@ -77,7 +78,7 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
     for (name, asynchronous, body) in all {
         if reaches_load_wait(&body) {
             assert!(asynchronous, "I-13 / OG-RULES Rule 4: {name} reaches the initial graph-load wait; a synchronous Tauri command blocks the UI thread. Make it async and use the blocking pool; exemplar resolve_blocks");
-            assert!(body.contains("spawn_blocking(") || body.contains("off_ui_graph_read("),
+            assert!(body.contains("spawn_blocking(") || body.contains("off_ui_graph_read(") || body.contains("off_ui("),
                 "I-13 / OG-RULES Rule 4: {name} must run load-waiting work on the blocking pool; exemplar resolve_blocks");
         }
     }
@@ -110,7 +111,6 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
         "resolve_block",
         "resolve_blocks",
         "preview_block",
-        "delete_page",
         "merge_pages",
         "rename_file_to_page",
         "copy_guide_into_graph",
@@ -120,7 +120,6 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
         "write_highlights",
         "open_page_file",
         "get_page_by_path",
-        "save_pages",
     ] {
         assert!(
             listed
@@ -226,8 +225,8 @@ fn guard_detects_a_synchronous_child_process_command() {
 /// an identifier matches only at an identifier boundary (`store_at(` is not
 /// `restore_at(`).
 const WRITER_OR_FSYNC: &[&str] = &[
-    // store writer
-    "save_pages_wire(",
+    // store writer (`hosted(` admits to the page host, which saves)
+    "hosted(",
     "tine_graph_features::config::set_",
     "tine_graph_features::assets::save_asset(",
     "import_asset_file(",
@@ -345,7 +344,11 @@ fn leaves_main_thread(body: &str, helpers: &[String]) -> bool {
 /// thread; the frontend now issues it through its ordered lane, so this list
 /// must equal `ORDERED_COMMANDS` in src/orderedWrites.ts.
 const ORDERED_WRITES: &[&str] = &[
-    "save_pages",
+    "page_open",
+    "page_submit",
+    "page_move",
+    "page_discard",
+    "page_close",
     "save_workspaces",
     "set_preferred_workflow",
     "set_timetracking_enabled",
@@ -368,8 +371,6 @@ const ORDERED_WRITES: &[&str] = &[
     "rollback_pdf_area_image",
     "resolve_sync_conflict",
     "trash_sync_conflict",
-    "store_draft",
-    "retire_draft",
     "set_app_bool",
     "set_app_string",
     "set_capture_enter_files",
@@ -442,7 +443,7 @@ fn writer_and_fsync_tauri_commands_leave_the_ui_thread() {
          synchronous command queues behind it. Taking the store writer waits behind a watcher \
          cycle or a checkpoint capture, and an fsync took 2-3 s on a slow Windows disk (GH #623). \
          Make it async and run the write through crate::state::off_ui; exemplar \
-         commands.rs::save_pages. If it was ordered by the main thread, add it to ORDERED_WRITES \
+         page_commands.rs::page_submit. If it was ordered by the main thread, add it to ORDERED_WRITES \
          here and ORDERED_COMMANDS in src/orderedWrites.ts. Offenders: {offenders:?}"
     );
     for exemplar in ["with_config_store", "save_workspaces"] {
@@ -485,9 +486,9 @@ fn guard_detects_a_synchronous_writer_or_fsync_command() {
     let planted = [
         (
             "x.rs".to_string(),
-            "save_page".to_string(),
+            "page_submit".to_string(),
             false,
-            "{ save_wire::save_pages_wire(&slot.store, &e, f) }".to_string(),
+            "{ hosted(ctx, move |host| host.submit(s, i, &k, &d, v, None, &e)) }".to_string(),
         ),
         (
             "x.rs".to_string(),

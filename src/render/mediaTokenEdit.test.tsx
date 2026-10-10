@@ -19,6 +19,8 @@ import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import { setGraphMeta } from "../graphSession";
 import { backend } from "../backend";
+import { bindTestHost } from "../document/host/wiring.test.support";
+import { openAsLoaded } from "../components/hostConflict.test.support";
 
 beforeAll(async () => {
   await initParser();
@@ -76,6 +78,8 @@ describe("media token edits target the clicked token", () => {
   });
 
   it("trashing an image whose label has markup removes its reference, then the file", async () => {
+    // The reference removal publishes through the page host, which read the page shown.
+    openAsLoaded(await bindTestHost());
     const { host, dispose } = await mount("see ![**b**](../assets/x.png) here");
     const trashAsset = await trash(host.querySelector(".asset-action-trash")!);
     expect(doc.byId.body.raw).toBe("see here");
@@ -86,6 +90,8 @@ describe("media token edits target the clicked token", () => {
 
   it("a token that cannot be located in the block text trashes nothing", async () => {
     // Rendered text is not the block's raw (a stale render / an expansion).
+    // Bound, so a save could succeed: the refusal is the token lookup's.
+    openAsLoaded(await bindTestHost());
     const { host, dispose } = await mount("unrelated text", `see ${IMG}`);
     const trashAsset = await trash(host.querySelector(".asset-action-trash")!);
     expect(doc.byId.body.raw).toBe("unrelated text");

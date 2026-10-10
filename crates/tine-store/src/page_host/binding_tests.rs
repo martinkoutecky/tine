@@ -321,6 +321,14 @@ impl Live {
         .unwrap()
     }
 
+    /// Pause or resume request application and the draft worker (Q-P2b-4).
+    fn pause(&self, paused: bool) {
+        self.host
+            .driver
+            .shared
+            .with_state(|state| state.progress.host.paused = paused);
+    }
+
     fn disk(&self, key: &str) -> String {
         fs::read_to_string(self.root.join(key)).unwrap()
     }
@@ -414,6 +422,30 @@ fn open_submit_and_mail_round_trip_through_a_real_store() {
     live.submit(&key, "- made\n", page.version, None).unwrap();
     live.until_disk(&key, "- made\n");
     assert!(live.host.pages_recoverable(&[(key, page.version + 1)]));
+    live.host.stop();
+}
+
+/// Q-P2b-3 (GH #538): the save-failure notice names the failed platform
+/// step and its OS error, and a later published save clears both.
+#[cfg(unix)]
+#[test]
+fn q_p2b_3_the_save_failure_notice_names_the_platform_step_and_os_error() {
+    use std::os::unix::fs::PermissionsExt;
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let pages = live.root.join("pages");
+    fs::set_permissions(&pages, fs::Permissions::from_mode(0o555)).unwrap();
+    live.submit(&key, "- two\n", page.version, None).unwrap();
+    let failed = live.wait(&key, "save error", |mail| mail.notice.save_error);
+    fs::set_permissions(&pages, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(failed.notice.operation, Some("create temporary file"));
+    assert_eq!(failed.notice.os_error, Some(libc::EACCES));
+    let saved = live.wait(&key, "saved", |mail| !mail.notice.save_error);
+    assert_eq!(
+        (saved.notice.operation, saved.notice.os_error),
+        (None, None)
+    );
+    live.until_disk(&key, "- two\n");
     live.host.stop();
 }
 
@@ -1383,6 +1415,9 @@ mod stop_saved;
 #[path = "binding_rename_tests.rs"]
 mod rename;
 
+#[path = "binding_order_tests.rs"]
+mod order;
+
 /// REVIEW-3a V4, amendment A-V4: while a host holds a page, its publication
 /// consumer is the page's only index writer. The reviewer's schedule: the
 /// host has not observed disk B yet (another transaction holds the page's
@@ -1444,6 +1479,7 @@ fn a_consumer_publication_names_the_bytes_it_publishes() {
         spelling: "pages/a.md".into(),
         bytes: Some(Arc::from(&b"title:: Owner\n- o\n"[..])),
         own: None,
+        stamp: None,
     };
     assert!(index(&store, &publication));
     drop(writer);
@@ -1534,7 +1570,7 @@ fn f1_publication_queries_never_answer_for_another_session() {
     });
     assert_eq!(
         waited,
-        Some(false),
+        PageOperation::Refused,
         "F1: a reload ends the old session's wait"
     );
     assert!(started.elapsed() < Duration::from_secs(10));
@@ -1543,12 +1579,12 @@ fn f1_publication_queries_never_answer_for_another_session() {
     assert_eq!(
         live.host
             .wait_published(now, &published, Duration::from_secs(20)),
-        Some(true)
+        PageOperation::Applied
     );
     assert_eq!(
         live.host
             .wait_published(first, &published, Duration::from_secs(20)),
-        Some(false),
+        PageOperation::Refused,
         "F1: never success for an earlier session"
     );
     assert_eq!(live.host.owed(first, None), None);
@@ -1564,7 +1600,7 @@ fn f1_publication_queries_never_answer_for_another_session() {
     );
     assert_eq!(
         host.wait_published(now, &published, Duration::from_secs(1)),
-        Some(false)
+        PageOperation::Refused
     );
     host.stop();
 }
@@ -1645,11 +1681,17 @@ fn wait_published_is_true_on_publication_false_on_conflict_or_bound() {
     let wait = |needs: &[(String, u64, Option<String>)], bound| {
         live.host.wait_published(session, needs, bound)
     };
-    assert_eq!(wait(&[(key.clone(), version, None)], long), Some(true));
+    assert_eq!(
+        wait(&[(key.clone(), version, None)], long),
+        PageOperation::Applied
+    );
     assert_eq!(live.disk(&key), "- two\n");
     let start = Instant::now();
     let later = [(key.clone(), version + 1, None)];
-    assert_eq!(wait(&later, Duration::from_millis(300)), None);
+    assert_eq!(
+        wait(&later, Duration::from_millis(300)),
+        PageOperation::Pending
+    );
     assert!(
         start.elapsed() >= Duration::from_millis(300),
         "S1: no early false"
@@ -1658,11 +1700,125 @@ fn wait_published_is_true_on_publication_false_on_conflict_or_bound() {
     let mine = live.answer(&key, id).answer.unwrap().version;
     fs::write(live.root.join(&key), "- theirs\n").unwrap();
     let start = Instant::now();
-    assert_eq!(wait(&[(key.clone(), mine, None)], long), Some(false));
+    assert_eq!(
+        wait(&[(key.clone(), mine, None)], long),
+        PageOperation::Refused
+    );
     assert!(
         start.elapsed() < Duration::from_secs(10),
         "a conflict ends the wait"
     );
+    live.host.stop();
+}
+
+/// Q-P2b-4 (STEP3-DESIGN, P2b checkpoint decisions): a barrier reads the
+/// logical state. With the draft worker paused before a deletion's
+/// application, `owed` names the page at the deletion's version and
+/// `page_wait` does not vouch for it until its file is gone from the disk.
+#[test]
+fn q_p2b_4_a_deletion_in_flight_is_owed_and_unpublished_until_its_file_is_gone() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let session = live.host.session();
+    let page = PageId::from("pages/a.md");
+    live.pause(true);
+    // Finding B: the delete waits for its own publication, so it runs
+    // beside the barrier calls.
+    std::thread::scope(|scope| {
+        let deleted = scope.spawn(|| live.host.delete(session, &page, b"- one\n"));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let owed = loop {
+            let owed = live
+                .host
+                .owed(session, Some(std::slice::from_ref(&page)))
+                .unwrap();
+            if !owed.is_empty() || Instant::now() >= deadline {
+                break owed;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(owed.len(), 1, "the in-flight deletion is debt: {owed:?}");
+        let needs = [(owed[0].0.clone(), owed[0].1, None)];
+        assert_eq!(
+            live.host
+                .wait_published(session, &needs, Duration::from_millis(300)),
+            PageOperation::Pending
+        );
+        assert!(live.root.join("pages/a.md").exists());
+        live.pause(false);
+        assert_eq!(deleted.join().unwrap(), PageOperation::Applied);
+        assert!(
+            !live.root.join("pages/a.md").exists(),
+            "the delete's Applied vouches for the disk"
+        );
+        assert_eq!(
+            live.host
+                .wait_published(session, &needs, Duration::from_secs(20)),
+            PageOperation::Applied
+        );
+    });
+    live.host.stop();
+}
+
+/// Q-P2b-5: the deletion is bound to the bytes the identity checks read. An
+/// external editor or sync service that changes the file between the checks
+/// and the host's operation read makes the deletion refuse, and the file
+/// keeps the new bytes (docs/storage-contract.md
+/// `tine-store::page_host::delete`).
+#[test]
+fn q_p2b_5_a_deletion_refuses_when_the_file_changed_after_its_checks() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let session = live.host.session();
+    let page = PageId::from("pages/a.md");
+    std::fs::write(live.root.join("pages/a.md"), "- external\n").unwrap();
+    assert_eq!(
+        live.host.delete(session, &page, b"- one\n"),
+        PageOperation::Refused
+    );
+    assert_eq!(
+        std::fs::read(live.root.join("pages/a.md")).unwrap(),
+        b"- external\n"
+    );
+    live.host.stop();
+}
+
+/// Q-P2b-4: a submit the host admitted but has not applied is debt too. The
+/// window's settle loop (ask `owed`, wait, ask again) ends only once the
+/// submitted text is on disk.
+#[test]
+fn q_p2b_4_a_queued_submit_is_owed_until_its_text_is_on_disk() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let session = live.host.session();
+    live.pause(true);
+    live.submit(&key, "- two\n", page.version, None).unwrap();
+    let owed = live.host.owed(session, None).unwrap();
+    assert!(
+        owed.iter().any(|(k, v)| *k == key && *v >= page.version),
+        "the queued submit is debt: {owed:?}"
+    );
+    let needs: Vec<_> = owed.into_iter().map(|(k, v)| (k, v, None)).collect();
+    assert_eq!(
+        live.host
+            .wait_published(session, &needs, Duration::from_millis(300)),
+        PageOperation::Pending
+    );
+    assert_eq!(live.disk(&key), "- one\n");
+    live.pause(false);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let owed = live.host.owed(session, None).unwrap();
+        if owed.is_empty() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "debt never cleared: {owed:?}");
+        let needs: Vec<_> = owed.into_iter().map(|(k, v)| (k, v, None)).collect();
+        assert_eq!(
+            live.host
+                .wait_published(session, &needs, Duration::from_secs(20)),
+            PageOperation::Applied
+        );
+    }
+    assert_eq!(live.disk(&key), "- two\n");
     live.host.stop();
 }
 
@@ -1708,6 +1864,117 @@ fn b_q1_a_restore_relaunches_into_unavailable_drafts_and_retry_restores_them() {
     fs::remove_file(&drafts).unwrap();
     assert_eq!(live.host.drafts_retry(), Ok(()));
     assert_eq!(live.host.draft_status(), DraftStatus::default());
+}
+
+/// S9, STEP3 §9: an open names the pages whose text is not on disk yet. A
+/// page launch recovered from its draft is `recovered` while it stays at
+/// the version launch installed; input typed into it since is ordinary
+/// unsaved input; a page whose saves keep failing says so; a published page
+/// is not named.
+#[test]
+fn s9_draft_status_names_recovered_and_unsaved_pages() {
+    use crate::page_host::io::{Phase, UnsavedPage};
+    let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- b\n")]);
+    live.open("pages/b.md");
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    live.faults(Phase::PageTemp, 100);
+    assert!(live.host.stop_begin(id, StopMode::Switch));
+    assert_eq!(
+        live.until_stop(),
+        StopState::Ready,
+        "the failed save is drafted"
+    );
+    let app = live.app();
+    let Live {
+        _dir,
+        root,
+        store,
+        host,
+        ..
+    } = live;
+    assert!(host.stop_finish().is_ok());
+    assert_eq!(
+        fs::read_to_string(root.join("pages/a.md")).unwrap(),
+        "- one\n"
+    );
+    crate::page_host::faults::fail(Phase::PageTemp, std::io::ErrorKind::Other, 100);
+    let (sender, mail) = mpsc::channel();
+    let host = PageHost::start(&store, &app, "test-graph", move |mail| {
+        let _ = sender.send(mail);
+    })
+    .unwrap();
+    let live = Live {
+        _dir,
+        root,
+        store,
+        host,
+        mail,
+        id: std::cell::Cell::new(100),
+    };
+    let unsaved = |recovered, failing| {
+        vec![UnsavedPage {
+            path: "pages/a.md".into(),
+            recovered,
+            conflict: false,
+            failing,
+        }]
+    };
+    assert_eq!(live.host.draft_status().unsaved, unsaved(true, false));
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- three\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    assert_eq!(live.host.draft_status().unsaved, unsaved(false, false));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while live.host.draft_status().unsaved != unsaved(false, true) {
+        assert!(Instant::now() < deadline, "the save error never showed");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    live.host
+        .driver
+        .shared
+        .with_state(|state| state.progress.host.fs.faults.clear());
+    let deadline = Instant::now() + Duration::from_secs(40);
+    while !live.host.draft_status().unsaved.is_empty() {
+        assert!(Instant::now() < deadline, "the page never published");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(live.disk(&key), "- three\n");
+    live.host.stop();
+}
+
+/// og I1c (audit F17) on the host: a transient removal of a page with
+/// unsaved input (an external editor's temp+rename, a sync pass mid-delivery)
+/// conflicts it; the file back with other bytes stays conflicted; back at
+/// the page's baseline the conflict lifts, and the held edit saves over it.
+#[test]
+fn i1c_a_removal_back_at_the_baseline_lifts_the_conflict_and_the_edit_saves() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    live.faults(crate::page_host::io::Phase::PageTemp, 1000);
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    fs::remove_file(live.root.join(&key)).unwrap();
+    let removed = live.wait(&key, "removal", |mail| {
+        mail.page
+            .as_ref()
+            .is_some_and(|page| page.disk == Some(DiskToken::NoFile))
+    });
+    assert!(removed.page.unwrap().conflict);
+    assert!(live.external(&key, "- other\n").conflict);
+    assert!(!live.external(&key, "- one\n").conflict);
+    live.host
+        .driver
+        .shared
+        .with_state(|state| state.progress.host.fs.faults.clear());
+    let deadline = Instant::now() + Duration::from_secs(40);
+    while live.disk(&key) != "- two\n" {
+        assert!(Instant::now() < deadline, "the held edit never saved");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(live.host.draft_status().unsaved.is_empty());
+    live.host.stop();
 }
 
 /// REVIEW-3b-P1 R2: a key named by a known, unsynced draft copy is not

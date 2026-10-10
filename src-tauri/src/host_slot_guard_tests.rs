@@ -28,13 +28,30 @@ fn production_files(dir: &Path, out: &mut Vec<(String, String)>) {
             continue;
         }
         let source = std::fs::read_to_string(&path).unwrap();
-        let production = source
-            .split("#[cfg(test)]\nmod tests")
-            .next()
-            .unwrap()
-            .to_owned();
-        out.push((path.display().to_string(), production));
+        out.push((path.display().to_string(), without_test_modules(&source)));
     }
+}
+
+/// `source` without its top-level `#[cfg(test)] mod … { … }` blocks (each
+/// ends at the first column-0 `}`; a test line read as production fails a
+/// guard loudly, never silently).
+fn without_test_modules(source: &str) -> String {
+    let mut production = String::new();
+    let mut rest = source;
+    while let Some(at) = rest.find("#[cfg(test)]\nmod ") {
+        let header = &rest[at..];
+        let header_end = header.find('\n').unwrap() + 1;
+        let line = &header[header_end..][..header[header_end..].find('\n').unwrap_or(0)];
+        production.push_str(&rest[..at]);
+        if !line.ends_with('{') {
+            // `#[cfg(test)] mod name;`: a test file, skipped by name.
+            rest = &rest[at + header_end..];
+            continue;
+        }
+        rest = header.find("\n}\n").map_or("", |end| &header[end + 3..]);
+    }
+    production.push_str(rest);
+    production
 }
 
 fn ident_char(c: char) -> bool {
@@ -350,5 +367,58 @@ fn standard(slot: &GraphSlot) {
             "bound_windows takes the host lock or the registry and runs under the gate",
         ],
         "{found:?}"
+    );
+}
+
+/// Production `GraphRegistry::bind` call sites: every one must give the
+/// window a running page host (STEP3 §3, step 3b P2b).
+fn binds(files: &[(String, String)]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (file, source) in files {
+        for (name, body) in functions(source) {
+            for _ in body.matches(".bind(") {
+                found.push(format!(
+                    "{}::{name}",
+                    Path::new(file).file_name().unwrap().to_string_lossy()
+                ));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn every_graph_window_binding_runs_a_host() {
+    let mut files = Vec::new();
+    production_files(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    assert_eq!(
+        binds(&files),
+        ["graph.rs::load_graph_for_label"],
+        "a graph window binds only in load_graph_for_label, which starts its page host \
+         (the only writer of the window's page edits; a binding without one has no save \
+         path); a second binding site would need its own host start"
+    );
+    let (_, graph) = files.iter().find(|(f, _)| f.ends_with("graph.rs")).unwrap();
+    let (_, load) = functions(graph)
+        .into_iter()
+        .find(|(name, _)| name == "load_graph_for_label")
+        .unwrap();
+    // The new-open arm starts the host; the adopted arm keeps its own.
+    assert!(load.contains("start_host(") && load.contains("PageHostSlot::Running(host)"));
+    assert!(load.contains("retirement.adopt("));
+}
+
+#[test]
+fn a_planted_second_binding_fails_the_guard() {
+    let planted = "fn load_graph_for_label() {\n    registry.bind(a, b);\n}\n\
+                   fn sneaky() {\n    state.graphs.write().unwrap().bind(a, b);\n}\n\
+                   #[cfg(test)]\nmod tests {\n    fn fixture() {\n        registry.bind(a, b);\n    }\n}\n";
+    let files = vec![("graph.rs".to_owned(), without_test_modules(planted))];
+    assert_eq!(
+        binds(&files),
+        ["graph.rs::load_graph_for_label", "graph.rs::sneaky"]
     );
 }

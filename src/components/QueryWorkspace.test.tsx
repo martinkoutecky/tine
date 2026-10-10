@@ -31,7 +31,7 @@ afterEach(() => {
 function materializeDeps(overrides: Partial<MaterializeQueryDependencies> = {}): MaterializeQueryDependencies {
   return {
     resolvePage: vi.fn(async (name: string) => ({ kind: "absent" as const, id: `pages/${name}.md` })),
-    savePages: vi.fn(async () => ({ ok: ["rev-new"] })),
+    createPage: vi.fn(async () => "rev-new"),
     runGraphSearch: vi.fn(async () => ({ hits: [], diagnostics: [], explanation: { branches: [{ description: "valid", children: [] }] }, cancelled: false })),
     ...overrides,
   };
@@ -48,7 +48,7 @@ describe("materializeQueryWorkspace", () => {
     resetStore();
     finish({ kind: "absent", id: "pages/Saved.md" });
     expect(await materializing).toMatchObject({ ok: false, kind: "error" });
-    expect(deps.savePages).not.toHaveBeenCalled();
+    expect(deps.createPage).not.toHaveBeenCalled();
   });
 
   it("rejects empty, exclusion-only, and Rust-diagnostic friendly searches before any graph write", async () => {
@@ -59,7 +59,7 @@ describe("materializeQueryWorkspace", () => {
       const result = await materializeQueryWorkspace({ title: "Unsafe", sourceKind: "search", source, presentation: "search", routeId: "query-unsafe" }, deps);
       expect(result.ok).toBe(false);
       expect(deps.resolvePage).not.toHaveBeenCalled();
-      expect(deps.savePages).not.toHaveBeenCalled();
+      expect(deps.createPage).not.toHaveBeenCalled();
     }
   });
   it("uses an explicit stable route lane and zero-limit Rust validation for every nonblank friendly save", async () => {
@@ -76,20 +76,20 @@ describe("materializeQueryWorkspace", () => {
     await materializeQueryWorkspace({ ...input, source: "   " }, blank);
     expect(blank.runGraphSearch).not.toHaveBeenCalled();
     expect(blank.resolvePage).not.toHaveBeenCalled();
-    expect(blank.savePages).not.toHaveBeenCalled();
+    expect(blank.createPage).not.toHaveBeenCalled();
   });
   it("rejects JavaScript-invalid, cancelled, and failed Rust validation before page lookup", async () => {
     const input = { title: "Unsafe", sourceKind: "search" as const, source: "/(unclosed/", presentation: "search" as const, routeId: "query-rejected" };
     const diagnostic = materializeDeps({ runGraphSearch: vi.fn(async () => ({ hits: [], diagnostics: [{ code: "invalid_regex", message: "invalid regex" }], explanation: { branches: [] }, cancelled: false })) });
     await materializeQueryWorkspace(input, diagnostic);
     expect(diagnostic.runGraphSearch).toHaveBeenCalledWith("/(unclosed/", 0, 0, "query-workspace:query-rejected:materialize", true);
-    expect(diagnostic.resolvePage).not.toHaveBeenCalled(); expect(diagnostic.savePages).not.toHaveBeenCalled();
+    expect(diagnostic.resolvePage).not.toHaveBeenCalled(); expect(diagnostic.createPage).not.toHaveBeenCalled();
     const cancelled = materializeDeps({ runGraphSearch: vi.fn(async () => ({ hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: true })) });
     await materializeQueryWorkspace({ ...input, source: "alpha" }, cancelled);
-    expect(cancelled.resolvePage).not.toHaveBeenCalled(); expect(cancelled.savePages).not.toHaveBeenCalled();
+    expect(cancelled.resolvePage).not.toHaveBeenCalled(); expect(cancelled.createPage).not.toHaveBeenCalled();
     const failed = materializeDeps({ runGraphSearch: vi.fn(async () => { throw new Error("IPC unavailable"); }) });
     await materializeQueryWorkspace({ ...input, source: "alpha" }, failed);
-    expect(failed.resolvePage).not.toHaveBeenCalled(); expect(failed.savePages).not.toHaveBeenCalled();
+    expect(failed.resolvePage).not.toHaveBeenCalled(); expect(failed.createPage).not.toHaveBeenCalled();
   });
   it("creates one canonical friendly query block through the guarded no-baseline save", async () => {
     const deps = materializeDeps();
@@ -118,9 +118,10 @@ describe("materializeQueryWorkspace", () => {
       }],
     });
     expect(deps.resolvePage).toHaveBeenCalledWith("Project dashboard", "page");
-    expect(deps.savePages).toHaveBeenCalledTimes(1);
-    // Saved to the backend's Absent id (its name format and preferred format).
-    expect(deps.savePages).toHaveBeenCalledWith([{ id: "pages/Project dashboard.md", page: result.page, baseRev: null, force: false, kinds: ["create-page"] }], 1);
+    expect(deps.createPage).toHaveBeenCalledTimes(1);
+    // Created as a new page on the window's binding (the host opens the backend's
+    // Absent id for it; the id's extension chose the page's format).
+    expect(deps.createPage).toHaveBeenCalledWith(result.page, 1);
     expect(pageInventoryRev()).toBeGreaterThan(beforeInventory);
   });
 
@@ -179,7 +180,7 @@ describe("materializeQueryWorkspace", () => {
     }, deps);
 
     expect(result).toMatchObject({ ok: false, kind: "exists" });
-    expect(deps.savePages).not.toHaveBeenCalled();
+    expect(deps.createPage).not.toHaveBeenCalled();
   });
 
   it("refuses an alias title without a write and keeps the query in the workspace (B15b)", async () => {
@@ -196,12 +197,12 @@ describe("materializeQueryWorkspace", () => {
 
     expect(result).toMatchObject({ ok: false, kind: "exists" });
     expect(result.ok ? "" : result.message).toContain("alias");
-    expect(deps.savePages).not.toHaveBeenCalled();
+    expect(deps.createPage).not.toHaveBeenCalled();
   });
 
   it("keeps the workspace virtual when a create race reaches the save guard", async () => {
     const deps = materializeDeps({
-      savePages: vi.fn(async () => { throw new Error("conflict"); }),
+      createPage: vi.fn(async () => { throw new Error("conflict"); }),
     });
     const result = await materializeQueryWorkspace({
       title: "Raced",
@@ -212,7 +213,7 @@ describe("materializeQueryWorkspace", () => {
     }, deps);
 
     expect(result).toMatchObject({ ok: false, kind: "conflict" });
-    expect(deps.savePages).toHaveBeenCalledTimes(1);
+    expect(deps.createPage).toHaveBeenCalledTimes(1);
   });
 
   it("writes an Org graph's view and scope properties in a :PROPERTIES: drawer, not as body text (GH #25 class)", async () => {
@@ -229,7 +230,7 @@ describe("materializeQueryWorkspace", () => {
     expect(raw).toBe('{{query (search "alpha")}}\n:PROPERTIES:\n:tine.view: table\n:tine.page-match-scope: content\n:END:');
     // The markdown spelling in an Org file is visible text that is never read back.
     expect(raw).not.toContain("::");
-    expect(deps.savePages).toHaveBeenCalledWith([expect.objectContaining({ id: "pages/Org saved.org" })], 1);
+    expect(deps.createPage).toHaveBeenCalledWith(result.page, 1);
   });
 
   it("keeps a markdown graph's property lines byte-identical to before", async () => {
@@ -263,7 +264,7 @@ describe("materializeQueryWorkspace", () => {
         () => current,
       );
       expect(result, moveAt).toMatchObject({ ok: false, kind: "superseded" });
-      expect(deps.savePages, moveAt).not.toHaveBeenCalled();
+      expect(deps.createPage, moveAt).not.toHaveBeenCalled();
       expect(pageInventoryRev(), moveAt).toBe(before);
     }
   });
@@ -333,7 +334,7 @@ function executionFixture(explained: boolean): QueryExecution {
 function workspaceDeps(): QueryWorkspaceDependencies {
   return {
     resolvePage: vi.fn(async (name: string) => ({ kind: "absent" as const, id: `pages/${name}.md` })),
-    savePages: vi.fn(async () => ({ ok: ["saved-rev"] })),
+    createPage: vi.fn(async () => "saved-rev"),
     runGraphSearch: vi.fn(async (_source, pageLimit, blockLimit, _lane, explain) =>
       pageLimit === 0 && blockLimit === 0
         ? { hits: [], diagnostics: [], explanation: { branches: [{ description: "valid", children: [] }] }, cancelled: false }
@@ -797,7 +798,7 @@ describe("QueryWorkspace", () => {
     typeInto(root, ".query-workspace-source", "beta");
     release({ kind: "absent", id: "pages/Stale.md" });
     await waitFor(() => expect(root.querySelector(".query-workspace-save-error")?.textContent).toContain("Try saving again"));
-    expect(deps.savePages).not.toHaveBeenCalled();
+    expect(deps.createPage).not.toHaveBeenCalled();
     expect(router.replaceActiveRoute).not.toHaveBeenCalled();
     expect(root.querySelector<HTMLButtonElement>('.query-workspace-save button[type="submit"]')!.disabled).toBe(false);
     dispose();
@@ -807,17 +808,17 @@ describe("QueryWorkspace", () => {
     const route: QueryRoute = { kind: "query", id: "query-late", sourceKind: "search", source: "alpha", presentation: "list" };
     const router = routerMock(route);
     const deps = workspaceDeps();
-    let finish!: (value: { ok: string[] }) => void;
-    deps.savePages = vi.fn(() => new Promise<{ ok: string[] }>((resolve) => { finish = resolve; }));
+    let finish!: (value: string | null) => void;
+    deps.createPage = vi.fn(() => new Promise<string | null>((resolve) => { finish = resolve; }));
     const root = document.createElement("div");
     document.body.append(root);
     const dispose = render(() => <QueryWorkspace route={route} router={router} deps={deps} />, root);
     await waitFor(() => expect(root.querySelector(".query-workspace-status")?.textContent).toContain("2 results"));
     typeInto(root, ".query-workspace-save input", "Committed");
     submitSave(root);
-    await waitFor(() => expect(deps.savePages).toHaveBeenCalled());
+    await waitFor(() => expect(deps.createPage).toHaveBeenCalled());
     typeInto(root, ".query-workspace-source", "beta");
-    finish({ ok: ["rev"] });
+    finish("rev");
     await waitFor(() => expect(root.querySelector(".query-workspace-save-notice")?.textContent).toContain("Committed"));
     expect(router.replaceActiveRoute).not.toHaveBeenCalled();
     expect(root.querySelector(".query-workspace-save-error")).toBeNull();
@@ -850,10 +851,10 @@ describe("QueryWorkspace", () => {
       name: "Saved search",
       pageKind: "page",
     }));
-    const saved = vi.mocked(deps.savePages).mock.calls[0][0][0].page;
+    const saved = vi.mocked(deps.createPage).mock.calls[0][0];
     expect(saved.blocks).toHaveLength(1);
     expect(saved.blocks[0].raw).toBe('{{query (search "alpha OR beta")}}\ntine.view:: board');
-    expect(deps.savePages).toHaveBeenCalledWith([{ id: "pages/Saved search.md", page: saved, baseRev: null, force: false, kinds: ["create-page"] }], 1);
+    expect(deps.createPage).toHaveBeenCalledWith(saved, 1);
 
     dispose();
   });

@@ -1,5 +1,5 @@
 import { type BlockDto, type Format, type PageDto, type RefGroup } from "../types";
-import { Node, FeedPage, DocState, doc } from "./model";
+import { Node, FeedPage, DocState, doc, freshId } from "./model";
 import { seedFacets, facetsFromDto } from "../render/facets";
 import { trimBlockTrailingSpace } from "../editor/format";
 import { isPageHeaderPropertiesOnly, pageHeaderKeys } from "../editor/properties";
@@ -117,8 +117,11 @@ function flatten(
     // serializes the other's content. The block's raw (incl. its id:: line) is
     // untouched, so the file on disk is unchanged. Rust dedups ids WITHIN a page,
     // so this only fires across pages.
-    const existing = byId[d.id];
-    const key = existing && existing.page !== pageName ? `dup~${crypto.randomUUID()}` : d.id;
+    // A DTO built in the window (a created page, a template, the welcome
+    // journal) has no runtime ids yet: each such block gets a fresh one, or
+    // they would all collapse into one node.
+    const existing = d.id ? byId[d.id] : undefined;
+    const key = !d.id ? freshId() : existing && existing.page !== pageName ? `dup~${crypto.randomUUID()}` : d.id;
     const childIds = flatten(d.children, key, pageName, byId, format);
     byId[key] = {
       id: key,

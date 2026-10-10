@@ -33,7 +33,6 @@ import { installBackgroundFlush } from "../backgroundFlush";
 import { dispatchFocusedEditorCommand } from "../editorCommandBridge";
 import { setGraphMeta } from "../graphSession";
 import { setToasts, toasts } from "../toasts";
-import { resetSaveState } from "../document/save/engine";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
 import { isRecordingAudio, setRecordingAudio } from "../mediaCapture";
@@ -54,7 +53,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  resetSaveState();
   resetStore();
   setToasts([]);
   setGraphMeta(null);

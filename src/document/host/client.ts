@@ -4,9 +4,7 @@
 // page-host port and a document port; it holds no base revisions, retries, drafts
 // or conflict detection of its own (§4.3).
 //
-// Step 3b P2a: unwired. Old persistence (`save/engine.ts`) is the only authority
-// until P2b; `boundary.guard.test.ts` ("P2a client is unwired") pins that nothing
-// in production imports this folder.
+// Wired by `wiring.ts` (step 3b P2b): the only page persistence of the window.
 
 import type { ClipboardSourcePage } from "../../clipboard";
 import type { EditKind, EditKinds } from "../../editKind";
@@ -46,6 +44,9 @@ export interface DocumentPort {
   holdsPush(name: string): boolean;
   /** The page was deleted in this window (delete tombstone). */
   tombstoned(name: string): boolean;
+  /** The host took this instance's text, now on disk at `rev` (a took
+   * answer's revision): the page's baseline for later reads. */
+  took(name: string, rev: string): void;
 }
 
 export interface AssetWrites {
@@ -56,8 +57,8 @@ export interface AssetWrites {
 type Request = "open" | "submit" | "move" | "discard" | "close";
 type Phase =
   | { kind: "idle" }
-  | { kind: "sending"; id: number; request: Request; editSeq: number }
-  | { kind: "inFlight"; id: number; request: Request; editSeq: number };
+  | { kind: "sending"; id: number; request: Request; editSeq: number; instance: number | null }
+  | { kind: "inFlight"; id: number; request: Request; editSeq: number; instance: number | null };
 
 export interface Answered { took: boolean; refusal: PageRefusal | string | null }
 
@@ -83,10 +84,14 @@ interface Page {
   held: { content: Content; version: number } | null;
   /** The latest version the host took from this window: what must publish (S1). */
   needed: number | null;
+  /** The kind a page not loaded yet is created as (`createPage`). */
+  hint?: PageKind;
   refusal: PageRefusal | string | null;
   refs: Set<Acquisition>;
   kinds: EditKind[];
   timer: ReturnType<typeof setTimeout> | null;
+  /** When the pending debounce's burst began (its max-wait anchor). */
+  burst: number | null;
   waiters: (() => void)[];
   answered: ((answer: Answered) => void)[];
 }
@@ -99,6 +104,8 @@ export interface ReviewTicket { name: string; instance: number; session: number;
   version: number | null; disk: DiskToken }
 
 const SEND_DEBOUNCE_MS = 400;
+/** A continuous burst still sends at least this often (STEP3 §13, §16-6). */
+const SEND_MAX_WAIT_MS = 1000;
 
 function sameToken(a: DiskToken | null | undefined, b: DiskToken | null | undefined): boolean {
   return !!a && !!b && a.kind === b.kind && (a.kind === "no-file" || a.rev === (b as { rev: string }).rev);
@@ -125,6 +132,10 @@ export class HostClient {
   private readonly frozen = new Set<string>();
   /** Every local edit anywhere: a change across a barrier means new work (S1). */
   editClock = 0;
+  /** The last host answer this client consumed (a restore's watermark, S8). */
+  consumed = 0;
+  /** Told after every change a view shows (an edit, an admission, an answer, a push, a drop). */
+  onChange: () => void = () => {};
 
   constructor(
     readonly host: HostPort,
@@ -179,10 +190,10 @@ export class HostClient {
     return () => {
       if (released) return;
       released = true;
-      const current = this.pages.get(name);
-      if (!current?.refs.delete(ref)) return;
-      if (ref.pin) this.reevaluate(current);
-      this.maybeClose(current);
+      // The page object, not its name: a title rename (`rekey`) keeps it.
+      if (!page.refs.delete(ref) || this.pages.get(page.name) !== page) return;
+      if (ref.pin) this.reevaluate(page);
+      this.maybeClose(page);
     };
   }
 
@@ -195,6 +206,22 @@ export class HostClient {
     for (const kind of typeof kinds === "string" ? [kinds] : kinds) if (!page.kinds.includes(kind)) page.kinds.push(kind);
     this.open(page);
     if (schedule) this.schedule(page);
+    this.onChange();
+  }
+
+  /** A title-identity rename moved the loaded instance to `newName`. The host's
+   * key names the file, so it stays; the client page follows the name. */
+  rekey(oldName: string, newName: string): void {
+    const page = this.pages.get(oldName);
+    if (!page || this.pages.has(newName)) return;
+    this.pages.delete(oldName);
+    page.name = newName;
+    this.pages.set(newName, page);
+    const known = this.installed.get(oldName);
+    this.installed.delete(oldName);
+    if (known) this.installed.set(newName, known);
+    if (this.frozen.delete(oldName)) this.frozen.add(newName);
+    this.onChange();
   }
 
   // ------------------------------------------------------------- queries
@@ -212,6 +239,21 @@ export class HostClient {
 
   conflicted(name: string): boolean {
     return !!this.pages.get(name)?.observed?.conflict;
+  }
+
+  /** The disk state the host last observed for the page (what Keep mine resolves against). */
+  disk(name: string): DiskToken | null {
+    return this.pages.get(name)?.observed?.disk ?? null;
+  }
+
+  /** The host's save and draft status for the page. */
+  notice(name: string): MailNotice | null {
+    return this.pages.get(name)?.notice ?? null;
+  }
+
+  /** Why the page's last command or request was refused, if it was. */
+  refusal(name: string): PageRefusal | string | null {
+    return this.pages.get(name)?.refusal ?? null;
   }
 
   /** The authoring version of the page's text (for tests and the UI's state line). */
@@ -310,7 +352,7 @@ export class HostClient {
     this.doc.install(receiver, { kind: "page", dto: receiverDto });
     for (const page of [a, b]) { page.editSeq += 1; this.editClock += 1; }
     const id = this.nextId++;
-    for (const page of [a, b]) page.phase = { kind: "sending", id, request: "move", editSeq: page.editSeq };
+    for (const page of [a, b]) page.phase = { kind: "sending", id, request: "move", editSeq: page.editSeq, instance: this.instanceOf(page) };
     const answers = Promise.all([a, b].map((page) => new Promise<Answered>((resolve) => page.answered.push(resolve))));
     void this.host.move(this.session, id, [a.key!, sourceDto, a.version ?? STALE_VERSION],
       [b.key!, receiverDto, b.version ?? STALE_VERSION], kinds).then((refusal) => {
@@ -409,12 +451,17 @@ export class HostClient {
    * default: an existing file is "exists" and nothing is written; an `expected`
    * token that no longer holds sends the text stale, so it becomes a conflict),
    * submit due now, and return once the answered version is published. */
-  async createPage(name: string, dto: PageDto, options: { kinds?: EditKinds; expected?: DiskToken } = {}):
+  async createPage(name: string, dto: PageDto,
+    options: { kinds?: EditKinds; expected?: DiskToken; refusedNow?: () => string | null } = {}):
     Promise<{ kind: "created"; key: string; version: number } | { kind: "exists" } | { kind: "unpublished" }
       | { kind: "refused"; refusal: PageRefusal | string | null }> {
+    this.state(name).hint = dto.kind;
     const release = this.acquire(name);
     try {
       await this.whenIdle(name);
+      // The caller's preconditions are rechecked after the open's await (P11).
+      const refused = options.refusedNow?.() ?? null;
+      if (refused) return { kind: "refused", refusal: refused };
       const page = this.pages.get(name);
       if (!page?.on) return { kind: "refused", refusal: page?.refusal ?? "not-open" };
       const disk = page.observed?.disk ?? null;
@@ -453,11 +500,12 @@ export class HostClient {
     }
   }
 
-  /** The host's publication debt under this session; null after a new session. */
-  async owed(paths: readonly string[] | null): Promise<OwedPage[] | null> {
+  /** The host's publication debt under this session; false (unknown) after a
+   * new session or a failed read. */
+  async owed(paths: readonly string[] | null): Promise<OwedPage[] | false> {
     const session = this.session;
     const owed = await this.host.owed(session, paths);
-    return this.session === session ? owed : null;
+    return this.session === session && owed;
   }
 
   // ------------------------------------------------------------- mail (§3.3, model wRecv)
@@ -480,30 +528,31 @@ export class HostClient {
   /** The answer to the page's outstanding request, consumed exactly once (S4). */
   private answer(page: Page, mail: PageMail): void {
     const answer = mail.answer!;
-    const request = (page.phase as { request: Request }).request;
+    this.consumed = Math.max(this.consumed, answer.id);
+    const { request, instance } = page.phase as { request: Request; instance: number | null };
     page.phase = { kind: "idle" };
     page.notice = mail.notice;
     if (answer.outcome.kind === "refused") page.refusal = answer.outcome.reason;
     const result: Answered = { took: answer.took, refusal: answer.outcome.kind === "refused" ? answer.outcome.reason : null };
-    if (!mail.page || request === "close") {
-      // The host released the page, or this window's view of it (a close
-      // unsubscribes at admission; an Open whose read failed holds nothing).
-      // Input typed or acquired meanwhile reopens it; a failed Open keeps the
-      // text and shows the refusal.
-      page.on = false;
-      if (page.key) this.byKey.delete(page.key);
-      page.key = null;
-      page.version = null;
+    if (!mail.page) {
+      // The host released the page (an Open whose read failed holds
+      // nothing): a failed Open keeps the text and shows the refusal.
+      this.unbind(page);
       this.settled(page, result);
-      if (request === "close" && (page.refs.size || page.editSeq > page.sentSeq)) this.open(page);
-      else if (!page.refs.size && page.editSeq === page.sentSeq) this.drop(page);
+      if (!page.refs.size && page.editSeq === page.sentSeq) this.drop(page);
       return;
     }
     if (request === "open") page.on = true;
     this.observe(page, mail.page);
-    if (answer.took) {
+    // A took answer is this request's text: it is the baseline of the page
+    // instance that sent it, never of a same-name replacement loaded since.
+    if (answer.took && instance === this.instanceOf(page)) {
       page.needed = answer.version;
-      this.remember(page, mail.page.text.kind === "unchanged" ? mail.page.text.rev : undefined, answer.version);
+      const rev = mail.page.text.kind === "unchanged" ? mail.page.text.rev : undefined;
+      this.remember(page, rev, answer.version);
+      if (rev) this.doc.took(page.name, rev);
+    } else if (answer.took) {
+      page.needed = answer.version;
     }
     const content = this.contentOf(mail.page);
     const newer = page.editSeq > page.sentSeq;
@@ -520,9 +569,12 @@ export class HostClient {
     } else if (answer.took) {
       page.version = answer.version;
     }
-    this.settled(page, result);
+    // Observers see the answer together with the close it may start: a
+    // settled page that is closing is still busy, never briefly idle.
+    this.settled(page, result, false);
     if (page.editSeq > page.sentSeq) this.schedule(page);
     this.maybeClose(page);
+    this.onChange();
   }
 
   /** Mail without an answer for this page: observation always; text only for an
@@ -532,10 +584,12 @@ export class HostClient {
     if (!mail.page || !page.on) return;
     this.observe(page, mail.page);
     const content = this.contentOf(mail.page);
-    if (!content) return;
+    if (!content) { this.onChange(); this.maybeClose(page); return; }
     if (page.phase.kind === "idle" && page.editSeq === page.sentSeq && !this.holds(page) && !this.doc.holdsPush(page.name))
       this.install(page, content, mail.page.version);
     else page.held = { content, version: mail.page.version };
+    this.onChange();
+    this.maybeClose(page);
   }
 
   /** A hold ended (unpin, an editor left, a block move finished, or the user took
@@ -544,7 +598,9 @@ export class HostClient {
    * version, so it is sent stale and becomes a conflict. */
   release(name: string, acceptPush = false): void {
     const page = this.pages.get(name);
-    if (page) this.reevaluate(page, acceptPush);
+    if (!page) return;
+    this.reevaluate(page, acceptPush);
+    this.maybeClose(page);
   }
 
   // ------------------------------------------------------------- internals
@@ -554,10 +610,14 @@ export class HostClient {
     if (!page) {
       page = { name, key: null, on: false, version: null, editSeq: 0, sentSeq: 0, phase: { kind: "idle" }, stash: [],
         baseline: null, observed: null, notice: null, held: null, needed: null, refusal: null, refs: new Set(),
-        kinds: [], timer: null, waiters: [], answered: [] };
+        kinds: [], timer: null, burst: null, waiters: [], answered: [] };
       this.pages.set(name, page);
     }
     return page;
+  }
+
+  private instanceOf(page: Page): number | null {
+    return this.doc.facts(page.name)?.instance ?? null;
   }
 
   private holds(page: Page): boolean {
@@ -581,8 +641,8 @@ export class HostClient {
     page.baseline = baseline;
     page.refusal = null;
     const id = this.nextId++;
-    page.phase = { kind: "sending", id, request: "open", editSeq: page.sentSeq };
-    void this.host.open(this.session, id, { name: page.name, kind: facts?.kind ?? "page", path: facts?.path ?? null })
+    page.phase = { kind: "sending", id, request: "open", editSeq: page.sentSeq, instance: facts?.instance ?? null };
+    void this.host.open(this.session, id, { name: page.name, kind: facts?.kind ?? page.hint ?? "page", path: facts?.path ?? null })
       .then((reply) => {
       if (this.pages.get(page.name) !== page || page.phase.kind !== "sending" || page.phase.id !== id) return;
       if ("reason" in reply) { this.admitted(page, id, reply); return; }
@@ -646,11 +706,15 @@ export class HostClient {
   private schedule(page: Page): void {
     if (!page.on || page.phase.kind !== "idle") return;
     if (page.timer) clearTimeout(page.timer);
-    page.timer = setTimeout(() => { page.timer = null; this.send(page); }, SEND_DEBOUNCE_MS);
+    const now = Date.now();
+    page.burst ??= now;
+    const wait = Math.max(0, Math.min(SEND_DEBOUNCE_MS, page.burst + SEND_MAX_WAIT_MS - now));
+    page.timer = setTimeout(() => { page.timer = null; this.send(page); }, wait);
   }
 
   private send(page: Page): void {
     if (page.timer) { clearTimeout(page.timer); page.timer = null; }
+    page.burst = null;
     if (!page.on || page.phase.kind !== "idle" || page.editSeq === page.sentSeq || this.pages.get(page.name) !== page) return;
     const dto = this.doc.dto(page.name);
     if (!dto) return;
@@ -664,7 +728,7 @@ export class HostClient {
   private request(page: Page, request: Request, call: (id: number) => Promise<PageRefusal | null>,
     kinds: readonly EditKind[] = []): Promise<Answered> {
     const id = this.nextId++;
-    page.phase = { kind: "sending", id, request, editSeq: page.editSeq };
+    page.phase = { kind: "sending", id, request, editSeq: page.editSeq, instance: this.instanceOf(page) };
     const answered = new Promise<Answered>((resolve) => page.answered.push(resolve));
     void call(id).then((refusal) => {
       if (refusal) for (const kind of kinds) if (!page.kinds.includes(kind)) page.kinds.push(kind);
@@ -686,23 +750,78 @@ export class HostClient {
       for (const mail of stash) this.receive(mail);
       return;
     }
-    if (page.phase.request === "submit" || page.phase.request === "move") page.sentSeq = page.phase.editSeq;
-    page.phase = { kind: "inFlight", id, request: page.phase.request, editSeq: page.phase.editSeq };
     const stash = page.stash;
     page.stash = [];
+    if (page.phase.request === "close") {
+      // A close is never answered (model wClose/upClose): admitted, this
+      // window's view of the page has ended. Input typed or acquired
+      // meanwhile reopens it; its mail, stashed or late, is not this view's.
+      page.phase = { kind: "idle" };
+      this.unbind(page);
+      this.settled(page, { took: false, refusal: null });
+      if (page.refs.size || page.editSeq > page.sentSeq) this.open(page);
+      else this.drop(page);
+      for (const mail of stash) this.receive(mail);
+      return;
+    }
+    if (page.phase.request === "submit" || page.phase.request === "move") page.sentSeq = page.phase.editSeq;
+    page.phase = { ...page.phase, kind: "inFlight" };
     for (const mail of stash) this.receive(mail);
+    this.onChange();
   }
 
-  private settled(page: Page, answer: Answered): void {
+  /** The page is no longer this window's view of a host page. */
+  private unbind(page: Page): void {
+    page.on = false;
+    if (page.key) this.byKey.delete(page.key);
+    page.key = null;
+    page.version = null;
+  }
+
+  private settled(page: Page, answer: Answered, changed = true): void {
     for (const resolve of page.answered.splice(0)) resolve(answer);
     for (const resolve of page.waiters.splice(0)) resolve();
+    if (changed) this.onChange();
   }
 
   private maybeClose(page: Page): void {
     if (this.pages.get(page.name) !== page || page.refs.size || page.phase.kind !== "idle"
-      || page.editSeq > page.sentSeq || page.timer) return;
+      || page.editSeq > page.sentSeq || page.timer || page.observed?.conflict
+      // The host still owes this page's save (a failed attempt): it stays
+      // open, so its notice stays live and the close prompt lists it (Q-TS5).
+      || page.notice?.saveError || (page.notice?.failures ?? 0) > 0) return;
+    // Host content a hold (pin, move) kept back is installed before the close;
+    // while the hold lasts the page stays open, so its release still installs
+    // it. A push held for the user's decision is the document's (holdsPush).
+    if (page.held) this.reevaluate(page);
+    if (page.held && this.holds(page)) return;
     if (!page.on) { this.drop(page); return; }
     void this.request(page, "close", (id) => this.host.close(this.session, id, page.key!));
+  }
+
+  /** The window let go of the page for good (an alias draft landed in its
+   * owner): its unsent input is abandoned and the page closes. */
+  forget(name: string): void {
+    const page = this.pages.get(name);
+    if (!page) return;
+    page.refs.clear();
+    page.editSeq = page.sentSeq;
+    page.kinds = [];
+    if (page.timer) { clearTimeout(page.timer); page.timer = null; }
+    page.burst = null;
+    this.maybeClose(page);
+  }
+
+  /** Set by `retire`: a barrier over this client never succeeds again. */
+  retired = false;
+
+  /** The binding ended (a graph switch, a store reset): every page's
+   * outstanding request settles unanswered; nothing is sent again. */
+  retire(): void {
+    this.retired = true;
+    for (const page of [...this.pages.values()]) this.drop(page);
+    this.unrouted = [];
+    this.installed.clear();
   }
 
   private drop(page: Page): void {

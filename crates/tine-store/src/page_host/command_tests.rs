@@ -96,6 +96,44 @@ fn an_answer_that_did_not_take_its_request_names_why() {
     );
 }
 
+/// Q2: an operation whose caller already left (it reported Uncertain) and
+/// whose draft then ends durably absent did not happen; its pages' notice
+/// says so. A caller still waiting hears DraftFailed itself, so no notice.
+#[test]
+fn an_operation_dropped_after_its_caller_left_is_noticed() {
+    let dropped = |h: &Host<model_fs::ModelFs>| {
+        h.events
+            .iter()
+            .filter_map(|event| match event {
+                Event::OperationDropped(pages) => Some(pages.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    for waiting in [false, true] {
+        let mut h = host();
+        open(&mut h, "a.md");
+        h.fs.inject(Phase::DraftTemp, [Fault::Before; 3]);
+        h.fs.inject(Phase::DraftSync, [Fault::Before; 3]);
+        assert_eq!(h.delete("a.md"), Disposition::Pending);
+        let id = h.register_reply().unwrap();
+        if !waiting {
+            assert!(h.order.remove(id), "the caller leaves");
+        }
+        drain(&mut h);
+        assert!(h.pages["a.md"].buf.is_some(), "nothing changed");
+        if waiting {
+            assert_eq!(
+                h.order.slot(id).unwrap().reply,
+                Some(order::OperationReply::DraftFailed)
+            );
+            assert!(dropped(&h).is_empty());
+        } else {
+            assert_eq!(dropped(&h), vec![BTreeSet::from(["a.md".to_string()])]);
+        }
+    }
+}
+
 fn twins(h: &Host<model_fs::ModelFs>) -> Vec<String> {
     h.events
         .iter()
@@ -228,4 +266,32 @@ fn a_twin_after_the_rename_keeps_a_failed_sync_uncertain() {
     restart(&mut h, true, true);
     assert_eq!(h.pages["c.md"].buf, text("created"));
     assert!(h.pages["c.md"].risk);
+}
+
+/// A Discard of a running rename's unwitnessed destination also reads its
+/// source (it reverts it). When that read fails (a disk error) the Discard
+/// is refused whole: neither page changes and the order keeps running.
+#[test]
+fn a_discard_whose_partner_source_read_fails_changes_nothing() {
+    let mut h = host();
+    assert_eq!(
+        h.rename(
+            "a.md",
+            "c.md",
+            &BTreeSet::new(),
+            "A",
+            "C",
+            tine_core::config::FileNameFormat::TripleLowbar
+        ),
+        Disposition::Pending
+    );
+    drain(&mut h);
+    assert_eq!(h.order.partner("c.md").map(String::as_str), Some("a.md"));
+    let before = (h.pages["a.md"].clone(), h.pages["c.md"].clone());
+    let version = before.1.version;
+    h.fs.inject(Phase::Read, [Fault::Before]);
+    send(&mut h, "c.md", RequestKind::Discard { version });
+    assert_eq!(refusals(&h), vec![("c.md".into(), Refusal::ReadFailed)]);
+    assert_eq!((h.pages["a.md"].clone(), h.pages["c.md"].clone()), before);
+    assert_eq!(h.order.partner("c.md").map(String::as_str), Some("a.md"));
 }

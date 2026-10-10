@@ -18,6 +18,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Saving moved into one background page host per graph: every edit is saved as you type, from any window, and keeps saving after the page closes. If a file changes on disk while you have unsaved text on that page, the page shows a comparison where you keep your edits or take the disk version, block by block. Unsaved text survives a crash: the next start puts it back on its page, saves it, and names each recovered page; it is never written over a file that changed meanwhile. Closing the last window while a page still cannot be saved reopens the graph and names those pages instead of quitting. Switching graphs waits until a running rename finishes.
+- A conflict over a page whose file was deleted on disk offers **Use disk version** (accept the deletion) and **Keep mine** (recreate the file) directly in the conflict bar (GH #541).
+
 - **Create a new graph** asks for its name, suggesting `notes`, then `notes-2`, and so on when taken. The graph is always created in a named child folder; invalid names and nonempty existing folders show an inline refusal so you can choose another name (GH #621).
 
 - Security: updated HTML sanitizers and desktop updater TLS dependencies, plus compatible dependency fixes from the review in discussion #564.

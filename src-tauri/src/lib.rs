@@ -66,27 +66,25 @@ mod youtube_identity;
 use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
     apply_journal_filename_migrations, asset_trash_stats, block_ref_counts, block_referrers,
-    capture_quick_switch, close_graph_window, copy_guide_into_graph, delete_page,
-    detect_media_editor, edit_asset_external, edit_custom_css, empty_asset_trash,
-    export_query_subtrees, get_backlink_filter_context, get_backlinks, get_page, get_page_by_path,
-    get_unlinked_refs, graph_source_files, guide_pages, import_asset, import_native_capture,
-    journal_content_days, journal_feed_page, list_journal_conflicts,
-    list_journal_filename_migrations, list_orphan_assets, list_templates, load_workspaces,
-    merge_pages, open_asset, open_page_file, open_pdf, page_icons, page_inventory, page_print_html,
-    preview_block, publish_html, query_facets, quick_switch, read_asset, read_custom_css,
-    read_highlights, read_journal_file, read_local_image, read_text_file, rename_file_to_page,
-    rename_page, resolve_block, resolve_blocks, resolve_page, run_graph_search, save_asset,
-    save_pages, save_pdf_area_image, save_workspaces, search, set_default_journal_template,
-    set_doc_mode_enter_for_new_block, set_guide_announced, set_journal_title_format,
-    set_logical_outdenting, set_preferred_format, set_preferred_workflow, set_show_brackets,
-    set_start_of_week, set_timetracking_enabled, stream_asset_path, tine_open_devtools,
-    trash_asset, trash_journal_file, write_highlights,
+    capture_quick_switch, close_graph_window, copy_guide_into_graph, detect_media_editor,
+    edit_asset_external, edit_custom_css, empty_asset_trash, export_query_subtrees,
+    get_backlink_filter_context, get_backlinks, get_page, get_page_by_path, get_unlinked_refs,
+    graph_source_files, guide_pages, import_asset, import_native_capture, journal_content_days,
+    journal_feed_page, list_journal_conflicts, list_journal_filename_migrations,
+    list_orphan_assets, list_templates, load_workspaces, merge_pages, open_asset, open_page_file,
+    open_pdf, page_icons, page_inventory, page_print_html, preview_block, publish_html,
+    query_facets, quick_switch, read_asset, read_custom_css, read_highlights, read_journal_file,
+    read_local_image, read_text_file, rename_file_to_page, rename_page, resolve_block,
+    resolve_blocks, resolve_page, run_graph_search, save_asset, save_pdf_area_image,
+    save_workspaces, search, set_default_journal_template, set_doc_mode_enter_for_new_block,
+    set_guide_announced, set_journal_title_format, set_logical_outdenting, set_preferred_format,
+    set_preferred_workflow, set_show_brackets, set_start_of_week, set_timetracking_enabled,
+    stream_asset_path, tine_open_devtools, trash_asset, trash_journal_file, write_highlights,
 };
 use concord::{
     conflict_inventory, duplicate_journal_diff, list_sync_conflicts, live_conflict_diff,
-    merge_live_conflict, resolve_duplicate_journal_day, resolve_live_conflict,
-    resolve_sync_conflict, resolve_vcs_marker_conflict, sync_conflict_diff, trash_sync_conflict,
-    vcs_marker_conflict_diff,
+    merge_live_conflict, resolve_duplicate_journal_day, resolve_sync_conflict,
+    resolve_vcs_marker_conflict, sync_conflict_diff, trash_sync_conflict, vcs_marker_conflict_diff,
 };
 use debug::{
     debug_header, debug_info, debug_init, debug_log, diag, diag_private, install_panic_logger,
@@ -272,8 +270,10 @@ pub(crate) fn graph_window(label: &str) -> bool {
 /// (`state::exit_when_unowned`). Any graph window other than `closed`,
 /// loaded or not, keeps the process. The only place that exits the process
 /// (G6, pinned by `state::tests::every_exit_goes_through_the_retirement_waiter`).
-/// On Linux it first SIGKILLs WebKitGTK's helpers (GH #28, ADR 0029). When
-/// it does not exit, a `closed` window still waiting for it is destroyed.
+/// On Linux it first SIGKILLs WebKitGTK's helpers (GH #28, ADR 0029). A
+/// graph still saving past the bound gets a window again, which adopts its
+/// host and names the pages not on disk and why (STEP3-DESIGN B-QA). When it
+/// does not exit, a `closed` window still waiting for it is then destroyed.
 pub(crate) fn exit_after_retirement(app: &tauri::AppHandle, closed: &str) {
     let (app, closed) = (app.clone(), closed.to_owned());
     std::thread::spawn(move || {
@@ -289,12 +289,32 @@ pub(crate) fn exit_after_retirement(app: &tauri::AppHandle, closed: &str) {
             app.exit(0);
         };
         let bound = std::time::Duration::from_secs(30);
-        if !state::exit_when_unowned(&state, bound, windows, exit) {
-            if let Some(window) = app.get_webview_window(&closed) {
-                let _ = window.destroy();
-            }
+        match state::exit_when_unowned(&state, bound, windows, exit) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(stuck) => reopen_stuck(&app, stuck),
+        }
+        if let Some(window) = app.get_webview_window(&closed) {
+            let _ = window.destroy();
         }
     });
+}
+
+/// B-QA: a window on each graph whose host the exit could not stop, before
+/// the closed window goes (its `Destroyed` then finds a graph bound).
+fn reopen_stuck(app: &tauri::AppHandle, stuck: Vec<std::path::PathBuf>) {
+    for root in stuck {
+        #[cfg(desktop)]
+        let reopened = graph::open_graph_window_blocking(app, root.display().to_string());
+        #[cfg(not(desktop))]
+        let reopened: Result<(), String> = {
+            let _ = (app, &root);
+            Err("graph windows are desktop-only".into())
+        };
+        if reopened.is_err() {
+            diag("page-host-stuck-graph-reopen-failed");
+        }
+    }
 }
 
 /// Show + focus the always-on-top quick-capture mini window (created hidden at
@@ -997,7 +1017,6 @@ pub fn run() {
             create_graph_verification,
             cancel_graph_verification,
             save_graph_verification_report,
-            save_pages,
             resolve_page,
             guide_pages,
             copy_guide_into_graph,
@@ -1007,7 +1026,6 @@ pub fn run() {
             warm_done,
             block_ref_counts,
             block_referrers,
-            delete_page,
             rename_page,
             publish_html,
             publish_query_plan,
@@ -1065,7 +1083,6 @@ pub fn run() {
             resolve_vcs_marker_conflict,
             live_conflict_diff,
             merge_live_conflict,
-            resolve_live_conflict,
             trash_journal_file,
             read_journal_file,
             get_page_by_path,
@@ -1114,9 +1131,7 @@ pub fn run() {
             page_commands::page_owed,
             page_commands::page_drafts_retry,
             load_session,
-            drafts::load_drafts,
-            drafts::store_draft,
-            drafts::retire_draft,
+            drafts::legacy_drafts_file,
             save_session,
             load_workspaces,
             save_workspaces,

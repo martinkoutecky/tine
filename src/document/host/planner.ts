@@ -1,5 +1,5 @@
 // Planned multi-page sequences (STEP3-DESIGN §8): K sources into one receiver as
-// a sequence of model moves. Step 3b P2a: unwired.
+// a sequence of model moves.
 
 import type { EditKinds } from "../../editKind";
 import type { PageDto } from "../../types";
@@ -25,7 +25,9 @@ export async function runSequence(
 ): Promise<SequenceOutcome> {
   const frozen = await client.freeze(endpoints);
   if (!frozen.ok) return { ok: false, completed: 0, reason: "commit-failed", pages: frozen.failed };
-  const releases = endpoints.map((name) => client.acquire(name));
+  // Pinned: a push arriving meanwhile is held, never installed under the plan
+  // (the planned text would then be sent on its version over that change).
+  const releases = endpoints.map((name) => client.acquire(name, { pin: true }));
   try {
     await client.drain(endpoints);
     const stuck = endpoints.filter((name) => !client.isOpen(name) || client.busy(name) || client.conflicted(name));

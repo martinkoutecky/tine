@@ -444,6 +444,33 @@ fn route_bound_root(
     }))
 }
 
+/// The page host for a new graph-window binding (STEP3 §3, step 3b P2b): the
+/// only writer of the window's page edits, its crash drafts under
+/// `<app data>/drafts-v2/<graph id>`, keyed like the session file. It fails
+/// when another live host holds this graph's draft locks; the open then
+/// fails and the Store closes with the dropped slot.
+fn start_host(
+    app: &tauri::AppHandle,
+    window_label: &str,
+    store: &Arc<Store>,
+    root_key: &Path,
+) -> Result<tine_store::PageHost, String> {
+    // Settings and the launch checkpoint already live under app data; with
+    // none there is no place for crash drafts (E-P2b-1).
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("no app data directory for crash drafts: {error}"))?;
+    let id = crate::settings::session_id(root_key);
+    let graph_id = id.strip_suffix(".json").unwrap_or(&id);
+    tine_store::PageHost::start(
+        store,
+        &app_data,
+        graph_id,
+        crate::page_commands::page_mail_sink(app.clone(), window_label.to_string()),
+    )
+}
+
 /// How long an open waits for an overlapping graph that is still saving.
 const RETIRING_OVERLAP_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -478,8 +505,10 @@ pub(crate) fn load_graph_for_label(
     if let Some(result) = routed {
         return Ok(result);
     }
-    // A graph that overlaps this root and is still saving its pages closes
-    // first; the window hears that it waits (`graph-open-waiting`).
+    // This window's own graph, when it overlaps the new root, retires first
+    // (F6). A graph that overlaps this root and is still saving its pages
+    // closes first; the window hears that it waits (`graph-open-waiting`).
+    crate::state::release_own_overlap(&state.graphs, window_label, &root_key);
     crate::state::wait_for_retiring_overlaps(
         &state.graphs,
         &root_key,
@@ -522,7 +551,11 @@ pub(crate) fn load_graph_for_label(
                     checkpoint_app_data(app).as_deref(),
                 ),
             }?;
-            (GraphSlot::new(store, root_key), meta)
+            let mut slot = GraphSlot::new(store, root_key);
+            // On failure the dropped slot closes the Store.
+            let host = start_host(app, window_label, &slot.store, &slot.root_key)?;
+            *slot.host.get_mut().unwrap() = PageHostSlot::Running(host);
+            (slot, meta)
         }
     };
     let slot = Arc::new(slot);
@@ -532,7 +565,7 @@ pub(crate) fn load_graph_for_label(
         match registry.bind(window_label.to_string(), slot.clone()) {
             Ok(displaced) => displaced,
             Err(error) => {
-                // An adopted host goes back to its retirement.
+                // The new or adopted host retires (its drafts are kept).
                 let released = registry.retirement.retire(slot);
                 drop(registry);
                 drop(released);
@@ -580,72 +613,80 @@ pub(crate) async fn open_graph_window(
 ) -> Result<LoadGraphResult, String> {
     #[cfg(desktop)]
     {
-        let id = state.next_window.fetch_add(1, Ordering::Relaxed);
-        let label = format!("graph-{id}");
-        let worker_app = app.clone();
-        let worker_label = label.clone();
-        let result = tauri::async_runtime::spawn_blocking(move || {
-            let state = worker_app.state::<AppState>();
-            load_graph_for_label(path, &worker_app, &worker_label, &state)
-        })
-        .await
-        .map_err(|error| format!("graph-open worker failed: {error}"))??;
-        if let LoadGraphResult::Loaded { ref meta, .. } = result {
-            let name = Path::new(&meta.root)
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("Graph");
-            let builder = tauri::WebviewWindowBuilder::new(
-                &app,
-                &label,
-                tauri::WebviewUrl::App("index.html".into()),
-            )
-            .title(format!("Tine — {name}"))
-            .inner_size(1200.0, 820.0)
-            .min_inner_size(640.0, 480.0)
-            .initialization_script(format!(
-                "window.__GRAPH_PATH__ = {};",
-                serde_json::to_string(&meta.root).unwrap_or_else(|_| "\"\"".to_string())
-            ));
-            #[cfg(target_os = "macos")]
-            let builder = builder
-                .decorations(true)
-                .title_bar_style(tauri::TitleBarStyle::Overlay)
-                .hidden_title(true);
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
-            let builder = builder.decorations(crate::settings::native_frame_active());
-            #[cfg(target_os = "windows")]
-            let builder = if let Some(arguments) = crate::windows_webdriver_args_from_env(None) {
-                builder.additional_browser_args(&arguments)
-            } else {
-                builder
-            };
-            #[cfg(target_os = "linux")]
-            let builder = crate::youtube_identity::configure(builder, &app);
-            let builder = crate::workspace_windows::attach(builder, &app, &label);
-            let built = builder.build();
-            match built {
-                Ok(window) => {
-                    crate::workspace_windows::allow_script_windows(&window);
-                    #[cfg(target_os = "linux")]
-                    crate::linux_window_identity::apply_to_window(&window);
-                    #[cfg(any(target_os = "linux", target_os = "windows"))]
-                    crate::native_mouse_history::install(&window);
-                    let _ = window.set_focus();
-                }
-                Err(error) => {
-                    let _ = crate::state::release_window_graph(&state.graphs, &label);
-                    return Err(format!("couldn't create graph window: {error}"));
-                }
-            }
-        }
-        Ok(result)
+        let _ = state;
+        tauri::async_runtime::spawn_blocking(move || open_graph_window_blocking(&app, path))
+            .await
+            .map_err(|error| format!("graph-open worker failed: {error}"))?
     }
     #[cfg(not(desktop))]
     {
         let _ = (path, app, state);
         Err("multiple graph windows are desktop-only".to_string())
     }
+}
+
+/// Load `path` for a new graph window and build that window, off the event
+/// thread (`open_graph_window`, and the exit that finds a graph still
+/// saving, STEP3 B-QA). A root another window owns only focuses it.
+#[cfg(desktop)]
+pub(crate) fn open_graph_window_blocking(
+    app: &tauri::AppHandle,
+    path: String,
+) -> Result<LoadGraphResult, String> {
+    let state = app.state::<AppState>();
+    let id = state.next_window.fetch_add(1, Ordering::Relaxed);
+    let label = format!("graph-{id}");
+    let result = load_graph_for_label(path, app, &label, &state)?;
+    if let LoadGraphResult::Loaded { ref meta, .. } = result {
+        let name = Path::new(&meta.root)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Graph");
+        let builder = tauri::WebviewWindowBuilder::new(
+            app,
+            &label,
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title(format!("Tine — {name}"))
+        .inner_size(1200.0, 820.0)
+        .min_inner_size(640.0, 480.0)
+        .initialization_script(format!(
+            "window.__GRAPH_PATH__ = {};",
+            serde_json::to_string(&meta.root).unwrap_or_else(|_| "\"\"".to_string())
+        ));
+        #[cfg(target_os = "macos")]
+        let builder = builder
+            .decorations(true)
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        let builder = builder.decorations(crate::settings::native_frame_active());
+        #[cfg(target_os = "windows")]
+        let builder = if let Some(arguments) = crate::windows_webdriver_args_from_env(None) {
+            builder.additional_browser_args(&arguments)
+        } else {
+            builder
+        };
+        #[cfg(target_os = "linux")]
+        let builder = crate::youtube_identity::configure(builder, app);
+        let builder = crate::workspace_windows::attach(builder, app, &label);
+        let built = builder.build();
+        match built {
+            Ok(window) => {
+                crate::workspace_windows::allow_script_windows(&window);
+                #[cfg(target_os = "linux")]
+                crate::linux_window_identity::apply_to_window(&window);
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
+                crate::native_mouse_history::install(&window);
+                let _ = window.set_focus();
+            }
+            Err(error) => {
+                let _ = crate::state::release_window_graph(&state.graphs, &label);
+                return Err(format!("couldn't create graph window: {error}"));
+            }
+        }
+    }
+    Ok(result)
 }
 
 #[derive(serde::Serialize)]

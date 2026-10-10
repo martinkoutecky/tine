@@ -1,9 +1,17 @@
-# s3.1 executable storage model
+# s3.2 executable storage model
 
-This private, unwired module transcribes `storage-s3.qnt`, SHA-256
-`614f82a83d61007d6e1a90747c71b350caa407e0c908699510b74ddba88c883f`.
-The scenario source is the repaired lane's `scenarios-s3x.inc`, SHA-256
-`4b4e2720a645afbb0ca71d034ff639a557bcf4f62abb886a105aec566b8504a5`.
+This private, unwired module transcribes `storage-s3.qnt` s3.2, SHA-256
+`1e6ec36c29ec8fd1b7a1ebdce099e82509c0ff59fa6c137cf6f0ef3d1e0d2bd4`.
+The scenario source is `scenarios-s3.inc` s3.2, SHA-256
+`92a75904b2da9b43a7bb9c80a0f2fc41b462cef5a60ec41f4d613b67d58ff1c3`.
+s3.2 adds a rename's in-run write order (`order.rs`, STEP3-DESIGN "rename
+ordering = option 2"): a full rename installs gates over the pages it changes,
+a gated page's save does not start, a page's witness is its `dirSync(ok)` at the
+operation's version, a Discard of an unwitnessed destination reverts the source
+while it still holds the deletion, and `down` clears the gates. The ghost checks
+`orderHolds` (no save started with an unretired obligation) and
+`renameResolves` (a renamed page keeps a file at one of its two paths) beside
+the guarantee; a power cut or launch clears both obligations.
 It performs no I/O and has no clock, async tasks or production consumers.
 Replay establishes transcription evidence, not backend or native I/O conformance.
 
@@ -40,7 +48,7 @@ Generators never write into the supplied model directory or proof lanes.
 Quint calls take `$TINE_AGENTS/og/.tlc.lock`; `TINE_AGENTS` defaults to the
 repository's sibling `tine-agents` directory.
 
-Regenerate the 143 scenarios, four profile oracles, 27 model-mutant oracles and
+Regenerate the 159 scenarios, four profile oracles, 32 model-mutant oracles and
 three-path random traces from the repository root:
 
 ```sh
@@ -50,10 +58,11 @@ rtk proxy bash -c 'source scripts/env.sh; export CARGO_INCREMENTAL=0 LANG=C.UTF-
 ```
 
 The generator checks both pinned source hashes, expands intermediate assertions,
-conditionals and refusal checks, and compares 4,433 scenario outcomes. It
+conditionals and refusal checks, and compares 5,724 scenario outcomes. It
 distinguishes pass, disabled action (QNT507/QNT513), failed assertion (QNT508)
-and test returned false (QNT511). All 27 sweep mutants fail their own scenario.
-MRN5 violates the restored-deletion completion assertion rather than the guarantee;
+and test returned false (QNT511). All 32 sweep mutants fail their own scenario.
+MRN5 violates the restored-deletion completion assertion rather than the
+checked invariants (guarantee, orderHolds, renameResolves);
 MDE additionally executes the power-loss suffix to demonstrate A.
 
 Random traces use 64 runs per profile, 40 steps, seeds 20261009 plus profile index

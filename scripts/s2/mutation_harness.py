@@ -9,7 +9,7 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCES = ["src/page_state/mod.rs", "src/page_state/operations.rs"]
+SOURCES = ["src/page_state/mod.rs", "src/page_state/operations.rs", "src/page_state/order.rs"]
 
 
 def source_sha256():

@@ -134,6 +134,7 @@ const suites = {
     ["query-nested-rows", "scripts/e2e-query-nested-rows.mjs", {}],
     ["scrollbars", "scripts/e2e-scrollbars.mjs", {}],
     ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
+    ["host-saves", "scripts/e2e-host-saves.mjs", {}],
   ],
   "windows-smoke": [
     // og-parity-references is a HARD gate on Linux (linux-release + og-parity-pilot

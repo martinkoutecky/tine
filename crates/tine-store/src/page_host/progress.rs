@@ -11,7 +11,14 @@ pub(super) trait Clock {
 pub(super) struct Notice {
     pub failures: u32,
     pub save_error: bool,
+    /// The latest failed save's platform step and OS error code, when the
+    /// filesystem named them (GH #538, Q-P2b-3).
+    pub operation: Option<&'static str>,
+    pub os_error: Option<i32>,
     pub draft_error: bool,
+    /// An operation reported Uncertain did not happen (Q2); sticky until the
+    /// page next publishes or is released.
+    pub dropped: bool,
     pub conflict_reported: bool,
     /// Trash payloads whose custody error is sticky (REVIEW-2b-r2 V3): set by
     /// the escape or a third failed retirement, kept across later saves and
@@ -166,6 +173,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         let pages = self.times.iter().filter(|(key, _)| !self.host.busy(key));
         let saves = pages
             .clone()
+            .filter(|(key, _)| !self.host.order.gated(key))
             .filter_map(|(_, t)| t.deadline().filter(|_| !t.page.clean() && !t.page.conflict));
         let refreshes = pages.filter_map(|(key, t)| {
             let differs = t.page.risk
@@ -195,6 +203,8 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             && !page.clean()
             && !page.conflict
             && !self.host.retained.contains(key)
+            // R3: a page a running rename gates is carried by its draft.
+            && !self.host.order.gated(key)
     }
 
     /// A page the stop must still try to save first: its readiness waits
@@ -253,6 +263,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 // clean. Keep its surfaced draft error across unrelated calls.
                 t.notice = Notice {
                     draft_error: t.notice.draft_error,
+                    dropped: t.notice.dropped,
                     ..Notice::default()
                 };
             } else if t.first.is_none() {
@@ -271,6 +282,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 Event::SaveOutcome {
                     page,
                     outcome: Outcome::Published,
+                    ..
                 } => {
                     let t = self.times.get_mut(page).unwrap();
                     t.notice = Notice::default();
@@ -281,8 +293,11 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 Event::SaveOutcome {
                     page,
                     outcome: Outcome::Failed | Outcome::Uncertain,
+                    cause,
                 } => {
                     let t = self.times.get_mut(page).unwrap();
+                    t.notice.operation = cause.and_then(|cause| cause.operation);
+                    t.notice.os_error = cause.and_then(|cause| cause.os_error);
                     t.notice.failures = t
                         .notice
                         .failures
@@ -293,6 +308,13 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                     t.notice.save_error = t.notice.failures >= 3;
                     if let Some(stopping) = &mut self.stopping {
                         stopping.failed.insert(page.clone());
+                    }
+                }
+                Event::OperationDropped(pages) => {
+                    for page in pages {
+                        if let Some(t) = self.times.get_mut(page) {
+                            t.notice.dropped = true;
+                        }
                     }
                 }
                 Event::DraftError {

@@ -3,8 +3,8 @@
 //! every page it touches, so the host neither opens, saves nor drafts them
 //! meanwhile; the host checks unsaved input under that final reservation
 //! (Q3) with the writer's own policy, the writer's transaction runs, and the
-//! pages go back to the host, which observes each. With no host (production
-//! until lane 3b's switch) the write is the plain call it was.
+//! pages go back to the host, which observes each. With no host the write
+//! is the plain call it was.
 //! Each refusal's in-scope scenario: `docs/storage-contract.md` I-8, row
 //! `tine-graph-features::retained`.
 

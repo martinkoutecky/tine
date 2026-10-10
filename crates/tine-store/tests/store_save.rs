@@ -5,7 +5,23 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
-use tine_store::{FaultPoint, PageId, SaveBase, SaveOutcome, SavePagesOutcome, Store, StoreError};
+use tine_store::{
+    EditKind, FaultPoint, PageId, Refusal, SaveBase, SaveOutcome, StepResult, Store, StoreError,
+    TxOutcome, Why,
+};
+
+type Entry = (PageId, SaveBase, PageDto, Vec<EditKind>);
+
+/// The guarded multi-page save these tests pin, over the transaction
+/// primitive that stays (the multi-page store save is deleted, STEP3 §12): one
+/// `save_page` step per entry, in input order, then one commit.
+fn save_all(store: &Store, entries: &[Entry]) -> TxOutcome {
+    let mut tx = store.transaction(Some(entries[0].3[0]));
+    for (id, base, doc, kinds) in entries {
+        tx.save_page(kinds, id, base.clone(), doc);
+    }
+    tx.commit()
+}
 
 #[test]
 fn g6b_one_block_edit_preserves_fixture_layout() {
@@ -86,7 +102,7 @@ fn g6b_explicit_eof_edit_is_not_lost() {
 }
 
 #[test]
-fn save_pages_keeps_order_and_reports_preflight_conflict_without_writes() {
+fn a_page_save_transaction_keeps_order_and_reports_preflight_conflict_without_writes() {
     let fixture = Fixture::new();
     fixture.write("pages/A.md", "- old A\n");
     fixture.write("pages/B.md", "- old B\n");
@@ -115,10 +131,10 @@ fn save_pages_keeps_order_and_reports_preflight_conflict_without_writes() {
     ];
     fixture.write("pages/B.md", "- external B\n");
     assert!(matches!(
-        store.save_pages(&entries),
-        SavePagesOutcome::Failed {
-            index: 1,
-            outcome: SaveOutcome::Conflict { .. },
+        save_all(&store, &entries),
+        TxOutcome::NotCommitted {
+            step: 1,
+            why: Why::Conflict { .. },
             ..
         }
     ));
@@ -133,15 +149,15 @@ fn save_pages_keeps_order_and_reports_preflight_conflict_without_writes() {
     let (_, new_b_rev) = store.read(&b.file(), None).unwrap();
     let mut entries = entries;
     entries[1].1 = SaveBase::Existing(new_b_rev);
-    let SavePagesOutcome::Ok { outcomes, .. } = store.save_pages(&entries) else {
+    let TxOutcome::Committed { steps, .. } = save_all(&store, &entries) else {
         panic!("save must commit")
     };
-    assert_eq!(outcomes.len(), 2);
+    assert_eq!(steps.len(), 2);
     assert!(
-        matches!(&outcomes[0], SaveOutcome::Saved(rev) if *rev == store.read(&a.file(), None).unwrap().1)
+        matches!(&steps[0], StepResult::Written { rev, .. } if *rev == store.read(&a.file(), None).unwrap().1)
     );
     assert!(
-        matches!(&outcomes[1], SaveOutcome::Saved(rev) if *rev == store.read(&b.file(), None).unwrap().1)
+        matches!(&steps[1], StepResult::Written { rev, .. } if *rev == store.read(&b.file(), None).unwrap().1)
     );
     assert!(String::from_utf8(fixture.files()["pages/A.md"].clone())
         .unwrap()
@@ -152,7 +168,7 @@ fn save_pages_keeps_order_and_reports_preflight_conflict_without_writes() {
 }
 
 #[test]
-fn save_pages_mid_step_failure_restores_prior_files() {
+fn a_page_save_transaction_mid_step_failure_restores_prior_files() {
     let fixture = Fixture::new();
     for name in ["A", "B", "C"] {
         fixture.write(&format!("pages/{name}.md"), format!("- old {name}\n"));
@@ -175,10 +191,10 @@ fn save_pages_mid_step_failure_restores_prior_files() {
         .collect();
     store.inject_fault(FaultPoint::MidStepIoAt(1));
     assert!(matches!(
-        store.save_pages(&entries),
-        SavePagesOutcome::Failed {
-            index: 1,
-            outcome: SaveOutcome::Io(_),
+        save_all(&store, &entries),
+        TxOutcome::NotCommitted {
+            step: 1,
+            why: Why::Failed(_),
             ..
         }
     ));
@@ -191,7 +207,7 @@ fn save_pages_mid_step_failure_restores_prior_files() {
 }
 
 #[test]
-fn save_pages_repeated_file_has_own_family() {
+fn a_page_save_transaction_repeated_file_has_own_family() {
     let fixture = Fixture::new();
     fixture.write("pages/A.md", "- old\n");
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
@@ -204,37 +220,43 @@ fn save_pages_repeated_file_has_own_family() {
         vec![tine_store::EditKind::ReplacePage],
     );
     assert!(matches!(
-        store.save_pages(&[entry.clone(), entry]),
-        SavePagesOutcome::Failed {
-            outcome: SaveOutcome::Repeated,
+        save_all(&store, &[entry.clone(), entry]),
+        TxOutcome::NotCommitted {
+            why: Why::Refused(Refusal::RepeatedFile(_)),
             ..
         }
     ));
 }
 
 #[test]
-fn save_pages_refuses_an_empty_kind_list_before_writing() {
+fn a_page_save_with_an_empty_kind_list_is_refused_before_writing() {
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
-    let entry = (
-        PageId::from("pages/New.md"),
-        SaveBase::CreateNew,
-        fresh("New", PageKind::Page),
-        Vec::new(),
+    let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut tx = store.transaction(Some(EditKind::CreatePage));
+        tx.save_page(
+            &[],
+            &PageId::from("pages/New.md"),
+            SaveBase::CreateNew,
+            &fresh("New", PageKind::Page),
+        );
+        tx.commit()
+    }));
+    let message = refused.expect_err("OG-RULES Rule 8: a kindless page save must not run");
+    let text = message
+        .downcast_ref::<&str>()
+        .map(|text| text.to_string())
+        .or_else(|| message.downcast_ref::<String>().cloned());
+    assert!(
+        text.as_deref()
+            .is_some_and(|text| text.contains("OG-RULES Rule 8")),
+        "{text:?}"
     );
-    assert!(matches!(
-        store.save_pages(&[entry]),
-        SavePagesOutcome::Failed {
-            index: 0,
-            outcome: SaveOutcome::InvalidTarget(_),
-            ..
-        }
-    ));
     assert!(!fixture.0.join("pages/New.md").exists());
 }
 
 #[test]
-fn save_pages_rollback_failure_names_recovery_location() {
+fn a_page_save_transaction_rollback_failure_names_recovery_location() {
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     let entries = vec![
@@ -253,29 +275,32 @@ fn save_pages_rollback_failure_names_recovery_location() {
     ];
     store.inject_fault(FaultPoint::MidStepIoAt(1));
     store.inject_fault(FaultPoint::UndoWithdrawalIo);
-    let outcome = store.save_pages(&entries);
+    let outcome = save_all(&store, &entries);
     assert!(
-        matches!(&outcome, SavePagesOutcome::Failed {
-        index: 1, outcome: SaveOutcome::Io(_), undo_failed, ..
-    } if format!("{undo_failed:?}").contains("pages/B.md")),
+        matches!(&outcome, TxOutcome::NotCommitted {
+        step: 1, why: Why::Failed(_), rollback, ..
+    } if format!("{:?}", rollback.undo_failed).contains("pages/B.md")),
         "{outcome:?}"
     );
 }
 
 #[test]
-fn save_pages_names_files_missing_from_publication_after_disk_write() {
+fn a_page_save_transaction_names_files_missing_from_publication_after_disk_write() {
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     store.inject_fault(FaultPoint::PublicationReadIo);
-    let outcome = store.save_pages(&[(
-        PageId::from("pages/New.md"),
-        SaveBase::CreateNew,
-        fresh("New", PageKind::Page),
-        vec![tine_store::EditKind::CreatePage],
-    )]);
+    let outcome = save_all(
+        &store,
+        &[(
+            PageId::from("pages/New.md"),
+            SaveBase::CreateNew,
+            fresh("New", PageKind::Page),
+            vec![tine_store::EditKind::CreatePage],
+        )],
+    );
     assert!(
-        matches!(&outcome, SavePagesOutcome::Failed { publication_errors, .. }
-        if format!("{publication_errors:?}").contains("pages/New.md")),
+        matches!(&outcome, TxOutcome::PublicationIncomplete { files, .. }
+        if format!("{files:?}").contains("pages/New.md")),
         "{outcome:?}"
     );
     assert!(
@@ -303,8 +328,8 @@ fn single_save_reports_incomplete_rollback() {
 }
 
 #[test]
-fn save_pages_crash_worker() {
-    let Ok(root) = std::env::var("TINE_SAVE_PAGES_CRASH_ROOT") else {
+fn page_save_transaction_crash_worker() {
+    let Ok(root) = std::env::var("TINE_PAGE_SAVE_TX_CRASH_ROOT") else {
         return;
     };
     let store = Store::open(Path::new(&root), Default::default()).unwrap().0;
@@ -324,20 +349,20 @@ fn save_pages_crash_worker() {
         })
         .collect();
     store.inject_fault(FaultPoint::AbortAfterStep(0));
-    let _ = store.save_pages(&entries);
-    panic!("save_pages crash fault did not abort");
+    let _ = save_all(&store, &entries);
+    panic!("page save transaction crash fault did not abort");
 }
 
 #[test]
-fn save_pages_crash_between_steps_keeps_earlier_disk_write() {
+fn a_page_save_transaction_crash_between_steps_keeps_earlier_disk_write() {
     let fixture = Fixture::new();
     for name in ["A", "B", "C"] {
         fixture.write(&format!("pages/{name}.md"), format!("- old {name}\n"));
     }
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("save_pages_crash_worker")
-        .env("TINE_SAVE_PAGES_CRASH_ROOT", &fixture.0)
+        .arg("page_save_transaction_crash_worker")
+        .env("TINE_PAGE_SAVE_TX_CRASH_ROOT", &fixture.0)
         .output()
         .unwrap();
     assert!(!output.status.success(), "fault must abort between steps");

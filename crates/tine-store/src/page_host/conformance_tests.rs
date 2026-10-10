@@ -196,3 +196,106 @@ fn directory_sync_does_not_make_external_unsynced_payload_durable() {
         1
     );
 }
+
+#[test]
+fn all_s3_scenarios_in_four_profiles() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/s2/scenarios.json")).unwrap();
+    assert_eq!(fixture["model_sha256"], Oracle::model_sha());
+    let mut comparisons = 0;
+    let mut barriers = 0;
+    let mut actions = 0;
+    for oracle in fixture["oracles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["mutant"] == "none")
+    {
+        let profile = oracle["profile"].as_str().unwrap();
+        for (name, program) in fixture["scenarios"].as_object().unwrap() {
+            let mut driver = Driver::new(profile, 3);
+            let outcome = driver.program(program.as_array().unwrap());
+            assert_eq!(
+                outcome.map_or_else(|e| e, |_| "pass"),
+                oracle["outcomes"][name],
+                "{profile}/{name}"
+            );
+            barriers += driver.barriers;
+            actions += driver.actions;
+            comparisons += 1;
+        }
+    }
+    assert_eq!(comparisons, 636);
+    eprintln!("host scenarios: {comparisons} outcomes / {actions} actions / {barriers} barriers");
+}
+
+fn replay(fixture: &Value) -> (usize, usize, usize) {
+    assert_eq!(fixture["model_sha256"], Oracle::model_sha());
+    let mut traces = 0;
+    let mut actions = 0;
+    let mut barriers = 0;
+    for (ti, trace) in fixture["traces"].as_array().unwrap().iter().enumerate() {
+        if trace["mutant"].as_str().unwrap_or("none") != "none" {
+            continue;
+        }
+        let mut d = Driver::new(
+            trace["profile"].as_str().unwrap(),
+            trace["pages"].as_u64().unwrap_or(3) as usize,
+        );
+        for (si, entry) in trace["states"].as_array().unwrap().iter().enumerate() {
+            let action = if let Some(index) = entry["a"].as_u64() {
+                &fixture["actions"][index as usize]
+            } else {
+                &entry["action"]
+            };
+            let name = action["name"].as_str().unwrap();
+            if si == 0 {
+                assert_eq!(name, "init");
+                continue;
+            }
+            let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+                d.step(name,action["args"].as_array().unwrap()))).unwrap_or_else(|failure| {
+                    eprintln!("failure capsule: HEAD b0c0f3b4c + lane diff; profile {:?}; trace {ti} {:?}/{si}/{action}; host/model conformance",trace["profile"],trace["name"]);
+                    std::panic::resume_unwind(failure)
+                });
+            assert!(result, "trace {:?}/{si}/{name}", trace["name"]);
+        }
+        traces += 1;
+        actions += d.actions;
+        barriers += d.barriers;
+    }
+    (traces, actions, barriers)
+}
+
+#[test]
+fn committed_itf_traces_through_host() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/s2/traces.json")).unwrap();
+    let (traces, actions, barriers) = replay(&fixture);
+    assert_eq!(traces, 32);
+    eprintln!("host ITF: {traces} traces / {actions} actions / {barriers} barriers");
+}
+
+#[test]
+fn committed_witnesses_through_host() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/s2/witnesses.json")).unwrap();
+    let (traces, actions, barriers) = replay(&fixture);
+    assert!(traces > 0);
+    eprintln!("host witnesses: {traces} traces / {actions} actions / {barriers} barriers");
+}
+
+#[test]
+fn short_witnesses_through_host() {
+    // Keep the diagnostic-bound traces in the ordinary full replay. Mutation
+    // sweeps use this subset to avoid repeating 8,000 counter-only actions.
+    let mut fixture: Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/s2/witnesses.json")).unwrap();
+    fixture["traces"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|trace| trace["states"].as_array().unwrap().len() <= 100);
+    let (traces, actions, barriers) = replay(&fixture);
+    assert_eq!(traces, 40);
+    eprintln!("short host witnesses: {traces} traces / {actions} actions / {barriers} barriers");
+}

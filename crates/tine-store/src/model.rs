@@ -4561,6 +4561,19 @@ pub(crate) fn atomic_copy_file_new(
 mod tests {
     use super::*;
 
+    use crate::test_fixture_io::hosted;
+
+    fn delete(
+        store: &std::sync::Arc<tine_store::Store>,
+        name: &str,
+        expected_path: Option<&str>,
+    ) -> io::Result<tine_store::PageOperation> {
+        let (operation, published) =
+            crate::test_fixture_io::delete(store, name, PageKind::Page, expected_path)?;
+        assert_ne!(published, Some(false), "a pending delete must publish");
+        Ok(operation)
+    }
+
     #[test]
     fn journal_content_asks_the_parser_which_bytes_are_properties() {
         // OG-C5 L12-S1/S1-14: Org stores properties in drawers, so heading prose
@@ -5669,18 +5682,14 @@ mod tests {
     fn parsed_doc_cache_index_does_not_serve_deleted_page() {
         let dir = scratch("doc-cache-index-delete");
         fs::write(dir.join("pages").join("Gone.md"), "- old\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
         let id = tine_store::PageId::from("pages/Gone.md");
         assert!(store.page(&id).is_ok());
-        tine_graph_features::pages::delete_page_expected(
-            &store,
-            None,
-            "Gone",
-            PageKind::Page,
-            None,
-            None,
-        )
-        .unwrap();
+        assert_eq!(
+            delete(&store, "Gone", None).unwrap(),
+            tine_store::PageOperation::Applied
+        );
         assert!(
             store.page(&id).is_err(),
             "stale cache/index must not serve the deleted entry"
@@ -5700,10 +5709,14 @@ mod tests {
             "- links [[Old]] and #Old\n",
         )
         .unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
         let old_id = tine_store::PageId::from("pages/Old.md");
         assert!(store.page(&old_id).is_ok());
-        tine_graph_features::pages::rename_page_expected(&store, None, "Old", "New", None).unwrap();
+        hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Old", "New", None)
+        })
+        .unwrap();
         assert!(
             store.page(&old_id).is_err(),
             "old entry must not be served after rename"
@@ -6593,9 +6606,12 @@ mod tests {
         let dir = scratch("rename");
         fs::write(dir.join("pages").join("Alpha.md"), "- alpha body\n").unwrap();
         fs::write(dir.join("pages").join("Other.md"), "- see [[Alpha]] here\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        tine_graph_features::pages::rename_page_expected(&store, None, "Alpha", "Beta", None)
-            .unwrap();
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Alpha", "Beta", None)
+        })
+        .unwrap();
         // The page file moved (content preserved) and the old file is gone.
         assert!(!dir.join("pages").join("Alpha.md").exists());
         assert_eq!(
@@ -6615,7 +6631,8 @@ mod tests {
         fs::write(dir.join("pages/Old.md"), "- old body\n").unwrap();
         let referrer = dir.join("pages/Referrer.md");
         fs::write(&referrer, "- unrelated\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
         let old_view = store.whole_graph().unwrap();
         let names = vec!["Old".to_owned()];
         let initial_candidates = old_view.explicit_referrers(&names);
@@ -6632,7 +6649,10 @@ mod tests {
             "the held production view must remain unchanged after a disk edit"
         );
 
-        tine_graph_features::pages::rename_page_expected(&store, None, "Old", "New", None).unwrap();
+        hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Old", "New", None)
+        })
+        .unwrap();
         let rewritten = fs::read_to_string(&referrer).unwrap();
         assert!(rewritten.contains("[[New]]"));
         assert!(!rewritten.contains("[[Old]]"));
@@ -6693,9 +6713,14 @@ mod tests {
             "tags:: Project, Project/Beta\n- see [[Project]], [[Project/Alpha]] and #[[Project/Beta]]\n",
         )
         .unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        tine_graph_features::pages::rename_page_expected(&store, None, "Project", "Archive", None)
-            .unwrap();
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(
+                &store, host, "Project", "Archive", None,
+            )
+        })
+        .unwrap();
 
         // Primary + every descendant file moved (content preserved), old names gone.
         assert!(!dir.join("pages").join("Project.md").exists());
@@ -6889,22 +6914,17 @@ mod tests {
         let dir = scratch("org-twin");
         fs::write(dir.join("pages").join("Foo.md"), "- md body\n").unwrap();
         fs::write(dir.join("pages").join("Foo.org"), "* org body\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
         assert!(
-            tine_graph_features::pages::rename_page_expected(&store, None, "Foo", "Bar", None)
-                .is_err(),
+            hosted(&store, |_, host| {
+                tine_graph_features::pages::rename_page_expected(&store, host, "Foo", "Bar", None)
+            })
+            .is_err(),
             "rename refused on twin"
         );
         assert!(
-            tine_graph_features::pages::delete_page_expected(
-                &store,
-                None,
-                "Foo",
-                PageKind::Page,
-                None,
-                None
-            )
-            .is_err(),
+            delete(&store, "Foo", None).is_err(),
             "delete refused on twin"
         );
         // Both files are byte-intact (nothing was written/moved/trashed).
@@ -7207,10 +7227,12 @@ mod tests {
         // `* a\n*** c` skips a heading level → not round-trip-safe → read-only.
         let ro = "* a\n*** c referencing [[Alpha]]\n";
         fs::write(dir.join("pages").join("Weird.org"), ro).unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        let err =
-            tine_graph_features::pages::rename_page_expected(&store, None, "Alpha", "Beta", None)
-                .unwrap_err();
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        let err = hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Alpha", "Beta", None)
+        })
+        .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
         // All-or-nothing: neither file moved/changed.
         assert!(
@@ -7232,8 +7254,12 @@ mod tests {
         fs::write(dir.join("pages").join("Old.md"), "- old body\n").unwrap();
         let org = "* note\nsee [[Old]]\n#+BEGIN_SRC clojure\n\"[[Old]]\"\n#+END_SRC\n";
         fs::write(dir.join("pages").join("Ref.org"), org).unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        tine_graph_features::pages::rename_page_expected(&store, None, "Old", "New", None).unwrap();
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
+        hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Old", "New", None)
+        })
+        .unwrap();
         let got = fs::read_to_string(dir.join("pages").join("Ref.org")).unwrap();
         assert_eq!(
             got,
@@ -10099,11 +10125,13 @@ mod tests {
         let b = dir.join("pages/client-b/foo.md");
         fs::write(&a, "- body a\n").unwrap();
         fs::write(&b, "- body b\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
 
-        let err =
-            tine_graph_features::pages::rename_page_expected(&store, None, "foo", "bar", None)
-                .unwrap_err();
+        let err = hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "foo", "bar", None)
+        })
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- body a\n");
@@ -10122,17 +10150,10 @@ mod tests {
         let b = dir.join("pages/client-b/foo.md");
         fs::write(&a, "- body a\n").unwrap();
         fs::write(&b, "- body b\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
 
-        let err = tine_graph_features::pages::delete_page_expected(
-            &store,
-            None,
-            "foo",
-            PageKind::Page,
-            None,
-            None,
-        )
-        .unwrap_err();
+        let err = delete(&store, "foo", None).unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- body a\n");
@@ -10149,28 +10170,23 @@ mod tests {
         let a = dir.join("pages/client-a/Twin.md");
         let b = dir.join("pages/client-b/Twin.md");
         fs::write(&a, "- client a\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
 
-        let stale = tine_graph_features::pages::delete_page_expected(
-            &store,
-            None,
-            "Twin",
-            PageKind::Page,
-            Some("pages/client-b/Twin.md"),
-            None,
-        )
-        .unwrap_err();
+        let stale = delete(&store, "Twin", Some("pages/client-b/Twin.md")).unwrap_err();
         assert_eq!(stale.kind(), io::ErrorKind::NotFound);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- client a\n");
 
         fs::write(&b, "- client b\n").unwrap();
-        let ambiguous = tine_graph_features::pages::rename_page_expected(
-            &store,
-            None,
-            "Twin",
-            "Renamed",
-            Some("pages/client-b/Twin.md"),
-        )
+        let ambiguous = hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(
+                &store,
+                host,
+                "Twin",
+                "Renamed",
+                Some("pages/client-b/Twin.md"),
+            )
+        })
         .unwrap_err();
         assert_eq!(ambiguous.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- client a\n");
@@ -10187,11 +10203,13 @@ mod tests {
         let target = dir.join("pages/New.md");
         fs::write(&old, "* old body\n").unwrap();
         fs::write(&target, "- existing target\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
 
-        let err =
-            tine_graph_features::pages::rename_page_expected(&store, None, "Old", "New", None)
-                .unwrap_err();
+        let err = hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Old", "New", None)
+        })
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&old).unwrap(), "* old body\n");
@@ -10209,11 +10227,13 @@ mod tests {
         let target = dir.join("pages/client/New.md");
         fs::write(&old, "* old body\n").unwrap();
         fs::write(&target, "- nested target\n").unwrap();
-        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let store =
+            std::sync::Arc::new(tine_store::Store::open(&dir, Default::default()).unwrap().0);
 
-        let err =
-            tine_graph_features::pages::rename_page_expected(&store, None, "Old", "New", None)
-                .unwrap_err();
+        let err = hosted(&store, |_, host| {
+            tine_graph_features::pages::rename_page_expected(&store, host, "Old", "New", None)
+        })
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&old).unwrap(), "* old body\n");

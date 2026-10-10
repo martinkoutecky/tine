@@ -1,8 +1,8 @@
 //! One page host per graph binding (STEP3 §1–§3): the driver thread, the
 //! command path that serializes a window's page DTO against the right
-//! comparison source and admits it, and the page-mail bridge. No production
-//! path starts one yet (step 3b P1 is inert; P2b starts it at graph open);
-//! until then the app saves through the old engine.
+//! comparison source and admits it, and the page-mail bridge. The app
+//! starts one at every graph-window binding (`load_graph_for_label`); it is
+//! the only writer of a window's page edits.
 use super::driver::{Driver, Owner, Sink, SystemClock};
 use super::production::ProductionIo;
 use super::progress::{backoff, Clock, Notice, Progress, Stopping};
@@ -10,6 +10,7 @@ use super::*;
 use crate::model::{bytes_hold_block_id, content_rev};
 use crate::store::PublishedObservations;
 use crate::{ChangeKind, EditKind, FileId, FileRev, Origin, PageId, Store, Why};
+use std::collections::HashMap;
 use std::path::Path;
 use tine_core::doc::Document;
 use tine_core::model::PageDto;
@@ -21,6 +22,9 @@ pub struct PageHost {
     store: Arc<Store>,
     /// What a relaunch after a restore binds again (§7 step 6).
     launch: Launch,
+    /// Each page launch recovered from a draft, at the version it installed
+    /// (STEP3 §9): recovered while still at that version.
+    recovered: BTreeMap<PageKey, u64>,
     /// Index publications to fail before the next success (tests).
     #[cfg(test)]
     index_faults: Arc<std::sync::atomic::AtomicU32>,
@@ -264,8 +268,17 @@ pub struct MailNotice {
     pub failures: u32,
     /// The latest save failed.
     pub save_error: bool,
+    /// The latest failed save's platform step, a fixed literal such as
+    /// `renameat2(RENAME_NOREPLACE)` (GH #538; never a path, I-5), and its
+    /// OS error code, when the filesystem named them. The window shows both
+    /// in the save-failure toast (Q-P2b-3).
+    pub operation: Option<&'static str>,
+    pub os_error: Option<i32>,
     /// The latest draft write failed.
     pub draft_error: bool,
+    /// A rename or delete reported Uncertain to its caller later ended with
+    /// its draft durably absent: it did not happen (Q2).
+    pub dropped: bool,
     /// The conflict has been reported to the window.
     pub conflict_reported: bool,
     /// A trash payload's custody could not be settled.
@@ -309,8 +322,15 @@ pub enum PageOperation {
     Pending,
     /// The page is busy; retry once it is clean.
     Waiting,
-    /// Refused (unsaved input, a stopped host).
+    /// Refused (unsaved input, a stopped host; for a delete also a failed
+    /// draft write, so nothing changed).
     Refused,
+    /// Admitted, but neither its answer nor its publication arrived within
+    /// the bound: it may still complete; Tine keeps trying.
+    Uncertain,
+    /// Applied, but the page was discarded or edited back before it
+    /// published: a later edit decides it.
+    Superseded,
 }
 
 /// Derived data a request carries (R8): its serialized bytes, the Document
@@ -356,6 +376,9 @@ pub(super) struct Publication {
     /// An own save's host version (the index watermark it reaches, §4.4)
     /// and the Document its bytes were serialized from (R8), if it matched.
     pub own: Option<(u64, Option<Document>)>,
+    /// The pre-read stamp of the read these bytes came from, if the host's
+    /// I/O took one (`HostIo::take_stamp`, GH #623).
+    pub stamp: Option<crate::watch::Stamp>,
 }
 
 /// What became of one publication.
@@ -518,6 +541,7 @@ impl Book {
                         spelling: progress.host.fs.spelling(page),
                         bytes: bytes.clone(),
                         own: Some((*version, document)),
+                        stamp: progress.host.fs.take_stamp(page),
                     });
                 }
                 Event::Observed { page, bytes } => {
@@ -527,6 +551,7 @@ impl Book {
                         spelling: progress.host.fs.spelling(page),
                         bytes: bytes.clone(),
                         own: None,
+                        stamp: progress.host.fs.take_stamp(page),
                     });
                 }
                 Event::Refused { page, id, reason } => {
@@ -868,9 +893,14 @@ fn index(store: &Store, publication: &Publication) -> bool {
     // The owner's bytes become the page's index and its row in one
     // critical section (R1); an unchanged row is not touched.
     let owned = graph.publish_owned(&publication.key, publication.bytes.clone(), document);
+    // The read the bytes came from stamped the file first (GH #623).
+    let stamps: HashMap<FileId, crate::watch::Stamp> = (publication.stamp.clone())
+        .map(|stamp| (id.clone(), stamp))
+        .into_iter()
+        .collect();
     let Some(kind) = kind else {
         graph.transaction_clear_page_marker(&path);
-        let raced = store.watch.note_own(&[(id, rev)]);
+        let raced = store.watch.note_own_observed(&[(id, rev)], &stamps);
         store.watch.reconcile_raced(&raced);
         return true;
     };
@@ -889,8 +919,11 @@ fn index(store: &Store, publication: &Publication) -> bool {
         graph.transaction_bump_generation();
     }
     let files = vec![(id.clone(), kind, rev)];
+    let mut observations = PublishedObservations {
+        stamps,
+        ..Default::default()
+    };
     if publication.own.is_some() {
-        let mut observations = PublishedObservations::default();
         if let Some(entry) = entry {
             observations.entries.insert(id, entry);
         }
@@ -906,7 +939,7 @@ fn index(store: &Store, publication: &Publication) -> bool {
             .map(|entry| (id, entry.kind, entry.name))
             .into_iter()
             .collect();
-        store.publish_transaction_change(Origin::External, files, pages, Default::default());
+        store.publish_transaction_change(Origin::External, files, pages, observations);
     }
     true
 }
@@ -952,7 +985,10 @@ fn page_mail(store: &Store, key: PageKey, mail: Mail, facts: MailFacts) -> PageM
         notice: MailNotice {
             failures: facts.notice.failures,
             save_error: facts.notice.save_error,
+            operation: facts.notice.operation,
+            os_error: facts.notice.os_error,
             draft_error: facts.notice.draft_error,
+            dropped: facts.notice.dropped,
             conflict_reported: facts.notice.conflict_reported,
             custody_error: !facts.notice.custody_error.is_empty(),
             index_error: facts.binding.index_error,
@@ -1278,25 +1314,56 @@ impl PageHost {
 
     /// `page_delete` (§7): the host's delete operation, for the current
     /// window `session` only (S2). D4 refuses a page with unsaved input;
-    /// Waiting means the page is busy (retry when clean).
-    pub fn delete(&self, session: u64, page: &PageId) -> PageOperation {
+    /// Waiting means the page is busy (retry when clean). `checked` is the
+    /// file's bytes the caller's identity check read (GH #620,
+    /// `pages::delete_page_expected`); the operation refuses when its own
+    /// read differs (Q-P2b-5). An admitted deletion is waited for, at most
+    /// `OPERATION_WAIT` (Finding B): `Applied` once its own save
+    /// published it; `Refused` when its draft failed (nothing changed);
+    /// `Pending` when the page cannot publish without the user (a conflict
+    /// or a persistent save error; it completes once it can); `Superseded`
+    /// or `Uncertain` otherwise.
+    pub fn delete(&self, session: u64, page: &PageId, checked: &[u8]) -> PageOperation {
         let (key, spelling, ..) = self.identify(page);
+        // `open`'s invalid-target refusal (docs/storage-contract.md
+        // `page_host::delete`): a path that is not a page file of this graph
+        // (outside the root, not a graph text file) deletes nothing. In-scope
+        // scenario: web content, a plugin or a frontend defect passing a path.
+        if self.store.as_page(&spelling.file()).is_none() {
+            return PageOperation::Refused;
+        }
         self.register(&key, &spelling);
+        let deadline = std::time::Instant::now() + retained::OPERATION_WAIT;
         let deleted = self.driver.shared.locked_step(|state| {
             if state.book.session != session {
-                return Disposition::Refused;
+                return (Disposition::Refused, None);
             }
-            let disposition = state.progress.with_host(|host| host.delete(&key));
+            let (disposition, reply) = state.progress.with_host(|host| {
+                let disposition = host.delete_checked(&key, checked);
+                let pending = disposition == Disposition::Pending;
+                (
+                    disposition,
+                    pending.then(|| host.register_reply()).flatten(),
+                )
+            });
             // OG-RULES Rule 8 (A-K1): the operation's write is a deletion.
             if disposition == Disposition::Pending {
                 state.book.took([key.clone()], EditKind::DeletePage);
             }
-            disposition
+            let slot = reply.map(|id| retained::ReplySlot::new(&self.driver.shared, id));
+            (disposition, slot)
         });
         match deleted {
-            Some(Disposition::Applied) => PageOperation::Applied,
-            Some(Disposition::Pending) => PageOperation::Pending,
-            Some(Disposition::Waiting) => PageOperation::Waiting,
+            Some((Disposition::Pending, Some(slot))) => {
+                match self.settle(&slot, Some(session), deadline) {
+                    retained::Settled::Applied => PageOperation::Applied,
+                    retained::Settled::DraftFailed => PageOperation::Refused,
+                    retained::Settled::Unwritten(_) => PageOperation::Pending,
+                    retained::Settled::Superseded(_) => PageOperation::Superseded,
+                    retained::Settled::Uncertain => PageOperation::Uncertain,
+                }
+            }
+            Some((Disposition::Waiting, _)) => PageOperation::Waiting,
             _ => PageOperation::Refused,
         }
     }

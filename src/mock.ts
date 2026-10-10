@@ -4,10 +4,11 @@
 import { split_linkable_property } from "./render/wasm/lsdoc_wasm.js";
 import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
-import { ASSET_INGRESS_MAX_BYTES } from "./backend";
+import { ASSET_INGRESS_MAX_BYTES } from "./clipboardImage";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
-import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, DraftRecord, BlockPreview, DraftLoad, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
+import { mockPageHost } from "./mockPageHost";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { previewDtoSubtree } from "./previewProjection";
 import { hlsPageName } from "./pdf";
@@ -466,7 +467,6 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
 const mockHighlights: Record<string, { label: string; highlights: Highlight[]; page?: number; scale?: number }> = {};
 // In-memory UI session for the browser mock (no backend file).
 let mockSession: string | null = null;
-const mockDrafts = new Map<string, DraftRecord>();
 let mockWorkspaces: string | null = null;
 let mockGuideAnnounced = false;
 const mockAssets: Record<string, Uint8Array> = {};
@@ -630,7 +630,7 @@ function cloneGuideBlockForCopy(block: BlockDto, copied: Map<string, string>): B
     properties: propertyLines(raw),
   };
 }
-/** Demo/test backend with mutable mock state. savePages is a no-op; writeHighlights replaces its list without three-way merge or production failures. */
+/** Demo/test backend with mutable mock state. Page saves are taken and not written (`mockPageHost`); writeHighlights replaces its list without three-way merge or production failures. */
 // Copy/Export's browser fixture retains local approximations. These are not
 // Backend operations and have no native command; only this mock calls them.
 type MockBackend = Backend & {
@@ -881,9 +881,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       };
     },
     graphBindingGeneration: () => 1,
-    async savePages(entries) {
-      return { ok: entries.map(() => "mock-rev") }; // no-op in mock
-    },
+    ...mockPageHost((path) => all.find((p) => mockPagePath(p) === path) ?? null, (name, kind) => mockResolve(name, kind)),
     async guidePages(): Promise<GuidePage[]> {
       return mockGuidePages().map((g) => ({ ...g, page: clonePage(g.page) }));
     },
@@ -978,9 +976,6 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async getBlockReferrers(uuid: string): Promise<RefGroup[]> {
       // No exclude → same-page referrers included (matches the backend).
       return collect((b) => blockRefIds(b.raw).includes(uuid));
-    },
-    async deletePage(): Promise<void> {
-      // no-op in mock
     },
     async renamePage(): Promise<import("./types").RenameDone> {
       return { outcome: "unchanged", touched: [] }; // no-op in mock
@@ -1511,8 +1506,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async listBackups() {
       return [];
     },
-    async restoreBackup(): Promise<void> {
-      // no-op in the browser mock
+    async restoreBackup() {
+      return { error: null, reloaded: null }; // no-op in the browser mock
     },
     async loadSession(): Promise<string | null> {
       return mockSession;
@@ -1520,15 +1515,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async saveSession(data: string): Promise<void> {
       mockSession = data;
     },
-    async loadDrafts(): Promise<DraftLoad> {
-      return { drafts: [...mockDrafts.values()].map((record) => structuredClone(record)), set_aside: null };
-    },
-    async storeDraft(record: DraftRecord, _graphRoot?: string): Promise<string | null> {
-      mockDrafts.set(record.id, structuredClone(record));
-      return null;
-    },
-    async retireDraft(id: string): Promise<string | null> {
-      mockDrafts.delete(id);
+    async legacyDraftsFile() {
       return null;
     },
     async loadWorkspaces(): Promise<string> {

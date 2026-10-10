@@ -111,32 +111,6 @@ export interface PageDto {
   guide?: boolean;
 }
 
-/** One crash-surviving draft (og ADR 0061): the page as the editor held it when
- *  it could not be saved. `id` is `<session>:<page name>`; `kind` "live-conflict"
- *  is the Concord live-draft capsule (og 21a): a draft whose save was refused
- *  because its file changed on disk, restorable into the in-page resolver. */
-export interface DraftRecord {
-  id: string;
-  kind: "unsaved" | "live-conflict";
-  session: string;
-  page_name: string;
-  path: string | null;
-  reason: "conflict" | "save-failed";
-  saved_at: number;
-  page: PageDto;
-  /** Revision the draft was edited from (its Concord-ledger base); live-conflict only. */
-  base_rev?: string | null;
-  /** Disk revision observed when the save was refused; live-conflict only. */
-  observed_rev?: string | null;
-}
-
-/** The draft store's records; `set_aside` names where an unreadable store's
- *  bytes were moved when this load set it aside (§8.5: reported, never silent). */
-export interface DraftLoad {
-  drafts: DraftRecord[];
-  set_aside: string | null;
-}
-
 /** A page loaded from one concrete file. Its identity is returned unchanged on save. */
 export interface PageRead extends PageDto {
   id: string;
@@ -352,16 +326,8 @@ export type ConflictSource = "sync-copy" | "vcs-markers" | "live-save" | "duplic
 
 /** The editor draft of a `live-save` conflict object. */
 export interface LiveConflictDraft {
-  /** The retained draft of a restored capsule; absent for an open editor's
-   *  draft, which the resolver reads from the editor at each review. */
-  page?: PageDto;
-  /** Revision a restored draft was edited from; selects the ledger base. */
+  /** Revision the open draft was installed from; selects the ledger base. */
   base_rev: string | null;
-  /** True for a draft restored from an earlier session's capsule record: the
-   *  editor holds the disk version and the record is the only copy of the draft. */
-  restored: boolean;
-  /** The capsule record, for a restored draft. */
-  record_id?: string;
 }
 
 /** One version of a page participating in a conflict. */

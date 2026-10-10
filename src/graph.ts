@@ -8,10 +8,9 @@ import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./o
 import { setGraphMeta, bumpGraphEpoch, bumpDataRev, graphMeta, graphEpoch } from "./graphSession";
 import { setWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { createSignal } from "solid-js";
-import { pushToast } from "./toasts";
-import { openUnsavedRecovery } from "./unsavedRecovery";
-import { keepAtSwitch } from "./draftStore";
-import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded } from "./document";
+import { dismissToast, pushToast } from "./toasts";
+import { restartTine } from "./update";
+import { bindHost, resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded, tryFreezeGraphRewrite } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
@@ -22,6 +21,7 @@ import { resetPageIndex } from "./pageIndex";
 import { applyCustomCss } from "./customCss";
 import { isMobile, platformKind } from "./platform";
 import type { BlockDto, GraphMeta } from "./types";
+import type { DraftStatus } from "./document";
 import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
 import { journalHasContent } from "./journalContent";
@@ -148,6 +148,7 @@ export async function loadGraphPath(
   if (ownsTransition) {
     setGraphTransitioning(true);
   }
+  let unfreeze: (() => void) | null = null;
   try {
   if (ownsTransition) {
     const active = activeElement();
@@ -228,6 +229,21 @@ export async function loadGraphPath(
   // the PDF drain could still abort (review F11), and before the last flush, so
   // an edit a window's disposal commits is still written.
   if (hadGraph && switching) closeAllWorkspaceWindows("graph-switch");
+  // STEP3 §6 step 1: freeze every window's input, workspace windows included,
+  // until the old working set is reset (or the switch aborts), so nothing typed
+  // after the last flush can be left without custody (storage.qnt MX). The
+  // focused editor commits first, as the rename freeze does.
+  if (hadGraph) {
+    const focused = activeElement();
+    if (isHTMLElementNode(focused)) focused.blur();
+    unfreeze = tryFreezeGraphRewrite();
+    if (!unfreeze) {
+      if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
+      pushToast("A rename is still running — switch graphs once it finishes.", "error");
+      return { kind: "aborted" };
+    }
+    endEdit("graph-switch");
+  }
   // An edit can land during the awaits since the first flush (session save,
   // access prompt, PDF drain); resetStore would discard it with the old
   // working set. Flush once more as the last await before the binding moves.
@@ -242,6 +258,12 @@ export async function loadGraphPath(
   }
 
   let result;
+  // An overlapping graph still saving its pages (closing elsewhere) makes the
+  // open wait for it (F6); say so while it does.
+  let waitingToast: number | null = null;
+  const stopWaiting = await backend().onGraphOpenWaiting((saving) => {
+    waitingToast ??= pushToast(`Waiting for Tine to finish saving “${saving}” before opening this graph…`, "info", { sticky: true });
+  }).catch(() => () => {});
   try {
     result = await backend().loadGraph(path);
   } catch (error) {
@@ -250,6 +272,9 @@ export async function loadGraphPath(
     // closed, so no callback can regain its former authority.
     if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
     throw error;
+  } finally {
+    stopWaiting();
+    if (waitingToast !== null) dismissToast(waitingToast);
   }
   if (result.kind === "focused_existing") {
     if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
@@ -260,21 +285,12 @@ export async function loadGraphPath(
     return { kind: "already_current", root: meta.root };
   }
   if (!hadGraph || rebindsPdfOwner) activatePdfOwnership(meta.root);
-  // An edit typed while load_graph ran missed the last flush, and the binding
-  // has moved: snapshot it into the old graph's draft store before resetStore
-  // drops it (no await in between, so no later edit can slip past).
-  const oldRoot = hadGraph ? graphMeta()?.root : undefined;
-  const kept = oldRoot ? keepAtSwitch(oldRoot) : null;
   resetStore();
-  // storage.qnt mutant MX: the switch goes on only once that text is durable
-  // in the old graph's draft store, or, if the store refused it (disk error,
-  // its 64-page / 8 MiB bound), is held in this window and the user is told.
-  const lost = kept ? await kept : [];
-  if (lost.length > 0) {
-    pushToast(`Couldn't keep a crash-safe copy of unsaved edits to ${lost.map((n) => `“${n}”`).join(", ")} from the previous graph. `
-      + "They are held in this window until you dismiss them: copy them from Review unsaved.", "error",
-      { sticky: true, action: { label: "Review unsaved", run: openUnsavedRecovery } });
-  }
+  unfreeze?.();
+  unfreeze = null;
+  await bindHost();
+  reportDraftStatus(result.draft_status ?? null);
+  void reportLegacyDrafts();
   clearWorkspaces();
   closePageProps();
   setAudioPlayer(null);
@@ -333,8 +349,65 @@ export async function loadGraphPath(
   }
   return { kind: result.kind, root: meta.root };
   } finally {
+    unfreeze?.();
     if (ownsTransition) setGraphTransitioning(false);
   }
+}
+
+/** Crash-draft storage the new host could not use (STEP3 §4): saves keep
+ * working; Retry re-probes it, and drafts it found but could not list are
+ * recovered at the next launch (M1, Q-P1-2), so the desktop offers Restart.
+ * The pages whose text is not on disk yet are named at every open (SPEC-s2
+ * §4.11): what launch recovered (STEP3 §9), and what a host kept from a
+ * closed window still holds, with why (B-QA). */
+function reportDraftStatus(status: DraftStatus | null): void {
+  const unsaved = status?.unsaved ?? [];
+  const recovered = unsaved.filter((page) => page.recovered);
+  if (recovered.length) {
+    pushToast(`Recovered unsaved edits on ${recovered.length} page(s) — Tine is saving them: ${recovered.map((page) => page.path).join(", ")}.`,
+      "info", { sticky: true });
+  }
+  const held = unsaved.filter((page) => !page.recovered);
+  if (held.length) {
+    const why = (page: (typeof held)[number]) => page.conflict ? " (changed on disk; open it to choose)"
+      : page.failing ? " (saving fails)" : "";
+    pushToast(`${held.length} page(s) still have edits that are not on disk; Tine keeps saving them: ${held.map((page) => page.path + why(page)).join(", ")}.`,
+      held.some((page) => page.conflict || page.failing) ? "error" : "info", { sticky: true });
+  }
+  if (status?.unreadable.length) {
+    pushToast(`Tine left ${status.unreadable.length} unreadable crash-recovery file(s) in place: ${status.unreadable.join(", ")}.`, "error", { sticky: true });
+  }
+  if (!status?.unavailable) return;
+  const id: number = pushToast(`Crash recovery is off for this graph: ${status.unavailable}. Your edits still save.`, "error",
+    { sticky: true, action: { label: "Retry", run: () => { dismissToast(id); void retryDrafts(); } } });
+}
+
+async function retryDrafts(): Promise<void> {
+  try {
+    if ((await writeOwned(bindingOwner(), backend().pageDraftsRetry())).kind === "stale") return;
+    pushToast("Crash recovery is on again.", "success");
+  } catch (error) {
+    const restart = (await platformKind()) === "desktop";
+    pushToast(`Crash recovery is still off: ${String(error)}.`, "error", restart
+      ? { sticky: true, action: { label: "Restart Tine", run: () => void restartTine() } }
+      : { sticky: true });
+  }
+}
+
+/** The v1 crash-draft file stays untouched as a backup (D-1): name it once,
+ * not again when the same graph reopens in this window. */
+let legacyDraftsReported: string | null = null;
+async function reportLegacyDrafts(): Promise<void> {
+  let read;
+  try { read = await readOwned(bindingOwner(), backend().legacyDraftsFile()); }
+  catch {
+    console.warn("Could not check for crash-recovery copies from an older Tine");
+    return;
+  }
+  const file = read.kind === "current" ? read.value : null;
+  if (!file || legacyDraftsReported === file) return;
+  legacyDraftsReported = file;
+  pushToast(`Crash-recovery copies from an older Tine are kept untouched in ${file}.`, "info");
 }
 
 /** Refresh frontend state after a successful page rename. The backend rename
@@ -476,7 +549,6 @@ export async function ensureJournalTemplateForDay(
       const resolved = resolution?.value ?? null;
       if (resolved?.kind === "alias") return "deferred";
       await createPage(owner.title, journalTemplatePage(owner.title, tmpl.blocks.map(resolve), existing), {
-        id: existing?.id ?? resolved!.id,
         baseRev: existing?.rev ?? null,
         bindingGeneration: binding.backendGeneration,
       });
@@ -726,7 +798,6 @@ async function seedTodayJournal(): Promise<void> {
     const resolved = resolution?.value ?? null;
     if (resolved?.kind === "alias") throw new Error("conflict: journal alias");
     await createPage(title, demoJournalPage(title), {
-      id: existing?.id ?? resolved!.id,
       baseRev: null,
       bindingGeneration: binding.backendGeneration,
     });

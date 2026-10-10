@@ -156,11 +156,19 @@ fn is_conflict(outcome: &TxOutcome) -> bool {
     } if rollback.undo_failed.is_empty() && publication_errors.is_empty())
 }
 
+// `retry_on_conflict` attempts on this thread: the bound a test counts.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn retry_on_conflict<T>(
     exhausted: &'static str,
     mut attempt: impl FnMut() -> io::Result<Option<T>>,
 ) -> io::Result<T> {
     for _ in 0..4 {
+        #[cfg(test)]
+        ATTEMPTS.with(|n| n.set(n.get() + 1));
         if let Some(value) = attempt()? {
             return Ok(value);
         }

@@ -54,9 +54,9 @@ def name(e):
     return e[1] if e[0]=='id' else None
 
 
-SHA = "614f82a83d61007d6e1a90747c71b350caa407e0c908699510b74ddba88c883f"
-SCENARIO_SHA = "4b4e2720a645afbb0ca71d034ff639a557bcf4f62abb886a105aec566b8504a5"
-SCENARIO_COUNT = 143
+SHA = "1e6ec36c29ec8fd1b7a1ebdce099e82509c0ff59fa6c137cf6f0ef3d1e0d2bd4"
+SCENARIO_SHA = "92a75904b2da9b43a7bb9c80a0f2fc41b462cef5a60ec41f4d613b67d58ff1c3"
+SCENARIO_COUNT = 159
 PROFILES = {
     "base": 'Set("crash", "power")',
     "R1": 'Set("crash", "power", "R1")',
@@ -169,7 +169,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("model_dir", type=Path)
     ap.add_argument("--quint", type=Path)
-    ap.add_argument("--scenario-source", type=Path, required=True, help="authoritative s3.1 scenarios (og/merged/scenarios-s3.inc; hash-pinned)")
+    ap.add_argument("--scenario-source", type=Path, required=True, help="authoritative s3.2 scenarios (og/merged/scenarios-s3.inc; hash-pinned)")
     ap.add_argument("--traces-per-profile", type=int, default=64)
     ap.add_argument("--steps", type=int, default=40)
     ap.add_argument("--sample", type=int, default=8, help="committed traces per profile; all generated traces are also replayed")
@@ -215,7 +215,7 @@ def main():
         path = work/f"trace-{p}.qnt"; path.write_text(traced_model(text))
         pattern = work/f"{p}-{{seq}}.itf.json"
         if not args.reuse:
-            result = command([quint, "run", path, "--backend", "typescript", "--init", "traceInit", "--step", "traceStep", "--invariant", "guarantee", "--max-samples", args.traces_per_profile, "--n-traces", args.traces_per_profile, "--max-steps", args.steps, "--seed", seeds[p], "--verbosity", "1", "--out-itf", pattern], work/f"traces-{p}.log", env)
+            result = command([quint, "run", path, "--backend", "typescript", "--init", "traceInit", "--step", "traceStep", "--invariants", "guarantee", "orderHolds", "renameResolves", "--max-samples", args.traces_per_profile, "--n-traces", args.traces_per_profile, "--max-steps", args.steps, "--seed", seeds[p], "--verbosity", "1", "--out-itf", pattern], work/f"traces-{p}.log", env)
             assert result.returncode == 0, result.stdout+result.stderr
         paths = sorted(work.glob(f"{p}-*.itf.json"))
         assert len(paths) == args.traces_per_profile, (p, len(paths))

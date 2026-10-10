@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 function productionSources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const file = path.join(dir, entry.name);
-    return entry.isDirectory() ? productionSources(file) : /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file) ? [file] : [];
+    return entry.isDirectory() ? productionSources(file) : /\.tsx?$/.test(file) && !/\.test(?:\.support)?\.tsx?$/.test(file) ? [file] : [];
   });
 }
 
@@ -15,7 +15,7 @@ const EXEMPT: Record<string, string> = {
   "src/components/Block.tsx#Editor.capturePhotoCmd": "asset editor token checks binding before insertion; an import failure is always reported",
   "src/components/Block.tsx#Editor.voiceMemoToggle": "native recorder must be cancelled from a stale start result; the app-wide start token guards insertion; a stop or import failure is always reported",
   "src/debug.ts#initDebug": "one-time device debug probe has no graph or route landing",
-  "src/graph.ts#loadGraphPath": "the graph transition changes its own binding; its transition lock owns publication",
+  "src/graph.ts#loadGraphPath": "the graph transition changes its own binding; its transition lock owns publication; the open-waiting subscription lives only inside its try/finally around loadGraph",
   "src/plugins/manager.ts#uninstall": "device-local plugin removal completes in the process-wide manager across graph navigation",
   "src/plugins/registry.ts#loadVerifiedCachedRegistry": "device-local verified registry cache load has no graph or route landing",
   "src/assetSettings.ts#initAssetSettings": "preference revision gates the device-local signal",
@@ -40,12 +40,15 @@ const EXEMPT: Record<string, string> = {
   "src/themePreference.ts#applyTheme": "device system-bar effect has no asynchronous UI landing",
   "src/update.ts#openReleases": "external link has no in-app result landing",
   "src/tray.ts#persistTrayPreference": "device-local tray preference write then apply; writePreference owns rollback of a failed write and a failed apply toasts itself",
-  "src/backend.ts#saveOnePage": "save refusal adapter preserves family and disk revision; save/reviewFixes.test.ts and save/cadenceConflict.test.ts own reconciliation",
-  "src/document/save/engine.ts#createPage": "save state machine owns create refusal; save/reviewFixes.test.ts",
-  "src/document/save/engine.ts#deletePageOnDisk": "save state machine owns deletion outcome; save/groupDeletion.test.ts",
-  "src/document/save/engine.ts#doSave": "save state machine owns dirty and conflict reconciliation; save/cadenceConflict.test.ts",
-  "src/document/save/engine.ts#resolveConflict": "save state machine owns conflict retry; save/reviewFixes.test.ts",
-  "src/document/save/engine.ts#runGroup": "save state machine owns grouped publication and rollback; save/groups.test.ts",
+  "src/document/host/wiring.ts#hostPort.open": "the page-host client owns every reply: it drops one whose session is not current (client.ts session checks); host/client.test.ts",
+  "src/document/host/wiring.ts#hostPort.submit": "the page-host client owns every reply: it drops one whose session is not current (client.ts session checks); host/client.test.ts",
+  "src/document/host/wiring.ts#hostPort.move": "the page-host client owns every reply: it drops one whose session is not current (client.ts session checks); host/client.test.ts",
+  "src/document/host/wiring.ts#hostPort.discard": "the page-host client owns every reply: it drops one whose session is not current (client.ts session checks); host/client.test.ts",
+  "src/document/host/wiring.ts#hostPort.close": "the page-host client owns every reply: it drops one whose session is not current (client.ts session checks); host/client.test.ts",
+  "src/document/host/wiring.ts#hostPort.saveNow": "the page-host client owns every reply: it drops one whose session is not current (client.ts session checks); host/client.test.ts",
+  "src/document/host/wiring.ts#hostPort.waitPublished": "the page-host client owns every reply: it drops one whose session is not current (client.ts session checks); host/client.test.ts",
+  "src/document/host/wiring.ts#hostPort.owed": "the page-host client owns every reply: it drops one whose session is not current (client.ts session checks); host/client.test.ts",
+  "src/document/host/wiring.ts#applyLiveResolution": "the review ticket owns the read-only merge: submitReviewed drops it when the session, page instance, edit or version moved; host/client.test.ts",
   "src/gpu.ts#warnIfSoftwareRendering": "one-time device-wide best-effort probe has no graph or view owner",
   "src/plugins/manager.ts#install": "process-wide install writes and applies its returned record independent of graph navigation; plugins/manager.test.ts",
   "src/plugins/registry.ts#verifiedIndex": "pure process-wide signature check; callers own any UI publication; plugins/registry.test.ts",
@@ -56,7 +59,7 @@ const EXEMPT_CALLS: Record<string, string[]> = {
   "src/components/Block.tsx#Editor.capturePhotoCmd": ["capturePhoto"],
   "src/components/Block.tsx#Editor.voiceMemoToggle": ["stopRecording", "startRecording"],
   "src/debug.ts#initDebug": ["debugInfo"],
-  "src/graph.ts#loadGraphPath": ["loadGraph"],
+  "src/graph.ts#loadGraphPath": ["loadGraph", "onGraphOpenWaiting"],
   "src/plugins/manager.ts#uninstall": ["uninstallPlugin", "setAppString"],
   "src/plugins/registry.ts#loadVerifiedCachedRegistry": ["loadPluginRegistryCache"],
   "src/assetSettings.ts#initAssetSettings": ["getAppString"],
@@ -81,12 +84,15 @@ const EXEMPT_CALLS: Record<string, string[]> = {
   "src/themePreference.ts#applyTheme": ["setSystemBarAppearance"],
   "src/update.ts#openReleases": ["openExternal"],
   "src/tray.ts#persistTrayPreference": ["setAppBool", "trayApply"],
-  "src/backend.ts#saveOnePage": ["savePages"],
-  "src/document/save/engine.ts#createPage": ["resolvePage"],
-  "src/document/save/engine.ts#deletePageOnDisk": ["deletePage", "deletePage"],
-  "src/document/save/engine.ts#doSave": ["resolvePage", "getPageByPath"],
-  "src/document/save/engine.ts#resolveConflict": ["getPageByPath", "getPage"],
-  "src/document/save/engine.ts#runGroup": ["getPageByPath", "savePages"],
+  "src/document/host/wiring.ts#hostPort.open": ["pageOpen"],
+  "src/document/host/wiring.ts#hostPort.submit": ["pageSubmit"],
+  "src/document/host/wiring.ts#hostPort.move": ["pageMove"],
+  "src/document/host/wiring.ts#hostPort.discard": ["pageDiscard"],
+  "src/document/host/wiring.ts#hostPort.close": ["pageClose"],
+  "src/document/host/wiring.ts#hostPort.saveNow": ["pageSaveNow"],
+  "src/document/host/wiring.ts#hostPort.waitPublished": ["pageWait"],
+  "src/document/host/wiring.ts#hostPort.owed": ["pageOwed", "pageOwed"], // .then and .catch
+  "src/document/host/wiring.ts#applyLiveResolution": ["mergeLiveConflict"],
   "src/gpu.ts#warnIfSoftwareRendering": ["gpuEnv"],
   "src/plugins/manager.ts#install": ["installPlugin"],
   "src/plugins/registry.ts#verifiedIndex": ["verifyPluginRegistry"],
@@ -101,17 +107,19 @@ const BOUNDARIES = new Set(["readOwned", "readOwnedResource", "writeOwned", "ser
 // such as rename and paste that a write-prefix expression cannot recognize.
 const DURABLE_BACKEND_METHODS = new Set([
   "approveExternalAssets", "forgetKnownGraph", "installPlugin", "uninstallPlugin", "setPluginEnabled",
-  "storePluginRegistryCache", "setSystemBarAppearance", "createGraph", "savePages", "copyGuideIntoGraph",
-  "setGuideAnnounced", "deletePage", "renamePage", "publishHtml", "publishQuery", "publishLive", "setFavorites",
+  "storePluginRegistryCache", "setSystemBarAppearance", "createGraph", "copyGuideIntoGraph",
+  // The page host's writes: each takes or drops page text, a delete, or makes a save due.
+  "pageSubmit", "pageMove", "pageDiscard", "pageClose", "pageDelete", "pageSaveNow",
+  "setGuideAnnounced", "renamePage", "publishHtml", "publishQuery", "publishLive", "setFavorites",
   "setPreferredWorkflow", "setDefaultHome", "setTimetrackingEnabled", "setShowBrackets", "setDocModeEnterForNewBlock",
   "setLogicalOutdenting", "setPreferredFormat", "setJournalTitleFormat", "setDefaultJournalTemplate",
   "setStartOfWeek", "editAssetExternal", "editCustomCss", "trashAsset", "emptyAssetTrash", "trashJournalFile",
   "applyJournalFilenameMigrations",
-  "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "resolveLiveConflict", "resolveDuplicateJournalDay", "trashSyncConflict", "saveAsset",
+  "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "resolveDuplicateJournalDay", "trashSyncConflict", "saveAsset",
   "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard",
   "writeHighlights", "savePdfAreaImage", "rollbackPdfAreaImage",
   "setBackupKeep", "setCaptureEnterFiles", "setWatchMode", "restoreBackup",
-  "saveSession", "saveWorkspaces", "storeDraft", "retireDraft", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
+  "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
   "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
   "saveGraphVerificationReport", "addDefenderExclusion", "dismissDefenderHint",
 ]);
@@ -124,7 +132,12 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "captureTarget", "bindCaptureGraph", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
   "readPluginEntry", "verifyPluginRegistry", "loadPluginRegistryCache", "defaultGraphParent", "suggestGraphName",
   "closeGraphWindow", "trayApply", "openDevtools", "pageInventory", "journalFeedPage", "journalContentDays",
-  "getPage", "resolvePage", "loadDrafts", "graphSourceFiles", "guidePages", "getBacklinks",
+  "getPage", "resolvePage", "graphSourceFiles",
+  // The page host's reads and controls: opening a page takes custody and writes
+  // nothing; the mail and graph-open events, the publication barrier and debt
+  // queries, the draft I/O re-probe, the v1 drafts path, the read-only merge.
+  "pageWindowReloaded", "pageOpen", "pageWait", "pageOwed", "onPageMail", "onGraphOpenWaiting", "pageDraftsRetry",
+  "legacyDraftsFile", "mergeLiveConflict", "guidePages", "getBacklinks",
   "getBacklinkFilterContext", "getUnlinkedRefs", "warmDone", "getBlockRefCounts", "getBlockReferrers",
   "pagePrintHtml", "sheetExportInputs", "exportQuerySubtrees", "parseQuery", "printQuery", "queryOgExpressible", "queryRegistry",
   "queryRun", "queryExplainEmpty", "queryFacets", "publishQueryPlan", "pageIcons",

@@ -1,6 +1,17 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
 mod fs {
     pub use std::fs::*;
     use std::path::Path;
@@ -1592,8 +1603,10 @@ fn page_rename_matches_legacy_for_refs_namespace_case_and_tags() {
         if let Some(edn) = config {
             put(&a, "logseq/config.edn", edn);
         }
-        let store = Store::open(&a, Default::default()).unwrap().0;
-        let client = pages::rename_page_expected(&store, None, old_name, new_name, None);
+        let store = std::sync::Arc::new(Store::open(&a, Default::default()).unwrap().0);
+        let client = hosted(&store, |host| {
+            pages::rename_page_expected(&store, host, old_name, new_name, None)
+        });
         assert_eq!(
             format!("{:?}", operation_result(&client, &a)),
             match index {
@@ -1659,10 +1672,12 @@ fn page_rename_refusals_match_legacy_and_keep_disk() {
         for (rel, body) in &files {
             put(&a, rel, body);
         }
-        let store = Store::open(&a, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(Store::open(&a, Default::default()).unwrap().0);
         let before = disk_tree(&a);
         let to = if label == "target-exists" { "y" } else { "z" };
-        let client = pages::rename_page_expected(&store, None, "x", to, None);
+        let client = hosted(&store, |host| {
+            pages::rename_page_expected(&store, host, "x", to, None)
+        });
         assert_eq!(format!("{:?}", operation_result(&client, &a)), match index { 0 => "\"AlreadyExists: target page identity already exists elsewhere in the graph\"", 1 => "\"PermissionDenied: cannot rename: <root>/pages/ref.org is a read-only .org file (does not round-trip)\"", _ => unreachable!() });
         assert_eq!(disk_tree(&a), before, "{label} client changed disk");
         assert_disk_tree(
@@ -1679,7 +1694,6 @@ fn page_rename_refusals_match_legacy_and_keep_disk() {
 
 #[test]
 fn page_merge_delete_and_rescue_match_legacy_bytes() {
-    use tine_core::model::PageKind;
     let (a, _) = fixture("page-operations-new");
     put(
         &a,
@@ -1690,7 +1704,7 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
     put(&a, "journals/Loose.md", "- rescued\n");
     put(&a, "pages/delete.md", "- gone\n");
     put(&a, "pages/ref.md", "- [[src]] and [[dst]]\n");
-    let store = Store::open(&a, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&a, Default::default()).unwrap().0);
     pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
     assert_disk_tree(
         &a,
@@ -1703,22 +1717,47 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
         "page_merge_delete_and_rescue_match_legacy_bytes",
         "rescue",
     );
-    let id = store.file_id(Area::Pages, "delete.md").unwrap();
-    let stale = store.read(&id, None).unwrap().1;
+    // A page's deletion is the page host's (STEP3 §7): the identity checks
+    // read the file and bind the host's deletion to those bytes, then
+    // page_owed and page_wait until it is published (Q-P2b-5).
+    let stale = fs::read(a.join("pages/delete.md")).unwrap();
     put(&a, "pages/delete.md", "- later\n");
-    let before_delete = disk_tree(&a);
-    assert!(pages::delete_page_expected(
-        &store,
-        None,
-        "delete",
-        PageKind::Page,
-        None,
-        Some(&stale)
-    )
-    .is_err());
-    assert_eq!(disk_tree(&a), before_delete, "stale delete changed disk");
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    pages::delete_page_expected(&store, None, "delete", PageKind::Page, None, None).unwrap();
+    let before_delete = disk_tree(&a);
+    hosted(&store, |host| {
+        let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
+            .as_u64()
+            .unwrap();
+        let page = tine_store::PageId::from("pages/delete.md");
+        assert_eq!(
+            host.delete(session, &page, &stale),
+            tine_store::PageOperation::Refused
+        );
+        assert_eq!(disk_tree(&a), before_delete, "stale delete changed disk");
+        assert_eq!(
+            pages::delete_page_expected(
+                &store,
+                host,
+                session,
+                "delete",
+                tine_core::model::PageKind::Page,
+                None
+            )
+            .unwrap(),
+            tine_store::PageOperation::Applied
+        );
+        let needs: Vec<_> = host
+            .owed(session, Some(std::slice::from_ref(&page)))
+            .unwrap()
+            .into_iter()
+            .map(|(key, version)| (key, version, None))
+            .collect();
+        let bound = std::time::Duration::from_secs(20);
+        assert_eq!(
+            host.wait_published(session, &needs, bound),
+            tine_store::PageOperation::Applied
+        );
+    });
     assert_disk_tree(
         &a,
         "page_merge_delete_and_rescue_match_legacy_bytes",
@@ -1769,30 +1808,74 @@ fn org_merge_and_binary_rescue_match_legacy() {
     );
 }
 
+/// A host rename is custody plus forward completion (STEP3-DESIGN, the
+/// restated rollback tests; SPEC-s3 s3.2). A failure before application is
+/// a refusal with the disk unchanged. After application, a referrer an
+/// external editor changes meanwhile keeps that change (it conflicts, it is
+/// never overwritten), and while it is unresolved the source is never
+/// trashed, so `[[x]]` keeps resolving; the other pages complete forward.
 #[test]
-fn page_rename_retries_external_change_and_rolls_back_third_step_failure() {
-    let (a, _) = fixture("rename-fault-retry");
+fn page_rename_keeps_an_external_referrer_change_and_a_failed_draft_changes_nothing() {
+    use tine_store::host_faults::{fail, Phase};
+    let (a, _) = fixture("rename-fault-external");
     put(&a, "pages/x.md", "- [[x]]\n");
     put(&a, "pages/one.md", "- [[x]]\n");
     put(&a, "pages/two.md", "- [[x]]\n");
-    let store = Store::open(&a, Default::default()).unwrap().0;
-    store.inject_fault(FaultPoint::Stage2MismatchAt(1));
-    pages::rename_page_expected(&store, None, "x", "y", None).unwrap();
-    assert!(a.join("pages/y.md").exists());
+    let store = std::sync::Arc::new(Store::open(&a, Default::default()).unwrap().0);
+    // A disk error fails the destination's first five writes; their backoff
+    // (0.1 + 0.3 + 1 + 3 s, then 10 s) outlasts the caller's 10 s wait.
+    fail(Phase::PageTemp, std::io::ErrorKind::Other, 5);
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    let renamed = pages::rename_page_expected(&store, &host, "x", "y", None);
+    assert!(
+        renamed.is_err(),
+        "an unwritten destination is never success"
+    );
+    assert!(!a.join("pages/y.md").exists());
+    for page in ["x", "one", "two"] {
+        let path = a.join(format!("pages/{page}.md"));
+        assert_eq!(
+            fs::read(path).unwrap(),
+            b"- [[x]]\n",
+            "s3.2: nothing before dst"
+        );
+    }
+    put(&a, "pages/two.md", "external stage-2");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !(a.join("pages/y.md").exists()
+        && fs::read(a.join("pages/one.md")).unwrap() == b"- [[y]]\n")
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the rename never completed forward"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    // Give a host that ignored the conflict or the order every chance to
+    // overwrite the referrer or trash the source.
+    std::thread::sleep(std::time::Duration::from_millis(500));
     assert_eq!(
         fs::read(a.join("pages/two.md")).unwrap(),
         b"external stage-2"
     );
-    assert_eq!(fs::read(a.join("pages/one.md")).unwrap(), b"- [[y]]\n");
-    let (b, _) = fixture("rename-fault-rollback");
+    assert_eq!(fs::read(a.join("pages/x.md")).unwrap(), b"- [[x]]\n");
+    drop(host);
+
+    let (b, _) = fixture("rename-fault-draft");
     put(&b, "pages/x.md", "- [[x]]\n");
     put(&b, "pages/one.md", "- [[x]]\n");
     put(&b, "pages/two.md", "- [[x]]\n");
-    let store = Store::open(&b, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&b, Default::default()).unwrap().0);
     let before = disk_tree(&b);
-    store.inject_fault(FaultPoint::MidStepIoAt(2));
-    assert!(pages::rename_page_expected(&store, None, "x", "y", None).is_err());
-    assert_eq!(disk_tree(&b), before, "failed commit changed disk");
+    // A full disk or an app-data disk error: the operation's draft fails.
+    fail(Phase::DraftTemp, std::io::ErrorKind::Other, 10_000);
+    let error = hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, "x", "y", None)
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("nothing changed"), "{error}");
+    assert_eq!(disk_tree(&b), before, "a refused rename changed disk");
 }
 
 /// OG `:block/refs` excludes `{{query}}` arguments, so a page that mentions the
@@ -1808,8 +1891,11 @@ fn page_rename_leaves_query_only_mentions_alone() {
         "- {{query (and (task TODO) [[x]])}}\n",
     );
     put(&a, "pages/ref.md", "- [[x]] and #x\n");
-    let store = Store::open(&a, Default::default()).unwrap().0;
-    pages::rename_page_expected(&store, None, "x", "y", None).unwrap();
+    let store = std::sync::Arc::new(Store::open(&a, Default::default()).unwrap().0);
+    hosted(&store, |host| {
+        pages::rename_page_expected(&store, host, "x", "y", None)
+    })
+    .unwrap();
     assert_eq!(
         fs::read(a.join("pages/query.md")).unwrap(),
         b"- {{query (and (task TODO) [[x]])}}\n"

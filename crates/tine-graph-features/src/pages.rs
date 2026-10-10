@@ -1,6 +1,8 @@
-//! Recoverable page deletion, rename, stray rescue, and merge. The caller names
-//! the operation; this client resolves identities and commits one guarded store
-//! transaction. It needs no graph path, lock, cache state, or write protocol.
+//! Page rename, stray rescue, merge and deletion (a deletion is the page
+//! host's, STEP3 §12, after this client's identity checks). The caller names
+//! the operation; this client resolves identities and commits one guarded
+//! store transaction or hands the page host one operation. It needs no graph path, lock,
+//! cache state, or write protocol.
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -10,8 +12,8 @@ use tine_core::refs;
 #[cfg(any(test, feature = "test-faults"))]
 use tine_store::SaveOutcome;
 use tine_store::{
-    Area, FileId, FileRev, Input, LoadError, PageHost, PageId, PageRead, RenameMap, RenameRefusal,
-    Resolved, RewriteEffect, SaveBase, SavePagesOutcome, Store, StoreError, TitleRebind,
+    Area, FileId, FileRev, Input, LoadError, PageHost, PageId, PageOperation, PageRead, RenameMap,
+    RenameRefusal, Resolved, RewriteEffect, SaveBase, Store, StoreError, TitleRebind,
 };
 
 /// A page read or OS source selection failed at the load, identity, or file step.
@@ -81,7 +83,7 @@ pub fn source_path_for_os_handoff(
 }
 
 /// Test oracle: one-page save over tine-store's test-only `Store::save`.
-/// Production saves use [`save_pages`]. Keep-mine reads the current UTF-8
+/// Production saves are the page host's (STEP3 §12). Keep-mine reads the current UTF-8
 /// revision and lets the save guard reject later edits. Cost O(page bytes +
 /// transaction publication).
 #[cfg(any(test, feature = "test-faults"))]
@@ -100,6 +102,7 @@ pub fn save_page(
     Ok(store.save(kind, id, base, page))
 }
 
+#[cfg(any(test, feature = "test-faults"))]
 fn save_base(
     store: &Store,
     id: &PageId,
@@ -122,34 +125,7 @@ fn save_base(
     })
 }
 
-/// Compute each requested base, then save every page in one store transaction.
-pub fn save_pages(
-    store: &Store,
-    entries: &[(
-        PageId,
-        PageDto,
-        Option<String>,
-        bool,
-        Vec<tine_store::EditKind>,
-    )],
-) -> Result<SavePagesOutcome, (usize, StoreError)> {
-    let mut prepared = Vec::with_capacity(entries.len());
-    for (index, (id, page, base_rev, force, kinds)) in entries.iter().enumerate() {
-        if page.guide {
-            prepared.push((id.clone(), SaveBase::CreateNew, page.clone(), kinds.clone()));
-            continue;
-        }
-        prepared.push((
-            id.clone(),
-            save_base(store, id, base_rev.clone(), *force).map_err(|error| (index, error))?,
-            page.clone(),
-            kinds.clone(),
-        ));
-    }
-    Ok(store.save_pages(&prepared))
-}
-
-use crate::{is_conflict, store_error, tx_error};
+use crate::store_error;
 
 fn error(kind: io::ErrorKind, message: &str) -> io::Error {
     io::Error::new(kind, message)
@@ -259,73 +235,41 @@ fn text_file(store: &Store, rel: &str) -> io::Result<FileId> {
     Err(error(io::ErrorKind::InvalidInput, "invalid file path"))
 }
 
-/// Delete one named page or journal into recoverable trash. A supplied revision
-/// pins the displayed version; without one the current version is read and
-/// guarded. An absent reference-only page is a no-op. With an expected path,
-/// an absent identity succeeds only after a fresh read confirms that file is
-/// also absent (external deletion during confirmation); a live file at the
-/// path or a replacement claimant still refuses as a stale target. No file is
-/// written in the absent case. A retained writer (STEP3 §7) of the page and
-/// the expected path: their unsaved input is saved first. Cost O(P + file
-/// bytes) per try; a conflict is replanned at most four times.
+/// Delete one named page or journal through the page host (GH #620, STEP3
+/// §12, Q-P2b-5). The identity checks run here against a refreshed
+/// inventory and a fresh read: twins refuse as ambiguous, and a displayed
+/// path that no longer holds the name is a stale target, unless a fresh read
+/// confirms that file is also absent (external deletion during
+/// confirmation), which succeeds without a write; an absent name with no
+/// displayed path is a no-op. The host's deletion is bound to the bytes the
+/// check read and refuses if its own read differs. The window waits for a
+/// `Pending` deletion to publish (§4.4). Cost O(P + file bytes).
 pub fn delete_page_expected(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
+    session: u64,
     name: &str,
     kind: PageKind,
     expected_path: Option<&str>,
-    expected_rev: Option<&FileRev>,
-) -> io::Result<()> {
-    let discover = || {
-        let mut pages = existing(refreshed_view(store)?.resolve(name, kind == PageKind::Journal));
-        let expected = expected_path.and_then(|path| text_file(store, path).ok());
-        pages.extend(crate::retained::pages(store, &expected));
-        Ok(pages)
+) -> io::Result<PageOperation> {
+    let graph = refreshed_view(store)?;
+    let ids = existing(graph.resolve(name, kind == PageKind::Journal));
+    let Some(id) = ids.first() else {
+        if let Some(path) = expected_path.filter(|path| !path.trim().is_empty()) {
+            let file = text_file(store, path)?;
+            match store.read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
+                Err(StoreError::NotFound) => {}
+                Err(error) => return Err(store_error(error)),
+                Ok(_) => return Err(error(io::ErrorKind::NotFound, "stale page target")),
+            }
+        }
+        return Ok(PageOperation::Applied);
     };
-    crate::retained::reserved(
-        host,
-        Input::Flush,
-        discover,
-        crate::retained::unsaved,
-        |_| {
-            crate::retry_on_conflict("page changed repeatedly during delete", || {
-                let graph = refreshed_view(store)?;
-                let ids = existing(graph.resolve(name, kind == PageKind::Journal));
-                let Some(id) = ids.first() else {
-                    if let Some(path) = expected_path.filter(|path| !path.trim().is_empty()) {
-                        let file = text_file(store, path)?;
-                        match store.read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-                            Err(StoreError::NotFound) => {}
-                            Err(error) => return Err(store_error(error)),
-                            Ok(_) => {
-                                return Err(error(io::ErrorKind::NotFound, "stale page target"))
-                            }
-                        }
-                    }
-                    return Ok(Some(()));
-                };
-                validate_target(&ids, expected_path)?;
-                let file = id.file();
-                let (_, rev) = store
-                    .read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES))
-                    .map_err(store_error)?;
-                if expected_rev.is_some_and(|expected| *expected != rev) {
-                    return Err(error(io::ErrorKind::WouldBlock, "stale page revision"));
-                }
-                let mut tx = store.transaction(Some(tine_store::EditKind::DeletePage));
-                tx.trash(&file, rev, tine_store::TrashIf::Any);
-                let outcome = tx.commit();
-                if is_conflict(&outcome) {
-                    if expected_rev.is_some() {
-                        return Err(error(io::ErrorKind::WouldBlock, "stale page revision"));
-                    }
-                    return Ok(None);
-                }
-                tx_error(outcome)?;
-                Ok(Some(()))
-            })
-        },
-    )
+    validate_target(&ids, expected_path)?;
+    let (checked, _) = store
+        .read(&id.file(), Some(tine_store::PARSE_INPUT_MAX_BYTES))
+        .map_err(store_error)?;
+    Ok(host.delete(session, id, &checked))
 }
 
 /// Rename a page and its file-backed namespace descendants in one transaction.
@@ -345,7 +289,7 @@ pub fn delete_page_expected(
 /// complete plans maximum, then `WouldBlock`.
 pub fn rename_page_expected(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     old: &str,
     new: &str,
     expected_path: Option<&str>,
@@ -394,16 +338,16 @@ pub fn rename_page_expected(
 /// because rewriting it would turn those edits into a conflict against bytes
 /// the user never saw. Pages it does not touch need not be saved. `WouldBlock`
 /// also reports giving up after pages kept changing under repeated replans.
-/// With a page host (`host`), its own unsaved input decides instead for a
+/// The page host (`host`) decides by its own unsaved input instead for a
 /// single page's rename, which is the host's operation; every other rename
-/// is a retained writer of the pages it touches (STEP3 §7), and the host's
-/// rename moves `config.edn`'s home page in its own transaction after it.
-/// Otherwise every write is one `tine-store` transaction: all steps are checked before
-/// the first write and a failure rolls back; only a failed rollback or
-/// publication leaves partial state, and its error says to inspect disk.
+/// is a retained writer of the pages it touches (STEP3 §7), one `tine-store`
+/// transaction: all steps are checked before the first write and a failure
+/// rolls back; only a failed rollback or publication leaves partial state,
+/// and its error says to inspect disk. The host's rename moves
+/// `config.edn`'s home page in its own transaction after it.
 pub fn rename_or_merge_page(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     old: &str,
     new: &str,
     expected_path: Option<&str>,
@@ -426,7 +370,7 @@ pub fn rename_or_merge_page(
 #[allow(clippy::too_many_arguments)]
 fn rename_page_after_inventory(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     old: &str,
     new: &str,
     expected_path: Option<&str>,
@@ -455,9 +399,6 @@ fn rename_page_after_inventory(
     };
     crate::retry_on_conflict("page changed repeatedly during rename", || {
         let first = plan()?;
-        let Some(host) = host else {
-            return commit_rename(store, old, first, unsaved_paths);
-        };
         if let Some(pair) = first.single(store)? {
             return host_rename(store, host, pair, first, &plan, unsaved_paths);
         }
@@ -501,6 +442,9 @@ struct RenamePlan {
     reads: HashMap<PageId, (String, FileRev)>,
     /// Referrers `pages` leaves byte-identical for their VCS conflict markers.
     skipped: Vec<PageId>,
+    /// The new text of each referrer `pages` found changed, computed from
+    /// its `reads` bytes; the host reuses it on equal bytes (GH #623).
+    rewritten: HashMap<PageId, String>,
 }
 
 impl RenamePlan {
@@ -528,11 +472,15 @@ impl RenamePlan {
                 .extension()
                 .is_some_and(|ext| ext == "org");
             let syntax = Format::from_path(id.as_str().as_ref());
-            let changed = refs::rename_rewrite(&content, org, &self.map.0, format) != content;
+            let rewritten = refs::rename_rewrite(&content, org, &self.map.0, format);
+            let changed = rewritten != content;
             let marked =
                 !tine_core::concord_queue::vcs_conflict_markers(&content, syntax).is_empty();
             match (changed, marked) {
-                (true, false) => pages.push(id.clone()),
+                (true, false) => {
+                    pages.push(id.clone());
+                    self.rewritten.insert(id.clone(), rewritten);
+                }
                 (true, true) => self.skipped.push(id.clone()),
                 _ => {}
             }
@@ -739,6 +687,7 @@ fn plan_rename(
         candidates,
         reads: HashMap::new(),
         skipped: Vec::new(),
+        rewritten: HashMap::new(),
     })
 }
 
@@ -762,6 +711,7 @@ fn commit_rename(
         candidates,
         mut reads,
         skipped: _,
+        rewritten: _,
     } = plan;
     let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
     // Every step, rewrite or not, commits only in the planning context.
@@ -932,7 +882,23 @@ fn host_rename(
     // the host adds held buffers and fixes the final pages under its lock.
     let mut referrers = first.pages(store)?;
     referrers.retain(|id| *id != source && *id != target);
-    let renamed = host.rename(&source, &target, &referrers, &first.map, &first.graph);
+    // The planner's rewrite of a referrer, reused when the host reads the
+    // same bytes under the page locks (GH #623: no second rewrite under the
+    // driver's state lock), and only under the planner's file-name format.
+    let prepared = |page: &PageId, old: &[u8], format| {
+        let (content, _) = first.reads.get(page)?;
+        let new = first.rewritten.get(page)?;
+        (format == first.config.file_name_format && content.as_bytes() == old)
+            .then(|| new.clone().into_bytes())
+    };
+    let renamed = host.rename(
+        &source,
+        &target,
+        &referrers,
+        &first.map,
+        &first.graph,
+        &prepared,
+    );
     let (changed, mut skipped) = match renamed {
         Ok(done) => done,
         Err(RenameRefusal::Alias) => {
@@ -970,6 +936,35 @@ fn host_rename(
             ))
         }
         Err(RenameRefusal::Refused) => return Ok(None),
+        // Finding B: a result never claims more than its evidence, and none
+        // of these is a replan.
+        Err(RenameRefusal::DraftFailed) => {
+            return Err(error(
+                io::ErrorKind::Other,
+                "The rename could not be recorded; nothing changed.",
+            ))
+        }
+        Err(RenameRefusal::Superseded(page)) => {
+            return Err(error(
+                io::ErrorKind::Other,
+                &format!(
+                    "“{}” changed before the rename finished; your later edit stands.",
+                    page.as_str()
+                ),
+            ))
+        }
+        Err(RenameRefusal::Uncertain) => {
+            return Err(error(
+                io::ErrorKind::TimedOut,
+                "Couldn't confirm the rename yet; Tine keeps trying to finish it.",
+            ))
+        }
+        Err(RenameRefusal::Busy) => {
+            return Err(error(
+                io::ErrorKind::WouldBlock,
+                "Another rename of these pages is still finishing; try again in a moment.",
+            ))
+        }
     };
     skipped.extend(first.skipped.iter().cloned());
     skipped.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
@@ -996,21 +991,26 @@ fn host_rename(
     }
     // In path order, as the transaction's report lists them.
     touched.sort_by(|a, b| a.path.cmp(&b.path));
-    let home_page =
-        crate::retry_on_conflict("config.edn changed repeatedly during rename", || {
-            let Some((id, rev, bytes, name)) = home_after(store, &first.lookup, None) else {
-                return Ok(Some(None));
-            };
-            let mut tx = store.transaction(None);
-            tx.replace(&id, rev, bytes);
-            Ok(crate::commit_retry(tx.commit())?.then_some(Some(name)))
-        })?;
     Ok(Some(RenameReport {
         outcome: RenameOutcome::Renamed,
         touched,
         skipped_conflicted_referrers: skipped.iter().map(|id| id.as_str().to_owned()).collect(),
-        home_page,
+        home_page: commit_home(store, &first.lookup)?,
     }))
+}
+
+/// A host rename's `:default-home` move: `logseq/config.edn` (the meta area,
+/// never a page file) in its own transaction after the host's operation,
+/// so no page reservation applies. The new home name, if it moved.
+fn commit_home(store: &Store, lookup: &HashMap<String, String>) -> io::Result<Option<String>> {
+    crate::retry_on_conflict("config.edn changed repeatedly during rename", || {
+        let Some((id, rev, bytes, name)) = home_after(store, lookup, None) else {
+            return Ok(Some(None));
+        };
+        let mut tx = store.transaction(None);
+        tx.replace(&id, rev, bytes);
+        Ok(crate::commit_retry(tx.commit())?.then_some(Some(name)))
+    })
 }
 
 /// OG `rename-page-aux` moves `:default-home` with a renamed page;

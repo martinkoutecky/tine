@@ -9,6 +9,7 @@
 //! no host running nothing is held, every source is the file, and builds
 //! and reads do the I/O they did before.
 
+use super::derived::Row;
 use super::entry_identity::{fold_leaf, Identity, Memo};
 use super::*;
 use std::collections::HashSet;
@@ -69,6 +70,32 @@ impl Graph {
 
     /// The one per-page seam (A-H1): where a build or read takes the page
     /// at `path` from. With no host, `Disk` for every page.
+    /// The row for the owner's `bytes` of `key`: the disk row its hold
+    /// retired when `claim` holds exactly these bytes under the same entry
+    /// (R1, GH #623), else parsed ([`Self::owned_row`]). A saved Document
+    /// always reparses, to keep its runtime ids.
+    pub(super) fn claimed_row(
+        &self,
+        key: &str,
+        bytes: &[u8],
+        doc: Option<&Document>,
+        claim: Option<Row>,
+    ) -> Option<Row> {
+        let rev = std::str::from_utf8(bytes).ok().map(content_rev);
+        let reuse = claim.filter(|(_, _, disk)| doc.is_none() && rev.as_ref() == Some(&disk.rev));
+        if let Some((old, document, disk)) = reuse {
+            let entry = self.owned_entry(key, bytes)?;
+            if entry.path == old.path
+                && entry.kind == old.kind
+                && entry.name == old.name
+                && entry.date_key == old.date_key
+            {
+                return Some((entry, document, disk));
+            }
+        }
+        self.owned_row(key, bytes, doc)
+    }
+
     pub(crate) fn source(&self, path: &Path) -> Source {
         self.source_of(&self.held_identity(path))
     }

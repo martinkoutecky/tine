@@ -430,7 +430,7 @@ export function QuickSwitcher(): JSX.Element {
         if (!target) throw new Error("resolved page disappeared");
         return { kind: "current", value: { name: target.name, pageKind: target.kind, path: target.id } };
       }
-      const saved = await writeOwned(owner, saveCreatedPage(name, switcherPage(name), { id: resolved.id, bindingGeneration: binding.backendGeneration }));
+      const saved = await writeOwned(owner, saveCreatedPage(name, switcherPage(name), { bindingGeneration: binding.backendGeneration }));
       return saved.kind === "stale" ? stale() : { kind: "current", value: null };
     } catch (error) {
       if (error instanceof CreatePageRefusal && error.reason === "graph-changed") return stale();

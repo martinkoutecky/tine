@@ -7,7 +7,7 @@ import { facetsOf } from "../../render/facets";
 import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
-import { markDirty, noteTitleIdentityIntent } from "../save/engine";
+import { markDirty, noteTitleIdentityIntent, pageFrozen } from "../host/wiring";
 import { isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, isBuiltinHidden, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
@@ -57,7 +57,9 @@ export function blockPageReadOnly(id: string): boolean {
  * equally non-writable. */
 export function pageWritable(name: string): boolean {
   const page = pageByName(name);
-  return !graphRewriteFrozen() && !!page && !page.readOnly && !page.guide;
+  // A transfer endpoint or a frozen page takes no input: the host holds its
+  // text apart from the display until the transfer or freeze ends (STEP3 §6, §8).
+  return !graphRewriteFrozen() && !!page && !page.readOnly && !page.guide && !pageFrozen(name);
 }
 
 export function blockWritable(id: string): boolean {

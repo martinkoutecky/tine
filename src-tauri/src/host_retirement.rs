@@ -216,7 +216,8 @@ fn overlap(
 mod tests {
     use super::*;
     use crate::state::{
-        exit_when_unowned, wait_for_retiring_overlaps, AppState, GraphRegistry, STALE_BINDING,
+        exit_when_unowned, release_own_overlap, wait_for_retiring_overlaps, AppState,
+        GraphRegistry, STALE_BINDING,
     };
     use std::sync::atomic::AtomicBool;
     use std::sync::{mpsc, Barrier, Mutex, RwLock};
@@ -567,6 +568,39 @@ mod tests {
         assert!(f.closed(), "the open went on only once the Store closed");
     }
 
+    /// F6: a window switching to a root nested in its own graph's releases
+    /// that graph first, so its host retires (saving the admitted input)
+    /// before the new root's open goes on; the open waits for it like any
+    /// retiring overlap. Another window's graph and the same root are never
+    /// released.
+    #[test]
+    fn f6_a_switch_to_a_nested_root_retires_the_windows_own_graph_first() {
+        let f = Fixture::new("f6-nested");
+        let graphs = RwLock::new(GraphRegistry::default());
+        let slot = f.bind(&mut graphs.write().unwrap(), "main");
+        let window = window(&slot);
+        let reservation = hold(&slot);
+        submit(&slot, &window, "- two\n").unwrap();
+        let inner = f.root.join("pages");
+        assert!(!release_own_overlap(&graphs, "other", &inner));
+        assert!(!release_own_overlap(&graphs, "main", &f.root));
+        assert!(graphs.read().unwrap().slot("main").is_some());
+        assert!(release_own_overlap(&graphs, "main", &inner));
+        assert!(graphs.read().unwrap().slot("main").is_none());
+        assert!(!f.closed(), "the released host still holds the input");
+        std::thread::scope(|scope| {
+            let open = scope.spawn(|| {
+                wait_for_retiring_overlaps(&graphs, &inner, Duration::from_secs(20), |_| {})
+            });
+            std::thread::sleep(Duration::from_millis(300));
+            assert!(!open.is_finished(), "the open waits for the retirement");
+            drop(reservation);
+            assert_eq!(open.join().unwrap(), Ok(()));
+        });
+        assert_eq!(f.disk(), "- two\n", "the old graph saved first");
+        assert!(f.closed(), "and closed before the new root binds");
+    }
+
     /// Past the bound the open is refused, naming the graph still saving;
     /// an open that raced past the wait is refused by `bind`, which counts
     /// a retiring root as owned. The same root is adopted, never waited for.
@@ -610,29 +644,23 @@ mod tests {
         assert!(f.closed());
     }
 
-    /// Old-engine conflict resolution of page a to `body`, the census
-    /// writer's shape (`commands/concord.rs`), on `slot` as a worker that
-    /// captured it finds it.
-    fn late_writer(slot: &GraphSlot, body: &str) -> Result<(), String> {
-        let rev = String::from(slot.store.page(&PageId::from("pages/a.md")).unwrap().rev);
-        tine_graph_features::live_conflict::resolve_live_conflict(
-            &slot.store,
-            slot.host_slot()?.running(),
-            "pages/a.md",
-            &host_dto(slot, body),
-            &rev,
-            None,
-            &[],
-            &Default::default(),
-            "union",
-        )
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    /// A census writer (STEP3 §7) as its command runs it
+    /// (`commands.rs` `rename_page`): page a renamed to `to` through the host
+    /// of `slot`, on `slot` as a worker that captured it finds it.
+    fn late_writer(slot: &GraphSlot, to: &str) -> Result<(), String> {
+        let gate = slot.host_slot()?;
+        rename(&slot.store, gate.running(), to)
+    }
+
+    fn rename(store: &Store, host: Option<&PageHost>, to: &str) -> Result<(), String> {
+        let host = host.ok_or("no page host")?;
+        tine_graph_features::pages::rename_page_expected(store, host, "a", to, None)
+            .map_err(|error| error.to_string())
     }
 
     /// REVIEW-3b-P1 B1: a retained writer that captured the old slot before
     /// its root was adopted gets the stale-binding outcome under the gate.
-    /// It never takes the no-host arm past the adopted host's reservation.
+    /// It never writes past the adopted host's reservation.
     #[test]
     fn review_p1_late_old_slot_writer_cannot_bypass_adopted_reservation() {
         let f = Fixture::new("late-writer");
@@ -649,14 +677,11 @@ mod tests {
             .bind("graph-2".into(), fresh.clone())
             .unwrap()
             .is_none());
-        assert_eq!(
-            late_writer(&old, "- stale queued command\n"),
-            Err(STALE_BINDING.to_owned())
-        );
+        assert_eq!(late_writer(&old, "stale"), Err(STALE_BINDING.to_owned()));
         assert_eq!(f.disk(), "- one\n", "the adopted reservation holds");
         drop(reservation);
         assert_eq!(
-            late_writer(&old, "- stale queued command\n"),
+            late_writer(&old, "stale"),
             Err(STALE_BINDING.to_owned()),
             "revoked for good, not only while the page is reserved"
         );
@@ -690,20 +715,7 @@ mod tests {
                 let gate = old.host_slot().unwrap();
                 entered.wait();
                 release.wait();
-                let rev = String::from(f.store.page(&PageId::from("pages/a.md")).unwrap().rev);
-                tine_graph_features::live_conflict::resolve_live_conflict(
-                    &old.store,
-                    gate.running(),
-                    "pages/a.md",
-                    &host_dto(&old, "- inside\n"),
-                    &rev,
-                    None,
-                    &[],
-                    &Default::default(),
-                    "union",
-                )
-                .map(|_| ())
-                .map_err(|error| error.to_string())
+                rename(&old.store, gate.running(), "inside")
             });
             entered.wait();
             let adopt = scope.spawn(|| retirement.adopt(&f.root));
@@ -713,10 +725,13 @@ mod tests {
             assert_eq!(writer.join().unwrap(), Ok(()));
             adopt.join().unwrap()
         });
-        assert_eq!(f.disk(), "- inside\n", "the writer under the gate finished");
+        assert!(
+            !f.root.join("pages/a.md").exists() && f.root.join("pages/inside.md").exists(),
+            "the writer under the gate finished"
+        );
         let (_, host) = adopted.expect("then the adoption");
         assert!(matches!(host, PageHostSlot::Running(_)));
-        assert_eq!(late_writer(&old, "- late\n"), Err(STALE_BINDING.to_owned()));
+        assert_eq!(late_writer(&old, "late"), Err(STALE_BINDING.to_owned()));
         drop(host);
     }
 
@@ -757,7 +772,7 @@ mod tests {
             });
             open();
             (
-                waiter.join().unwrap(),
+                waiter.join().unwrap().expect("no host stays stuck"),
                 exited.load(std::sync::atomic::Ordering::SeqCst),
             )
         })
@@ -877,6 +892,31 @@ mod tests {
         assert_eq!(state.graphs.read().unwrap().len(), 0, "no graph was bound");
     }
 
+    /// STEP3-DESIGN B-QA: a host still saving past the exit's bound keeps
+    /// Tine running; the exit names its root (for the window that adopts it)
+    /// and never exits over its input, which then saves.
+    #[test]
+    fn b_qa_a_host_still_saving_past_the_bound_names_its_root_and_never_exits() {
+        let f = Fixture::new("exit-stuck");
+        let state = app_state();
+        let reservation = retiring(&f, &state.graphs);
+        let exited = AtomicBool::new(false);
+        let outcome = exit_when_unowned(
+            &state,
+            Duration::from_millis(200),
+            || false,
+            || exited.store(true, std::sync::atomic::Ordering::SeqCst),
+        );
+        assert_eq!(outcome, Err(vec![f.root.clone()]));
+        assert!(!exited.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(f.disk(), "- one\n", "the input is still held");
+        drop(reservation);
+        let retirement = state.graphs.read().unwrap().retirement.clone();
+        assert_eq!(retirement.wait_idle(Duration::from_secs(20)), Ok(()));
+        assert_eq!(f.disk(), "- two\n");
+        assert!(f.closed());
+    }
+
     /// G6(b), data safety: closing the last window (`close_graph_window`)
     /// over a hosted page with unsaved input unbinds and retires its graph
     /// first; the exit runs only once that input is on disk.
@@ -906,7 +946,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(200));
             assert!(!waiter.is_finished(), "the exit waits for the retirement");
             drop(reservation);
-            assert!(waiter.join().unwrap());
+            assert_eq!(waiter.join().unwrap(), Ok(true));
         });
         assert_eq!(*at_exit.lock().unwrap(), Some("- unsaved\n".to_owned()));
         assert!(f.closed());

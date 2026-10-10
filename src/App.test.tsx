@@ -1,5 +1,5 @@
 import type { PageDto, PageRead } from "./types";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as tauriCore from "@tauri-apps/api/core";
 import { setToasts, toasts } from "./toasts";
 import { backend } from "./backend";
@@ -16,6 +16,7 @@ import { isConflicted } from "./document";
 import { pageInventoryRev, firstLoadDone, setFirstLoadDone } from "./graphSession";
 import { bumpGraphEpoch } from "./graphSession";
 import { applyGraphChange as handleGraphChange } from "./document";
+import { bindTestHost, type TestHost } from "./document/host/wiring.test.support";
 
 vi.mock("@tauri-apps/api/core", { spy: true });
 
@@ -33,6 +34,10 @@ function click(el: Element): MouseEvent {
   return event;
 }
 
+// The window's page-mail listener is registered on its first bind; App renders
+// bind too, so bind through the helper first to let later tests deliver mail.
+beforeAll(async () => { await bindTestHost(); });
+
 afterEach(() => {
   document.body.innerHTML = "";
   vi.restoreAllMocks();
@@ -42,6 +47,18 @@ afterEach(() => {
 
 function page(name: string, kind: "page" | "journal", roots: string[]): FeedPage {
   return { name, kind, title: name, preBlock: null, roots, format: "md", readOnly: false, guide: false };
+}
+
+/** Mark `name` dirty on a bound host: the noted edit opens the page there, so
+ * the host holds it. Returns the host and the page's key. */
+async function heldDirty(name: string): Promise<{ host: TestHost; key: string }> {
+  const host = await bindTestHost();
+  const open = vi.spyOn(backend(), "pageOpen");
+  markDirty(name, "save-block");
+  await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+  const opened = await open.mock.results[0].value;
+  if (!opened || !("key" in opened)) throw new Error(`the host refused to open ${name}`);
+  return { host, key: opened.key };
 }
 
 function node(id: string, pageName: string): StoreNode {
@@ -211,25 +228,32 @@ describe("journal watcher feed reconciliation", () => {
     expect(pageToDto(name)!.blocks[0].raw).toBe("saved");
   });
 
+  // A page the host holds takes an external change as host mail: the watcher
+  // event neither reloads nor reads it, and the host's conflict (over the
+  // window's input) is what marks it conflicted.
   it("marks a dirty page conflicted and preserves its edits after an external change", async () => {
     const name = "Dirty";
     setDoc({ byId: { local: { ...node("local", name), raw: "local edit" } }, pages: [page(name, "page", ["local"])], feed: [], loaded: true });
-    markDirty(name, "save-block");
+    const { host, key } = await heldDirty(name);
     const read = vi.spyOn(backend(), "getPage");
 
     await handleGraphChange({ name, kind: "page", created: false, removed: false });
-    expect(isConflicted(name)).toBe(true);
+    expect(read).not.toHaveBeenCalled();
     expect(pageToDto(name)!.blocks[0].raw).toBe("local edit");
-    expect(read).toHaveBeenCalledTimes(1); // revision observation for Keep mine
+    expect(isConflicted(name)).toBe(false);
+    host.notice(key, { conflictReported: true }, { version: 9, conflict: true, disk: { kind: "file", rev: "external-rev" } });
+    await vi.waitFor(() => expect(isConflicted(name)).toBe(true));
+    expect(pageToDto(name)!.blocks[0].raw).toBe("local edit");
   });
 
   it("keeps a removed dirty page open as a conflict", async () => {
     const name = "Removed while dirty";
     resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
     setDoc({ byId: { local: node("local", name) }, pages: [page(name, "page", ["local"])], feed: [name], loaded: true });
-    markDirty(name, "save-block");
+    const { host, key } = await heldDirty(name);
     await handleGraphChange({ name, kind: "page", created: false, removed: true });
-    expect(isConflicted(name)).toBe(true);
+    host.notice(key, { conflictReported: true }, { version: 9, conflict: true, disk: { kind: "no-file" } });
+    await vi.waitFor(() => expect(isConflicted(name)).toBe(true));
     expect(paneRouter("main").route()).toMatchObject({ kind: "page", name });
   });
 
@@ -289,7 +313,7 @@ describe("journal watcher feed reconciliation", () => {
   it("restarts Journals while preserving a dirty journal removed on disk", async () => {
     const name = "15th July, 2030";
     setDoc({ byId: { local: node("local", name) }, pages: [page(name, "journal", ["local"])], feed: [], loaded: true });
-    markDirty(name, "save-block");
+    const { host, key } = await heldDirty(name);
     const now = new Date();
     const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({
       pages: [], next_before_day: null, done: true,
@@ -297,7 +321,8 @@ describe("journal watcher feed reconciliation", () => {
     });
     await handleGraphChange({ name, kind: "journal", created: false, removed: true });
     await Promise.resolve();
-    expect(isConflicted(name)).toBe(true);
+    host.notice(key, { conflictReported: true }, { version: 9, conflict: true, disk: { kind: "no-file" } });
+    await vi.waitFor(() => expect(isConflicted(name)).toBe(true));
     expect(pageToDto(name)!.blocks[0].raw).toBe("loaded elsewhere");
     expect(feed).toHaveBeenCalledWith(3, null);
   });

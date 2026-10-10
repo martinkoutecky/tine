@@ -1,4 +1,5 @@
 //! Quint s3 page operations; pure rules, no storage wiring.
+use super::order::touches;
 use super::*;
 
 /// Quint: opCur
@@ -80,6 +81,10 @@ pub(super) fn op_rename(
         || !op_free(x, &all3)
         || !op_held(x, &all3.union(&BTreeSet::from([src])).copied().collect())
         || !refs.iter().all(|r| *r != src && *r != dst)
+        || touches(
+            &x.s,
+            &refs.union(&BTreeSet::from([src, dst])).copied().collect(),
+        )
         || (full && !op_clean(&x.s, src))
         || (full
             && !((op_cur(&x.s, dst) == ABSENT && op_clean(&x.s, dst)) || x.config.mutant("MRN3")))
@@ -111,6 +116,25 @@ pub(super) fn op_rename(
         }
         s.pages[dst] = nd;
         s.pages[src] = ns;
+        // s3.2: the order over the pages this rename changes, and the
+        // obligations the ghost holds it to.
+        s.gates.push(Gate {
+            dst,
+            src,
+            vers: (0..versions.len())
+                .map(|p| if all3.contains(&p) { versions[p] } else { NONE })
+                .collect(),
+            open: all3.clone(),
+        });
+        for &r in refs {
+            g.obl.insert((r, dst, versions[dst], dst));
+            g.obl.insert((src, r, versions[r], dst));
+        }
+        g.obl.insert((src, dst, versions[dst], dst));
+    }
+    unrename(&mut g.renamed, &[src, dst]);
+    if full && x.s.disk[src] != ABSENT {
+        g.renamed.insert((src, dst));
     }
     for &r in refs {
         let mut nr = op_edit(&x.s, r, rt.get(&r).copied().unwrap_or(ABSENT), versions[r]);
@@ -171,6 +195,7 @@ pub(super) fn op_delete(x: &State, p: usize) -> Option<State> {
         || !op_held(x, &BTreeSet::from([p]))
         || !op_clean(&x.s, p)
         || op_cur(&x.s, p) == ABSENT
+        || touches(&x.s, &BTreeSet::from([p]))
     {
         return None;
     }
@@ -187,16 +212,26 @@ pub(super) fn op_delete(x: &State, p: usize) -> Option<State> {
     s.pages[p] = np;
     g.vc = v1;
     g.mine = BTreeSet::from([p]);
+    unrename(&mut g.renamed, &[p]);
     g.op_read[p].insert(if pg.held { pg.base } else { x.s.disk[p] });
     commit(x, s, g, "opDelete")
 }
 /// Quint: flushDel
 pub(super) fn flush_del(x: &State, p: usize) -> Option<State> {
     let pg = &x.s.pages[p];
-    if !x.s.alive || x.s.job.on || !pg.held || pg.conflict || pg.buf != ABSENT || !dirty(pg) {
+    if !x.s.alive
+        || x.s.job.on
+        || !pg.held
+        || pg.conflict
+        || pg.buf != ABSENT
+        || !dirty(pg)
+        || (!x.config.mutant("MDF") && gated(x, p))
+    {
         return None;
     }
     let mut s = x.s.clone();
+    let mut g = x.g.clone();
+    started(&mut g, p);
     s.job = Job {
         on: true,
         p,
@@ -206,5 +241,5 @@ pub(super) fn flush_del(x: &State, p: usize) -> Option<State> {
         phase: 1,
         ep: 0,
     };
-    commit(x, s, x.g.clone(), "flush")
+    commit(x, s, g, "flush")
 }

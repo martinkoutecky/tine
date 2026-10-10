@@ -121,7 +121,8 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // its command future like get_page.
         // +2 GH #623: open_asset and edit_asset_external start the OS opener
         // (PATH search, exec) on the blocking pool, awaited by their futures.
-        37,
+        // -1 step 3b P2b: the deleted `delete_page` command (page_delete).
+        36,
         "command future",
         "caller awaits blocking result",
     ),
@@ -150,7 +151,8 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // +2 og-A: duplicate_journal_diff and resolve_duplicate_journal_day,
         // each awaited by its own command future like the six before them.
         // +1 step 3b R6: merge_live_conflict, likewise.
-        9,
+        // -1 step 3b P2b: the deleted `resolve_live_conflict` command.
+        8,
         "command future",
         "caller awaits blocking result",
     ),

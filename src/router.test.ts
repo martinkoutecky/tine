@@ -24,7 +24,8 @@ import {
 } from "./router";
 import { setNavReuseTabs } from "./navSettings";
 import { doc, setDoc } from "./document/model";
-import { isDirty, resetStore } from "./document";
+import { flushPage, isDirty, resetStore } from "./document";
+import { bindTestHost } from "./document/host/wiring.test.support";
 import { backend } from "./backend";
 
 // The router holds singleton tab state, so reset to a single unpinned journals
@@ -233,7 +234,8 @@ describe("reuse already-open tabs on user navigation", () => {
   });
 
   it("zooming into a fresh block writes nothing: the route names the live block, not a stamped id", async () => {
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
+    await bindTestHost();
+    const writes = (["pageSubmit", "pageMove", "pageDelete"] as const).map((method) => vi.spyOn(backend(), method));
     const uuid = "12345678-1234-4234-8234-123456789abc";
     const random = vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
     setDoc({
@@ -268,8 +270,9 @@ describe("reuse already-open tabs on user navigation", () => {
     // Browsing never mutates the graph (OG stamps id:: only when a reference is made).
     expect(doc.byId["bfresh-route"].raw).toBe("Fresh route target");
     expect(isDirty("Target")).toBe(false);
-    await Promise.resolve();
-    expect(save).not.toHaveBeenCalled();
+    // A barrier sends any input there is; there must be none.
+    expect(await flushPage("Target")).toBe(true);
+    for (const write of writes) expect(write).not.toHaveBeenCalled();
     expect(random).not.toHaveBeenCalled();
   });
 
@@ -381,7 +384,6 @@ describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
   });
 
   it("retains the loaded physical owner while zooming into and back out of a block", async () => {
-    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
     const path = "pages/client-b/Twin.md";
     const id = "11111111-1111-4111-8111-111111111111";
     const external = "22222222-2222-4222-8222-222222222222";

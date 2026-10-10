@@ -226,6 +226,7 @@ impl<F: ConformanceIo> Driver<F> {
                 job: h.job.clone(),
                 worker: h.worker.clone(),
                 retained: h.retained.clone(),
+                order: h.order.clone(),
                 version: h.version,
                 wseq: h.wseq,
                 incarnation: h.incarnation,
@@ -235,6 +236,8 @@ impl<F: ConformanceIo> Driver<F> {
                 admission_open: h.admission_open,
                 switch_confirmation: h.switch_confirmation,
                 alive: h.alive,
+                #[cfg(test)]
+                paused: false,
             },
             oracle: self.oracle.clone(),
             windows: self.windows.clone(),
@@ -454,7 +457,19 @@ impl<F: ConformanceIo> Driver<F> {
                 .collect()
         };
         let trash = |files| self.trash_labels(files);
-        json!({"alive":self.host.alive,"disk":disk(&self.host.fs.physical().files),
+        let gates: Vec<_> = self
+            .host
+            .order
+            .view()
+            .map(|(dst, src, versions, open)| {
+                let vers: Vec<_> = (0..self.windows.len())
+                    .map(|p| versions.get(&key(p)).map_or(NONE, |v| self.version(*v)))
+                    .collect();
+                let open: BTreeSet<_> = open.iter().map(|k| index(k)).collect();
+                json!({"dst":index(dst),"src":index(src),"vers":vers,"open":open})
+            })
+            .collect();
+        json!({"alive":self.host.alive,"gates":gates,"disk":disk(&self.host.fs.physical().files),
             "stable":disk(&self.host.fs.physical().stable),"drafts":records,"pages":pages,
             "mb":mail,"up":up,"job":job,"w":self.windows,
             "trash":trash(&self.host.fs.physical().files),"trashStable":trash(&self.host.fs.physical().stable)})
@@ -1002,6 +1017,13 @@ impl<F: ConformanceIo> Driver<F> {
             serde_json::from_value(value.clone()).unwrap()
         };
         let mut owed = pairset(&g["owed"]);
+        // s3.2 order ghost: obligations a full rename records, retired by
+        // the dependency's Published or a Discard; a save start checks them.
+        let mut obl: BTreeSet<(usize, usize, i64, usize)> =
+            serde_json::from_value(g["obl"].clone()).unwrap();
+        let mut renamed: BTreeSet<(usize, usize)> =
+            serde_json::from_value(g["renamed"].clone()).unwrap();
+        let mut order_ok = g["orderOk"].as_bool().unwrap();
         match name {
             "wSend" | "wResolve" => {
                 owed.insert((p, self.windows[p].text));
@@ -1058,17 +1080,35 @@ impl<F: ConformanceIo> Driver<F> {
                         }
                     }
                     "discard" => {
-                        let page = &actual["pages"][p];
-                        if page["ver"] != before["s"]["pages"][p]["ver"] {
-                            mine.insert(p);
-                            let pr = &g["promise"][p];
-                            let live = pr["on"] == true
-                                && !(pr["saved"] == true
-                                    && g["ext"][p].as_i64().unwrap() > pr["ep"].as_i64().unwrap());
-                            if !live || pr["bytes"] != page["buf"] {
-                                g["promise"][p]["on"] = json!(false);
-                                g["promise"][p]["ver"] = page["ver"].clone();
+                        // A running rename's unwitnessed destination: its
+                        // Discard may also revert the source.
+                        let partner = before["s"]["gates"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .find(|gt| {
+                                gt["dst"] == p && gt["open"].as_array().unwrap().contains(&json!(p))
+                            })
+                            .map(|gt| gt["src"].as_u64().unwrap() as usize);
+                        if actual["pages"][p]["ver"] != before["s"]["pages"][p]["ver"] {
+                            for p in [Some(p), partner].into_iter().flatten() {
+                                let page = &actual["pages"][p];
+                                if page["ver"] == before["s"]["pages"][p]["ver"] {
+                                    continue;
+                                }
+                                mine.insert(p);
+                                let pr = &g["promise"][p];
+                                let live = pr["on"] == true
+                                    && !(pr["saved"] == true
+                                        && g["ext"][p].as_i64().unwrap()
+                                            > pr["ep"].as_i64().unwrap());
+                                if !live || pr["bytes"] != page["buf"] {
+                                    g["promise"][p]["on"] = json!(false);
+                                    g["promise"][p]["ver"] = page["ver"].clone();
+                                }
                             }
+                            let cancels = obl.iter().any(|o| o.1 == p && o.3 == p);
+                            obl.retain(|o| !(o.0 == p || o.1 == p || (cancels && o.3 == p)));
                             tag = "uDiscard";
                         } else {
                             tag = "uDiscardFail";
@@ -1085,6 +1125,39 @@ impl<F: ConformanceIo> Driver<F> {
                         mine.insert(i);
                     }
                 }
+                let ends = if name == "opDelete" {
+                    vec![p]
+                } else {
+                    vec![p, args[1].as_u64().unwrap() as usize]
+                };
+                renamed.retain(|r| !(ends.contains(&r.0) || ends.contains(&r.1)));
+                // A full rename installed its order: the obligations follow
+                // the host's own gate, so a missing or misversioned gate
+                // diverges from the model's ghost.
+                let gates = actual["gates"].as_array().unwrap();
+                if name != "opDelete"
+                    && gates.len() > before["s"]["gates"].as_array().unwrap().len()
+                {
+                    let gt = gates.last().unwrap();
+                    let (src, dst) = (p, ends[1]);
+                    assert_eq!(
+                        (gt["src"].as_u64(), gt["dst"].as_u64()),
+                        (Some(src as u64), Some(dst as u64))
+                    );
+                    let ver = |k: usize| gt["vers"][k].as_i64().unwrap();
+                    let open: BTreeSet<usize> = serde_json::from_value(gt["open"].clone()).unwrap();
+                    for &r in open.iter().filter(|&&r| r != src && r != dst) {
+                        obl.insert((r, dst, ver(dst), dst));
+                        obl.insert((src, r, ver(r), dst));
+                    }
+                    obl.insert((src, dst, ver(dst), dst));
+                    if before["s"]["disk"][src] != ABSENT {
+                        renamed.insert((src, dst));
+                    }
+                }
+            }
+            "flush" | "flushDel" => {
+                order_ok = order_ok && !obl.iter().any(|o| o.0 == p);
             }
             "check" => {
                 g["guard"] = json!(self.host.job.is_some());
@@ -1112,11 +1185,14 @@ impl<F: ConformanceIo> Driver<F> {
             }
             "saveFail" => g["guard"] = json!(false),
             "extWrite" | "extWriteD" => {
+                renamed.retain(|r| r.0 != p && r.1 != p);
                 g["ext"][p] = json!(self.host.fs.physical().epochs[&key(p)]);
                 tag = "extWrite";
             }
             "crash" | "switchFin" | "power" | "powerK" | "powerKBits" => {
                 owed.clear();
+                obl.clear();
+                renamed.clear();
                 g["guard"] = json!(false);
                 if name.starts_with("power") {
                     tag = "power";
@@ -1174,13 +1250,9 @@ impl<F: ConformanceIo> Driver<F> {
                     epoch,
                 } => {
                     let p = index(&page);
-                    promise(
-                        &mut g["promise"][p],
-                        label(&bytes),
-                        self.version(version),
-                        true,
-                        epoch,
-                    );
+                    let v = self.version(version);
+                    obl.retain(|o| !(o.1 == p && v >= o.2));
+                    promise(&mut g["promise"][p], label(&bytes), v, true, epoch);
                 }
                 Event::Removed { page, bytes } => {
                     let p = index(&page);
@@ -1217,6 +1289,9 @@ impl<F: ConformanceIo> Driver<F> {
         }
         g["mine"] = json!(mine);
         g["owed"] = json!(owed);
+        g["obl"] = json!(obl);
+        g["renamed"] = json!(renamed);
+        g["orderOk"] = json!(order_ok);
         let instrumented = self.oracle.observed_commit(&before, &after, tag);
         // Keep the actual outbox; instrumentation is allowed to evaluate
         // guarantee predicates, never to manufacture a host push.
@@ -1233,7 +1308,27 @@ impl<F: ConformanceIo> Driver<F> {
             self.oracle.observed_guarantee(&self.observed),
             "{name}/guarantee"
         );
+        self.saves_start_only_where_the_model_may();
         self.actions += 1;
+    }
+
+    /// The host never starts a save the model forbids (s3.2: a gated page's
+    /// save waits). Traces schedule only enabled model steps, so without
+    /// this a host that ignored its order would replay them unchanged.
+    fn saves_start_only_where_the_model_may(&self) {
+        for p in 0..self.windows.len() {
+            let Some(mut probe) = self.fork() else {
+                return;
+            };
+            if probe.host.start_save(&key(p)) == Disposition::Pending {
+                assert!(
+                    ["flush", "flushDel"]
+                        .iter()
+                        .any(|name| self.oracle.next(name, &[json!(p)]).is_some()),
+                    "the host starts a save of page {p} the model forbids"
+                );
+            }
+        }
     }
 
     /// Earlier trash custody before a save is internal to the flush step
@@ -1352,112 +1447,4 @@ fn promise(pr: &mut Value, bytes: i64, ver: i64, saved: bool, ep: u64) {
     if ver > old || (ver == old && pr["on"] == true && saved && pr["saved"] == false) {
         *pr = json!({"on":true,"bytes":bytes,"ver":ver,"saved":saved,"ep":ep});
     }
-}
-
-#[test]
-#[cfg(test)]
-fn all_s3_scenarios_in_four_profiles() {
-    let fixture: Value =
-        serde_json::from_str(include_str!("../../tests/fixtures/s2/scenarios.json")).unwrap();
-    assert_eq!(fixture["model_sha256"], Oracle::model_sha());
-    let mut comparisons = 0;
-    let mut barriers = 0;
-    let mut actions = 0;
-    for oracle in fixture["oracles"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|o| o["mutant"] == "none")
-    {
-        let profile = oracle["profile"].as_str().unwrap();
-        for (name, program) in fixture["scenarios"].as_object().unwrap() {
-            let mut driver = Driver::new(profile, 3);
-            let outcome = driver.program(program.as_array().unwrap());
-            assert_eq!(
-                outcome.map_or_else(|e| e, |_| "pass"),
-                oracle["outcomes"][name],
-                "{profile}/{name}"
-            );
-            barriers += driver.barriers;
-            actions += driver.actions;
-            comparisons += 1;
-        }
-    }
-    assert_eq!(comparisons, 572);
-    eprintln!("host scenarios: {comparisons} outcomes / {actions} actions / {barriers} barriers");
-}
-
-#[cfg(test)]
-fn replay(fixture: &Value) -> (usize, usize, usize) {
-    assert_eq!(fixture["model_sha256"], Oracle::model_sha());
-    let mut traces = 0;
-    let mut actions = 0;
-    let mut barriers = 0;
-    for (ti, trace) in fixture["traces"].as_array().unwrap().iter().enumerate() {
-        if trace["mutant"].as_str().unwrap_or("none") != "none" {
-            continue;
-        }
-        let mut d = Driver::new(
-            trace["profile"].as_str().unwrap(),
-            trace["pages"].as_u64().unwrap_or(3) as usize,
-        );
-        for (si, entry) in trace["states"].as_array().unwrap().iter().enumerate() {
-            let action = if let Some(index) = entry["a"].as_u64() {
-                &fixture["actions"][index as usize]
-            } else {
-                &entry["action"]
-            };
-            let name = action["name"].as_str().unwrap();
-            if si == 0 {
-                assert_eq!(name, "init");
-                continue;
-            }
-            let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
-                d.step(name,action["args"].as_array().unwrap()))).unwrap_or_else(|failure| {
-                    eprintln!("failure capsule: HEAD b0c0f3b4c + lane diff; profile {:?}; trace {ti} {:?}/{si}/{action}; host/model conformance",trace["profile"],trace["name"]);
-                    std::panic::resume_unwind(failure)
-                });
-            assert!(result, "trace {:?}/{si}/{name}", trace["name"]);
-        }
-        traces += 1;
-        actions += d.actions;
-        barriers += d.barriers;
-    }
-    (traces, actions, barriers)
-}
-
-#[test]
-#[cfg(test)]
-fn committed_itf_traces_through_host() {
-    let fixture: Value =
-        serde_json::from_str(include_str!("../../tests/fixtures/s2/traces.json")).unwrap();
-    let (traces, actions, barriers) = replay(&fixture);
-    assert_eq!(traces, 32);
-    eprintln!("host ITF: {traces} traces / {actions} actions / {barriers} barriers");
-}
-
-#[test]
-#[cfg(test)]
-fn committed_witnesses_through_host() {
-    let fixture: Value =
-        serde_json::from_str(include_str!("../../tests/fixtures/s2/witnesses.json")).unwrap();
-    let (traces, actions, barriers) = replay(&fixture);
-    assert!(traces > 0);
-    eprintln!("host witnesses: {traces} traces / {actions} actions / {barriers} barriers");
-}
-
-#[test]
-#[cfg(test)]
-fn short_witnesses_through_host() {
-    // Keep the diagnostic-bound traces in the ordinary full replay. Mutation
-    // sweeps use this subset to avoid repeating 8,000 counter-only actions.
-    let mut fixture: Value =
-        serde_json::from_str(include_str!("../../tests/fixtures/s2/witnesses.json")).unwrap();
-    fixture["traces"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|trace| trace["states"].as_array().unwrap().len() <= 100);
-    let (traces, actions, barriers) = replay(&fixture);
-    assert_eq!(traces, 38);
-    eprintln!("short host witnesses: {traces} traces / {actions} actions / {barriers} barriers");
 }

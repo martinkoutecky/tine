@@ -1,15 +1,19 @@
 // GH #337 (master 9869c1cfe): an external change declined while its page is held
-// (block being edited, block move in flight, component draft) is replayed when
-// the hold ends, through the same `applyGraphChange` entry point a live watcher
-// event uses. Each hold kind is driven through its real release.
+// (block move in flight, component draft) is replayed when the hold ends, through
+// the same `applyGraphChange` entry point a live watcher event uses. Each hold
+// kind is driven through its real release. A page being edited is open in the
+// page host (STEP3 §4.2, B-Q2): its disk change arrives as host mail, never as a
+// window re-read, and is installed with the editor kept on its block.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../render/parse";
 import { backend, type GraphChange } from "../backend";
 import { applyGraphChange, ensurePageLoaded, loadFeed, pageByName, pinPageWhileDrafting, resetStore, setRaw, withBlockMoving } from "./index";
 import { registerPaneRouteProvider } from "./workingSet";
 import { doc } from "./model";
-import { endEdit, startEditing } from "../editorController";
+import { editingId, endEdit, startEditing } from "../editorController";
 import type { BlockDto, PageDto } from "../types";
+import { answerOpensFromDocument } from "./host/documentHost.test.support";
+import { bindTestHost, mailPage, type TestHost } from "./host/wiring.test.support";
 
 let serial = 0;
 const block = (raw: string): BlockDto => ({ id: `dr-${++serial}`, raw, collapsed: false, children: [] });
@@ -21,13 +25,15 @@ const changed = (name: string): GraphChange => ({ name, kind: "page", created: f
 
 let disk: PageDto & { id: string; rev: string };
 let reads = 0;
+let host: TestHost;
 beforeAll(() => initParser());
-beforeEach(() => {
+beforeEach(async () => {
   serial = 0;
   resetStore();
   reads = 0;
   vi.spyOn(backend(), "getPage").mockImplementation(async () => { reads++; return disk as never; });
-  vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map((_, i) => `saved-${i}`) }));
+  host = await bindTestHost();
+  answerOpensFromDocument(host);
 });
 afterEach(() => {
   endEdit("graph-switch");
@@ -41,23 +47,33 @@ function load(name: string, mine: string[]) {
 }
 
 describe("an external change declined mid-edit is replayed (GH #337)", () => {
-  it("replays after the block editor ends", async () => {
-    load("P", ["mine"]);
-    startEditing(pageByName("P")!.roots[0], 0);
-    disk = page("P", ["from disk"]);
-    await applyGraphChange(changed("P"));
-    expect(raws("P")).toEqual(["mine"]); // caret is never stolen
-    endEdit("blur");
-    await vi.waitFor(() => expect(raws("P")).toEqual(["from disk"]));
-  });
+  let version = 5000;
+  /** The host's push of P's new disk text, as the native host mails it. */
+  const pushed = (raws: string[]) => {
+    const dto = page("P", raws);
+    host.deliver({ key: dto.id, answer: null, page: mailPage(++version, dto) });
+  };
+  /** P open in the host for the editor (its Open answered). */
+  async function editing(): Promise<string> {
+    const id = pageByName("P")!.roots[0];
+    startEditing(id, 0);
+    await vi.waitFor(() => expect(backend().pageOpen).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return id;
+  }
 
-  it("replays when editing moves to a block of another page", async () => {
+  it("a page being edited takes its disk change as host mail, with the editor kept on its block", async () => {
     load("P", ["mine"]);
-    startEditing(pageByName("P")!.roots[0], 0);
+    await editing();
     disk = page("P", ["from disk"]);
     await applyGraphChange(changed("P"));
-    startEditing(pageByName("Journal")!.roots[0], 0);
+    // The watcher event does not re-read a page the host holds.
+    expect([raws("P"), reads]).toEqual([["mine"], 0]);
+    pushed(["from disk"]);
     await vi.waitFor(() => expect(raws("P")).toEqual(["from disk"]));
+    // The caret is never stolen: the editor is still on P's (only) block.
+    expect(editingId()).toBe(pageByName("P")!.roots[0]);
+    expect(reads).toBe(0);
   });
 
   it("replays after a block move settles", async () => {
@@ -82,26 +98,23 @@ describe("an external change declined mid-edit is replayed (GH #337)", () => {
     await vi.waitFor(() => expect(raws("P")).toEqual(["from disk"]));
   });
 
-  it("the latest observation wins and one replay reads the page once", async () => {
+  it("the latest host observation wins and the window reads the page no time", async () => {
     load("P", ["mine"]);
-    startEditing(pageByName("P")!.roots[0], 0);
-    disk = page("P", ["first"]);
-    await applyGraphChange(changed("P"));
-    disk = page("P", ["second"]);
-    await applyGraphChange(changed("P"));
-    expect(reads).toBe(0);
+    await editing();
+    pushed(["first"]);
+    pushed(["second"]);
     endEdit("blur");
     await vi.waitFor(() => expect(raws("P")).toEqual(["second"]));
-    expect(reads).toBe(1);
+    expect(reads).toBe(0);
   });
 
-  it("a replay while the page is still held stays deferred", async () => {
+  it("host content mailed under a component draft stays held until the draft is released", async () => {
     load("P", ["mine"]);
-    startEditing(pageByName("P")!.roots[0], 0);
+    await editing();
     const unpin = pinPageWhileDrafting(() => "P");
-    disk = page("P", ["from disk"]);
-    await applyGraphChange(changed("P"));
+    pushed(["from disk"]);
     endEdit("blur");
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(raws("P")).toEqual(["mine"]); // the draft still holds the page
     unpin();
     await vi.waitFor(() => expect(raws("P")).toEqual(["from disk"]));
@@ -113,12 +126,28 @@ describe("an external change declined mid-edit is replayed (GH #337)", () => {
     disk = page("P", ["from disk"]);
     await applyGraphChange(changed("P"));
     setRaw(pageByName("P")!.roots[0], "typed but not saved");
+    pushed(["from disk"]);
     endEdit("blur");
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(raws("P")).toEqual(["typed but not saved"]);
   });
 
   it("a graph switch discards the deferred change", async () => {
+    load("P", ["mine"]);
+    let settle!: () => void;
+    const moving = withBlockMoving("P", () => new Promise<void>((resolve) => { settle = resolve; }));
+    disk = page("P", ["from disk"]);
+    await applyGraphChange(changed("P"));
+    resetStore();
+    load("P", ["other graph"]);
+    settle();
+    await moving;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(raws("P")).toEqual(["other graph"]);
+    expect(reads).toBe(0);
+  });
+
+  it("a graph switch while the edited page's Open is in flight never shows the old graph's text", async () => {
     load("P", ["mine"]);
     startEditing(pageByName("P")!.roots[0], 0);
     disk = page("P", ["from disk"]);

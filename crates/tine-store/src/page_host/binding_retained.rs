@@ -3,7 +3,9 @@
 //! pages away from the host or run a page operation for a writer.
 use super::*;
 use crate::model::entry_identity::Identity;
-use crate::transaction::validation::{rewrite as rewrite_refs, rewrite_move};
+use crate::transaction::validation::{
+    prepared as reuse_rewrite, rewrite as rewrite_refs, rewrite_move,
+};
 use crate::RenameMap;
 
 /// Why a host rename did not run (§7, F10), or did not finish.
@@ -24,6 +26,65 @@ pub enum RenameRefusal {
     Unwritten(PageId),
     /// The target has a file, or the host is stopped.
     Refused,
+    /// The operation's draft could not be written: nothing changed. In-scope
+    /// scenario: a full disk or an app-data disk error.
+    DraftFailed,
+    /// Applied, but this page was discarded or edited back before it
+    /// published: a later edit decides it.
+    Superseded(PageId),
+    /// No answer or no publication within `OPERATION_WAIT`, or the host
+    /// stopped: the operation may still complete; Tine keeps trying.
+    Uncertain,
+    /// Not admitted within `OPERATION_WAIT`: other work held its pages
+    /// (another rename still running over them, or draft recovery).
+    Busy,
+}
+
+/// The planner's rewrite of a referrer, when it was computed from exactly
+/// these bytes under this file-name format (GH #623).
+pub type PreparedRewrite<'a> =
+    dyn Fn(&PageId, &[u8], tine_core::config::FileNameFormat) -> Option<Vec<u8>> + 'a;
+
+/// The longest a host operation's caller waits for admission, then for its
+/// answer and every page's publication (Finding B, R1).
+pub const OPERATION_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// What a caller's admitted operation came to, by precedence: Superseded,
+/// Applied, Unwritten, Uncertain (STEP3-DESIGN option 2; plan v3 N6).
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Settled {
+    Applied,
+    DraftFailed,
+    Unwritten(PageKey),
+    Superseded(PageKey),
+    Uncertain,
+}
+
+/// A caller's reply slot. Only the caller removes it, here, on every exit
+/// (an unwind included), so a late answer creates nothing (R2).
+pub(super) struct ReplySlot {
+    shared: Arc<crate::page_host::driver::Shared<ProductionIo, SystemClock>>,
+    id: ReplyId,
+}
+
+impl ReplySlot {
+    pub(super) fn new(
+        shared: &Arc<crate::page_host::driver::Shared<ProductionIo, SystemClock>>,
+        id: ReplyId,
+    ) -> Self {
+        Self {
+            shared: Arc::clone(shared),
+            id,
+        }
+    }
+}
+
+impl Drop for ReplySlot {
+    fn drop(&mut self) {
+        // A poisoned state has no slot left to answer.
+        self.shared
+            .try_with_state(|state| state.progress.host.order.remove(self.id));
+    }
 }
 
 /// The pages a retained writer holds (§7 step 3): none of them can be
@@ -99,7 +160,11 @@ struct Rewrites {
 impl PageHost {
     /// Reserve the complete page set `discover` names for a retained
     /// writer (§7 steps 2–3, R6). Waiting reservations hold no lock. Under
-    /// the reservation discovery runs again; a grown set starts over. Then,
+    /// the reservation discovery runs again; a set it does not cover starts
+    /// over with the union fenced, never shrinking (Q-P2b-1): each restart
+    /// strictly grows a set bounded by the pages discovery can name, so a
+    /// discovery that alternates (a config flipping between plans) ends,
+    /// with a superset reserved. Then,
     /// under that final reservation, the writer's input contract is checked
     /// on every page in it (Q3): unsaved input is a buffer that is not
     /// clean (typed, at risk or on an unknown base) or a submit or move the
@@ -114,15 +179,18 @@ impl PageHost {
         mut discover: impl FnMut() -> Vec<PageId>,
         input: Input,
     ) -> Result<Reservation, BTreeSet<PageId>> {
+        let mut keys = self.register_all(discover());
         loop {
-            let keys = self.register_all(discover());
             self.fence(&keys);
             let mut reservation = Reservation {
-                keys,
+                keys: keys.clone(),
                 shared: Arc::clone(&self.driver.shared),
                 handover: false,
             };
-            if !self.register_all(discover()).is_subset(reservation.keys()) {
+            let found = self.register_all(discover());
+            if !found.is_subset(reservation.keys()) {
+                drop(reservation);
+                keys.extend(found);
                 continue;
             }
             let unsaved = self.unsaved(reservation.keys());
@@ -176,7 +244,11 @@ impl PageHost {
     /// Waits while a page is busy, then until the operation's writes
     /// complete. Returns the rewritten referrers and the pages left for their
     /// markers; with nothing to write (a references-only rerun whose
-    /// referrers already say the new name), both are empty.
+    /// referrers already say the new name), both are empty. `prepared`
+    /// returns the planner's rewrite of a referrer when it was computed from
+    /// exactly the given bytes under the given file-name format; the host
+    /// reuses it instead of rewriting under the driver's state lock
+    /// (GH #623), and rewrites otherwise.
     pub fn rename(
         &self,
         source: &PageId,
@@ -184,6 +256,7 @@ impl PageHost {
         referrers: &[PageId],
         map: &RenameMap,
         view: &crate::WholeGraph,
+        prepared: &PreparedRewrite<'_>,
     ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
         let (src, src_spelling, ..) = self.identify(source);
         let (dst, dst_spelling, ..) = self.identify(target);
@@ -198,7 +271,8 @@ impl PageHost {
         let root = self.store.graph.root.clone();
         let format = view.config.file_name_format;
         let destination = root.join(dst_spelling.as_str());
-        let (seen, written) = loop {
+        let deadline = std::time::Instant::now() + OPERATION_WAIT;
+        let (seen, slot) = loop {
             let outcome = self.driver.shared.locked_step(|state| {
                 // Admission in the planner's context (B2); a stale view
                 // replans. In-scope scenario: a sync service or external
@@ -209,7 +283,7 @@ impl PageHost {
                 {
                     return None;
                 }
-                let (disposition, seen, pages) = state.progress.with_host(|host| {
+                let (disposition, seen, pages, reply) = state.progress.with_host(|host| {
                     // The keys the policy is called on: the operation's
                     // pages and every held buffer (A-R5: not every key
                     // ever registered).
@@ -226,6 +300,10 @@ impl PageHost {
                         let path = root.join(spelling);
                         let rewritten = if moving {
                             rewrite_move(old, &destination, map, format)
+                        } else if let Some(new) =
+                            prepared(&PageId::from(spelling.as_str()), old, format)
+                        {
+                            reuse_rewrite(old, new, &path)
                         } else {
                             rewrite_refs(old, &path, map, format)
                         };
@@ -251,6 +329,11 @@ impl PageHost {
                         Ok(Some(Arc::from(new)))
                     };
                     let disposition = host.rename_with(&src, &dst, &refs, policy);
+                    let reply = if disposition == Disposition::Pending {
+                        host.register_reply()
+                    } else {
+                        None
+                    };
                     // The final value (R3/R4): the operation's pages, or for
                     // a refusal the pages it would have written; empty when
                     // a references-only rerun has nothing left to write.
@@ -268,20 +351,24 @@ impl PageHost {
                             pages
                         }
                     };
-                    (disposition, record.into_inner().unwrap(), pages)
+                    (disposition, record.into_inner().unwrap(), pages, reply)
                 });
+                let slot = reply.map(|id| ReplySlot::new(&self.driver.shared, id));
                 // OG-RULES Rule 8 (A-K1): the operation's writes are renames.
                 if disposition == Disposition::Pending {
                     state.book.took(pages.clone(), EditKind::RenamePage);
                 }
-                Some((disposition, seen, pages))
+                Some((disposition, seen, pages, slot))
             });
-            let Some((disposition, seen, pages)) = outcome.flatten() else {
+            let Some((disposition, seen, pages, slot)) = outcome.flatten() else {
                 return Err(RenameRefusal::Refused);
             };
-            match disposition {
-                Disposition::Pending => break (seen, pages),
-                Disposition::Waiting => {
+            match (disposition, slot) {
+                (Disposition::Pending, Some(slot)) => break (seen, slot),
+                (Disposition::Waiting | Disposition::Pending, _) => {
+                    if std::time::Instant::now() >= deadline {
+                        return Err(RenameRefusal::Busy);
+                    }
                     let shared = &self.driver.shared;
                     let state = shared.state.lock().unwrap();
                     drop(shared.wait(state, std::time::Duration::from_millis(100)));
@@ -300,12 +387,71 @@ impl PageHost {
                 }
             }
         };
-        if let Err(stuck) = self.flush(&written) {
-            let page = stuck.into_iter().next().unwrap();
-            return Err(RenameRefusal::Unwritten(self.spelling(&page)));
+        match self.settle(&slot, None, deadline) {
+            Settled::Applied => {
+                let pages = |set: BTreeSet<String>| set.into_iter().map(PageId::from).collect();
+                Ok((pages(seen.changed), pages(seen.skipped)))
+            }
+            Settled::DraftFailed => Err(RenameRefusal::DraftFailed),
+            Settled::Unwritten(page) => Err(RenameRefusal::Unwritten(self.spelling(&page))),
+            Settled::Superseded(page) => Err(RenameRefusal::Superseded(self.spelling(&page))),
+            Settled::Uncertain => Err(RenameRefusal::Uncertain),
         }
-        let pages = |set: BTreeSet<String>| set.into_iter().map(PageId::from).collect();
-        Ok((pages(seen.changed), pages(seen.skipped)))
+    }
+
+    /// Wait for a caller's admitted operation (Finding B): its answer, then
+    /// each answered page's own publication at the answered version or later.
+    /// Never success without both; Uncertain at `deadline`, once the driver
+    /// ended or the state is poisoned, once the host stopped or relaunched,
+    /// or once window `session` is not current (F1: a result never vouches
+    /// for another session's pages).
+    pub(super) fn settle(
+        &self,
+        slot: &ReplySlot,
+        session: Option<u64>,
+        deadline: std::time::Instant,
+    ) -> Settled {
+        let shared = &self.driver.shared;
+        let Ok(mut state) = shared.state.lock() else {
+            return Settled::Uncertain;
+        };
+        loop {
+            let host = &state.progress.host;
+            let Some(reply) = host.order.slot(slot.id) else {
+                return Settled::Uncertain;
+            };
+            if session.is_some_and(|session| session != state.book.session) {
+                return Settled::Uncertain;
+            }
+            match &reply.reply {
+                Some(OperationReply::DraftFailed) => return Settled::DraftFailed,
+                Some(OperationReply::Applied(pages)) => {
+                    if let Some(page) = &reply.superseded {
+                        return Settled::Superseded(page.clone());
+                    }
+                    let mut open = pages.keys().filter(|key| !reply.witnessed.contains(*key));
+                    let mut stuck = open.clone().filter(|key| {
+                        host.logical(key).conflict() || state.progress.notice(key).save_error
+                    });
+                    if open.next().is_none() {
+                        return Settled::Applied;
+                    }
+                    if let Some(page) = stuck.next() {
+                        return Settled::Unwritten(page.clone());
+                    }
+                }
+                None => {}
+            }
+            let now = std::time::Instant::now();
+            if !host.alive || host.incarnation != slot.id.incarnation || now >= deadline {
+                return Settled::Uncertain;
+            }
+            let pause = (deadline - now).min(std::time::Duration::from_millis(100));
+            match shared.wait_checked(state, pause) {
+                Some(next) => state = next,
+                None => return Settled::Uncertain,
+            }
+        }
     }
 
     /// The alias spelling move (§2, Q4): under its reservation the caller
@@ -401,21 +547,11 @@ impl PageHost {
     fn unsaved(&self, keys: &BTreeSet<PageKey>) -> BTreeSet<PageKey> {
         let state = self.driver.shared.state.lock().unwrap();
         let host = &state.progress.host;
-        let queued = host.abstract_queue();
         keys.iter()
-            .filter(|key| {
-                host.pages.get(*key).is_some_and(|page| !page.clean())
-                    || host.worker.as_ref().is_some_and(|w| {
-                        matches!(&w.application,
-                            Some(Application::Operation { pages, .. }) if pages.contains_key(*key))
-                    })
-                    || queued.iter().any(|request| match &request.kind {
-                        RequestKind::Submit { .. } => &request.page == *key,
-                        RequestKind::Move { receiver, .. } => {
-                            &request.page == *key || receiver == *key
-                        }
-                        _ => false,
-                    })
+            .filter(|key| match host.logical(key) {
+                Logical::Settled(page) => !page.clean(),
+                Logical::Admitted { .. } => true,
+                Logical::Absent => false,
             })
             .cloned()
             .collect()
@@ -426,20 +562,17 @@ impl PageHost {
     fn flush(&self, pages: &BTreeSet<PageKey>) -> Result<(), BTreeSet<PageKey>> {
         let shared = &self.driver.shared;
         loop {
-            let stuck: BTreeSet<_> =
-                {
-                    let state = shared.state.lock().unwrap();
-                    let progress = &state.progress;
-                    pages
-                        .iter()
-                        .filter(|key| {
-                            progress.host.pages.get(*key).is_some_and(|page| {
-                                page.conflict || progress.notice(key).save_error
-                            })
-                        })
-                        .cloned()
-                        .collect()
-                };
+            let stuck: BTreeSet<_> = {
+                let state = shared.state.lock().unwrap();
+                let progress = &state.progress;
+                pages
+                    .iter()
+                    .filter(|key| {
+                        progress.host.logical(key).conflict() || progress.notice(key).save_error
+                    })
+                    .cloned()
+                    .collect()
+            };
             if !stuck.is_empty() {
                 return Err(stuck);
             }

@@ -77,22 +77,28 @@ function containerImportViolations(all: Sources): string[] {
   return bad;
 }
 
-// Step 3b P2a: the page-host client is reviewed and tested before it is wired;
-// old persistence stays the only page authority until the P2b flip, which
-// deletes this check in the same commit that imports the client.
-const HOST_CLIENT = `${DOC}/host/`;
-function unwiredClientViolations(all: Sources): string[] {
+// Step 3b P2b: the page host is the only page authority. Its client, settle and
+// planner are reached only through `host/wiring.ts`, which owns the one client.
+const HOST = `${DOC}/host/`;
+const WIRING = `${DOC}/host/wiring.ts`;
+function hostClientViolations(all: Sources): string[] {
   const bad: string[] = [];
   for (const [file, source] of all) {
-    if (file.startsWith(HOST_CLIENT) || file.endsWith("/mock.ts")) continue;
+    if (file.startsWith(HOST) || file.endsWith("/mock.ts")) continue;
     for (const entry of imports(file, source)) {
-      if (resolved(file, entry.spec, all)?.startsWith(HOST_CLIENT))
-        bad.push(`P2a client is unwired: ${file} imports ${entry.spec}; old persistence is the only authority until P2b; exemplar src/document/save/engine.ts`);
+      const target = resolved(file, entry.spec, all);
+      if (target?.startsWith(HOST) && target !== WIRING && !entry.typeOnly)
+        bad.push(`I-1: the page-host client is reached through host/wiring.ts only; ${file} imports ${target}; exemplar src/document/edits/moves.ts`);
     }
   }
   return bad;
 }
 
+// The page host's per-page commands (`page_commands.rs`): the window's one client
+// issues them. Graph-level `onGraphOpenWaiting` and `pageDraftsRetry` are graph
+// lifecycle and stay in graph.ts.
+const PAGE_HOST_COMMANDS = new Set(["pageWindowReloaded", "pageOpen", "pageSubmit", "pageMove", "pageDiscard",
+  "pageClose", "pageDelete", "pageWait", "pageSaveNow", "pageOwed", "onPageMail"]);
 function backendWriteViolations(all: Sources): string[] {
   const bad: string[] = [];
   const directKinds: Record<string, { index: number; kinds: string[] }> = {
@@ -115,9 +121,9 @@ function backendWriteViolations(all: Sources): string[] {
           && ts.isCallExpression(node.expression.expression)
           && node.expression.expression.expression.getText(parsed) === "backend") {
         const method = node.expression.name.text;
-        if (method === "savePages" || method === "deletePage") {
-          if (file !== `${DOC}/save/engine.ts`)
-            bad.push(`I-1: backend page writes belong in document/save/engine.ts; OG-RULES Rule 8; ${file}; exemplar src/document/save/engine.ts`);
+        if (PAGE_HOST_COMMANDS.has(method)) {
+          if (file !== WIRING)
+            bad.push(`I-1: backend page writes go through the page host in document/host/wiring.ts; OG-RULES Rule 8; ${file}; exemplar src/document/host/wiring.ts`);
         } else if (directKinds[method]) {
           const { index, kinds } = directKinds[method];
           const argument = node.arguments[index];
@@ -203,11 +209,11 @@ it("I-11 document containers stay private", () => {
   expect(containerImportViolations(all)[0]).toContain("I-11: no doc/setDoc import");
 }, SCAN_TIMEOUT_MS);
 
-it("I-1 backend page writes use the engine", () => {
+it("I-1 backend page writes use the page host", () => {
   const all = sources();
   expect(backendWriteViolations(all)).toEqual([]);
-  all.set("src/__plant.ts", "backend().savePages('id', page, null, false)");
-  expect(backendWriteViolations(all)[0]).toContain("I-1: backend page writes belong");
+  all.set("src/__plant.ts", "backend().pageSubmit(1, 2, 'pages/a.md', page, 3, null, ['typing'])");
+  expect(backendWriteViolations(all)[0]).toContain("I-1: backend page writes go through the page host");
   all.set("src/__plant.ts", 'backend().restoreBackup("stamp")');
   expect(backendWriteViolations(all)[0]).toContain("OG-RULES Rule 8");
 }, SCAN_TIMEOUT_MS);
@@ -227,12 +233,14 @@ it("I-11 the document module has no import cycle", () => {
   expect(() => assertNoDocumentCycle(all)).toThrow("I-11: document must not join an import cycle; exemplar src/components/PageProps.tsx; src/document -> src/__plant.ts -> src/document");
 }, SCAN_TIMEOUT_MS);
 
-it("P2a client is unwired: no production module imports the page-host client", () => {
+it("I-1 the page-host client is reached through host/wiring.ts only", () => {
   const all = sources();
-  expect(unwiredClientViolations(all)).toEqual([]);
+  expect(hostClientViolations(all)).toEqual([]);
   all.set("src/document/__plant.ts", 'import { HostClient } from "./host/client";');
-  expect(unwiredClientViolations(all)[0]).toContain("P2a client is unwired: src/document/__plant.ts");
+  expect(hostClientViolations(all)[0]).toContain("I-1: the page-host client is reached through host/wiring.ts only; src/document/__plant.ts");
   all.delete("src/document/__plant.ts");
   all.set("src/__plant.ts", 'export { settle } from "./document/host/settle";');
-  expect(unwiredClientViolations(all)[0]).toContain("P2a client is unwired: src/__plant.ts");
+  expect(hostClientViolations(all)[0]).toContain("src/__plant.ts");
+  all.set("src/__plant.ts", 'import { markDirty } from "./document/host/wiring";');
+  expect(hostClientViolations(all)).toEqual([]);
 }, SCAN_TIMEOUT_MS);

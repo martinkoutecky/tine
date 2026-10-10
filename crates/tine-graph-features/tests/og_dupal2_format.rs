@@ -2,6 +2,17 @@ use std::fs;
 use tine_graph_features::conflicts;
 use tine_store::Store;
 
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
 #[test]
 fn uppercase_org_conflict_diff_keeps_outline_blocks_out_of_preamble() {
     let root = tempfile::tempdir().unwrap();
@@ -10,7 +21,7 @@ fn uppercase_org_conflict_diff_keeps_outline_blocks_out_of_preamble() {
     let copy = "pages/Note.sync-conflict-20261001-101010-ABCDEFG.ORG";
     fs::write(root.path().join(winner), "* mine\n** child\n").unwrap();
     fs::write(root.path().join(copy), "* theirs\n** child\n").unwrap();
-    let store = Store::open(root.path(), Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(root.path(), Default::default()).unwrap().0);
     let diff = conflicts::sync_conflict_diff(&store, winner, copy, &[])
         .unwrap()
         .unwrap();
@@ -34,16 +45,18 @@ fn uppercase_org_merge_keeps_source_header_and_outline() {
     )
     .unwrap();
     fs::write(root.path().join("pages/New.org"), "* survivor\n").unwrap();
-    let store = Store::open(root.path(), Default::default()).unwrap().0;
-    tine_graph_features::pages::rename_or_merge_page(
-        &store,
-        None,
-        "Old",
-        "New",
-        None,
-        Some("pages/New.org"),
-        &[],
-    )
+    let store = std::sync::Arc::new(Store::open(root.path(), Default::default()).unwrap().0);
+    hosted(&store, |host| {
+        tine_graph_features::pages::rename_or_merge_page(
+            &store,
+            host,
+            "Old",
+            "New",
+            None,
+            Some("pages/New.org"),
+            &[],
+        )
+    })
     .unwrap();
     assert_eq!(
         fs::read_to_string(root.path().join("pages/New.org")).unwrap(),

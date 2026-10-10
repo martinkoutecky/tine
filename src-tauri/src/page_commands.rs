@@ -1,9 +1,9 @@
 //! The page host's commands and its mail bridge (STEP3 §3, plan v3 P1). A
 //! window issues them through `src/document/host/protocol.ts` `HostPort`;
 //! mutating commands carry the window's session (R8, S2), so a command from
-//! an earlier window or owner binding is not admitted. With no host running
-//! for the window's graph each command fails with "no page host"; no
-//! production host starts before step 3b P2b.
+//! an earlier window or owner binding is not admitted. Every graph-window
+//! binding runs a host (`graph.rs` `load_graph_for_label`, step 3b P2b); a
+//! binding mid-restore or revoked answers with the stale-binding error.
 
 use crate::state::{off_ui, slot_for_context, GraphContext, GraphSlot, PageHostSlot};
 use std::time::Duration;
@@ -145,11 +145,24 @@ pub(crate) async fn page_close(
 #[tauri::command]
 pub(crate) async fn page_delete(
     session: u64,
-    page: String,
+    name: String,
+    kind: tine_core::model::PageKind,
+    expected_path: Option<String>,
     ctx: GraphContext<'_>,
 ) -> Result<PageOperation, String> {
-    hosted(ctx, move |host| {
-        host.delete(session, &PageId::from(page.as_str()))
+    let slot = slot_for_context(&ctx)?;
+    off_ui(move || {
+        with_host(&slot, |host| {
+            tine_graph_features::pages::delete_page_expected(
+                &slot.store,
+                host,
+                session,
+                &name,
+                kind,
+                expected_path.as_deref(),
+            )
+            .map_err(|error| error.to_string())
+        })?
     })
     .await
 }
@@ -182,7 +195,18 @@ pub(crate) async fn page_wait(
         .map(|need| (need.key, need.version, need.witness))
         .collect();
     let bound = Duration::from_millis(bound_ms).min(PAGE_WAIT_BOUND);
-    hosted(ctx, move |host| host.wait_published(session, &needs, bound)).await
+    hosted(ctx, move |host| {
+        match host.wait_published(session, &needs, bound) {
+            PageOperation::Applied => Some(true),
+            // `wait_published` answers only Applied, Pending or Refused.
+            PageOperation::Pending
+            | PageOperation::Waiting
+            | PageOperation::Uncertain
+            | PageOperation::Superseded => None,
+            PageOperation::Refused => Some(false),
+        }
+    })
+    .await
 }
 
 #[tauri::command]

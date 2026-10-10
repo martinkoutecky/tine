@@ -2,6 +2,17 @@ use std::fs;
 use tine_core::model::PageKind;
 use tine_store::{EditKind, PageId, Resolved, SaveBase, SaveOutcome, Store};
 
+/// Renames are the page host's (STEP3 §7): each runs through a host started
+/// for it under its own app data, as the app's graph binding runs one.
+fn hosted<T>(
+    store: &std::sync::Arc<tine_store::Store>,
+    run: impl FnOnce(&tine_store::PageHost) -> T,
+) -> T {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    run(&host)
+}
+
 #[cfg(unix)]
 #[test]
 fn path_saved_under_another_case_opens_disk_spelling() {
@@ -376,9 +387,11 @@ fn rename_keeps_a_heading_blocks_title_property() {
         "# Heading\ntitle:: Physical\n\n- body\n",
     )
     .unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
-    tine_graph_features::pages::rename_page_expected(&store, None, "Physical", "Moved", None)
-        .unwrap();
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    hosted(&store, |host| {
+        tine_graph_features::pages::rename_page_expected(&store, host, "Physical", "Moved", None)
+    })
+    .unwrap();
     assert_eq!(
         fs::read_to_string(root.join("pages/Moved.md")).unwrap(),
         "# Heading\ntitle:: Physical\n\n- body\n"

@@ -9,13 +9,15 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { appendFeed, appendToTodayJournal, ensurePageLoaded, loadFeed, pageByName, pinPageWhileDrafting, reloadHlsIfLoaded, resetStore, restoreTodayJournalInFeed, setRaw } from "./index";
-import { baseRevFor } from "./save/engine";
+import { baseRevFor } from "./host/wiring";
 import { registerPaneRouteProvider } from "./workingSet";
 import { doc } from "./model";
 import { endEdit, startEditing } from "../editorController";
 import { journalTitle, appNow } from "../journal";
 import { setToasts, toasts } from "../toasts";
 import type { BlockDto, PageDto, PageKind } from "../types";
+import { answerOpensFromDocument } from "./host/documentHost.test.support";
+import { bindTestHost } from "./host/wiring.test.support";
 
 let serial = 0;
 const block = (raw: string): BlockDto => ({ id: `rr-${++serial}`, raw, collapsed: false, children: [] });
@@ -27,11 +29,11 @@ const refusalToast = () => toasts().find((toast) => toast.kind === "error" && to
 
 let unpin: (() => void) | null = null;
 beforeAll(() => initParser());
-beforeEach(() => {
+beforeEach(async () => {
   serial = 0;
   resetStore();
   setToasts([]);
-  vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map((_, i) => `saved-${i}`) }));
+  answerOpensFromDocument(await bindTestHost());
 });
 afterEach(() => {
   unpin?.(); unpin = null;
@@ -96,7 +98,7 @@ describe("capture never lands in a second file holding the destination's name", 
     expect(doc.feed).toEqual(["Aug 31st, 2026"]);
     let finish!: (page: PageDto) => void;
     vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise((resolve) => { finish = resolve as never; }));
-    const save = vi.spyOn(backend(), "savePages");
+    const save = vi.spyOn(backend(), "pageSubmit");
     const capturing = appendToTodayJournal("- captured thought");
     await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
     strayHolding(today, holds[0][1]);
@@ -113,11 +115,11 @@ describe("capture never lands in a second file holding the destination's name", 
     expect(doc.feed).toEqual(["Aug 31st, 2026"]);
     install(file(today, "pages/stray.md", ["stray text"]));
     vi.spyOn(backend(), "getPage").mockResolvedValue(file(today, "journals/today.md", ["morning"]) as never);
-    const save = vi.spyOn(backend(), "savePages");
+    const save = vi.spyOn(backend(), "pageSubmit");
     expect(await appendToTodayJournal("- captured thought")).toBe(true);
     expect(pageByName(today)!.id).toBe("journals/today.md");
     expect(raws(today)).toEqual(["morning", "captured thought"]);
-    const written = save.mock.calls.flatMap(([entries]) => entries);
+    const written = save.mock.calls;
     expect(written.some((entry) => JSON.stringify(entry).includes("captured thought") && JSON.stringify(entry).includes("journals/today.md"))).toBe(true);
     expect(JSON.stringify(written)).not.toContain("pages/stray.md");
   });
@@ -128,7 +130,7 @@ describe("capture never lands in a second file holding the destination's name", 
     expect(doc.feed).toEqual(["Aug 31st, 2026"]);
     strayHolding(today, hold);
     vi.spyOn(backend(), "getPage").mockResolvedValue(file(today, "journals/today.md", []) as never);
-    const save = vi.spyOn(backend(), "savePages");
+    const save = vi.spyOn(backend(), "pageSubmit");
     expect(await appendToTodayJournal("- captured thought")).toBe(false);
     expect(JSON.stringify(save.mock.calls)).not.toContain("captured thought");
     expect(pageByName(today)!.id).toBe("pages/stray.md");
@@ -140,11 +142,18 @@ describe("capture never lands in a second file holding the destination's name", 
 });
 
 describe("the PDF-notes refresh never drops a highlight write it declined", () => {
+  /** A block of `name` in the editor, its page open in the host (Open answered). */
+  async function editing(name: string): Promise<void> {
+    startEditing(pageByName(name)!.roots[0], 0);
+    await vi.waitFor(() => expect(backend().pageOpen).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
   it("defers while a block on the notes page is edited, then applies disk content and baseline", async () => {
     const notes = "hls__paper";
     expect(loadFeed([file("Aug 31st, 2026", "journals/2026_08_31.md", ["older"])])).toBe("published");
     install(file(notes, "pages/hls__paper.md", ["old note"], "page"));
-    startEditing(pageByName(notes)!.roots[0], 0);
+    await editing(notes);
     const disk = file(notes, "pages/hls__paper.md", ["old note", "new highlight"], "page");
     vi.spyOn(backend(), "getPage").mockResolvedValue(disk as never);
     const applied = await reloadHlsIfLoaded(notes);
@@ -159,7 +168,7 @@ describe("the PDF-notes refresh never drops a highlight write it declined", () =
     const notes = "hls__failing";
     vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(1);
     install(file(notes, "pages/hls__failing.md", ["old note"], "page"));
-    startEditing(pageByName(notes)!.roots[0], 0);
+    await editing(notes);
     vi.spyOn(backend(), "getPage").mockRejectedValue(new Error("disk unreadable"));
     expect(await reloadHlsIfLoaded(notes)).toBe(false);
     endEdit("blur");

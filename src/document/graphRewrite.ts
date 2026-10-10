@@ -3,7 +3,7 @@ import { backend } from "../backend";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "../owned";
 import type { PageTarget } from "../router";
 import { endEdit } from "../editorController";
-import { conflicts, dirtyPages, flushAll, savingPages } from "./save/engine";
+import { flushAll, unpublishedPages } from "./host/wiring";
 import { forgetPage, reloadDisposition, reloadPageIfStillSafe } from "./workingSet";
 import { doc, pageByName } from "./model";
 import { invalidateUndoForPage } from "./history";
@@ -104,12 +104,13 @@ export async function renamePageOnDisk(
 
 /** Save every pending edit. The rename reads referring pages from disk, so an
  * edit that cannot be saved matters only on a page the rename would change:
- * the renamed page, a namespace child, or one whose unsaved text references
+ * the renamed page, a namespace child, or one whose unpublished text references
  * the renamed page or a namespace child (a reference that exists only in
  * memory would be missed). References are the ones the backend rewrites, read
  * off the lsdoc parse and compared by page key; prose that merely contains the
  * name does not count. Those refuse; every other stuck page's file is returned
- * for the backend to leave alone. O(stuck pages' blocks) parses after the flush. */
+ * for the backend to leave alone; unknown host debt refuses. O(stuck pages'
+ * blocks) parses after the flush. */
 async function unsavedPathsFor(from: string): Promise<string[] | { unsaved: string; mentions: boolean }> {
   if (await flushAll()) return [];
   const renamed = pageIdentityKey(from);
@@ -118,11 +119,17 @@ async function unsavedPathsFor(from: string): Promise<string[] | { unsaved: stri
     return key === renamed || key.startsWith(`${renamed}/`);
   };
   const paths: string[] = [];
-  for (const name of new Set([...dirtyPages(), ...savingPages(), ...conflicts()])) {
+  const unpublished = await unpublishedPages();
+  // The host could not say what it owes (stale binding, stopped host): any
+  // page may be unsaved, so the rename refuses.
+  if (!unpublished) return { unsaved: "a page", mentions: false };
+  for (const { key, name } of unpublished) {
+    // Host debt this window cannot read the text of: it may mention anything.
+    if (!name) return { unsaved: key ?? "a page", mentions: false };
     if (rewritten(name)) return { unsaved: name, mentions: false };
     if (pageTexts(name).some((text) => pageRefsInText(text.raw, text.format).some(rewritten)))
       return { unsaved: name, mentions: true };
-    const path = pageByName(name)?.id;
+    const path = pageByName(name)?.id ?? key;
     if (path) paths.push(path);
   }
   return paths;

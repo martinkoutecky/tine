@@ -8,7 +8,9 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { blockPositionRef, blockRef, ensureBlockId, isDirty, resetStore } from "./document";
+import { blockPositionRef, blockRef, ensureBlockId, flushAll, isDirty, resetStore } from "./document";
+import { bindTestHost, submittedPages } from "./document/host/wiring.test.support";
+import { expectNoPageWrites, spyPageWrites } from "./pageWrites.test.support";
 import { doc, setDoc } from "./document/model";
 import { openDurableBlock } from "./blockRefActions";
 import { activeTab, focusBlock, openInNewTab, openPage, resetTabsToJournals, resolveRouteBlock, route, settleActiveBlock } from "./router";
@@ -50,9 +52,10 @@ beforeEach(() => {
 
 describe("navigation writes no byte", () => {
   it("zoom, new tab, other pane and sidebar open stamp nothing and mint no id", async () => {
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
     const random = vi.spyOn(crypto, "randomUUID");
     const { c } = loadNotes("k");
+    await bindTestHost();
+    const writes = spyPageWrites();
     const before = rawOf();
 
     openPage("Notes", "page");
@@ -61,25 +64,28 @@ describe("navigation writes no byte", () => {
     openDurableBlock(c, "sidebar");
     openDurableBlock(c, "pane");
     openInNewTab({ kind: "page", name: "Notes", pageKind: "page", block: c });
-    await Promise.resolve();
 
     expect(rawOf()).toEqual(before);
     expect(isDirty("Notes")).toBe(false);
-    expect(save).not.toHaveBeenCalled();
+    // A barrier sends any input there is; there must be none.
+    expect(await flushAll()).toBe(true);
+    expectNoPageWrites(writes);
     expect(random).not.toHaveBeenCalled();
     expect(rightSidebar()[0]).toMatchObject({ kind: "block", page: "Notes" });
   });
 
   it("saving the session for a zoomed route writes only the session, never the page", async () => {
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
     const { c } = loadNotes("k");
+    await bindTestHost();
+    const writes = spyPageWrites();
     openPage("Notes", "page");
     focusBlock(c);
     const before = rawOf();
     const persisted = buildPersistedSession();
     JSON.stringify(persisted);
     expect(rawOf()).toEqual(before);
-    expect(save).not.toHaveBeenCalled();
+    expect(await flushAll()).toBe(true);
+    expectNoPageWrites(writes);
   });
 });
 
@@ -154,8 +160,9 @@ describe("a reference still writes id::", () => {
   it("zoom, then Copy block ref: the id is stamped once, the zoom keeps showing the block, and it is saved by id", async () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
     const { c } = loadNotes("k");
+    await bindTestHost();
+    const save = vi.spyOn(backend(), "pageSubmit");
     openPage("Notes", "page");
     focusBlock(c);
     expect(save).not.toHaveBeenCalled();
@@ -163,6 +170,7 @@ describe("a reference still writes id::", () => {
     expect(await ensureBlockId(c)).toBe(uuid);
     expect(doc.byId[c].raw).toBe(`${RAW.c}\nid:: ${uuid}`);
     expect(save).toHaveBeenCalledTimes(1);
+    expect(submittedPages(save, "Notes")[0].blocks[1].children[0].raw).toBe(`${RAW.c}\nid:: ${uuid}`);
 
     // The zoomed route opened by runtime key keeps resolving after the stamp (GH #373 rule relaxed for navigation only).
     expect(resolveRouteBlock(route())).toBe(c);

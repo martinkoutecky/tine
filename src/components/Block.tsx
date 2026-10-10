@@ -35,7 +35,7 @@ import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
@@ -1446,6 +1446,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const trigger = ac();
       const editorValue = ref.value;
       let inserted = false;
+      const intended = () => bindingCurrent(binding) && ac() === trigger && ref.value === editorValue;
       void persistBlockRefTarget(uuid, page, kind, undefined, externalId, () => {
         if (!bindingCurrent(binding) || ac() !== trigger || ref.value !== editorValue) return null;
         const sourcePage = docNode(props.id)?.page;
@@ -1453,7 +1454,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         replaceTrigger(`((${externalId}))`);
         inserted = true;
         return sourcePage;
-      }).then((saved) => {
+      }, intended).then((saved) => {
         if (!saved && bindingCurrent(binding) && (inserted || ac() === trigger))
           pushToast("Could not save the block reference. Resolve the page save and try again.", "error");
       }).catch((error) => { if (bindingCurrent(binding)) pushToast(`Could not save the block reference: ${String(error)}`, "error"); });
@@ -3126,6 +3127,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         classList={{ [`h${editorHeadingLevel()}`]: editorHeadingLevel() != null, "code-edit": codeEditing() }}
         wrap={codeEditing() && !codeWrapping() ? "off" : "soft"}
         spellcheck={spellcheckEnabled()}
+        // A frozen page (a transfer endpoint, a rename, a graph switch) takes
+        // no input at all, so nothing typed is shown and then dropped (Q-TS2).
+        readOnly={!blockWritable(props.id)}
         value={textareaValue()}
         placeholder={cap?.bulletHint?.()}
         onInput={onInput}

@@ -116,16 +116,16 @@ field store::ConfigState.asset_trash_location
 fn store::Store::config
 struct store::ConfigState
 
-## Save (ceiling: 7)
+# Step 3b P2b: the old save engine's Store::save_pages and SavePagesOutcome are
+# deleted; page saves are the page host's (STEP3 §12; 7 -> 5).
+## Save (ceiling: 5)
 enum edit_kind::EditKind
 fn directory_durability::sync_directory_entry
 enum store::SaveBase
 enum store::SaveOutcome
-enum store::SavePagesOutcome
 enum store::StoreError
-fn store::Store::save_pages
 
-## Transaction steps (ceiling: 30)
+## Transaction steps (ceiling: 28)
 enum transaction::Content
 enum transaction::Refusal
 enum transaction::StepResult
@@ -137,8 +137,6 @@ enum transaction::TitleRebind
 enum transaction::RewriteEffect
 field transaction::IoError.kind
 field transaction::IoError.message
-field transaction::IoError.operation
-field transaction::IoError.os_error
 field transaction::Rollback.kept_external
 field transaction::Rollback.undo_failed
 fn transaction::Store::transaction
@@ -283,7 +281,7 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 36)
+## Page host (ceiling: 37)
 # Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
 # for its retained-writer callers (census writers in tine-graph-features, backup restore in
 # src-tauri) and, from step 3b P1 (ceiling 12 -> 36), for the window's page commands and
@@ -291,8 +289,11 @@ fn store::WholeGraph::templates
 # bridge (PageMail, retarget) and the binding's retirement (orphan_stop, stop_abort,
 # stop_finish, StopState; src-tauri host_retirement.rs, plan v3 §3). Each verb is one
 # host operation the window already performs through the old engine; no item re-exports
-# file I/O.
+# file I/O. Step 3b P2b (36 -> 37): `start`, the production constructor src-tauri's graph
+# binding calls (graph.rs load_graph_for_label); no existing item starts a host outside
+# tests (`start_for_tests` is test-faults gated and picks a fixed graph id).
 struct page_host::PageHost
+fn page_host::PageHost::start
 fn page_host::PageHost::reserve
 fn page_host::PageHost::rename
 fn page_host::PageHost::respell
@@ -321,7 +322,7 @@ enum page_host::PageRefusal
 enum page_host::DiskToken
 enum page_host::PageOperation
 enum page_host::StopState
-# test-oracle: tine-graph-features tests bind a host; production binds through lane 3b's switch.
+# test-oracle: tine-graph-features tests bind a host; production starts one through `start`.
 fn page_host::PageHost::start_for_tests
 struct page_host::Reservation
 enum page_host::Input
@@ -337,5 +338,5 @@ use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
 use crate::transaction::{Content,IoError,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
 use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SaveOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}

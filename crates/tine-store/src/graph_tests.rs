@@ -8,6 +8,8 @@ use std::sync::Arc;
 use tine_graph_features::{conflicts, pages};
 use tine_store::{Cancel, PageId, SaveBase, SaveOutcome, SearchRequest, Store};
 
+use crate::test_fixture_io::hosted;
+
 fn demo_graph() -> Graph {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/demo-graph");
     Graph::open(root)
@@ -377,7 +379,7 @@ fn search_cache_reflects_saves_and_deletes() {
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::write(root.join("pages").join("Seed.md"), "- a seed block\n").unwrap();
 
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let cancel = tine_store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
     let find = || {
         store
@@ -420,7 +422,12 @@ fn search_cache_reflects_saves_and_deletes() {
     assert_eq!(hits[0].page, "Fresh");
 
     // Deleting the page removes it from the cache too.
-    pages::delete_page_expected(&store, None, "Fresh", PageKind::Page, None, None).unwrap();
+    let (deleted, published) =
+        crate::test_fixture_io::delete(&store, "Fresh", PageKind::Page, None).unwrap();
+    assert_eq!(
+        (deleted, published),
+        (tine_store::PageOperation::Applied, Some(true))
+    );
     assert_eq!(find().len(), 0, "deleted page should drop out");
 
     std::fs::remove_dir_all(&root).ok();
@@ -1203,12 +1210,9 @@ fn rename_page_moves_file_and_updates_refs() {
     )
     .unwrap();
 
-    pages::rename_page_expected(
-        &Store::open(&root, Default::default()).unwrap().0,
-        None,
-        "Old Name",
-        "New Name",
-        None,
+    hosted(
+        &Arc::new(Store::open(&root, Default::default()).unwrap().0),
+        |store, host| pages::rename_page_expected(store, host, "Old Name", "New Name", None),
     )
     .unwrap();
 
@@ -1269,12 +1273,9 @@ fn rename_cascades_namespace_and_rewrites_self_refs() {
     )
     .unwrap();
 
-    pages::rename_page_expected(
-        &Store::open(&root, Default::default()).unwrap().0,
-        None,
-        "Proj",
-        "Renamed",
-        None,
+    hosted(
+        &Arc::new(Store::open(&root, Default::default()).unwrap().0),
+        |store, host| pages::rename_page_expected(store, host, "Proj", "Renamed", None),
     )
     .unwrap();
 
@@ -1362,12 +1363,9 @@ fn rename_rewrites_bare_tags_property() {
     )
     .unwrap();
 
-    pages::rename_page_expected(
-        &Store::open(&root, Default::default()).unwrap().0,
-        None,
-        "Old",
-        "New",
-        None,
+    hosted(
+        &Arc::new(Store::open(&root, Default::default()).unwrap().0),
+        |store, host| pages::rename_page_expected(store, host, "Old", "New", None),
     )
     .unwrap();
 
@@ -1394,12 +1392,9 @@ fn rename_aborts_on_target_collision_without_changes() {
     std::fs::write(root.join("pages").join("B.md"), "- b body\n").unwrap();
 
     assert!(
-        pages::rename_page_expected(
-            &Store::open(&root, Default::default()).unwrap().0,
-            None,
-            "A",
-            "B",
-            None
+        hosted(
+            &Arc::new(Store::open(&root, Default::default()).unwrap().0),
+            |store, host| pages::rename_page_expected(store, host, "A", "B", None)
         )
         .is_err(),
         "rename onto existing page must fail"
@@ -1429,12 +1424,9 @@ fn rename_ref_only_page_rewrites_refs_without_a_file() {
     )
     .unwrap();
 
-    pages::rename_page_expected(
-        &Store::open(&root, Default::default()).unwrap().0,
-        None,
-        "Ghost",
-        "Spirit",
-        None,
+    hosted(
+        &Arc::new(Store::open(&root, Default::default()).unwrap().0),
+        |store, host| pages::rename_page_expected(store, host, "Ghost", "Spirit", None),
     )
     .unwrap();
 
@@ -2262,10 +2254,13 @@ fn rename_superstring_rewrites_journal_and_nonjournal_refs() {
     )
     .unwrap();
 
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let _ = store.whole_graph().unwrap().backlinks("Testtest").unwrap();
 
-    pages::rename_page_expected(&store, None, "Testtest", "TesttestTest", None).unwrap();
+    hosted(&store, |store, host| {
+        pages::rename_page_expected(store, host, "Testtest", "TesttestTest", None)
+    })
+    .unwrap();
 
     let my = std::fs::read_to_string(root.join("pages").join("MyPage.md")).unwrap();
     let jr = std::fs::read_to_string(root.join("journals").join("2026_06_15.md")).unwrap();
@@ -2306,11 +2301,14 @@ fn rename_rewrites_nested_ref_in_open_page() {
     )
     .unwrap();
 
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let _ = store.page(&PageId::from("pages/Tine.md")).unwrap();
     let _ = store.whole_graph().unwrap().backlinks("Testtest").unwrap();
 
-    pages::rename_page_expected(&store, None, "Testtest", "TesttestTest", None).unwrap();
+    hosted(&store, |store, host| {
+        pages::rename_page_expected(store, host, "Testtest", "TesttestTest", None)
+    })
+    .unwrap();
 
     let tine = std::fs::read_to_string(root.join("pages").join("Tine.md")).unwrap();
     assert!(

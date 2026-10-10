@@ -178,11 +178,7 @@ pub(crate) struct PreparedWrite {
 }
 
 impl PreparedWrite {
-    pub(crate) fn new(path: &Path, bytes: &[u8]) -> io::Result<Self> {
-        Self::with_hooks(path, bytes, || {}, || {})
-    }
-
-    fn with_hooks(
+    pub(crate) fn with_hooks(
         path: &Path,
         bytes: &[u8],
         on_write: impl FnOnce(),

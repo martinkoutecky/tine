@@ -1,16 +1,25 @@
 CreatePageRefusal
+DiskToken  # why: backend wire type of the page host protocol; batch-og-s3b
+DraftStatus  # why: graph open reports crash-draft storage status; batch-og-s3b
 FeedPage
 HistoryRouteContext
 Node
 OutlineScope
+OwedPage  # why: backend wire type of the page host protocol; batch-og-s3b
 PageLoadRefusal  # why: GH #254 family: one typed answer to whether a page file took its name slot; batchJ1
+PageMail  # why: backend wire type of the page host protocol; batch-og-s3b
+PageOperation  # why: backend wire type of the page host protocol; batch-og-s3b
+PageRefusal  # why: backend wire type of the page host protocol; batch-og-s3b
+PublishedNeed  # why: backend wire type of the page host protocol; batch-og-s3b
 UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
 admitPageFile  # why: capture and carry load the file their write must land in, refusing a second file; batchJ1
 appendFeed
 appendToTodayJournal
 applyGraphChange
 applyGraphChangesBulk  # why: a checkout-sized watcher batch (graph-changed-bulk) is applied once (family 10); batch22a
+applyLiveResolution  # why: conflict dock applies a live-buffer resolution through the page host; batch-og-s3b
 beginPageHeaderEdit
+bindHost  # why: graph open binds the page host client for the new working set; batch-og-s3b
 blockExternalId
 blockIsGridView
 blockPageReadOnly
@@ -30,6 +39,7 @@ collapseEpochOf  # why: embed occurrence folds compare the source collapse write
 collapsibleDescendantIds
 conflictReason  # why: conflict bar reason text; batch03
 conflicts
+consumedAnswer  # why: backup restore waits on the host answer watermark; batch-og-s3b
 createPage
 cycleSelectionTasks
 deleteBlock
@@ -58,7 +68,6 @@ flushPage
 formatForBlock
 formatForPage
 graphRewriteFrozen  # why: hide query crossing Undo while graph rewrites freeze edits; batch14q4a-followup
-groupedPages  # why: show waiting pages in conflict bar; batch03
 hasSelection
 indentBlock
 indentSelection
@@ -67,10 +76,8 @@ insertOutlineAfter
 insertOutlineBefore  # why: Insert block above any bullet (GH #480); batch17a
 insertOutlineChildren
 installAliasDraftRouteHandler
-installDraftKeeper  # why: the app-data draft store keeps a crash-surviving copy while a page's edits cannot be saved (og ADR 0061); batch20b
 installExternalChangeUiHandler
 installHistoryRouteContextAdapter
-installLiveResolution  # why: the in-page resolver installs a committed live-conflict resolution only after the page's saves drain and only over the reviewed draft (og 8e; master 7e1b6ec42/ba80a151e); batch21a
 installPageIdentityNavigation  # why: route/tab rekey must precede exact-path working-set identity adoption; batch11e
 installRenameRefreshHandler
 isBlockMoving
@@ -164,13 +171,12 @@ toggleListItemAtIndex
 toggleOwnNumberedList
 toggleUndoRedoMode
 trackAssetWrite
+tryFreezeGraphRewrite  # why: graph switch freezes all input before its last flush (STEP3 6 step 1); batch-og-s3b
 undo
 undoTopTag  # why: the query crossing notice offers Undo only while its own save is still the top undo step; batch14q4a
 unsavedDrafts  # why: the unsaved-changes recovery panel and close prompt list each page whose edits are not on disk, with its draft (GH #540); batch20b
 unsavedPageCount  # why: a close that discards drafts records how many pages it dropped, as a count only; batch18a
 visibleOrder
-waitingFor  # why: show unresolved group member; batch03
-waitingOn  # why: show pages blocked by conflict; batch03
 whenPageReplaceable  # why: a refused load retries once the holder is replaceable; batchJ1
 withBlockMoving
 withToday

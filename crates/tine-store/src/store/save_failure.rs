@@ -1,15 +1,15 @@
-//! Page-save adapters over the guarded transaction path. A group save keeps
-//! failed rollback and publication file locations for recovery; the test-only
-//! single save oracle returns one revision or a refusal. Existing-page writes can copy O(P) page pointers
-//! while a graph view is held. Callers retain unsaved edits on every failure.
-//! Group success includes its published Change: serialization carries bounded
-//! reference-count updates and name-inventory invalidation, shared with watchers.
+//! The test-only one-page save oracle over the guarded transaction path. It
+//! returns one revision or a refusal; a failed rollback or publication becomes
+//! an `Io` refusal naming the page. Existing-page writes can copy O(P) page
+//! pointers while a graph view is held. Production page saves are the page
+//! host's (STEP3 §12: `Store::save_pages` is deleted, not hidden).
 
 use super::*;
 
 impl Store {
-    /// Test oracle (og-surface rule 4): production saves go through
-    /// [`Store::save_pages`]; this one-entry adapter exists for tests only.
+    /// Test oracle (og-surface rule 4): production saves go through the page
+    /// host; this one-entry adapter over [`Store::transaction`] exists for
+    /// tests only.
     ///
     /// Save one page with a raw-byte [`SaveBase`] guard. Revalidates the
     /// caller-constructible identity, reads current disk bytes, and uses
@@ -76,7 +76,6 @@ impl Store {
     /// republished as an external watcher echo. Keep unsaved edits on every
     /// refusal.
     /// An incomplete rollback or publication returns `Io` naming the page; inspect disk before retrying.
-    #[cfg(any(test, feature = "test-faults"))]
     pub fn save(
         &self,
         kind: crate::EditKind,
@@ -84,108 +83,54 @@ impl Store {
         base: SaveBase,
         doc: &PageDto,
     ) -> SaveOutcome {
-        match self.save_pages(&[(id.clone(), base, doc.clone(), vec![kind])]) {
-            SavePagesOutcome::Ok { mut outcomes, .. } => outcomes.remove(0),
-            SavePagesOutcome::Failed {
-                outcome,
-                undo_failed,
-                publication_errors,
-                ..
-            } => single_page_failure(outcome, &undo_failed, &publication_errors, id),
-        }
-    }
-
-    /// Save page snapshots in input order through one guarded transaction.
-    /// Preflight checks all entries before writing; duplicate file IDs, an
-    /// empty request, empty edit kinds, and Guide pages refuse. Success returns
-    /// one Saved or Unchanged file revision per entry plus its bounded published
-    /// Change signal (None for unchanged writes or a failed initial load). A preflight refusal writes
-    /// nothing. An apply failure attempts undo; inspect `undo_failed` and
-    /// `publication_errors` before retrying. If publication fails after all disk
-    /// steps, Failed uses index 0 as a placeholder, not a failed entry, and the
-    /// writes may stand. Cost includes reading/hashing every guarded page,
-    /// writing changed pages, possible undo/final-state reads and writes, and
-    /// graph publication that may copy O(P) page pointers.
-    pub fn save_pages(
-        &self,
-        entries: &[(PageId, SaveBase, PageDto, Vec<crate::EditKind>)],
-    ) -> SavePagesOutcome {
-        if entries.is_empty() {
-            return SavePagesOutcome::Failed {
-                index: 0,
-                outcome: SaveOutcome::InvalidTarget("empty page save".into()),
-                undo_failed: Vec::new(),
-                publication_errors: Vec::new(),
-            };
-        }
-        if let Some(index) = entries.iter().position(|(_, _, _, kinds)| kinds.is_empty()) {
-            return SavePagesOutcome::Failed {
-                index,
-                outcome: SaveOutcome::InvalidTarget(
-                    "OG-RULES Rule 8: page save needs a kind".into(),
-                ),
-                undo_failed: Vec::new(),
-                publication_errors: Vec::new(),
-            };
-        }
         if self.is_closed() {
-            return SavePagesOutcome::Failed {
-                index: 0,
-                outcome: SaveOutcome::Closed,
-                undo_failed: Vec::new(),
-                publication_errors: Vec::new(),
-            };
+            return SaveOutcome::Closed;
         }
-        if let Some(index) = entries.iter().position(|(_, _, doc, _)| doc.guide) {
-            return SavePagesOutcome::Failed {
-                index,
-                outcome: SaveOutcome::GuideEphemeral,
-                undo_failed: Vec::new(),
-                publication_errors: Vec::new(),
-            };
+        if doc.guide {
+            return SaveOutcome::GuideEphemeral;
         }
-        let mut tx = self.transaction(Some(entries[0].3[0]));
-        for (id, base, doc, kinds) in entries {
-            tx.save_page(kinds, id, base.clone(), doc);
-        }
+        let mut tx = self.transaction(Some(kind));
+        tx.save_page(&[kind], id, base, doc);
         match tx.commit() {
-            crate::TxOutcome::Committed { steps, change, .. } => SavePagesOutcome::Ok {
-                change,
-                outcomes: steps
-                    .into_iter()
-                    .map(|step| match step {
-                        crate::StepResult::Written { rev, .. } => SaveOutcome::Saved(rev),
-                        crate::StepResult::Unchanged { rev, .. } => SaveOutcome::Unchanged(rev),
-                        _ => unreachable!("save_page result"),
-                    })
-                    .collect(),
+            crate::TxOutcome::Committed { mut steps, .. } => match steps.remove(0) {
+                crate::StepResult::Written { rev, .. } => SaveOutcome::Saved(rev),
+                crate::StepResult::Unchanged { rev, .. } => SaveOutcome::Unchanged(rev),
+                _ => unreachable!("save_page result"),
             },
             crate::TxOutcome::NotCommitted {
-                step,
                 why,
                 rollback,
                 publication_errors,
                 ..
             } => {
-                let undo_failed = rollback.undo_failed.into_iter().map(|(file, _)| file).collect();
-                SavePagesOutcome::Failed {
-                    index: step,
-                    outcome: SaveOutcome::from_failed_step(why, &entries[step].0),
-                    undo_failed,
-                    publication_errors: publication_errors.into_iter().map(|(file, _)| file).collect(),
-                }
+                let undo_failed: Vec<FileId> = rollback
+                    .undo_failed
+                    .into_iter()
+                    .map(|(file, _)| file)
+                    .collect();
+                let publication_errors: Vec<FileId> = publication_errors
+                    .into_iter()
+                    .map(|(file, _)| file)
+                    .collect();
+                single_page_failure(
+                    SaveOutcome::from_failed_step(why, id),
+                    &undo_failed,
+                    &publication_errors,
+                    id,
+                )
             }
-            crate::TxOutcome::PublicationIncomplete { files, .. } => SavePagesOutcome::Failed {
-                index: 0,
-                outcome: SaveOutcome::Io(crate::IoError {
-                    kind: std::io::ErrorKind::Other,
-                    message: "disk steps applied but publication incomplete; inspect disk before retrying".into(),
-                    operation: None,
-                    os_error: None,
-                }),
-                undo_failed: Vec::new(),
-                publication_errors: files.into_iter().map(|(file, _)| file).collect(),
-            },
+            crate::TxOutcome::PublicationIncomplete { files, .. } => {
+                let files: Vec<FileId> = files.into_iter().map(|(file, _)| file).collect();
+                single_page_failure(
+                    SaveOutcome::Io(crate::IoError {
+                        kind: std::io::ErrorKind::Other,
+                        message: "disk steps applied but publication incomplete; inspect disk before retrying".into(),
+                    }),
+                    &[],
+                    &files,
+                    id,
+                )
+            }
         }
     }
 }
@@ -193,7 +138,6 @@ impl Store {
 /// Return outcome unchanged when no undo step or publication failed. Otherwise
 /// return Io naming the page and what is incomplete, asking the caller to inspect
 /// disk before retrying, regardless of the original refusal. No I/O; O(1).
-#[cfg(any(test, feature = "test-faults"))]
 fn single_page_failure(
     outcome: SaveOutcome,
     undo_failed: &[FileId],
@@ -215,7 +159,5 @@ fn single_page_failure(
             },
             id.as_str(),
         ),
-        operation: None,
-        os_error: None,
     })
 }

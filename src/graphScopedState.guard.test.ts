@@ -31,8 +31,6 @@ const CLASSIFIED: Record<string, string> = {
   "src/components/SidebarFavorites.tsx#dropTarget": "favorites drag state; a click ends the drag in the old graph first (K17b, no user path)",
   "src/components/DeepLinkGraphChoice.tsx#choice": "a pending choice among known graph roots for an external link (paths, not graph content); the chosen target is re-resolved through the graph-switch door, which refuses a missing page or block",
   "src/components/TabBar.tsx#currentTabDropTarget": "tab drop target (pane/tab ids, not graph content)",
-  "src/draftStore.ts#held": "window-lifetime by design (storage.qnt MX): drafts of the graph that was LEFT, each carrying its own root; "
-    + "the recovery panel only shows and copies them, Dismiss releases them, and nothing writes them into any graph",
   "src/document/model.ts#collapseEpochState": "a counter compared for equality by embed folds, never written back to a graph; cleared by resetStore (clearCollapseEpochs)",
   "src/document/edits/selection.ts#selAnchor": "cleared by clearOnBindingInvalidated",
   "src/document/edits/selection.ts#selFocus": "cleared by clearOnBindingInvalidated",
@@ -55,7 +53,6 @@ const CLASSIFIED: Record<string, string> = {
   "src/ui.ts#audioPlayer": "setAudioPlayer(null) on a switch; playback only",
   "src/ui.ts#switcherPluginBlock": "OwnedPluginBlockSnapshot carries its plugin graph owner",
   "src/assetCache.ts#versions": "display cache-buster per asset path; clearAssetBlobCache drops every version at graph switch",
-  "src/document/save/engine.ts#conflictReasons": "resetSaveState() clears it in resetStore",
   "src/mediaEditorSettings.ts#commands": "device preference",
   "src/ui.ts#shortcutOverrides": "device preference",
   // Found once named types were expanded (og 15a follow-up):
@@ -211,22 +208,10 @@ const LEGACY_COLLECTIONS = new Set([
   "src/binding.ts#scopedClears",
   "src/components/Macro.tsx#youtubePlayers",
   "src/conflictQueue.ts#arrivalNotices",
-  "src/document/save/engine.ts#kindLedger",
-  "src/document/save/engine.ts#titleIdentityIntents",
-  "src/document/save/engine.ts#pageInstanceGenerations",
-  "src/document/save/engine.ts#dirty",
-  "src/document/save/engine.ts#baseRev",
-  "src/document/save/engine.ts#deletedPages",
-  "src/document/save/engine.ts#landedAliasDrafts",
-  "src/document/save/engine.ts#saveChain",
-  "src/document/save/engine.ts#lastSaveFailure",
-  "src/document/save/engine.ts#saveFailureToasts",
+  // Moved unchanged out of the save engine (step 3b P2b, engine.ts deleted).
+  "src/document/instance.ts#pageInstanceGenerations",
   // Moved unchanged out of the save engine (step 3b P2a), shared with settle.
   "src/document/assetWrites.ts#pending",
-  "src/document/save/engine.ts#groupOf",
-  "src/document/save/engine.ts#sealedGroups",
-  "src/document/save/engine.ts#saveAttempts",
-  "src/document/save/engine.ts#deletingGroupMembers",
   "src/document/workingSet.ts#draftPins",
   // The controller contract reserves its private token even in string inventories.
   "src/editorController.ts#pending" + "FocusSurface",
@@ -238,7 +223,6 @@ const LEGACY_COLLECTIONS = new Set([
   "src/mediaEditorSettings.ts#commandKeys",
   "src/mediaEditorSettings.ts#commandReaders",
   "src/mock.ts#mockPluginEntries",
-  "src/mock.ts#mockDrafts",
   "src/modeHooks.ts#outlineSelectionListeners",
   "src/modeHooks.ts#editingStartListeners",
   "src/modeHooks.ts#modeResetListeners",
@@ -270,7 +254,7 @@ const LEGACY_COLLECTIONS = new Set([
   "src/transientLayers.ts#layers",
   "src/themes/manager.ts#[revokedThemeVersions, setRevokedThemeVersions]",
 ]);
-const LEGACY_COLLECTION_COUNT = 61;
+const LEGACY_COLLECTION_COUNT = 46;
 function unownedCollections(sources: Sources): string[] {
   return moduleCollections(sources).filter((c) => !c.scoped && !c.fixed && !BOUNDED_COLLECTIONS[c.key]).map((c) => c.key);
 }
@@ -336,7 +320,6 @@ describe("graph-scoped UI state (I-20)", () => {
       "src/components/FormulaEditor.tsx#formulaEditor",
       "src/components/GraphNamePrompt.tsx#graphNameRequest",
       "src/components/Settings.tsx#orphanScan",
-      "src/draftStore.ts#earlier",
     ]);
     const picker = readFileSync("src/components/DatePicker.tsx", "utf8");
     expect(picker.match(/if \(!bound\(\)\) return/g)?.length, `${RULE}: both DatePicker write paths check bound()`).toBe(2);

@@ -2,10 +2,8 @@
 // Mail and refusal shapes mirror `crates/tine-store/src/page_host/binding.rs`
 // (`DiskToken`, `MailText`, `MailPage`, `MailAnswer`, `MailNotice`, `PageMail`,
 // `PageRefusal`) and `page_host/mod.rs` (`Refusal`). `session` replaces the
-// binding+generation pair (plan v3 §5, R8); the commands it qualifies land in P1.
-//
-// Step 3b P2a: nothing in production imports this folder yet
-// (`boundary.guard.test.ts`, "P2a client is unwired").
+// binding+generation pair (plan v3 §5, R8). `wiring.ts` implements `HostPort`
+// over the `page_*` commands (`src-tauri/src/page_commands.rs`).
 
 import type { EditKinds } from "../../editKind";
 import type { PageDto, PageKind } from "../../types";
@@ -52,7 +50,13 @@ export interface MailAnswer {
 export interface MailNotice {
   failures: number;
   saveError: boolean;
+  /** The latest failed save's platform step, a fixed backend literal (never
+   * a path, I-5), and its OS error code, when known (GH #538, Q-P2b-3). */
+  operation: string | null;
+  osError: number | null;
   draftError: boolean;
+  /** A rename or delete reported as unconfirmed did not happen (Q2). */
+  dropped: boolean;
   conflictReported: boolean;
   custodyError: boolean;
   indexError: boolean;
@@ -81,6 +85,34 @@ export type PageRefusal =
   /** Client side, before any command: the page's name is an alias of these
    * existing files, so its text belongs to their owner (`resolve_page`). */
   | { reason: "alias"; owners: string[] };
+
+/** A host page operation's disposition (`binding.rs` `PageOperation`): done
+ * (published); applied but unpublished until the user acts (a conflict or a
+ * persistent save error; it completes once it can); the page is busy (retry
+ * once it is clean); refused (unsaved input, a stopped host, another session,
+ * or a failed draft: nothing changed); not confirmed within the bound (Tine
+ * keeps trying); or superseded (a later edit or discard changed the page
+ * before it published). */
+export type PageOperation = "applied" | "pending" | "waiting" | "refused" | "uncertain" | "superseded";
+
+/** Crash-draft storage status at graph open (`io.rs` `DraftStatus`):
+ * `unavailable` is why draft I/O is down; `unreadable` names draft files left in
+ * place untouched; `unsaved` names the pages whose text is not on disk yet
+ * (SPEC-s2 §4.11, STEP3 §9, B-QA). */
+export interface DraftStatus {
+  unavailable?: string | null;
+  unreadable: string[];
+  unsaved?: UnsavedPage[];
+}
+
+/** A page whose text is not on disk yet (`io.rs` `UnsavedPage`). `recovered`:
+ * launch recovered it from a crash-recovery copy and Tine is saving it. */
+export interface UnsavedPage {
+  path: string;
+  recovered: boolean;
+  conflict: boolean;
+  failing: boolean;
+}
 
 /** Publication debt the host holds for a key (save or index), at a version. */
 export interface OwedPage {
@@ -124,6 +156,7 @@ export interface HostPort {
   waitPublished(session: number, needs: readonly PublishedNeed[]): Promise<boolean | null>;
   /** Publication debt; `paths` (graph-relative files) filters through the host's
    * page identity, null lists all. Bounded by held pages; no filesystem scan.
-   * Null when the session is not current. */
-  owed(session: number, paths: readonly string[] | null): Promise<OwedPage[] | null>;
+   * False when there is no answer (the session is not current, or the read
+   * failed): the debt is unknown, and every barrier fails on it. */
+  owed(session: number, paths: readonly string[] | null): Promise<OwedPage[] | false>;
 }

@@ -94,7 +94,6 @@ import { installEdgeSwipe } from "./edgeSwipe";
 import { createSafeCloseCoordinator } from "./safeClose";
 import { openUnsavedRecovery } from "./unsavedRecovery";
 import { UnsavedRecovery } from "./components/UnsavedRecovery";
-import { installDraftStore, writeAtRisk } from "./draftStore";
 import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
 import { hlsPageName } from "./pdf";
 import type { InvalidRoute } from "./routeTypes";
@@ -134,8 +133,9 @@ export const safeClose = createSafeCloseCoordinator({
   },
   onDiscardDeclined: openUnsavedRecovery,
   recordDiscard: (reason) => recordDiagnostic("close_discarded_unsaved", { closeReason: reason, pages: unsavedPageCount() }),
-  // A close that keeps unsaved pages leaves their newest drafts in app data first.
-  flushSession: () => writeAtRisk().then(flushSession),
+  // The page host keeps a crash-recovery copy of every page it took and has
+  // not saved; the close only persists the session layout.
+  flushSession,
   setTransition: setGraphTransitioning,
   notifyPdfFailure: () => {
     pushToast("Couldn't save pending PDF changes. The graph remains open.", "error");
@@ -646,8 +646,7 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
 }
 
 export function App(): JSX.Element {
-  installDraftStore();
-  // Every graph window mounts App and owns its own save engine. Split panes
+  // Every graph window mounts App and owns its own page-host client. Split panes
   // share it; the capture mini-window owns only an unsaved scratch page.
   onMount(() => onCleanup(installBackgroundFlush({
     endEdit: () => endEdit("graph-switch"),

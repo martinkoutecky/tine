@@ -127,20 +127,13 @@ pub struct IoError {
     pub kind: io::ErrorKind,
     /// Human-readable cause.
     pub message: String,
-    /// Fixed name of the platform step that failed, when known (GH #538).
-    pub operation: Option<&'static str>,
-    /// OS error code of that step, when known.
-    pub os_error: Option<i32>,
 }
 
 impl From<io::Error> for IoError {
     fn from(error: io::Error) -> Self {
-        let step = crate::directory_durability::failure_step(&error);
         Self {
             kind: error.kind(),
             message: error.to_string(),
-            operation: step.map(|(operation, _)| operation),
-            os_error: step.map_or(error.raw_os_error(), |(_, os_error)| os_error),
         }
     }
 }

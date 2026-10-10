@@ -1,6 +1,6 @@
 // The one barrier capture (plan v3 §2, REVIEW-3b-plan2 S1): drain the scoped
 // work, wait for the versions the host took to publish, and succeed only on a
-// final synchronous proof that nothing new arrived. Step 3b P2a: unwired.
+// final synchronous proof that nothing new arrived.
 
 import type { HostClient } from "./client";
 import type { OwedPage, PublishedNeed } from "./protocol";
@@ -24,6 +24,8 @@ export type SettleScope = readonly string[] | "all";
  * Reaching the round bound with new work is false; an empty scope is true. */
 export async function settle(client: HostClient, scope: SettleScope, options: SettleOptions = {}): Promise<boolean> {
   for (let round = 0; round < (options.rounds ?? 4); round += 1) {
+    // A retired client's binding ended: nothing it drains is this graph's (I-20).
+    if (client.retired) return false;
     if (options.assets) await Promise.all(client.assets.pending());
     // The work identity is taken after the asset wait, so references those
     // writes added are drained in this round; later work changes it.
@@ -46,7 +48,7 @@ export async function settle(client: HostClient, scope: SettleScope, options: Se
     if (!after) return false;
     // Final synchronous proof: nothing below awaits, so no edit, answer, asset
     // write or host debt can arrive between this check and the caller's next step.
-    if (quiescent(client, scope, start, needs, after, options)) return true;
+    if (!client.retired && quiescent(client, scope, start, needs, after, options)) return true;
   }
   return false;
 }
@@ -89,12 +91,14 @@ function quiescent(
 /** Rename's drain (S6): attempt the All drain, then report every page whose
  * input is not published, whatever the barrier returned, so the caller's
  * selective mentions check always runs. `name` is null for a page only the host
- * holds (a recovered draft); the caller reads its text through the host. */
+ * holds (a recovered draft): the caller cannot read its text. Null when the
+ * host's debt is unknown (no answer): the caller cannot prove anything. */
 export async function unpublishedAfterDrain(client: HostClient):
-  Promise<{ key: string | null; name: string | null; state: "unsent" | "owed"; conflict: boolean }[]> {
+  Promise<{ key: string | null; name: string | null; state: "unsent" | "owed"; conflict: boolean }[] | null> {
   await settle(client, "all", { assets: true });
-  const owed = await client.owed(null) ?? [];
-  const local = client.names().filter((name) => client.busy(name));
+  const owed = await client.owed(null);
+  if (!owed) return null;
+  const local = client.names().filter((name) => client.busy(name) || client.conflicted(name));
   const listed = new Set(local);
   return [
     ...local.map((name) => ({ key: client.keyOf(name), name, state: "unsent" as const, conflict: client.conflicted(name) })),

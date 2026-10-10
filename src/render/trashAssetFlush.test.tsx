@@ -21,6 +21,8 @@ import { doc } from "../document/model";
 import { setGraphMeta } from "../graphSession";
 import { backend } from "../backend";
 import { toasts, setToasts } from "../toasts";
+import { bindTestHost } from "../document/host/wiring.test.support";
+import { openAsLoaded } from "../components/hostConflict.test.support";
 
 beforeAll(async () => {
   await initParser();
@@ -44,18 +46,33 @@ async function mount(raw: string) {
   return { host, dispose };
 }
 
-/** A backend that behaves like the real one at the seam this bug lives on: it
- *  remembers what the last page save wrote, and trashes an asset only when that
- *  published text no longer names it (`check_orphan_asset`). `elsewhere` models
- *  a second page still referencing the file. */
-function fakeBackend(elsewhere: boolean, saveOk = true) {
+/** A backend that behaves like the real one at the seam this bug lives on: the
+ *  page host owes each text it took until a publication wait publishes it
+ *  (`saveOk` false: the publication fails), and the backend trashes an asset
+ *  only when the published text no longer names it (`check_orphan_asset`).
+ *  `elsewhere` models a second page still referencing the file. */
+async function fakeBackend(elsewhere: boolean, saveOk = true) {
+  openAsLoaded(await bindTestHost());
   let published = IMG;
+  // The host's version of the page: 1 as opened, one more per taken submit (as mockPageHost).
+  let version = 1;
+  let taken: { key: string; version: number; text: string } | null = null;
   const saves: string[] = [];
-  vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => {
-    if (!saveOk) return { failed: { index: 0, family: "conflict", undoFailed: [] } };
-    published = entries[0].page.blocks.map((b) => b.raw).join("\n");
-    saves.push(published);
-    return { ok: entries.map(() => "rev") };
+  const submit = backend().pageSubmit.bind(backend());
+  vi.spyOn(backend(), "pageSubmit").mockImplementation(async (...args) => {
+    version += 1;
+    taken = { key: args[2], version, text: args[3].blocks.map((b) => b.raw).join("\n") };
+    return submit(...args);
+  });
+  vi.spyOn(backend(), "pageOwed").mockImplementation(async () => taken ? [{ key: taken.key, version: taken.version }] : []);
+  vi.spyOn(backend(), "pageWait").mockImplementation(async (_session, needs) => {
+    if (!saveOk) return false;
+    if (taken && needs.some((need) => need.key === taken!.key && need.version <= taken!.version)) {
+      published = taken.text;
+      saves.push(published);
+      taken = null;
+    }
+    return true;
   });
   const trashAsset = vi.spyOn(backend(), "trashAsset").mockImplementation(async () => {
     if (published.includes("x.png") || elsewhere) return "referenced" as never;
@@ -74,7 +91,7 @@ async function clickTrash(host: Element) {
 describe("trashing an image asset", () => {
   it("makes the reference removal durable before the file is trashed", async () => {
     const { host, dispose } = await mount(`see ${IMG}`);
-    const { trashAsset, saves } = fakeBackend(false);
+    const { trashAsset, saves } = await fakeBackend(false);
     const messages = await clickTrash(host);
     expect(saves, "the block is saved without the image before the file moves").toEqual(["see"]);
     expect(trashAsset).toHaveBeenCalledTimes(1);
@@ -86,7 +103,7 @@ describe("trashing an image asset", () => {
 
   it("keeps a file that other places still use, says so plainly, and leaves the block edit in place", async () => {
     const { host, dispose } = await mount(`see ${IMG}`);
-    const { trashAsset } = fakeBackend(true);
+    const { trashAsset } = await fakeBackend(true);
     const messages = await clickTrash(host);
     expect(trashAsset).toHaveBeenCalledTimes(1);
     expect(messages.join("\n")).toMatch(/removed from this block/i);
@@ -98,7 +115,7 @@ describe("trashing an image asset", () => {
 
   it("trashes nothing while the block edit could not be saved", async () => {
     const { host, dispose } = await mount(`see ${IMG}`);
-    const { trashAsset } = fakeBackend(false, false);
+    const { trashAsset } = await fakeBackend(false, false);
     const messages = await clickTrash(host);
     expect(trashAsset, "I-2: a reference that is not durably gone never frees its file").not.toHaveBeenCalled();
     expect(messages.join("\n")).toMatch(/not saved|couldn.t save/i);

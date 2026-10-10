@@ -27,6 +27,8 @@ pub(super) struct ProductionIo {
     unsynced: std::collections::BTreeSet<String>,
     changes: Vec<(String, Option<Vec<u8>>)>,
     paths: BTreeMap<String, PathBuf>,
+    /// `HostIo::take_stamp`'s stamps, per page key until taken.
+    stamps: BTreeMap<String, crate::watch::Stamp>,
     /// Each page key's current graph-relative spelling (STEP3 §2): a key
     /// resolved through a case alias at registration, or moved by the alias
     /// spelling move (Q4). The one table (B1); the store's held index reads
@@ -44,8 +46,11 @@ pub(super) struct ProductionIo {
     /// Unreadable vehicles launch could not quarantine: left in place, and
     /// every later effect on one but Retry's quarantine fails untouched (§4).
     untouchable: std::collections::BTreeSet<String>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-faults"))]
     pub faults: BTreeMap<super::io::Phase, std::collections::VecDeque<io::ErrorKind>>,
+    /// Abort the process just before the phase's call number `n` (0-based).
+    #[cfg(any(test, feature = "test-faults"))]
+    abort: Option<(super::io::Phase, usize)>,
 }
 
 impl ProductionIo {
@@ -70,6 +75,7 @@ impl ProductionIo {
             unsynced: Default::default(),
             changes: vec![],
             paths: BTreeMap::new(),
+            stamps: BTreeMap::new(),
             spellings: Default::default(),
             quarantines: BTreeMap::new(),
             directories: BTreeMap::new(),
@@ -77,8 +83,10 @@ impl ProductionIo {
             marks: None,
             down: None,
             untouchable: Default::default(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-faults"))]
             faults: ATTACH_FAULTS.with(|faults| faults.take()),
+            #[cfg(any(test, feature = "test-faults"))]
+            abort: ATTACH_ABORT.with(|abort| abort.take()),
         };
         match listing {
             // A listed vehicle is readable, not yet durable: a process crash
@@ -103,13 +111,24 @@ impl ProductionIo {
             return Err(IoFailure {
                 kind: ErrorKind::Io,
                 completed: false,
+                operation: None,
+                os_error: None,
             });
         }
         self.before(phase)
     }
 
     fn before(&mut self, phase: super::io::Phase) -> IoResult<()> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-faults"))]
+        if let Some((at, n)) = &mut self.abort {
+            if *at == phase {
+                if *n == 0 {
+                    std::process::abort();
+                }
+                *n -= 1;
+            }
+        }
+        #[cfg(any(test, feature = "test-faults"))]
         if let Some(kind) = self
             .faults
             .get_mut(&phase)
@@ -123,12 +142,22 @@ impl ProductionIo {
 
     fn graph_sync(&mut self, phase: super::io::Phase, dir: &Path) -> IoResult<Witness> {
         self.before(phase)?;
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::fsync();
         durability::sync_directory_witness(dir)
             .map(witness)
             .map_err(sync_failure)
     }
 
     /// The page's file, through its key's current spelling.
+    /// Record `page`'s latest pre-read stamp; none drops an older one.
+    fn stamp(&mut self, page: &str, stamp: Option<crate::watch::Stamp>) {
+        match stamp {
+            Some(stamp) => self.stamps.insert(page.into(), stamp),
+            None => self.stamps.remove(page),
+        };
+    }
+
     fn page_path(&self, key: &str) -> PathBuf {
         self.graph.join(self.spellings.spelling(key))
     }
@@ -224,6 +253,7 @@ fn witness(value: DirectoryWitness) -> Witness {
 }
 
 fn failure(error: io::Error) -> IoFailure {
+    let step = crate::directory_durability::failure_step(&error);
     IoFailure {
         kind: if error.kind() == io::ErrorKind::AlreadyExists {
             ErrorKind::Collision
@@ -231,7 +261,43 @@ fn failure(error: io::Error) -> IoFailure {
             ErrorKind::Io
         },
         completed: false,
+        operation: step.map(|(operation, _)| operation),
+        os_error: step.map_or(error.raw_os_error(), |(_, os_error)| os_error),
     }
+}
+
+/// Read `path` with the metadata of the read's own handle taken before the
+/// bytes, and their revision (GH #623; `transaction/publication.rs`).
+fn read_observed(path: &Path) -> io::Result<(Vec<u8>, Option<crate::watch::Stamp>)> {
+    use std::io::Read;
+    let mut file = fs::File::open(path)?;
+    let stamp = file
+        .metadata()
+        .ok()
+        .and_then(|metadata| crate::watch::stamp_from_metadata(&metadata));
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::full_read();
+    let rev = crate::FileRev::from_bytes(&bytes);
+    Ok((bytes, stamp.map(|stamp| stamp.with_rev(Some(rev)))))
+}
+
+/// A synced temporary file for `path`. The host's writes and syncs are
+/// counted where the transaction's are (`cost_counters`, I-25, Q-P2b-2).
+fn temp(path: &Path, bytes: &[u8]) -> io::Result<PreparedWrite> {
+    PreparedWrite::with_hooks(
+        path,
+        bytes,
+        || {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::wrote(bytes.len());
+        },
+        || {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::fsync();
+        },
+    )
 }
 
 fn sync_failure(error: io::Error) -> IoFailure {
@@ -308,11 +374,22 @@ pub(super) fn key_base(key: &str) -> &str {
 #[cfg(test)]
 thread_local! {
     pub(super) static SPELLING_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Faults the next `attach` on this thread starts with: a binding's
-    /// launch then fails as the filesystem would (R2's launch tests).
+}
+
+// The plants the next `attach` on this thread starts with (`super::faults`).
+/// The error a planted fault fails with: the adapter's own I/O error kind.
+#[cfg(feature = "test-faults")]
+pub type FaultKind = io::ErrorKind;
+#[cfg(any(test, feature = "test-faults"))]
+thread_local! {
+    /// Faults: a binding's launch then fails as the filesystem would (R2's
+    /// launch tests), and a host's later phases likewise (Q-P2b-2).
     pub(super) static ATTACH_FAULTS: std::cell::RefCell<
         BTreeMap<super::io::Phase, std::collections::VecDeque<io::ErrorKind>>,
     > = const { std::cell::RefCell::new(BTreeMap::new()) };
+    /// A process abort before a phase's numbered call (Q-P2b-2).
+    pub(super) static ATTACH_ABORT: std::cell::Cell<Option<(super::io::Phase, usize)>> =
+        const { std::cell::Cell::new(None) };
 }
 
 impl HostIo for ProductionIo {
@@ -358,9 +435,10 @@ impl HostIo for ProductionIo {
 
     fn read_page(&mut self, page: &str) -> IoResult<Text> {
         self.before(super::io::Phase::Read)?;
-        match fs::read(self.page_path(page)) {
-            Ok(bytes) => {
+        match read_observed(&self.page_path(page)) {
+            Ok((bytes, stamp)) => {
                 self.creates.insert(page.into(), false);
+                self.stamp(page, stamp);
                 Ok(Some(bytes.into()))
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -378,11 +456,13 @@ impl HostIo for ProductionIo {
         let bytes = bytes.as_deref().ok_or(IoFailure {
             kind: ErrorKind::Io,
             completed: false,
+            operation: None,
+            os_error: None,
         })?;
         if let Some(graph) = &self.marks {
             graph.transaction_note_page(&target, bytes);
         }
-        let prepared = PreparedWrite::new(&target, bytes).map_err(failure)?;
+        let prepared = temp(&target, bytes).map_err(failure)?;
         self.page_temps.insert(page.into(), prepared);
         Ok(())
     }
@@ -392,10 +472,24 @@ impl HostIo for ProductionIo {
         let prepared = self.page_temps.remove(page).ok_or(IoFailure {
             kind: ErrorKind::Io,
             completed: false,
+            operation: None,
+            os_error: None,
         })?;
         prepared
             .publish(self.creates.get(page).copied().unwrap_or(false))
-            .map_err(failure)
+            .map_err(failure)?;
+        // The publication read (GH #623): the bytes now at the path with
+        // their handle's stamp, instead of the watcher's open and hash. A
+        // failed read leaves the watcher its own stamp.
+        let stamp = read_observed(&self.page_path(page))
+            .ok()
+            .and_then(|(_, s)| s);
+        self.stamp(page, stamp);
+        Ok(())
+    }
+
+    fn take_stamp(&mut self, page: &str) -> Option<crate::watch::Stamp> {
+        self.stamps.remove(page)
     }
 
     fn page_sync(&mut self, page: &str) -> IoResult<Witness> {
@@ -436,6 +530,8 @@ impl HostIo for ProductionIo {
                 .map_err(|_| IoFailure {
                     kind: ErrorKind::Io,
                     completed: true,
+                    operation: None,
+                    os_error: None,
                 })
         })();
         match result {
@@ -453,12 +549,16 @@ impl HostIo for ProductionIo {
     fn trash_sync(&mut self, _page: &str, payload: &str) -> IoResult<Witness> {
         self.before(super::io::Phase::TrashSync)?;
         // The recorded basename locates the payload; the trash is never listed.
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::fsync();
         match crate::atomic_file::sync_file_bytes(&self.trash.join(payload)) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Witness::Durable),
             Err(error) => return Err(failure(error)),
         }
         chain(&self.graph, &self.trash).try_fold(Witness::Durable, |result, dir| {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::fsync();
             let synced = durability::sync_directory_witness(dir).map_err(sync_failure)?;
             let synced = witness(synced);
             Ok(if synced == Witness::Unsupported {
@@ -472,9 +572,13 @@ impl HostIo for ProductionIo {
     fn custody_write(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {
         self.before(super::io::Phase::CustodyWrite)?;
         let dir = self.custody().map_err(failure)?;
-        PreparedWrite::new(&dir.join(name), bytes)
+        temp(&dir.join(name), bytes)
             .and_then(|prepared| prepared.publish(true))
-            .and_then(|()| durability::sync_private_directory(&dir))
+            .and_then(|()| {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::fsync();
+                durability::sync_private_directory(&dir)
+            })
             .map_err(failure)
     }
 
@@ -482,6 +586,8 @@ impl HostIo for ProductionIo {
         self.before(super::io::Phase::CustodyRetire)?;
         let dir = self.drafts.join(CUSTODY);
         remove_present(&dir.join(name)).map_err(failure)?;
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::fsync();
         durability::sync_private_directory(&dir).map_err(failure)
     }
 
@@ -534,7 +640,7 @@ impl HostIo for ProductionIo {
         self.draft_effect(Phase::DraftTemp, Some(name))?;
         self.draft_temps.insert(
             name.into(),
-            PreparedWrite::new(&self.drafts.join(name), bytes).map_err(failure)?,
+            temp(&self.drafts.join(name), bytes).map_err(failure)?,
         );
         self.draft_payloads.insert(name.into(), bytes.to_vec());
         Ok(())
@@ -549,6 +655,8 @@ impl HostIo for ProductionIo {
         let prepared = self.draft_temps.remove(name).ok_or(IoFailure {
             kind: ErrorKind::Io,
             completed: false,
+            operation: None,
+            os_error: None,
         })?;
         if let Err(error) = prepared.publish(true) {
             self.draft_payloads.remove(name);
@@ -578,6 +686,8 @@ impl HostIo for ProductionIo {
 
     fn draft_sync(&mut self) -> IoResult<Witness> {
         self.draft_effect(Phase::DraftSync, None)?;
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::fsync();
         durability::sync_private_directory(&self.drafts).map_err(sync_failure)?;
         // Only entries changed since the last sync differ between the two
         // censuses; every payload is not copied again (D-10).
@@ -653,6 +763,7 @@ impl HostIo for ProductionIo {
                 Down::Unsynced => format!("{drafts}: the recovered drafts could not be synced"),
             }),
             unreadable: self.untouchable.iter().cloned().collect(),
+            unsaved: vec![],
         }
     }
 

@@ -5,8 +5,11 @@ it("I-12/I-25: publications own name/count invalidation; exemplar store/answer_c
   for (const file of ["src/pageIndex.ts", "src/blockRefCounts.ts"])
     expect(source(file), "text revisions cannot trigger graph-sized answer reads").not.toMatch(/\bdataRev\b/);
   expect(source("src/document/external.ts")).toContain("applyGraphAnswers");
-  expect(source("src/document/save/engine.ts")).toContain("applyGraphAnswers");
-  expect(source("src-tauri/src/watcher.rs")).toContain("serde_json::to_value(&change)");
+  // Own saves have no direct reply (step 3b P2b: the page host publishes them),
+  // so their answers arrive as a page-less bulk event that external.ts applies.
+  const watcher = source("src-tauri/src/watcher.rs");
+  expect(watcher).toContain("serde_json::to_value(&change)");
+  expect(watcher).toMatch(/events\.is_empty\(\) && answers\.is_some\(\)/);
   expect(source("crates/tine-store/src/store/snapshot.rs")).toContain("snapshot.answer_changes(old, &changed_paths, name_set_changed)");
 });
 it("I-12: one owning-page query substitution, shared with baked queries; exemplar render_query_cache.rs", () => {

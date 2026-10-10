@@ -172,8 +172,8 @@ fn f2_completed_undo_restores_old_bytes_and_leaves_no_staged_copy() {
     let entries = two_page_entries(&store);
     store.inject_fault(tine_store::FaultPoint::Stage2MismatchAt(1));
     assert!(matches!(
-        store.save_pages(&entries),
-        tine_store::SavePagesOutcome::Failed { index: 1, .. }
+        save_all(&store, &entries),
+        tine_store::TxOutcome::NotCommitted { step: 1, .. }
     ));
     assert_eq!(
         fs::read_to_string(root.join("pages/A.md")).unwrap(),
@@ -185,6 +185,26 @@ fn f2_completed_undo_restores_old_bytes_and_leaves_no_staged_copy() {
     ));
     store.close();
     let _ = fs::remove_dir_all(&root);
+}
+
+/// A multi-page save over the transaction primitive that stays
+/// (the multi-page store save is deleted, STEP3 §12): one `save_page` step per
+/// entry, in order, then one commit.
+#[cfg(feature = "test-faults")]
+fn save_all(
+    store: &Store,
+    entries: &[(
+        PageId,
+        SaveBase,
+        tine_core::model::PageDto,
+        Vec<tine_store::EditKind>,
+    )],
+) -> tine_store::TxOutcome {
+    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+    for (id, base, doc, kinds) in entries {
+        tx.save_page(kinds, id, base.clone(), doc);
+    }
+    tx.commit()
 }
 
 #[cfg(feature = "test-faults")]
@@ -225,7 +245,7 @@ fn f2_undo_crash_worker() {
     // race): B is refused unwritten and undo runs for A alone.
     store.inject_fault(tine_store::FaultPoint::Stage2MismatchAt(1));
     store.inject_fault(tine_store::FaultPoint::AbortAfterUndoWithdraw);
-    let _ = store.save_pages(&entries);
+    let _ = save_all(&store, &entries);
     panic!("undo did not reach the withdraw abort point");
 }
 

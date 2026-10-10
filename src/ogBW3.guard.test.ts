@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 const source = (path: string) => readFileSync(path, "utf8");
-it("I-22: draft loading bounds the read before decoding; exemplar drafts::load_unlocked", () => {
-  const body = source("src-tauri/src/drafts.rs").split("fn load_unlocked(")[1].split("fn write_unlocked(")[0];
-  expect(body).not.toContain("std::fs::read(path)");
-  expect(body).toContain("take((MAX_BYTES + 1) as u64)");
+// The v1 draft loader (drafts::load_unlocked) is gone: step 3b P2b no longer
+// reads the v1 store (D-1); drafts.rs only probes the legacy file's existence.
+it("I-22: the v1 draft store is never read; exemplar drafts::legacy_drafts_file", () => {
+  const drafts = source("src-tauri/src/drafts.rs");
+  expect(drafts).not.toMatch(/fs::read|read_to_string|File::open/);
 });
 it("I-22: CSV drop uses the existing bounded regular-file reader; exemplar device_io::read_regular_file_bounded", () => {
   const body = source("src-tauri/src/commands.rs").split("fn read_text_file_from_path(")[1].split("/// Open an `assets/")[0];

@@ -35,46 +35,42 @@
  * it returns null when the target graph changes and strips uncertain IDs on a
  * lookup failure. The caller needs no knowledge of which pages are loaded.
  * `blockPositionRef` and `settleBlockRef` let a saved session name an ID-less
- * zoomed block by position: navigation never writes an `id::`. `persistBlockRefTarget` validates the target
- * before a source edit, then saves the target ID before the source reference
- * in one ordered group. A crash between those writes may leave an unreferenced
- * ID, never a dangling reference. Failure returns null or false. Cost is one
- * page or grouped save, plus a page lookup when the target is not loaded.
+ * zoomed block by position: navigation never writes an `id::`. `persistBlockRefTarget`
+ * stamps the target ID and edits the source only once the target's published
+ * bytes carry that ID (STEP3 §8, Q2). A crash between the two may leave an
+ * unreferenced ID, never a dangling reference. Failure returns null or false.
+ * Cost is one target save, plus a page lookup when the target is not loaded.
  * `ensurePagePropertyOnKeyPage` writes a property declaration on its normalized
  * key page: one page read, then one guarded page edit. It rejects
  * graph changes, conflicts and read-only pages; callers report the error.
  *
- * Saving. Pages save as whole-page snapshots, never as operations. `markDirty`
- * requires an edit kind and schedules a trailing 400 ms save, capped at 3 s
- * from the first dirty mark of a burst;
- * the request carries distinct kinds in first-seen order. A lazy page also
- * declares `create-page` on its first save. Multi-page intents call
- * `persistTogether` with kinds inside the document module: their pages enter one open
- * group, overlapping groups merge, and the group sends one sinks-first
- * `savePages` request. A sealed request chains before later edits of its pages;
- * a new multi-page edit forms a successor group. Saves use the revision last
- * read, so an external file change surfaces a reasoned conflict rather than
- * an overwrite. `resolveConflict` reloads the pinned file for Use disk, or
- * guards Keep mine with the disk revision observed when the conflict arose;
- * a later disk edit raises a fresh conflict. For an alias-owner draft, Keep mine
- * appends the draft to the owner's current content at that observed revision.
- * `flushPage` / `flushAll` wait for
- * pending requests. An incomplete page-header draft remains dirty without an
- * autosave toast; exiting that editor reports invalid syntax once. A crash
- * between file writes can duplicate a moved block, but sinks-first order keeps
- * it on at least one file for acyclic moves (I-3). Creating a page file
- * goes through `createPage`, which refuses locally with a typed
- * `CreatePageRefusal`, distinct from a disk conflict. Only save/engine.ts calls
- * the backend's savePages/deletePage (I-1). Direct native page writers declare
- * their fixed kinds at their backend call and store entry. This adds O(1) kind
- * bookkeeping per edit and no disk bytes; missing kinds are refused before a
- * save request. Callers need no knowledge of the debounce or save group state.
+ * Saving. The graph's page host (tine-store `page_host`) owns every page
+ * write; `host/wiring.ts` is this window's client of it and the only caller of
+ * the `page_*` commands (I-1). Pages are sent as whole-page snapshots, never
+ * as operations. `markDirty` requires an edit kind; the client sends the page
+ * after a short debounce on the version its text was installed at, and the
+ * host saves it, keeps a crash-recovery draft until it is saved, and answers.
+ * Input on a page whose file changed meanwhile becomes a conflict the host
+ * reports; `resolveConflict` sends Keep mine on the disk state the conflict
+ * showed, or takes the host's text for Use disk. A block entering editing
+ * opens its page in the host (`bindHost` binds the window after a graph load).
+ * Multi-page intents that move blocks between pages run `persistTransfer`: the
+ * pages freeze, their input drains, and one host move per source carries the
+ * blocks; a crash between moves can leave a block in both pages, never in
+ * neither (§8). Other multi-page intents are independent page edits.
+ * `flushPage` / `flushAll` wait until the host published the input (`settle`).
+ * An incomplete page-header draft remains unsent without an autosave toast;
+ * exiting that editor reports invalid syntax once. Creating a page file goes
+ * through `createPage`, which refuses locally with a typed `CreatePageRefusal`,
+ * distinct from a disk conflict (an existing file). Kinds are O(1) bookkeeping
+ * per edit and no disk bytes.
  *
- * Outside changes. `applyGraphChange` handles one watcher event using
+ * Outside changes. A page the host holds for this window takes disk changes
+ * as host mail: its text when it is clean and unheld, a reported conflict over
+ * input. `applyGraphChange` handles one watcher event for other pages using
  * `reloadDisposition`: an own-save echo keeps content and undo; a clean page
- * reloads, unless it is being edited or moved (then the change is skipped); a
- * dirty, saving or conflicted page becomes a conflict, including when its file
- * was removed; a clean removed page that is not being edited leaves its route;
+ * reloads, unless it is being edited or moved (then the change is deferred);
+ * a clean removed page that is not being edited leaves its route;
  * results that land after a graph switch are dropped (I-20). This module never imports the router: route
  * and feed effects go through handlers the app installs
  * (`installExternalChangeUiHandler`, `installAliasDraftRouteHandler`,
@@ -89,13 +85,14 @@
 export { blockIsGridView, collapseEpochOf, node, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName } from "./model";
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
 export { trackAssetWrite } from "./assetWrites";
-export { conflictReason, conflicts, createPage, CreatePageRefusal, flushAll, flushPage, groupedPages, installAliasDraftRouteHandler, installDraftKeeper, installLiveResolution, isConflicted, liveConflictDraft, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, sameLiveDraft, unsavedDrafts, unsavedPageCount, waitingFor, waitingOn, type UnsavedState } from "./save/engine";
-export { pendingDataRevision } from "./save/engine";
+export { applyLiveResolution, bindHost, conflictReason, conflicts, consumedAnswer, createPage, CreatePageRefusal, flushAll, flushPage, installAliasDraftRouteHandler, isConflicted, liveConflictDraft, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, sameLiveDraft, unsavedDrafts, unsavedPageCount, type UnsavedState } from "./host/wiring";
+export { pendingDataRevision } from "./host/wiring";
+export type { DiskToken, DraftStatus, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed } from "./host/protocol";
 export { applyGraphChange, applyGraphChangesBulk, installExternalChangeUiHandler } from "./external";
 export { replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";
 export { admitPageFile, appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, pageLoadRefusalMessage, pinPageWhileDrafting, registerPaneRouteProvider, reloadHlsIfLoaded, reportPageLoadRefusal, resetStore, restoreTodayJournalInFeed, type PageLoadRefusal } from "./workingSet";
 export { installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
-export { graphRewriteFrozen } from "./graphRewriteState";
+export { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";
 export { emptyPage, favoritesArrangementPage, favoritesArrangementBlocks, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";
 export { depthOf, nextVisible, pageVisibleOrder, prevVisible, visibleOrder } from "./tree";
 export type { OutlineScope } from "./tree";

@@ -9,7 +9,7 @@ import { pageWritable } from "./properties";
 import { insertOutlineAfter, deleteBlock } from "./blocks";
 import { withUndoUnit } from "../history";
 import { produce } from "solid-js/store";
-import { markDirty, flushPage } from "../save/engine";
+import { markDirty, flushPage } from "../host/wiring";
 
 /** Append a quick-capture (Logseq outline markdown, as produced by the capture
  *  window's editor — usually one bullet, but templates/multi-line paste can make

@@ -936,6 +936,10 @@ fn public_paths_are_only_inputs_and_handoffs() {
             "host-chosen app-data file location (OS hand-off)",
         ),
         (
+            "page_host::PageHost::start",
+            "host-chosen app-data crash-draft location (OS hand-off)",
+        ),
+        (
             "store::OpenError::NotAFolder",
             "failed user root path to user",
         ),
