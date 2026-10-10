@@ -28,6 +28,7 @@ mod drafts;
 mod edit_kind_guard_tests;
 #[cfg(desktop)]
 mod experiment_config_seed;
+mod file_lock;
 mod flight;
 mod flight_store;
 mod graph;

@@ -54,7 +54,7 @@ pub(crate) struct Opened {
 /// so a descriptor a spawned child inherited cannot keep the directory owned.
 impl Drop for FlightStore {
     fn drop(&mut self) {
-        let _ = self.lock.unlock();
+        crate::file_lock::unlock_file(&self.lock);
     }
 }
 
@@ -68,12 +68,13 @@ impl FlightStore {
             .truncate(false)
             .write(true)
             .open(dir.join(LOCK_FILE))?;
-        match lock.try_lock() {
-            Ok(()) => {}
-            Err(fs::TryLockError::WouldBlock) => return Err(io::ErrorKind::WouldBlock.into()),
-            // A platform without advisory locks still gets its history: the
-            // single-instance plugin already forwards a second desktop launch.
-            Err(fs::TryLockError::Error(_)) => {}
+        // `file_lock` names every shipped target (std's lock is `Unsupported`
+        // on Android). A filesystem without advisory locks still gets its
+        // history: the single-instance plugin already forwards a second
+        // desktop launch.
+        match crate::file_lock::try_lock_file(&lock) {
+            Ok(true) | Err(_) => {}
+            Ok(false) => return Err(io::ErrorKind::WouldBlock.into()),
         }
         let store = Self {
             dir: dir.to_path_buf(),
