@@ -77,6 +77,22 @@ function containerImportViolations(all: Sources): string[] {
   return bad;
 }
 
+// Step 3b P2a: the page-host client is reviewed and tested before it is wired;
+// old persistence stays the only page authority until the P2b flip, which
+// deletes this check in the same commit that imports the client.
+const HOST_CLIENT = `${DOC}/host/`;
+function unwiredClientViolations(all: Sources): string[] {
+  const bad: string[] = [];
+  for (const [file, source] of all) {
+    if (file.startsWith(HOST_CLIENT) || file.endsWith("/mock.ts")) continue;
+    for (const entry of imports(file, source)) {
+      if (resolved(file, entry.spec, all)?.startsWith(HOST_CLIENT))
+        bad.push(`P2a client is unwired: ${file} imports ${entry.spec}; old persistence is the only authority until P2b; exemplar src/document/save/engine.ts`);
+    }
+  }
+  return bad;
+}
+
 function backendWriteViolations(all: Sources): string[] {
   const bad: string[] = [];
   const directKinds: Record<string, { index: number; kinds: string[] }> = {
@@ -209,4 +225,14 @@ it("I-11 the document module has no import cycle", () => {
   all.set("src/document/__plant.ts", 'import "../__plant";');
   all.set("src/__plant.ts", 'import "./document";');
   expect(() => assertNoDocumentCycle(all)).toThrow("I-11: document must not join an import cycle; exemplar src/components/PageProps.tsx; src/document -> src/__plant.ts -> src/document");
+}, SCAN_TIMEOUT_MS);
+
+it("P2a client is unwired: no production module imports the page-host client", () => {
+  const all = sources();
+  expect(unwiredClientViolations(all)).toEqual([]);
+  all.set("src/document/__plant.ts", 'import { HostClient } from "./host/client";');
+  expect(unwiredClientViolations(all)[0]).toContain("P2a client is unwired: src/document/__plant.ts");
+  all.delete("src/document/__plant.ts");
+  all.set("src/__plant.ts", 'export { settle } from "./document/host/settle";');
+  expect(unwiredClientViolations(all)[0]).toContain("P2a client is unwired: src/__plant.ts");
 }, SCAN_TIMEOUT_MS);

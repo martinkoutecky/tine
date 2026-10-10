@@ -3,6 +3,8 @@ import { pageByName, setPageId, doc } from "../model";
 import { createSignal } from "solid-js";
 import { bumpDataRev, bumpPageInventoryRev } from "../../graphSession";
 import { type ClipboardSourcePage } from "../../clipboard";
+import { cutSourceMatches as cutSourceIdentity } from "../cutSource";
+import { pendingAssetWrites } from "../assetWrites";
 import { captureBinding, clearOnBindingInvalidated, type Binding, bindingCurrent } from "../../binding";
 import { pageToDto, appendAliasDraft, aliasDraftBlocks, replaceLandedAliasDraft } from "../convert";
 import type { BlockDto, PageDto, PageKind } from "../../types";
@@ -363,7 +365,6 @@ function forgetSaveFailure(name: string) {
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let saveBurstStart: number | null = null;
 let dataRevTimer: ReturnType<typeof setTimeout> | null = null;
-const assetWriteChain = new Set<Promise<boolean>>();
 export type TransferEdge = readonly [source: string, destination: string];
 export interface SaveGroup {
   members: Set<string>;
@@ -805,20 +806,6 @@ export function isSaving(name: string): boolean {
   return saveChain.has(name);
 }
 
-/** Track an optimistic asset write so flushAll/app-close waits for the bytes to
- *  land before letting the process exit. The caller still owns success/failure
- *  handling for any UI/store rollback. */
-export function trackAssetWrite<T>(write: Promise<T>): Promise<T> {
-  let tracked: Promise<boolean>;
-  tracked = write.then(
-    () => true,
-    () => false
-  ).finally(() => {
-    assetWriteChain.delete(tracked);
-  });
-  assetWriteChain.add(tracked);
-  return write;
-}
 /** Record a page's load/save baseline rev (set on load and after each save). */
 export function setBaseRev(name: string, rev: string | null) {
   baseRev.set(name, rev);
@@ -964,15 +951,7 @@ function scheduleDataRev() {
 export function pendingDataRevision(): boolean { return dataRevTimer !== null; }
 
 function cutSourceMatches(expected: ClipboardSourcePage): boolean {
-  const page = pageByName(expected.name);
-  return !!page
-    && page.name === expected.name
-    && page.kind === expected.kind
-    // A grant taken before the page's first save has no file id; that save
-    // then records the id it created (`setPageId`) on the same instance, so
-    // the generation check alone pins it.
-    && (expected.path === undefined || page.id === expected.path)
-    && pageInstanceGeneration(expected.name) === expected.generation;
+  return cutSourceIdentity(expected, pageByName(expected.name), pageInstanceGeneration(expected.name));
 }
 
 function cutSourceUsable(expected: ClipboardSourcePage): boolean {
@@ -1220,7 +1199,7 @@ export async function flushAll(): Promise<boolean> {
   // save).
   for (let i = 0; i < 4; i++) {
     const names = new Set<string>([...dirty, ...saveChain.keys()]);
-    const assetWrites = [...assetWriteChain];
+    const assetWrites = pendingAssetWrites();
     if (names.size === 0 && assetWrites.length === 0) break;
     const [results] = await Promise.all([
       Promise.all([...names].map((n) => enqueueSave(n))),
@@ -1232,7 +1211,7 @@ export async function flushAll(): Promise<boolean> {
   // Success only if nothing is still pending AND there are no unresolved
   // conflicts (a conflicted page's edit is NOT on disk) — so a destructive
   // transition (graph switch / restore / close) can abort instead of discarding it.
-  return dirty.size === 0 && saveChain.size === 0 && assetWriteChain.size === 0 && conflicts().length === 0;
+  return dirty.size === 0 && saveChain.size === 0 && pendingAssetWrites().length === 0 && conflicts().length === 0;
 }
 
 /** Resolve a save conflict by overwriting the on-disk file with the in-memory
