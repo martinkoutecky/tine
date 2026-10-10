@@ -84,6 +84,10 @@ interface Page {
   held: { content: Content; version: number } | null;
   /** The latest version the host took from this window: what must publish (S1). */
   needed: number | null;
+  /** The highest taken version whose publication wait answered (J6). */
+  waited: number | null;
+  /** The taken version a publication wait is running for (J6). */
+  waiting: number | null;
   /** The kind a page not loaded yet is created as (`createPage`). */
   hint?: PageKind;
   refusal: PageRefusal | string | null;
@@ -609,7 +613,7 @@ export class HostClient {
     let page = this.pages.get(name);
     if (!page) {
       page = { name, key: null, on: false, version: null, editSeq: 0, sentSeq: 0, phase: { kind: "idle" }, stash: [],
-        baseline: null, observed: null, notice: null, held: null, needed: null, refusal: null, refs: new Set(),
+        baseline: null, observed: null, notice: null, held: null, needed: null, waited: null, waiting: null, refusal: null, refs: new Set(),
         kinds: [], timer: null, burst: null, waiters: [], answered: [] };
       this.pages.set(name, page);
     }
@@ -796,7 +800,24 @@ export class HostClient {
     if (page.held) this.reevaluate(page);
     if (page.held && this.holds(page)) return;
     if (!page.on) { this.drop(page); return; }
+    // A version the host took from this window stays the window's until it
+    // publishes (J6, completing Q-TS5): the page stays open until its
+    // publication wait answers. True lets go; false is a terminal notice,
+    // which the rule above keeps open; a new session drops the page.
+    if (page.needed !== null && (page.waited === null || page.waited < page.needed)) {
+      if (page.waiting !== page.needed) this.awaitPublication(page, page.key!, page.needed);
+      return;
+    }
     void this.request(page, "close", (id) => this.host.close(this.session, id, page.key!));
+  }
+
+  private awaitPublication(page: Page, key: string, version: number): void {
+    page.waiting = version;
+    void this.published([{ key, version }]).then(() => {
+      page.waited = Math.max(page.waited ?? version, version);
+      if (page.waiting === version) page.waiting = null;
+      this.maybeClose(page);
+    });
   }
 
   /** The window let go of the page for good (an alias draft landed in its

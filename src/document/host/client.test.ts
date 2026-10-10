@@ -491,6 +491,48 @@ describe("close and move edges", () => {
     editing();
   });
 
+  it("keeps a page open while a version the host took from it is unpublished (J6); a true wait lets go", async () => {
+    const ctx = await setup();
+    const { host, doc, client } = ctx;
+    let publish: (published: boolean | null) => void = () => {};
+    host.onWait = () => new Promise<boolean | null>((resolve) => { publish = resolve; });
+    const release = await opened(ctx, "P", 3);
+    doc.type("P", "ab");
+    client.noteEdit("P", "save-block", false);
+    client.sendNow("P");
+    await tick();
+    client.receive(mail(7, KEY, mailPage(4, { kind: "unchanged" }), took(host.last("submit").id, 4)));
+    release();
+    await tick();
+    expect([client.isOpen("P"), host.count("close"), host.last("wait").needs]).toEqual([true, 0, [{ key: KEY, version: 4 }]]);
+    // A bounded wait passing is not publication: the page stays open.
+    publish(null);
+    await tick();
+    expect([client.isOpen("P"), host.count("close")]).toEqual([true, 0]);
+    publish(true);
+    await tick();
+    expect([host.count("close"), client.names()]).toEqual([1, []]);
+  });
+
+  it("a page whose taken version is unpublished lets go when the session ends (J6)", async () => {
+    const ctx = await setup();
+    const { host, doc, client } = ctx;
+    host.onWait = () => new Promise<boolean | null>(() => {});
+    const release = await opened(ctx, "P", 3);
+    doc.type("P", "ab");
+    client.noteEdit("P", "save-block", false);
+    client.sendNow("P");
+    await tick();
+    client.receive(mail(7, KEY, mailPage(4, { kind: "unchanged" }), took(host.last("submit").id, 4)));
+    release();
+    client.forget("P");
+    await tick();
+    expect([client.isOpen("P"), host.count("close")]).toEqual([true, 0]);
+    host.session = 8;
+    await client.rebind();
+    expect([client.names(), host.count("close")]).toEqual([[], 0]);
+  });
+
   it("a move the host does not admit restores both endpoints, clean, so no half is ever sent", async () => {
     const ctx = await setup();
     const { host, doc, client } = ctx;

@@ -551,8 +551,15 @@ describe("Journals feed generation lifecycle", () => {
       if (gate === "conflict") host.deliver({ key, answer: null,
         page: { version: 3, conflict: false, risk: false, disk: { kind: "file", rev: "disk-2" }, text: { kind: "unchanged" } } });
       if (gate === "moving") setBlockMoving(false);
-      await vi.waitFor(() => expect(api).toHaveBeenCalledTimes(1), { timeout: 2000 });
+      // The window now holds a saved page until the host publishes it (J6),
+      // so its close lands after the retry's read began: that read can be
+      // superseded and retried once the close is admitted. The release
+      // still retries, lands the released feed, and then stops.
+      await vi.waitFor(() => expect(api).toHaveBeenCalled(), { timeout: 2000 });
       await vi.waitFor(() => expect(doc.feed).toContain(`released-${gate}`));
+      const reads = api.mock.calls.length;
+      await new Promise((done) => setTimeout(done, 1000));
+      expect(api).toHaveBeenCalledTimes(reads);
     } finally {
       mounted.dispose();
     }

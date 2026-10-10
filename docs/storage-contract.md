@@ -223,6 +223,15 @@ collected under, and the window drops mail of any other. Proof
 `crates/tine-store/src/page_host/binding_tests.rs`
 `e101_every_host_instance_and_reload_draws_a_fresh_session`.
 
+**Window close (Q-TS5, J6).** The window sends no `page_close` for a page
+while the host owes it a save: a failed attempt (the notice), a conflict, or
+any version the host took from this window that has not published. It asks
+`page_wait` for the latest taken version and closes only when that answers
+true; a terminal notice keeps the page open under the notice rule, and a new
+session drops it without a close. Proof `src/document/host/client.test.ts`
+"keeps a page open while a version the host took from it is unpublished (J6)"
+and "lets go when the session ends (J6)".
+
 **Launch on failing draft I/O (B-Q1).** The host always starts. A drafts
 directory that cannot be created, synced or listed leaves draft I/O down:
 the launch recovers nothing and touches no vehicle (declared deviation M1
