@@ -31,6 +31,9 @@ pub(super) struct ProductionIo {
     /// differs from the key: a key resolved through a case alias at
     /// registration, or moved by the alias spelling move (Q4).
     spellings: BTreeMap<String, String>,
+    /// `spellings` inverted: the key moved to each spelling (A-R5, D-10:
+    /// a key is found by lookup, not by a walk over every registered key).
+    respelled: std::collections::HashMap<String, String>,
     quarantines: BTreeMap<String, (PathBuf, u8)>,
     directories: BTreeMap<PathBuf, durability::DirectoryCreation>,
     pub(super) launch_warnings: Vec<(PathBuf, io::ErrorKind)>,
@@ -95,6 +98,7 @@ impl ProductionIo {
             changes: vec![],
             paths,
             spellings: BTreeMap::new(),
+            respelled: Default::default(),
             quarantines: BTreeMap::new(),
             directories: BTreeMap::new(),
             launch_warnings: vec![],
@@ -198,8 +202,24 @@ fn sync_failure(error: io::Error) -> IoFailure {
     }
 }
 
+impl ProductionIo {
+    /// The key moved to `spelling` (a case alias or the alias spelling
+    /// move), if any.
+    pub(super) fn respelled(&self, spelling: &str) -> Option<&str> {
+        self.respelled.get(spelling).map(String::as_str)
+    }
+}
+
+// `HostIo::spelling` calls on this thread (A-R5's counting test).
+#[cfg(test)]
+thread_local! {
+    pub(super) static SPELLING_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl HostIo for ProductionIo {
     fn spelling(&self, key: &str) -> String {
+        #[cfg(test)]
+        SPELLING_LOOKUPS.with(|n| n.set(n.get() + 1));
         self.spellings
             .get(key)
             .cloned()
@@ -207,10 +227,16 @@ impl HostIo for ProductionIo {
     }
 
     fn spell(&mut self, key: &str, spelling: &str) {
-        if key == spelling {
-            self.spellings.remove(key);
-        } else {
+        // The reverse entry goes only if it is this key's: a later spelling
+        // of another key to `old` keeps its claim.
+        if let Some(old) = self.spellings.remove(key) {
+            if self.respelled.get(&old).is_some_and(|owner| owner == key) {
+                self.respelled.remove(&old);
+            }
+        }
+        if key != spelling {
             self.spellings.insert(key.into(), spelling.into());
+            self.respelled.insert(spelling.into(), key.into());
         }
     }
 

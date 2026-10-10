@@ -123,7 +123,7 @@ impl<F: HostIo> Host<F> {
             || source == target
             || !self.keys.contains(source)
             || !self.keys.contains(target)
-            || !referrers.is_subset(&self.keys)
+            || !self.keys.includes(referrers)
             || referrers.contains(source)
             || referrers.contains(target)
         {
@@ -206,24 +206,16 @@ impl<F: HostIo> Host<F> {
                 };
                 page.buf = bytes;
             }
-            // Quint L505 reserves PAGES.size(), with each key's rank offset.
-            let versions: BTreeMap<_, _> = host
-                .keys
-                .iter()
-                .enumerate()
-                .map(|(rank, key)| {
-                    (
-                        key.clone(),
-                        host.version
-                            .checked_add(rank as u64 + 1)
-                            .expect("host version exhausted"),
-                    )
-                })
-                .collect();
-            let last_version = *versions.values().max().unwrap();
+            // Quint L505 reserves PAGES.size() versions, each key at its rank
+            // offset. The host allocates densely over the operation's pages in
+            // key order: the conformance map compares order, not numbering
+            // (STEP3-REVIEW-1 F8), and a rename visits no untouched registered
+            // key (A-R5, D-10).
+            let mut last_version = host.version;
             let mut records = vec![];
             for (key, page) in &mut pages {
-                page.version = versions[key];
+                last_version = last_version.checked_add(1).expect("host version exhausted");
+                page.version = last_version;
                 page.typed = true;
                 page.risk = true;
                 records.push(host.record(key, page));

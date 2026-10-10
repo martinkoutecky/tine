@@ -559,7 +559,7 @@ impl<F: ConformanceIo> Driver<F> {
     /// A process fault ends the binding: the next one registers afresh,
     /// its recovered keys first (§2).
     fn fresh_binding(&mut self) {
-        self.host.keys.clear();
+        self.host.keys = Keys::default();
         self.host.locks.clear();
     }
 

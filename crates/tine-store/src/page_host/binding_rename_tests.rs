@@ -292,3 +292,46 @@ fn an_alias_spelling_is_refused_for_a_respell_that_keeps_the_page() {
     live.until_disk("pages/foo.md", "- typed\n");
     live.host.stop();
 }
+
+/// A-R5 (D-10): a reservation's key lookup and a single-page rename cost
+/// the same however many keys the binding registered before (keys are
+/// never unregistered): no step walks every registered key.
+#[test]
+fn rename_and_reserve_cost_is_independent_of_registered_keys() {
+    let cost = |registered: usize| {
+        let live = Live::new(&[
+            ("pages/Old.md", "title:: Old\n\n- body\n"),
+            ("pages/r.md", "- see [[Old]]\n"),
+        ]);
+        for n in 0..registered {
+            let page = PageId::from(format!("pages/k{n}.md").as_str());
+            live.host.register(page.as_str(), &page);
+        }
+        super::super::production::SPELLING_LOOKUPS.with(|n| n.set(0));
+        super::super::KEY_VISITS.with(|n| n.set(0));
+        drop(
+            live.host
+                .reserve(|| vec![PageId::from("pages/r.md")], Input::Refuse)
+                .unwrap(),
+        );
+        live.host
+            .rename(
+                &PageId::from("pages/Old.md"),
+                &PageId::from("pages/New.md"),
+                &[PageId::from("pages/r.md")],
+                &map("Old", "New"),
+            )
+            .unwrap();
+        let lookups = super::super::production::SPELLING_LOOKUPS.with(|n| n.get());
+        let visits = super::super::KEY_VISITS.with(|n| n.get());
+        live.host.stop();
+        (lookups, visits)
+    };
+    let (few, many) = (cost(10), cost(400));
+    assert_eq!(
+        few, many,
+        "A-R5/D-10: a reserve plus a one-page rename cost (spelling lookups, registered-key \
+         visits) {few:?} with 10 registered keys and {many:?} with 400; exemplars binding.rs \
+         key_spelled and operations.rs rename_with's version allocation"
+    );
+}

@@ -181,10 +181,14 @@ impl PageHost {
         let seen = loop {
             let outcome = self.driver.shared.locked_step(|state| {
                 let (disposition, seen, written) = state.progress.with_host(|host| {
-                    let spellings: BTreeMap<PageKey, String> = host
-                        .keys
+                    // The keys the policy is called on: the operation's
+                    // pages and every held buffer (A-R5: not every key
+                    // ever registered).
+                    let spellings: BTreeMap<PageKey, String> = refs
                         .iter()
-                        .map(|key| (key.clone(), host.fs.spelling(key).to_owned()))
+                        .chain([&src, &dst])
+                        .chain(host.pages.keys())
+                        .map(|key| (key.clone(), host.fs.spelling(key)))
                         .collect();
                     let record = Mutex::new(Rewrites::default());
                     let policy = |bytes: &Text, key: &str, moving: bool| {
@@ -272,11 +276,7 @@ impl PageHost {
         let lock = graph.page_lock(&graph.root.join(to.as_str()));
         let key = self.driver.shared.with_state(|state| {
             let host = &mut state.progress.host;
-            let key = host
-                .keys
-                .iter()
-                .find(|key| host.fs.spelling(key) == page.as_str())
-                .cloned()?;
+            let key = key_spelled(host, page.as_str())?;
             host.respell(&key, to.as_str(), lock);
             Some(key)
         });

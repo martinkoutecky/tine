@@ -37,6 +37,44 @@ use std::sync::{Arc, Mutex};
 type Text = Option<Arc<[u8]>>;
 type PageKey = String;
 
+/// The registered keys (STEP3 §2). Every visit goes through `iter`, which a
+/// cost test counts: an operation visits no registered key it does not touch
+/// (A-R5, D-10). Membership is a lookup, not a visit.
+#[derive(Clone, Default)]
+struct Keys(BTreeSet<PageKey>);
+
+// `Keys::iter` visits on this thread (A-R5's counting test).
+#[cfg(test)]
+thread_local! {
+    static KEY_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl Keys {
+    fn contains(&self, key: &str) -> bool {
+        self.0.contains(key)
+    }
+
+    fn insert(&mut self, key: PageKey) -> bool {
+        self.0.insert(key)
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether every key of `set` is registered, by lookup.
+    fn includes(&self, set: &BTreeSet<PageKey>) -> bool {
+        set.iter().all(|key| self.0.contains(key))
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &PageKey> {
+        self.0.iter().inspect(|_| {
+            #[cfg(test)]
+            KEY_VISITS.with(|n| n.set(n.get() + 1));
+        })
+    }
+}
+
 /// A4 trash custody one page owes: its markers on disk (name → payload
 /// basename) whose phases (a) and (b) have not completed in this incarnation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -335,7 +373,7 @@ enum Disposition {
 #[cfg_attr(test, derive(Clone))]
 struct Host<F: HostIo> {
     fs: F,
-    keys: BTreeSet<PageKey>,
+    keys: Keys,
     /// Handles supplied from Graph::page_lock; this is not another registry.
     locks: BTreeMap<PageKey, Arc<Mutex<()>>>,
     lock_ownership: BTreeSet<PageKey>,
@@ -386,7 +424,7 @@ impl<F: HostIo> Host<F> {
         let drafts = drafts::scan(fs.draft_files(true)).files;
         fs.draft_changes();
         Self {
-            keys: locks.keys().cloned().collect(),
+            keys: Keys(locks.keys().cloned().collect()),
             fs,
             locks,
             lock_ownership: BTreeSet::new(),
@@ -1016,7 +1054,7 @@ impl<F: HostIo> Host<F> {
     }
 
     fn reserve(&mut self, keys: &BTreeSet<PageKey>) -> Disposition {
-        if !keys.is_subset(&self.keys) {
+        if !self.keys.includes(keys) {
             return Disposition::Refused;
         }
         if keys.iter().any(|key| self.busy(key)) {
@@ -1184,7 +1222,7 @@ impl<F: HostIo> Host<F> {
         for key in self.custody.keys().cloned().collect::<Vec<_>>() {
             self.settle(&key);
         }
-        self.fs.graph_launch(&self.keys);
+        self.fs.graph_launch(&self.keys.iter().cloned().collect());
         self.with_locks(&keys, |host| {
             for (key, record) in &scan.logical {
                 host.version = host.next_version();

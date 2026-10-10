@@ -1094,12 +1094,7 @@ impl PageHost {
             .unwrap_or_else(|| page.clone());
         let state = self.driver.shared.state.lock().unwrap();
         let host = &state.progress.host;
-        let key = host
-            .keys
-            .iter()
-            .find(|key| host.fs.spelling(key) == spelling.as_str())
-            .cloned()
-            .unwrap_or_else(|| spelling.as_str().into());
+        let key = key_spelled(host, spelling.as_str()).unwrap_or_else(|| spelling.as_str().into());
         let held = host.pages.contains_key(&key);
         (key, spelling, held)
     }
@@ -1473,6 +1468,16 @@ impl Drop for PageHost {
         let _writer = self.store.writer.lock().unwrap();
         self.store.watch.release_holds();
     }
+}
+
+/// The registered key whose current spelling is `spelling` (§2), by lookup
+/// (A-R5, D-10): a key moved to that spelling, or the key spelled as itself.
+fn key_spelled(host: &Host<ProductionIo>, spelling: &str) -> Option<PageKey> {
+    if let Some(key) = host.fs.respelled(spelling) {
+        return Some(key.into());
+    }
+    (host.keys.contains(spelling) && host.fs.spelling(spelling) == spelling)
+        .then(|| spelling.into())
 }
 
 #[path = "binding_retained.rs"]

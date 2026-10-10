@@ -1766,3 +1766,31 @@ fn a_real_alternate_extension_twin_fails_or_annotates_a_creating_save() {
     assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"created");
     assert_eq!(fs::read(f.graph.join("c.org")).unwrap(), b"* org");
 }
+
+/// A-R5: the reverse spelling map answers exactly the keys whose current
+/// spelling differs from the key. Returning to its own spelling clears a
+/// key's entry, and a key leaving a spelling another key has since taken
+/// never erases that key's claim.
+#[test]
+fn the_reverse_spelling_map_follows_respell_and_return() {
+    let mut f = Fixture::new();
+    let fs = &mut f.host.fs;
+    fs.spell("a.md", "a.md");
+    assert_eq!(fs.respelled("a.md"), None);
+    fs.spell("a.md", "A.md");
+    assert_eq!(
+        (fs.respelled("A.md"), fs.spelling("a.md").as_str()),
+        (Some("a.md"), "A.md")
+    );
+    fs.spell("a.md", "a.md");
+    assert_eq!(
+        (fs.respelled("A.md"), fs.spelling("a.md").as_str()),
+        (None, "a.md")
+    );
+    fs.spell("a.md", "X.md");
+    fs.spell("b.md", "X.md");
+    fs.spell("a.md", "a.md");
+    assert_eq!(fs.respelled("X.md"), Some("b.md"));
+    fs.spell("b.md", "b.md");
+    assert_eq!(fs.respelled("X.md"), None);
+}
