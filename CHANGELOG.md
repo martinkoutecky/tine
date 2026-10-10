@@ -20,6 +20,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - **Create a new graph** asks for its name, suggesting `notes`, then `notes-2`, and so on when taken. The graph is always created in a named child folder; invalid names and nonempty existing folders show an inline refusal so you can choose another name (GH #621).
 
+- Launch backups store each distinct file content once and write only what changed since the last snapshot: on an unchanged graph a launch backup now writes one small manifest instead of copying every page, with no per-file disk syncs. Restore checks every stored file's hash before touching the graph and refuses a damaged backup ("this backup is damaged; pick another snapshot"). Existing snapshots still restore; snapshots taken by this version are not visible to older Tine builds.
+
 - Security: updated HTML sanitizers and desktop updater TLS dependencies, plus compatible dependency fixes from the review in discussion #564.
 
 - Bare `(task)` queries now include every unfinished task, including WAITING, WAIT, STARTED, and IN-PROGRESS, using the same rule as carry-over and the agenda. DONE and both CANCELED spellings stay excluded; queries with explicit markers are unchanged (GH #422).

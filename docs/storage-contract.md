@@ -237,6 +237,98 @@ failure alike. Proof `src-tauri/src/backup/restore.rs`
 `a_restore_holds_the_host_gate_until_one_fresh_host_runs`,
 `a_retirement_waits_for_the_restore_it_raced`.
 
+## Graph backups (og-backup-cas)
+
+A graph's snapshots live in `<app data>/backups/<graph-id>/`, outside the
+graph. og writes schema 4 (`src-tauri/src/backup.rs`):
+
+- **Layout.** `blobs/<sha256>` holds each distinct file content once. A
+  snapshot directory (`<UTC stamp>[-<suffix>][-<n>]`) holds only
+  `snapshot.json`: schema 4, the graph root, the pages/journals directories,
+  the graph-text policy (ADR 0062), `writer: "og"`, `files: [{path, sha256}]`
+  and `complete: true`. Paths are schema 3's: `graph/<graph-relative path>`,
+  `<assets dir>/<rel>` for `.edn` sidecars, `logseq/config.edn`.
+- **Write.** Under the process-wide backup permit (`BACKUP_WORK`), every
+  included file is read through the Store and hashed. No mtime or size
+  shortcut: a tool that preserves mtime would otherwise make a snapshot
+  record stale content. A blob is written (temp name, then rename) only when
+  its name is absent, or present with bytes that differ from the content
+  (torn by power loss); an equal blob is reused. The manifest is written last
+  into `.partial-<name>/`, and a no-replace rename of that directory
+  publishes the snapshot. A snapshot name taken in the same second gets a
+  counter.
+- **Verification is the integrity check.** Restore verifies every listed
+  blob's SHA-256 before the pre-restore safety snapshot and before any graph
+  write, then hands the verified, open blobs to `Store::restore` (which
+  rechecks their length). A snapshot with a missing or damaged blob, or a
+  torn manifest, is refused: "this backup is damaged; pick another snapshot".
+  Older snapshots remain, and the next launch rewrites a torn blob whose
+  content the graph still holds, which makes older snapshots that list it
+  restorable again.
+- **Durability.** A launch snapshot syncs nothing; the next launch re-takes
+  it. A suffixed snapshot (`pre-restore`, `pre-journal-rename`) precedes a
+  destructive operation the user asked for, so it is made durable before that
+  operation runs.
+
+| Target | Launch snapshot | Suffixed snapshot |
+|---|---|---|
+| Linux | no file, directory or filesystem sync | `fsync` every listed blob, `blobs/`, the manifest and its directory before the rename; the base directory after |
+| Android | as Linux | as Linux |
+| macOS | as Linux (no `syncfs`; not measured on Apple hardware) | as Linux (`fsync`, not `F_FULLFSYNC`, as before) |
+| iOS | as macOS | as macOS |
+| Windows | no flush; the one publication rename is `MoveFileExW(MOVEFILE_WRITE_THROUGH)` | `FlushFileBuffers` on every listed blob and the manifest; directory syncs are no-ops; write-through rename |
+
+  A `syncfs` after a launch snapshot was considered and not used: its cost is
+  bounded by all dirty data on the filesystem, not by the backup, and the
+  repair-on-reuse above covers what it would protect.
+- **Prune.** The keep-count deletes the oldest snapshot directories this
+  build counts (schema 2, and schema 3/4 marked `writer: "og"`; never
+  `-pre-restore`, another Tine's snapshots or `blobs/`). Then every blob that
+  no snapshot directory's manifest lists is deleted. Every manifest counts,
+  whatever its schema, writer or name (`.partial-*` included); an unreadable
+  directory or manifest stops the collection, and a manifest that is not
+  valid JSON lists nothing (it never restores). Prune and collection run
+  under `BACKUP_WORK`, never during a snapshot write. A crash between a
+  manifest's deletion and the collection leaves unreferenced blobs that the
+  next prune collects. Proof `src-tauri/src/backup.rs`
+  `a_shared_blob_survives_pruning_one_of_its_snapshots`,
+  `a_prune_racing_a_snapshot_never_deletes_its_blobs`.
+- **Older snapshots.** Schema 3 (full copy under `graph/`) and schema 2
+  (`journals/`, `pages/`) are listed, verified against their manifest,
+  restored and pruned as before; nothing is migrated. A build without schema
+  4 neither lists nor restores schema-4 snapshots; an older og build never
+  prunes them (it treats an unknown schema as foreign), and master's
+  keep-count counts them and `blobs/` as snapshots but never deletes `blobs/`
+  (it sorts after every stamp).
+
+Proof `src-tauri/src/backup.rs`
+`publication_follows_every_blob_write_and_restore_verifies_every_blob`,
+`unchanged_launch_writes_no_blob_and_edits_write_only_theirs`,
+`a_torn_blob_is_repaired_not_reused`; `src-tauri/src/backup/restore.rs`
+`schema_4_restore_is_byte_identical_and_damage_is_refused`,
+`og_full_copy_snapshot_restores_and_prunes_beside_schema_4`.
+
+**Unit cost:** 0 bytes, 0 files and 0 transport bytes per edit on a 1-block or
+a 60-block page: snapshots are taken at launch and before a user-requested
+rewrite, never per edit. Per launch backup of a copy of the anonymized graph
+(1,075 text files, 1,300,622 bytes; measured 2026-10-10 with
+`launch_backup_cost_on_corpus`, counting files created and bytes written under
+the backup base and sync calls):
+
+| Launch | Before (schema 3 full copy) | After (schema 4) |
+|---|---|---|
+| First backup | 1,076 files, 1,455,521 bytes, 1,083 syncs | 941 files (940 distinct blobs + manifest), 1,455,277 bytes, 0 syncs |
+| Unchanged graph | 1,076 files, 1,455,521 bytes, 1,083 syncs | 1 file (manifest), 154,899 bytes, 0 syncs |
+| 3 pages edited | 1,076 files, 1,455,599 bytes, 1,083 syncs | 4 files (manifest + 3 blobs), 163,291 bytes, 0 syncs |
+
+The manifest records the graph root, so its size moves with the root path's
+length. Linux wall time (release build, ext4 on NVMe, 3 alternating runs,
+snapshot plus prune): before 629–771 ms first, 1,027–2,162 ms unchanged,
+671–810 ms after 3 edits; after 102–159 ms, 67–116 ms and 73–116 ms. N
+changed pages cost the manifest plus N blobs of those pages' sizes. Twelve
+retained launch snapshots of an unchanged graph hold the graph's bytes once
+plus twelve manifests (about 3.2 MB here, was about 17.5 MB).
+
 ## I-8 refusal scenarios
 
 Each row below is keyed by the source file, owning function and refusal family.
@@ -309,7 +401,7 @@ by I-9's typed failure paths.
 | `tine-graph-features::journals` migration and trash | A journal disappears or changes after selection; refuse that item and leave other journals intact. |
 | `tine-graph-features::pdf` highlight and sidecar | Sidecar or notes bytes change concurrently, a malformed imported sidecar appears, or Org notes cannot round-trip; retain the source and refuse or retry within the bounded loop. |
 | `tine-graph-features::config` and `assets` | Config or an asset changes repeatedly while applying a user update; stop before overwriting the external winner. |
-| `src-tauri::backup` restore selection | A backup is incomplete, belongs to another graph, fails its manifest hash, loses a source file or a whole snapshot area (`graph/` for schema 3; `journals/`, `pages/` for schema 2; assets), or changes during verification; refuse restore before touching live content. A failed pre-restore safety snapshot also refuses publication. A schema-2 snapshot made under different `:pages-directory`/`:journals-directory` settings still refuses (it names roots, not paths); schema 3 places text at its recorded graph-relative path and ignores them (ADR 0062). |
+| `src-tauri::backup` restore selection | A backup is incomplete, belongs to another graph, fails its manifest hash, loses a source file or a whole snapshot area (`graph/` for schema 3; `journals/`, `pages/` for schema 2; assets), or changes during verification; refuse restore before touching live content. Schema 4 (og-backup-cas): power loss or a disk error tore its manifest, or tore, removed or damaged a blob it lists (`blobs/<sha256>` that no longer hashes to its name); refuse ("this backup is damaged; pick another snapshot") before the safety snapshot and any graph write (proof `src-tauri/src/backup/restore.rs` `schema_4_restore_is_byte_identical_and_damage_is_refused`). A failed pre-restore safety snapshot also refuses publication. A schema-2 snapshot made under different `:pages-directory`/`:journals-directory` settings still refuses (it names roots, not paths); schema 3 places text at its recorded graph-relative path and ignores them (ADR 0062). |
 | `src-tauri::backup::restore_hosted` restore stop (STEP3 §7, R7) | Only with a running page host. A drained edit whose save fails (disk error) or conflicts (external-editor race), an unretired draft, or a known draft copy whose census could not be synced (power loss, M2), at the restore stop: restore nothing, keep the host, and name the pages (today's restore aborts when its flush fails). The binding's host lock is held throughout (S8), so a writer, a retirement or another restore waits for this outcome. A fresh host that cannot start after the restore (an app-data disk error) is reported, and writers then run as with no host. Proof `src-tauri/src/backup/restore.rs` `a_restore_holds_the_host_gate_until_one_fresh_host_runs`. |
 | `src-tauri::data_home::ensure_usable` app-data home (og I1a, master 8e1ea0bfd) | A disk error or a filesystem the user cannot write (a root-owned `~/.local/share`, a read-only mount): the app-data home is relocated for this launch to the first writable fallback (`~/.tine-data`, `$XDG_RUNTIME_DIR/tine-data`, `$TMPDIR/tine-data-<uid>`) and the frontend says where, once, stickily. Only when none is writable does the launch refuse: one sentence naming the `ErrorKind`, exit 1, instead of Tauri's setup panic. |
 | `src-tauri::state` graph binding | Two windows try to own overlapping roots, or a queued command carries an old binding generation, or a queued worker holds a binding a reopen has since adopted (`review_p1_late_old_slot_writer_cannot_bypass_adopted_reservation`, `review_p1_a_queued_restore_cannot_enter_after_slot_adoption`); refuse a wrong-graph write. A graph whose page host is still retiring (saving after its window closed) owns its root too: an open of an overlapping root first waits for it outside the registry lock, up to 10 s, telling the window it waits (`graph-open-waiting`), and is refused only past that bound, naming the graph still saving (`host_retirement` `a_stuck_retirement_refuses_an_overlapping_open_naming_the_saving_graph`). The same root is adopted, never waited for. |

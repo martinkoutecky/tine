@@ -214,6 +214,7 @@ fn restore_from_backup_source(
 
 /// Every refusal of a snapshot whose own bytes are missing, torn or
 /// unverifiable (power loss, a disk error). Nothing in the graph has changed.
+/// Refusal row: docs/storage-contract.md, `src-tauri::backup` restore selection.
 const DAMAGED: &str = "this backup is damaged; pick another snapshot";
 
 fn require_safety_snapshot(snapshot: BackupOutcome, live_n: usize) -> Result<(), String> {

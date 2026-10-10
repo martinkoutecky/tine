@@ -4,6 +4,12 @@
   outcome; this ADR, including the schema change and the added persisted
   format, accepted the same day). He also confirmed that og never prunes
   master's snapshots: rare in practice, and the safer rule.
+- **Amended 2026-10-10 (og-backup-cas, design approved by Martin):** og now
+  writes schema 4, which keeps this ADR's scope, policy and `graph/` paths but
+  stores each distinct content once in `blobs/<sha256>` beside the snapshots;
+  the snapshot directory holds only the manifest. og still lists, restores
+  and prunes schema 3 and 2. Contract: docs/storage-contract.md, Graph
+  backups.
 - **Date:** 2026-09-29
 - **Unit cost:** 0 bytes and 0 files per edit on a 1-block or a 60-block page
   (snapshots are taken at launch and before user-requested rewrites, never per
@@ -90,7 +96,8 @@ Alternatives on the table:
 **Interoperability.**
 - Root and other-folder pages now survive a bad write or accidental edit.
 - og restores master's schema-3 snapshots.
-- Master restores og's schema-3 snapshots.
+- Master restores og's schema-3 snapshots. (Amended 2026-10-10: og's
+  schema-4 snapshots are og-only; docs/app-identity.md.)
 
 **Scope reading matches master's.**
 - og reads the recorded `hidden` list with `configured_hidden`, the one
