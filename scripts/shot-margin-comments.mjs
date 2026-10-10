@@ -1,11 +1,12 @@
 // Visual check for margin dialogue slice 1 (vision §3.7): an agent-written block
-// with a comment card (two-level thread), a repeated-phrase quote, a stale quote
+// with a comment card (three-level thread), a repeated-phrase quote, a stale quote
 // and an untouched block, in light and dark at desktop and phone width.
 // Usage: npm run build && node scripts/shot-margin-comments.mjs [outDir]
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
+import { bulletlessFacts, checkBulletless } from "./lib/margin-bulletless.mjs";
 
 const PORT = 5217;
 const OUT = process.argv[2] ?? "scratch/margin-s1";
@@ -67,6 +68,7 @@ try {
     if (facts.cards !== 3) throw new Error(`${testCase.name}: ${facts.cards} comment cards`);
     if (facts.stale.length !== 1 || !facts.stale[0].includes("quoted text changed")) throw new Error(`${testCase.name}: stale ${facts.stale}`);
     if (facts.hiddenRows.length) throw new Error(`${testCase.name}: property rows shown for ${facts.hiddenRows}`);
+    checkBulletless(testCase.name, await page.evaluate(bulletlessFacts), { expectCards: 3 });
     if (facts.overflow) throw new Error(`${testCase.name}: horizontal page overflow`);
     if (errors.length) throw new Error(`${testCase.name}: browser errors:\n${errors.join("\n")}`);
     await page.screenshot({ path: `${OUT}/${testCase.name}.png`, fullPage: false });

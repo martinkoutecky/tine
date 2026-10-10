@@ -200,6 +200,9 @@ fn guide_explains_margin_comments() {
     assert!(tips
         .markdown
         .contains("A bullet with an `author::` property"));
+    // Slice 2b: comments draw no bullets; the author chip is their handle.
+    assert!(tips.markdown.contains("draw no bullet of their own"));
+    assert!(tips.markdown.contains("the name chip is the handle"));
     // Slice 2: the margin column on wide windows, and where it does not apply.
     assert!(tips
         .markdown

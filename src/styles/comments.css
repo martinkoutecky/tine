@@ -3,8 +3,12 @@
    card; agent-written blocks (`author::`) carry a chip and a quiet left mark. */
 
 .ls-block.comment-card {
+  /* Slice 2b: no bullets. A reply's depth is a thin rule plus this indent,
+     capped at depth 2 (the rule keeps showing). */
+  --comment-reply-indent: 10px;
+  --comment-rule: color-mix(in srgb, var(--accent) 42%, transparent);
   margin: 4px 0;
-  padding: 2px 6px 4px 0;
+  padding: 2px 8px 4px 8px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent) 6%, var(--bg-primary, transparent));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
@@ -15,7 +19,7 @@
   gap: 8px;
   align-items: baseline;
   min-width: 0;
-  padding: 3px 0 0 var(--comment-quote-indent, 39px);
+  padding: 3px 0 0 0;
   font-size: 12px;
   line-height: 18px;
   color: var(--text-muted);
@@ -70,17 +74,37 @@
   padding-left: 6px;
 }
 
+/* Slice 2b: replies nest without the outline's full indent and without bullets
+   or fold arrows (a comment's author chip is its handle). */
+.ls-block.comment-in-thread > .block-children-container {
+  margin-left: 0;
+}
+.ls-block.comment-in-thread > .block-children-container > .block-children {
+  margin-left: 0;
+  padding-left: var(--comment-reply-indent, 10px);
+  border-left: 2px solid var(--comment-rule);
+}
+.ls-block.comment-card .block-children .block-children .block-children {
+  padding-left: 0;
+}
+.ls-block.comment-in-thread > .block-children-container > .block-children-left-border {
+  display: none;
+}
+/* Inside a thread the chip alone says who wrote it: the quiet "not yours" edge
+   would read as a second depth rule. */
+.ls-block.comment-in-thread.authored > .block-main > .block-content-wrapper {
+  box-shadow: none;
+  padding-left: 0;
+}
+.comment-handle {
+  cursor: grab;
+}
+
 /* The passage a comment quotes, inside the parent's text. */
 .comment-quote-anchor {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
   border-radius: 2px;
-}
-
-@media (max-width: 640px) {
-  .comment-quote {
-    --comment-quote-indent: 28px;
-  }
 }
 
 /* Margin dialogue, slice 2: the comment column. On a wide main pane, a page with
@@ -112,7 +136,6 @@
   top: 0;
   left: 0;
   right: 0;
-  --comment-quote-indent: 30px;
 }
 .margin-thread > .ls-block.comment-card {
   margin: 0;

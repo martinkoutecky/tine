@@ -9,7 +9,8 @@ function editableTarget(target: EventTarget | null): boolean {
 
 /** Desktop code editors with a caret offer the existing block actions; selected
  * text retains its native menu. Ordinary rows keep desktop right-click, but Android long-press may
- * open Tine's block menu only from the explicit bullet affordance. */
+ * open Tine's block menu only from the explicit bullet affordance (a comment
+ * block has no bullet: its author chip is the handle). */
 export function shouldOpenBlockContextMenu(
   target: EventTarget | null,
   mobile = isMobilePlatform,
@@ -17,7 +18,7 @@ export function shouldOpenBlockContextMenu(
   if (!mobile && isElementTag(target, "textarea") && target.classList.contains("code-edit") && target.selectionStart === target.selectionEnd) return true;
   if (editableTarget(target)) return false;
   const element = isElementNode(target) ? target : null;
-  return !mobile || !!element?.closest(".bullet-container");
+  return !mobile || !!element?.closest(".bullet-container, .comment-handle");
 }
 
 /** Inline/page/reference text owns no explicit mobile menu affordance. Android

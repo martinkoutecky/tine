@@ -139,6 +139,14 @@ try {
       && ![...document.querySelectorAll(".page-blocks .ls-block")].some((b) => b.textContent.includes(reply)), REPLY), {
     timeout: 5_000, timeoutMsg: "the reply is not drawn in the margin thread",
   });
+  // Slice 2b: the thread (comment and reply) draws no bullets, only author chips as
+  // handles; the commented block in the outline keeps its bullet.
+  const bullets = await browser.execute(() => ({
+    inThread: document.querySelectorAll(".margin-thread .bullet-container, .margin-thread .collapse-toggle").length,
+    handles: document.querySelectorAll(".margin-thread .comment-handle").length,
+    outline: document.querySelectorAll(".page-blocks .ls-block > .block-main > .block-controls > .bullet-container").length,
+  }));
+  if (bullets.inThread !== 0 || bullets.handles < 2 || bullets.outline < 1) throw new Error(`thread bullets: ${JSON.stringify(bullets)}`);
   console.log("PASS: on a wide window a Ctrl+R comment is drawn and edited in the margin; its reply nests under it on disk");
 } finally {
   try { await browser?.deleteSession(); } catch {}

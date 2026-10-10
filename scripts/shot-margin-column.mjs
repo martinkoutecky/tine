@@ -7,6 +7,7 @@ import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
+import { bulletlessFacts, checkBulletless } from "./lib/margin-bulletless.mjs";
 
 const PORT = 5218;
 const OUT = process.argv[2] ?? "scratch/margin-s2";
@@ -104,6 +105,7 @@ try {
     const f = await tab.evaluate(facts);
     console.log(JSON.stringify({ case: name, paneWidth: f.paneWidth, margin: f.column, markers: f.markers, threads: f.threads.map((t) => [t.id.slice(0, 6), Math.round(t.top), t.anchor === null ? null : Math.round(t.anchor)]) }));
     check(name, page, f);
+    checkBulletless(name, await tab.evaluate(bulletlessFacts), { expectCards: page.threads });
     if (errors.length) throw new Error(`${name}: browser errors:\n${errors.join("\n")}`);
     await tab.screenshot({ path: `${OUT}/${name}.png`, fullPage: false });
     if (page.slug === "stacking" && f.column) {

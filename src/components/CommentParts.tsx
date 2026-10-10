@@ -8,7 +8,9 @@ import { createEffect, createMemo, onCleanup, onMount, Show, useContext, type JS
 import { MarginContext } from "./marginContext";
 import { anchorQuote, quoteSelectorOf, type QuoteSelector } from "../comments";
 import { facetsOf } from "../render/facets";
-import { node as docNode } from "../document";
+import { blockPageReadOnly, node as docNode } from "../document";
+import { internalLinkMouseDown } from "../linkGesture";
+import { beginDrag } from "./blockGestures";
 import { QuoteHighlightContext, quotedSourceRanges, type QuotedRange } from "../render/quoteHighlight";
 import type { Format } from "../render/ast";
 
@@ -47,13 +49,27 @@ export function CommentQuoteHeader(props: { parentId: string; selector: QuoteSel
   );
 }
 
-/** Who wrote a block: the `author::` value, or "you" for the graph owner. */
-export function AuthorChip(props: { author: string | null }): JSX.Element {
+/** Who wrote a block: the `author::` value, or "you" for the graph owner. On a
+ * comment block (`handleOf` set) the chip also takes over what the bullet did:
+ * it starts the block drag (the same gesture contract as the bullet), and its
+ * long press opens the block menu (contextMenuPolicy). Right-click anywhere on
+ * the row already opens the menu, where "Zoom into block" lives. */
+export function AuthorChip(props: { author: string | null; handleOf?: string }): JSX.Element {
+  const onMouseDown = (e: MouseEvent) => {
+    const id = props.handleOf;
+    if (id === undefined) return;
+    // Not an edit gesture: keep the row's caret placement out of it.
+    e.stopPropagation();
+    internalLinkMouseDown(e);
+    if (e.button !== 0) return;
+    if (!blockPageReadOnly(id)) beginDrag(id, e);
+  };
   return (
     <span
       class="author-chip"
-      classList={{ agent: props.author !== null }}
+      classList={{ agent: props.author !== null, "comment-handle": props.handleOf !== undefined }}
       title={props.author !== null ? `Written by ${props.author}` : "Written by you"}
+      onMouseDown={onMouseDown}
     >
       {props.author ?? "you"}
     </span>

@@ -324,6 +324,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const commentSelector = () => (node().parent !== null ? quoteSelectorOf(blockFacets().properties) : null);
   const author = () => authorOf(blockFacets().properties);
   const showsAuthor = () => author() !== null || commentSelector() !== null || inThread();
+  // Slice 2b: a comment and its replies draw no bullet or fold arrow. The author
+  // chip is their handle (drag, block menu); zoom is in that menu.
+  const bulletless = () => commentSelector() !== null || inThread();
   const renderedView = () => (
     <Rendered
       id={props.id}
@@ -354,7 +357,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           </a>
         </Show>
         <Show when={showsAuthor()}>
-          <AuthorChip author={author()} />
+          <AuthorChip author={author()} handleOf={bulletless() ? props.id : undefined} />
         </Show>
       </>}
     />
@@ -403,7 +406,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           openContextMenu(e.clientX, e.clientY, props.id);
         }}
       >
-        <Show when={!blockEmbedHost()}>
+        <Show when={!blockEmbedHost() && !bulletless()}>
         <div class="block-controls">
           <span
             class="collapse-toggle"
