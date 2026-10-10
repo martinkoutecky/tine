@@ -9,9 +9,14 @@ import { backend, isTauri } from "./backend";
 import { captureBinding, stillBound } from "./binding";
 import { loadGraphPath } from "./graph";
 import { graphMeta } from "./graphSession";
-import { focusedRouter } from "./panes";
+import { focusedRouter, focusedPaneId } from "./panes";
 import { pushToast } from "./toasts";
-import { parseTineLink } from "./deepLinks";
+import { parseTineLink, parseAppRoute, type AppRoute } from "./deepLinks";
+import { admitPageFile, captureEmptyPage, pageByName, reportPageLoadRefusal } from "./document";
+import { journalTitle, appNow } from "./journal";
+import { openSwitcher } from "./ui";
+import { focusPageTrailing } from "./components/pageTrailing";
+import type { Owner } from "./owned";
 import { chooseLinkGraph } from "./components/DeepLinkGraphChoice";
 
 export interface LinkTarget {
@@ -35,6 +40,8 @@ export async function openTineLink(delivery: LinkDelivery, alive: () => boolean 
   try {
     const api = backend();
     let target: LinkTarget;
+    const app = delivery.kind === "url" ? parseAppRoute(delivery.url) : null;
+    if (app) return await openAppRoute(app, owner);
     if (delivery.kind === "url") {
       const request = parseTineLink(delivery.url);
       if (!api.tineLinks?.scanKnownGraphs) throw new Error("External links are available in the Tine app");
@@ -91,6 +98,40 @@ export async function openTineLink(delivery: LinkDelivery, alive: () => boolean 
   } catch (error) {
     if (alive()) pushToast(`Couldn't open Tine link: ${String(error)}`, "error");
   }
+}
+
+/** Open a current-graph route (ADR 0073) in the focused pane. Never creates
+ * a page: an unknown page name is an error, and today's journal stays the
+ * usual phantom day until the user types. O(1) backend reads. */
+async function openAppRoute(app: AppRoute, owner: Owner): Promise<void> {
+  if (!graphMeta()) throw new Error("open a graph first");
+  const router = focusedRouter();
+  if (app.route === "search") { openSwitcher(app.query ? { prefill: app.query } : undefined); return; }
+  const today = journalTitle(appNow());
+  if (app.route === "page") {
+    const api = backend();
+    for (const kind of ["page", "journal"] as const) {
+      const resolved = await readOwned(owner, api.resolvePage(app.page, kind));
+      if (resolved.kind === "stale") return;
+      const id = resolved.value.kind === "existing" ? resolved.value.id : null;
+      const read = id ? await readOwned(owner, api.getPageByPath(id)) : null;
+      if (read?.kind === "stale") return;
+      if (read?.value) {
+        router.openInNewTab({ kind: "page", name: read.value.name, pageKind: read.value.kind, path: read.value.id }, true);
+        return;
+      }
+    }
+    throw new Error(`the page "${app.page}" doesn't exist in the open graph`);
+  }
+  router.openPage(today, "journal");
+  if (app.route === "today") return;
+  // Quick capture: the same "continue writing below" as the page's trailing
+  // target, in the pane that shows the journal.
+  const admitted = await admitPageFile(today, "journal", owner, captureEmptyPage(today, "journal"));
+  if (admitted && admitted !== "stale") reportPageLoadRefusal(admitted, "Nothing was opened for writing.");
+  if (admitted || !owner()) return;
+  const pane = focusedPaneId();
+  focusPageTrailing(pageByName(today), pane === "main" ? "main" : `pane:${pane}`);
 }
 
 export async function installTineLinks(alive: () => boolean): Promise<() => void> {
