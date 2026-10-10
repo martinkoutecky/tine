@@ -15,7 +15,7 @@ use super::progress::{Clock, Progress};
 use super::*;
 use std::sync::{Condvar, MutexGuard};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Where a driver step's results go, called on the driver thread after it
 /// has released the state mutex and every path lock: host events in host
@@ -57,6 +57,11 @@ pub(super) struct State<F: HostIo, C: Clock> {
     stopping: bool,
     /// Keys whose disk state the driver owes the host an observation of.
     pub observe: BTreeMap<PageKey, Observation>,
+    /// Keys whose path lock another thread held at the driver's last try:
+    /// consecutive misses and the retry instant (A4, REVIEW-3a). A path lock
+    /// is a physical resource, so its retry runs on the monotonic clock, not
+    /// on the host's logical one.
+    contended: BTreeMap<PageKey, (u32, Instant)>,
     /// The binding's bookkeeping beside the host (handoffs, notices sent).
     pub book: Book,
     #[cfg(test)]
@@ -68,14 +73,55 @@ impl<F: HostIo, C: Clock> State<F, C> {
         self.wake_seq = self.wake_seq.wrapping_add(1);
     }
 
+    /// One driver step. A key whose path lock another thread holds is not
+    /// waited for until its retry: its step waits and other work runs (A4).
+    fn step(&mut self) -> Disposition {
+        let now = self.progress.clock.now_ms();
+        // A miss not retried for a second is history: its step went away.
+        let at = Instant::now();
+        let stale = at.checked_sub(Duration::from_secs(1));
+        self.contended
+            .retain(|_, (_, retry)| stale.is_none_or(|stale| *retry > stale));
+        self.progress.host.contended = self.contending(at).collect();
+        let result = self.step_unblocked(now);
+        self.progress.host.contended.clear();
+        result
+    }
+
+    /// Another thread held `key`'s path lock: retry it after a short
+    /// backoff (10 ms doubling to 160 ms), woken by the driver's timer.
+    fn contend(&mut self, key: PageKey) {
+        let (misses, retry) = self.contended.entry(key).or_insert((0, Instant::now()));
+        *misses = misses.saturating_add(1);
+        *retry = Instant::now() + Duration::from_millis(10 << (*misses).min(5).saturating_sub(1));
+    }
+
+    /// The keys still waiting for their path-lock retry at `at`.
+    fn contending(&self, at: Instant) -> impl Iterator<Item = PageKey> + '_ {
+        let waiting = self
+            .contended
+            .iter()
+            .filter(move |(_, (_, retry))| *retry > at);
+        waiting.map(|(key, _)| key.clone())
+    }
+
+    /// The earliest path-lock retry still ahead.
+    fn retry(&self) -> Option<Instant> {
+        let now = Instant::now();
+        self.contended
+            .values()
+            .map(|(_, retry)| *retry)
+            .filter(|r| *r > now)
+            .min()
+    }
+
     /// One host step: an owed observation first, then progress. Read
     /// failures retry with the save backoff; the third is reported.
-    fn step(&mut self) -> Disposition {
+    fn step_unblocked(&mut self, now: u64) -> Disposition {
         #[cfg(test)]
         {
             self.polls += 1;
         }
-        let now = self.progress.clock.now_ms();
         let owed = self
             .observe
             .iter()
@@ -114,22 +160,33 @@ impl<F: HostIo, C: Clock> State<F, C> {
     /// deadline (the job's progress or the release wakes the driver).
     fn observable(&self, key: &str) -> bool {
         let host = &self.progress.host;
-        !host.busy(key) && !host.allocator_busy()
+        !host.busy(key)
+            && !host.allocator_busy()
+            && !self
+                .contended
+                .get(key)
+                .is_some_and(|(_, retry)| *retry > Instant::now())
     }
 
-    /// The earliest timed work, or None to sleep until woken.
+    /// The earliest timed work, or None to sleep until woken. While another
+    /// thread holds a path lock a step needed, the work it blocks is due
+    /// already: only later times and the lock's `retry` wake the driver, so
+    /// it never spins on a held lock (A4).
     fn until(&self) -> Option<u64> {
+        let now = self.progress.clock.now_ms();
         let observe = self
             .observe
             .iter()
             .filter(|(key, _)| self.observable(key))
             .map(|(_, o)| o.due)
             .min();
+        let held = self.retry().is_some();
         self.progress
             .next_deadline()
             .into_iter()
             .chain(observe)
             .chain(self.book.next_retry(&self.progress.host))
+            .filter(|due| !held || *due > now)
             .min()
     }
 }
@@ -155,7 +212,7 @@ impl<F: HostIo, C: Clock> Shared<F, C> {
     /// (§1), then wake the driver. None once the driver is stopping.
     pub fn locked_step<R>(&self, step: impl FnMut(&mut State<F, C>) -> R) -> Option<R> {
         let state = self.state.lock().unwrap();
-        let (mut state, result, _) = locked(self, state, step)?;
+        let (mut state, result, _) = locked(self, state, false, step)?;
         state.wake();
         drop(state);
         self.condition.notify_all();
@@ -192,6 +249,7 @@ where
                 wake_seq: 0,
                 stopping: false,
                 observe: BTreeMap::new(),
+                contended: BTreeMap::new(),
                 book: Book::default(),
                 #[cfg(test)]
                 polls: 0,
@@ -253,6 +311,7 @@ type Locked<'a, F, C, R> = (MutexGuard<'a, State<F, C>>, R, bool);
 pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
     shared: &'a Shared<F, C>,
     mut state: MutexGuard<'a, State<F, C>>,
+    driver: bool,
     mut step: impl FnMut(&mut State<F, C>) -> R,
 ) -> Option<Locked<'a, F, C, R>> {
     state.progress.host.held = Some(BTreeSet::new());
@@ -261,19 +320,45 @@ pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
         let host = &state.progress.host;
         let mut handles: Vec<_> = keys
             .iter()
-            .map(|key| (host.fs.spelling(key), host.locks[key].clone()))
+            .map(|key| (host.fs.spelling(key), host.locks[key].clone(), key.clone()))
             .collect();
         handles.sort_by(|a, b| a.0.cmp(&b.0));
         drop(state);
-        let guards: Vec<_> = handles.iter().map(|(_, l)| l.lock().unwrap()).collect();
+        // The driver never blocks on a path lock another thread holds (A4):
+        // it marks the key and replans, so other pages' work runs.
+        let mut guards = Vec::new();
+        let mut held_elsewhere = None;
+        for (_, lock, key) in &handles {
+            if !driver {
+                guards.push(lock.lock().unwrap());
+                continue;
+            }
+            match lock.try_lock() {
+                Ok(guard) => guards.push(guard),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    held_elsewhere = Some(key.clone());
+                    break;
+                }
+                Err(std::sync::TryLockError::Poisoned(error)) => panic!("{error}"),
+            }
+        }
+        if held_elsewhere.is_some() {
+            guards.clear();
+        }
         state = shared.state.lock().unwrap();
         if state.stopping {
             return None;
         }
+        if let Some(key) = held_elsewhere {
+            state.contend(key);
+            result = step(&mut state);
+            continue;
+        }
+        state.contended.retain(|key, _| !keys.contains(key));
         let host = &state.progress.host;
         let current = keys.iter().all(|key| {
             let lock = &host.locks[key];
-            handles.iter().any(|(_, held)| Arc::ptr_eq(held, lock))
+            handles.iter().any(|(_, held, _)| Arc::ptr_eq(held, lock))
         });
         if current {
             state.progress.host.held = Some(keys);
@@ -302,7 +387,7 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
             return;
         }
         let seq = state.wake_seq;
-        let Some((mut state, result, stepped)) = locked(shared, state, State::step) else {
+        let Some((mut state, result, stepped)) = locked(shared, state, true, State::step) else {
             return;
         };
         let delivery = {
@@ -330,18 +415,14 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
         }
         if idle {
             // Sleep until woken, or until the earliest timed work is due.
-            let until = state.until();
+            let (until, retry) = (state.until(), state.retry());
             while state.wake_seq == seq && !state.stopping {
                 let now = state.progress.clock.now_ms();
-                state = match until {
-                    Some(due) if due <= now => break,
-                    Some(due) => {
-                        shared
-                            .condition
-                            .wait_timeout(state, Duration::from_millis(due - now))
-                            .unwrap()
-                            .0
-                    }
+                let timer = until.map(|due| Duration::from_millis(due.saturating_sub(now)));
+                let lock = retry.map(|at| at.saturating_duration_since(Instant::now()));
+                state = match timer.into_iter().chain(lock).min() {
+                    Some(wait) if wait.is_zero() => break,
+                    Some(wait) => shared.condition.wait_timeout(state, wait).unwrap().0,
                     None => shared.condition.wait(state).unwrap(),
                 };
             }

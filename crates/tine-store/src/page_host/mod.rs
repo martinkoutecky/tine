@@ -342,6 +342,11 @@ struct Host<F: HostIo> {
     /// The key set a step needs and the driver does not hold: recorded, never
     /// acquired here. The step returned before any side effect.
     lock_request: Option<BTreeSet<PageKey>>,
+    /// Keys whose path lock another thread held when the driver last tried
+    /// it, until its retry (A4, REVIEW-3a): a step needing one waits without
+    /// a lock request, so the driver plans other work. Set only for a
+    /// driver step; empty otherwise.
+    contended: BTreeSet<PageKey>,
     /// D-10: decoded durable draft vehicles, kept in step with the adapter's
     /// durable census through `draft_changes`, never rescanned per call.
     drafts: BTreeMap<String, Vec<Record>>,
@@ -384,6 +389,7 @@ impl<F: HostIo> Host<F> {
             lock_ownership: BTreeSet::new(),
             held: None,
             lock_request: None,
+            contended: BTreeSet::new(),
             drafts,
             pages: BTreeMap::new(),
             custody: BTreeMap::new(),
@@ -416,7 +422,12 @@ impl<F: HostIo> Host<F> {
     fn lacks_locks(&mut self, keys: &BTreeSet<PageKey>) -> bool {
         match &self.held {
             Some(held) if !keys.is_subset(held) => {
-                self.lock_request = Some(keys.clone());
+                let contended = keys
+                    .iter()
+                    .any(|key| !held.contains(key) && self.contended.contains(key));
+                if !contended {
+                    self.lock_request = Some(keys.clone());
+                }
                 true
             }
             _ => false,

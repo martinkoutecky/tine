@@ -1178,6 +1178,56 @@ fn a2_a_failing_release_observation_is_a_notice_that_clears_on_recovery() {
     live.host.stop();
 }
 
+/// A4 (REVIEW-3a): another thread holds page A's path lock while the driver
+/// owes A an observation; page B's save falls due meanwhile and must run.
+/// The driver yields A's step and retries it, without blocking on A's
+/// mutex; once A's lock is free, A is observed.
+#[test]
+fn a4_a_held_path_lock_does_not_stall_another_pages_due_save() {
+    let live = Live::new(&[("pages/a.md", "- a\n"), ("pages/b.md", "- b\n")]);
+    let (a, _) = live.open("pages/a.md");
+    let (b, page) = live.open("pages/b.md");
+    let lock = live.store.graph.page_lock(&live.root.join(&a));
+    let held = lock.lock().unwrap();
+    fs::write(live.root.join(&a), "- a2\n").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !live
+        .host
+        .driver
+        .shared
+        .with_state(|state| state.observe.contains_key(&a))
+    {
+        assert!(Instant::now() < deadline, "the watcher never forwarded A");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    live.submit(&b, "- b2\n", page.version, None).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while live.disk(&b) != "- b2\n" {
+        assert!(
+            Instant::now() < deadline,
+            "A4: B's due save waited for A's path lock"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // Yielding is no spin: the held lock is retried on a backoff timer.
+    let polls = || live.host.driver.shared.with_state(|state| state.polls);
+    let before = polls();
+    std::thread::sleep(Duration::from_secs(1));
+    let spent = polls() - before;
+    assert!(
+        spent < 100,
+        "A4: {spent} driver steps in 1 s while A is held"
+    );
+    drop(held);
+    live.wait(&a, "A observed once its lock is free", |mail| {
+        mail.page
+            .as_ref()
+            .is_some_and(|p| p.disk == Some(token("- a2\n")))
+    });
+    live.host.stop();
+}
+
 /// V5 (REVIEW-3a): a restore is not ready while a publication the driver
 /// collected is still being delivered; once its result is recorded, an
 /// index failure keeps the restore waiting and a success lets it close.

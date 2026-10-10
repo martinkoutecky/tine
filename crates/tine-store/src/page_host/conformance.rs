@@ -214,6 +214,7 @@ impl<F: ConformanceIo> Driver<F> {
                 lock_ownership: h.lock_ownership.clone(),
                 held: h.held.clone(),
                 lock_request: h.lock_request.clone(),
+                contended: h.contended.clone(),
                 drafts: h.drafts.clone(),
                 pages: h.pages.clone(),
                 queue: h.queue.clone(),
