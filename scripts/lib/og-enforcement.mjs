@@ -104,7 +104,7 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   // exit; no durable layout or graph state. Uses the existing audited writer.
   // The one prepared.json write of the share inbox; producers are native
   // code outside this census, and they never write the graph.
-  "src-tauri/src/share_inbox.rs": { sites: 1, approval: "Martin 2026-10-10 (Rule 8 new persisted format: share-inbox); docs/adr/0073" },
+  "src-tauri/src/share_inbox.rs": { sites: 2, approval: "Martin 2026-10-10 (Rule 8 new persisted format: share-inbox); docs/adr/0073. Second site: the commit tombstone inside that format (review round 2, manager-specified)" },
   "src-tauri/src/youtube_identity.rs": { sites: 1, approval: "Martin's OG-QBY native YouTube identity task; temporary bundled WebProcess module, no new persisted format" },
 });
 

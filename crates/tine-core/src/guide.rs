@@ -579,6 +579,7 @@ mod rename_guide_tests {
             "a new block at the bottom of today's journal",
             "keeps the item and tries again",
             "Retrying never loses the item",
+            "It can add it twice in one rare case",
             "Tine saves a share whole or not at all",
             "On iOS the shared text is kept as it is",
             "**Launcher shortcuts and a Quick Settings tile.**",
