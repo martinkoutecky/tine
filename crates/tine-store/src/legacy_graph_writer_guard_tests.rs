@@ -59,8 +59,8 @@ const ALLOWED_GRAPH_UNIT_CALLS: &[(&str, &str, &str)] = &[
         "invalidate_cache",
     ),
     (
-        "crates/tine-store/src/page_host/binding_tests.rs",
-        "v4_a_read_or_rebuild_never_indexes_a_held_page",
+        "crates/tine-store/src/model/held_index.rs",
+        "a_build_that_read_a_page_before_its_hold_declines",
         "invalidate_cache",
     ),
     (

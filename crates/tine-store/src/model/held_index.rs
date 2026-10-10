@@ -132,6 +132,8 @@ mod tests {
     /// A build that read a page before a host held it declines its
     /// install even when the owner has not published yet (A-V4): its disk
     /// bytes could be newer than the owner's pending first observation.
+    /// Forced and on-demand builds of a held, indexed page parse the
+    /// owner's bytes.
     #[test]
     fn a_build_that_read_a_page_before_its_hold_declines() {
         let temp = tempfile::tempdir().unwrap();
@@ -176,6 +178,15 @@ mod tests {
         assert_eq!(
             store.graph.cached_rev(&path),
             Some(crate::model::content_rev("- owner\n"))
+        );
+        // A failed publication drops the cache (transaction.rs); the next
+        // whole-graph question builds it on demand, from the same bytes.
+        store.graph.invalidate_cache();
+        store.graph.with_pages(|_| ());
+        assert_eq!(
+            store.graph.cached_rev(&path),
+            Some(crate::model::content_rev("- owner\n")),
+            "A-V4: an on-demand build indexed a held page from disk"
         );
         store.close();
     }

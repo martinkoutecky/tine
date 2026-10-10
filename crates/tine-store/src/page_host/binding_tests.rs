@@ -1292,8 +1292,8 @@ mod stop_saved;
 /// them; once the host observes B, its consumer indexes B.
 /// REVIEW-3a V4 / A-V4: while the host holds a page whose newer disk bytes
 /// it has not observed (its read is blocked on the path lock), a read, a
-/// forced rebuild and an on-demand build answer the bytes the consumer
-/// indexed. Indexing disk there could be overwritten by the host's older
+/// forced rebuild answer the bytes the consumer indexed (the on-demand
+/// build: `held_index::tests`). Indexing disk there could be overwritten by the host's older
 /// pending event.
 #[test]
 fn v4_a_read_or_rebuild_never_indexes_a_held_page() {
@@ -1320,15 +1320,6 @@ fn v4_a_read_or_rebuild_never_indexes_a_held_page() {
         live.indexed(&key),
         Some(content_rev("- a\n")),
         "V4: the rebuild indexed a held page from disk"
-    );
-    // A failed publication drops the cache (transaction.rs); the next
-    // whole-graph question builds it on demand.
-    live.store.graph.invalidate_cache();
-    live.store.graph.with_pages(|_| ());
-    assert_eq!(
-        live.indexed(&key),
-        Some(content_rev("- a\n")),
-        "V4: an on-demand build indexed a held page from disk"
     );
     drop(held);
     live.until_indexed(&key, "- b\n");
