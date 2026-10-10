@@ -10,7 +10,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "0.7.1"
+version = "0.8.0-beta.1"
 edition = "2021"
 license = "AGPL-3.0-only"
 authors = ["Martin Koutecký"]

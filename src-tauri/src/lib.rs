@@ -26,6 +26,8 @@ mod device_io;
 mod drafts;
 #[cfg(test)]
 mod edit_kind_guard_tests;
+#[cfg(desktop)]
+mod experiment_config_seed;
 mod flight;
 mod flight_store;
 mod graph;
@@ -604,6 +606,12 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         diag("TINE_GPU=0 → set WEBKIT_DISABLE_DMABUF_RENDERER=1 (software compositing)");
     }
+
+    // TEMPORARY (docs/app-identity.md): an experiment build with no graph of its
+    // own starts from the released Tine's config. Before the Builder, because
+    // WebKitGTK creates the app-data dir while the Builder is assembled.
+    #[cfg(desktop)]
+    experiment_config_seed::seed_from_release_once();
 
     // Wayland resolves the shell/titlebar icon by matching a window app ID to a
     // desktop-entry basename. Packages ship that identity themselves; the raw
