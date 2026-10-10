@@ -12,7 +12,7 @@ import { graphMeta, setGraphMeta } from "./graphSession";
 import { setToasts, toasts } from "./toasts";
 import { journalTitle, appNow } from "./journal";
 import { initParser } from "./render/parse";
-import { ingestShares, CAPTURED_TOAST } from "./shareIngest";
+import { ingestShares, CAPTURED_TOAST, resetShareIngestForTests } from "./shareIngest";
 import type { NativeShareInbox, ShareInboxItem } from "./nativeTineLinks";
 import type { PageDto } from "./types";
 
@@ -61,12 +61,14 @@ const bindGraph = (root: string) =>
   setGraphMeta({ root, pages_dir: "pages", journals_dir: "journals", assets_dir: "assets", preferred_format: "md" } as any);
 /** The process restarts: a fresh store reads the journal from disk. */
 function restart(root = graphMeta()!.root) {
+  resetShareIngestForTests();
   resetStore();
   bindStore();
   bindGraph(root);
 }
 
 beforeEach(() => {
+  resetShareIngestForTests();
   bindStore();
   files = new Map(); revs = new Map(); saves = 0; imports = [];
   commitFails = false; saveFails = false;
@@ -124,7 +126,7 @@ it("a crash between the journal write and the removal does not duplicate the ite
   commitFails = true; // the process dies after the write reached disk
   await expect(ingestShares()).resolves.toBeUndefined();
   expect(shared("exactly once")).toHaveLength(1);
-  expect(inbox.get("a")?.prepared).toMatchObject({ graph: "/g", day: day(), armed: { before: null, matches: 0 } });
+  expect(inbox.get("a")?.prepared).toMatchObject({ graph: "/g", day: day(), armed: { before: null }, written: true });
   restart();
   commitFails = false;
   const before = saves;
@@ -154,7 +156,7 @@ it("a crash after arming but before the append, then an edit of the journal, sti
     if (prepared.armed) { apiInbox.prepare = prepare; throw new Error("crash after arming, before the append"); }
   };
   await ingestShares();
-  expect(inbox.get("a")?.prepared?.armed).toEqual({ before: "r1", matches: 1 });
+  expect(inbox.get("a")?.prepared?.armed).toEqual({ before: "r1" });
   expect(shared("twice")).toHaveLength(1);
   restart();
   writeFile(day(), ["an edit elsewhere", ...journal()]);
@@ -163,17 +165,85 @@ it("a crash after arming but before the append, then an edit of the journal, sti
   expect(inbox.size).toBe(0);
 });
 
-it("a landed item the user edited afterwards is appended again: a duplicate, never a loss", async () => {
+it("a written item is only acknowledged: a later edit or deletion of its block is the user's", async () => {
   share("a", "edited later");
   commitFails = true;
   await ingestShares();
   restart();
   writeFile(day(), journal().map((raw) => `${raw} (edited)`));
   commitFails = false;
+  const before = saves;
   await ingestShares();
-  expect(journal()).toHaveLength(2);
-  expect(shared("edited later")).toHaveLength(1);
+  expect(saves).toBe(before);
+  expect(journal()).toHaveLength(1);
   expect(inbox.size).toBe(0);
+});
+
+/** Make the `written` marker fail once: the process dies after the journal
+ *  flush and before that marker reached disk. */
+function crashBeforeWritten() {
+  const apiInbox = backend().tineLinks!.inbox!;
+  const prepare = apiInbox.prepare;
+  apiInbox.prepare = async (id, prepared) => {
+    if (prepared.written) { apiInbox.prepare = prepare; throw new Error("crash before the written marker"); }
+    await prepare(id, prepared);
+  };
+}
+
+it("the one duplicate window: a crash after the journal flush and before `written` appends again", async () => {
+  share("a", "maybe twice");
+  crashBeforeWritten();
+  await ingestShares();
+  expect(shared("maybe twice")).toHaveLength(1);
+  expect(inbox.get("a")?.prepared?.written).toBe(false);
+  restart();
+  await ingestShares();
+  expect(shared("maybe twice")).toHaveLength(2);
+  expect(inbox.size).toBe(0);
+});
+
+it("round2: acknowledgement rests on this process's own durable flush, never on what the live store shows", async () => {
+  share("a", "keep original");
+  crashBeforeWritten(); // the flush reached disk; only the marker failed
+  await ingestShares();
+  expect(shared("keep original")).toHaveLength(1);
+  // An external editor then removes the block; its watcher notification has
+  // not arrived, so the live store still shows it. No restart.
+  writeFile(day(), []);
+  const before = saves;
+  await ingestShares();
+  // The append did land (its own flush succeeded): the removal is the
+  // editor's, and the item is acknowledged without writing again.
+  expect(saves).toBe(before);
+  expect(journal()).toHaveLength(0);
+  expect(inbox.size).toBe(0);
+  // In a fresh process with no `written` marker, the same item is appended
+  // again, whatever the journal shows (the documented duplicate window).
+  share("b", "fresh process");
+  crashBeforeWritten();
+  await ingestShares();
+  restart();
+  await ingestShares();
+  expect(shared("fresh process")).toHaveLength(2);
+});
+
+it("round2: an equal capture after arming must not consume a separate share", async () => {
+  share("a", "two operations");
+  const apiInbox = backend().tineLinks!.inbox!;
+  const prepare = apiInbox.prepare;
+  apiInbox.prepare = async (id, prepared) => {
+    await prepare(id, prepared);
+    if (prepared.armed) { apiInbox.prepare = prepare; throw new Error("killed after durable arm, before insert"); }
+  };
+  await ingestShares();
+  expect(inbox.get("a")?.prepared?.armed).toEqual({ before: null });
+  expect(journal()).toHaveLength(0);
+  restart();
+  // A different writer's capture, byte-for-byte equal, after our arm.
+  writeFile(day(), [inbox.get("a")!.prepared!.markdown!.slice(2)]);
+  await ingestShares();
+  expect(inbox.size).toBe(0);
+  expect(shared("two operations")).toHaveLength(2);
 });
 
 it("review: a different writer's identical capture must not consume a pending share", async () => {
@@ -202,16 +272,34 @@ it("review: a committed share awaiting deletion must not replay into a switched 
   commitFails = true;
   await ingestShares();
   expect(shared("belongs in A")).toHaveLength(1);
+  expect(inbox.get("a")?.prepared?.written).toBe(true);
   // A is safely on disk; only the inbox commit failed. Bind a new empty graph B.
   restart("/B");
   setToasts([]);
   commitFails = false;
+  const before = saves;
+  await ingestShares();
+  // `written`: only acknowledged, nothing is written into B.
+  expect(saves).toBe(before);
+  expect(journal()).toHaveLength(0);
+  expect(inbox.size).toBe(0);
+  expect(toasts().filter((toast) => toast.kind === "error")).toHaveLength(0);
+  restart("/g");
+  expect(shared("belongs in A")).toHaveLength(1);
+});
+
+it("review: an unwritten share bound to A waits silently in B and is appended once back in A", async () => {
+  share("a", "belongs in A");
+  saveFails = true;
+  await ingestShares();
+  restart("/B");
+  setToasts([]);
+  saveFails = false;
   await ingestShares();
   await ingestShares();
   expect(journal()).toHaveLength(0);
   expect(inbox.has("a")).toBe(true);
   expect(toasts()).toHaveLength(0);
-  // Back in A, the landed append is recognised and acknowledged once.
   restart("/g");
   await ingestShares();
   expect(shared("belongs in A")).toHaveLength(1);

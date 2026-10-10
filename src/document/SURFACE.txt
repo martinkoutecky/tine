@@ -1,8 +1,6 @@
 CreatePageRefusal
 FeedPage
 HistoryRouteContext
-JournalAppendDecision  # why: the share inbox gate's verdict inside the admitted journal read (ADR 0073); batchNativeIntegrations
-JournalAppendState  # why: the journal revision and match count the share inbox records before its append (ADR 0073); batchNativeIntegrations
 Node
 OutlineScope
 PageLoadRefusal  # why: GH #254 family: one typed answer to whether a page file took its name slot; batchJ1

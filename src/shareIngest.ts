@@ -6,21 +6,25 @@
  * item is removed from the inbox only after its write reached disk; a failed
  * write keeps it and says so.
  *
- * Loss-free first, then no duplicates (manager decision, review round 1).
- * Every step that touches the graph is preceded by a durable `prepared.json`:
- * 1. bind: the graph (its root) and the journal day, frozen once; `{date}`
+ * Loss-free first, then no duplicates (manager decision, review rounds 1-2).
+ * Every step that touches the graph is preceded by a durable `prepared.json`,
+ * and acknowledgement never rests on content equality:
+ * 1. bound: the graph (its root) and the journal day, frozen once; `{date}`
  *    is that day;
- * 2. shape: the item's files are imported into that graph only, once, and
+ * 2. shaped: the item's files are imported into that graph only, once, and
  *    the shaped Markdown and asset names are recorded before any append;
- * 3. arm: inside the admitted read the append uses, the day file's revision
- *    and the number of equal blocks on the page are recorded, then the block
- *    is inserted and flushed with no further await.
- * Recovery (a later pass) acts only in the recorded graph (another graph
- * keeps the item silently). An item that was never armed is appended (its
- * append never started). An armed item whose day now holds more equal
- * blocks than recorded has landed: flush, then remove it. Otherwise it is
- * appended again: the user may have edited it, and a possible duplicate
- * beats a lost share. Remaining duplicate/loss windows are listed in ADR 0073.
+ * 3. armed: inside the admitted read the append uses, the day file's
+ *    revision is recorded, then the block is inserted and flushed with no
+ *    further await;
+ * 4. written: set as soon as the append reached disk, before the commit.
+ * Recovery acts only in the recorded graph (another graph keeps the item
+ * silently), except that a `written` item is only committed. Anything not
+ * `written` is appended (again). The one duplicate window: a crash after the
+ * journal flush and before `written` reached disk. Nothing can be lost.
+ * Within one process, `appended` remembers the blocks an item's append put
+ * in the store, by block id (never by content): a failed flush is retried on
+ * those same blocks instead of appending a second copy, and a flush that
+ * succeeded is marked `written` even if writing that marker failed before.
  *
  * Runs one pass at a time, at launch (after the graph loaded), when the app
  * returns to the foreground, and when a native producer signals an arrival.
@@ -32,7 +36,7 @@ import { bindingOwner, writeOwned } from "./owned";
 import { graphMeta } from "./graphSession";
 import { pushToast } from "./toasts";
 import { journalTitle, appNow } from "./journal";
-import { appendToJournalDay, formatForPage, pageByName, trackAssetWrite } from "./document";
+import { appendToJournalDay, flushPage, formatForPage, pageByName, trackAssetWrite } from "./document";
 import { assetFileName, assetMarkdown } from "./media";
 import { asOutlineBlock, captureTime, shapeShare } from "./shareShape";
 import type { NativeShareInbox, ShareInboxItem, SharePrepared } from "./nativeTineLinks";
@@ -43,6 +47,21 @@ export const CAPTURED_TOAST = "Captured to today's journal";
 /** done: written and removed; kept: retried later, the user is told;
  * elsewhere: bound to another graph, kept silently; stale: the binding moved. */
 type Outcome = "done" | "kept" | "elsewhere" | "stale";
+
+/** This process's appends per item: where they went, their root block ids,
+ *  and whether the flush reached disk. */
+const appended = new Map<string, { graph: string; day: string; ids: string[]; durable: boolean }>();
+
+/** A process restart forgets `appended` (tests that simulate one). */
+export function resetShareIngestForTests(): void {
+  appended.clear();
+}
+
+/** The item's blocks from this process's append, still in the store on `day`. */
+function stillInStore(entry: { day: string; ids: string[] }): boolean {
+  const roots = pageByName(entry.day)?.roots ?? [];
+  return entry.ids.length > 0 && entry.ids.every((id) => roots.includes(id));
+}
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() ?? "";
@@ -79,10 +98,22 @@ async function ingestOne(inbox: NativeShareInbox, item: ShareInboxItem, owner: (
   const graph = graphMeta()?.root;
   if (!graph) return "stale";
   let prepared: SharePrepared | null = item.prepared ?? null;
+  if (prepared?.written) {
+    // Its block reached disk before this record did: flush whatever of that
+    // day is still pending here (in its own graph only), then acknowledge.
+    // A later edit or removal of the block is the user's (never re-appended).
+    if (prepared.graph === graph) {
+      const flushed = await writeOwned(owner, flushPage(prepared.day));
+      if (flushed.kind === "stale") return "stale";
+      if (!flushed.value) return "kept";
+    }
+    await inbox.commit(item.id);
+    return "done";
+  }
   if (prepared && prepared.graph !== graph) return "elsewhere";
   if (!prepared) {
     // 1. Bind the item to this graph and freeze its day before any graph write.
-    prepared = { graph, day: journalTitle(appNow()), markdown: null, assets: [], armed: null };
+    prepared = { graph, day: journalTitle(appNow()), markdown: null, assets: [], armed: null, written: false };
     await inbox.prepare(item.id, prepared);
     if (!owner()) return "stale";
   }
@@ -99,15 +130,41 @@ async function ingestOne(inbox: NativeShareInbox, item: ShareInboxItem, owner: (
   const record = prepared;
   const markdown = prepared.markdown;
   if (markdown === null) return "kept";
+  const mine = appended.get(item.id);
+  if (mine && mine.graph === graph && mine.day === record.day) {
+    if (mine.durable) return acknowledge(inbox, item.id, record);
+    if (stillInStore(mine)) {
+      // The earlier flush failed; these blocks are ours: save them, no copy.
+      const saved = await writeOwned(owner, flushPage(record.day));
+      if (saved.kind === "stale") return "stale";
+      if (!saved.value) return "kept";
+      mine.durable = true;
+      return acknowledge(inbox, item.id, record);
+    }
+  }
+  appended.delete(item.id);
   // 3. Arm inside the admitted read, then append into exactly the recorded day.
-  const written = await writeOwned(owner, appendToJournalDay(record.day, markdown, async (state) => {
-    if (record.armed && state.matches > record.armed.matches) return "landed";
-    await inbox.prepare(item.id, { ...record, armed: { before: state.before, matches: state.matches } });
-    return "append";
+  let armed = record;
+  const entry = { graph, day: record.day, ids: [] as string[], durable: false };
+  const written = await writeOwned(owner, appendToJournalDay(record.day, markdown, async (before) => {
+    armed = { ...record, armed: { before } };
+    await inbox.prepare(item.id, armed);
+    return true;
+  }, (ids) => {
+    entry.ids = ids;
+    appended.set(item.id, entry);
   }));
   if (written.kind === "stale") return "stale";
-  if (written.value === "failed") return "kept";
-  await inbox.commit(item.id);
+  if (!written.value) return "kept";
+  entry.durable = true;
+  return acknowledge(inbox, item.id, armed);
+}
+
+/** 4. The block is on disk: record `written`, then remove the item. */
+async function acknowledge(inbox: NativeShareInbox, id: string, record: SharePrepared): Promise<Outcome> {
+  await inbox.prepare(id, { ...record, written: true });
+  await inbox.commit(id);
+  appended.delete(id);
   return "done";
 }
 
