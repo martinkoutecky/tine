@@ -2,7 +2,7 @@ import { For, Show, createSignal, createResource, createEffect, createMemo, onCl
 import { backend } from "../backend";
 import { bindingIdentity, captureBinding } from "../binding";
 import { bindingOwner, readOwned, writeOwned, type Owned } from "../owned";
-import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
+import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPrefill, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
 import { createLongPress } from "../render/longPress";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { graphMeta } from "../graphSession";
@@ -284,7 +284,7 @@ export function QuickSwitcher(): JSX.Element {
           ? { name: originRoute.name, pageKind: originRoute.pageKind, path: originRoute.path }
           : null,
       );
-      setQuery(switcherEmbryo()?.prefill ?? "");
+      setQuery(switcherEmbryo()?.prefill ?? switcherPrefill());
       setSel(0);
       setSyntaxOpen(false);
       queueMicrotask(() => inputRef?.focus());

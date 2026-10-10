@@ -1435,8 +1435,11 @@ export type SwitcherMode = "all" | "commands" | "current-page";
 export const [switcherMode, setSwitcherMode] = createSignal<SwitcherMode>("all");
 export const [switcherEmbryo, setSwitcherEmbryo] =
   createSignal<{ paneId: string; prefill: string } | null>(null);
+/** The query an ordinary switcher opens with (`tine://search?q=`, ADR 0073). */
+export const [switcherPrefill, setSwitcherPrefill] = createSignal("");
 export function openSwitcher(opts?: { mode?: "embryo" | "current-page"; paneId?: string; prefill?: string; pluginBlock?: OwnedPluginBlockSnapshot | null }) {
   setSwitcherMode(opts?.mode === "current-page" ? "current-page" : "all");
+  setSwitcherPrefill(opts?.mode === "embryo" ? "" : opts?.prefill ?? "");
   setSwitcherPluginBlock(opts?.pluginBlock ?? null);
   setSwitcherEmbryo(opts?.mode === "embryo" && opts.paneId
     ? { paneId: opts.paneId, prefill: opts.prefill ?? "" }

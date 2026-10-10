@@ -1,7 +1,7 @@
 import { BlockList } from "./BlockList";
 import { reportUiFailure } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
-import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
+import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -14,6 +14,7 @@ import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
 import { pushToast } from "../toasts";
+import { focusPageTrailing } from "./pageTrailing";
 import { ensureJournalTemplateForDay, renameOrMergePage, renameOutcomeMessage, switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
 import { TaggedPages } from "./TaggedPages";
@@ -1136,23 +1137,7 @@ export function PageTypingTarget(props: {
   page: () => FeedPage | undefined;
   surface?: string | null;
 }): JSX.Element {
-  const focusTrailing = () => {
-    const page = props.page();
-    if (!page || page.readOnly || page.guide) return;
-    const seeded = ensureEmptyBlock(page.name, { afterProperties: true });
-    if (seeded) {
-      startEditing(seeded, 0, null, props.surface ?? null);
-      return;
-    }
-    // GH #158: always add a fresh root-level block (never reuse the trailing empty
-    // leaf). Reuse stranded users whose last block is an empty *indented* bullet:
-    // clicking could only ever re-focus that indented block, never give them a new
-    // unindented last block. Stacking empty last blocks is intentionally allowed.
-    const roots = page.roots;
-    const id = insertOutlineAfter(roots[roots.length - 1], [{ raw: "", children: [] }]);
-    if (id) startEditing(id, 0, null, props.surface ?? null);
-    else pushToast("Could not add a block to this page.", "error");
-  };
+  const focusTrailing = () => { focusPageTrailing(props.page(), props.surface ?? null); };
   // A page emptied of its last block (explicit Delete bypasses the Backspace
   // last-block guard) would render nothing to type into. `ensureEmptyBlock` is a
   // no-op once a body exists, so this only ever fires on a genuinely empty page.

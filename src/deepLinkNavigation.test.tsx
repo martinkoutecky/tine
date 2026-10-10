@@ -6,7 +6,9 @@ import { copyTineLink } from "./components/blockLinkCopy";
 import { pageLink, blockLink } from "./deepLinks";
 import { DeepLinkGraphChoice } from "./components/DeepLinkGraphChoice";
 import { ContextMenu } from "./components/ContextMenu";
-import { openPageContextMenu, openContextMenu, closeContextMenu } from "./ui";
+import { openPageContextMenu, openContextMenu, closeContextMenu, setSwitcherOpen, switcherOpen, switcherPrefill } from "./ui";
+import { journalTitle, appNow } from "./journal";
+import { editingId } from "./editorController";
 import { initParser } from "./render/parse";
 import { loadSingle } from "./document/workingSet";
 import { resetStore, pageByName } from "./document";
@@ -137,5 +139,46 @@ describe("GH #181 literal menu and navigation boundaries", () => {
     vi.mocked(api.tineLinks!.identity).mockImplementation(async () => { bumpGraphEpoch(); return id; });
     await copyTineLink({ page: dto.name });
     expect(write).toHaveBeenCalledWith(pageLink(dto.name, id));
+  });
+});
+describe("current-graph app routes (ADR 0073): quick actions, shortcuts, intents, Spotlight", () => {
+  const today = () => journalTitle(appNow());
+  it("today opens today's journal without writing", async () => {
+    const api = setup(); const save = vi.spyOn(api, "savePages");
+    await openTineLink({ kind: "url", url: "tine://today" });
+    expect(focusedRouter().route()).toMatchObject({ kind: "page", name: today(), pageKind: "journal" });
+    expect(save).not.toHaveBeenCalled();
+    expect(api.tineLinks!.scanKnownGraphs).not.toHaveBeenCalled();
+  });
+  it("search opens the switcher with the query", async () => {
+    setup(); setSwitcherOpen(false);
+    await openTineLink({ kind: "url", url: "tine://search?q=plan" });
+    expect(switcherOpen()).toBe(true);
+    expect(switcherPrefill()).toBe("plan");
+  });
+  it("a graph-less page (Spotlight, Open page intent) opens the existing page of the open graph", async () => {
+    const api = setup();
+    vi.spyOn(api, "resolvePage").mockImplementation(async (_name, kind) => (kind === "page" ? { kind: "existing", id: dto.id, others: [] } : { kind: "absent", id: "" }));
+    await openTineLink({ kind: "url", url: `tine://page/${encodeURIComponent(dto.name.toLowerCase())}` });
+    expect(focusedRouter().route()).toMatchObject({ kind: "page", name: dto.name, path: dto.id });
+  });
+  it("a missing page is an error and nothing is created", async () => {
+    const api = setup(); const before = focusedRouter().route(); const save = vi.spyOn(api, "savePages");
+    vi.spyOn(api, "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/Gone.md" });
+    await openTineLink({ kind: "url", url: "tine://page/Gone" });
+    expect(focusedRouter().route()).toEqual(before);
+    expect(save).not.toHaveBeenCalled();
+    expect(toasts().at(-1)?.message).toContain("doesn't exist");
+  });
+  it("capture opens today's journal and starts editing an empty bottom block, writing nothing yet", async () => {
+    const api = setup(); const save = vi.spyOn(api, "savePages");
+    vi.spyOn(api, "getPage").mockResolvedValue({ name: today(), kind: "journal", title: today(), id: "journals/today.md", rev: "r", pre_block: null,
+      blocks: [{ id: "j1", raw: "first", collapsed: false, children: [] }] } as any);
+    await openTineLink({ kind: "url", url: "tine://capture" });
+    expect(focusedRouter().route()).toMatchObject({ kind: "page", name: today(), pageKind: "journal" });
+    const roots = pageByName(today())!.roots;
+    expect(roots).toHaveLength(2);
+    expect(editingId()).toBe(roots[1]);
+    expect(save).not.toHaveBeenCalled();
   });
 });

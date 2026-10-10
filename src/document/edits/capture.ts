@@ -2,7 +2,7 @@ import { journalTitle, appNow } from "../../journal";
 import { OUTLINE_MAX_DEPTH, outlineDepth, parseOutline, type OutlineNode } from "../../editor/outline";
 import { type PageKind } from "../../types";
 import { bindingOwner } from "../../owned";
-import { pageByName, freshId, setDoc } from "../model";
+import { pageByName, freshId, setDoc, doc } from "../model";
 import { admitPageFile, reportPageLoadRefusal } from "../workingSet";
 import { captureEmptyPage } from "../convert";
 import { pageWritable } from "./properties";
@@ -22,6 +22,21 @@ import { markDirty, flushPage } from "../save/engine";
  *  unsaved input (`admitPageFile`). Returns whether the write reached disk. */
 export async function appendToTodayJournal(markdown: string): Promise<boolean> {
   return captureOutlineInto(journalTitle(appNow()), "journal", parseOutline(markdown));
+}
+
+/** How many root blocks of journal `day` have the body `raw` (trimmed), read
+ *  from the file the name resolves to (loaded, or synthesized empty, through
+ *  the same `admitPageFile` door as the append; never writes). The share
+ *  inbox records this count before appending and compares after a crash, so
+ *  an item whose append already landed is not appended twice (ADR 0073).
+ *  null when the page cannot be admitted or the binding moved. */
+export async function countRootBlocks(day: string, raw: string): Promise<number | null> {
+  const owner = bindingOwner();
+  const admitted = await admitPageFile(day, "journal", owner, captureEmptyPage(day, "journal"));
+  const page = admitted === null && owner() ? pageByName(day) : undefined;
+  if (!page) return null;
+  const body = raw.trim();
+  return page.roots.filter((id) => (doc.byId[id]?.raw ?? "").trim() === body).length;
 }
 
 /** In-app quick capture into a (new or existing) named PAGE — the heading-filled
