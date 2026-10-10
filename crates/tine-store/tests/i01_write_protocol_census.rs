@@ -151,12 +151,21 @@ fn every_content_mutation_has_a_reviewed_owner() {
         ("crates/tine-store/src/transaction.rs", "apply"),
         ("crates/tine-store/src/transaction.rs", "commit_timed"),
         ("src-tauri/src/backup.rs", "cleanup_partial_backups"),
+        // Deletes blobs no snapshot manifest lists (og-backup-cas), in app
+        // data, never graph content, under BACKUP_WORK. Crash matrix: a crash
+        // mid-collection leaves unreferenced blobs the next prune collects;
+        // any unreadable manifest or directory stops it before a delete.
+        ("src-tauri/src/backup.rs", "collect_blobs"),
         ("src-tauri/src/backup.rs", "drop"),
         ("src-tauri/src/backup.rs", "prune_backups"),
         ("src-tauri/src/backup.rs", "publish_snapshot"),
-        ("src-tauri/src/backup.rs", "sync_dir"),
+        // Writes one content-addressed backup blob (temp name in `blobs/`,
+        // then rename) under BACKUP_WORK; never graph content. Crash matrix:
+        // a leftover temp is listed by no manifest, so the next prune collects
+        // it; a torn blob fails restore's hash check and is rewritten by the
+        // next snapshot of that content.
+        ("src-tauri/src/backup.rs", "put_blob"),
         ("src-tauri/src/backup.rs", "write_manifest"),
-        ("src-tauri/src/backup.rs", "write_payload"),
         // Thumbnail cache cleanup is outside graph/private-durable state.
         ("src-tauri/src/commands.rs", "import_native_capture"),
         // Deletes a forgotten graph's launch checkpoint (ADR 0070), a
