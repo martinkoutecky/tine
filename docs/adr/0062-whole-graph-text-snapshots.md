@@ -12,6 +12,15 @@
   without schema 4 never open, under one OS file lock. og still lists,
   restores and prunes schema 3 and 2 in `backups/<graph-id>/`. Contract:
   docs/storage-contract.md, Graph backups.
+- **Amended 2026-10-10 (og-backup-cas round 3, the redesign the manager
+  approved):** retention rests on a durable **anchor** instead of the
+  earlier-launch assumption: the first schema-4 snapshot, and then a launch
+  snapshot at least 7 days after the newest anchor, is published with the
+  whole sync chain, verified by hashing its blobs, and only then replaces
+  the older anchor; the keep-count never prunes an anchor. Routine launch
+  snapshots stay best effort (no syncs). The manifest gains `anchor` and
+  `created_unix` under its checksum. Blobs are deleted only by one
+  fail-closed collector. Contract: docs/storage-contract.md, Graph backups.
 - **Date:** 2026-09-29
 - **Unit cost:** 0 bytes and 0 files per edit on a 1-block or a 60-block page
   (snapshots are taken at launch and before user-requested rewrites, never per

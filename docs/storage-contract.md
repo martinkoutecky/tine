@@ -241,16 +241,33 @@ failure alike. Proof `src-tauri/src/backup/restore.rs`
 
 A graph's schema-4 snapshots live in `<app data>/backups/<graph-id>.cas/`,
 outside the graph and beside the legacy namespace `<app data>/backups/<graph-id>/`
-that schemas 2 and 3 use (`src-tauri/src/backup.rs`). Two assumptions bound
+that schemas 2 and 3 use (`src-tauri/src/backup.rs`). One assumption bounds
 the guarantees below:
 
 - **A-bk1.** The backup directory is private to the device. Only Tine
   processes write it, and no sync tool delivers into it. Builds without
   schema 4 (master v0.6.98, og before og-backup-cas) reach only the legacy
   namespace; they never open `<graph-id>.cas/`.
-- **A-bk2.** A launch snapshot taken in an earlier launch has been through
-  the OS's writeback, so after a power cut an older snapshot remains (see
-  Prune).
+
+**The guarantee.** Once a graph's first anchor exists, its namespace holds a
+valid, durable snapshot at every instant, across power cuts and concurrent
+Tine processes: an old anchor is deleted only after its replacement's syncs
+returned and every blob it lists hashed correctly, in the same process,
+under the lock. "Durable" means the syncs in the durability table succeeded,
+with the limits stated there. Known effects:
+
+- Routine launch snapshots are best effort. A power cut can lose or damage
+  recent ones; restore detects the damage and refuses that snapshot. The
+  guaranteed fallback is the anchor, normally at most about 7 days old (older
+  when Tine was not launched meanwhile), plus any pre-restore and pre-rewrite
+  snapshots.
+- A blob damaged after its anchor was verified (a later disk error) is found
+  only by restore's verification.
+- Clock jumps move only when rotation happens, never whether an anchor
+  exists.
+- A launch whose snapshot was skipped (lock held), cancelled or failed writes
+  no anchor and prunes no snapshot; "a launch" below means one whose
+  snapshot ran.
 
 The layout and protocol:
 
@@ -258,59 +275,87 @@ The layout and protocol:
   `blobs/<sha256>` holds each distinct file content once. A snapshot
   directory `snapshots/<UTC stamp>[-<suffix>][-<n>]` holds only
   `snapshot.json`: schema 4, the graph root, the pages/journals directories,
-  the graph-text policy (ADR 0062), `writer: "og"`, `files: [{path, sha256}]`,
-  `complete: true` and `checksum`. Paths are schema 3's: `graph/<graph-relative path>`,
+  the graph-text policy (ADR 0062), `writer: "og"`, `created_unix`,
+  `anchor: true` on an anchor, `files: [{path, sha256}]`, `complete: true` and
+  `checksum`. Paths are schema 3's: `graph/<graph-relative path>`,
   `<assets dir>/<rel>` for `.edn` sidecars, `logseq/config.edn`.
-- **Lock.** Every operation on the namespace (snapshot write, keep-count,
-  partial cleanup, blob collection, restore's read and verification) holds
-  one OS file lock on `lock` (`File::lock`: `flock` on Unix, `LockFileEx`
-  on Windows). It excludes other Tine processes and other threads alike. A
-  launch snapshot that finds it held is skipped and logged
-  (`backup-skipped`): another process is backing up this graph now. A
-  suffixed snapshot, a keep-count change and a restore wait up to 30 s; a
-  suffixed snapshot or restore that times out is refused (refusal table).
-  The process-wide `BACKUP_WORK` permit is only an in-process copy
-  throttle, taken before the lock.
+- **Lock.** Every operation that changes the namespace (snapshot write,
+  anchor rotation, keep-count, blob collection) and restore's read and
+  verification hold one OS file lock on `lock` (`src-tauri/src/file_lock.rs`:
+  `flock` on Linux, Android, macOS and iOS through one shared function;
+  `LockFileEx` through std `File::try_lock` on Windows). The guard owns the
+  open handle for the whole operation; the lock file is never unlinked or
+  replaced. It excludes other Tine processes and other threads alike. Only
+  contention (`EWOULDBLOCK`, `ERROR_LOCK_VIOLATION`) and `EINTR` retry; any
+  other error refuses the operation. Listing snapshots and restore's private
+  staging of already-verified bytes are unlocked by design: listing reads
+  manifests only and is cheap. A launch snapshot that finds the lock held is
+  skipped and logged (`backup-skipped`): another process is backing up this
+  graph now. A suffixed snapshot, a keep-count change and a restore poll for
+  up to 30 s (10→200 ms backoff); a suffixed snapshot or restore that times
+  out is refused (refusal table). The wait bounds contention only; it cannot
+  interrupt a hung filesystem call. The process-wide `BACKUP_WORK` permit is
+  only an in-process copy throttle, taken before the lock.
 - **Write.** Under the lock, every included file is read through the Store
   and hashed. No mtime or size shortcut: a tool that preserves mtime would
-  otherwise make a snapshot record stale content. A blob is written only when
-  its name is absent, or present with bytes that differ from the content
-  (torn by power loss, compared length first, then in 64 KiB chunks); an equal
-  blob is reused. It is written to a `create_new` temp unique to the process
-  and call (`.tmp-<sha256>-<pid>-<n>`), then renamed over its name. The
-  manifest is written last into `snapshots/.partial-<name>/`, and a
-  no-replace rename publishes it. A name taken in the same second gets a
-  counter `-2`, `-3`, …, ordered numerically (`-10` after `-9`).
+  otherwise make a snapshot record stale content. A file over 256 MiB fails
+  the snapshot (`backup-failed:<phase>:FileTooLarge`), the same cap restore
+  applies. A blob is written only when its name is absent, or present with
+  bytes that differ from the content (torn by power loss, compared length
+  first, then in 64 KiB chunks); an equal blob is reused. It is written to a
+  `create_new` temp unique to the process and call
+  (`.tmp-<sha256>-<pid>-<n>`), then renamed over its name. The manifest is
+  written last into `snapshots/.partial-<name>/`, and a no-replace rename
+  publishes it. A name taken in the same second gets a counter `-2`, `-3`, …,
+  ordered numerically (`-10` after `-9`).
 - **Manifest checksum.** `checksum` is the SHA-256 of the manifest's other
-  fields serialized as compact JSON with keys sorted (unknown fields
-  included). Listing and restore read a schema-4 manifest only when its
-  checksum matches: a bit flip in a path, hash or scope that leaves valid JSON
-  makes the snapshot damaged, not a different snapshot. Schemas 2 and 3 have
-  no checksum, as before.
+  fields serialized as compact JSON with object keys sorted recursively
+  (unknown fields included). Listing and restore read a schema-4 manifest
+  only when its checksum matches: a bit flip in a path, hash, scope or the
+  anchor mark that leaves valid JSON makes the snapshot damaged, not a
+  different snapshot. A damaged anchor counts as a routine snapshot. Schemas
+  2 and 3 have no checksum, as before.
 - **Listing is not verification.** Listing reads manifests only; it never
   opens blobs. A listed snapshot can still fail restore's verification.
 - **Restore verifies, then consumes the verified bytes.** Under the lock,
   restore reads every listed blob into memory and checks its SHA-256 before
-  the pre-restore safety snapshot and before any graph write. After the
-  safety snapshot, it stages exactly those verified bytes in unnamed temp
-  files and hands them to `Store::restore`; a blob changed after
-  verification never reaches the graph. A snapshot with a missing or damaged
-  blob, a torn manifest or a checksum mismatch is refused: "this backup is
-  damaged; pick another snapshot". The next launch rewrites a torn blob whose
-  content the graph still holds, which makes older snapshots that list it
-  restorable again.
-- **Durability.** A launch snapshot syncs nothing; the next launch re-takes
-  it. A suffixed snapshot (`pre-restore`, `pre-journal-rename`) precedes a
-  destructive operation the user asked for, so it is made durable before that
-  operation runs, and a failed sync fails it and refuses the operation.
+  the pre-restore safety snapshot and before any graph write. A blob over
+  256 MiB is refused as damaged from its metadata, before it is read, and
+  every read is bounded to the cap plus one byte. After the safety snapshot,
+  restore stages exactly those verified bytes in unnamed temp files and hands
+  them to `Store::restore`; a blob changed after verification never reaches
+  the graph. A snapshot with a missing, oversized or damaged blob, a torn
+  manifest or a checksum mismatch is refused: "this backup is damaged; pick
+  another snapshot". Any failure of the safety snapshot refuses the restore,
+  and a graph with live content (graph text, asset sidecars or
+  `config.edn`) needs a non-empty one. The next launch rewrites a torn blob
+  whose content the graph still holds, which makes older snapshots that list
+  it restorable again.
+- **Anchor rotation.** A launch publishes its snapshot as a new anchor when
+  the namespace has no valid anchor, or when the newest valid anchor's
+  `created_unix` is 7 days or more from now in either direction. The first
+  backup ever is therefore an anchor. Rotation, under the lock: publish
+  durably (table below); verify the new anchor by hashing every blob it
+  lists; only then delete the older anchors. A new anchor that fails
+  verification is deleted, the older ones stay, the launch reports
+  `backup-failed:anchor:InvalidData`, and the next launch tries again.
+- **Durability.** A routine launch snapshot syncs nothing. Durable
+  publication (an anchor, `pre-restore`, `pre-journal-rename`) syncs the
+  whole chain unconditionally, in this order, and a failed sync fails the
+  snapshot (refusing the operation a suffixed one precedes): each distinct
+  listed blob, `blobs/`, the manifest, the partial directory, the publishing
+  rename, then `snapshots/`, `<graph-id>.cas/`, `backups/` and the app data
+  directory. Directory syncs go through
+  `tine_store::directory_durability::sync_directory_entry`, which tolerates a
+  filesystem that does not offer directory sync.
 
-| Target | Launch snapshot | Suffixed snapshot |
+| Target | Routine launch snapshot | Durable publication |
 |---|---|---|
-| Linux | no file, directory or filesystem sync | `fsync` every listed blob, `blobs/`, the manifest and its directory before the rename; `snapshots/` after |
+| Linux | no file, directory or filesystem sync | `fsync` on each listed blob and the manifest; directory `fsync` on each directory in the chain |
 | Android | as Linux | as Linux |
 | macOS | as Linux (no `syncfs`; not measured on Apple hardware) | as Linux (`fsync`, not `F_FULLFSYNC`, as before) |
 | iOS | as macOS | as macOS |
-| Windows | no flush; the one publication rename is `MoveFileExW(MOVEFILE_WRITE_THROUGH)` | `FlushFileBuffers` on every listed blob and the manifest; directory syncs are no-ops; write-through rename |
+| Windows | no flush; the one publication rename is `MoveFileExW(MOVEFILE_WRITE_THROUGH)` | `FlushFileBuffers` on each listed blob and the manifest; directory syncs are no-ops; write-through rename |
 
   A `syncfs` after a launch snapshot was considered and not used: its cost is
   bounded by all dirty data on the filesystem, not by the backup, and the
@@ -318,23 +363,27 @@ The layout and protocol:
 - **Prune.** After a launch's snapshot, under the lock, the keep-count
   deletes the oldest snapshot directories this build counts, in both
   namespaces (schema 2, and schema 3/4 marked `writer: "og"`; never
-  `-pre-restore` or another Tine's snapshots). The snapshot this process's
-  latest launch took is never counted, so `keep + 1` routine snapshots
-  remain and an earlier launch's (A-bk2) survives a power cut before this
-  launch's snapshot reaches the disk. The exclusion is per process: a
-  launch snapshot another running Tine process took counts as routine here
-  (residual, A-bk2 does not cover it when this process has no launch
-  snapshot of its own). A pruned schema-4 snapshot is first
-  renamed to `.partial-<name>`; then each blob it listed that no other
-  directory under `snapshots/` lists is deleted, then the directory. The
-  blob store is not enumerated. Any doubt (an unreadable directory or
-  manifest) deletes nothing; a manifest that is not valid JSON lists nothing
-  (it never restores). Cleanup removes `snapshots/.partial-*` only under the
-  lock, so each is abandoned. When it finds one, or a snapshot write fails,
-  the whole blob store is collected: every entry (blob or temp) that no
-  manifest under `snapshots/` lists is deleted. A steady-state launch never
-  enumerates `blobs/`. The legacy namespace's `.partial-*` entries are left
-  alone: an older build may be writing one.
+  `-pre-restore`, a valid anchor or another Tine's snapshots), so `keep`
+  routine snapshots remain beside the anchor. A pruned snapshot directory is
+  deleted whole; its blobs wait for the collector.
+- **Collection** (`src-tauri/src/backup/collect.rs`, the only code that
+  deletes blobs). It runs under the lock after an operation that deleted a
+  snapshot (a prune or a rotation), found a crashed `.partial-*`, or failed.
+  It reads every manifest in `snapshots/`, independently of restore
+  eligibility: a checksum-failed or unknown-schema manifest still keeps every
+  blob its `files[].sha256` list names. Not-JSON (torn) manifests and
+  published directories without a manifest are damage that can never
+  restore: their directories are removed and logged (`backup-collect`).
+  `.partial-*` directories are abandoned under the lock and removed. The
+  whole mark is complete before anything is removed. Then it lists `blobs/`
+  and removes every blob and `.tmp-*` temp no manifest names. A listing,
+  entry or manifest read error, an entry this module did not create, or a
+  manifest whose references cannot be read stops the collection before it
+  removes anything (`backup-collect-failed`); the snapshot itself still
+  stands. A removal that fails is logged, and the next collection retries
+  it. Once the keep-count is reached every launch prunes one snapshot, so
+  every such launch enumerates `blobs/` once. The legacy namespace's
+  `.partial-*` entries are left alone: an older build may be writing one.
 - **Older snapshots.** Schema 3 (full copy under `graph/`) and schema 2
   (`journals/`, `pages/`) in the legacy namespace are listed, verified
   against their manifest, restored and pruned as before; nothing is migrated.
@@ -344,23 +393,45 @@ The layout and protocol:
 
 Proof `src-tauri/src/backup.rs`
 `publication_follows_every_blob_write_and_restore_verifies_every_blob`,
+`a_durable_snapshot_syncs_its_whole_chain_after_a_launch_in_this_process`,
+`a_durable_snapshot_syncs_its_whole_chain_after_a_launch_in_another_process`,
+`a_failed_sync_fails_a_snapshot_taken_before_a_rewrite`,
+`the_first_backup_is_a_durable_anchor_the_keep_count_never_prunes`,
+`a_week_old_anchor_rotates_after_its_successor_is_durable`,
+`a_new_anchor_that_fails_verification_never_replaces_the_old_one`,
+`another_processs_anchor_survives_this_processs_keep_count`,
 `unchanged_launch_writes_no_blob_and_edits_write_only_theirs`,
 `a_torn_blob_is_repaired_not_reused`,
 `a_shared_blob_survives_pruning_one_of_its_snapshots`,
 `a_prune_racing_a_snapshot_never_deletes_its_blobs`,
-`a_launch_never_prunes_the_last_earlier_snapshot`,
 `same_second_counters_order_numerically`,
-`steady_state_launches_never_enumerate_the_blob_store`,
-`a_failed_sync_fails_a_snapshot_taken_before_a_rewrite`,
-`the_manifest_checksum_is_pinned`; two OS processes:
+`launches_that_delete_nothing_never_enumerate_the_blob_store`,
+`the_collector_stops_on_a_listing_entry_error`,
+`the_collector_stops_on_a_manifest_read_error`,
+`the_collector_keeps_unverifiable_refs_and_stops_on_uninterpretable_ones`,
+`the_collector_removes_torn_manifestless_and_abandoned_snapshots`,
+`an_unsearchable_snapshots_dir_fails_the_snapshot_and_collects_nothing`,
+`a_failed_blob_removal_is_retried_by_the_next_deletion`,
+`an_oversized_blob_is_refused_before_it_is_read`,
+`a_file_over_the_cap_fails_the_backup`,
+`the_manifest_checksum_is_pinned`,
+`the_manifest_checksum_canonical_form_is_pinned`; two OS processes:
 `a_prune_in_another_process_never_deletes_a_writers_blobs`,
 `a_launch_in_another_process_skips_while_a_writer_holds_the_lock`,
 `a_same_content_blob_write_in_two_processes_is_serialised`;
+`src-tauri/src/file_lock.rs`
+`lock_arms_name_every_shipped_target`,
+`the_unix_arm_takes_a_flock_and_drop_releases_it`,
+`a_lock_error_is_returned_not_read_as_success_or_contention`,
+`another_processs_lock_contends_times_out_and_dies_with_it`,
+`a_bounded_wait_gets_a_lock_released_before_its_deadline`;
 `src-tauri/src/backup/restore.rs`
 `schema_4_restore_is_byte_identical_and_damage_is_refused`,
 `og_full_copy_snapshot_restores_and_prunes_beside_schema_4`,
 `a_bit_flip_in_a_manifest_path_is_refused`,
-`a_blob_changed_after_verification_never_reaches_the_graph`.
+`a_blob_changed_after_verification_never_reaches_the_graph`,
+`a_config_only_graph_needs_a_nonempty_safety_snapshot`,
+`any_safety_snapshot_failure_refuses_the_restore`.
 
 **Unit cost:** 0 bytes, 0 files and 0 transport bytes per edit on a 1-block or
 a 60-block page: snapshots are taken at launch and before a user-requested
@@ -373,18 +444,24 @@ rename are not counted.
 
 | Launch | Before (schema 3 full copy) | After (schema 4) |
 |---|---|---|
-| First backup | 1,076 files, 1,455,521 bytes, 1,083 syncs | 942 files (940 distinct blobs, manifest, `lock`), 1,455,359 bytes, 0 syncs |
-| Unchanged graph | 1,076 files, 1,455,521 bytes, 1,083 syncs | 1 file (manifest), 154,981 bytes, 0 syncs |
-| 3 pages edited | 1,076 files, 1,455,599 bytes, 1,083 syncs | 4 files (manifest + 3 blobs), 163,373 bytes, 0 syncs |
+| First backup (an anchor) | 1,076 files, 1,455,521 bytes, 1,083 syncs | 942 files (940 distinct blobs, manifest, `lock`), 1,455,407 bytes, 947 syncs |
+| Unchanged graph | 1,076 files, 1,455,521 bytes, 1,083 syncs | 1 file (manifest), 155,011 bytes, 0 syncs |
+| 3 pages edited | 1,076 files, 1,455,599 bytes, 1,083 syncs | 4 files (manifest + 3 blobs), 163,403 bytes, 0 syncs |
+| Anchor rotation (at most once per 7 days) | n/a | 1 file (manifest), 155,029 bytes, 947 syncs, 1 blob-store enumeration |
+| A launch that prunes (keep reached) | n/a | 1 file (manifest), 155,011 bytes, 0 syncs, 1 blob-store enumeration |
 
 The manifest records the graph root, so its size moves with the root path's
 length. Linux wall time (release build, ext4 on NVMe, 3 alternating runs,
 snapshot plus prune): before 629–771 ms first, 1,027–2,162 ms unchanged,
-671–810 ms after 3 edits; after (round 2, with the lock and checksum)
-99–103 ms, 59–61 ms and 59–78 ms. N
+671–810 ms after 3 edits; after (round 3, with the anchor and the
+collector) 116–124 ms first (the anchor's 947 syncs included), 62–71 ms
+unchanged, 62–72 ms after 3 edits, 79–80 ms for an anchor rotation and
+65–67 ms for a launch that prunes and collects. The durable chain is 940
+blob syncs plus 7 (`blobs/`, manifest, partial directory, `snapshots/`,
+`<graph-id>.cas/`, `backups/`, app data). N
 changed pages cost the manifest plus N blobs of those pages' sizes. With
-the default keep-count of 12, an unchanged graph's 13 retained launch
-snapshots hold the graph's bytes once plus 13 manifests (about 3.3 MB here;
+the default keep-count of 12, an unchanged graph's 12 retained launch
+snapshots plus its anchor hold the graph's bytes once plus 13 manifests (about 3.3 MB here;
 schema 3 kept 12 full copies, about 17.5 MB).
 
 ## I-8 refusal scenarios
@@ -459,8 +536,10 @@ by I-9's typed failure paths.
 | `tine-graph-features::journals` migration and trash | A journal disappears or changes after selection; refuse that item and leave other journals intact. |
 | `tine-graph-features::pdf` highlight and sidecar | Sidecar or notes bytes change concurrently, a malformed imported sidecar appears, or Org notes cannot round-trip; retain the source and refuse or retry within the bounded loop. |
 | `tine-graph-features::config` and `assets` | Config or an asset changes repeatedly while applying a user update; stop before overwriting the external winner. |
-| `src-tauri::backup` restore selection | A backup is incomplete, belongs to another graph, fails its manifest hash, loses a source file or a whole snapshot area (`graph/` for schema 3; `journals/`, `pages/` for schema 2; assets), or changes during verification; refuse restore before touching live content. Schema 4 (og-backup-cas): power loss or a disk error tore its manifest, flipped a bit in it that leaves valid JSON (its checksum no longer matches), or tore, removed or damaged a blob it lists (`blobs/<sha256>` that no longer hashes to its name); refuse ("this backup is damaged; pick another snapshot") before the safety snapshot and any graph write (proof `src-tauri/src/backup/restore.rs` `schema_4_restore_is_byte_identical_and_damage_is_refused`, `a_bit_flip_in_a_manifest_path_is_refused`). A failed pre-restore safety snapshot also refuses publication. A schema-2 snapshot made under different `:pages-directory`/`:journals-directory` settings still refuses (it names roots, not paths); schema 3 places text at its recorded graph-relative path and ignores them (ADR 0062). |
-| `src-tauri::backup` namespace lock (og-backup-cas) | Concurrent honest instances: another Tine process (a second window's process, master beside og, a CLI) holds the graph's backup lock `backups/<graph-id>.cas/lock` for longer than 30 s. A restore refuses ("backups are busy in another Tine window or process; try the restore again in a moment") before reading the snapshot, the safety snapshot and any graph write; a pre-restore or pre-rewrite snapshot fails and refuses the operation it precedes; a lowered keep-count is applied at the next launch instead. A launch snapshot is skipped, not refused, and logged (`backup-skipped`). An OS error opening or locking the file refuses the same way (`backup-failed:lock:<kind>`). Proof `src-tauri/src/backup.rs` `a_launch_in_another_process_skips_while_a_writer_holds_the_lock`, `a_same_content_blob_write_in_two_processes_is_serialised`. |
+| `src-tauri::backup` restore selection | A backup is incomplete, belongs to another graph, fails its manifest hash, loses a source file or a whole snapshot area (`graph/` for schema 3; `journals/`, `pages/` for schema 2; assets), or changes during verification; refuse restore before touching live content. Schema 4 (og-backup-cas): power loss or a disk error tore its manifest, flipped a bit in it that leaves valid JSON (its checksum no longer matches), or tore, removed or damaged a blob it lists (`blobs/<sha256>` that no longer hashes to its name); refuse ("this backup is damaged; pick another snapshot") before the safety snapshot and any graph write; a blob over the 256 MiB staging cap is damage of the same kind, refused from its metadata before it is read (proof `src-tauri/src/backup/restore.rs` `schema_4_restore_is_byte_identical_and_damage_is_refused`, `a_bit_flip_in_a_manifest_path_is_refused`, `src-tauri/src/backup.rs` `an_oversized_blob_is_refused_before_it_is_read`). Any failure of the pre-restore safety snapshot also refuses the restore (a disk error, a lock timeout, or a graph file over the cap, which fails the snapshot with `FileTooLarge` because restore could never take it back), and a graph with live content, `config.edn` included, needs a non-empty one (proof `src-tauri/src/backup/restore.rs` `any_safety_snapshot_failure_refuses_the_restore`, `a_config_only_graph_needs_a_nonempty_safety_snapshot`). A schema-2 snapshot made under different `:pages-directory`/`:journals-directory` settings still refuses (it names roots, not paths); schema 3 places text at its recorded graph-relative path and ignores them (ADR 0062). |
+| `src-tauri::backup` namespace lock (og-backup-cas) | Concurrent honest instances: another Tine process (a second window's process, master beside og, a CLI) holds the graph's backup lock `backups/<graph-id>.cas/lock` for longer than 30 s. A restore refuses ("backups are busy in another Tine window or process; try the restore again in a moment") before reading the snapshot, the safety snapshot and any graph write; a pre-restore or pre-rewrite snapshot fails and refuses the operation it precedes; a lowered keep-count is applied at the next launch instead. A launch snapshot is skipped, not refused, and logged (`backup-skipped`). An OS error opening or locking the file refuses the same way (`backup-failed:lock:<kind>`): only contention and `EINTR` retry, so an error is never read as a held lock. Proof `src-tauri/src/backup.rs` `a_launch_in_another_process_skips_while_a_writer_holds_the_lock`, `a_same_content_blob_write_in_two_processes_is_serialised`; `src-tauri/src/file_lock.rs` `another_processs_lock_contends_times_out_and_dies_with_it`, `a_lock_error_is_returned_not_read_as_success_or_contention`. |
+| `src-tauri::backup::collect` blob collection (og-backup-cas D3) | Power loss, a torn write or a disk error left the backup namespace in a state the collector cannot read completely: a listing or entry error, a manifest it cannot read, JSON whose `files[].sha256` references cannot be interpreted, or an entry no Tine creates. The collector removes nothing that run and logs `backup-collect-failed`; the snapshot that triggered it stands, and the next deletion retries. A blob is deleted only when no readable manifest could still name it, so a restorable snapshot never loses a blob. Proof `src-tauri/src/backup.rs` `the_collector_stops_on_a_listing_entry_error`, `the_collector_stops_on_a_manifest_read_error`, `the_collector_keeps_unverifiable_refs_and_stops_on_uninterpretable_ones`, `an_unsearchable_snapshots_dir_fails_the_snapshot_and_collects_nothing`. |
+| `src-tauri::backup::settle_anchor` anchor verification (og-backup-cas D2) | A disk error or torn write damaged the new anchor's blobs between their write and the rotation's verification. The new anchor is deleted and the older anchors stay; the launch reports `backup-failed:anchor:InvalidData` and the next launch retries the rotation. Proof `src-tauri/src/backup.rs` `a_new_anchor_that_fails_verification_never_replaces_the_old_one`. |
 | `src-tauri::backup::restore_hosted` restore stop (STEP3 §7, R7) | Only with a running page host. A drained edit whose save fails (disk error) or conflicts (external-editor race), an unretired draft, or a known draft copy whose census could not be synced (power loss, M2), at the restore stop: restore nothing, keep the host, and name the pages (today's restore aborts when its flush fails). The binding's host lock is held throughout (S8), so a writer, a retirement or another restore waits for this outcome. A fresh host that cannot start after the restore (an app-data disk error) is reported, and writers then run as with no host. Proof `src-tauri/src/backup/restore.rs` `a_restore_holds_the_host_gate_until_one_fresh_host_runs`. |
 | `src-tauri::data_home::ensure_usable` app-data home (og I1a, master 8e1ea0bfd) | A disk error or a filesystem the user cannot write (a root-owned `~/.local/share`, a read-only mount): the app-data home is relocated for this launch to the first writable fallback (`~/.tine-data`, `$XDG_RUNTIME_DIR/tine-data`, `$TMPDIR/tine-data-<uid>`) and the frontend says where, once, stickily. Only when none is writable does the launch refuse: one sentence naming the `ErrorKind`, exit 1, instead of Tauri's setup panic. |
 | `src-tauri::state` graph binding | Two windows try to own overlapping roots, or a queued command carries an old binding generation, or a queued worker holds a binding a reopen has since adopted (`review_p1_late_old_slot_writer_cannot_bypass_adopted_reservation`, `review_p1_a_queued_restore_cannot_enter_after_slot_adoption`); refuse a wrong-graph write. A graph whose page host is still retiring (saving after its window closed) owns its root too: an open of an overlapping root first waits for it outside the registry lock, up to 10 s, telling the window it waits (`graph-open-waiting`), and is refused only past that bound, naming the graph still saving (`host_retirement` `a_stuck_retirement_refuses_an_overlapping_open_naming_the_saving_graph`). The same root is adopted, never waited for. |
