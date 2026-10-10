@@ -146,7 +146,7 @@ class ShareIntakeTest {
     }
     assertFalse(File(root, "id2").exists())
     // Refused with a message: no "interrupted" notice later.
-    assertEquals(emptyList<String>(), InboxWriter(root, Recorder().files).interrupted(null))
+    assertTrue(InboxWriter(root, Recorder().files).interrupted(null).isEmpty())
   }
 
   @Test
@@ -159,16 +159,57 @@ class ShareIntakeTest {
   }
 
   @Test
-  fun aSyncFailureAfterThePublishingRenameLeavesTheItemPublished() {
+  fun aSyncFailureAfterThePublishingRenameIsRetriedThenUnconfirmedAndKeepsTheMarker() {
+    // Review round 3, R3-1 (round3-android/postrename.log): the failed
+    // barrier must not complete the publication nor erase its evidence.
     val recorder = Recorder()
     val root = File(temp.root, "share-inbox")
     recorder.failSyncOf = "share-inbox"
     recorder.passFirst = 1 // the receiving marker's barrier succeeds
     val writer = InboxWriter(root, recorder.files)
-    // Not reported as unsaved: the item is visible and will be ingested.
-    writer.publish("id1", 7, "t", null, emptyList(), "t")
-    assertTrue(writer.published("id1"))
+    try {
+      writer.publish("id1", 7, "t", null, emptyList(), "t")
+      fail("expected the unconfirmed publication")
+    } catch (_: ShareUnconfirmed) {
+    }
+    assertTrue(writer.published("id1")) // still visible: it is ingested
     assertFalse(File(root, ".tmp-id1").exists())
+    assertTrue(File(root, ".receiving-id1").exists())
+    // Modelled power loss of the unbarriered rename: the next start reports it.
+    File(root, "id1").deleteRecursively()
+    assertEquals(listOf("t"), InboxWriter(root, Recorder().files).interrupted(null).map { it.summary })
+  }
+
+  @Test
+  fun aRetriedPostRenameSyncThatSucceedsCompletesThePublication() {
+    val root = File(temp.root, "share-inbox")
+    var inboxSyncs = 0
+    // 1st inbox sync: the marker's barrier; 2nd (post-rename) fails; 3rd is the retry.
+    val files = DurableFiles { dir ->
+      if (dir.name == "share-inbox" && ++inboxSyncs == 2) throw IOException("fsync failed once")
+    }
+    val writer = InboxWriter(root, files)
+    writer.publish("id1", 7, "t", null, emptyList(), "t")
+    assertEquals(3, inboxSyncs)
+    assertTrue(writer.published("id1"))
+    assertFalse(File(root, ".receiving-id1").exists())
+  }
+
+  @Test
+  fun anExistingInboxHasItsParentSyncedOnEveryPublication() {
+    // R3-1 (round3-android/parent.log): a creation whose parent sync failed
+    // left the directory; the next share must still make its entry durable.
+    val root = File(temp.root, "share-inbox")
+    val failing = Recorder().apply { failSyncOf = temp.root.name }
+    try {
+      failing.files.ensureDir(root)
+      fail("expected the parent sync error")
+    } catch (_: IOException) {
+    }
+    assertTrue(root.isDirectory)
+    val recorder = Recorder()
+    InboxWriter(root, recorder.files).publish("id1", 7, "t", null, emptyList(), "t")
+    assertEquals("sync ${temp.root.name}", recorder.log.first())
   }
 
   // ---- Review round 2 (R2-2, R2-3, R2-4): one item per share occurrence. ----
@@ -242,10 +283,42 @@ class ShareIntakeTest {
     File(root, ".tmp-occ-1").mkdir()
     File(root, ".receiving-occ-1").writeText("1 image")
     File(root, ".receiving-occ-2").writeText("keep me")
-    assertEquals(listOf("1 image"), writer.interrupted(keep = "occ-2"))
+    val lost = writer.interrupted(keep = "occ-2")
+    assertEquals(listOf("1 image"), lost.map { it.summary })
+    // R3-2 (round3-android/sweep-kill.log): discovery deletes nothing; a
+    // crash before the notice is shown repeats it at the next start.
+    assertTrue(File(root, ".receiving-occ-1").exists())
+    assertEquals(listOf("1 image"), writer.interrupted(keep = "occ-2").map { it.summary })
+    lost.single().acknowledge() // the notice was shown
     assertFalse(File(root, ".receiving-occ-1").exists())
     assertTrue(File(root, ".receiving-occ-2").exists()) // being redelivered now
-    assertEquals(emptyList<String>(), writer.interrupted(keep = "occ-2"))
+    assertTrue(writer.interrupted(keep = "occ-2").isEmpty())
+  }
+
+  @Test
+  fun anUnreadableMarkerDoesNotDiscardTheOthers() {
+    // R3-2 (round3-android/read-error.log): one marker's read error must not
+    // drop another share's notice.
+    val root = File(temp.root, "share-inbox").apply { mkdirs() }
+    File(root, ".receiving-occ-1").writeText("first share")
+    File(root, ".receiving-occ-2").mkdir() // reading it throws
+    val lost = InboxWriter(root, Recorder().files).interrupted(null)
+    assertEquals(setOf("first share", "a shared item"), lost.map { it.summary }.toSet())
+    assertTrue(File(root, ".receiving-occ-1").exists())
+  }
+
+  @Test
+  fun aSettledMarkerIsDeletedOnlyAfterTheInboxSync() {
+    val root = File(temp.root, "share-inbox").apply { mkdirs() }
+    File(root, "occ-1").mkdir() // visible, not known to be durable
+    File(root, ".receiving-occ-1").writeText("t")
+    val failing = Recorder().apply { failSyncOf = "share-inbox" }
+    assertTrue(InboxWriter(root, failing.files).interrupted(null).isEmpty())
+    assertTrue(File(root, ".receiving-occ-1").exists()) // kept for the next start
+    val recorder = Recorder()
+    assertTrue(InboxWriter(root, recorder.files).interrupted(null).isEmpty())
+    assertEquals(listOf("sync share-inbox"), recorder.log)
+    assertFalse(File(root, ".receiving-occ-1").exists())
   }
 
   @Test
@@ -253,13 +326,13 @@ class ShareIntakeTest {
     val root = File(temp.root, "share-inbox")
     val writer = InboxWriter(root, Recorder().files)
     writer.publish("occ-1", 7, "t", null, emptyList(), "t")
-    assertEquals(emptyList<String>(), writer.interrupted(null))
+    assertTrue(writer.interrupted(null).isEmpty())
     // Killed after the rename, before the marker was deleted; or already
     // ingested (tombstone): no notice, marker removed.
     File(root, ".receiving-occ-1").writeText("t")
     File(root, ".committed-occ-2").writeText("")
     File(root, ".receiving-occ-2").writeText("u")
-    assertEquals(emptyList<String>(), writer.interrupted(null))
+    assertTrue(writer.interrupted(null).isEmpty())
     assertFalse(File(root, ".receiving-occ-1").exists())
     assertFalse(File(root, ".receiving-occ-2").exists())
   }

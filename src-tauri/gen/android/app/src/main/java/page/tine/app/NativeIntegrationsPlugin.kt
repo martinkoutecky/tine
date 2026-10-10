@@ -87,8 +87,17 @@ class NativeIntegrationsPlugin(private val activity: Activity) : Plugin(activity
     }
     Thread {
       try {
-        for (summary in InboxWriter(inboxRoot(), files).interrupted(keep)) {
-          toast("A share to Tine was interrupted and wasn't saved: $summary. Please share it again.")
+        for (lost in InboxWriter(inboxRoot(), files).interrupted(keep)) {
+          // The marker goes only once its notice is shown (R3-2); a crash
+          // before that repeats the notice at the next start.
+          activity.runOnUiThread {
+            android.widget.Toast.makeText(
+              activity,
+              "A share to Tine was interrupted and wasn't saved: ${lost.summary}. Please share it again.",
+              android.widget.Toast.LENGTH_LONG,
+            ).show()
+            lost.acknowledge()
+          }
         }
       } catch (error: Exception) {
         Log.e(TAG, "couldn't check interrupted shares", error)
@@ -168,6 +177,12 @@ class NativeIntegrationsPlugin(private val activity: Activity) : Plugin(activity
         writer.publish(id, System.currentTimeMillis(), share.text, share.title, resources, ShareIntake.summary(share.text ?: share.title, resources.size))
       }
       if (announce) activity.runOnUiThread { trigger(INBOX_CHANGED, JSObject()) }
+    } catch (unconfirmed: ShareUnconfirmed) {
+      // Visible, so it is ingested as usual; the user is told it may not
+      // have survived, and its marker stays for the next start's check.
+      Log.e(TAG, "couldn't make a share durable", unconfirmed)
+      toast(unconfirmed.message ?: "Tine couldn't make sure the share was saved.")
+      activity.runOnUiThread { trigger(INBOX_CHANGED, JSObject()) }
     } catch (error: Exception) {
       Log.e(TAG, "couldn't save the shared item", error)
       toast(
