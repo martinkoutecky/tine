@@ -27,7 +27,7 @@ icon:: 🗄️
 	- For file sync between devices, run one app at a time on the graph where you can, and let conflict copies (below) catch the rest.
 - ## Snapshots — automatic backups
 	- Each time Tine opens your graph it snapshots every Markdown/Org page in the graph — pages and journals, and pages kept in other folders or at the graph root — plus `logseq/config.edn` and asset `.edn` sidecars, to a local folder **outside** the graph, once opening has gone quiet (a few seconds after startup finishes, at most three minutes) so the copy does not compete with your first page. Syncthing never syncs it. Binary assets, folders listed in `:hidden`, and Tine's own trash and backup folders are not copied.
-	- Settings → **Backups & recovery** → **Snapshots to keep** (default 12) controls how many survive; the oldest beyond the count are pruned.
+	- Settings → **Backups & recovery** → **Snapshots to keep** (default 12) controls how many earlier launches' snapshots survive beside the one this launch took; older ones are pruned.
 	- 1. Pick a snapshot under **Available snapshots** and choose **Restore**, then confirm.
 	- 2. What you should see: Tine saves pending edits, snapshots your current state first, restores backed-up graph text to its original paths, restores config and sidecars, and reloads the graph — a mistaken restore is itself reversible. Pages created after the snapshot are moved into the restore's recovery folder under `logseq/.tine-trash/`, not deleted. A snapshot from an older Tine covers only the pages and journals folders; one made under a different pages or journals folder setting is refused rather than restored into the wrong place.
 - ## Trash

@@ -348,6 +348,10 @@ mod journal_guide_tests {
         // og-B (ADR 0062): snapshots cover text outside pages/ and journals/.
         assert!(files.contains("pages kept in other folders or at the graph root"));
         assert!(files.contains("moved into the restore's recovery folder"));
+        // og-backup-cas N3: the keep-count counts earlier launches only.
+        assert!(
+            files.contains("earlier launches' snapshots survive beside the one this launch took")
+        );
         // og-J2 (master d017d1afc): assets refresh in place after an outside change.
         assert!(files.contains("Files in `assets/` are watched too"));
         assert!(files.contains("An open PDF, audio, or video is not swapped while you use it"));

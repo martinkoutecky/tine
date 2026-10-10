@@ -373,17 +373,19 @@ rename are not counted.
 
 | Launch | Before (schema 3 full copy) | After (schema 4) |
 |---|---|---|
-| First backup | 1,076 files, 1,455,521 bytes, 1,083 syncs | 941 files (940 distinct blobs + manifest), 1,455,277 bytes, 0 syncs |
-| Unchanged graph | 1,076 files, 1,455,521 bytes, 1,083 syncs | 1 file (manifest), 154,899 bytes, 0 syncs |
-| 3 pages edited | 1,076 files, 1,455,599 bytes, 1,083 syncs | 4 files (manifest + 3 blobs), 163,291 bytes, 0 syncs |
+| First backup | 1,076 files, 1,455,521 bytes, 1,083 syncs | 942 files (940 distinct blobs, manifest, `lock`), 1,455,359 bytes, 0 syncs |
+| Unchanged graph | 1,076 files, 1,455,521 bytes, 1,083 syncs | 1 file (manifest), 154,981 bytes, 0 syncs |
+| 3 pages edited | 1,076 files, 1,455,599 bytes, 1,083 syncs | 4 files (manifest + 3 blobs), 163,373 bytes, 0 syncs |
 
 The manifest records the graph root, so its size moves with the root path's
 length. Linux wall time (release build, ext4 on NVMe, 3 alternating runs,
 snapshot plus prune): before 629–771 ms first, 1,027–2,162 ms unchanged,
-671–810 ms after 3 edits; after 102–159 ms, 67–116 ms and 73–116 ms. N
-changed pages cost the manifest plus N blobs of those pages' sizes. Twelve
-retained launch snapshots of an unchanged graph hold the graph's bytes once
-plus twelve manifests (about 3.2 MB here, was about 17.5 MB).
+671–810 ms after 3 edits; after (round 2, with the lock and checksum)
+99–103 ms, 59–61 ms and 59–78 ms. N
+changed pages cost the manifest plus N blobs of those pages' sizes. With
+the default keep-count of 12, an unchanged graph's 13 retained launch
+snapshots hold the graph's bytes once plus 13 manifests (about 3.3 MB here;
+schema 3 kept 12 full copies, about 17.5 MB).
 
 ## I-8 refusal scenarios
 
