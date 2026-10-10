@@ -292,7 +292,9 @@ fn write_manifest(dir: &std::path::Path, manifest: &SnapshotManifest) -> std::io
     record_backup_op("manifest_sync");
     drop(file);
     crate::device_io::move_file_noreplace(&tmp, &path)?;
-    tine_store::directory_durability::sync_directory_entry(dir)
+    tine_store::directory_durability::sync_directory_entry(dir)?;
+    record_backup_op("manifest_dir_sync");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1063,6 +1065,75 @@ mod tests {
             b"- durable\n"
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Launch-backup cost on a real graph (dossier og-backup-cas): files
+    /// created and bytes written under the backup base, sync calls, wall
+    /// time, for a first backup, an unchanged second one, and one after
+    /// three page edits. Runs only on a scratch COPY of a graph:
+    /// `TINE_BACKUP_CORPUS=<copy> cargo test -p tine launch_backup_cost -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "measurement; needs TINE_BACKUP_CORPUS (a scratch copy of a graph)"]
+    fn launch_backup_cost_on_corpus() {
+        let graph = PathBuf::from(std::env::var_os("TINE_BACKUP_CORPUS").expect("TINE_BACKUP_CORPUS"));
+        let base = graph.with_extension("backup-cost");
+        let _ = std::fs::remove_dir_all(&base);
+        let files_under = |dir: &std::path::Path| {
+            let mut out = std::collections::BTreeMap::new();
+            let mut stack = vec![dir.to_path_buf()];
+            while let Some(dir) = stack.pop() {
+                for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                    let meta = entry.metadata().unwrap();
+                    if meta.is_dir() {
+                        stack.push(entry.path());
+                    } else {
+                        out.insert(entry.path(), meta.len());
+                    }
+                }
+            }
+            out
+        };
+        let run = |label: &str| {
+            // Snapshot names have one-second resolution.
+            std::thread::sleep(std::time::Duration::from_millis(1100));
+            let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+            let source = BackupSource::from_store(&store, &graph).unwrap();
+            let before = files_under(&base);
+            BACKUP_OPS.with(|ops| ops.borrow_mut().clear());
+            let started = std::time::Instant::now();
+            let outcome = write_snapshot(&base, &store, source, "", &|| false);
+            prune_backups(&base, BACKUP_KEEP_DEFAULT);
+            let elapsed = started.elapsed();
+            assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
+            let after = files_under(&base);
+            let created: Vec<_> = after.keys().filter(|path| !before.contains_key(*path)).collect();
+            let bytes: u64 = created.iter().map(|path| after[*path]).sum();
+            let ops = BACKUP_OPS.with(|ops| ops.borrow().clone());
+            let syncs = ops.iter().filter(|op| op.ends_with("sync")).count();
+            eprintln!(
+                "BACKUP-COST {label}: graph_files={} created_files={} bytes_written={bytes} syncs={syncs} wall_ms={:.1}",
+                outcome.copied,
+                created.len(),
+                elapsed.as_secs_f64() * 1000.0
+            );
+            store.close();
+        };
+        run("first");
+        run("unchanged");
+        let mut pages: Vec<PathBuf> = std::fs::read_dir(graph.join("pages"))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
+            .collect();
+        pages.sort();
+        for page in &pages[..3] {
+            let mut text = std::fs::read(page).unwrap();
+            text.extend_from_slice(b"\n- backup cost probe edit\n");
+            std::fs::write(page, text).unwrap();
+        }
+        run("three-edits");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
