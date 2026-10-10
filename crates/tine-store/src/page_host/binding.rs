@@ -114,7 +114,7 @@ pub struct Reservation {
 
 impl Reservation {
     /// The reserved keys.
-    pub fn keys(&self) -> &BTreeSet<PageKey> {
+    pub(crate) fn keys(&self) -> &BTreeSet<PageKey> {
         &self.keys
     }
 }
@@ -938,7 +938,7 @@ impl PageHost {
     /// page it holds (§5). `mail` runs on the driver thread. The error says
     /// why no host could start; the app stays on the old engine (the switch
     /// is off in production until lane 3b).
-    pub fn start(
+    pub(crate) fn start(
         store: &Arc<Store>,
         app_data: &Path,
         graph_id: &str,
@@ -952,6 +952,14 @@ impl PageHost {
             binding,
             mail: Arc::new(Mutex::new(Box::new(mail))),
         })
+    }
+
+    /// A host for tests outside this crate (retained writers in
+    /// tine-graph-features): binding 0 under `app_data`, mail discarded.
+    /// Production binds hosts through lane 3b's switch.
+    #[cfg(any(test, feature = "test-faults"))]
+    pub fn start_for_tests(store: &Arc<Store>, app_data: &Path) -> Result<Self, String> {
+        Self::start(store, app_data, "test-graph", 0, |_| {})
     }
 
     fn launch(launch: Launch) -> Result<Self, String> {
@@ -1041,7 +1049,7 @@ impl PageHost {
     }
 
     /// The window generation commands must carry.
-    pub fn generation(&self) -> u64 {
+    pub(crate) fn generation(&self) -> u64 {
         self.driver
             .shared
             .state
@@ -1054,7 +1062,7 @@ impl PageHost {
 
     /// A window reload (`window_crash`): unsent input is lost, admitted
     /// requests keep their custody. Returns the new generation.
-    pub fn window_reloaded(&self) -> u64 {
+    pub(crate) fn window_reloaded(&self) -> u64 {
         self.driver.shared.with_state(|state| {
             state.progress.with_host(|host| {
                 host.window_crash();
@@ -1123,7 +1131,7 @@ impl PageHost {
     /// The page's index moves to the publication consumer here (§5), under
     /// the writer: a watcher reconcile already running for it finishes
     /// first, and the consumer publishes the Open read.
-    pub fn open(
+    pub(crate) fn open(
         &self,
         generation: u64,
         id: u64,
@@ -1224,7 +1232,7 @@ impl PageHost {
     /// `page_submit` (§3.1): serialize against the request's comparison
     /// source, then admit. A refusal here was never sent.
     #[allow(clippy::too_many_arguments)]
-    pub fn submit(
+    pub(crate) fn submit(
         &self,
         generation: u64,
         id: u64,
@@ -1252,7 +1260,7 @@ impl PageHost {
     /// `page_move` (§3.1, §8): both endpoints serialized as ordinary submits
     /// on their versions, admitted as the model's two-page move.
     #[allow(clippy::too_many_arguments)]
-    pub fn move_blocks(
+    pub(crate) fn move_blocks(
         &self,
         generation: u64,
         id: u64,
@@ -1290,7 +1298,7 @@ impl PageHost {
     }
 
     /// `page_discard` (§3.1): the window consumed its unsent input first.
-    pub fn discard(
+    pub(crate) fn discard(
         &self,
         generation: u64,
         id: u64,
@@ -1307,7 +1315,7 @@ impl PageHost {
     }
 
     /// `page_close` (§3.1): the last surface showing the page released it.
-    pub fn close(&self, generation: u64, id: u64, key: &str) -> Result<(), PageRefusal> {
+    pub(crate) fn close(&self, generation: u64, id: u64, key: &str) -> Result<(), PageRefusal> {
         let request = Request {
             id,
             generation,
@@ -1319,7 +1327,7 @@ impl PageHost {
 
     /// `page_delete` (§7): the host's delete operation. D4 refuses a page
     /// with unsaved input; Waiting means the page is busy (retry when clean).
-    pub fn delete(&self, page: &PageId) -> PageOperation {
+    pub(crate) fn delete(&self, page: &PageId) -> PageOperation {
         let (key, spelling, _) = self.identify(page);
         self.register(&key, &spelling);
         match self.locked(|host| host.delete(&key)) {
@@ -1333,7 +1341,7 @@ impl PageHost {
     /// `pages_recoverable` (§4.4): every listed page is clean at or past
     /// that version, or its durable draft holds a version at or past it. A
     /// page the host does not hold has nothing to recover.
-    pub fn pages_recoverable(&self, pages: &[(String, u64)]) -> bool {
+    pub(crate) fn pages_recoverable(&self, pages: &[(String, u64)]) -> bool {
         let state = self.driver.shared.state.lock().unwrap();
         let host = &state.progress.host;
         let drafts = host.logical_drafts();
@@ -1357,7 +1365,7 @@ impl PageHost {
     /// indexed bytes must also hold that block (Q2): a later version without
     /// it does not do, nor does an unsent local restoration. A page the
     /// host does not hold has no save owed, but cannot witness a block.
-    pub fn pages_published(&self, pages: &[(String, u64, Option<String>)]) -> bool {
+    pub(crate) fn pages_published(&self, pages: &[(String, u64, Option<String>)]) -> bool {
         let mut witnesses = Vec::new();
         {
             let state = self.driver.shared.state.lock().unwrap();
@@ -1448,6 +1456,7 @@ impl Drop for PageHost {
 
 #[path = "binding_retained.rs"]
 mod retained;
+pub use retained::RenameRefusal;
 #[cfg(test)]
 #[path = "binding_tests.rs"]
 mod tests;

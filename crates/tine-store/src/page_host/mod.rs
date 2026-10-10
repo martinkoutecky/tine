@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 mod binding;
+pub use binding::{Input, PageHost, RenameRefusal, Reservation, StopMode, Stopped};
 #[cfg(test)]
 mod command_tests;
 #[cfg(test)]

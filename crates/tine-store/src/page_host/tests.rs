@@ -818,7 +818,13 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
                     continue;
                 }
                 if relative == "crates/tine-store/src/lib.rs"
-                    && ["mod page_state;", "mod page_host;"].contains(&line.trim())
+                    && [
+                        "mod page_state;",
+                        "mod page_host;",
+                        // The retained-writer export (PENDING MARTIN).
+                        "pub use page_host::{Input, PageHost, RenameRefusal, Reservation, StopMode, Stopped};",
+                    ]
+                    .contains(&line.trim())
                 {
                     continue;
                 }

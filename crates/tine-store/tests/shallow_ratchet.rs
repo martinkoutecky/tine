@@ -621,6 +621,8 @@ const CONCEPTS: &[&str] = &[
     "WholeGraph: Block refs",
     "WholeGraph: Search/Query",
     "WholeGraph: View meta",
+    // PENDING MARTIN (surface concept): STEP3 §7 retained writers and restore.
+    "Page host",
 ];
 
 /// Bookkeeping, not a concept: the `pub use` lines that re-export items
@@ -1233,6 +1235,14 @@ fn no_cache_or_readiness_state_on_the_surface() {
 
 /// Docs that mention cache/readiness vocabulary without exposing that state.
 const RULE5_DOCS: &[(&str, &str)] = &[
+    (
+        "struct page_host::PageHost",
+        "names the window generation every command carries, a protocol field; nothing answers it",
+    ),
+    (
+        "struct page_host::Reservation",
+        "lists the host steps a reservation fences (open, load, save, draft); no state is returned",
+    ),
     (
         "fn store::Store::diagnostics",
         "the diagnostics dump reports internal build state by design; no caller branches on it",

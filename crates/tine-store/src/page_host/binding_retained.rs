@@ -307,7 +307,7 @@ impl PageHost {
     }
 
     /// Stop the host (see `Drop`).
-    pub fn stop(self) {}
+    pub(crate) fn stop(self) {}
 
     /// Begin a switch or restore stop (§6 step 3, §7 step 3) once the
     /// window has consumed every answer up to `consumed_last_id`: admission
@@ -315,7 +315,7 @@ impl PageHost {
     /// any draft of it. A failed save puts the page at risk, which drafts it
     /// in a switch (the model's switchReq, needed by no page a save-first
     /// order leaves dirty). False: the window has more to drain.
-    pub fn stop_begin(&self, consumed_last_id: u64, mode: StopMode) -> bool {
+    pub(crate) fn stop_begin(&self, consumed_last_id: u64, mode: StopMode) -> bool {
         self.driver.shared.with_state(|state| {
             let closed = state
                 .progress
@@ -332,13 +332,13 @@ impl PageHost {
     }
 
     /// The stop's barrier (§6 step 4) and its abort condition (step 5).
-    pub fn stop_state(&self) -> StopState {
+    pub(crate) fn stop_state(&self) -> StopState {
         let state = self.driver.shared.state.lock().unwrap();
         stop_state(&state.progress, &state.book)
     }
 
     /// Abort the stop: admission reopens and the pages keep their state.
-    pub fn stop_abort(&self) {
+    pub(crate) fn stop_abort(&self) {
         self.driver
             .shared
             .with_state(|state| state.progress.with_host(|host| host.switch_abort()));
@@ -350,7 +350,7 @@ impl PageHost {
     /// watcher indexes every page again. The binding holds no host until
     /// `Stopped::relaunch` (the "restoring" state). Otherwise the host is
     /// handed back.
-    pub fn stop_finish(self) -> Result<Stopped, Self> {
+    pub(crate) fn stop_finish(self) -> Result<Stopped, Self> {
         let stopped = self.driver.shared.with_state(|state| {
             stop_state(&state.progress, &state.book) == StopState::Ready
                 && state.progress.with_host(|host| host.switch_finish()) == Disposition::Applied

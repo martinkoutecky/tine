@@ -277,7 +277,26 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Re-exports (ceiling: 8)
+## Page host (ceiling: 13)
+# PENDING MARTIN (surface concept, STEP3 §7): the binding's page host, exported
+# only for its retained-writer callers (census writers in tine-graph-features,
+# backup restore in src-tauri). The page commands stay crate-private until 3b.
+struct page_host::PageHost
+fn page_host::PageHost::reserve
+fn page_host::PageHost::release
+fn page_host::PageHost::rename
+fn page_host::PageHost::respell
+fn page_host::PageHost::stop_saved
+# test-oracle: tine-graph-features tests bind a host; production binds through lane 3b's switch.
+fn page_host::PageHost::start_for_tests
+struct page_host::Reservation
+enum page_host::Input
+enum page_host::RenameRefusal
+enum page_host::StopMode
+struct page_host::Stopped
+fn page_host::Stopped::relaunch
+## Re-exports (ceiling: 9)
+use crate::page_host::{Input,PageHost,RenameRefusal,Reservation,StopMode,Stopped}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
