@@ -50,9 +50,11 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
         "src-tauri/src/backup.rs",
         "thread::spawn(",
-        1,
-        "GraphSlot background_cancelled",
-        "detached snapshot checks cancellation per entry",
+        // +1 og-backup-cas round 2: `lock_cas`'s bounded wait for the
+        // backup namespace's OS file lock.
+        2,
+        "GraphSlot background_cancelled (launch snapshot); the lock waiter stops when the OS grants or refuses the lock, at the latest when the holding process exits",
+        "detached; the snapshot checks cancellation per entry; the lock waiter's caller waits at most CAS_LOCK_WAIT, and a lock granted after that is dropped (released) when its send finds no receiver",
     ),
     (
         "src-tauri/src/backup.rs",

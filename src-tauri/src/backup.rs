@@ -583,7 +583,10 @@ fn publish_snapshot(
 fn read_manifest(dir: &std::path::Path) -> Option<SnapshotManifest> {
     let bytes = std::fs::read(dir.join(SNAPSHOT_MANIFEST)).ok()?;
     let mut value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let checksum = value.as_object_mut()?.remove(MANIFEST_CHECKSUM);
+    let checksum = value
+        .as_object_mut()?
+        .remove_entry(MANIFEST_CHECKSUM)
+        .map(|(_, checksum)| checksum);
     let checksum_ok =
         checksum.as_ref().and_then(serde_json::Value::as_str) == Some(&manifest_checksum(&value));
     let manifest: SnapshotManifest = serde_json::from_value(value).ok()?;
@@ -1387,9 +1390,8 @@ fn drop_cas_snapshots(cas: &std::path::Path, doomed: &[(&str, &std::path::Path)]
         let Ok(refs) = manifest_refs(&path) else {
             return;
         };
-        for name in refs {
-            victims.remove(&name);
-        }
+        let kept: std::collections::BTreeSet<String> = refs.into_iter().collect();
+        victims.retain(|name| !kept.contains(name));
     }
     let mut hidden = Vec::new();
     for (name, dir) in doomed {
