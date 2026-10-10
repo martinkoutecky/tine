@@ -1,15 +1,17 @@
 //! Concord live-draft conflicts (og family 8e): an editor draft whose ordinary
 //! guarded save was refused because the file changed on disk. The review
 //! compares the draft ("mine") with the file as it is NOW ("theirs"); the
-//! resolve recomputes the same comparison and writes the chosen result through
-//! one guarded store transaction. Nothing here is persisted; the draft itself
-//! lives in the editor, or in the app-private draft store across a restart.
+//! merge recomputes the same comparison and composes the chosen result,
+//! read-only; the old engine's resolve writes it through one guarded store
+//! transaction. Nothing here is persisted; the draft itself lives in the
+//! editor, or in the app-private draft store across a restart.
 //!
 //! Base: the Concord ledger's retained text whose revision equals the draft's
 //! `base_rev` (the bytes the editor loaded or last saved). With it the review is
-//! 3-way and its rows carry suggestions; without it (evicted, unreadable, never
-//! recorded) it is 2-way and nothing is pre-selected. Never an authority: only
-//! a `"merged"` decision reads the base at resolve time.
+//! 3-way and its rows carry suggestions, and names that text by its sha256
+//! (`merge_base_rev`); without it (evicted, unreadable, never recorded) it is
+//! 2-way and nothing is pre-selected. Never an authority: only a `"merged"`
+//! decision reads the base at merge time, by that name.
 //!
 //! A missing file is its own disk revision, `"absent"`: the resolve then
 //! creates the file and refuses when anything (even an empty file) appeared.
@@ -52,17 +54,20 @@ fn disk_rev(read: &Option<(String, FileRev)>) -> String {
         .map_or_else(|| ABSENT.to_owned(), |(_, rev)| rev.clone().into())
 }
 
-/// The retained text the draft was edited from, and its identity token
-/// (sha256 hex). `None` when no candidate has the draft's revision.
+/// A retained text's identity token (sha256 hex): the review's
+/// `merge_base_rev`.
+fn token(text: &str) -> String {
+    format!("{:x}", Sha256::digest(text.as_bytes()))
+}
+
+/// The retained text the draft was edited from, and its identity token.
+/// `None` when no candidate has the draft's revision.
 fn base_for<'a>(bases: &'a [String], base_rev: Option<&str>) -> Option<(&'a str, String)> {
     let wanted = base_rev?;
     let base = bases
         .iter()
         .find(|text| String::from(FileRev::from_bytes(text.as_bytes())) == wanted)?;
-    Some((
-        base.as_str(),
-        format!("{:x}", Sha256::digest(base.as_bytes())),
-    ))
+    Some((base.as_str(), token(base)))
 }
 
 fn sides(
@@ -109,27 +114,84 @@ pub fn live_conflict_diff(
     Ok(diff)
 }
 
-/// Apply the user's per-row `decisions` for the reviewed live conflict and
-/// write the result in one guarded transaction: `SaveBase::Existing` at the
-/// reviewed disk revision, or `CreateNew` when the review showed the file
-/// absent. Returns the written page with its new revision, which the editor
-/// installs. Refusals (each writes nothing):
+/// Compose the result of the user's per-row `decisions` for the reviewed
+/// live conflict, read-only: the page as the editor installs it, without a
+/// revision. The review showed the disk at `conflict_rev` ([`ABSENT`] for a
+/// missing file); a `"merged"` row reads the retained text the review named
+/// `merge_base_rev`. Refusals:
 /// - the disk moved since the review (`live conflict changed on disk`,
 ///   scenario: an external-editor race, sync-service delivery, or an honest
 ///   concurrent instance writing after the review) — the UI refreshes the
 ///   review;
-/// - a `"merged"` row whose reviewed base is gone or different (`merge base
+/// - a `"merged"` row whose reviewed base is no longer retained (`merge base
 ///   changed since the review`, same scenarios moving the ledger);
 /// - an Org file on disk that does not round-trip (malformed imported content).
 ///
-/// Cost O(file + draft + base bytes) plus one page commit.
+/// The caller writes the result guarded by `conflict_rev`, so a write after
+/// this read is the first refusal's race again. Cost O(file + draft + base
+/// bytes).
+#[allow(clippy::too_many_arguments)]
+pub fn merge_live_conflict(
+    store: &Store,
+    path: &str,
+    draft: &PageDto,
+    conflict_rev: &str,
+    merge_base_rev: Option<&str>,
+    bases: &[String],
+    decisions: &HashMap<String, String>,
+    pre_choice: &str,
+) -> io::Result<PageDto> {
+    let file = id(store, path)?;
+    let page = store.as_page(&file).ok_or_else(invalid_path)?;
+    let now = disk(store, &file)?;
+    if disk_rev(&now) != conflict_rev {
+        return Err(changed_on_disk());
+    }
+    if let Some((text, _)) = &now {
+        if format(&file) == Format::Org && !tine_core::org::org_editable(text) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the org file does not round-trip; not merging",
+            ));
+        }
+    }
+    let (fmt, mine, theirs) = sides(&file, draft, &now);
+    let base_doc = match (merge_base_rev, decisions.values().any(|d| d == "merged")) {
+        (Some(wanted), true) => match bases.iter().find(|text| token(text) == wanted) {
+            Some(base) => Some(parse(base, fmt)),
+            None => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "merge base changed since the review",
+                ))
+            }
+        },
+        _ => None,
+    };
+    let roots = sync_diff::merge_blocks3(
+        base_doc.as_ref().map(|doc| doc.roots.as_slice()),
+        &mine.roots,
+        &theirs.roots,
+        None,
+        decisions,
+    )
+    .map_err(merge_refused)?;
+    let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
+    Ok(dto(store, &page, Document { pre_block, roots }))
+}
+
+/// The old engine's apply: [`merge_live_conflict`], written in one guarded
+/// transaction — `SaveBase::Existing` at the reviewed disk revision, or
+/// `CreateNew` when the review showed the file absent. Returns the written
+/// page with its new revision, which the editor installs. Refuses as the
+/// merge does, and as a moved disk revision when the commit's guard fails;
+/// each refusal writes nothing. Cost: the merge plus one page commit.
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_live_conflict(
     store: &Store,
     host: Option<&PageHost>,
     path: &str,
     draft: &PageDto,
-    base_rev: Option<&str>,
     conflict_rev: &str,
     merge_base_rev: Option<&str>,
     bases: &[String],
@@ -147,44 +209,23 @@ pub fn resolve_live_conflict(
         discover,
         |_| changed_on_disk(),
         |_| {
-            let now = disk(store, &file)?;
-            if disk_rev(&now) != conflict_rev {
-                return Err(changed_on_disk());
-            }
-            if let Some((text, _)) = &now {
-                if format(&file) == Format::Org && !tine_core::org::org_editable(text) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        "the org file does not round-trip; not merging",
-                    ));
-                }
-            }
-            let (fmt, mine, theirs) = sides(&file, draft, &now);
-            let base_doc = match (merge_base_rev, decisions.values().any(|d| d == "merged")) {
-                (Some(token), true) => match base_for(bases, base_rev) {
-                    Some((base, current)) if current == token => Some(parse(base, fmt)),
-                    _ => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::AlreadyExists,
-                            "merge base changed since the review",
-                        ))
-                    }
-                },
-                _ => None,
-            };
-            let roots = sync_diff::merge_blocks3(
-                base_doc.as_ref().map(|doc| doc.roots.as_slice()),
-                &mine.roots,
-                &theirs.roots,
-                None,
+            let mut merged = merge_live_conflict(
+                store,
+                path,
+                draft,
+                conflict_rev,
+                merge_base_rev,
+                bases,
                 decisions,
-            )
-            .map_err(merge_refused)?;
-            let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
-            let mut merged = dto(store, &page, Document { pre_block, roots });
-            let (kind, base) = match &now {
-                Some((_, rev)) => (EditKind::ReplacePage, SaveBase::Existing(rev.clone())),
-                None => (EditKind::CreatePage, SaveBase::CreateNew),
+                pre_choice,
+            )?;
+            let (kind, base) = if conflict_rev == ABSENT {
+                (EditKind::CreatePage, SaveBase::CreateNew)
+            } else {
+                (
+                    EditKind::ReplacePage,
+                    SaveBase::Existing(FileRev::from(conflict_rev.to_owned())),
+                )
             };
             let mut tx = store.transaction(Some(kind));
             tx.save_page(&[kind], &page, base, &merged);

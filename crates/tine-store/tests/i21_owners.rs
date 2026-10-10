@@ -69,6 +69,14 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         "caller awaits blocking result",
     ),
     (
+        "src-tauri/src/host_retirement.rs",
+        ".spawn(move ||",
+        // Step 3b P1: one thread per retiring slot whose host runs.
+        1,
+        "the retiring host's stop completing, or `HostRetirement::adopt` by a reopen of its root (the thread then finds its slot unclaimed and returns)",
+        "detached; app exit waits on `HostRetirement::wait_idle` (30 s bound), and the thread removes its slot from the map before it ends",
+    ),
+    (
         "src-tauri/src/graph.rs",
         ".spawn(move ||",
         1,
@@ -141,7 +149,8 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         "spawn_blocking(",
         // +2 og-A: duplicate_journal_diff and resolve_duplicate_journal_day,
         // each awaited by its own command future like the six before them.
-        8,
+        // +1 step 3b R6: merge_live_conflict, likewise.
+        9,
         "command future",
         "caller awaits blocking result",
     ),
@@ -229,6 +238,7 @@ fn production_acquisitions_have_owners() {
         "src-tauri/src/commands.rs",
         "src-tauri/src/commands/concord.rs",
         "src-tauri/src/graph.rs",
+        "src-tauri/src/host_retirement.rs",
         "src-tauri/src/settings.rs",
         "src-tauri/src/state.rs",
         "src-tauri/src/watcher.rs",

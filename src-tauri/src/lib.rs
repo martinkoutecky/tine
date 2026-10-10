@@ -84,8 +84,9 @@ use commands::{
 };
 use concord::{
     conflict_inventory, duplicate_journal_diff, list_sync_conflicts, live_conflict_diff,
-    resolve_duplicate_journal_day, resolve_live_conflict, resolve_sync_conflict,
-    resolve_vcs_marker_conflict, sync_conflict_diff, trash_sync_conflict, vcs_marker_conflict_diff,
+    merge_live_conflict, resolve_duplicate_journal_day, resolve_live_conflict,
+    resolve_sync_conflict, resolve_vcs_marker_conflict, sync_conflict_diff, trash_sync_conflict,
+    vcs_marker_conflict_diff,
 };
 use debug::{
     debug_header, debug_info, debug_init, debug_log, diag, diag_private, install_panic_logger,
@@ -1056,6 +1057,7 @@ pub fn run() {
             vcs_marker_conflict_diff,
             resolve_vcs_marker_conflict,
             live_conflict_diff,
+            merge_live_conflict,
             resolve_live_conflict,
             trash_journal_file,
             read_journal_file,

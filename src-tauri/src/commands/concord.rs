@@ -276,17 +276,52 @@ pub(crate) async fn live_conflict_diff(
     .map_err(|error| error.to_string())?
 }
 
-/// Resolve a reviewed live-draft conflict: recompute the review from the same
-/// draft and the disk at `conflict_rev`, apply `decisions`, and write the page
-/// in one guarded transaction. Returns the written page (with its revision)
-/// for the editor to install; "conflict" when the disk or the reviewed base
-/// moved since the review (nothing written).
+/// Compose a reviewed live-draft conflict's result, read-only (step 3b R6):
+/// recompute the review from the same draft and the disk at `conflict_rev`
+/// and apply `decisions`. The page host's client submits the answer as a
+/// resolve at `conflict_rev`; "conflict" when the disk or the reviewed base
+/// moved since the review.
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
+pub(crate) async fn merge_live_conflict(
+    path: String,
+    page: tine_core::model::PageDto,
+    conflict_rev: String,
+    merge_base_rev: Option<String>,
+    decisions: std::collections::HashMap<String, String>,
+    pre_choice: Option<String>,
+    state: GraphContext<'_>,
+) -> Result<tine_core::model::PageDto, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let bases = if merge_base_rev.is_some() {
+            page_bases(&slot, &path)
+        } else {
+            Vec::new()
+        };
+        tine_graph_features::live_conflict::merge_live_conflict(
+            &slot.store,
+            &path,
+            &page,
+            &conflict_rev,
+            merge_base_rev.as_deref(),
+            &bases,
+            &decisions,
+            pre_choice.as_deref().unwrap_or("union"),
+        )
+        .map_err(sync_conflict_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Resolve a reviewed live-draft conflict (the old engine's apply): the merge
+/// above, written in one guarded transaction. Returns the written page (with
+/// its revision) for the editor to install; "conflict" when the disk or the
+/// reviewed base moved since the review (nothing written).
+#[tauri::command]
 pub(crate) async fn resolve_live_conflict(
     path: String,
     page: tine_core::model::PageDto,
-    base_rev: Option<String>,
     conflict_rev: String,
     merge_base_rev: Option<String>,
     decisions: std::collections::HashMap<String, String>,
@@ -305,7 +340,6 @@ pub(crate) async fn resolve_live_conflict(
             slot.host_slot().running(),
             &path,
             &page,
-            base_rev.as_deref(),
             &conflict_rev,
             merge_base_rev.as_deref(),
             &bases,

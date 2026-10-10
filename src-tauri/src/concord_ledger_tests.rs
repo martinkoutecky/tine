@@ -763,7 +763,9 @@ fn a_master_layout_ledger_tree_is_byte_identical_after_og_opens_saves_and_prunes
 /// 2-way and still resolves (the ledger never blocks a resolve).
 #[test]
 fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
-    use tine_graph_features::live_conflict::{live_conflict_diff, resolve_live_conflict};
+    use tine_graph_features::live_conflict::{
+        live_conflict_diff, merge_live_conflict, resolve_live_conflict,
+    };
     for (label, usable) in [("live-ledger", true), ("live-no-ledger", false)] {
         let dir = scratch(label);
         std::fs::write(dir.join("graph/pages/Desk.md"), body("seed")).unwrap();
@@ -794,12 +796,29 @@ fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
         assert_eq!(diff.three_way, usable, "{label}");
         let decisions = preselected(&diff);
         assert_eq!(decisions.values().any(|d| d == "merged"), usable, "{label}");
+        // Step 3b R6: the merge alone is read-only and composes exactly what
+        // the apply writes, the base found by the review's name for it.
+        let merged = merge_live_conflict(
+            &slot.store,
+            "pages/Desk.md",
+            &draft,
+            &diff.conflict_rev,
+            diff.merge_base_rev.as_deref(),
+            &bases,
+            &decisions,
+            "union",
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("graph/pages/Desk.md")).unwrap(),
+            body("Desktop 5 kk"),
+            "{label}: the merge wrote"
+        );
         let resolved = resolve_live_conflict(
             &slot.store,
             None,
             "pages/Desk.md",
             &draft,
-            Some(&base_rev),
             &diff.conflict_rev,
             diff.merge_base_rev.as_deref(),
             &bases,
@@ -816,6 +835,10 @@ fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
             }
         }
         assert!(resolved.rev.is_some());
+        let raws = |page: &tine_core::model::PageDto| -> Vec<String> {
+            page.blocks.iter().map(|block| block.raw.clone()).collect()
+        };
+        assert_eq!(raws(&merged), raws(&resolved), "{label}");
         drop(slot);
         let _ = std::fs::remove_dir_all(dir);
     }

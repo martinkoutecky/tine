@@ -11,7 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::PageDto;
 use tine_core::sync_diff::{DiffRow, RowKind};
-use tine_graph_features::live_conflict::{live_conflict_diff, resolve_live_conflict, ABSENT};
+use tine_graph_features::live_conflict::{
+    live_conflict_diff, merge_live_conflict, resolve_live_conflict, ABSENT,
+};
 use tine_store::{FileRev, PageId, Store};
 
 const PAGE: &str = "pages/Desk.md";
@@ -96,7 +98,6 @@ fn a_live_conflict_uses_the_editor_base_and_guarded_resolution() {
         None,
         PAGE,
         &page,
-        Some(&base_rev),
         &diff.conflict_rev,
         diff.merge_base_rev.as_deref(),
         &bases,
@@ -136,7 +137,6 @@ fn without_the_editor_base_the_review_is_two_way_and_keeps_both() {
         None,
         PAGE,
         &page,
-        Some(&base_rev),
         &diff.conflict_rev,
         None,
         &foreign,
@@ -149,7 +149,6 @@ fn without_the_editor_base_the_review_is_two_way_and_keeps_both() {
         None,
         PAGE,
         &page,
-        Some(&base_rev),
         &diff.conflict_rev,
         None,
         &foreign,
@@ -184,7 +183,6 @@ fn a_newer_external_write_refuses_and_writes_nothing_until_rereviewed() {
         None,
         PAGE,
         &page,
-        Some(&base_rev),
         &diff.conflict_rev,
         None,
         &[],
@@ -204,7 +202,6 @@ fn a_newer_external_write_refuses_and_writes_nothing_until_rereviewed() {
         None,
         PAGE,
         &page,
-        Some(&base_rev),
         &fresh.conflict_rev,
         None,
         &[],
@@ -243,7 +240,6 @@ fn a_stale_ledger_base_refuses_a_merged_row_and_loses_nothing() {
             None,
             PAGE,
             &page,
-            Some(&base_rev),
             &diff.conflict_rev,
             diff.merge_base_rev.as_deref(),
             &moved,
@@ -263,7 +259,6 @@ fn a_stale_ledger_base_refuses_a_merged_row_and_loses_nothing() {
         None,
         PAGE,
         &page,
-        Some(&base_rev),
         &diff.conflict_rev,
         diff.merge_base_rev.as_deref(),
         &bases,
@@ -274,6 +269,51 @@ fn a_stale_ledger_base_refuses_a_merged_row_and_loses_nothing() {
     assert_eq!(
         fs::read_to_string(root.join(PAGE)).unwrap(),
         body("Desktop kk")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Step 3b R6: the merge the page host's client submits is read-only. A
+/// `"merged"` row reads the retained text the review named, wherever the
+/// ledger now lists it among newer texts; the disk is untouched.
+#[test]
+fn a_merge_reads_the_reviewed_base_by_its_name_and_writes_nothing() {
+    let root = scratch("merge-read-only");
+    const ID: &str = "aaaaaaaa-0000-0000-0000-0000000000e9";
+    let body = |text: &str| format!("- shared intro\n- {text}\n  id:: {ID}\n");
+    let base = body("Desktop 5");
+    fs::write(root.join(PAGE), &base).unwrap();
+    let store = open(&root);
+    let (page, base_rev) = draft(&store, 1, &format!("Desktop\nid:: {ID}"));
+    external(&root, &body("Desktop 5 kk"));
+    let diff = live_conflict_diff(
+        &store,
+        PAGE,
+        &page,
+        Some(&base_rev),
+        std::slice::from_ref(&base),
+    )
+    .unwrap();
+    let chosen = decisions(&diff);
+    assert!(chosen.values().any(|d| d == "merged"), "{:?}", diff.rows);
+    let grown = vec![body("Desktop 6"), base];
+    let merged = merge_live_conflict(
+        &store,
+        PAGE,
+        &page,
+        &diff.conflict_rev,
+        diff.merge_base_rev.as_deref(),
+        &grown,
+        &chosen,
+        "union",
+    )
+    .unwrap();
+    assert_eq!(merged.blocks[1].raw, format!("Desktop kk\nid:: {ID}"));
+    assert_eq!(merged.rev, None, "a merge has no written revision");
+    assert_eq!(
+        fs::read_to_string(root.join(PAGE)).unwrap(),
+        body("Desktop 5 kk"),
+        "the merge wrote"
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -299,7 +339,6 @@ fn an_absent_file_review_is_read_only_and_apply_recreates_only_if_still_absent()
         None,
         PAGE,
         &page,
-        Some(&base_rev),
         ABSENT,
         None,
         &[],
@@ -315,7 +354,6 @@ fn an_absent_file_review_is_read_only_and_apply_recreates_only_if_still_absent()
         None,
         PAGE,
         &page,
-        Some(&base_rev),
         ABSENT,
         None,
         &[],
