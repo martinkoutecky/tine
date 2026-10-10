@@ -21,10 +21,18 @@ use tine_core::model::{
 };
 use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use tine_core::sync_diff::{self, SyncConflictDiff};
-use tine_store::{Area, FileId, FileRev, PageId, SaveBase, Store};
+use tine_store::{Area, FileId, FileRev, Input, PageHost, PageId, SaveBase, Store};
 
 pub(crate) fn invalid_path() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "invalid file path")
+}
+
+/// A guarded resolve's refusal: `what` changed on disk since the review.
+fn changed(what: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!("{what} changed on disk"),
+    )
 }
 
 pub(crate) fn id(store: &Store, rel: &str) -> io::Result<FileId> {
@@ -654,6 +662,7 @@ pub(crate) fn dto(store: &Store, id: &PageId, mut doc: Document) -> PageDto {
 /// four attempts.
 pub fn resolve_sync_conflict(
     store: &Store,
+    host: Option<&PageHost>,
     winner: &str,
     conflict: &str,
     decisions: &HashMap<String, String>,
@@ -683,6 +692,7 @@ pub fn resolve_sync_conflict(
     }
     fold_pair(
         store,
+        host,
         (&win, &conf),
         decisions,
         (base_rev, conflict_rev),
@@ -694,9 +704,13 @@ pub fn resolve_sync_conflict(
 
 /// The guarded two-file fold shared by a sync copy and a duplicate journal
 /// day, once the caller has proved the pairing: `conf` is merged into `win`
-/// per the row decisions and trashed recoverably, in one transaction.
+/// per the row decisions and trashed recoverably, in one transaction. A
+/// retained writer (STEP3 §7) of both pages: unsaved input in either is
+/// refused as a change on disk would be, so the fold never drops it.
+#[allow(clippy::too_many_arguments)]
 fn fold_pair(
     store: &Store,
+    host: Option<&PageHost>,
     (win, conf): (&FileId, &FileId),
     decisions: &HashMap<String, String>,
     (base_rev, conflict_rev): (&str, &str),
@@ -705,81 +719,87 @@ fn fold_pair(
     pre_choice: &str,
 ) -> io::Result<()> {
     let page = store.as_page(win).ok_or_else(invalid_path)?;
-    crate::retry_on_conflict("conflict files changed repeatedly during merge", || {
-        let (mine, win_rev) = read_text(store, win)?;
-        let (theirs, conf_rev) = read_text(store, conf)?;
-        if String::from(win_rev.clone()) != base_rev {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "winner changed on disk",
-            ));
-        }
-        if String::from(conf_rev.clone()) != conflict_rev {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "conflict copy changed on disk",
-            ));
-        }
-        let fmt = format(win);
-        if fmt == Format::Org
-            && (!tine_core::org::org_editable(&mine) || !tine_core::org::org_editable(&theirs))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "an org file in this pair does not round-trip; not merging",
-            ));
-        }
-        let mine_doc = parse(&mine, fmt);
-        let their_doc = parse(&theirs, format(conf));
-        // Only a `"merged"` row reads the base (mine/theirs/both do not), so a
-        // base that is gone or different blocks nothing else: a ledger read
-        // failure never refuses a resolve. For a merged row, scenario:
-        // sync-service delivery or an honest concurrent instance moved the
-        // ledger between review and apply; the user must review the body the
-        // merge would now compute.
-        let wants_merged = decisions.values().any(|d| d == "merged");
-        let base_doc = match (merge_base_rev, wants_merged) {
-            (Some(token), true) => match pick_base(bases, &mine, &theirs) {
-                Some((base, current)) if current == token => Some(parse(base, fmt)),
-                _ => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::AlreadyExists,
-                        "merge base changed since the review",
-                    ))
-                }
-            },
-            _ => None,
-        };
-        // A forged `"merged"` decision on a 2-way review refuses the whole
-        // resolve (malformed input).
-        let roots = sync_diff::merge_blocks3(
-            base_doc.as_ref().map(|doc| doc.roots.as_slice()),
-            &mine_doc.roots,
-            &their_doc.roots,
-            None,
-            decisions,
-        )
-        .map_err(merge_refused)?;
-        let pre_block = choose_pre(pre_choice, fmt, &mine_doc, &their_doc)?;
-        let merged = dto(store, &page, Document { pre_block, roots });
-        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-        tx.save_page(
-            &[
-                tine_store::EditKind::ReplacePage,
-                tine_store::EditKind::DeletePage,
-            ],
-            &page,
-            SaveBase::Existing(win_rev),
-            &merged,
-        );
-        tx.trash(conf, conf_rev, tine_store::TrashIf::Any);
-        Ok(crate::commit_retry(tx.commit())?.then_some(()))
+    let copy = store.as_page(conf);
+    let refused = |key: &str| match copy.as_ref() {
+        Some(copy) if copy.as_str().eq_ignore_ascii_case(key) => changed("conflict copy"),
+        _ => changed("winner"),
+    };
+    let discover = || Ok(crate::retained::pages(store, [win, conf]));
+    crate::retained::reserved(host, Input::Refuse, discover, refused, |_| {
+        crate::retry_on_conflict("conflict files changed repeatedly during merge", || {
+            let (mine, win_rev) = read_text(store, win)?;
+            let (theirs, conf_rev) = read_text(store, conf)?;
+            if String::from(win_rev.clone()) != base_rev {
+                return Err(changed("winner"));
+            }
+            if String::from(conf_rev.clone()) != conflict_rev {
+                return Err(changed("conflict copy"));
+            }
+            let fmt = format(win);
+            if fmt == Format::Org
+                && (!tine_core::org::org_editable(&mine) || !tine_core::org::org_editable(&theirs))
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "an org file in this pair does not round-trip; not merging",
+                ));
+            }
+            let mine_doc = parse(&mine, fmt);
+            let their_doc = parse(&theirs, format(conf));
+            // Only a `"merged"` row reads the base (mine/theirs/both do not), so a
+            // base that is gone or different blocks nothing else: a ledger read
+            // failure never refuses a resolve. For a merged row, scenario:
+            // sync-service delivery or an honest concurrent instance moved the
+            // ledger between review and apply; the user must review the body the
+            // merge would now compute.
+            let wants_merged = decisions.values().any(|d| d == "merged");
+            let base_doc = match (merge_base_rev, wants_merged) {
+                (Some(token), true) => match pick_base(bases, &mine, &theirs) {
+                    Some((base, current)) if current == token => Some(parse(base, fmt)),
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            "merge base changed since the review",
+                        ))
+                    }
+                },
+                _ => None,
+            };
+            // A forged `"merged"` decision on a 2-way review refuses the whole
+            // resolve (malformed input).
+            let roots = sync_diff::merge_blocks3(
+                base_doc.as_ref().map(|doc| doc.roots.as_slice()),
+                &mine_doc.roots,
+                &their_doc.roots,
+                None,
+                decisions,
+            )
+            .map_err(merge_refused)?;
+            let pre_block = choose_pre(pre_choice, fmt, &mine_doc, &their_doc)?;
+            let merged = dto(store, &page, Document { pre_block, roots });
+            let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+            tx.save_page(
+                &[
+                    tine_store::EditKind::ReplacePage,
+                    tine_store::EditKind::DeletePage,
+                ],
+                &page,
+                SaveBase::Existing(win_rev),
+                &merged,
+            );
+            tx.trash(conf, conf_rev, tine_store::TrashIf::Any);
+            Ok(crate::commit_retry(tx.commit())?.then_some(()))
+        })
     })
 }
 
 /// Recoverably trash only a sync copy, with four revision-guard retries. Cost
 /// O(copy bytes) per attempt.
-pub fn trash_sync_conflict(store: &Store, conflict: &str) -> io::Result<()> {
+pub fn trash_sync_conflict(
+    store: &Store,
+    host: Option<&PageHost>,
+    conflict: &str,
+) -> io::Result<()> {
     let conf = id(store, conflict)?;
     let stem = conf
         .as_str()
@@ -790,14 +810,23 @@ pub fn trash_sync_conflict(store: &Store, conflict: &str) -> io::Result<()> {
     if !stem.is_some_and(|stem| sync_conflict_base(stem).is_some()) {
         return Err(invalid_path());
     }
-    crate::retry_on_conflict("conflict copy changed repeatedly during trash", || {
-        crate::trash_current(
-            store,
-            &conf,
-            Some(tine_store::PARSE_INPUT_MAX_BYTES),
-            "no such conflict file",
-        )
-    })
+    let discover = || Ok(crate::retained::pages(store, [&conf]));
+    crate::retained::reserved(
+        host,
+        Input::Refuse,
+        discover,
+        crate::retained::unsaved,
+        |_| {
+            crate::retry_on_conflict("conflict copy changed repeatedly during trash", || {
+                crate::trash_current(
+                    store,
+                    &conf,
+                    Some(tine_store::PARSE_INPUT_MAX_BYTES),
+                    "no such conflict file",
+                )
+            })
+        },
+    )
 }
 
 /// Two-way diff of a duplicate journal day's canonical file against one stray
@@ -829,8 +858,10 @@ pub fn duplicate_journal_diff(
 /// change re-sorted the day; never a merge of two unrelated pages); a
 /// cross-format pair (malformed pairing: an Org body would be rewritten as
 /// Markdown or the reverse). Cost O(journal listing + both file bytes).
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_duplicate_journal_day(
     store: &Store,
+    host: Option<&PageHost>,
     canonical: &str,
     stray: &str,
     decisions: &HashMap<String, String>,
@@ -876,6 +907,7 @@ pub fn resolve_duplicate_journal_day(
     }
     fold_pair(
         store,
+        host,
         (&keep, &other),
         decisions,
         (base_rev, stray_rev),
@@ -1396,6 +1428,7 @@ pub fn vcs_marker_conflict_diff(
 /// four attempts.
 pub fn resolve_vcs_marker_conflict(
     store: &Store,
+    host: Option<&PageHost>,
     rel: &str,
     decisions: &HashMap<String, String>,
     base_rev: &str,
@@ -1403,55 +1436,58 @@ pub fn resolve_vcs_marker_conflict(
 ) -> io::Result<()> {
     let file = id(store, rel)?;
     let page = store.as_page(&file).ok_or_else(invalid_path)?;
-    crate::retry_on_conflict("marker file changed repeatedly during resolve", || {
-        let (content, rev) = read_text(store, &file)?;
-        // Scenario: the VCS or an external editor changed the file after the
-        // review was computed; the user must review the new version.
-        if String::from(rev.clone()) != base_rev {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "file changed on disk",
-            ));
-        }
-        let Some(sides) = parse_vcs_marker_sides(&content, format(&file)) else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "no VCS merge conflict markers to resolve",
-            ));
-        };
-        let fmt = format(&file);
-        // Scenario: malformed imported Org — a side that does not round-trip
-        // would be rewritten lossily.
-        if fmt == Format::Org
-            && (!tine_core::org::org_editable(&sides.mine)
-                || !tine_core::org::org_editable(&sides.theirs))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "an org side of this merge does not round-trip; not resolving",
-            ));
-        }
-        let mine = parse(&sides.mine, fmt);
-        let theirs = parse(&sides.theirs, fmt);
-        let base = sides.base.as_deref().map(|text| parse(text, fmt));
-        let artifact = sides.suggested.as_deref().map(|text| parse(text, fmt));
-        let roots = sync_diff::merge_blocks3(
-            base.as_ref().map(|doc| doc.roots.as_slice()),
-            &mine.roots,
-            &theirs.roots,
-            artifact.as_ref().map(|doc| doc.roots.as_slice()),
-            decisions,
-        )
-        .map_err(merge_refused)?;
-        let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
-        let merged = dto(store, &page, Document { pre_block, roots });
-        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-        tx.save_page(
-            &[tine_store::EditKind::ReplacePage],
-            &page,
-            SaveBase::ResolvingMarkers(rev),
-            &merged,
-        );
-        Ok(crate::commit_retry(tx.commit())?.then_some(()))
+    // A retained writer (STEP3 §7): unsaved input on the page is refused as
+    // a change on disk would be.
+    let refused = |_: &str| changed("file");
+    let discover = || Ok(vec![page.clone()]);
+    crate::retained::reserved(host, Input::Refuse, discover, refused, |_| {
+        crate::retry_on_conflict("marker file changed repeatedly during resolve", || {
+            let (content, rev) = read_text(store, &file)?;
+            // Scenario: the VCS or an external editor changed the file after the
+            // review was computed; the user must review the new version.
+            if String::from(rev.clone()) != base_rev {
+                return Err(changed("file"));
+            }
+            let Some(sides) = parse_vcs_marker_sides(&content, format(&file)) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "no VCS merge conflict markers to resolve",
+                ));
+            };
+            let fmt = format(&file);
+            // Scenario: malformed imported Org — a side that does not round-trip
+            // would be rewritten lossily.
+            if fmt == Format::Org
+                && (!tine_core::org::org_editable(&sides.mine)
+                    || !tine_core::org::org_editable(&sides.theirs))
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "an org side of this merge does not round-trip; not resolving",
+                ));
+            }
+            let mine = parse(&sides.mine, fmt);
+            let theirs = parse(&sides.theirs, fmt);
+            let base = sides.base.as_deref().map(|text| parse(text, fmt));
+            let artifact = sides.suggested.as_deref().map(|text| parse(text, fmt));
+            let roots = sync_diff::merge_blocks3(
+                base.as_ref().map(|doc| doc.roots.as_slice()),
+                &mine.roots,
+                &theirs.roots,
+                artifact.as_ref().map(|doc| doc.roots.as_slice()),
+                decisions,
+            )
+            .map_err(merge_refused)?;
+            let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
+            let merged = dto(store, &page, Document { pre_block, roots });
+            let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+            tx.save_page(
+                &[tine_store::EditKind::ReplacePage],
+                &page,
+                SaveBase::ResolvingMarkers(rev),
+                &merged,
+            );
+            Ok(crate::commit_retry(tx.commit())?.then_some(()))
+        })
     })
 }

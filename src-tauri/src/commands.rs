@@ -786,6 +786,7 @@ pub(crate) async fn delete_page(
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::pages::delete_page_expected(
             &slot.store,
+            slot.host.read().unwrap().running(),
             &name,
             kind,
             expected_path.as_deref(),
@@ -810,6 +811,7 @@ pub(crate) async fn rename_page(
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::pages::rename_or_merge_page(
             &slot.store,
+            slot.host.read().unwrap().running(),
             &old,
             &new,
             expected_path.as_deref(),
@@ -2276,8 +2278,12 @@ pub(crate) async fn apply_journal_filename_migrations(
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         crate::backup::snapshot_before_rewrite(&app, &slot, "pre-journal-rename")?;
-        let result = journals::migrate_journal_filenames(&slot.store, &migrations)
-            .map_err(|error| error.to_string())?;
+        let result = journals::migrate_journal_filenames(
+            &slot.store,
+            slot.host.read().unwrap().running(),
+            &migrations,
+        )
+        .map_err(|error| error.to_string())?;
         Ok(result)
     })
     .await
@@ -2292,8 +2298,12 @@ pub(crate) async fn trash_journal_file(
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     crate::state::off_ui(move || {
-        tine_graph_features::journals::trash_journal_file(&slot.store, &name)
-            .map_err(|e| e.to_string())
+        tine_graph_features::journals::trash_journal_file(
+            &slot.store,
+            slot.host.read().unwrap().running(),
+            &name,
+        )
+        .map_err(|e| e.to_string())
     })
     .await
 }
@@ -2337,8 +2347,13 @@ pub(crate) async fn merge_pages(
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pages::merge_pages(&slot.store, &src, &dst)
-            .map_err(graph_write_error_to_wire)
+        tine_graph_features::pages::merge_pages(
+            &slot.store,
+            slot.host.read().unwrap().running(),
+            &src,
+            &dst,
+        )
+        .map_err(graph_write_error_to_wire)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2375,8 +2390,13 @@ pub(crate) async fn rename_file_to_page(
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pages::rename_file_to_page(&slot.store, &path, &new_name)
-            .map_err(|error| error.to_string())
+        tine_graph_features::pages::rename_file_to_page(
+            &slot.store,
+            slot.host.read().unwrap().running(),
+            &path,
+            &new_name,
+        )
+        .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2437,6 +2457,7 @@ pub(crate) async fn write_highlights(
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::pdf::write_highlights(
             &slot.store,
+            slot.host.read().unwrap().running(),
             &pdf,
             &label,
             &highlights,

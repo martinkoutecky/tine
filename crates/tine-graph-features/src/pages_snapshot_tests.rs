@@ -14,7 +14,7 @@ fn rename_plan_keeps_its_view_during_concurrent_referrer_write() {
     disk::write(root.join("pages/Referrer.md"), "- [[Old]] before\n").unwrap();
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let written = AtomicBool::new(false);
-    rename_page_after_inventory(&store, "Old", "New", None, None, &[], || {
+    rename_page_after_inventory(&store, None, "Old", "New", None, None, &[], || {
         if written.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -60,9 +60,15 @@ fn delete_detects_an_external_twin_before_selecting_a_file() {
     let _ = store.whole_graph().unwrap();
     disk::write(root.join("pages/Old.org"), "* org\n").unwrap();
 
-    assert!(
-        delete_page_expected(&store, "Old", tine_core::model::PageKind::Page, None, None).is_err()
-    );
+    assert!(delete_page_expected(
+        &store,
+        None,
+        "Old",
+        tine_core::model::PageKind::Page,
+        None,
+        None
+    )
+    .is_err());
     assert!(root.join("pages/Old.md").exists());
     assert!(root.join("pages/Old.org").exists());
     store.close();
@@ -371,4 +377,60 @@ fn force_save_refuses_changed_header_properties_and_preamble_loss() {
     assert_eq!(cached.blocks.len(), 1);
     store.close();
     disk::remove_dir_all(root).unwrap();
+}
+
+/// STEP3 §7, F10, E17: with a host the command routes a single page's
+/// rename, with or without a file, to the host's own operation; a namespace
+/// rename or a merge to a retained transaction that flushes unsaved input
+/// first; and an interrupted title completion to one that refuses it.
+#[test]
+fn a_hosted_rename_routes_by_the_plan_shape() {
+    let root = std::env::temp_dir().join(format!(
+        "tine-rename-routing-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = disk::remove_dir_all(&root);
+    disk::create_dir_all(root.join("pages")).unwrap();
+    disk::create_dir_all(root.join("logseq")).unwrap();
+    disk::write(
+        root.join("logseq/config.edn"),
+        "{:file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
+    for (name, text) in [
+        ("Start.md", "- [[Ghost]]\n"),
+        ("Ns.md", "- ns\n"),
+        ("Ns___child.md", "- child\n"),
+        ("Into.md", "- into\n"),
+        ("Merged.md", "- merged\n"),
+        ("Done.md", "title:: Half\n\n- interrupted\n"),
+    ] {
+        disk::write(root.join("pages").join(name), text).unwrap();
+    }
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let shape = |old: &str, new: &str, into: Option<&str>| {
+        let plan = plan_rename(&store, old, new, None, into, &|| {}).unwrap();
+        let single = plan.single(&store).unwrap();
+        let single =
+            single.map(|(source, target)| (source.as_str().to_owned(), target.as_str().to_owned()));
+        (single, plan.input())
+    };
+    let pair = |source: &str, target: &str| Some((source.to_owned(), target.to_owned()));
+    assert_eq!(
+        shape("Start", "Begin", None),
+        (pair("pages/Start.md", "pages/Begin.md"), Input::Flush)
+    );
+    assert_eq!(
+        shape("Ghost", "Spirit", None),
+        (pair("pages/Ghost.md", "pages/Spirit.md"), Input::Flush)
+    );
+    assert_eq!(shape("Ns", "Space", None), (None, Input::Flush));
+    assert_eq!(
+        shape("Merged", "Into", Some("pages/Into.md")),
+        (None, Input::Flush)
+    );
+    assert_eq!(shape("Half", "Done", None), (None, Input::Refuse));
+    store.close();
+    let _ = disk::remove_dir_all(root);
 }

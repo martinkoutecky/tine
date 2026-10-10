@@ -45,7 +45,7 @@ fn rename_cost_at_scale() {
     let read_before = bytes_read();
     tine_store::cost_counters::reset();
     let started = Instant::now();
-    pages::rename_page_expected(&store, &old, &new, None).unwrap();
+    pages::rename_page_expected(&store, None, &old, &new, None).unwrap();
     let rename = started.elapsed();
     let counts = tine_store::cost_counters::snapshot();
     let read = bytes_read() - read_before;

@@ -17,7 +17,7 @@ fn merge_source_preamble_survives_in_lsdoc_tree() {
     .unwrap();
     fs::write(root.join("pages/dst.md"), b"alias:: Destination\n- kept\n").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
-    pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+    pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
     let bytes = fs::read_to_string(root.join("pages/dst.md")).unwrap();
     let projection = lsdoc::parse_format(&bytes, "md");
     let tree = serde_json::to_string(&projection).unwrap();

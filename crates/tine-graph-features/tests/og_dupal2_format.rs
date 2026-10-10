@@ -37,6 +37,7 @@ fn uppercase_org_merge_keeps_source_header_and_outline() {
     let store = Store::open(root.path(), Default::default()).unwrap().0;
     tine_graph_features::pages::rename_or_merge_page(
         &store,
+        None,
         "Old",
         "New",
         None,

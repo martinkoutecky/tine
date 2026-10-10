@@ -8,7 +8,9 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use tine_core::model::{Format, PageDto, PageKind};
 use tine_core::pdf::{self, Highlight, PdfState};
-use tine_store::{Area, Content, FileId, FileRev, PageId, SaveBase, Store, StoreError};
+use tine_store::{
+    Area, Content, FileId, FileRev, Input, PageHost, PageId, SaveBase, Store, StoreError,
+};
 
 use crate::store_error;
 
@@ -382,9 +384,12 @@ fn rollback_pdf_area_file(
 /// After commit, crop/legacy trash moves are best effort and do not fail this
 /// call; a failed one is reported through `diag_line` and the leftover stays. Cost O(asset entries + sidecar + page + deleted crop bytes + deleted
 /// crops × sidecar bytes) per retry, plus graph refresh when the annotation
-/// page is absent (up to O(P)).
+/// page is absent (up to O(P)). A retained writer (STEP3 §7) of the
+/// annotation page under both names and formats: its unsaved input is
+/// saved first.
 pub fn write_highlights(
     store: &Store,
+    host: Option<&PageHost>,
     pdf_name: &str,
     label: &str,
     highlights: &[Highlight],
@@ -400,183 +405,206 @@ pub fn write_highlights(
     let old_name = pdf::hls_page_name(&legacy);
     let base: HashMap<&str, &Highlight> =
         base_highlights.iter().map(|h| (h.id.as_str(), h)).collect();
-    crate::retry_on_conflict("highlight sidecar changed repeatedly during update", || {
-        let current = optional(store, &primary)?;
-        let old = if current.is_none() {
-            legacy_id
-                .as_ref()
-                .map(|id| optional(store, id))
-                .transpose()?
-                .flatten()
-        } else {
-            None
-        };
-        let raw = current
-            .as_ref()
-            .or(old.as_ref())
-            .map(|(raw, _)| raw.as_str())
-            .unwrap_or("");
-        valid_edn(raw)?;
-        let disk = pdf::parse_highlights(raw);
-        let have: HashSet<&str> = highlights.iter().map(|h| h.id.as_str()).collect();
-        let disk_by_id: HashMap<&str, &Highlight> =
-            disk.iter().map(|h| (h.id.as_str(), h)).collect();
-        if highlights.iter().any(|local| {
-            base.get(local.id.as_str()).is_some_and(|loaded| {
-                *loaded != local && !disk_by_id.contains_key(local.id.as_str())
-            })
-        }) || base.iter().any(|(id, loaded)| {
-            !have.contains(id)
-                && disk_by_id
-                    .get(id)
-                    .is_some_and(|current| *current != *loaded)
-        }) {
-            return Err(io::Error::new(
+    let discover = || {
+        let files: Vec<_> = [&name, &old_name]
+            .into_iter()
+            .flat_map(|name| ["md", "org"].map(|ext| format!("{name}.{ext}")))
+            .filter_map(|rel| store.file_id(Area::Pages, &rel).ok())
+            .collect();
+        Ok(crate::retained::pages(store, &files))
+    };
+    crate::retained::reserved(
+        host,
+        Input::Flush,
+        discover,
+        crate::retained::unsaved,
+        |_| {
+            crate::retry_on_conflict("highlight sidecar changed repeatedly during update", || {
+                let current = optional(store, &primary)?;
+                let old = if current.is_none() {
+                    legacy_id
+                        .as_ref()
+                        .map(|id| optional(store, id))
+                        .transpose()?
+                        .flatten()
+                } else {
+                    None
+                };
+                let raw = current
+                    .as_ref()
+                    .or(old.as_ref())
+                    .map(|(raw, _)| raw.as_str())
+                    .unwrap_or("");
+                valid_edn(raw)?;
+                let disk = pdf::parse_highlights(raw);
+                let have: HashSet<&str> = highlights.iter().map(|h| h.id.as_str()).collect();
+                let disk_by_id: HashMap<&str, &Highlight> =
+                    disk.iter().map(|h| (h.id.as_str(), h)).collect();
+                if highlights.iter().any(|local| {
+                    base.get(local.id.as_str()).is_some_and(|loaded| {
+                        *loaded != local && !disk_by_id.contains_key(local.id.as_str())
+                    })
+                }) || base.iter().any(|(id, loaded)| {
+                    !have.contains(id)
+                        && disk_by_id
+                            .get(id)
+                            .is_some_and(|current| *current != *loaded)
+                }) {
+                    return Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
                 "highlight edit conflicts with a concurrent deletion or edit; local changes remain unsaved",
             ));
-        }
-        let mut merged: Vec<Highlight> = highlights
-            .iter()
-            .filter_map(|local| {
-                match (
-                    base.get(local.id.as_str()),
-                    disk_by_id.get(local.id.as_str()),
-                ) {
-                    (Some(loaded), Some(current)) => Some(merge_highlight(loaded, local, current)),
-                    (Some(loaded), None) if *loaded == local => None,
-                    _ => Some(local.clone()),
                 }
+                let mut merged: Vec<Highlight> = highlights
+                    .iter()
+                    .filter_map(|local| {
+                        match (
+                            base.get(local.id.as_str()),
+                            disk_by_id.get(local.id.as_str()),
+                        ) {
+                            (Some(loaded), Some(current)) => {
+                                Some(merge_highlight(loaded, local, current))
+                            }
+                            (Some(loaded), None) if *loaded == local => None,
+                            _ => Some(local.clone()),
+                        }
+                    })
+                    .collect();
+                for item in &disk {
+                    if !have.contains(item.id.as_str()) && !base.contains_key(item.id.as_str()) {
+                        merged.push(item.clone());
+                    }
+                }
+                let next = pdf::write_highlights(&merged, raw);
+                let (mut page, existing) = page_id(store, &name)?;
+                let (legacy_page_id, legacy_page) =
+                    if existing.is_none() && legacy != key && legacy_id.is_some() {
+                        let (id, value) = page_id(store, &old_name)?;
+                        (Some(id), value)
+                    } else {
+                        (None, None)
+                    };
+                if existing.is_none() && legacy_page.is_some() {
+                    let ext = if format(legacy_page_id.as_ref().unwrap()) == Format::Org {
+                        "org"
+                    } else {
+                        "md"
+                    };
+                    let file = store
+                        .file_id(Area::Pages, &format!("{name}.{ext}"))
+                        .map_err(store_error)?;
+                    page = store.as_page(&file).expect("annotation page");
+                }
+                let page_raw = existing
+                    .as_ref()
+                    .or(legacy_page.as_ref())
+                    .map(|(raw, _)| raw.as_str());
+                if format(&page) == Format::Org
+                    && page_raw.is_some_and(|raw| !tine_core::org::org_editable(raw))
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "org highlight page is read-only (does not round-trip)",
+                    ));
+                }
+                let prior = page_raw.map(|raw| parse_doc(raw, format(&page)));
+                // Only highlights this write knows were deleted lose their page block;
+                // an annotation whose sidecar entry is unreadable or not yet synced is
+                // not ours to remove (L01 H1/H2).
+                let merged_ids: HashSet<&str> =
+                    merged.iter().map(|item| item.id.as_str()).collect();
+                let removed: HashSet<String> = disk
+                    .iter()
+                    .map(|item| item.id.as_str())
+                    .chain(base.keys().copied())
+                    .filter(|id| !merged_ids.contains(id))
+                    .map(str::to_owned)
+                    .collect();
+                let doc = pdf::merge_hls_page_for_format(
+                    prior.as_ref(),
+                    pdf_name,
+                    label,
+                    &merged,
+                    &removed,
+                    format(&page),
+                );
+                let page_dto = dto(&page, &name, &doc);
+                let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+                match current.as_ref() {
+                    Some((_, rev)) => {
+                        tx.replace(&primary, rev.clone(), next.clone().into_bytes());
+                    }
+                    None => {
+                        tx.create(&primary, Content::Bytes(next.clone().into_bytes()));
+                    }
+                }
+                if let (Some(id), Some((raw, rev))) = (legacy_id.as_ref(), old.as_ref()) {
+                    tx.replace(id, rev.clone(), raw.clone().into_bytes());
+                }
+                if let (Some(id), Some((raw, rev))) =
+                    (legacy_page_id.as_ref(), legacy_page.as_ref())
+                {
+                    if optional(store, &id.file())?.as_ref() != Some(&(raw.clone(), rev.clone())) {
+                        return Ok(None);
+                    }
+                }
+                let base = existing.map_or(SaveBase::CreateNew, |(_, rev)| SaveBase::Existing(rev));
+                tx.save_page(&[tine_store::EditKind::ReplacePage], &page, base, &page_dto);
+                if !crate::commit_retry(tx.commit())? {
+                    return Ok(None);
+                }
+                if let (Some(id), Some((_, rev))) = (legacy_id.as_ref(), old.as_ref()) {
+                    let mut cleanup = store.transaction(None);
+                    cleanup.trash(id, rev.clone(), tine_store::TrashIf::Any);
+                    report_cleanup(cleanup.commit(), LEGACY_SIDECAR_LEFT);
+                }
+                let source_key = if old.is_some() { &legacy } else { &key };
+                let merged_ids: HashSet<&str> =
+                    merged.iter().map(|item| item.id.as_str()).collect();
+                let active_stamps: HashSet<i64> =
+                    merged.iter().filter_map(|item| item.image).collect();
+                for item in disk
+                    .iter()
+                    .filter(|item| item.image.is_some() && !merged_ids.contains(item.id.as_str()))
+                {
+                    let stamp = item.image.unwrap();
+                    if active_stamps.contains(&stamp) {
+                        continue;
+                    }
+                    let crop_name = format!("{}_{}_{}.png", item.page, item.id, stamp);
+                    if crop_name.contains('/') || crop_name.contains('\\') {
+                        continue;
+                    }
+                    let crop_rel = if source_key.is_empty() {
+                        crop_name.clone()
+                    } else {
+                        format!("{source_key}/{crop_name}")
+                    };
+                    let Ok(crop) = asset(store, &crop_rel) else {
+                        continue;
+                    };
+                    if legacy_id
+                        .as_ref()
+                        .is_some_and(|id| !matches!(optional(store, id), Ok(None)))
+                    {
+                        continue;
+                    }
+                    // An already-missing crop is the state we want; any other failure
+                    // leaves an orphan image behind.
+                    match rollback_pdf_area_file(store, pdf_name, &crop, &item.id, stamp) {
+                        Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                            tine_core::diag_line::diagnostic_line(DELETED_CROP_LEFT);
+                        }
+                        _ => {}
+                    }
+                }
+                if let (Some(id), Some((_, rev))) = (legacy_page_id, legacy_page) {
+                    let mut cleanup = store.transaction(Some(tine_store::EditKind::DeletePage));
+                    cleanup.trash(&id.file(), rev, tine_store::TrashIf::Any);
+                    report_cleanup(cleanup.commit(), LEGACY_PAGE_LEFT);
+                }
+                Ok(Some(merged))
             })
-            .collect();
-        for item in &disk {
-            if !have.contains(item.id.as_str()) && !base.contains_key(item.id.as_str()) {
-                merged.push(item.clone());
-            }
-        }
-        let next = pdf::write_highlights(&merged, raw);
-        let (mut page, existing) = page_id(store, &name)?;
-        let (legacy_page_id, legacy_page) =
-            if existing.is_none() && legacy != key && legacy_id.is_some() {
-                let (id, value) = page_id(store, &old_name)?;
-                (Some(id), value)
-            } else {
-                (None, None)
-            };
-        if existing.is_none() && legacy_page.is_some() {
-            let ext = if format(legacy_page_id.as_ref().unwrap()) == Format::Org {
-                "org"
-            } else {
-                "md"
-            };
-            let file = store
-                .file_id(Area::Pages, &format!("{name}.{ext}"))
-                .map_err(store_error)?;
-            page = store.as_page(&file).expect("annotation page");
-        }
-        let page_raw = existing
-            .as_ref()
-            .or(legacy_page.as_ref())
-            .map(|(raw, _)| raw.as_str());
-        if format(&page) == Format::Org
-            && page_raw.is_some_and(|raw| !tine_core::org::org_editable(raw))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "org highlight page is read-only (does not round-trip)",
-            ));
-        }
-        let prior = page_raw.map(|raw| parse_doc(raw, format(&page)));
-        // Only highlights this write knows were deleted lose their page block;
-        // an annotation whose sidecar entry is unreadable or not yet synced is
-        // not ours to remove (L01 H1/H2).
-        let merged_ids: HashSet<&str> = merged.iter().map(|item| item.id.as_str()).collect();
-        let removed: HashSet<String> = disk
-            .iter()
-            .map(|item| item.id.as_str())
-            .chain(base.keys().copied())
-            .filter(|id| !merged_ids.contains(id))
-            .map(str::to_owned)
-            .collect();
-        let doc = pdf::merge_hls_page_for_format(
-            prior.as_ref(),
-            pdf_name,
-            label,
-            &merged,
-            &removed,
-            format(&page),
-        );
-        let page_dto = dto(&page, &name, &doc);
-        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-        match current.as_ref() {
-            Some((_, rev)) => {
-                tx.replace(&primary, rev.clone(), next.clone().into_bytes());
-            }
-            None => {
-                tx.create(&primary, Content::Bytes(next.clone().into_bytes()));
-            }
-        }
-        if let (Some(id), Some((raw, rev))) = (legacy_id.as_ref(), old.as_ref()) {
-            tx.replace(id, rev.clone(), raw.clone().into_bytes());
-        }
-        if let (Some(id), Some((raw, rev))) = (legacy_page_id.as_ref(), legacy_page.as_ref()) {
-            if optional(store, &id.file())?.as_ref() != Some(&(raw.clone(), rev.clone())) {
-                return Ok(None);
-            }
-        }
-        let base = existing.map_or(SaveBase::CreateNew, |(_, rev)| SaveBase::Existing(rev));
-        tx.save_page(&[tine_store::EditKind::ReplacePage], &page, base, &page_dto);
-        if !crate::commit_retry(tx.commit())? {
-            return Ok(None);
-        }
-        if let (Some(id), Some((_, rev))) = (legacy_id.as_ref(), old.as_ref()) {
-            let mut cleanup = store.transaction(None);
-            cleanup.trash(id, rev.clone(), tine_store::TrashIf::Any);
-            report_cleanup(cleanup.commit(), LEGACY_SIDECAR_LEFT);
-        }
-        let source_key = if old.is_some() { &legacy } else { &key };
-        let merged_ids: HashSet<&str> = merged.iter().map(|item| item.id.as_str()).collect();
-        let active_stamps: HashSet<i64> = merged.iter().filter_map(|item| item.image).collect();
-        for item in disk
-            .iter()
-            .filter(|item| item.image.is_some() && !merged_ids.contains(item.id.as_str()))
-        {
-            let stamp = item.image.unwrap();
-            if active_stamps.contains(&stamp) {
-                continue;
-            }
-            let crop_name = format!("{}_{}_{}.png", item.page, item.id, stamp);
-            if crop_name.contains('/') || crop_name.contains('\\') {
-                continue;
-            }
-            let crop_rel = if source_key.is_empty() {
-                crop_name.clone()
-            } else {
-                format!("{source_key}/{crop_name}")
-            };
-            let Ok(crop) = asset(store, &crop_rel) else {
-                continue;
-            };
-            if legacy_id
-                .as_ref()
-                .is_some_and(|id| !matches!(optional(store, id), Ok(None)))
-            {
-                continue;
-            }
-            // An already-missing crop is the state we want; any other failure
-            // leaves an orphan image behind.
-            match rollback_pdf_area_file(store, pdf_name, &crop, &item.id, stamp) {
-                Err(error) if error.kind() != io::ErrorKind::NotFound => {
-                    tine_core::diag_line::diagnostic_line(DELETED_CROP_LEFT);
-                }
-                _ => {}
-            }
-        }
-        if let (Some(id), Some((_, rev))) = (legacy_page_id, legacy_page) {
-            let mut cleanup = store.transaction(Some(tine_store::EditKind::DeletePage));
-            cleanup.trash(&id.file(), rev, tine_store::TrashIf::Any);
-            report_cleanup(cleanup.commit(), LEGACY_PAGE_LEFT);
-        }
-        Ok(Some(merged))
-    })
+        },
+    )
 }

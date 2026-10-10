@@ -20,7 +20,7 @@ fn k1_merge_race_worker() {
     if let Ok(boundary) = std::env::var("TINE_K1_KILL_BOUNDARY") {
         graph.inject_fault(FaultPoint::AbortAfterStep(boundary.parse().unwrap()));
     }
-    let result = tine_graph_features::pages::merge_pages(&graph, "pages/A.md", "pages/B.md");
+    let result = tine_graph_features::pages::merge_pages(&graph, None, "pages/A.md", "pages/B.md");
     eprintln!("merge worker result: {result:?}");
 }
 

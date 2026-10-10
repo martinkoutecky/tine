@@ -84,6 +84,7 @@ fn a_copy_of_a_parenthesised_page_is_listed_against_it_and_never_merged_elsewher
     let decisions: HashMap<String, String> = HashMap::new();
     let refused = conflicts::resolve_sync_conflict(
         &store,
+        None,
         "pages/Meeting.md",
         copy,
         &decisions,

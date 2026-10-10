@@ -69,7 +69,7 @@ fn namespace_rename_keeps_the_child_suffix_across_spellings() {
                 ("pages/Ref.md", &format!("- see [[{child_title}]]\n")),
             ],
         );
-        pages::rename_page_expected(&store, typed_old, "New", None)
+        pages::rename_page_expected(&store, None, typed_old, "New", None)
             .unwrap_or_else(|e| panic!("{label}: {e}"));
         assert_eq!(
             owner(&store, "New/x").as_deref(),
@@ -109,10 +109,18 @@ fn merge_keeps_a_fenced_preamble_line_inside_its_fence() {
                 ],
             );
             if plain {
-                pages::merge_pages(&store, "pages/Old.md", "pages/New.md").unwrap();
+                pages::merge_pages(&store, None, "pages/Old.md", "pages/New.md").unwrap();
             } else {
-                pages::rename_or_merge_page(&store, "Old", "New", None, Some("pages/New.md"), &[])
-                    .unwrap();
+                pages::rename_or_merge_page(
+                    &store,
+                    None,
+                    "Old",
+                    "New",
+                    None,
+                    Some("pages/New.md"),
+                    &[],
+                )
+                .unwrap();
             }
             let merged = read(&root, "pages/New.md");
             let at = format!("{label}, plain merge {plain}");
@@ -158,7 +166,8 @@ fn org_merge_keeps_a_directive_example_inside_its_block() {
             ("pages/New.org", "#+CATEGORY: work\n* survivor block\n"),
         ],
     );
-    pages::rename_or_merge_page(&store, "Old", "New", None, Some("pages/New.org"), &[]).unwrap();
+    pages::rename_or_merge_page(&store, None, "Old", "New", None, Some("pages/New.org"), &[])
+        .unwrap();
     let merged = read(&root, "pages/New.org");
     assert!(merged.contains(example), "{merged}");
     assert!(merged.starts_with("#+CATEGORY: work\n"), "{merged}");
@@ -180,7 +189,8 @@ fn rename_merge_keeps_a_source_block_equal_to_a_survivor_block() {
             ("pages/New.md", "- only in new\n- repeated\n"),
         ],
     );
-    pages::rename_or_merge_page(&store, "Old", "New", None, Some("pages/New.md"), &[]).unwrap();
+    pages::rename_or_merge_page(&store, None, "Old", "New", None, Some("pages/New.md"), &[])
+        .unwrap();
     let merged = read(&root, "pages/New.md");
     assert_eq!(merged.matches("- repeated").count(), 2, "{merged}");
     assert!(merged.contains("- only in new"), "{merged}");

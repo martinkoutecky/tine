@@ -31,12 +31,12 @@ fn delete_after_external_removal_accepts_the_displayed_path_without_writes() {
         let revision = pages::get_page(&store, name, kind).unwrap().unwrap().rev;
         fs::remove_file(root.path().join(path)).unwrap();
         store.refresh(tine_store::Depth::Stamps).unwrap();
-        pages::delete_page_expected(&store, name, kind, Some(path), Some(&revision)).unwrap();
+        pages::delete_page_expected(&store, None, name, kind, Some(path), Some(&revision)).unwrap();
         // Repeated Delete and restart are equally harmless; no trash or page is created.
-        pages::delete_page_expected(&store, name, kind, Some(path), None).unwrap();
+        pages::delete_page_expected(&store, None, name, kind, Some(path), None).unwrap();
         drop(store);
         let reopened = Store::open(root.path(), Default::default()).unwrap().0;
-        pages::delete_page_expected(&reopened, name, kind, Some(path), None).unwrap();
+        pages::delete_page_expected(&reopened, None, name, kind, Some(path), None).unwrap();
         assert!(!root.path().join(path).exists());
         assert!(!root.path().join("logseq/.tine-trash").exists());
         assert_eq!(
@@ -51,9 +51,15 @@ fn delete_after_external_removal_accepts_the_displayed_path_without_writes() {
 fn absent_identity_does_not_trash_a_live_file_with_a_changed_title() {
     let bytes = "title:: Someone Else\n\n- external editor content\n";
     let (root, store) = fixture(&[("pages/Old.md", bytes)]);
-    let error =
-        pages::delete_page_expected(&store, "Old", PageKind::Page, Some("pages/Old.md"), None)
-            .unwrap_err();
+    let error = pages::delete_page_expected(
+        &store,
+        None,
+        "Old",
+        PageKind::Page,
+        Some("pages/Old.md"),
+        None,
+    )
+    .unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
     assert_eq!(
         fs::read_to_string(root.path().join("pages/Old.md")).unwrap(),
@@ -64,10 +70,15 @@ fn absent_identity_does_not_trash_a_live_file_with_a_changed_title() {
 #[test]
 fn removed_file_does_not_authorize_deleting_a_replacement_claimant() {
     let (root, store) = fixture(&[("pages/Replacement.md", "title:: Old\n\n- replacement\n")]);
-    assert!(
-        pages::delete_page_expected(&store, "Old", PageKind::Page, Some("pages/Old.md"), None)
-            .is_err()
-    );
+    assert!(pages::delete_page_expected(
+        &store,
+        None,
+        "Old",
+        PageKind::Page,
+        Some("pages/Old.md"),
+        None
+    )
+    .is_err());
     assert_eq!(
         fs::read(root.path().join("pages/Replacement.md")).unwrap(),
         b"title:: Old\n\n- replacement\n"
@@ -79,16 +90,22 @@ fn absent_delete_still_refuses_invalid_paths_and_ambiguous_twins() {
     let (root, store) = fixture(&[("pages/Old.md", "- one\n"), ("pages/Old.org", "* two\n")]);
     assert!(pages::delete_page_expected(
         &store,
+        None,
         "Absent",
         PageKind::Page,
         Some("../Outside.md"),
         None
     )
     .is_err());
-    assert!(
-        pages::delete_page_expected(&store, "Old", PageKind::Page, Some("pages/Old.md"), None)
-            .is_err()
-    );
+    assert!(pages::delete_page_expected(
+        &store,
+        None,
+        "Old",
+        PageKind::Page,
+        Some("pages/Old.md"),
+        None
+    )
+    .is_err());
     assert_eq!(
         fs::read(root.path().join("pages/Old.md")).unwrap(),
         b"- one\n"

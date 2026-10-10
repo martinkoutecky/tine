@@ -537,6 +537,7 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
     );
     conflicts::resolve_sync_conflict(
         &store,
+        None,
         "pages/Foo.md",
         &conflict,
         &HashMap::new(),
@@ -556,7 +557,7 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
     // The separate discard operation preserves the same bytes too.
     fs::write(new_root.join("pages").join(conflict_name), "- next\n").unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    conflicts::trash_sync_conflict(&store, &conflict).unwrap();
+    conflicts::trash_sync_conflict(&store, None, &conflict).unwrap();
     assert_disk_tree(
         &new_root,
         "conflict_clients_match_legacy_values_and_disk_bytes",
@@ -601,7 +602,7 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
         format!("{listed:?}"),
         r#"[JournalFilenameMigration { from: "Jun 19th, 2026.md", to: "2026_06_19.md" }]"#
     );
-    let migration = journals::migrate_journal_filenames(&store, &listed).unwrap();
+    let migration = journals::migrate_journal_filenames(&store, None, &listed).unwrap();
     assert_eq!((migration.migrated, migration.skipped.len()), (1, 0));
     assert!(new_root.join("journals/Jun 20th, 2026.md").exists());
     assert!(new_root.join("journals/Jun 18th, 2026.org").exists());
@@ -611,7 +612,7 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
         "journal_clients_match_legacy_feed_conflicts_read_trash_and_migration",
         "after_migration",
     );
-    journals::trash_journal_file(&store, "Jun 20th, 2026.md").unwrap();
+    journals::trash_journal_file(&store, None, "Jun 20th, 2026.md").unwrap();
     assert_disk_tree(
         &new_root,
         "journal_clients_match_legacy_feed_conflicts_read_trash_and_migration",
@@ -632,6 +633,7 @@ fn external_write_during_resolve_rolls_back_winner_and_keeps_external_copy() {
     store.inject_fault(FaultPoint::Stage2MismatchAt(1));
     assert!(conflicts::resolve_sync_conflict(
         &store,
+        None,
         "pages/Foo.md",
         conflict,
         &HashMap::new(),
@@ -660,6 +662,7 @@ fn resolve_preblock_keep_choices_match_legacy_bytes() {
             .unwrap();
         conflicts::resolve_sync_conflict(
             &store,
+            None,
             "pages/Foo.md",
             conflict,
             &HashMap::new(),
@@ -689,7 +692,7 @@ fn failed_journal_repair_restores_legacy_filename() {
     fs::write(root.join("journals/Jun 18th, 2026.md"), "- preserve\n").unwrap();
     let listed = journals::journal_filename_migrations(&store).unwrap();
     store.inject_fault(FaultPoint::MidStepIoAt(0));
-    let migration = journals::migrate_journal_filenames(&store, &listed).unwrap();
+    let migration = journals::migrate_journal_filenames(&store, None, &listed).unwrap();
     assert_eq!(migration.migrated, 0);
     assert_eq!(
         fs::read(root.join("journals/Jun 18th, 2026.md")).unwrap(),
@@ -882,7 +885,7 @@ fn pdf_open_is_read_only_until_first_annotation() {
         );
     }
     let item = highlight("first");
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[item.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[item.clone()], &[]).unwrap();
     let annotated = disk_tree(&root);
     assert!(root.join("assets/paper.edn").exists());
     assert!(root.join("pages/hls__paper.md").exists());
@@ -956,7 +959,7 @@ fn highlights_first_write_and_update_persist_both_artifacts() {
         (vec![highlight("a")], vec![]),
         (vec![highlight("a"), highlight("b")], vec![highlight("a")]),
     ] {
-        pdf::write_highlights(&store, "paper.pdf", "Paper", &items, &base).unwrap();
+        pdf::write_highlights(&store, None, "paper.pdf", "Paper", &items, &base).unwrap();
         for rel in ["assets/paper.edn", "pages/hls__paper.md"] {
             assert!(!fs::read(a.join(rel)).unwrap().is_empty(), "{rel}");
         }
@@ -968,15 +971,24 @@ fn highlights_first_write_and_update_persist_both_artifacts() {
 fn highlight_save_preserves_external_recolour_when_local_value_is_unchanged() {
     let (_root, store) = fixture("hl-external-recolour");
     let loaded = highlight("a");
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
     let mut external = loaded.clone();
     external.color = "green".into();
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[external], &[loaded.clone()]).unwrap();
+    pdf::write_highlights(
+        &store,
+        None,
+        "paper.pdf",
+        "Paper",
+        &[external],
+        &[loaded.clone()],
+    )
+    .unwrap();
 
     let mut added = highlight("b");
     added.color = "blue".into();
     pdf::write_highlights(
         &store,
+        None,
         "paper.pdf",
         "Paper",
         &[loaded.clone(), added],
@@ -994,13 +1006,21 @@ fn highlight_save_preserves_external_recolour_when_local_value_is_unchanged() {
 fn highlight_save_merges_disjoint_local_and_external_fields() {
     let (_root, store) = fixture("hl-disjoint-fields");
     let loaded = highlight("a");
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
     let mut external = loaded.clone();
     external.text = Some("external text".into());
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[external], &[loaded.clone()]).unwrap();
+    pdf::write_highlights(
+        &store,
+        None,
+        "paper.pdf",
+        "Paper",
+        &[external],
+        &[loaded.clone()],
+    )
+    .unwrap();
     let mut local = loaded.clone();
     local.color = "blue".into();
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[local], &[loaded]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[local], &[loaded]).unwrap();
     let saved = pdf::read_highlights(&store, "paper.pdf");
     assert_eq!(saved[0].color, "blue");
     assert_eq!(
@@ -1014,10 +1034,17 @@ fn highlight_save_merges_disjoint_local_and_external_fields() {
 fn highlight_save_keeps_external_deletion_when_local_value_is_unchanged() {
     let (_root, store) = fixture("hl-external-deletion");
     let loaded = highlight("a");
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[], &[loaded.clone()]).unwrap();
-    let committed =
-        pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[loaded]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[], &[loaded.clone()]).unwrap();
+    let committed = pdf::write_highlights(
+        &store,
+        None,
+        "paper.pdf",
+        "Paper",
+        &[loaded.clone()],
+        &[loaded],
+    )
+    .unwrap();
     assert!(
         committed.is_empty(),
         "C1 #13: an unchanged local copy must not resurrect an externally deleted highlight"
@@ -1029,8 +1056,8 @@ fn highlight_save_keeps_external_deletion_when_local_value_is_unchanged() {
 fn highlight_save_conflicts_when_local_edit_meets_external_deletion() {
     let (root, store) = fixture("hl-edit-after-delete");
     let loaded = highlight("a");
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[], &[loaded.clone()]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[], &[loaded.clone()]).unwrap();
     let before: Vec<_> = ["assets/paper.edn", "pages/hls__paper.md"]
         .iter()
         .map(|rel| fs::read(root.join(rel)).unwrap())
@@ -1038,7 +1065,7 @@ fn highlight_save_conflicts_when_local_edit_meets_external_deletion() {
     let mut local = loaded.clone();
     local.color = "red".into();
     let error =
-        pdf::write_highlights(&store, "paper.pdf", "Paper", &[local], &[loaded]).unwrap_err();
+        pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[local], &[loaded]).unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
     for (rel, expected) in ["assets/paper.edn", "pages/hls__paper.md"]
         .iter()
@@ -1053,15 +1080,24 @@ fn highlight_save_conflicts_when_local_edit_meets_external_deletion() {
 fn highlight_save_conflicts_when_local_deletion_meets_external_edit() {
     let (root, store) = fixture("hl-delete-after-edit");
     let loaded = highlight("a");
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
     let mut external = loaded.clone();
     external.color = "green".into();
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[external], &[loaded.clone()]).unwrap();
+    pdf::write_highlights(
+        &store,
+        None,
+        "paper.pdf",
+        "Paper",
+        &[external],
+        &[loaded.clone()],
+    )
+    .unwrap();
     let before: Vec<_> = ["assets/paper.edn", "pages/hls__paper.md"]
         .iter()
         .map(|rel| fs::read(root.join(rel)).unwrap())
         .collect();
-    let error = pdf::write_highlights(&store, "paper.pdf", "Paper", &[], &[loaded]).unwrap_err();
+    let error =
+        pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[], &[loaded]).unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
     for (rel, expected) in ["assets/paper.edn", "pages/hls__paper.md"]
         .iter()
@@ -1254,7 +1290,7 @@ fn old_vs_new_matrix_on_identical_fixtures() {
         (vec![highlight("a")], vec![]),
         (vec![highlight("a"), highlight("b")], vec![highlight("a")]),
     ] {
-        pdf::write_highlights(&store, "paper.pdf", "Paper", &items, &base).unwrap();
+        pdf::write_highlights(&store, None, "paper.pdf", "Paper", &items, &base).unwrap();
         same("assets/paper.edn");
         same("pages/hls__paper.md");
     }
@@ -1296,7 +1332,7 @@ fn highlights_retry_external_sidecar_write_and_preserve_foreign_data() {
     )
     .unwrap();
     store.inject_fault(FaultPoint::Stage2ValidSidecar);
-    pdf::write_highlights(&store, "other.pdf", "Other", &[highlight("h")], &[]).unwrap();
+    pdf::write_highlights(&store, None, "other.pdf", "Other", &[highlight("h")], &[]).unwrap();
     let edn = fs::read_to_string(root.join("assets/other.edn")).unwrap();
     assert!(edn.contains("external") && edn.contains("h"));
     assert!(
@@ -1333,7 +1369,15 @@ fn legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration() {
     pdf::open_pdf(&store, pdf_name, "My Paper").unwrap();
     assert!(!a.join("assets").join(format!("{key}.edn")).exists());
     assert_eq!(fs::read(a.join("assets").join(format!("{legacy}.edn"))).unwrap(), b"{:highlights [{:id \"one\" :page 1 :position {:page 1 :bounding {:top 0 :left 0 :width 1 :height 1} :rects ()} :content {:text \"one\"} :properties {:color \"yellow\"}}] :extra {}}\n");
-    pdf::write_highlights(&store, pdf_name, "My Paper", &[h.clone()], &[h.clone()]).unwrap();
+    pdf::write_highlights(
+        &store,
+        None,
+        pdf_name,
+        "My Paper",
+        &[h.clone()],
+        &[h.clone()],
+    )
+    .unwrap();
     for rel in [format!("assets/{key}.edn"), format!("pages/hls__{key}.md")] {
         assert_fixture_file(
             &a,
@@ -1413,7 +1457,7 @@ fn malformed_sidecar_refusal_matches_legacy_text_and_keeps_bytes() {
     assert_eq!(
         format!(
             "{:?}",
-            pdf::write_highlights(&store, "paper.pdf", "Paper", &[highlight("h")], &[])
+            pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[highlight("h")], &[])
                 .unwrap_err()
                 .to_string()
         ),
@@ -1443,7 +1487,15 @@ fn annotation_notes_survive_update_with_legacy_bytes() {
     .unwrap();
     fs::write(a.join("pages/hls__paper.md"), &page).unwrap();
     let store = Store::open(&a, Default::default()).unwrap().0;
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[h.clone()], &[h.clone()]).unwrap();
+    pdf::write_highlights(
+        &store,
+        None,
+        "paper.pdf",
+        "Paper",
+        &[h.clone()],
+        &[h.clone()],
+    )
+    .unwrap();
     let new_page = fs::read(a.join("pages/hls__paper.md")).unwrap();
     assert!(String::from_utf8_lossy(&new_page).contains("private note"));
     assert_eq!(new_page, b"file:: [Paper](../assets/paper.pdf)\nfile-path:: ../assets/paper.pdf\n\n- one\n  hl-page:: 1\n  hl-color:: yellow\n  ls-type:: annotation\n  id:: one\n\t- private note\n");
@@ -1541,7 +1593,7 @@ fn page_rename_matches_legacy_for_refs_namespace_case_and_tags() {
             put(&a, "logseq/config.edn", edn);
         }
         let store = Store::open(&a, Default::default()).unwrap().0;
-        let client = pages::rename_page_expected(&store, old_name, new_name, None);
+        let client = pages::rename_page_expected(&store, None, old_name, new_name, None);
         assert_eq!(
             format!("{:?}", operation_result(&client, &a)),
             match index {
@@ -1610,7 +1662,7 @@ fn page_rename_refusals_match_legacy_and_keep_disk() {
         let store = Store::open(&a, Default::default()).unwrap().0;
         let before = disk_tree(&a);
         let to = if label == "target-exists" { "y" } else { "z" };
-        let client = pages::rename_page_expected(&store, "x", to, None);
+        let client = pages::rename_page_expected(&store, None, "x", to, None);
         assert_eq!(format!("{:?}", operation_result(&client, &a)), match index { 0 => "\"AlreadyExists: target page identity already exists elsewhere in the graph\"", 1 => "\"PermissionDenied: cannot rename: <root>/pages/ref.org is a read-only .org file (does not round-trip)\"", _ => unreachable!() });
         assert_eq!(disk_tree(&a), before, "{label} client changed disk");
         assert_disk_tree(
@@ -1639,13 +1691,13 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
     put(&a, "pages/delete.md", "- gone\n");
     put(&a, "pages/ref.md", "- [[src]] and [[dst]]\n");
     let store = Store::open(&a, Default::default()).unwrap().0;
-    pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+    pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
     assert_disk_tree(
         &a,
         "page_merge_delete_and_rescue_match_legacy_bytes",
         "merge",
     );
-    pages::rename_file_to_page(&store, "journals/Loose.md", "Rescued").unwrap();
+    pages::rename_file_to_page(&store, None, "journals/Loose.md", "Rescued").unwrap();
     assert_disk_tree(
         &a,
         "page_merge_delete_and_rescue_match_legacy_bytes",
@@ -1655,12 +1707,18 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
     let stale = store.read(&id, None).unwrap().1;
     put(&a, "pages/delete.md", "- later\n");
     let before_delete = disk_tree(&a);
-    assert!(
-        pages::delete_page_expected(&store, "delete", PageKind::Page, None, Some(&stale)).is_err()
-    );
+    assert!(pages::delete_page_expected(
+        &store,
+        None,
+        "delete",
+        PageKind::Page,
+        None,
+        Some(&stale)
+    )
+    .is_err());
     assert_eq!(disk_tree(&a), before_delete, "stale delete changed disk");
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    pages::delete_page_expected(&store, "delete", PageKind::Page, None, None).unwrap();
+    pages::delete_page_expected(&store, None, "delete", PageKind::Page, None, None).unwrap();
     assert_disk_tree(
         &a,
         "page_merge_delete_and_rescue_match_legacy_bytes",
@@ -1679,7 +1737,7 @@ fn merge_keeps_source_preamble_text_and_conflicting_properties() {
     put(&root, "pages/dst.md", "alias:: Destination alias\n- kept\n");
     let store = Store::open(&root, Default::default()).unwrap().0;
 
-    pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+    pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
     let merged = std::fs::read_to_string(root.join("pages/dst.md")).unwrap();
     let parsed = tine_core::doc::parse(&merged);
     assert!(merged.contains("alias:: Destination alias, Source alias"));
@@ -1700,10 +1758,10 @@ fn org_merge_and_binary_rescue_match_legacy() {
     fs::create_dir_all(a.join("journals")).unwrap();
     fs::write(a.join("journals/Loose.md"), [0xff, 0xfe, 0x00]).unwrap();
     let store = Store::open(&a, Default::default()).unwrap().0;
-    let client = pages::merge_pages(&store, "pages/src.org", "pages/dst.org");
+    let client = pages::merge_pages(&store, None, "pages/src.org", "pages/dst.org");
     assert_eq!(operation_result(&client, &a), "ok");
     assert_disk_tree(&a, "org_merge_and_binary_rescue_match_legacy", "org_merge");
-    pages::rename_file_to_page(&store, "journals/Loose.md", "Rescued").unwrap();
+    pages::rename_file_to_page(&store, None, "journals/Loose.md", "Rescued").unwrap();
     assert_disk_tree(
         &a,
         "org_merge_and_binary_rescue_match_legacy",
@@ -1719,7 +1777,7 @@ fn page_rename_retries_external_change_and_rolls_back_third_step_failure() {
     put(&a, "pages/two.md", "- [[x]]\n");
     let store = Store::open(&a, Default::default()).unwrap().0;
     store.inject_fault(FaultPoint::Stage2MismatchAt(1));
-    pages::rename_page_expected(&store, "x", "y", None).unwrap();
+    pages::rename_page_expected(&store, None, "x", "y", None).unwrap();
     assert!(a.join("pages/y.md").exists());
     assert_eq!(
         fs::read(a.join("pages/two.md")).unwrap(),
@@ -1733,7 +1791,7 @@ fn page_rename_retries_external_change_and_rolls_back_third_step_failure() {
     let store = Store::open(&b, Default::default()).unwrap().0;
     let before = disk_tree(&b);
     store.inject_fault(FaultPoint::MidStepIoAt(2));
-    assert!(pages::rename_page_expected(&store, "x", "y", None).is_err());
+    assert!(pages::rename_page_expected(&store, None, "x", "y", None).is_err());
     assert_eq!(disk_tree(&b), before, "failed commit changed disk");
 }
 
@@ -1751,7 +1809,7 @@ fn page_rename_leaves_query_only_mentions_alone() {
     );
     put(&a, "pages/ref.md", "- [[x]] and #x\n");
     let store = Store::open(&a, Default::default()).unwrap().0;
-    pages::rename_page_expected(&store, "x", "y", None).unwrap();
+    pages::rename_page_expected(&store, None, "x", "y", None).unwrap();
     assert_eq!(
         fs::read(a.join("pages/query.md")).unwrap(),
         b"- {{query (and (task TODO) [[x]])}}\n"

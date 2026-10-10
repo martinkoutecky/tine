@@ -57,7 +57,7 @@ fn rename_paths_and_bytes_match_master_ddf408c55() {
         fs::write(dest, file.bytes.as_bytes()).unwrap();
     }
     let store = Store::open(&root, Default::default()).unwrap().0;
-    pages::rename_page_expected(&store, &input.old, &input.new, None).unwrap();
+    pages::rename_page_expected(&store, None, &input.old, &input.new, None).unwrap();
 
     let mut removed: Vec<String> = input
         .files

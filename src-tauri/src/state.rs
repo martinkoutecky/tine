@@ -42,6 +42,32 @@ pub(crate) struct GraphSlot {
     pub(crate) concord_ledger: std::sync::OnceLock<crate::concord_ledger::ConcordLedger>,
     /// Focus rescans waiting for this binding's dispatch thread (family 10).
     pub(crate) rescan: crate::watcher::RescanCursor,
+    /// The binding's page host (STEP3 §6–7). Census writers run under its
+    /// reservations while one runs (`running`); a backup restore marks the
+    /// binding restoring between its stop and the fresh host's launch.
+    pub(crate) host: RwLock<PageHostSlot>,
+}
+
+/// Where the binding's page host stands. `Off` until lane 3b's switch
+/// starts one. `Restoring` while a backup restore runs between the old
+/// host's stop and the fresh host's launch (§7 step 4): nothing launches
+/// a replacement meanwhile, and writers run as with no host.
+#[derive(Default)]
+pub(crate) enum PageHostSlot {
+    #[default]
+    Off,
+    Running(tine_store::PageHost),
+    Restoring,
+}
+
+impl PageHostSlot {
+    /// The running host, which census writers reserve their pages from.
+    pub(crate) fn running(&self) -> Option<&tine_store::PageHost> {
+        match self {
+            Self::Running(host) => Some(host),
+            Self::Off | Self::Restoring => None,
+        }
+    }
 }
 
 impl GraphSlot {
@@ -60,6 +86,7 @@ impl GraphSlot {
             conflict_queue: Default::default(),
             concord_ledger: Default::default(),
             rescan: Default::default(),
+            host: Default::default(),
         }
     }
 

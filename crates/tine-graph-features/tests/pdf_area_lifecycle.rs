@@ -89,6 +89,7 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
     .unwrap();
     assert!(pdf::write_highlights(
         &failed_graph,
+        None,
         "paper.pdf",
         "Paper",
         &[],
@@ -116,6 +117,7 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
     .unwrap();
     pdf::write_highlights(
         &shared_graph,
+        None,
         "paper.pdf",
         "Paper",
         std::slice::from_ref(&keeper),
@@ -142,6 +144,7 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
     .unwrap();
     pdf::write_highlights(
         &success_graph,
+        None,
         "paper.pdf",
         "Paper",
         &[],

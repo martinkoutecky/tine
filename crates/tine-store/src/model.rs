@@ -5188,7 +5188,8 @@ mod tests {
         .unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let _ = store.whole_graph().unwrap();
-        tine_graph_features::pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+        tine_graph_features::pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md")
+            .unwrap();
         let merged = fs::read_to_string(dir.join("pages").join("dst.md")).unwrap();
         assert!(
             merged.contains("alias:: Foo"),
@@ -6110,6 +6111,7 @@ mod tests {
         assert!(store.page(&id).is_ok());
         tine_graph_features::pages::delete_page_expected(
             &store,
+            None,
             "Gone",
             PageKind::Page,
             None,
@@ -6138,7 +6140,7 @@ mod tests {
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let old_id = tine_store::PageId::from("pages/Old.md");
         assert!(store.page(&old_id).is_ok());
-        tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None).unwrap();
+        tine_graph_features::pages::rename_page_expected(&store, None, "Old", "New", None).unwrap();
         assert!(
             store.page(&old_id).is_err(),
             "old entry must not be served after rename"
@@ -6171,8 +6173,13 @@ mod tests {
             tine_store::Resolved::Existing { .. }
         ));
 
-        tine_graph_features::pages::rename_file_to_page(&store, "journals/Loose.md", "Rescued")
-            .unwrap();
+        tine_graph_features::pages::rename_file_to_page(
+            &store,
+            None,
+            "journals/Loose.md",
+            "Rescued",
+        )
+        .unwrap();
         let after = store.whole_graph().unwrap();
         assert!(matches!(
             after.resolve("Loose", true),
@@ -6658,7 +6665,7 @@ mod tests {
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let listed = tine_graph_features::journals::journal_filename_migrations(&store).unwrap();
         assert_eq!(
-            tine_graph_features::journals::migrate_journal_filenames(&store, &listed)
+            tine_graph_features::journals::migrate_journal_filenames(&store, None, &listed)
                 .unwrap()
                 .migrated,
             1,
@@ -7024,7 +7031,8 @@ mod tests {
         fs::write(dir.join("pages").join("Alpha.md"), "- alpha body\n").unwrap();
         fs::write(dir.join("pages").join("Other.md"), "- see [[Alpha]] here\n").unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        tine_graph_features::pages::rename_page_expected(&store, "Alpha", "Beta", None).unwrap();
+        tine_graph_features::pages::rename_page_expected(&store, None, "Alpha", "Beta", None)
+            .unwrap();
         // The page file moved (content preserved) and the old file is gone.
         assert!(!dir.join("pages").join("Alpha.md").exists());
         assert_eq!(
@@ -7061,7 +7069,7 @@ mod tests {
             "the held production view must remain unchanged after a disk edit"
         );
 
-        tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None).unwrap();
+        tine_graph_features::pages::rename_page_expected(&store, None, "Old", "New", None).unwrap();
         let rewritten = fs::read_to_string(&referrer).unwrap();
         assert!(rewritten.contains("[[New]]"));
         assert!(!rewritten.contains("[[Old]]"));
@@ -7123,7 +7131,7 @@ mod tests {
         )
         .unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        tine_graph_features::pages::rename_page_expected(&store, "Project", "Archive", None)
+        tine_graph_features::pages::rename_page_expected(&store, None, "Project", "Archive", None)
             .unwrap();
 
         // Primary + every descendant file moved (content preserved), old names gone.
@@ -7320,12 +7328,14 @@ mod tests {
         fs::write(dir.join("pages").join("Foo.org"), "* org body\n").unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         assert!(
-            tine_graph_features::pages::rename_page_expected(&store, "Foo", "Bar", None).is_err(),
+            tine_graph_features::pages::rename_page_expected(&store, None, "Foo", "Bar", None)
+                .is_err(),
             "rename refused on twin"
         );
         assert!(
             tine_graph_features::pages::delete_page_expected(
                 &store,
+                None,
                 "Foo",
                 PageKind::Page,
                 None,
@@ -7635,8 +7645,9 @@ mod tests {
         let ro = "* a\n*** c referencing [[Alpha]]\n";
         fs::write(dir.join("pages").join("Weird.org"), ro).unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        let err = tine_graph_features::pages::rename_page_expected(&store, "Alpha", "Beta", None)
-            .unwrap_err();
+        let err =
+            tine_graph_features::pages::rename_page_expected(&store, None, "Alpha", "Beta", None)
+                .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
         // All-or-nothing: neither file moved/changed.
         assert!(
@@ -7659,7 +7670,7 @@ mod tests {
         let org = "* note\nsee [[Old]]\n#+BEGIN_SRC clojure\n\"[[Old]]\"\n#+END_SRC\n";
         fs::write(dir.join("pages").join("Ref.org"), org).unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None).unwrap();
+        tine_graph_features::pages::rename_page_expected(&store, None, "Old", "New", None).unwrap();
         let got = fs::read_to_string(dir.join("pages").join("Ref.org")).unwrap();
         assert_eq!(
             got,
@@ -8381,9 +8392,15 @@ mod tests {
         fs::write(&edn_path, unknown).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let err =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
-                .unwrap_err();
+        let err = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        )
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&edn_path).unwrap(), unknown);
@@ -8411,7 +8428,7 @@ mod tests {
         assert!(!dir.join("assets").join("paper.edn").exists());
         assert!(!dir.join("pages").join("hls__paper.org").exists());
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
-        tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+        tine_graph_features::pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[h], &[])
             .unwrap();
 
         let sidecar = fs::read_to_string(dir.join("assets").join("paper.edn")).unwrap();
@@ -8449,6 +8466,7 @@ mod tests {
 
         tine_graph_features::pdf::write_highlights(
             &store,
+            None,
             "paper.pdf",
             "Paper",
             &[h.clone(), h2.clone()],
@@ -8484,7 +8502,7 @@ mod tests {
         .unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let h = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("text"));
-        tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+        tine_graph_features::pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[h], &[])
             .unwrap();
         let org_path = dir.join("pages").join("hls__paper.org");
         let org = fs::read_to_string(&org_path).unwrap();
@@ -8503,8 +8521,15 @@ mod tests {
         store.close();
         let reopened = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("more"));
-        tine_graph_features::pdf::write_highlights(&reopened, "paper.pdf", "Paper", &[h2], &[])
-            .unwrap();
+        tine_graph_features::pdf::write_highlights(
+            &reopened,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h2],
+            &[],
+        )
+        .unwrap();
         assert!(org_path.exists());
         assert!(!dir.join("pages").join("hls__paper.md").exists());
         reopened.close();
@@ -8521,9 +8546,15 @@ mod tests {
         fs::write(&page_path, unknown).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let err =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
-                .unwrap_err();
+        let err = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        )
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&page_path).unwrap(), unknown);
@@ -8551,9 +8582,15 @@ mod tests {
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        let err =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
-                .unwrap_err();
+        let err = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        )
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(fs::read_to_string(&sidecar_path).unwrap(), original);
@@ -8585,8 +8622,14 @@ mod tests {
         let mut read_only = original_permissions.clone();
         read_only.set_mode(0o555);
         fs::set_permissions(&pages, read_only).unwrap();
-        let result =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[]);
+        let result = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        );
         fs::set_permissions(&pages, original_permissions).unwrap();
 
         assert!(
@@ -8625,8 +8668,14 @@ mod tests {
         let mut read_only = original_permissions.clone();
         read_only.set_mode(0o555);
         fs::set_permissions(&pages, read_only).unwrap();
-        let result =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[]);
+        let result = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        );
         fs::set_permissions(&pages, original_permissions).unwrap();
 
         assert!(result.is_err());
@@ -8652,9 +8701,15 @@ mod tests {
         fs::write(&edn_path, malformed).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let err =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
-                .unwrap_err();
+        let err = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        )
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read_to_string(&edn_path).unwrap(), malformed);
@@ -8673,9 +8728,15 @@ mod tests {
         fs::write(&edn_path, malformed).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let err =
-            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
-                .unwrap_err();
+        let err = tine_graph_features::pdf::write_highlights(
+            &store,
+            None,
+            "paper.pdf",
+            "Paper",
+            &[h],
+            &[],
+        )
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read_to_string(&edn_path).unwrap(), malformed);
@@ -8727,6 +8788,7 @@ mod tests {
         let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("new text"));
         tine_graph_features::pdf::write_highlights(
             &store,
+            None,
             pdf,
             "My Paper",
             &[h1.clone(), h2.clone()],
@@ -8791,6 +8853,7 @@ mod tests {
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         tine_graph_features::pdf::write_highlights(
             &store,
+            None,
             pdf,
             "Paper",
             &[h.clone()],
@@ -8859,6 +8922,7 @@ mod tests {
         );
         tine_graph_features::pdf::write_highlights(
             &store,
+            None,
             spaced_pdf,
             "My Paper",
             &[spaced_highlight],
@@ -8923,6 +8987,7 @@ mod tests {
         let page_path = dir.join("pages").join("hls__paper.md");
         tine_graph_features::pdf::write_highlights(
             &store,
+            None,
             "paper.pdf",
             "Paper",
             &[h1.clone(), h2.clone()],
@@ -8944,6 +9009,7 @@ mod tests {
         // Delete h2 (write just h1; baseline = both) — the rewrite must also be ours.
         tine_graph_features::pdf::write_highlights(
             &store,
+            None,
             "paper.pdf",
             "Paper",
             &[h1.clone()],
@@ -10472,8 +10538,9 @@ mod tests {
         fs::write(&b, "- body b\n").unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
 
-        let err = tine_graph_features::pages::rename_page_expected(&store, "foo", "bar", None)
-            .unwrap_err();
+        let err =
+            tine_graph_features::pages::rename_page_expected(&store, None, "foo", "bar", None)
+                .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- body a\n");
@@ -10496,6 +10563,7 @@ mod tests {
 
         let err = tine_graph_features::pages::delete_page_expected(
             &store,
+            None,
             "foo",
             PageKind::Page,
             None,
@@ -10522,6 +10590,7 @@ mod tests {
 
         let stale = tine_graph_features::pages::delete_page_expected(
             &store,
+            None,
             "Twin",
             PageKind::Page,
             Some("pages/client-b/Twin.md"),
@@ -10534,6 +10603,7 @@ mod tests {
         fs::write(&b, "- client b\n").unwrap();
         let ambiguous = tine_graph_features::pages::rename_page_expected(
             &store,
+            None,
             "Twin",
             "Renamed",
             Some("pages/client-b/Twin.md"),
@@ -10556,8 +10626,9 @@ mod tests {
         fs::write(&target, "- existing target\n").unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
 
-        let err = tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None)
-            .unwrap_err();
+        let err =
+            tine_graph_features::pages::rename_page_expected(&store, None, "Old", "New", None)
+                .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&old).unwrap(), "* old body\n");
@@ -10577,8 +10648,9 @@ mod tests {
         fs::write(&target, "- nested target\n").unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
 
-        let err = tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None)
-            .unwrap_err();
+        let err =
+            tine_graph_features::pages::rename_page_expected(&store, None, "Old", "New", None)
+                .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&old).unwrap(), "* old body\n");
@@ -10595,6 +10667,7 @@ mod tests {
         let _ = store.whole_graph().unwrap();
         tine_graph_features::pages::merge_pages(
             &store,
+            None,
             "journals/Friday, 26-06-2026.org",
             "journals/2026_06_26.org",
         )
@@ -10626,6 +10699,7 @@ mod tests {
         let _ = store.whole_graph().unwrap();
         tine_graph_features::pages::rename_file_to_page(
             &store,
+            None,
             "journals/Friday, 26-06-2026.org",
             "Old Friday",
         )
@@ -10650,6 +10724,7 @@ mod tests {
         assert!(
             tine_graph_features::pages::rename_file_to_page(
                 &store,
+                None,
                 "journals/Saturday, 27-06-2026.org",
                 "Old Friday",
             )

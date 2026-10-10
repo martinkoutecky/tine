@@ -85,6 +85,7 @@ pub(crate) async fn resolve_sync_conflict(
         };
         let outcome = tine_graph_features::conflicts::resolve_sync_conflict(
             &slot.store,
+            slot.host.read().unwrap().running(),
             &winner,
             &conflict,
             &decisions,
@@ -110,8 +111,12 @@ pub(crate) async fn trash_sync_conflict(
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     crate::state::off_ui(move || {
-        let outcome = tine_graph_features::conflicts::trash_sync_conflict(&slot.store, &conflict)
-            .map_err(|e| e.to_string());
+        let outcome = tine_graph_features::conflicts::trash_sync_conflict(
+            &slot.store,
+            slot.host.read().unwrap().running(),
+            &conflict,
+        )
+        .map_err(|e| e.to_string());
         settle_queue(&slot, &[&conflict]);
         outcome
     })
@@ -154,6 +159,7 @@ pub(crate) async fn resolve_duplicate_journal_day(
     tauri::async_runtime::spawn_blocking(move || {
         let outcome = tine_graph_features::conflicts::resolve_duplicate_journal_day(
             &slot.store,
+            slot.host.read().unwrap().running(),
             &canonical,
             &stray,
             &decisions,
@@ -218,6 +224,7 @@ pub(crate) async fn resolve_vcs_marker_conflict(
     tauri::async_runtime::spawn_blocking(move || {
         let outcome = tine_graph_features::conflicts::resolve_vcs_marker_conflict(
             &slot.store,
+            slot.host.read().unwrap().running(),
             &path,
             &decisions,
             &base_rev,
@@ -295,6 +302,7 @@ pub(crate) async fn resolve_live_conflict(
         };
         tine_graph_features::live_conflict::resolve_live_conflict(
             &slot.store,
+            slot.host.read().unwrap().running(),
             &path,
             &page,
             base_rev.as_deref(),

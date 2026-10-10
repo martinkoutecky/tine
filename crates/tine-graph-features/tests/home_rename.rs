@@ -43,7 +43,8 @@ fn renaming_the_home_page_moves_default_home_with_it() {
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     fs::write(dir.join("pages/Ref.md"), "- see [[Start]]\n").unwrap();
     let store = open(&dir);
-    let report = pages::rename_or_merge_page(&store, "Start", "Begin", None, None, &[]).unwrap();
+    let report =
+        pages::rename_or_merge_page(&store, None, "Start", "Begin", None, None, &[]).unwrap();
     assert_eq!(report.home_page.as_deref(), Some("Begin"));
     assert_eq!(config(&dir), HOME.replace("\"Start\"", "\"Begin\""));
     assert_eq!(store.config().config.default_home.as_deref(), Some("Begin"));
@@ -60,7 +61,8 @@ fn a_home_named_by_case_or_as_a_namespace_child_follows_the_rename() {
     let dir = scratch("case", &HOME.replace("\"Start\"", "\"start\""));
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     let store = open(&dir);
-    let report = pages::rename_or_merge_page(&store, "Start", "Begin", None, None, &[]).unwrap();
+    let report =
+        pages::rename_or_merge_page(&store, None, "Start", "Begin", None, None, &[]).unwrap();
     assert_eq!(report.home_page.as_deref(), Some("Begin"));
     assert_eq!(store.config().config.default_home.as_deref(), Some("Begin"));
 
@@ -68,7 +70,7 @@ fn a_home_named_by_case_or_as_a_namespace_child_follows_the_rename() {
     fs::write(dir.join("pages/Work.md"), "- parent\n").unwrap();
     fs::write(dir.join("pages/Work___Log.md"), "- child\n").unwrap();
     let store = open(&dir);
-    let report = pages::rename_or_merge_page(&store, "Work", "Job", None, None, &[]).unwrap();
+    let report = pages::rename_or_merge_page(&store, None, "Work", "Job", None, None, &[]).unwrap();
     assert_eq!(report.home_page.as_deref(), Some("Job/Log"));
     assert_eq!(
         store.config().config.default_home.as_deref(),
@@ -83,7 +85,8 @@ fn renaming_another_page_leaves_config_untouched() {
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     fs::write(dir.join("pages/Starter.md"), "- other\n").unwrap();
     let store = open(&dir);
-    let report = pages::rename_or_merge_page(&store, "Starter", "Kit", None, None, &[]).unwrap();
+    let report =
+        pages::rename_or_merge_page(&store, None, "Starter", "Kit", None, None, &[]).unwrap();
     assert_eq!(report.home_page, None);
     assert_eq!(config(&dir), HOME);
 }
@@ -95,9 +98,16 @@ fn merging_the_home_page_into_another_keeps_default_home() {
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     fs::write(dir.join("pages/Other.md"), "- other body\n").unwrap();
     let store = open(&dir);
-    let report =
-        pages::rename_or_merge_page(&store, "Start", "Other", None, Some("pages/Other.md"), &[])
-            .unwrap();
+    let report = pages::rename_or_merge_page(
+        &store,
+        None,
+        "Start",
+        "Other",
+        None,
+        Some("pages/Other.md"),
+        &[],
+    )
+    .unwrap();
     assert_eq!(report.home_page, None);
     assert_eq!(config(&dir), HOME);
 }
@@ -110,7 +120,8 @@ fn a_malformed_config_neither_blocks_the_rename_nor_is_rewritten() {
     let dir = scratch("malformed", truncated);
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     let store = open(&dir);
-    let report = pages::rename_or_merge_page(&store, "Start", "Begin", None, None, &[]).unwrap();
+    let report =
+        pages::rename_or_merge_page(&store, None, "Start", "Begin", None, None, &[]).unwrap();
     assert_eq!(report.home_page, None);
     assert_eq!(config(&dir), truncated);
     assert!(dir.join("pages/Begin.md").exists());
@@ -127,7 +138,7 @@ fn crash_home_rename_worker() {
         .unwrap();
     let store = open(Path::new(&root));
     store.inject_fault(FaultPoint::AbortAfterStep(boundary));
-    let _ = pages::rename_or_merge_page(&store, "Start", "Begin", None, None, &[]);
+    let _ = pages::rename_or_merge_page(&store, None, "Start", "Begin", None, None, &[]);
     panic!("I-2: home rename fault did not abort; exemplar pages::rename_page_expected");
 }
 

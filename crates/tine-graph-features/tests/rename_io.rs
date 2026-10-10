@@ -54,7 +54,7 @@ fn rename(pages_count: usize, referrers: usize) -> Counts {
     let store = Store::open(&root, Default::default()).unwrap().0;
     store.whole_graph().unwrap();
     cost_counters::reset();
-    pages::rename_page_expected(&store, "Target", "Renamed", None).unwrap();
+    pages::rename_page_expected(&store, None, "Target", "Renamed", None).unwrap();
     let counts = cost_counters::snapshot();
     assert!(root.join("pages/Renamed.md").exists());
     assert_eq!(

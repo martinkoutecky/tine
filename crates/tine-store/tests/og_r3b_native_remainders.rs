@@ -41,7 +41,7 @@ fn hard_linked_pages_save_and_rename_with_master_bytes() {
         // link's original bytes; moving the page and rewriting refs both work.
         assert_eq!(fs::read(&target).unwrap(), b"- after\n");
         assert_eq!(fs::read(&alias).unwrap(), b"- before\n");
-        pages::rename_page_expected(&store, "Old", "New", None).unwrap();
+        pages::rename_page_expected(&store, None, "Old", "New", None).unwrap();
         assert!(!target.exists());
         assert_eq!(
             fs::read(root.path().join("pages/New.md")).unwrap(),

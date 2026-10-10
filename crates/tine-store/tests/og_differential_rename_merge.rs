@@ -66,6 +66,7 @@ fn rename_merge_paths_and_bytes_match_master_7160c501() {
     let store = Store::open(&root, Default::default()).unwrap().0;
     pages::rename_or_merge_page(
         &store,
+        None,
         &input.old,
         &input.new,
         Some(&input.src),

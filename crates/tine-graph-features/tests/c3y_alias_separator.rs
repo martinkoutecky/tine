@@ -33,7 +33,8 @@ fn y4_merge_unites_full_width_separated_aliases_without_duplicates() {
         ("pages/Old.md", "alias:: Shared，Former\n\n- source block\n"),
         ("pages/New.md", "alias:: Kept，Shared\n\n- survivor block\n"),
     ]);
-    pages::rename_or_merge_page(&store, "Old", "New", None, Some("pages/New.md"), &[]).unwrap();
+    pages::rename_or_merge_page(&store, None, "Old", "New", None, Some("pages/New.md"), &[])
+        .unwrap();
     let merged = fs::read_to_string(root.join("pages/New.md")).unwrap();
     assert!(
         merged.starts_with("alias:: Kept，Shared, Former\n"),
@@ -62,7 +63,7 @@ fn y4_rename_keeps_a_bare_alias_member_and_rewrites_a_bracketed_one() {
         ("pages/Other.md", "- other\n  alias:: Old，[[Old]]\n"),
         ("pages/Ref.md", "- [[Old]]\n"),
     ]);
-    pages::rename_page_expected(&store, "Old", "New", None).unwrap();
+    pages::rename_page_expected(&store, None, "Old", "New", None).unwrap();
     assert_eq!(
         fs::read_to_string(root.join("pages/Other.md")).unwrap(),
         "- other\n  alias:: Old，[[New]]\n"

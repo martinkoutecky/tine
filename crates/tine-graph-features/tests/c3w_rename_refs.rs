@@ -50,7 +50,7 @@ fn w3_rename_rewrites_references_after_an_unmatched_opener_and_fullwidth_tags() 
             "* see [[ x and [[file:./Target.org][Target]] and [[Target]]\n",
         ),
     ]);
-    pages::rename_or_merge_page(&store, "Target", "Renamed", None, None, &[]).unwrap();
+    pages::rename_or_merge_page(&store, None, "Target", "Renamed", None, None, &[]).unwrap();
     assert!(root.join("pages/Renamed.md").exists());
     let referrer = fs::read_to_string(root.join("pages/Referrer.md")).unwrap();
     assert_eq!(

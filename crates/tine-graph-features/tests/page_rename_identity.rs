@@ -56,6 +56,7 @@ fn title_owned_rename_rebinds_identity_and_plain_rename_keeps_lookup() {
         };
         pages::rename_page_expected(
             &store,
+            None,
             old,
             "Renamed",
             Some(&format!("pages/{physical}.md")),
@@ -121,7 +122,8 @@ fn org_title_directive_rename_rebinds_identity() {
             put(&root, &source, before);
             put(&root, "pages/Ref.md", "- [[Effective]]\n");
             let store = Store::open(&root, Default::default()).unwrap().0;
-            pages::rename_page_expected(&store, "Effective", "Renamed", Some(&source)).unwrap();
+            pages::rename_page_expected(&store, None, "Effective", "Renamed", Some(&source))
+                .unwrap();
             assert!(!root.join(&source).exists(), "{label}");
             assert_eq!(
                 fs::read_to_string(root.join("pages/Renamed.org")).unwrap(),
@@ -163,7 +165,7 @@ fn org_title_naming_another_page_is_left_alone() {
     );
     put(&root, "pages/Effective.md", "- body\n");
     let store = Store::open(&root, Default::default()).unwrap().0;
-    pages::rename_page_expected(&store, "Effective", "Renamed", None).unwrap();
+    pages::rename_page_expected(&store, None, "Effective", "Renamed", None).unwrap();
     assert_eq!(
         fs::read_to_string(root.join("pages/Other.org")).unwrap(),
         "#+TITLE: Other\n* see [[Renamed]]\n"
@@ -179,7 +181,7 @@ fn org_title_rename_refuses_a_page_that_does_not_round_trip() {
     let source = "#+TITLE: Effective\n* Parent\n*** child\n";
     put(&root, "pages/Physical.org", source);
     let store = Store::open(&root, Default::default()).unwrap().0;
-    let error = pages::rename_page_expected(&store, "Effective", "Renamed", None)
+    let error = pages::rename_page_expected(&store, None, "Effective", "Renamed", None)
         .expect_err("a non-round-tripping Org title must not be rewritten");
     assert!(error.to_string().contains("round-trip"), "{error}");
     assert_eq!(
@@ -200,7 +202,7 @@ fn a_rename_whose_move_already_happened_rebinds_the_title_in_place() {
     put(&root, "pages/New.md", "title:: Old\n\n- [[Old]] body\n");
     put(&root, "pages/Ref.md", "- [[Old]]\n");
     let store = Store::open(&root, Default::default()).unwrap().0;
-    pages::rename_page_expected(&store, "Old", "New", Some("pages/New.md")).unwrap();
+    pages::rename_page_expected(&store, None, "Old", "New", Some("pages/New.md")).unwrap();
     assert_eq!(
         fs::read_to_string(root.join("pages/New.md")).unwrap(),
         "title:: New\n\n- [[New]] body\n"

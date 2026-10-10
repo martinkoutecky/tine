@@ -93,6 +93,7 @@ fn a_live_conflict_uses_the_editor_base_and_guarded_resolution() {
     let chosen = decisions(&diff);
     let resolved = resolve_live_conflict(
         &store,
+        None,
         PAGE,
         &page,
         Some(&base_rev),
@@ -132,6 +133,7 @@ fn without_the_editor_base_the_review_is_two_way_and_keeps_both() {
     }
     assert!(resolve_live_conflict(
         &store,
+        None,
         PAGE,
         &page,
         Some(&base_rev),
@@ -144,6 +146,7 @@ fn without_the_editor_base_the_review_is_two_way_and_keeps_both() {
     .is_err());
     resolve_live_conflict(
         &store,
+        None,
         PAGE,
         &page,
         Some(&base_rev),
@@ -178,6 +181,7 @@ fn a_newer_external_write_refuses_and_writes_nothing_until_rereviewed() {
     external(&root, "- shared intro\n- second outside edit\n");
     let err = resolve_live_conflict(
         &store,
+        None,
         PAGE,
         &page,
         Some(&base_rev),
@@ -197,6 +201,7 @@ fn a_newer_external_write_refuses_and_writes_nothing_until_rereviewed() {
     assert_ne!(fresh.conflict_rev, diff.conflict_rev);
     resolve_live_conflict(
         &store,
+        None,
         PAGE,
         &page,
         Some(&base_rev),
@@ -235,6 +240,7 @@ fn a_stale_ledger_base_refuses_a_merged_row_and_loses_nothing() {
     for moved in [vec![], vec!["- shared intro\n- other\n".to_owned()]] {
         let err = resolve_live_conflict(
             &store,
+            None,
             PAGE,
             &page,
             Some(&base_rev),
@@ -254,6 +260,7 @@ fn a_stale_ledger_base_refuses_a_merged_row_and_loses_nothing() {
     assert!(page.blocks[1].raw.starts_with("Desktop\n"));
     resolve_live_conflict(
         &store,
+        None,
         PAGE,
         &page,
         Some(&base_rev),
@@ -289,6 +296,7 @@ fn an_absent_file_review_is_read_only_and_apply_recreates_only_if_still_absent()
     fs::write(root.join(PAGE), "").unwrap();
     let err = resolve_live_conflict(
         &store,
+        None,
         PAGE,
         &page,
         Some(&base_rev),
@@ -304,6 +312,7 @@ fn an_absent_file_review_is_read_only_and_apply_recreates_only_if_still_absent()
     fs::remove_file(root.join(PAGE)).unwrap();
     let resolved = resolve_live_conflict(
         &store,
+        None,
         PAGE,
         &page,
         Some(&base_rev),

@@ -284,7 +284,7 @@ fn rewritten_move_with_preamble_title_retries_after_rename_crash() {
             fs::read_to_string(root.join(format!("pages/New.{ext}"))).unwrap(),
             old
         );
-        pages::rename_page_expected(&reopened, "Old", "New", None).unwrap();
+        pages::rename_page_expected(&reopened, None, "Old", "New", None).unwrap();
         let final_bytes = fs::read_to_string(root.join(format!("pages/New.{ext}"))).unwrap();
         assert!(
             final_bytes.contains(new_title),
@@ -506,14 +506,22 @@ fn crash_feature_worker() {
     store.inject_fault(FaultPoint::AbortAfterStep(boundary));
     match journey.as_str() {
         "merge" => {
-            pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+            pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
         }
         "rename" => {
-            pages::rename_page_expected(&store, "A", "B", None).unwrap();
+            pages::rename_page_expected(&store, None, "A", "B", None).unwrap();
         }
         "rename-merge" => {
-            pages::rename_or_merge_page(&store, "Old", "New", None, Some("pages/New.md"), &[])
-                .unwrap();
+            pages::rename_or_merge_page(
+                &store,
+                None,
+                "Old",
+                "New",
+                None,
+                Some("pages/New.md"),
+                &[],
+            )
+            .unwrap();
         }
         "conflict" => {
             let copy = "pages/Foo.sync-conflict-20260705-120000-ABCDEFG.md";
@@ -527,6 +535,7 @@ fn crash_feature_worker() {
                 .collect();
             conflicts::resolve_sync_conflict(
                 &store,
+                None,
                 "pages/Foo.md",
                 copy,
                 &decisions,
@@ -680,6 +689,7 @@ fn feature_journeys_kill_reopen_keep_content() {
                     if root.join("pages/Old.md").exists() {
                         pages::rename_or_merge_page(
                             &reopened,
+                            None,
                             "Old",
                             "New",
                             None,

@@ -177,6 +177,7 @@ fn org_real_conflicts_beside_literal_examples_are_inventory_and_resolution_candi
         .collect();
     conflicts::resolve_vcs_marker_conflict(
         &store,
+        None,
         "pages/Real.org",
         &decisions,
         &reviewed.diff.base_rev,

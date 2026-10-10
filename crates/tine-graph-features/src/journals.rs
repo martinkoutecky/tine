@@ -7,7 +7,7 @@ use std::io;
 
 use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::model::{JournalConflict, JournalFile};
-use tine_store::{Area, Day, FileEntry, PageId, Store, StoreError};
+use tine_store::{Area, Day, FileEntry, Input, PageHost, PageId, Store, StoreError};
 
 use crate::{store_error, tx_error};
 
@@ -460,9 +460,32 @@ pub fn journal_filename_migrations(store: &Store) -> io::Result<Vec<JournalFilen
 /// only when `migration_plan` still gives the same `to` for its `from`;
 /// otherwise it is reported as skipped with the reason. A file not in
 /// `confirmed` is never renamed. References are not rewritten (the name stays
-/// the journal's title). Caller takes the pre-migration backup. Cost
-/// O(J log J + confirmed × J + migrated file bytes).
+/// the journal's title). Caller takes the pre-migration backup. A retained
+/// writer (STEP3 §7) of every confirmed source and target: their unsaved
+/// input is saved first. Cost O(J log J + confirmed × J + migrated file
+/// bytes).
 pub fn migrate_journal_filenames(
+    store: &Store,
+    host: Option<&PageHost>,
+    confirmed: &[JournalFilenameMigration],
+) -> io::Result<MigrationResult> {
+    let discover = || {
+        let names = confirmed.iter().flat_map(|p| [&p.from, &p.to]);
+        let files: Vec<_> = names
+            .filter_map(|name| store.file_id(Area::Journals, name).ok())
+            .collect();
+        Ok(crate::retained::pages(store, &files))
+    };
+    crate::retained::reserved(
+        host,
+        Input::Flush,
+        discover,
+        crate::retained::unsaved,
+        |_| migrate_confirmed(store, confirmed),
+    )
+}
+
+fn migrate_confirmed(
     store: &Store,
     confirmed: &[JournalFilenameMigration],
 ) -> io::Result<MigrationResult> {
@@ -612,15 +635,25 @@ pub fn read_journal_file(store: &Store, name: &str) -> io::Result<String> {
 
 /// Trash one top-level journal with a revision guard, retrying an external
 /// conflict four times. Cost O(file bytes) per attempt.
-pub fn trash_journal_file(store: &Store, name: &str) -> io::Result<()> {
+/// A retained writer (STEP3 §7): the page's unsaved input is saved first.
+pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) -> io::Result<()> {
     journal_name(name)?;
     let id = store.file_id(Area::Journals, name).map_err(store_error)?;
-    crate::retry_on_conflict("journal changed repeatedly during trash", || {
-        crate::trash_current(
-            store,
-            &id,
-            Some(tine_store::PARSE_INPUT_MAX_BYTES),
-            "no such journal file",
-        )
-    })
+    let discover = || Ok(crate::retained::pages(store, [&id]));
+    crate::retained::reserved(
+        host,
+        Input::Flush,
+        discover,
+        crate::retained::unsaved,
+        |_| {
+            crate::retry_on_conflict("journal changed repeatedly during trash", || {
+                crate::trash_current(
+                    store,
+                    &id,
+                    Some(tine_store::PARSE_INPUT_MAX_BYTES),
+                    "no such journal file",
+                )
+            })
+        },
+    )
 }

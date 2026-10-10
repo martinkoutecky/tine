@@ -10,11 +10,14 @@ use super::*;
 /// its graph-relative path across the whole graph; schema 2 keeps the old
 /// configured-root behaviour. Both restore asset `.edn` sidecars and
 /// `config.edn`. Takes a fresh safety snapshot of the *current* state first
-/// (so a mistaken restore is itself reversible).
+/// (so a mistaken restore is itself reversible). With a page host, the
+/// restore runs between its stop and a fresh host (`restore_hosted`);
+/// `consumed_last_id` is the last host answer the window consumed.
 /// Destructive — the frontend confirms.
 #[tauri::command]
 pub(crate) async fn restore_backup(
     stamp: String,
+    consumed_last_id: Option<u64>,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
@@ -32,13 +35,66 @@ pub(crate) async fn restore_backup(
     let restore_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let base = backup_base_for_root(&restore_app, &source.root).ok_or("no app-data dir")?;
-        restore_from_backup_source(&stamp, &base, &slot.store, source, |source| {
-            do_backup_source(&restore_app, &slot.store, source.clone(), "pre-restore")
+        restore_hosted(&slot.host, consumed_last_id.unwrap_or(0), || {
+            restore_from_backup_source(&stamp, &base, &slot.store, source, |source| {
+                do_backup_source(&restore_app, &slot.store, source.clone(), "pre-restore")
+            })
         })
     })
     .await
     .map_err(|error| error.to_string())??;
     Ok(())
+}
+
+/// A backup restore around the binding's page host (STEP3 §7, R7). With a
+/// running host the binding is marked restoring, and the host stops in
+/// restore mode: every drained edit saved and published, every draft and
+/// custody debt retired. A stop that cannot complete restores nothing and
+/// the host comes back, naming the pages it could not save (today's
+/// restore likewise aborts when its flush fails). Otherwise `restore` runs
+/// and one fresh host launches on the tree as it now is, on success and on
+/// failure alike. With no host `restore` is the plain call.
+pub(super) fn restore_hosted(
+    slot: &std::sync::RwLock<crate::state::PageHostSlot>,
+    consumed_last_id: u64,
+    restore: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    use crate::state::PageHostSlot;
+    let host = {
+        let mut slot = slot.write().unwrap();
+        match std::mem::take(&mut *slot) {
+            PageHostSlot::Running(host) => {
+                *slot = PageHostSlot::Restoring;
+                host
+            }
+            other => {
+                *slot = other;
+                drop(slot);
+                return restore();
+            }
+        }
+    };
+    let stopped = match host.stop_saved(consumed_last_id, tine_store::StopMode::Restore) {
+        Ok(stopped) => stopped,
+        Err((host, pages)) => {
+            *slot.write().unwrap() = PageHostSlot::Running(*host);
+            let pages: Vec<_> = pages.into_iter().collect();
+            return Err(format!(
+                "restore-aborted: unsaved pages: {}",
+                pages.join(", ")
+            ));
+        }
+    };
+    let restored = restore();
+    let (next, relaunched) = match stopped.relaunch() {
+        Ok(host) => (PageHostSlot::Running(host), Ok(())),
+        Err(error) => (
+            PageHostSlot::Off,
+            Err(format!("page-host-relaunch-failed: {error}")),
+        ),
+    };
+    *slot.write().unwrap() = next;
+    restored.and(relaunched)
 }
 
 fn restore_from_backup_source(
@@ -263,6 +319,52 @@ fn open_verified_restore_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// R7 (STEP3 §7 steps 4–6): a restore with a running host runs while
+    /// the binding is marked restoring (no host to launch writers under, and
+    /// nothing launches a replacement), then binds one fresh host, after a
+    /// failed restore too; with no host the restore is the plain call.
+    #[test]
+    fn a_restore_runs_between_its_host_stop_and_one_fresh_host() {
+        use crate::state::PageHostSlot;
+        use std::sync::{Arc, RwLock};
+        let root = scratch("restore-host");
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::write(root.join("pages/a.md"), "- a\n").unwrap();
+        let app_data = scratch("restore-host-app");
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let restoring = |slot: &RwLock<PageHostSlot>| {
+            let slot = slot.read().unwrap();
+            assert!(slot.running().is_none());
+            matches!(*slot, PageHostSlot::Restoring)
+        };
+        let off = RwLock::new(PageHostSlot::Off);
+        let mut ran = false;
+        restore_hosted(&off, 0, || {
+            ran = true;
+            assert!(!restoring(&off), "no host: nothing is marked restoring");
+            Ok(())
+        })
+        .unwrap();
+        assert!(ran && matches!(*off.read().unwrap(), PageHostSlot::Off));
+        let host = tine_store::PageHost::start_for_tests(&store, &app_data).unwrap();
+        let slot = RwLock::new(PageHostSlot::Running(host));
+        for outcome in [Ok(()), Err("restore-failed:Other: copy".to_owned())] {
+            let result = restore_hosted(&slot, 0, || {
+                assert!(restoring(&slot), "R7: the binding is restoring meanwhile");
+                outcome.clone()
+            });
+            assert_eq!(result, outcome);
+            assert!(
+                slot.read().unwrap().running().is_some(),
+                "R7: one fresh host after the restore, on failure too"
+            );
+        }
+        *slot.write().unwrap() = PageHostSlot::Off;
+        store.close();
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(app_data).unwrap();
+    }
 
     fn scratch(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("tine-tauri-{tag}-{}", std::process::id()));

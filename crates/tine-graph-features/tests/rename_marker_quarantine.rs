@@ -43,7 +43,8 @@ fn rename_skips_marker_bearing_referrers_and_reports_them() {
             ("pages/Clean.md", "- clean sees [[Alpha]]\n"),
         ],
     );
-    let report = pages::rename_or_merge_page(&store, "Alpha", "Beta", None, None, &[]).unwrap();
+    let report =
+        pages::rename_or_merge_page(&store, None, "Alpha", "Beta", None, None, &[]).unwrap();
     assert_eq!(report.outcome, RenameOutcome::Renamed);
     assert_eq!(
         fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(),
@@ -81,7 +82,7 @@ fn namespace_rename_also_skips_marker_bearing_referrers_and_moves_them_verbatim(
         ],
     );
     let report =
-        pages::rename_or_merge_page(&store, "Parent", "Ancestor", None, None, &[]).unwrap();
+        pages::rename_or_merge_page(&store, None, "Parent", "Ancestor", None, None, &[]).unwrap();
     assert_eq!(
         fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(),
         conflicted

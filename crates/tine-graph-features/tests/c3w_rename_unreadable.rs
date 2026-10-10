@@ -63,7 +63,8 @@ fn w2_rename_refuses_when_a_page_it_must_move_is_unreadable() {
     ] {
         let (root, store) = fixture(label, &child);
         let before = snapshot(&root);
-        let result = pages::rename_or_merge_page(&store, "Target", "Renamed", None, None, &[]);
+        let result =
+            pages::rename_or_merge_page(&store, None, "Target", "Renamed", None, None, &[]);
         let after = snapshot(&root);
         match result {
             Err(error) => {

@@ -315,6 +315,7 @@ fn a_syncthing_copy_resolves_three_way_with_the_ledger_base() {
     let decisions = preselected(&diff);
     conflicts::resolve_sync_conflict(
         &slot.store,
+        None,
         "pages/Desk.md",
         COPY,
         &decisions,
@@ -474,6 +475,7 @@ fn an_unwritable_ledger_never_blocks_saves_or_resolves() {
         .collect();
     conflicts::resolve_sync_conflict(
         &slot.store,
+        None,
         "pages/Desk.md",
         COPY,
         &decisions,
@@ -522,6 +524,7 @@ fn a_stale_or_foreign_base_never_loses_data_silently() {
     let moved = vec![body("Desktop 4")];
     let err = conflicts::resolve_sync_conflict(
         &slot.store,
+        None,
         "pages/Desk.md",
         COPY,
         &decisions,
@@ -536,6 +539,7 @@ fn a_stale_or_foreign_base_never_loses_data_silently() {
     // A failed ledger read at apply time refuses the merged row the same way.
     let err = conflicts::resolve_sync_conflict(
         &slot.store,
+        None,
         "pages/Desk.md",
         COPY,
         &decisions,
@@ -563,6 +567,7 @@ fn a_stale_or_foreign_base_never_loses_data_silently() {
     // time does not refuse them.
     conflicts::resolve_sync_conflict(
         &slot.store,
+        None,
         "pages/Desk.md",
         COPY,
         &preselected(&diff),
@@ -791,6 +796,7 @@ fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
         assert_eq!(decisions.values().any(|d| d == "merged"), usable, "{label}");
         let resolved = resolve_live_conflict(
             &slot.store,
+            None,
             "pages/Desk.md",
             &draft,
             Some(&base_rev),

@@ -49,6 +49,7 @@ fn resolve_all(ext: &str, winner: &str, copy: &str, decision: &str) -> String {
     all_rows(&diff.rows, decision, &mut decisions);
     conflicts::resolve_sync_conflict(
         &store,
+        None,
         &win,
         &conf,
         &decisions,

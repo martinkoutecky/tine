@@ -22,7 +22,7 @@ use tine_core::doc::Document;
 use tine_core::model::{Format, PageDto};
 use tine_core::projection::page_dto_document;
 use tine_core::sync_diff::{self, SyncConflictDiff};
-use tine_store::{EditKind, FileId, FileRev, SaveBase, Store};
+use tine_store::{EditKind, FileId, FileRev, Input, PageHost, SaveBase, Store};
 
 use crate::conflicts::{
     choose_pre, dto, format, id, invalid_path, merge_refused, parse, read_text,
@@ -126,6 +126,7 @@ pub fn live_conflict_diff(
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_live_conflict(
     store: &Store,
+    host: Option<&PageHost>,
     path: &str,
     draft: &PageDto,
     base_rev: Option<&str>,
@@ -137,61 +138,72 @@ pub fn resolve_live_conflict(
 ) -> io::Result<PageDto> {
     let file = id(store, path)?;
     let page = store.as_page(&file).ok_or_else(invalid_path)?;
-    let now = disk(store, &file)?;
-    if disk_rev(&now) != conflict_rev {
-        return Err(changed_on_disk());
-    }
-    if let Some((text, _)) = &now {
-        if format(&file) == Format::Org && !tine_core::org::org_editable(text) {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "the org file does not round-trip; not merging",
-            ));
-        }
-    }
-    let (fmt, mine, theirs) = sides(&file, draft, &now);
-    let base_doc = match (merge_base_rev, decisions.values().any(|d| d == "merged")) {
-        (Some(token), true) => match base_for(bases, base_rev) {
-            Some((base, current)) if current == token => Some(parse(base, fmt)),
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "merge base changed since the review",
-                ))
+    // A retained writer (STEP3 §7) of an old-engine review: a hosted page
+    // with unsaved input refuses as a moved disk revision would.
+    let discover = || Ok(vec![page.clone()]);
+    crate::retained::reserved(
+        host,
+        Input::Refuse,
+        discover,
+        |_| changed_on_disk(),
+        |_| {
+            let now = disk(store, &file)?;
+            if disk_rev(&now) != conflict_rev {
+                return Err(changed_on_disk());
             }
+            if let Some((text, _)) = &now {
+                if format(&file) == Format::Org && !tine_core::org::org_editable(text) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "the org file does not round-trip; not merging",
+                    ));
+                }
+            }
+            let (fmt, mine, theirs) = sides(&file, draft, &now);
+            let base_doc = match (merge_base_rev, decisions.values().any(|d| d == "merged")) {
+                (Some(token), true) => match base_for(bases, base_rev) {
+                    Some((base, current)) if current == token => Some(parse(base, fmt)),
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            "merge base changed since the review",
+                        ))
+                    }
+                },
+                _ => None,
+            };
+            let roots = sync_diff::merge_blocks3(
+                base_doc.as_ref().map(|doc| doc.roots.as_slice()),
+                &mine.roots,
+                &theirs.roots,
+                None,
+                decisions,
+            )
+            .map_err(merge_refused)?;
+            let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
+            let mut merged = dto(store, &page, Document { pre_block, roots });
+            let (kind, base) = match &now {
+                Some((_, rev)) => (EditKind::ReplacePage, SaveBase::Existing(rev.clone())),
+                None => (EditKind::CreatePage, SaveBase::CreateNew),
+            };
+            let mut tx = store.transaction(Some(kind));
+            tx.save_page(&[kind], &page, base, &merged);
+            let outcome = tx.commit();
+            // A revision guard that fails at commit is the same race as a moved
+            // revision before it: refresh the review, never retry against unseen bytes.
+            if crate::is_conflict(&outcome) {
+                return Err(changed_on_disk());
+            }
+            let rev = crate::tx_error(outcome)?
+                .into_iter()
+                .find_map(|step| match step {
+                    tine_store::StepResult::Written { rev, .. }
+                    | tine_store::StepResult::Unchanged { rev, .. } => Some(rev),
+                    _ => None,
+                })
+                .ok_or_else(|| io::Error::other("the resolved page was not written"))?;
+            merged.rev = Some(rev.into());
+            Ok(merged)
         },
-        _ => None,
-    };
-    let roots = sync_diff::merge_blocks3(
-        base_doc.as_ref().map(|doc| doc.roots.as_slice()),
-        &mine.roots,
-        &theirs.roots,
-        None,
-        decisions,
     )
-    .map_err(merge_refused)?;
-    let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
-    let mut merged = dto(store, &page, Document { pre_block, roots });
-    let (kind, base) = match &now {
-        Some((_, rev)) => (EditKind::ReplacePage, SaveBase::Existing(rev.clone())),
-        None => (EditKind::CreatePage, SaveBase::CreateNew),
-    };
-    let mut tx = store.transaction(Some(kind));
-    tx.save_page(&[kind], &page, base, &merged);
-    let outcome = tx.commit();
-    // A revision guard that fails at commit is the same race as a moved
-    // revision before it: refresh the review, never retry against unseen bytes.
-    if crate::is_conflict(&outcome) {
-        return Err(changed_on_disk());
-    }
-    let rev = crate::tx_error(outcome)?
-        .into_iter()
-        .find_map(|step| match step {
-            tine_store::StepResult::Written { rev, .. }
-            | tine_store::StepResult::Unchanged { rev, .. } => Some(rev),
-            _ => None,
-        })
-        .ok_or_else(|| io::Error::other("the resolved page was not written"))?;
-    merged.rev = Some(rev.into());
-    Ok(merged)
 }

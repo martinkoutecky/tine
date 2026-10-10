@@ -781,14 +781,45 @@ fn retained_reservation_blocks_save_and_reconciles_undo_or_publication() {
     assert_eq!(h.pages["a.md"].buf, text("transaction"));
 }
 
+/// The production files that name the retained-writer surface: the census
+/// writers (STEP3 §7) and the binding's host slot and restore.
+const CENSUS_CALL_SITES: &[&str] = &[
+    "crates/tine-graph-features/src/retained.rs",
+    "crates/tine-graph-features/src/pages.rs",
+    "crates/tine-graph-features/src/conflicts.rs",
+    "crates/tine-graph-features/src/journals.rs",
+    "crates/tine-graph-features/src/pdf.rs",
+    "crates/tine-graph-features/src/live_conflict.rs",
+    "src-tauri/src/state.rs",
+    "src-tauri/src/backup/restore.rs",
+];
+
 #[test]
 fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
     let root = option_env!("TINE_HOST_REPO_ROOT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    /// Whether `parent` declares the sibling `file` as a module, under
+    /// `#[cfg(test)]` when `gated`.
+    fn declares(parent: &str, file: &str, gated: bool) -> bool {
+        let stem = file.trim_end_matches(".rs");
+        let lines: Vec<_> = parent.lines().collect();
+        lines.iter().enumerate().any(|(i, line)| {
+            let named = *line == format!("mod {stem};") || *line == format!("#[path = \"{file}\"]");
+            named && (!gated || (i > 0 && lines[i - 1] == "#[cfg(test)]"))
+        })
+    }
     fn visit(root: &std::path::Path, dir: &std::path::Path) {
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
+        let paths: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        let siblings: Vec<String> = paths
+            .iter()
+            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+            .map(|path| std::fs::read_to_string(path).unwrap())
+            .collect();
+        for path in paths {
             if path.is_dir() {
                 visit(root, &path);
                 continue;
@@ -813,9 +844,59 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
                 continue;
             }
             let source = std::fs::read_to_string(&path).unwrap();
-            for line in source.lines() {
+            let name = path.file_name().unwrap().to_string_lossy();
+            // Test code: a file a sibling declares under `#[cfg(test)]`, and a
+            // top-level `#[cfg(test)] mod … {` up to its closing `}`.
+            let mut test_code = siblings.iter().any(|parent| declares(parent, &name, true));
+            let test_file = test_code;
+            let lines: Vec<&str> = source.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
                 if line.trim_start().starts_with("//") {
                     continue;
+                }
+                if *line == "#[cfg(test)]"
+                    && lines
+                        .get(i + 1)
+                        .is_some_and(|next| next.starts_with("mod ") && next.ends_with('{'))
+                {
+                    test_code = true;
+                } else if *line == "}" && !test_file {
+                    test_code = false;
+                }
+                // The retained-writer surface (PENDING MARTIN) is named only
+                // where a census writer reserves from a host or the binding
+                // keeps one (STEP3 §7), and no production path starts a host
+                // while the switch is off (lane 3b owns the switch).
+                assert!(
+                    test_code
+                        || (!line.contains("start_for_tests") && !line.contains("PageHost::start")),
+                    "a production path starts a page host: {relative}: {line}"
+                );
+                let exported = [
+                    "Input",
+                    "PageHost",
+                    "RenameRefusal",
+                    "Reservation",
+                    "StopMode",
+                    "Stopped",
+                ]
+                .into_iter()
+                .find(|name| {
+                    line.match_indices(name).any(|(at, _)| {
+                        let word =
+                            |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+                        !word(line[..at].chars().next_back())
+                            && !word(line[at + name.len()..].chars().next())
+                    })
+                });
+                if let Some(name) = exported.filter(|_| !test_code) {
+                    assert!(
+                        CENSUS_CALL_SITES.contains(&relative.as_str())
+                            || relative.starts_with("crates/tine-store/"),
+                        "page host name {name} outside the census-writer call sites \
+                         (STEP3 §7; exemplar crates/tine-graph-features/src/conflicts.rs \
+                         fold_pair): {relative}: {line}"
+                    );
                 }
                 if relative == "crates/tine-store/src/lib.rs"
                     && [
@@ -853,14 +934,6 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
     // join this list. Any other file here is the adapter, or a module
     // declared under `#[cfg(test)]` or inside such a module.
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/page_host");
-    let declares = |parent: &str, file: &str, gated: bool| {
-        let stem = file.trim_end_matches(".rs");
-        let lines: Vec<_> = parent.lines().collect();
-        lines.iter().enumerate().any(|(i, line)| {
-            let named = *line == format!("mod {stem};") || *line == format!("#[path = \"{file}\"]");
-            named && (!gated || (i > 0 && lines[i - 1] == "#[cfg(test)]"))
-        })
-    };
     let mut test_only: BTreeSet<String> = BTreeSet::new();
     let files: Vec<String> = std::fs::read_dir(&dir)
         .unwrap()

@@ -132,11 +132,23 @@ fn main() {
     }
     for round in 0..5 {
         measure(&format!("rename-{round}"), || {
-            tine_graph_features::pages::rename_page_expected(&store, "R5Cost1", "R5Renamed", None)
-                .unwrap();
-        });
-        tine_graph_features::pages::rename_page_expected(&store, "R5Renamed", "R5Cost1", None)
+            tine_graph_features::pages::rename_page_expected(
+                &store,
+                None,
+                "R5Cost1",
+                "R5Renamed",
+                None,
+            )
             .unwrap();
+        });
+        tine_graph_features::pages::rename_page_expected(
+            &store,
+            None,
+            "R5Renamed",
+            "R5Cost1",
+            None,
+        )
+        .unwrap();
     }
     std::hint::black_box(held);
     store.close();

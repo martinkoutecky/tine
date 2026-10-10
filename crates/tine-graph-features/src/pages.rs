@@ -10,8 +10,8 @@ use tine_core::refs;
 #[cfg(any(test, feature = "test-faults"))]
 use tine_store::SaveOutcome;
 use tine_store::{
-    Area, FileId, FileRev, LoadError, PageId, PageRead, RenameMap, Resolved, RewriteEffect,
-    SaveBase, SavePagesOutcome, Store, StoreError, TitleRebind,
+    Area, FileId, FileRev, Input, LoadError, PageHost, PageId, PageRead, RenameMap, RenameRefusal,
+    Resolved, RewriteEffect, SaveBase, SavePagesOutcome, Store, StoreError, TitleRebind,
 };
 
 /// A page read or OS source selection failed at the load, identity, or file step.
@@ -265,49 +265,67 @@ fn text_file(store: &Store, rel: &str) -> io::Result<FileId> {
 /// an absent identity succeeds only after a fresh read confirms that file is
 /// also absent (external deletion during confirmation); a live file at the
 /// path or a replacement claimant still refuses as a stale target. No file is
-/// written in the absent case. Cost O(P + file bytes)
-/// per try; a conflict is replanned at most four times.
+/// written in the absent case. A retained writer (STEP3 §7) of the page and
+/// the expected path: their unsaved input is saved first. Cost O(P + file
+/// bytes) per try; a conflict is replanned at most four times.
 pub fn delete_page_expected(
     store: &Store,
+    host: Option<&PageHost>,
     name: &str,
     kind: PageKind,
     expected_path: Option<&str>,
     expected_rev: Option<&FileRev>,
 ) -> io::Result<()> {
-    crate::retry_on_conflict("page changed repeatedly during delete", || {
-        let graph = refreshed_view(store)?;
-        let ids = existing(graph.resolve(name, kind == PageKind::Journal));
-        let Some(id) = ids.first() else {
-            if let Some(path) = expected_path.filter(|path| !path.trim().is_empty()) {
-                let file = text_file(store, path)?;
-                match store.read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-                    Err(StoreError::NotFound) => {}
-                    Err(error) => return Err(store_error(error)),
-                    Ok(_) => return Err(error(io::ErrorKind::NotFound, "stale page target")),
+    let discover = || {
+        let mut pages = existing(refreshed_view(store)?.resolve(name, kind == PageKind::Journal));
+        let expected = expected_path.and_then(|path| text_file(store, path).ok());
+        pages.extend(crate::retained::pages(store, &expected));
+        Ok(pages)
+    };
+    crate::retained::reserved(
+        host,
+        Input::Flush,
+        discover,
+        crate::retained::unsaved,
+        |_| {
+            crate::retry_on_conflict("page changed repeatedly during delete", || {
+                let graph = refreshed_view(store)?;
+                let ids = existing(graph.resolve(name, kind == PageKind::Journal));
+                let Some(id) = ids.first() else {
+                    if let Some(path) = expected_path.filter(|path| !path.trim().is_empty()) {
+                        let file = text_file(store, path)?;
+                        match store.read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
+                            Err(StoreError::NotFound) => {}
+                            Err(error) => return Err(store_error(error)),
+                            Ok(_) => {
+                                return Err(error(io::ErrorKind::NotFound, "stale page target"))
+                            }
+                        }
+                    }
+                    return Ok(Some(()));
+                };
+                validate_target(&ids, expected_path)?;
+                let file = id.file();
+                let (_, rev) = store
+                    .read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES))
+                    .map_err(store_error)?;
+                if expected_rev.is_some_and(|expected| *expected != rev) {
+                    return Err(error(io::ErrorKind::WouldBlock, "stale page revision"));
                 }
-            }
-            return Ok(Some(()));
-        };
-        validate_target(&ids, expected_path)?;
-        let file = id.file();
-        let (_, rev) = store
-            .read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES))
-            .map_err(store_error)?;
-        if expected_rev.is_some_and(|expected| *expected != rev) {
-            return Err(error(io::ErrorKind::WouldBlock, "stale page revision"));
-        }
-        let mut tx = store.transaction(Some(tine_store::EditKind::DeletePage));
-        tx.trash(&file, rev, tine_store::TrashIf::Any);
-        let outcome = tx.commit();
-        if is_conflict(&outcome) {
-            if expected_rev.is_some() {
-                return Err(error(io::ErrorKind::WouldBlock, "stale page revision"));
-            }
-            return Ok(None);
-        }
-        tx_error(outcome)?;
-        Ok(Some(()))
-    })
+                let mut tx = store.transaction(Some(tine_store::EditKind::DeletePage));
+                tx.trash(&file, rev, tine_store::TrashIf::Any);
+                let outcome = tx.commit();
+                if is_conflict(&outcome) {
+                    if expected_rev.is_some() {
+                        return Err(error(io::ErrorKind::WouldBlock, "stale page revision"));
+                    }
+                    return Ok(None);
+                }
+                tx_error(outcome)?;
+                Ok(Some(()))
+            })
+        },
+    )
 }
 
 /// Rename a page and its file-backed namespace descendants in one transaction.
@@ -327,12 +345,14 @@ pub fn delete_page_expected(
 /// complete plans maximum, then `WouldBlock`.
 pub fn rename_page_expected(
     store: &Store,
+    host: Option<&PageHost>,
     old: &str,
     new: &str,
     expected_path: Option<&str>,
 ) -> io::Result<()> {
     rename_page_after_inventory(
         store,
+        host,
         old,
         new,
         expected_path,
@@ -374,11 +394,16 @@ pub fn rename_page_expected(
 /// because rewriting it would turn those edits into a conflict against bytes
 /// the user never saw. Pages it does not touch need not be saved. `WouldBlock`
 /// also reports giving up after pages kept changing under repeated replans.
-/// Every write is one `tine-store` transaction: all steps are checked before
+/// With a page host (`host`), its own unsaved input decides instead for a
+/// single page's rename, which is the host's operation; every other rename
+/// is a retained writer of the pages it touches (STEP3 §7), and the host's
+/// rename moves `config.edn`'s home page in its own transaction after it.
+/// Otherwise every write is one `tine-store` transaction: all steps are checked before
 /// the first write and a failure rolls back; only a failed rollback or
 /// publication leaves partial state, and its error says to inspect disk.
 pub fn rename_or_merge_page(
     store: &Store,
+    host: Option<&PageHost>,
     old: &str,
     new: &str,
     expected_path: Option<&str>,
@@ -387,6 +412,7 @@ pub fn rename_or_merge_page(
 ) -> io::Result<RenameReport> {
     rename_page_after_inventory(
         store,
+        host,
         old,
         new,
         expected_path,
@@ -397,8 +423,10 @@ pub fn rename_or_merge_page(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rename_page_after_inventory(
     store: &Store,
+    host: Option<&PageHost>,
     old: &str,
     new: &str,
     expected_path: Option<&str>,
@@ -414,300 +442,575 @@ fn rename_page_after_inventory(
     if old.is_empty() || old == new {
         return Ok(RenameReport::unchanged());
     }
+    let plan = || {
+        plan_rename(
+            store,
+            old,
+            new,
+            expected_path,
+            merge_into,
+            #[cfg(test)]
+            &after_inventory,
+        )
+    };
     crate::retry_on_conflict("page changed repeatedly during rename", || {
-        let graph = refreshed_view(store)?;
-        let old_key = refs::normalize(old);
-        let prefix = format!("{old_key}/");
-        // Only file-claimed names move: the full inventory's alias and
-        // reference-only name discovery is not needed here (GH #623).
-        let owned = graph.inventory(tine_store::InventoryScope::FilesAtOrUnder(&old_key));
-        #[cfg(test)]
-        after_inventory();
-        let source = existing(graph.resolve(old, false));
-        validate_target(&source, expected_path)?;
-        let mut pairs = Vec::new();
-        let mut moves = HashMap::<PageId, FileId>::new();
-        let mut moved_titles_to_rebind = HashSet::<PageId>::new();
-        let mut destinations = HashSet::new();
-        let mut identities = HashSet::new();
-        let mut primary_is_file = false;
-        let mut merge = None;
-        for entry in owned.0.iter().filter(|entry| !entry.is_journal) {
-            let ids = physical(&entry.target);
-            let primary = refs::normalize(&entry.name) == old_key;
-            let new_name = if primary {
-                new.to_owned()
-            } else {
-                format!("{new}{}", namespace_suffix(&entry.name, &old_key))
-            };
-            if ids.len() > 1 {
-                return Err(error(
-                    io::ErrorKind::AlreadyExists,
-                    "multiple files share this page identity; mutation is ambiguous",
-                ));
+        let first = plan()?;
+        let Some(host) = host else {
+            return commit_rename(store, old, first, unsaved_paths);
+        };
+        if let Some(pair) = first.single(store)? {
+            return host_rename(store, host, pair, first, &plan, unsaved_paths);
+        }
+        // A retained writer (STEP3 §7) of every page the plan writes, planned
+        // again under the reservation: flush first, except an interrupted
+        // title completion, which refuses unsaved input as today.
+        let input = first.input();
+        let last = std::cell::Cell::new(None);
+        let discover = || {
+            let plan = plan()?;
+            let pages = plan.pages(store);
+            last.set(Some(plan));
+            Ok(pages)
+        };
+        let refused = |page: &str| unsaved_error(&first.graph, page);
+        crate::retained::reserved(Some(host), input, discover, refused, |_| {
+            let plan = last.take().expect("planned under the reservation");
+            if plan.single(store)?.is_some() || plan.input() != input {
+                return Ok(None);
             }
-            let id = ids[0].clone();
-            // An alias names its owner's page, so it is taken like a file name.
-            let mut taken = claimants(graph.resolve(&new_name, false));
-            taken.retain(|claimant| *claimant != id);
-            if let (true, Some(into), [survivor]) = (primary, merge_into, taken.as_slice()) {
-                if survivor.as_str() == into {
-                    identities.insert(refs::normalize(&new_name));
-                    merge = Some((id, survivor.clone()));
-                    primary_is_file = true;
-                    pairs.push((entry.name.clone(), new_name));
-                    continue;
-                }
+            commit_rename(store, old, plan, unsaved_paths)
+        })
+    })
+}
+
+/// What one rename attempt writes, planned from one refreshed view.
+struct RenamePlan {
+    graph: tine_store::WholeGraph,
+    map: RenameMap,
+    lookup: HashMap<String, String>,
+    moves: HashMap<PageId, FileId>,
+    moved_titles_to_rebind: HashSet<PageId>,
+    merge: Option<(PageId, PageId)>,
+    ref_merge: bool,
+    candidates: Vec<PageId>,
+}
+
+impl RenamePlan {
+    /// Every page the plan can write: referrers, moved pages and their
+    /// destinations, and a merge's survivor and source.
+    fn pages(&self, store: &Store) -> Vec<PageId> {
+        let mut pages = self.candidates.clone();
+        pages.extend(crate::retained::pages(store, self.moves.values()));
+        pages.extend(
+            self.merge
+                .iter()
+                .flat_map(|(src, dst)| [src.clone(), dst.clone()]),
+        );
+        pages
+    }
+
+    /// An interrupted title completion refuses unsaved input; every other
+    /// retained rename flushes it first (STEP3 §7).
+    fn input(&self) -> Input {
+        if self.moved_titles_to_rebind.is_empty() {
+            Input::Flush
+        } else {
+            Input::Refuse
+        }
+    }
+
+    /// The source and target of a single page's rename, which a host runs
+    /// as one page operation (STEP3 §7, F10): one name, no namespace
+    /// descendant, no merge, no interrupted title. A source with no file
+    /// renames its references only, under the default Markdown spelling.
+    fn single(&self, store: &Store) -> io::Result<Option<(PageId, PageId)>> {
+        if self.merge.is_some()
+            || self.ref_merge
+            || !self.moved_titles_to_rebind.is_empty()
+            || self.map.0.len() != 1
+        {
+            return Ok(None);
+        }
+        let spelled = |name: &str| {
+            let rel = format!(
+                "{}.md",
+                tine_core::model::encode_page_name(name, store.config().file_name_format)
+            );
+            store.file_id(Area::Pages, &rel).map_err(store_error)
+        };
+        let (source, target) = match self.moves.iter().next() {
+            Some((source, to)) => (source.clone(), to.clone()),
+            None => {
+                let (old, new) = &self.map.0[0];
+                (page(store, &spelled(old)?)?, spelled(new)?)
             }
-            if !taken.is_empty() {
+        };
+        Ok(Some((source, page(store, &target)?)))
+    }
+}
+
+fn page(store: &Store, file: &FileId) -> io::Result<PageId> {
+    store
+        .as_page(file)
+        .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))
+}
+
+fn plan_rename(
+    store: &Store,
+    old: &str,
+    new: &str,
+    expected_path: Option<&str>,
+    merge_into: Option<&str>,
+    #[cfg(test)] after_inventory: &dyn Fn(),
+) -> io::Result<RenamePlan> {
+    let graph = refreshed_view(store)?;
+    let old_key = refs::normalize(old);
+    // Only file-claimed names move: the full inventory's alias and
+    // reference-only name discovery is not needed here (GH #623).
+    let owned = graph.inventory(tine_store::InventoryScope::FilesAtOrUnder(&old_key));
+    #[cfg(test)]
+    after_inventory();
+    let source = existing(graph.resolve(old, false));
+    validate_target(&source, expected_path)?;
+    let mut pairs = Vec::new();
+    let mut moves = HashMap::<PageId, FileId>::new();
+    let mut moved_titles_to_rebind = HashSet::<PageId>::new();
+    let mut destinations = HashSet::new();
+    let mut identities = HashSet::new();
+    let mut primary_is_file = false;
+    let mut merge = None;
+    for entry in owned.0.iter().filter(|entry| !entry.is_journal) {
+        let ids = physical(&entry.target);
+        let primary = refs::normalize(&entry.name) == old_key;
+        let new_name = if primary {
+            new.to_owned()
+        } else {
+            format!("{new}{}", namespace_suffix(&entry.name, &old_key))
+        };
+        if ids.len() > 1 {
+            return Err(error(
+                io::ErrorKind::AlreadyExists,
+                "multiple files share this page identity; mutation is ambiguous",
+            ));
+        }
+        let id = ids[0].clone();
+        // An alias names its owner's page, so it is taken like a file name.
+        let mut taken = claimants(graph.resolve(&new_name, false));
+        taken.retain(|claimant| *claimant != id);
+        if let (true, Some(into), [survivor]) = (primary, merge_into, taken.as_slice()) {
+            if survivor.as_str() == into {
+                identities.insert(refs::normalize(&new_name));
+                merge = Some((id, survivor.clone()));
+                primary_is_file = true;
+                pairs.push((entry.name.clone(), new_name));
+                continue;
+            }
+        }
+        if !taken.is_empty() {
+            return Err(error(
+                io::ErrorKind::AlreadyExists,
+                "target page identity already exists elsewhere in the graph",
+            ));
+        }
+        let ext = Format::from_path(id.as_str().as_ref()).ext();
+        let rel = format!(
+            "{}.{}",
+            tine_core::model::encode_page_name(&new_name, store.config().file_name_format),
+            ext
+        );
+        let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
+        if !destinations.insert(to.as_str().to_owned())
+            || !identities.insert(refs::normalize(&new_name))
+        {
+            return Err(error(
+                io::ErrorKind::AlreadyExists,
+                "multiple pages map to the same rename target",
+            ));
+        }
+        if to == id.file() {
+            // A crash after the physical rename can leave Old's explicit
+            // title in New's file. Finish that rewrite in place on retry.
+            moved_titles_to_rebind.insert(id.clone());
+            pairs.push((entry.name.clone(), new_name));
+            primary_is_file |= primary;
+            continue;
+        }
+        if primary {
+            primary_is_file = true;
+        }
+        pairs.push((entry.name.clone(), new_name));
+        moves.insert(id, to);
+    }
+    // v0.6.5 model.rs 3654: reference-only pages have no move, but refs
+    // change. Onto an existing page that repoints them, which is OG
+    // `merge-pages!` of a page with no blocks, so it needs the confirmation.
+    let mut ref_merge = false;
+    if !primary_is_file {
+        let taken = claimants(graph.resolve(new, false));
+        match (merge_into, taken.as_slice()) {
+            (_, []) => {}
+            (Some(into), [owner]) if owner.as_str() == into => ref_merge = true,
+            (Some(_), _) => {}
+            (None, _) => {
                 return Err(error(
                     io::ErrorKind::AlreadyExists,
                     "target page identity already exists elsewhere in the graph",
-                ));
-            }
-            let ext = Format::from_path(id.as_str().as_ref()).ext();
-            let rel = format!(
-                "{}.{}",
-                tine_core::model::encode_page_name(&new_name, store.config().file_name_format),
-                ext
-            );
-            let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
-            if !destinations.insert(to.as_str().to_owned())
-                || !identities.insert(refs::normalize(&new_name))
-            {
-                return Err(error(
-                    io::ErrorKind::AlreadyExists,
-                    "multiple pages map to the same rename target",
-                ));
-            }
-            if to == id.file() {
-                // A crash after the physical rename can leave Old's explicit
-                // title in New's file. Finish that rewrite in place on retry.
-                moved_titles_to_rebind.insert(id.clone());
-                pairs.push((entry.name.clone(), new_name));
-                primary_is_file |= primary;
-                continue;
-            }
-            if primary {
-                primary_is_file = true;
-            }
-            pairs.push((entry.name.clone(), new_name));
-            moves.insert(id, to);
-        }
-        // v0.6.5 model.rs 3654: reference-only pages have no move, but refs
-        // change. Onto an existing page that repoints them, which is OG
-        // `merge-pages!` of a page with no blocks, so it needs the confirmation.
-        let mut ref_merge = false;
-        if !primary_is_file {
-            let taken = claimants(graph.resolve(new, false));
-            match (merge_into, taken.as_slice()) {
-                (_, []) => {}
-                (Some(into), [owner]) if owner.as_str() == into => ref_merge = true,
-                (Some(_), _) => {}
-                (None, _) => {
-                    return Err(error(
-                        io::ErrorKind::AlreadyExists,
-                        "target page identity already exists elsewhere in the graph",
-                    ))
-                }
-            }
-            pairs.push((old.to_owned(), new.to_owned()));
-        }
-        if merge_into.is_some() && merge.is_none() && !ref_merge {
-            return Err(error(
-                io::ErrorKind::NotFound,
-                "the page to merge into no longer owns that name",
-            ));
-        }
-        let map = RenameMap(pairs);
-        let lookup: HashMap<_, _> = map
-            .0
-            .iter()
-            .map(|(from, to)| (refs::normalize(from), to.clone()))
-            .collect();
-        // v0.6.5 model.rs 3681-3690 (warm index) and OG `:block/refs`: only
-        // pages that explicitly reference a renamed name are rewritten, plus
-        // every moved page. A name mentioned only inside `{{query}}` stays.
-        let olds: Vec<String> = map.0.iter().map(|(from, _)| from.clone()).collect();
-        let mut candidates: Vec<PageId> = graph.explicit_referrers(&olds);
-        candidates.extend(moves.keys().cloned());
-        candidates.extend(moved_titles_to_rebind.iter().cloned());
-        candidates.retain(|id| {
-            merge
-                .as_ref()
-                .is_none_or(|(src, dst)| id != src && id != dst)
-        });
-        candidates.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
-        candidates.dedup();
-        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-        // Crash order (I-2): survivor, then referrer rewrites, then namespace
-        // descendant moves, then the source trash, then config.edn LAST. The
-        // survivor is queued first because referrer rewrites are queued as the
-        // candidates are read below.
-        let merged = match &merge {
-            Some((src, dst)) => Some(merged_survivor(store, src, dst, Some(&lookup))?),
-            None => None,
-        };
-        if let (Some((_, dst)), Some(survivor)) = (&merge, &merged) {
-            let kinds = [
-                tine_store::EditKind::RenamePage,
-                tine_store::EditKind::InsertBlocks,
-            ];
-            tx.save_page(
-                &kinds,
-                dst,
-                SaveBase::Existing(survivor.dst_rev.clone()),
-                &survivor.doc,
-            );
-        }
-        let name_format = store.config().file_name_format;
-        let mut edits = Vec::new();
-        let mut skipped = Vec::new();
-        for id in candidates {
-            let file = id.file();
-            // A candidate the rename cannot read (non-UTF-8, over the size or
-            // depth cap: malformed imported/synced content) fails the rename,
-            // naming the file. Skipping it (v0.6.5 model.rs 3699) left a moved
-            // page under Old while every referrer said New (C3W W2, I-2);
-            // master page_rename.rs fails the same way (audit R15-09).
-            let (content, rev) = read_text(store, &file)
-                .map_err(|e| error(e.kind(), &format!("{}: {e}", file.as_str())))?;
-            let org = Format::from_path(id.as_str().as_ref()) == Format::Org;
-            let moved = moves.contains_key(&id);
-            let rebind = moved_titles_to_rebind.contains(&id);
-            let marked = !tine_core::concord_queue::vcs_conflict_markers(
-                &content,
-                if org { Format::Org } else { Format::Md },
-            )
-            .is_empty();
-            // Master a8fd4230d: a file carrying VCS conflict markers is not
-            // ours to rewrite (R-VCS-MARKERS; scenario: an external merge or a
-            // sync service left it mid-conflict). It stays byte-identical, a
-            // moved one moves verbatim, and the rename reports it. A moved
-            // file is rewritten inside its move step, and a marker-bearing one
-            // must not be queued before this check, so both ask the shared
-            // rewriter directly. Every other referrer is queued by the
-            // transaction's own rewrite, computed once from this read and
-            // reused by preflight (GH #623).
-            let changed = if moved || marked {
-                tine_core::refs::rename_rewrite(&content, org, &map.0, name_format) != content
-            } else {
-                let title = if rebind {
-                    TitleRebind::Own
-                } else {
-                    TitleRebind::Keep
-                };
-                tx.rewrite_refs(&id, rev.clone(), Some(&content), &map, title)
-                    == RewriteEffect::Changes
-            };
-            if changed && marked {
-                skipped.push(id.as_str().to_owned());
-                if moved {
-                    edits.push((id, rev, false));
-                }
-                continue;
-            }
-            if org && changed && !tine_core::org::org_editable(&content) {
-                let display = store
-                    .path_for_os_handoff(&file, false)
-                    .map_err(store_error)?;
-                return Err(error(
-                    io::ErrorKind::PermissionDenied,
-                    &format!(
-                        "cannot rename: {} is a read-only .org file (does not round-trip)",
-                        display.display()
-                    ),
-                ));
-            }
-            if marked && rebind {
-                // References unchanged, but the interrupted rename's title
-                // still needs rebinding in place.
-                tx.rewrite_refs(&id, rev.clone(), None, &map, TitleRebind::Own);
-            }
-            if moved || rebind || changed {
-                edits.push((id, rev, true));
+                ))
             }
         }
-        let outcome = if merge.is_some() || ref_merge {
-            RenameOutcome::Merged
+        pairs.push((old.to_owned(), new.to_owned()));
+    }
+    if merge_into.is_some() && merge.is_none() && !ref_merge {
+        return Err(error(
+            io::ErrorKind::NotFound,
+            "the page to merge into no longer owns that name",
+        ));
+    }
+    let map = RenameMap(pairs);
+    let lookup: HashMap<_, _> = map
+        .0
+        .iter()
+        .map(|(from, to)| (refs::normalize(from), to.clone()))
+        .collect();
+    // v0.6.5 model.rs 3681-3690 (warm index) and OG `:block/refs`: only
+    // pages that explicitly reference a renamed name are rewritten, plus
+    // every moved page. A name mentioned only inside `{{query}}` stays.
+    let olds: Vec<String> = map.0.iter().map(|(from, _)| from.clone()).collect();
+    let mut candidates: Vec<PageId> = graph.explicit_referrers(&olds);
+    candidates.extend(moves.keys().cloned());
+    candidates.extend(moved_titles_to_rebind.iter().cloned());
+    candidates.retain(|id| {
+        merge
+            .as_ref()
+            .is_none_or(|(src, dst)| id != src && id != dst)
+    });
+    candidates.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
+    candidates.dedup();
+    Ok(RenamePlan {
+        graph,
+        map,
+        lookup,
+        moves,
+        moved_titles_to_rebind,
+        merge,
+        ref_merge,
+        candidates,
+    })
+}
+
+/// The rename as one store transaction (`unsaved_paths`: see
+/// [`rename_or_merge_page`]).
+fn commit_rename(
+    store: &Store,
+    old: &str,
+    plan: RenamePlan,
+    unsaved_paths: &[String],
+) -> io::Result<Option<RenameReport>> {
+    let RenamePlan {
+        graph,
+        map,
+        lookup,
+        moves,
+        moved_titles_to_rebind,
+        merge,
+        ref_merge,
+        candidates,
+    } = plan;
+    let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+    // Crash order (I-2): survivor, then referrer rewrites, then namespace
+    // descendant moves, then the source trash, then config.edn LAST. The
+    // survivor is queued first because referrer rewrites are queued as the
+    // candidates are read below.
+    let merged = match &merge {
+        Some((src, dst)) => Some(merged_survivor(store, src, dst, Some(&lookup))?),
+        None => None,
+    };
+    if let (Some((_, dst)), Some(survivor)) = (&merge, &merged) {
+        let kinds = [
+            tine_store::EditKind::RenamePage,
+            tine_store::EditKind::InsertBlocks,
+        ];
+        tx.save_page(
+            &kinds,
+            dst,
+            SaveBase::Existing(survivor.dst_rev.clone()),
+            &survivor.doc,
+        );
+    }
+    let name_format = store.config().file_name_format;
+    let mut edits = Vec::new();
+    let mut skipped = Vec::new();
+    for id in candidates {
+        let file = id.file();
+        // A candidate the rename cannot read (non-UTF-8, over the size or
+        // depth cap: malformed imported/synced content) fails the rename,
+        // naming the file. Skipping it (v0.6.5 model.rs 3699) left a moved
+        // page under Old while every referrer said New (C3W W2, I-2);
+        // master page_rename.rs fails the same way (audit R15-09).
+        let (content, rev) = read_text(store, &file)
+            .map_err(|e| error(e.kind(), &format!("{}: {e}", file.as_str())))?;
+        let org = Format::from_path(id.as_str().as_ref()) == Format::Org;
+        let moved = moves.contains_key(&id);
+        let rebind = moved_titles_to_rebind.contains(&id);
+        let marked = !tine_core::concord_queue::vcs_conflict_markers(
+            &content,
+            if org { Format::Org } else { Format::Md },
+        )
+        .is_empty();
+        // Master a8fd4230d: a file carrying VCS conflict markers is not
+        // ours to rewrite (R-VCS-MARKERS; scenario: an external merge or a
+        // sync service left it mid-conflict). It stays byte-identical, a
+        // moved one moves verbatim, and the rename reports it. A moved
+        // file is rewritten inside its move step, and a marker-bearing one
+        // must not be queued before this check, so both ask the shared
+        // rewriter directly. Every other referrer is queued by the
+        // transaction's own rewrite, computed once from this read and
+        // reused by preflight (GH #623).
+        let changed = if moved || marked {
+            tine_core::refs::rename_rewrite(&content, org, &map.0, name_format) != content
         } else {
-            RenameOutcome::Renamed
+            let title = if rebind {
+                TitleRebind::Own
+            } else {
+                TitleRebind::Keep
+            };
+            tx.rewrite_refs(&id, rev.clone(), Some(&content), &map, title) == RewriteEffect::Changes
         };
-        if edits.is_empty() && merged.is_none() {
-            return Ok(Some(RenameReport {
-                skipped_conflicted_referrers: skipped,
-                ..RenameReport::unchanged()
-            }));
+        if changed && marked {
+            skipped.push(id.as_str().to_owned());
+            if moved {
+                edits.push((id, rev, false));
+            }
+            continue;
         }
-        let touched: Vec<TouchedPage> = edits
-            .iter()
-            .map(|(id, _, _)| (id, moves.contains_key(id)))
-            .chain(
-                merge
-                    .iter()
-                    .flat_map(|(src, dst)| [(dst, false), (src, true)]),
-            )
-            .map(|(id, moved)| TouchedPage {
-                path: id.as_str().to_owned(),
-                moved,
-            })
-            .collect();
-        if let Some(blocked) = touched
-            .iter()
-            .find(|page| unsaved_paths.contains(&page.path))
-        {
-            let inventory = graph.inventory(tine_store::InventoryScope::All);
-            let name = inventory
-                .0
-                .iter()
-                .find(|entry| {
-                    physical(&entry.target)
-                        .iter()
-                        .any(|id| id.as_str() == blocked.path)
-                })
-                .map_or(blocked.path.as_str(), |entry| entry.name.as_str());
+        if org && changed && !tine_core::org::org_editable(&content) {
+            let display = store
+                .path_for_os_handoff(&file, false)
+                .map_err(store_error)?;
             return Err(error(
-                io::ErrorKind::WouldBlock,
+                io::ErrorKind::PermissionDenied,
                 &format!(
-                    "“{name}” has changes Tine could not save, and this rename would rewrite it. \
-                     Save or discard those changes, then rename again."
+                    "cannot rename: {} is a read-only .org file (does not round-trip)",
+                    display.display()
                 ),
             ));
         }
-        // OG `rename-page-aux` moves `:default-home` with a renamed page;
-        // `merge-pages!` does not, so a merged source keeps it.
-        let merged_old = (merge.is_some() || ref_merge).then(|| refs::normalize(old));
-        let home = crate::config::home_after_rename(store, |home| {
-            let key = refs::normalize(home);
-            (merged_old.as_ref() != Some(&key))
-                .then(|| lookup.get(&key).cloned())
-                .flatten()
-        });
-        // Crash order (I-2), continued: the survivor and the referrer
-        // rewrites are queued above; namespace descendant moves, then the
-        // source trash, then config.edn LAST. A crash before the config step
-        // leaves home naming the old page. Every boundary leaves `[[Old]]`
-        // resolving to the still-live source, and a retry finds the survivor
-        // already holding the source payload (see `merged_survivor`).
-        for (id, rev, rewrite) in edits
-            .into_iter()
-            .filter(|(id, _, _)| moves.contains_key(id))
-        {
-            tx.move_file(&id.file(), rev, &moves[&id], rewrite.then_some(&map));
+        if marked && rebind {
+            // References unchanged, but the interrupted rename's title
+            // still needs rebinding in place.
+            tx.rewrite_refs(&id, rev.clone(), None, &map, TitleRebind::Own);
         }
-        if let (Some((src, _)), Some(survivor)) = (&merge, merged) {
-            tx.trash(&src.file(), survivor.src_rev, tine_store::TrashIf::Any);
+        if moved || rebind || changed {
+            edits.push((id, rev, true));
         }
-        if let Some((id, rev, bytes, _)) = &home {
-            tx.replace(id, rev.clone(), bytes.clone());
-        }
-        Ok(crate::commit_retry(tx.commit())?.then_some(RenameReport {
-            outcome,
-            touched,
+    }
+    let outcome = if merge.is_some() || ref_merge {
+        RenameOutcome::Merged
+    } else {
+        RenameOutcome::Renamed
+    };
+    if edits.is_empty() && merged.is_none() {
+        return Ok(Some(RenameReport {
             skipped_conflicted_referrers: skipped,
-            home_page: home.map(|(_, _, _, name)| name),
-        }))
+            ..RenameReport::unchanged()
+        }));
+    }
+    let touched: Vec<TouchedPage> = edits
+        .iter()
+        .map(|(id, _, _)| (id, moves.contains_key(id)))
+        .chain(
+            merge
+                .iter()
+                .flat_map(|(src, dst)| [(dst, false), (src, true)]),
+        )
+        .map(|(id, moved)| TouchedPage {
+            path: id.as_str().to_owned(),
+            moved,
+        })
+        .collect();
+    if let Some(blocked) = touched
+        .iter()
+        .find(|page| unsaved_paths.contains(&page.path))
+    {
+        return Err(unsaved_error(&graph, &blocked.path));
+    }
+    let merged_old = (merge.is_some() || ref_merge).then(|| refs::normalize(old));
+    let home = home_after(store, &lookup, merged_old.as_ref());
+    // Crash order (I-2), continued: the survivor and the referrer
+    // rewrites are queued above; namespace descendant moves, then the
+    // source trash, then config.edn LAST. A crash before the config step
+    // leaves home naming the old page. Every boundary leaves `[[Old]]`
+    // resolving to the still-live source, and a retry finds the survivor
+    // already holding the source payload (see `merged_survivor`).
+    for (id, rev, rewrite) in edits
+        .into_iter()
+        .filter(|(id, _, _)| moves.contains_key(id))
+    {
+        tx.move_file(&id.file(), rev, &moves[&id], rewrite.then_some(&map));
+    }
+    if let (Some((src, _)), Some(survivor)) = (&merge, merged) {
+        tx.trash(&src.file(), survivor.src_rev, tine_store::TrashIf::Any);
+    }
+    if let Some((id, rev, bytes, _)) = &home {
+        tx.replace(id, rev.clone(), bytes.clone());
+    }
+    Ok(crate::commit_retry(tx.commit())?.then_some(RenameReport {
+        outcome,
+        touched,
+        skipped_conflicted_referrers: skipped,
+        home_page: home.map(|(_, _, _, name)| name),
+    }))
+}
+
+/// A single page's rename with a host (STEP3 §7, F10): one host operation
+/// under `pages.rs`'s policy, then the home page in `config.edn` as its own
+/// transaction once the operation completes. A target that is another
+/// spelling of the source's own entry (a case-folding volume, Q4) moves as
+/// a retained transaction instead, refusing unsaved input, and the host
+/// follows the new spelling. A replan is `Ok(None)`.
+fn host_rename(
+    store: &Store,
+    host: &PageHost,
+    (source, target): (PageId, PageId),
+    first: RenamePlan,
+    plan: &dyn Fn() -> io::Result<RenamePlan>,
+    unsaved_paths: &[String],
+) -> io::Result<Option<RenameReport>> {
+    let referrers: Vec<PageId> = first
+        .candidates
+        .iter()
+        .filter(|id| **id != source)
+        .cloned()
+        .collect();
+    let (changed, skipped) = match host.rename(&source, &target, &referrers, &first.map) {
+        Ok(done) => done,
+        Err(RenameRefusal::Alias) => {
+            let last = std::cell::Cell::new(None);
+            let discover = || {
+                let plan = plan()?;
+                let pages = plan.pages(store);
+                last.set(Some(plan));
+                Ok(pages)
+            };
+            let refused = |page: &str| unsaved_error(&first.graph, page);
+            return crate::retained::reserved(Some(host), Input::Refuse, discover, refused, |_| {
+                let plan = last.take().expect("planned under the reservation");
+                if plan.single(store)?.as_ref() != Some(&(source.clone(), target.clone())) {
+                    return Ok(None);
+                }
+                let report = commit_rename(store, &first.map.0[0].0, plan, unsaved_paths)?;
+                if report.is_some() {
+                    host.respell(&source, &target);
+                }
+                Ok(report)
+            });
+        }
+        Err(RenameRefusal::Unsaved(page)) => {
+            return Err(unsaved_error(&first.graph, page.as_str()))
+        }
+        Err(RenameRefusal::Unwritable(page)) => return Err(unwritable(store, &page)),
+        Err(RenameRefusal::Unwritten(page)) => {
+            return Err(error(
+                io::ErrorKind::WouldBlock,
+                &format!(
+                    "“{}” could not be written; the rename finishes once it can be.",
+                    page.as_str()
+                ),
+            ))
+        }
+        Err(RenameRefusal::Refused) => return Ok(None),
+    };
+    if changed.is_empty() && first.moves.is_empty() {
+        let skipped = skipped.iter().map(|id| id.as_str().to_owned()).collect();
+        return Ok(Some(RenameReport {
+            skipped_conflicted_referrers: skipped,
+            ..RenameReport::unchanged()
+        }));
+    }
+    let mut touched: Vec<TouchedPage> = changed
+        .iter()
+        .map(|id| TouchedPage {
+            path: id.as_str().to_owned(),
+            moved: false,
+        })
+        .collect();
+    if first.moves.contains_key(&source) {
+        touched.push(TouchedPage {
+            path: source.as_str().to_owned(),
+            moved: true,
+        });
+    }
+    // In path order, as the transaction's report lists them.
+    touched.sort_by(|a, b| a.path.cmp(&b.path));
+    let home_page =
+        crate::retry_on_conflict("config.edn changed repeatedly during rename", || {
+            let Some((id, rev, bytes, name)) = home_after(store, &first.lookup, None) else {
+                return Ok(Some(None));
+            };
+            let mut tx = store.transaction(None);
+            tx.replace(&id, rev, bytes);
+            Ok(crate::commit_retry(tx.commit())?.then_some(Some(name)))
+        })?;
+    Ok(Some(RenameReport {
+        outcome: RenameOutcome::Renamed,
+        touched,
+        skipped_conflicted_referrers: skipped.iter().map(|id| id.as_str().to_owned()).collect(),
+        home_page,
+    }))
+}
+
+/// OG `rename-page-aux` moves `:default-home` with a renamed page;
+/// `merge-pages!` does not, so a merged source (`merged_old`) keeps it.
+fn home_after(
+    store: &Store,
+    lookup: &HashMap<String, String>,
+    merged_old: Option<&String>,
+) -> Option<(FileId, FileRev, Vec<u8>, String)> {
+    crate::config::home_after_rename(store, |home| {
+        let key = refs::normalize(home);
+        (merged_old != Some(&key))
+            .then(|| lookup.get(&key).cloned())
+            .flatten()
     })
+}
+
+/// The refusal of a rename that would rewrite a page with unsaved input,
+/// naming the page by its title.
+fn unsaved_error(graph: &tine_store::WholeGraph, path: &str) -> io::Error {
+    let inventory = graph.inventory(tine_store::InventoryScope::All);
+    let name = inventory
+        .0
+        .iter()
+        .find(|entry| physical(&entry.target).iter().any(|id| id.as_str() == path))
+        .map_or(path, |entry| entry.name.as_str());
+    error(
+        io::ErrorKind::WouldBlock,
+        &format!(
+            "“{name}” has changes Tine could not save, and this rename would rewrite it. \
+             Save or discard those changes, then rename again."
+        ),
+    )
+}
+
+/// The refusal of a rename that would change a page it cannot rewrite: a
+/// read-only Org file, or one that is not UTF-8.
+fn unwritable(store: &Store, page: &PageId) -> io::Error {
+    let file = page.file();
+    if Format::from_path(page.as_str().as_ref()) == Format::Org {
+        if let Ok(display) = store.path_for_os_handoff(&file, false) {
+            return error(
+                io::ErrorKind::PermissionDenied,
+                &format!(
+                    "cannot rename: {} is a read-only .org file (does not round-trip)",
+                    display.display()
+                ),
+            );
+        }
+    }
+    error(
+        io::ErrorKind::InvalidData,
+        &format!("{}: stream did not contain valid UTF-8", file.as_str()),
+    )
 }
 
 /// The namespace tail of descendant `name` below the parent whose page key is
@@ -778,8 +1081,15 @@ pub enum RenameOutcome {
 
 /// Rescue a stray page or journal file into a uniquely named normal page.
 /// Its bytes are unchanged and inbound references are not rewritten, matching
-/// v0.6.5 model.rs 1779. Cost O(P + source bytes) per try; four tries maximum.
-pub fn rename_file_to_page(store: &Store, src_rel: &str, new_name: &str) -> io::Result<()> {
+/// v0.6.5 model.rs 1779. A retained writer (STEP3 §7) of the source and the
+/// target: their unsaved input is saved first. Cost O(P + source bytes) per
+/// try; four tries maximum.
+pub fn rename_file_to_page(
+    store: &Store,
+    host: Option<&PageHost>,
+    src_rel: &str,
+    new_name: &str,
+) -> io::Result<()> {
     let name = new_name.trim();
     if name.is_empty() {
         return Err(error(io::ErrorKind::InvalidInput, "empty page name"));
@@ -792,34 +1102,49 @@ pub fn rename_file_to_page(store: &Store, src_rel: &str, new_name: &str) -> io::
         ext
     );
     let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
-    crate::retry_on_conflict("page changed repeatedly during rescue", || {
-        // A retained non-portable legacy filename (`pages/A:B.md`) is not a view
-        // claimant but OG loads it as that page: refuse like a live claimant
-        // (external-editor / multi-device graph; master 46a0e8c27).
-        if !existing(refreshed_view(store)?.resolve(name, false)).is_empty()
-            || retained_legacy_page_identity_exists(store, name)?
-        {
-            return Err(error(
-                io::ErrorKind::AlreadyExists,
-                "a page with that name already exists",
-            ));
-        }
-        let (_, rev) = store
-            .read(&src, Some(tine_store::PARSE_INPUT_MAX_BYTES))
-            .map_err(store_error)?;
-        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-        tx.move_file(&src, rev, &to, None);
-        Ok(crate::commit_retry(tx.commit())?.then_some(()))
-    })
+    let discover = || Ok(crate::retained::pages(store, [&src, &to]));
+    crate::retained::reserved(
+        host,
+        Input::Flush,
+        discover,
+        crate::retained::unsaved,
+        |_| {
+            crate::retry_on_conflict("page changed repeatedly during rescue", || {
+                // A retained non-portable legacy filename (`pages/A:B.md`) is not a view
+                // claimant but OG loads it as that page: refuse like a live claimant
+                // (external-editor / multi-device graph; master 46a0e8c27).
+                if !existing(refreshed_view(store)?.resolve(name, false)).is_empty()
+                    || retained_legacy_page_identity_exists(store, name)?
+                {
+                    return Err(error(
+                        io::ErrorKind::AlreadyExists,
+                        "a page with that name already exists",
+                    ));
+                }
+                let (_, rev) = store
+                    .read(&src, Some(tine_store::PARSE_INPUT_MAX_BYTES))
+                    .map_err(store_error)?;
+                let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+                tx.move_file(&src, rev, &to, None);
+                Ok(crate::commit_retry(tx.commit())?.then_some(()))
+            })
+        },
+    )
 }
 
 /// Merge one source into a survivor, as [`rename_or_merge_page`] merges pages
 /// but without renaming anything (aliases united, Org directives kept, through
 /// the same `merged_survivor`), then recoverably trash the source in the same
 /// commit. Org pairs must round-trip; formats must match. v0.6.5 never
-/// rewrites inbound refs in this operation. Cost O(source + survivor bytes and
-/// blocks) per try; four complete attempts maximum.
-pub fn merge_pages(store: &Store, src_rel: &str, dst_rel: &str) -> io::Result<()> {
+/// rewrites inbound refs in this operation. A retained writer (STEP3 §7) of
+/// both pages: their unsaved input is saved first. Cost O(source + survivor
+/// bytes and blocks) per try; four complete attempts maximum.
+pub fn merge_pages(
+    store: &Store,
+    host: Option<&PageHost>,
+    src_rel: &str,
+    dst_rel: &str,
+) -> io::Result<()> {
     let src = text_file(store, src_rel)?;
     let dst = text_file(store, dst_rel)?;
     if src == dst {
@@ -834,21 +1159,30 @@ pub fn merge_pages(store: &Store, src_rel: &str, dst_rel: &str) -> io::Result<()
     let dst_id = store
         .as_page(&dst)
         .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))?;
-    crate::retry_on_conflict("pages changed repeatedly during merge", || {
-        let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
-        let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
-        tx.save_page(
-            &[
-                tine_store::EditKind::InsertBlocks,
-                tine_store::EditKind::DeletePage,
-            ],
-            &dst_id,
-            SaveBase::Existing(survivor.dst_rev),
-            &survivor.doc,
-        );
-        tx.trash(&src, survivor.src_rev, tine_store::TrashIf::Any);
-        Ok(crate::commit_retry(tx.commit())?.then_some(()))
-    })
+    let discover = || Ok(vec![src_id.clone(), dst_id.clone()]);
+    crate::retained::reserved(
+        host,
+        Input::Flush,
+        discover,
+        crate::retained::unsaved,
+        |_| {
+            crate::retry_on_conflict("pages changed repeatedly during merge", || {
+                let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
+                let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
+                tx.save_page(
+                    &[
+                        tine_store::EditKind::InsertBlocks,
+                        tine_store::EditKind::DeletePage,
+                    ],
+                    &dst_id,
+                    SaveBase::Existing(survivor.dst_rev),
+                    &survivor.doc,
+                );
+                tx.trash(&src, survivor.src_rev, tine_store::TrashIf::Any);
+                Ok(crate::commit_retry(tx.commit())?.then_some(()))
+            })
+        },
+    )
 }
 
 fn lines<'a>(mut parts: impl Iterator<Item = &'a str>) -> String {

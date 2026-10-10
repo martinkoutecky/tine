@@ -633,7 +633,15 @@ fn write_highlights_preserves_externally_added_ones() {
             .collect()
     };
     // Tine writes H1 (no baseline yet).
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[mk_hl("H1", "one")], &[]).unwrap();
+    pdf::write_highlights(
+        &store,
+        None,
+        "paper.pdf",
+        "Paper",
+        &[mk_hl("H1", "one")],
+        &[],
+    )
+    .unwrap();
     // An external editor (OG) adds H2 to the same EDN.
     let edn_path = root
         .join("assets")
@@ -645,6 +653,7 @@ fn write_highlights_preserves_externally_added_ones() {
     // Tine, baseline [H1], adds H3 and writes — H2 (external) must NOT be dropped.
     pdf::write_highlights(
         &store,
+        None,
         "paper.pdf",
         "Paper",
         &[mk_hl("H1", "one"), mk_hl("H3", "three")],
@@ -661,6 +670,7 @@ fn write_highlights_preserves_externally_added_ones() {
     let base = pdf::read_highlights(&store, "paper.pdf");
     pdf::write_highlights(
         &store,
+        None,
         "paper.pdf",
         "Paper",
         &[mk_hl("H1", "one"), mk_hl("H3", "three")],
@@ -710,7 +720,7 @@ fn highlight_write_is_not_seen_as_external_change() {
         text: Some("noted".into()),
         image: None,
     };
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[]).unwrap();
+    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[h], &[]).unwrap();
 
     store.refresh(tine_store::Depth::Stamps).unwrap();
     let observed: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
@@ -840,7 +850,8 @@ fn delete_page_moves_to_trash_recoverable() {
             .len(),
         1
     );
-    pages::delete_page_expected(&store, "Doomed", PageKind::Page, None, None).expect("delete");
+    pages::delete_page_expected(&store, None, "Doomed", PageKind::Page, None, None)
+        .expect("delete");
 
     // Gone from pages/, no longer resolvable...
     assert!(!root.join("pages").join("Doomed.md").exists());
@@ -881,7 +892,7 @@ fn delete_page_errors_when_trash_path_is_file_and_keeps_page_cached() {
         1
     );
 
-    let err = pages::delete_page_expected(&store, "Doomed", PageKind::Page, None, None)
+    let err = pages::delete_page_expected(&store, None, "Doomed", PageKind::Page, None, None)
         .expect_err("trash path is blocked");
     assert!(
         err.to_string().contains(".tine-trash"),
@@ -909,8 +920,8 @@ fn trash_journal_file_errors_when_trash_path_is_file_and_keeps_source() {
     let journal = root.join("journals").join("2026_06_20.md");
     std::fs::write(&journal, "- journal body\n").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
-    let err =
-        journals::trash_journal_file(&store, "2026_06_20.md").expect_err("trash path is blocked");
+    let err = journals::trash_journal_file(&store, None, "2026_06_20.md")
+        .expect_err("trash path is blocked");
     assert!(
         err.to_string().contains(".tine-trash"),
         "error should name the trash path: {err}"
@@ -1221,6 +1232,7 @@ fn migrate_renames_title_named_journal_files() {
     let store = Store::open(&root, Default::default()).unwrap().0;
     let n = journals::migrate_journal_filenames(
         &store,
+        None,
         &journals::journal_filename_migrations(&store).unwrap(),
     )
     .unwrap();

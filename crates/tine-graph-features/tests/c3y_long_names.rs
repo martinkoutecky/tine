@@ -133,7 +133,7 @@ fn y2_trashing_a_long_asset_and_page_keeps_a_recoverable_copy() {
     let rel = format!("pages/{title}.md");
     fs::write(root.join(&rel), "- long page\n").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
-    pages::delete_page_expected(&store, &title, PageKind::Page, None, None)
+    pages::delete_page_expected(&store, None, &title, PageKind::Page, None, None)
         .expect("delete an 84-char page");
     assert!(!root.join(&rel).exists());
     let pages_trash = names(&root.join("logseq/.tine-trash/pages"));

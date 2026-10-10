@@ -325,7 +325,7 @@ fn issue232_merge_output_matches_destination_reload_identity() {
         .map(|block| block.id)
         .collect::<Vec<_>>();
     let kept_id = store.page(&destination).unwrap().doc.blocks[0].id.clone();
-    pages::merge_pages(&store, "pages/Source.md", "pages/Destination.md").unwrap();
+    pages::merge_pages(&store, None, "pages/Source.md", "pages/Destination.md").unwrap();
     let merged_ids = store
         .page(&destination)
         .unwrap()

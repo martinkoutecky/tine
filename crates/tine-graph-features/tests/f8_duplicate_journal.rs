@@ -111,6 +111,7 @@ fn resolving_keep_both_folds_the_stray_in_trashes_it_and_leaves_the_queue() {
     keep_both(&diff.rows, &mut decisions);
     conflicts::resolve_duplicate_journal_day(
         &store,
+        None,
         KEEPER,
         STRAY,
         &decisions,
@@ -159,6 +160,7 @@ fn resolving_refuses_files_of_different_days_and_a_non_canonical_target() {
     let refuse = |canonical: &str, stray: &str| {
         conflicts::resolve_duplicate_journal_day(
             &store,
+            None,
             canonical,
             stray,
             &HashMap::new(),
@@ -205,6 +207,7 @@ fn a_stale_review_writes_nothing() {
     keep_both(&diff.rows, &mut decisions);
     let error = conflicts::resolve_duplicate_journal_day(
         &store,
+        None,
         KEEPER,
         STRAY,
         &decisions,
@@ -241,6 +244,7 @@ fn a_cross_format_day_lists_its_files_offers_no_rows_and_refuses_a_fold() {
         .is_none());
     let error = conflicts::resolve_duplicate_journal_day(
         &store,
+        None,
         KEEPER,
         org,
         &HashMap::new(),

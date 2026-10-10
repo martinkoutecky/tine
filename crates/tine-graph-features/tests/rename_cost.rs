@@ -43,7 +43,7 @@ fn rename(pages_count: usize, referrers: usize) -> Counts {
     let store = Store::open(&root, Default::default()).unwrap().0;
     store.whole_graph().unwrap();
     cost_counters::reset();
-    pages::rename_page_expected(&store, "Target", "Renamed", None).unwrap();
+    pages::rename_page_expected(&store, None, "Target", "Renamed", None).unwrap();
     let counts = cost_counters::snapshot();
     assert!(root.join("pages/Renamed.md").exists());
     assert_eq!(
@@ -126,7 +126,7 @@ fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
         let store = Store::open(root.path(), Default::default()).unwrap().0;
         store.whole_graph().unwrap();
         cost_counters::reset();
-        pages::rename_page_expected(&store, "Target", "Renamed", None).unwrap();
+        pages::rename_page_expected(&store, None, "Target", "Renamed", None).unwrap();
         let cost = cost_counters::snapshot();
         assert_eq!(cost.files_written, 1);
         assert_eq!(cost.bytes_written, bytes);

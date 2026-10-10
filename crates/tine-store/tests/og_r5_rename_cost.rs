@@ -17,7 +17,7 @@ fn rename_does_not_read_unrelated_page_headers() {
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         store.whole_graph().unwrap();
         cost_counters::reset();
-        tine_graph_features::pages::rename_page_expected(&store, "Name 0", "Renamed", None)
+        tine_graph_features::pages::rename_page_expected(&store, None, "Name 0", "Renamed", None)
             .unwrap();
         let cost = cost_counters::snapshot();
         eprintln!("R5 rename pages={pages}: {cost:?}");

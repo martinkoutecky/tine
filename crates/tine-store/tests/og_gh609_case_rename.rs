@@ -29,7 +29,8 @@ fn case_only_rename_changes_filename_title_refs_and_namespace() {
         )
         .unwrap();
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
-        let report = rename_or_merge_page(&store, "my note", "My Note", None, None, &[]).unwrap();
+        let report =
+            rename_or_merge_page(&store, None, "my note", "My Note", None, None, &[]).unwrap();
         assert_eq!(report.outcome, RenameOutcome::Renamed);
         assert_eq!(report.home_page.as_deref(), Some("My Note"));
         let names: Vec<_> = fs::read_dir(dir.path().join("pages"))
@@ -89,7 +90,7 @@ fn case_move_io_failure_restores_source_and_preserves_refs() {
         if alias {
             store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
         }
-        assert!(rename_or_merge_page(&store, "old", "Old", None, None, &[]).is_err());
+        assert!(rename_or_merge_page(&store, None, "old", "Old", None, None, &[]).is_err());
         assert_eq!(
             fs::read_to_string(dir.path().join("pages/old.md")).unwrap(),
             "- [[old]]\n"
@@ -119,7 +120,7 @@ fn distinct_case_twins_refuse_without_writing() {
     twin.write_all(b"- second\n").unwrap();
     drop(twin);
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
-    assert!(rename_or_merge_page(&store, "old", "Old", None, None, &[]).is_err());
+    assert!(rename_or_merge_page(&store, None, "old", "Old", None, None, &[]).is_err());
     assert_eq!(
         fs::read_to_string(dir.path().join("pages/old.md")).unwrap(),
         "- first\n"
@@ -146,7 +147,7 @@ fn case_rename_crash_worker() {
         _ => unreachable!(),
     };
     store.inject_fault(point);
-    rename_or_merge_page(&store, "old", "Old", None, None, &[]).unwrap();
+    rename_or_merge_page(&store, None, "old", "Old", None, None, &[]).unwrap();
     panic!("case rename did not reach abort boundary");
 }
 
@@ -192,7 +193,7 @@ fn case_rename_kill_reopen_preserves_bytes_and_can_resume() {
                 expected
             );
         }
-        rename_or_merge_page(&store, "old", "Old", None, None, &[]).unwrap();
+        rename_or_merge_page(&store, None, "old", "Old", None, None, &[]).unwrap();
         assert_eq!(
             fs::read_to_string(dir.path().join("pages/Old.md")).unwrap(),
             "title:: Old\n- [[Old]]\n"
@@ -291,7 +292,7 @@ fn case_rename_uses_the_shared_unicode_identity_on_normalizing_filesystems() {
     .unwrap();
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
     assert_eq!(
-        rename_or_merge_page(&store, "café", "CAFÉ", None, None, &[])
+        rename_or_merge_page(&store, None, "café", "CAFÉ", None, None, &[])
             .unwrap()
             .outcome,
         RenameOutcome::Renamed
@@ -321,7 +322,7 @@ fn successful_case_rename_retains_only_the_existing_old_byte_copy() {
         let old = "- [[old]]\n".repeat(blocks);
         fs::write(dir.path().join("pages/old.md"), &old).unwrap();
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
-        rename_or_merge_page(&store, "old", "Old", None, None, &[]).unwrap();
+        rename_or_merge_page(&store, None, "old", "Old", None, None, &[]).unwrap();
         let copies: Vec<_> = fs::read_dir(dir.path().join("logseq/.tine-trash/pages"))
             .unwrap()
             .map(|entry| fs::read(entry.unwrap().path()).unwrap())

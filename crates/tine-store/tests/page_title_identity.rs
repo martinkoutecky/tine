@@ -377,7 +377,8 @@ fn rename_keeps_a_heading_blocks_title_property() {
     )
     .unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
-    tine_graph_features::pages::rename_page_expected(&store, "Physical", "Moved", None).unwrap();
+    tine_graph_features::pages::rename_page_expected(&store, None, "Physical", "Moved", None)
+        .unwrap();
     assert_eq!(
         fs::read_to_string(root.join("pages/Moved.md")).unwrap(),
         "# Heading\ntitle:: Physical\n\n- body\n"

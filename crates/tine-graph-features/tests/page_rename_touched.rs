@@ -53,7 +53,7 @@ fn touched(path: &str, moved: bool) -> TouchedPage {
 fn a_rename_reports_every_page_it_moved_or_rewrote_and_nothing_else() {
     let (root, store) = fixture("report");
     let mut report =
-        pages::rename_or_merge_page(&store, "Target", "Renamed", None, None, &[]).unwrap();
+        pages::rename_or_merge_page(&store, None, "Target", "Renamed", None, None, &[]).unwrap();
     assert_eq!(report.outcome, RenameOutcome::Renamed);
     report.touched.sort_by(|a, b| a.path.cmp(&b.path));
     assert_eq!(
@@ -78,6 +78,7 @@ fn a_rename_refuses_to_write_a_file_with_unsaved_edits_and_changes_nothing() {
         let before = snapshot(&root);
         let error = pages::rename_or_merge_page(
             &store,
+            None,
             "Target",
             "Renamed",
             None,
@@ -100,6 +101,7 @@ fn unsaved_edits_on_an_untouched_page_do_not_block_the_rename() {
     let (root, store) = fixture("untouched");
     let report = pages::rename_or_merge_page(
         &store,
+        None,
         "Target",
         "Renamed",
         None,
@@ -125,6 +127,7 @@ fn a_merge_reports_its_survivor_and_source_and_honours_unsaved_paths() {
     let before = snapshot(&root);
     let error = pages::rename_or_merge_page(
         &store,
+        None,
         "Referrer",
         "Survivor",
         None,
@@ -137,6 +140,7 @@ fn a_merge_reports_its_survivor_and_source_and_honours_unsaved_paths() {
 
     let mut report = pages::rename_or_merge_page(
         &store,
+        None,
         "Referrer",
         "Survivor",
         None,

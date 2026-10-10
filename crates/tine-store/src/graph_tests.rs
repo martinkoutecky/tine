@@ -420,7 +420,7 @@ fn search_cache_reflects_saves_and_deletes() {
     assert_eq!(hits[0].page, "Fresh");
 
     // Deleting the page removes it from the cache too.
-    pages::delete_page_expected(&store, "Fresh", PageKind::Page, None, None).unwrap();
+    pages::delete_page_expected(&store, None, "Fresh", PageKind::Page, None, None).unwrap();
     assert_eq!(find().len(), 0, "deleted page should drop out");
 
     std::fs::remove_dir_all(&root).ok();
@@ -1205,6 +1205,7 @@ fn rename_page_moves_file_and_updates_refs() {
 
     pages::rename_page_expected(
         &Store::open(&root, Default::default()).unwrap().0,
+        None,
         "Old Name",
         "New Name",
         None,
@@ -1270,6 +1271,7 @@ fn rename_cascades_namespace_and_rewrites_self_refs() {
 
     pages::rename_page_expected(
         &Store::open(&root, Default::default()).unwrap().0,
+        None,
         "Proj",
         "Renamed",
         None,
@@ -1362,6 +1364,7 @@ fn rename_rewrites_bare_tags_property() {
 
     pages::rename_page_expected(
         &Store::open(&root, Default::default()).unwrap().0,
+        None,
         "Old",
         "New",
         None,
@@ -1393,6 +1396,7 @@ fn rename_aborts_on_target_collision_without_changes() {
     assert!(
         pages::rename_page_expected(
             &Store::open(&root, Default::default()).unwrap().0,
+            None,
             "A",
             "B",
             None
@@ -1427,6 +1431,7 @@ fn rename_ref_only_page_rewrites_refs_without_a_file() {
 
     pages::rename_page_expected(
         &Store::open(&root, Default::default()).unwrap().0,
+        None,
         "Ghost",
         "Spirit",
         None,
@@ -2260,7 +2265,7 @@ fn rename_superstring_rewrites_journal_and_nonjournal_refs() {
     let store = Store::open(&root, Default::default()).unwrap().0;
     let _ = store.whole_graph().unwrap().backlinks("Testtest").unwrap();
 
-    pages::rename_page_expected(&store, "Testtest", "TesttestTest", None).unwrap();
+    pages::rename_page_expected(&store, None, "Testtest", "TesttestTest", None).unwrap();
 
     let my = std::fs::read_to_string(root.join("pages").join("MyPage.md")).unwrap();
     let jr = std::fs::read_to_string(root.join("journals").join("2026_06_15.md")).unwrap();
@@ -2305,7 +2310,7 @@ fn rename_rewrites_nested_ref_in_open_page() {
     let _ = store.page(&PageId::from("pages/Tine.md")).unwrap();
     let _ = store.whole_graph().unwrap().backlinks("Testtest").unwrap();
 
-    pages::rename_page_expected(&store, "Testtest", "TesttestTest", None).unwrap();
+    pages::rename_page_expected(&store, None, "Testtest", "TesttestTest", None).unwrap();
 
     let tine = std::fs::read_to_string(root.join("pages").join("Tine.md")).unwrap();
     assert!(
@@ -2335,10 +2340,10 @@ fn trash_sync_conflict_refuses_real_pages() {
 
     let store = Store::open(&root, Default::default()).unwrap().0;
     // Refuses a genuine page — never trashes real data.
-    assert!(conflicts::trash_sync_conflict(&store, "pages/Real.md").is_err());
+    assert!(conflicts::trash_sync_conflict(&store, None, "pages/Real.md").is_err());
     assert!(pages.join("Real.md").exists(), "real page must survive");
     // Trashes an actual conflict copy.
-    conflicts::trash_sync_conflict(&store, &format!("pages/{conflict}")).unwrap();
+    conflicts::trash_sync_conflict(&store, None, &format!("pages/{conflict}")).unwrap();
     assert!(
         !pages.join(conflict).exists(),
         "conflict copy should be gone"
@@ -2474,6 +2479,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
     crate::test_fixture_io::atomic_write(pages.join("Foo.md"), &changed_winner).unwrap();
     let err = conflicts::resolve_sync_conflict(
         &store,
+        None,
         win_rel,
         &conf_rel,
         &HashMap::new(),
@@ -2502,6 +2508,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
     crate::test_fixture_io::atomic_write(pages.join(conflict_name), &changed_conflict).unwrap();
     let err = conflicts::resolve_sync_conflict(
         &store,
+        None,
         win_rel,
         &conf_rel,
         &HashMap::new(),
@@ -2532,6 +2539,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
     let conflict_rev = crate::model::content_rev(conflict);
     conflicts::resolve_sync_conflict(
         &store,
+        None,
         win_rel,
         &conf_rel,
         &decisions,

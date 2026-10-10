@@ -50,6 +50,7 @@ fn resolve_union(ext: &str, winner: &str, copy: &str) -> (std::io::Result<()>, S
     all_rows(&diff.rows, &mut decisions);
     let result = conflicts::resolve_sync_conflict(
         &store,
+        None,
         &win,
         &conf,
         &decisions,
