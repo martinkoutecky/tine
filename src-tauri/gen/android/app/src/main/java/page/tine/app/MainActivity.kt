@@ -26,7 +26,7 @@ class MainActivity : TauriActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     // Read by NativeIntegrationsPlugin: a restored Activity repeats its launch
-    // intent, and a share that intent carried was already published.
+    // intent; the share's publication record decides whether it resumes.
     restoredFromSavedState = savedInstanceState != null
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
