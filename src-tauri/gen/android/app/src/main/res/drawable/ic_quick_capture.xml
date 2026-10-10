@@ -1,7 +1,11 @@
-<!-- Material Icons "add" (Apache 2.0). -->
+<!-- The Tine mark for quick capture: the app icon's rounded square with the
+     fork cut out, and a + in a notch at its corner. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24"
     android:tint="?android:attr/colorControlNormal">
-  <path android:fillColor="@android:color/white" android:pathData="M19,13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+  <path android:fillColor="@android:color/white" android:fillType="evenOdd"
+      android:pathData="M7,2.5H15A4.5,4.5 0,0 1,19.5,7V13.02A6,6 0,0 0,13.02,19.5H7A4.5,4.5 0,0 1,2.5,15V7A4.5,4.5 0,0 1,7,2.5ZM10.15,17V12.85H8A0.85,0.85 0,0 1,7.15,12V7.5A0.85,0.85 0,0 1,8.85,7.5V11.15H10.15V7.5A0.85,0.85 0,0 1,11.85,7.5V11.15H13.15V7.5A0.85,0.85 0,0 1,14.85,7.5V12A0.85,0.85 0,0 1,14,12.85H11.85V17A0.85,0.85 0,0 1,10.15,17Z"/>
+  <path android:strokeColor="@android:color/white" android:strokeWidth="1.8" android:strokeLineCap="round"
+      android:pathData="M19,16.2V21.8M16.2,19H21.8"/>
 </vector>
