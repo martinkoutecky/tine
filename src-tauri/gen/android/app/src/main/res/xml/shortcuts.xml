@@ -12,7 +12,7 @@
     <intent
         android:action="android.intent.action.VIEW"
         android:data="tine://today"
-        android:targetPackage="page.tine.app"
+        android:targetPackage="page.tine.beta"
         android:targetClass="page.tine.app.MainActivity" />
   </shortcut>
   <shortcut
@@ -24,7 +24,7 @@
     <intent
         android:action="android.intent.action.VIEW"
         android:data="tine://capture"
-        android:targetPackage="page.tine.app"
+        android:targetPackage="page.tine.beta"
         android:targetClass="page.tine.app.MainActivity" />
   </shortcut>
   <shortcut
@@ -36,7 +36,7 @@
     <intent
         android:action="android.intent.action.VIEW"
         android:data="tine://search"
-        android:targetPackage="page.tine.app"
+        android:targetPackage="page.tine.beta"
         android:targetClass="page.tine.app.MainActivity" />
   </shortcut>
 </shortcuts>
