@@ -901,8 +901,10 @@ fn merged_survivor(
             "an org file in this pair does not round-trip; not merging",
         ));
     }
-    let source = store.page(src).map_err(store_error)?.doc;
-    let mut doc = store.page(dst).map_err(store_error)?.doc;
+    // Parsed from the bytes whose revisions guard the write (A-V4b).
+    let page = |id, text: &str| store.page_of(id, text.as_bytes()).map_err(store_error);
+    let source = page(src, &src_text)?.doc;
+    let mut doc = page(dst, &dst_text)?.doc;
     let format = store.config().file_name_format;
     if let Some(renames) = renames {
         rename_doc(&mut doc, renames, org, format);

@@ -1919,7 +1919,8 @@ impl Store {
     /// opens in parse time whatever the graph is doing. Target parse costs
     /// O(bytes + blocks); publication adds O(P) metadata. Reads write no
     /// page bytes. A page a page host holds answers the bytes the host last
-    /// indexed and publishes nothing (A-V4).
+    /// indexed and publishes nothing (A-V4): a write parses the bytes its
+    /// revision guards with [`Store::page_of`] instead.
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
             if self.is_closed() {

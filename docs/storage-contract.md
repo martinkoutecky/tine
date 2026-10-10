@@ -63,7 +63,7 @@ pages conflicted, and tells the user which files need inspection before retry.
 
 A held `WholeGraph` view does not wait for later writers. Acquiring the first
 view with `whole_graph()` can wait for the initial parse. The public operation
-surface is 41 operations: the methods of `Store` and `Transaction` plus every
+surface is 42 operations: the methods of `Store` and `Transaction` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 The graph-command boundary guard lives at `crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
@@ -105,11 +105,15 @@ consumer, or a reservation's transaction, is the page's only index writer
 its first publication, parses the file without publishing), and a full or
 on-demand build parses those same bytes; a build that read a page before its
 hold began declines its install. A newer disk read indexed there could be
-overwritten by an older host event still on its way. With no host running
-nothing is held and both paths read the file. Proof:
+overwritten by an older host event still on its way. A write computed from a
+page parses the bytes whose revision guards it (`Store::read` then
+`Store::page_of`; A-V4b), never `page()`. With no host running nothing is
+held and both paths read the file. Proof:
 `crates/tine-store/src/page_host/binding_tests.rs`
 `v4_a_read_or_rebuild_never_indexes_a_held_page`,
-`crates/tine-store/src/model/held_index.rs`.
+`crates/tine-store/src/model/held_index.rs`,
+`crates/tine-graph-features/tests/page_rename_merge.rs`
+`merge_keeps_edits_held_pages_have_not_indexed`.
 
 A save that changes only blocks' `collapsed::` property (value `true`, `false`
 or absent, decided by the parser, `model/collapse_only.rs`) publishes a

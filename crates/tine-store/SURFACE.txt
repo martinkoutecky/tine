@@ -86,7 +86,7 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 13)
+## Reads (ceiling: 15)
 const model::PARSE_INPUT_MAX_BYTES
 fn model::parse_input_depth_within_limit
 field store::PageRead.doc
@@ -97,6 +97,11 @@ fn store::Store::may_carry_vcs_markers
 fn store::Store::open_read
 fn store::Store::page
 fn store::Store::page_named
+# A-V4b: a write parses the exact bytes its revision guards; `page` reads the
+# file itself, and for a page a host holds answers the host's bytes (A-V4).
+fn store::Store::page_of
+# test-oracle: tests hold a page as a page host does, with no host running (A-V4b).
+fn store::Store::hold_page
 fn store::Store::read
 fn store::Store::whole_graph
 struct store::PageRead

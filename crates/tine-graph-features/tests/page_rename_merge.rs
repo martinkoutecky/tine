@@ -384,3 +384,31 @@ fn plain_merge_unites_aliases_like_the_rename_merge() {
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
+
+/// A-V4b: a merge parses both pages from the bytes whose revisions guard its
+/// write. While a page host holds a page, reading it answers the host's
+/// indexed bytes, which can be older than disk: an edit the host has not yet
+/// observed must survive the merge, in the survivor and in the source.
+#[test]
+fn merge_keeps_edits_held_pages_have_not_indexed() {
+    let (root, store) = fixture(
+        "held",
+        &[("pages/src.md", "- moved\n"), ("pages/dst.md", "- kept\n")],
+    );
+    store.whole_graph().unwrap();
+    for rel in ["pages/src.md", "pages/dst.md"] {
+        store.hold_page(&tine_store::PageId::from(rel)).unwrap();
+    }
+    fs::write(root.join("pages/src.md"), "- moved\n- source edit\n").unwrap();
+    fs::write(root.join("pages/dst.md"), "- kept\n- survivor edit\n").unwrap();
+    pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+    let merged = read(&root, "pages/dst.md");
+    for line in ["- kept", "- survivor edit", "- moved", "- source edit"] {
+        assert!(
+            merged.contains(line),
+            "A-V4b: the merge lost {line:?}:\n{merged}"
+        );
+    }
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}

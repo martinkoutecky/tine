@@ -68,6 +68,31 @@ impl Store {
         })
     }
 
+    /// The page `id` parsed from `bytes`, as a read of its file holding
+    /// them would answer: for a caller that already read the file (with
+    /// [`Store::read`]) and writes under that read's revision, so what it
+    /// writes is computed from the bytes the revision guards (A-V4b).
+    /// [`Store::page`] reads the file itself. Writes nothing. Cost O(bytes
+    /// + blocks).
+    pub fn page_of(&self, id: &PageId, bytes: &[u8]) -> Result<PageRead, StoreError> {
+        let (id, path, _) = self.page_target(id)?;
+        let doc = page_dto(|| self.graph.page_dto_for_bytes(&path, bytes))?;
+        self.page_read(id, doc)
+    }
+
+    /// Hold page `id` as a page host does, with no host running: its index
+    /// and reads answer the bytes on disk now until the store closes
+    /// (A-V4). The caller's later disk edits stay unindexed.
+    #[cfg(any(test, feature = "test-faults"))]
+    pub fn hold_page(&self, id: &PageId) -> Result<(), StoreError> {
+        let _writer = self.writer.lock().unwrap();
+        let (id, path, _) = self.page_target(id)?;
+        let bytes = fs::read(&path).map_err(StoreError::from_io)?;
+        self.watch.hold(path.clone(), id.as_str().to_owned());
+        self.graph.held.indexed(&path, || Some(Arc::from(bytes)));
+        Ok(())
+    }
+
     /// Publish a change `read` observed on disk (its cache entry moved): a
     /// file the published claimants know is `Modified`, any other `Created`.
     pub(super) fn publish_observed(&self, read: &PageRead, path: &Path, entry: PageEntry) {
