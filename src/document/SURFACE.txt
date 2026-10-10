@@ -1,12 +1,15 @@
 CreatePageRefusal
 FeedPage
 HistoryRouteContext
+JournalAppendDecision  # why: the share inbox gate's verdict inside the admitted journal read (ADR 0073); batchNativeIntegrations
+JournalAppendState  # why: the journal revision and match count the share inbox records before its append (ADR 0073); batchNativeIntegrations
 Node
 OutlineScope
 PageLoadRefusal  # why: GH #254 family: one typed answer to whether a page file took its name slot; batchJ1
 UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
 admitPageFile  # why: capture and carry load the file their write must land in, refusing a second file; batchJ1
 appendFeed
+appendToJournalDay  # why: the share inbox appends into the exact day it recorded and records its recovery state inside the admitted read (ADR 0073); batchNativeIntegrations
 appendToTodayJournal
 applyGraphChange
 applyGraphChangesBulk  # why: a checkout-sized watcher batch (graph-changed-bulk) is applied once (family 10); batch22a
@@ -31,7 +34,6 @@ collapseEpochOf  # why: embed occurrence folds compare the source collapse write
 collapsibleDescendantIds
 conflictReason  # why: conflict bar reason text; batch03
 conflicts
-countRootBlocks  # why: the share inbox counts its block before and after a crash so it is never appended twice (ADR 0073); batchNativeIntegrations
 createPage
 cycleSelectionTasks
 deleteBlock

@@ -1,28 +1,38 @@
 /** S1 of the native-integrations batch (ADR 0073): shared items wait in the
  * app-owned share inbox (src-tauri/src/share_inbox.rs) and reach the graph
- * only here, through the single quick-capture writer `appendToTodayJournal`
- * inside `writeOwned`, as a new block at the bottom of today's journal (OG's
- * behaviour, approved by Martin). An item is removed from the inbox only
- * after its write reached disk; a failed write keeps it and says so.
+ * only here, through the single quick-capture writer (`appendToJournalDay`,
+ * the day-parameterised `appendToTodayJournal`) inside `writeOwned`, as a new
+ * block at the bottom of a journal (OG's behaviour, approved by Martin). An
+ * item is removed from the inbox only after its write reached disk; a failed
+ * write keeps it and says so.
  *
- * Idempotency across a crash between the journal write and the removal: the
- * item's `prepared.json` records the shaped Markdown, the target day and how
- * many root blocks of that day already had the same body (`baseline`), and is
- * durable before the append starts. A later pass that finds more such blocks
- * than the baseline knows the append landed and only removes the item.
+ * Loss-free first, then no duplicates (manager decision, review round 1).
+ * Every step that touches the graph is preceded by a durable `prepared.json`:
+ * 1. bind: the graph (its root) and the journal day, frozen once; `{date}`
+ *    is that day;
+ * 2. shape: the item's files are imported into that graph only, once, and
+ *    the shaped Markdown and asset names are recorded before any append;
+ * 3. arm: inside the admitted read the append uses, the day file's revision
+ *    and the number of equal blocks on the page are recorded, then the block
+ *    is inserted and flushed with no further await.
+ * Recovery (a later pass) acts only in the recorded graph (another graph
+ * keeps the item silently). An item that was never armed is appended (its
+ * append never started). An armed item whose day now holds more equal
+ * blocks than recorded has landed: flush, then remove it. Otherwise it is
+ * appended again: the user may have edited it, and a possible duplicate
+ * beats a lost share. Remaining duplicate/loss windows are listed in ADR 0073.
  *
  * Runs one pass at a time, at launch (after the graph loaded), when the app
  * returns to the foreground, and when a native producer signals an arrival.
- * Cost per pass: one inbox listing plus, per item, one journal page read and
- * one append. */
+ * Cost per pass: one inbox listing plus, per item, one journal page read, two
+ * or three `prepared.json` writes and one append. */
 import { createRoot, createEffect, on } from "solid-js";
 import { backend, isTauri } from "./backend";
 import { bindingOwner, writeOwned } from "./owned";
 import { graphMeta } from "./graphSession";
 import { pushToast } from "./toasts";
 import { journalTitle, appNow } from "./journal";
-import { appendToTodayJournal, countRootBlocks, flushPage, formatForPage, pageByName, trackAssetWrite } from "./document";
-import { parseOutline } from "./editor/outline";
+import { appendToJournalDay, formatForPage, pageByName, trackAssetWrite } from "./document";
 import { assetFileName, assetMarkdown } from "./media";
 import { asOutlineBlock, captureTime, shapeShare } from "./shareShape";
 import type { NativeShareInbox, ShareInboxItem, SharePrepared } from "./nativeTineLinks";
@@ -30,72 +40,73 @@ import type { NativeShareInbox, ShareInboxItem, SharePrepared } from "./nativeTi
 /** The toast the in-app quick capture shows (App.tsx `installQuickCaptureReceiver`). */
 export const CAPTURED_TOAST = "Captured to today's journal";
 
-type Outcome = "done" | "kept" | "stale";
+/** done: written and removed; kept: retried later, the user is told;
+ * elsewhere: bound to another graph, kept silently; stale: the binding moved. */
+type Outcome = "done" | "kept" | "elsewhere" | "stale";
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() ?? "";
 }
 
-function firstBody(markdown: string): string {
-  return parseOutline(markdown)[0]?.raw ?? "";
-}
-
-/** Import the item's files and shape its block (OG transcription in shareShape.ts). */
-async function shape(item: ShareInboxItem, day: string, live: () => boolean): Promise<string | "stale" | null> {
+/** Import the item's files into the bound graph and shape its block (OG
+ * transcription in shareShape.ts). */
+async function shape(item: ShareInboxItem, day: string, live: () => boolean): Promise<{ markdown: string | null; assets: string[] } | "stale"> {
   const owner = bindingOwner(live);
   const format = formatForPage(day);
   const pagePath = pageByName(day)?.id;
-  const assets: string[] = [];
+  const names: string[] = [];
+  const links: string[] = [];
   for (const resource of item.resources) {
     const label = resource.name || basename(resource.path) || undefined;
     const imported = await writeOwned(owner, trackAssetWrite(
       backend().importAsset(resource.path, assetFileName(label), backend().graphBindingGeneration())));
     if (imported.kind === "stale") return "stale";
-    assets.push(assetMarkdown(imported.value, { label, pagePath, format }));
+    names.push(imported.value);
+    links.push(assetMarkdown(imported.value, { label, pagePath, format }));
   }
   const meta = graphMeta();
-  const content = shapeShare({ text: item.text, title: item.title, url: item.url, assets }, {
+  const content = shapeShare({ source: item.source, text: item.text, title: item.title, url: item.url, assets: links }, {
     time: captureTime(item.created ? new Date(item.created) : appNow()),
     date: day,
     format,
     textTemplate: meta?.quick_capture_template_text,
     mediaTemplate: meta?.quick_capture_template_media,
   });
-  return content === null ? null : asOutlineBlock(content);
+  return { markdown: content === null ? null : asOutlineBlock(content), assets: names };
 }
 
 async function ingestOne(inbox: NativeShareInbox, item: ShareInboxItem, owner: () => boolean): Promise<Outcome> {
+  const graph = graphMeta()?.root;
+  if (!graph) return "stale";
   let prepared: SharePrepared | null = item.prepared ?? null;
-  // An attempt was recorded: did its append land before the crash?
-  if (prepared && prepared.baseline !== null) {
-    const count = await countRootBlocks(prepared.day, firstBody(prepared.markdown));
-    if (!owner()) return "stale";
-    if (count === null) return "kept";
-    if (count > prepared.baseline) {
-      if (!(await flushPage(prepared.day))) return owner() ? "kept" : "stale";
-      if (!owner()) return "stale";
-      await inbox.commit(item.id);
-      return "done";
-    }
-  }
-  const day = journalTitle(appNow());
+  if (prepared && prepared.graph !== graph) return "elsewhere";
   if (!prepared) {
-    const markdown = await shape(item, day, owner);
-    if (markdown === "stale") return "stale";
-    // Nothing to write (a template that drops every field): keep the item.
-    if (markdown === null) return "kept";
-    prepared = { markdown, day, baseline: null };
+    // 1. Bind the item to this graph and freeze its day before any graph write.
+    prepared = { graph, day: journalTitle(appNow()), markdown: null, assets: [], armed: null };
+    await inbox.prepare(item.id, prepared);
+    if (!owner()) return "stale";
   }
-  // Count just before the append, on the day it targets.
-  const baseline = await countRootBlocks(day, firstBody(prepared.markdown));
-  if (!owner()) return "stale";
-  if (baseline === null) return "kept";
-  prepared = { ...prepared, day, baseline };
-  await inbox.prepare(item.id, prepared);
-  if (!owner()) return "stale";
-  const written = await writeOwned(owner, appendToTodayJournal(prepared.markdown));
+  if (prepared.markdown === null) {
+    // 2. Import and shape once; recorded before any append.
+    const shaped = await shape(item, prepared.day, owner);
+    if (shaped === "stale") return "stale";
+    // Nothing to write (a template that drops every field): keep the item.
+    if (shaped.markdown === null) return "kept";
+    prepared = { ...prepared, markdown: shaped.markdown, assets: shaped.assets };
+    await inbox.prepare(item.id, prepared);
+    if (!owner()) return "stale";
+  }
+  const record = prepared;
+  const markdown = prepared.markdown;
+  if (markdown === null) return "kept";
+  // 3. Arm inside the admitted read, then append into exactly the recorded day.
+  const written = await writeOwned(owner, appendToJournalDay(record.day, markdown, async (state) => {
+    if (record.armed && state.matches > record.armed.matches) return "landed";
+    await inbox.prepare(item.id, { ...record, armed: { before: state.before, matches: state.matches } });
+    return "append";
+  }));
   if (written.kind === "stale") return "stale";
-  if (!written.value) return "kept";
+  if (written.value === "failed") return "kept";
   await inbox.commit(item.id);
   return "done";
 }
@@ -119,6 +130,7 @@ export async function ingestShares(): Promise<void> {
         continue;
       }
       if (outcome === "stale") return;
+      if (outcome === "elsewhere") continue;
       if (outcome === "kept") {
         pushToast("A shared item couldn't be added to today's journal. It is kept and will be retried.", "error");
         continue;

@@ -7,10 +7,23 @@
 import type { TineLink } from "./deepLinks";
 import type { LinkTarget, LinkDelivery } from "./deepLinkNavigation";
 export interface ShareInboxResource { path: string; name?: string | null; type?: string | null }
-/** The ingest's durable record of an item's shaping (share_inbox.rs `Prepared`). */
-export interface SharePrepared { markdown: string; day: string; baseline: number | null }
+/** The ingest's durable record for an item (share_inbox.rs `Prepared`, ADR 0073):
+ * the graph and frozen journal day it is bound to, its shaped Markdown (null
+ * while its files are imported), the asset names imported for it, and the
+ * journal state recorded inside the admitted read just before the append. */
+export interface SharePrepared {
+  graph: string;
+  day: string;
+  markdown: string | null;
+  assets: string[];
+  armed: { before: string | null; matches: number } | null;
+}
+/** Which OG share path an item follows: Android's legacy `SendIntent` result
+ * (`handle-result`) or the iOS share-sheet payload (`handle-payload`). */
+export type ShareSource = "android" | "ios";
 export interface ShareInboxItem {
   id: string;
+  source: ShareSource;
   created?: number | null;
   text?: string | null;
   title?: string | null;

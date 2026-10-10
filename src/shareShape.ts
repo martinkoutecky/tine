@@ -8,15 +8,22 @@
  * - `frontend/util/text.cljs` (the video URL patterns).
  * Pure: the caller supplies time, date, format, templates and asset links.
  *
+ * Each item keeps the path its platform takes in OG (`ShareSource`):
+ * - android: OG's legacy `SendIntent` result (`handle-result`): text goes
+ *   through `transform-args` and `quick-capture` (link shapes, video and
+ *   tweet embeds); one image alone takes the `:media` template
+ *   (`embed-asset-file`). OG has no path for several images or images with
+ *   text there; Tine joins them like `handle-payload` instead of dropping any.
+ * - ios: OG's share-sheet payload (`handle-payload`): the text verbatim in
+ *   `{text}`, the web link and the files' asset links one per line in
+ *   `{url}`, always the `:text` template.
+ *
  * Deliberate differences (named in the batch receipt):
- * - one shaping per item instead of one per producer API: an item with no
- *   files takes OG's text path (`transform-args` + `quick-capture`) on every
- *   platform, so a shared YouTube link becomes a video embed on iOS too, where
- *   OG's v2 path left the raw URL;
  * - asset links use Tine's existing asset markup (`assetMarkdown`), which
  *   gives images an empty label, as every other Tine asset insert does;
  * - trailing whitespace is trimmed (OG's default template leaves "{url}"'s
- *   separating space behind when there is no link). */
+ *   separating space behind when there is no link);
+ * - on iOS the web link comes before the files (OG keeps attachment order). */
 import type { Format } from "./types";
 
 /** OG defaults (`[:quick-capture-templates :text]` / `:media`). */
@@ -130,6 +137,8 @@ export function payloadContent(text: string, rich: string[], context: ShapeConte
 }
 
 export interface SharedContent {
+  /** Which OG path the item follows (share_inbox.rs `ItemFile.source`). */
+  source: "android" | "ios";
   text?: string | null;
   title?: string | null;
   url?: string | null;
@@ -142,11 +151,16 @@ export function shapeShare(item: SharedContent, context: ShapeContext): string |
   const text = item.text?.trim() ? item.text : null;
   const url = item.url?.trim() ? item.url : null;
   let content: string | null;
-  if (!item.assets.length) {
+  if (item.source === "ios") {
+    // handle-payload: text verbatim, the rich parts joined by newlines.
+    content = payloadContent(text ?? "", [...(url ? [url] : []), ...item.assets], context);
+  } else if (!item.assets.length) {
+    // handle-received-text: EXTRA_TEXT is OG's `:url`, EXTRA_SUBJECT its title.
     if (!text && !url) return null;
     const args = transformArgs({ url: url ?? text, title: item.title ?? null });
     content = quickCaptureContent(url && text ? { ...args, content: text } : args, context);
   } else if (item.assets.length === 1 && !text && !url) {
+    // handle-received-media: one image alone.
     content = mediaContent(item.assets[0], context);
   } else {
     content = payloadContent(text ?? "", [...(url ? [url] : []), ...item.assets], context);
