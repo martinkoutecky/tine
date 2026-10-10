@@ -1465,22 +1465,13 @@ pub(crate) fn stream_asset_path(name: String, state: GraphContext<'_>) -> Result
     Ok(format!("{}/{}", slot.binding_generation, name))
 }
 
-/// Quit the app cleanly. On Linux, first SIGKILL WebKitGTK's helper subprocesses so
-/// they don't run their buggy GL-driver atexit teardown and dump a SIGABRT core on
-/// exit (GH #28). The JS close handler calls this only AFTER `flushAll()`/
-/// `flushSession()` have resolved, so tearing the web process down hard loses no
-/// edits. Then hand off to Tauri's normal exit (the main process still tears down
-/// the way it always has — no dump there). On non-Linux this is just `app.exit(0)`.
-#[tauri::command]
-pub(crate) fn tine_quit(app: tauri::AppHandle) {
-    #[cfg(target_os = "linux")]
-    crate::platform::kill_webkit_children();
-    app.exit(0);
-}
-
-/// Close only the calling graph window. The final graph window still performs
-/// the process-wide WebKit cleanup before exit; the hidden capture window never
-/// keeps the process alive by itself.
+/// Close only the calling graph window; the JS close handler calls this
+/// after its own flush. While another graph window exists, the window is
+/// destroyed and its `Destroyed` hook releases its graph. The last one
+/// first unbinds its graph, which retires a running page host, and leaves
+/// the exit to `exit_after_retirement` once the retirement is idle (G6: an
+/// exit never skips a host's saves). It stays until the exit, so WebKit's
+/// helpers are killed before its graceful teardown (GH #28, ADR 0029).
 #[tauri::command]
 pub(crate) fn close_graph_window(
     window: tauri::WebviewWindow,
@@ -1488,24 +1479,17 @@ pub(crate) fn close_graph_window(
     state: tauri::State<'_, crate::state::AppState>,
 ) -> Result<(), String> {
     use tauri::Manager;
-    // The last window to finish takes the process down, never an earlier one:
-    // another window that is still flushing (tray Quit and a manual quit both
-    // close every window at once) keeps the process alive until it is done.
     let label = window.label();
-    let (own_slot, graph_slots) = {
-        let graphs = state.graphs.read().unwrap();
-        (graphs.slot(label).is_some(), graphs.len())
-    };
-    let others_closing = app
-        .state::<crate::state::ClosingWindows>()
-        .others(label, |other| app.get_webview_window(other).is_some());
-    if crate::state::may_exit(own_slot, graph_slots, others_closing) {
-        #[cfg(target_os = "linux")]
-        crate::platform::kill_webkit_children();
-        app.exit(0);
-        return Ok(());
+    let others = app
+        .webview_windows()
+        .keys()
+        .any(|other| other != label && crate::graph_window(other));
+    if others {
+        return window.destroy().map_err(|e| e.to_string());
     }
-    window.destroy().map_err(|e| e.to_string())
+    crate::state::release_window_graph(&state.graphs, label);
+    crate::exit_after_retirement(&app, label);
+    Ok(())
 }
 
 /// Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS

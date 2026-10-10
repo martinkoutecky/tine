@@ -732,15 +732,28 @@ mod tests {
     }
 
     /// The exit left pending by the last window's close (as `lib.rs`'s
-    /// `Destroyed` hook leaves it), run while `open` runs; whether it
-    /// exited, and whether `exit` ran.
+    /// `exit_after_retirement` leaves it), with no other window, run while
+    /// `open` runs; whether it exited, and whether `exit` ran.
     fn pending_exit(state: &AppState, open: impl FnOnce()) -> (bool, bool) {
+        pending_exit_with(state, &AtomicBool::new(false), open)
+    }
+
+    /// `pending_exit` while `window` says whether another graph window
+    /// exists when the exit decides.
+    fn pending_exit_with(
+        state: &AppState,
+        window: &AtomicBool,
+        open: impl FnOnce(),
+    ) -> (bool, bool) {
         let exited = AtomicBool::new(false);
         std::thread::scope(|scope| {
             let waiter = scope.spawn(|| {
-                exit_when_unowned(state, Duration::from_secs(20), || {
-                    exited.store(true, std::sync::atomic::Ordering::SeqCst)
-                })
+                exit_when_unowned(
+                    state,
+                    Duration::from_secs(20),
+                    || window.load(std::sync::atomic::Ordering::SeqCst),
+                    || exited.store(true, std::sync::atomic::Ordering::SeqCst),
+                )
             });
             open();
             (
@@ -843,5 +856,59 @@ mod tests {
         assert!(state.graphs.write().unwrap().remove("graph-2").is_none());
         let retirement = state.graphs.read().unwrap().retirement.clone();
         assert_eq!(retirement.wait_idle(Duration::from_secs(20)), Ok(()));
+    }
+
+    /// G6(a): a window created during the wait cancels the exit, whether or
+    /// not it has sent its load (no graph is bound, none is retiring).
+    #[test]
+    fn g6_a_window_created_during_the_wait_cancels_the_pending_exit() {
+        let f = Fixture::new("exit-window");
+        let state = app_state();
+        let reservation = retiring(&f, &state.graphs);
+        let created = AtomicBool::new(false);
+        let outcome = pending_exit_with(&state, &created, || {
+            std::thread::sleep(Duration::from_millis(200));
+            created.store(true, std::sync::atomic::Ordering::SeqCst);
+            drop(reservation);
+        });
+        assert_eq!(outcome, (false, false));
+        assert_eq!(f.disk(), "- two\n");
+        assert!(f.closed(), "the retirement ended");
+        assert_eq!(state.graphs.read().unwrap().len(), 0, "no graph was bound");
+    }
+
+    /// G6(b), data safety: closing the last window (`close_graph_window`)
+    /// over a hosted page with unsaved input unbinds and retires its graph
+    /// first; the exit runs only once that input is on disk.
+    #[test]
+    fn g6_closing_the_last_window_saves_its_unsaved_input_before_the_exit() {
+        let f = Fixture::new("exit-close");
+        let state = app_state();
+        let slot = f.bind(&mut state.graphs.write().unwrap(), "graph-1");
+        let window = window(&slot);
+        let reservation = hold(&slot);
+        submit(&slot, &window, "- unsaved\n").unwrap();
+        drop(slot);
+        assert_eq!(f.disk(), "- one\n", "the input is not saved yet");
+        assert!(crate::state::release_window_graph(&state.graphs, "graph-1"));
+        let at_exit = Mutex::new(None);
+        std::thread::scope(|scope| {
+            let waiter = scope.spawn(|| {
+                exit_when_unowned(
+                    &state,
+                    Duration::from_secs(20),
+                    || false,
+                    || {
+                        *at_exit.lock().unwrap() = Some(f.disk());
+                    },
+                )
+            });
+            std::thread::sleep(Duration::from_millis(200));
+            assert!(!waiter.is_finished(), "the exit waits for the retirement");
+            drop(reservation);
+            assert!(waiter.join().unwrap());
+        });
+        assert_eq!(*at_exit.lock().unwrap(), Some("- unsaved\n".to_owned()));
+        assert!(f.closed());
     }
 }

@@ -236,60 +236,21 @@ pub(crate) fn release_window_graph(graphs: &RwLock<GraphRegistry>, window: &str)
     empty
 }
 
-/// Windows (`main`, `graph-*`) whose close request has arrived and which have
-/// not been destroyed yet: their frontend is flushing, or waiting on a prompt.
-///
-/// **Question answered.** "May the process exit now, or is another window
-/// still saving?" The exit paths (`close_graph_window`, the `Destroyed` hook)
-/// both ask [`ClosingWindows::others`]; a window that is not the last one to
-/// finish only destroys itself and leaves the exit to the last finisher. A
-/// cancelled close leaves its entry behind, which is harmless: that window is
-/// still open, so the process rightly stays alive.
-#[derive(Default)]
-pub(crate) struct ClosingWindows(Mutex<std::collections::HashSet<WindowKey>>);
-
-impl ClosingWindows {
-    pub(crate) fn begin(&self, label: &str) {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(label.to_string());
-    }
-
-    pub(crate) fn end(&self, label: &str) {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(label);
-    }
-
-    /// How many windows other than `own` are mid-close and still exist.
-    pub(crate) fn others(&self, own: &str, exists: impl Fn(&str) -> bool) -> usize {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .filter(|label| label.as_str() != own && exists(label))
-            .count()
-    }
-}
-
-/// Whether a closing window may take the process down with it. The window
-/// exits only when it is the last one standing: no other window is still
-/// closing (its flush may be running), and no graph is left that another
-/// window owns (`own_slot` is whether the closing window holds a graph).
-pub(crate) fn may_exit(own_slot: bool, graph_slots: usize, others_closing: usize) -> bool {
-    others_closing == 0 && graph_slots <= usize::from(own_slot)
-}
-
 /// The exit the last graph window's close leaves pending (plan v3 §3,
-/// REVIEW-3b-P1 B2). It first waits up to `bound` for every retiring page
-/// host to stop. It then decides under `graph_load`, which an open holds
-/// from its routing through adoption and bind: it exits only if no graph is
-/// bound and none is retiring. An open that adopted or bound meanwhile, or
-/// that is still inside its load, cancels the exit, and a later last close
-/// leaves its own. True when it exited.
-pub(crate) fn exit_when_unowned(state: &AppState, bound: Duration, exit: impl FnOnce()) -> bool {
+/// REVIEW-3b-P1 B2, manager decision G6). It first waits up to `bound` for
+/// every retiring page host to stop. It then decides under `graph_load`,
+/// which an open holds from its routing through adoption and bind: it exits
+/// only if no graph is bound, none is retiring, and no graph window exists
+/// (`windows`, which leaves out the window whose close left this exit). An
+/// open that adopted or bound meanwhile, an open still inside its load, or
+/// a window created during the wait (loaded or not) cancels the exit; the
+/// last close after it leaves its own. True when it exited.
+pub(crate) fn exit_when_unowned(
+    state: &AppState,
+    bound: Duration,
+    windows: impl FnOnce() -> bool,
+    exit: impl FnOnce(),
+) -> bool {
     let retirement = state.graphs.read().unwrap().retirement.clone();
     if retirement.wait_idle(bound).is_err() {
         // The host keeps its pages and Tine keeps running; the stuck-graph
@@ -302,10 +263,11 @@ pub(crate) fn exit_when_unowned(state: &AppState, bound: Duration, exit: impl Fn
         let graphs = state.graphs.read().unwrap();
         graphs.len() == 0 && graphs.retirement.is_idle()
     };
-    if unowned {
+    let exits = unowned && !windows();
+    if exits {
         exit();
     }
-    unowned
+    exits
 }
 
 /// Whether one graph root contains the other: two Stores and hosts must
@@ -651,51 +613,62 @@ pub(crate) fn capture_quick_switch_slot(
 mod tests {
     use super::*;
 
-    /// The quit race: with several windows closing at once, an early finisher
-    /// must not exit the process while another window is still flushing.
+    /// G6: every exit is the revocable waiter's. The last window's
+    /// `close_graph_window` and the `Destroyed` hook each release the
+    /// window's graph (which retires its running host) before they leave the
+    /// exit to `exit_after_retirement`, the one place that exits the process.
     #[test]
-    fn the_process_exits_only_when_the_last_closing_window_finishes() {
-        // Sole window, sole graph: exits (the ordinary quit).
-        assert!(may_exit(true, 1, 0));
-        // Slotless window and no graph at all: exits.
-        assert!(may_exit(false, 0, 0));
-        // Another graph window is open and not closing: only this one closes.
-        assert!(!may_exit(true, 2, 0));
-        // A slotless window must not take a still-open graph down with it.
-        assert!(!may_exit(false, 1, 0));
-        // The race itself: this window is the last graph, but another window
-        // is still flushing, so it must wait for that window to finish.
-        assert!(!may_exit(true, 1, 1));
-        assert!(!may_exit(false, 0, 1));
-    }
-
-    #[test]
-    fn closing_windows_ignore_themselves_and_windows_that_are_gone() {
-        let closing = ClosingWindows::default();
-        closing.begin("main");
-        closing.begin("graph-2");
-        assert_eq!(closing.others("main", |_| true), 1);
-        assert_eq!(closing.others("graph-9", |_| true), 2);
-        // A destroyed window is not a pending flush.
-        assert_eq!(closing.others("main", |label| label != "graph-2"), 0);
-        closing.end("graph-2");
-        assert_eq!(closing.others("main", |_| true), 0);
-    }
-
-    /// Both exit paths must consult the in-flight set; a path that decides from
-    /// the graph count alone is the original race (tray Quit closes every window
-    /// at once, so the first finisher exited under the others' saves).
-    #[test]
-    fn every_exit_path_waits_for_windows_still_closing() {
+    fn every_exit_goes_through_the_retirement_waiter() {
         let commands = include_str!("commands.rs");
         let close = &commands[commands.find("fn close_graph_window").unwrap()..];
         let close = &close[..close.find("\n}\n").unwrap()];
-        assert!(close.contains("may_exit(") && close.contains("ClosingWindows"));
+        let release = close.find("release_window_graph(").unwrap();
+        assert!(
+            release < close.find("exit_after_retirement(").unwrap() && !close.contains("exit(")
+        );
         let lib = include_str!("lib.rs");
         let destroyed = &lib[lib.find("WindowEvent::Destroyed => {").unwrap()..];
         let destroyed = &destroyed[..destroyed.find("_ => {}").unwrap()];
-        assert!(destroyed.contains(".others(") && destroyed.contains("app.exit(0)"));
-        assert!(lib.contains("WindowEvent::CloseRequested { .. } => {"));
+        let release = destroyed.find("release_window_graph(").unwrap();
+        assert!(release < destroyed.find("exit_after_retirement(").unwrap());
+        let waiter = &lib[lib.find("fn exit_after_retirement").unwrap()..];
+        let waiter = &waiter[..waiter.find("\n}\n").unwrap()];
+        assert!(waiter.contains("exit_when_unowned(") && waiter.contains("app.exit(0)"));
+        // Census over every production source (test modules cut off).
+        let mut exits = vec![];
+        let mut dirs = vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(dir).unwrap().map(Result::unwrap) {
+                let path = entry.path();
+                if path.is_dir() {
+                    dirs.push(path);
+                    continue;
+                }
+                let name = path.to_string_lossy().into_owned();
+                if !name.ends_with(".rs") || name.ends_with("_tests.rs") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                let production = source
+                    .match_indices("#[cfg(test)]\nmod ")
+                    .find(|(at, _)| {
+                        let line = source[*at + 13..].lines().next().unwrap_or("");
+                        line.ends_with(" {")
+                    })
+                    .map_or(source.as_str(), |(at, _)| &source[..at]);
+                exits.extend(production.matches(".exit(").map(|_| name.clone()));
+            }
+        }
+        assert_eq!(
+            exits.len(),
+            1,
+            "G6: an exit outside exit_after_retirement ({exits:?}) skips a running host's retirement; exemplar lib.rs exit_after_retirement"
+        );
+        assert!(exits[0].ends_with("src/lib.rs"));
+        assert!(
+            lib.contains("std::process::exit(0)"),
+            "the GH #455 Exit arm is the one other exit"
+        );
     }
 
     fn graph(root: &Path) -> Arc<GraphSlot> {

@@ -88,7 +88,6 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
         "guide_pages",
         "read_asset",
         "stream_asset_path",
-        "tine_quit",
         "close_graph_window",
         "tine_open_devtools",
         "read_local_image",

@@ -801,9 +801,6 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       mockPluginRegistryCache = { schemaVersion: 1, indexJson, signature: signature.trim() };
     },
     async setSystemBarAppearance(): Promise<void> {},
-    async quit(): Promise<void> {
-      // No-op in the mock/screenshot harness — there's no process to exit.
-    },
     async closeGraphWindow(): Promise<void> {
       // No-op in the mock/screenshot harness.
     },

@@ -79,7 +79,7 @@ use commands::{
     save_pages, save_pdf_area_image, save_workspaces, search, set_default_journal_template,
     set_doc_mode_enter_for_new_block, set_guide_announced, set_journal_title_format,
     set_logical_outdenting, set_preferred_format, set_preferred_workflow, set_show_brackets,
-    set_start_of_week, set_timetracking_enabled, stream_asset_path, tine_open_devtools, tine_quit,
+    set_start_of_week, set_timetracking_enabled, stream_asset_path, tine_open_devtools,
     trash_asset, trash_journal_file, write_highlights,
 };
 use concord::{
@@ -258,6 +258,42 @@ fn schedule_main_window_reveal_fallback(app: &tauri::AppHandle) {
                 let _ = window.show();
             }
         });
+    });
+}
+
+/// A window that can own a graph (`main`, `graph-*`); the hidden capture
+/// window never keeps the process alive.
+pub(crate) fn graph_window(label: &str) -> bool {
+    label == "main" || label.starts_with("graph-")
+}
+
+/// The exit the last graph window's close leaves, off the event thread:
+/// the decision waits for retiring hosts and then for `graph_load`
+/// (`state::exit_when_unowned`). Any graph window other than `closed`,
+/// loaded or not, keeps the process. The only place that exits the process
+/// (G6, pinned by `state::tests::every_exit_goes_through_the_retirement_waiter`).
+/// On Linux it first SIGKILLs WebKitGTK's helpers (GH #28, ADR 0029). When
+/// it does not exit, a `closed` window still waiting for it is destroyed.
+pub(crate) fn exit_after_retirement(app: &tauri::AppHandle, closed: &str) {
+    let (app, closed) = (app.clone(), closed.to_owned());
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let windows = || {
+            app.webview_windows()
+                .keys()
+                .any(|label| label != &closed && graph_window(label))
+        };
+        let exit = || {
+            #[cfg(target_os = "linux")]
+            platform::kill_webkit_children();
+            app.exit(0);
+        };
+        let bound = std::time::Duration::from_secs(30);
+        if !state::exit_when_unowned(&state, bound, windows, exit) {
+            if let Some(window) = app.get_webview_window(&closed) {
+                let _ = window.destroy();
+            }
+        }
     });
 }
 
@@ -804,7 +840,7 @@ pub fn run() {
             #[cfg(desktop)]
             tray::window_event(window, event);
             let label = window.label();
-            if label != "main" && !label.starts_with("graph-") {
+            if !graph_window(label) {
                 return;
             }
             let app = window.app_handle();
@@ -827,33 +863,12 @@ pub fn run() {
                         }
                     }
                 }
-                tauri::WindowEvent::CloseRequested { .. } => {
-                    app.state::<state::ClosingWindows>().begin(label);
-                }
                 tauri::WindowEvent::Destroyed => {
-                    let closing = app.state::<state::ClosingWindows>();
-                    closing.end(label);
-                    let released = state::release_window_graph(&state.graphs, label);
-                    // The last graph is gone, but a window still flushing
-                    // exits the process itself when it is done.
-                    if released
-                        && closing.others(label, |l| app.get_webview_window(l).is_some()) == 0
-                    {
-                        // A retiring page host finishes its admitted queue and
-                        // stops before the process exits (plan v3 §3); an open
-                        // meanwhile cancels the exit (REVIEW-3b-P1 B2). Off the
-                        // event thread: the decision waits for `graph_load`.
-                        let (app, exiting) = (app.clone(), app.clone());
-                        let exit = move || {
-                            #[cfg(target_os = "linux")]
-                            platform::kill_webkit_children();
-                            app.exit(0);
-                        };
-                        std::thread::spawn(move || {
-                            let state = exiting.state::<AppState>();
-                            let bound = std::time::Duration::from_secs(30);
-                            state::exit_when_unowned(&state, bound, exit);
-                        });
+                    // Unbind the window's graph, which retires its running
+                    // host (plan v3 §3), before any exit is decided (G6).
+                    let unowned = state::release_window_graph(&state.graphs, label);
+                    if unowned {
+                        exit_after_retirement(app, label);
                     }
                 }
                 _ => {}
@@ -861,7 +876,6 @@ pub fn run() {
         })
         .manage(workspace_windows::Pending::default())
         .manage(workspace_windows::CloseRequests::default())
-        .manage(state::ClosingWindows::default())
         .manage(graph::StartupGraph::default())
         .manage(deep_links::PendingLinks::default())
         .manage(AppState {
@@ -1139,7 +1153,6 @@ pub fn run() {
             defender::defender_hint,
             defender::dismiss_defender_hint,
             defender::add_defender_exclusion,
-            tine_quit,
             close_graph_window,
             tine_open_devtools,
             tray::tray_apply

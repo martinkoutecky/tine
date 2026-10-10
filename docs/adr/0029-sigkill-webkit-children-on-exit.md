@@ -61,6 +61,14 @@ and the web process owns no persistent app data (Tine's graph is written by the
 Rust main process, which exits normally). Any future change to the close path must
 preserve "flush, then quit."
 
+**Amendment (2026-10, storage step 3b, G6).** `tine_quit` is gone: it had no
+caller left, and an exit there would skip a running page host's retirement.
+The last window's `close_graph_window` unbinds its graph and leaves the window
+open while `exit_after_retirement` waits for the retirement; that waiter runs
+`kill_webkit_children()` then `app.exit(0)`, so the kill still precedes the
+window's graceful teardown. It is the only exit
+(`state::tests::every_exit_goes_through_the_retirement_waiter`).
+
 ## Consequences
 
 - The exit coredump is *prevented*, not hidden, and GPU compositing stays on for

@@ -215,12 +215,16 @@ transaction or restore that captured it before and has not entered the
 gate gets `stale-graph-binding`, never the no-host path on the adopted
 Store, and one already inside finishes first. Lock order: registry, host
 gate, retirement map, host state; nothing under the gate takes the registry
-(`src-tauri/src/host_slot_guard_tests.rs`). The last
-window's exit waits for every retirement, 30 s at most; past that Tine
+(`src-tauri/src/host_slot_guard_tests.rs`). Every exit is the
+retirement waiter's (`exit_after_retirement`; scenario: quitting while a
+host still holds unsaved input). Closing the last graph window first
+unbinds its graph, retiring its host, and the window stays until the exit
+(GH #28). The exit waits for every retirement, 30 s at most; past that Tine
 keeps running with the host alive (the stuck-graph window is P2b). The exit
 is then decided under the open lock (`graph_load`): a graph bound or
-adopted meanwhile, or an open still inside its load, cancels it
-(`state::exit_when_unowned`). Proof
+adopted meanwhile, an open still inside its load, or any other graph
+window, loaded or not, cancels it (`state::exit_when_unowned`; the guard
+`state::tests::every_exit_goes_through_the_retirement_waiter`). Proof
 `src-tauri/src/host_retirement.rs` tests,
 `crates/tine-store/src/page_host/binding_stop_tests.rs` (`an_orphan_stop_*`,
 `retargeted_mail_reaches_the_adopting_window`).

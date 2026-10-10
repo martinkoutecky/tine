@@ -153,11 +153,6 @@ export interface Backend {
    *  against Tine's explicit in-app theme. Other platforms are a no-op. */
   setSystemBarAppearance(dark: boolean): Promise<void>;
   defaultGraphParent(): Promise<string>;
-  /** Quit the app. On Linux this first SIGKILLs WebKitGTK's helper subprocesses so
-   *  they don't dump a SIGABRT core on exit (GH #28 — GL driver atexit double-free);
-   *  the caller MUST have flushed pending edits first. Does not resolve — the
-   *  process exits. */
-  quit(): Promise<void>;
   closeGraphWindow(): Promise<void>;
   /** Desktop tray (GH #625, src/tray.ts): sync the icon to the `tray_*` device settings. */
   trayApply(): Promise<TrayStatus>;
@@ -901,9 +896,6 @@ class TauriBackend implements Backend {
   }
   setSystemBarAppearance(dark: boolean) {
     return this.call<void>("set_system_bar_appearance", { dark });
-  }
-  quit() {
-    return this.call<void>("tine_quit");
   }
   closeGraphWindow() {
     return this.call<void>("close_graph_window");

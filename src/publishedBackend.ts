@@ -792,7 +792,6 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     },
     async applySpellcheck() {},
     async setSystemBarAppearance() {},
-    async quit() {},
     async closeGraphWindow() {},
     async trayApply() {
       return { supported: false, active: false, problem: null };
@@ -972,7 +971,6 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "listSpellcheckDictionaries",
   "applySpellcheck",
   "setSystemBarAppearance",
-  "quit",
   "closeGraphWindow",
   "trayApply",
   "openDevtools",
