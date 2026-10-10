@@ -122,6 +122,7 @@ impl Store {
         let bytes = fs::read(&path).map_err(StoreError::from_io)?;
         self.graph.hold_unhosted(id.as_str());
         let _ = (self.graph).publish_owned(id.as_str(), Some(Arc::from(bytes)), None);
+        self.publish_retired();
         Ok(())
     }
 

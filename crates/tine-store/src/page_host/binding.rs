@@ -812,6 +812,7 @@ impl Sink for Bridge {
                     store.watch.release_hold(&key);
                 }
             }
+            store.publish_retired();
         }
         for (key, mail, facts) in delivery.mail {
             let mail = page_mail(store, key, mail, facts);
@@ -1108,6 +1109,7 @@ impl PageHost {
         {
             store.watch.release_hold(&key);
         }
+        store.publish_retired();
         admitted.map(|()| Opened {
             key,
             baseline_entry,

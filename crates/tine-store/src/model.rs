@@ -352,6 +352,9 @@ pub(crate) struct Graph {
     pub(crate) diag: crate::launch_diag::DiagRecorder,
     #[cfg(test)]
     pub(crate) cache_publish_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    /// Between a name discovery's authority decision and its record.
+    #[cfg(test)]
+    pub(crate) discovery_record_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) warm_after_first_page_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
@@ -1183,6 +1186,10 @@ pub(crate) enum Withdrawal {
 
 struct PageCacheIndex {
     by_path: std::collections::HashMap<PathBuf, usize>,
+    /// Cached paths by folded leaf ([`entry_identity::fold_leaf`]): the
+    /// rows an ownership transition may move (REVIEW-3a4 #3). Built on the
+    /// first transition that asks, then kept with `by_path`.
+    by_fold: Option<HashMap<String, Vec<PathBuf>>>,
 }
 
 fn snapshot_page_by_rel<'a>(
@@ -1685,17 +1692,48 @@ impl PageCacheBuild {
 
 pub(crate) use tine_core::page_properties::document_block_ref_counts;
 
+fn leaf_fold(path: &Path) -> Option<String> {
+    path.file_name().map(entry_identity::fold_leaf)
+}
+
 impl PageCacheIndex {
     fn insert(&mut self, entry: &PageEntry, slot: usize) {
-        self.by_path.insert(entry.path.clone(), slot);
+        if self.by_path.insert(entry.path.clone(), slot).is_none() {
+            if let (Some(folds), Some(fold)) = (self.by_fold.as_mut(), leaf_fold(&entry.path)) {
+                folds.entry(fold).or_default().push(entry.path.clone());
+            }
+        }
     }
     fn remove(&mut self, entry: &PageEntry, _slot: usize) {
         self.by_path.remove(&entry.path);
+        if let (Some(folds), Some(fold)) = (self.by_fold.as_mut(), leaf_fold(&entry.path)) {
+            if let Some(paths) = folds.get_mut(&fold) {
+                paths.retain(|path| *path != entry.path);
+                if paths.is_empty() {
+                    folds.remove(&fold);
+                }
+            }
+        }
+    }
+    /// The cached paths whose leaf folds to `fold`.
+    fn folded(&mut self, fold: &str) -> &[PathBuf] {
+        let paths = &self.by_path;
+        let folds = self.by_fold.get_or_insert_with(|| {
+            let mut folds: HashMap<String, Vec<PathBuf>> = HashMap::new();
+            for path in paths.keys() {
+                if let Some(fold) = leaf_fold(path) {
+                    folds.entry(fold).or_default().push(path.clone());
+                }
+            }
+            folds
+        });
+        folds.get(fold).map_or(&[], Vec::as_slice)
     }
 }
 fn build_page_cache_index(pages: &Pages) -> PageCacheIndex {
     let mut index = PageCacheIndex {
         by_path: HashMap::with_capacity(pages.len()),
+        by_fold: None,
     };
     for (slot, (entry, _)) in pages.slots() {
         index.insert(entry, slot);
@@ -2171,6 +2209,8 @@ impl Graph {
             diag: crate::launch_diag::DiagRecorder::new(),
             #[cfg(test)]
             cache_publish_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            discovery_record_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
             warm_after_first_page_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
@@ -2726,8 +2766,9 @@ impl Graph {
     ///
     fn load_all_pages(&self) -> PageCacheBuild {
         // A held page's row is its owner's (`install_built`): never read.
+        let mut memo = entry_identity::Memo::default();
         let entries: Vec<PageEntry> = (self.list_pages_shared().iter())
-            .filter(|entry| self.disk_sourced(&entry.path))
+            .filter(|entry| self.disk_sourced_in(&mut memo, &entry.path))
             .cloned()
             .collect();
         let mut built = PageCacheBuild::with_capacity(entries.len());

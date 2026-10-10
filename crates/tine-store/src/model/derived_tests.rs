@@ -336,3 +336,110 @@ fn journal_twins_and_shadows_keep_their_claimants() {
     );
     store.close();
 }
+
+/// REVIEW-3a4 #4: a direct read's discovery error decided before a hold
+/// never lands after it. The read pauses between its decision and its
+/// record while a writer holds the page and publishes its owner's bytes.
+#[test]
+fn a_discovery_error_never_lands_after_a_hold() {
+    let (_temp, store) = graph(&[("pages/a.md", b"title:: Owner\n- a\n")]);
+    let path = store.graph.root.join("pages/a.md");
+    fs::write(&path, b"title:: \xff\xfe\n- b\n").unwrap();
+    let pause: Pause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+    *store.graph.discovery_record_pause.lock().unwrap() = Some(Arc::clone(&pause));
+    let read = {
+        let (store, path) = (Arc::clone(&store), path.clone());
+        std::thread::spawn(move || drop(store.graph.entry_for_path(&path)))
+    };
+    wait_paused(&pause);
+    *store.graph.discovery_record_pause.lock().unwrap() = None;
+    let holder = {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || {
+            hold(&store, "pages/a.md");
+            publish(&store, "pages/a.md", Some("title:: Owner\n- owner\n"));
+            let _writer = store.writer.lock().unwrap();
+            store.publish_retired();
+        })
+    };
+    // The holder runs to its end, or waits for the read's decision.
+    let deadline = Instant::now() + Duration::from_millis(300);
+    while !holder.is_finished() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    pause.0.lock().unwrap().1 = true;
+    pause.1.notify_all();
+    read.join().unwrap();
+    holder.join().unwrap();
+    let unreadable: Vec<String> = store
+        .graph
+        .unreadable_pages()
+        .iter()
+        .map(|(id, reason)| format!("{} {reason}", id.as_str()))
+        .collect();
+    assert!(
+        unreadable.is_empty(),
+        "REVIEW-3a4 #4: a disk discovery error landed after the hold: {unreadable:?}"
+    );
+    store.close();
+}
+
+/// REVIEW-3a4 #5: an owner publication installs what its bytes say; a
+/// Document of other content never reaches the row, and one of the same
+/// content keeps its runtime identities (R8).
+#[test]
+fn an_owner_publication_installs_its_bytes_not_a_foreign_document() {
+    let (_temp, store) = graph(&[("pages/a.md", b"- a\n")]);
+    let path = store.graph.root.join("pages/a.md");
+    hold(&store, "pages/a.md");
+    let bodies = || {
+        store
+            .graph
+            .with_cached(&path, |row| {
+                let doc = &row.expect("the owner's row").1;
+                doc.roots
+                    .iter()
+                    .map(|block| (block.raw().to_owned(), block.uuid.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap()
+    };
+    let owner = "title:: Owner\n- owner bytes\n";
+    let foreign = tine_core::doc::parse("- foreign document\n");
+    {
+        let _writer = store.writer.lock().unwrap();
+        let bytes = Some(Arc::from(owner.as_bytes()));
+        assert!(store
+            .graph
+            .publish_owned("pages/a.md", bytes, Some(&foreign))
+            .is_ok());
+    }
+    let installed: Vec<String> = bodies().into_iter().map(|(raw, _)| raw).collect();
+    assert_eq!(
+        installed,
+        ["owner bytes"],
+        "REVIEW-3a4 #5: an owner publication installed a foreign Document"
+    );
+    let saved_body = "title:: Owner\n- saved\n  - child\n";
+    let mut saved = tine_core::doc::parse(saved_body);
+    saved.roots[0].uuid = "saved-root".into();
+    saved.roots[0].children[0].uuid = "saved-child".into();
+    {
+        let _writer = store.writer.lock().unwrap();
+        let bytes = Some(Arc::from(saved_body.as_bytes()));
+        assert!(store
+            .graph
+            .publish_owned("pages/a.md", bytes, Some(&saved))
+            .is_ok());
+    }
+    let child = store.graph.with_cached(&path, |row| {
+        row.unwrap().1.roots[0].children[0].uuid.clone()
+    });
+    assert_eq!(bodies()[0].1, "saved-root", "R8: the saved root's identity");
+    assert_eq!(
+        child.as_deref(),
+        Some("saved-child"),
+        "R8: the child's identity"
+    );
+    store.close();
+}

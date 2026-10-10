@@ -105,14 +105,15 @@ impl PageHost {
     /// clean (typed, at risk or on an unknown base) or a submit or move the
     /// host admitted but has not applied. `Refuse` returns those pages;
     /// `Flush` releases, waits for their saves holding nothing, and retries,
-    /// returning the pages whose save cannot complete. The reservation
+    /// returning the pages whose save cannot complete. A returned page is
+    /// named by its current spelling, never by its opaque key. The reservation
     /// exists from the fence on, so an unwind out of the rediscovery or the
     /// check withdraws it (A-R1).
     pub fn reserve(
         &self,
         mut discover: impl FnMut() -> Vec<PageId>,
         input: Input,
-    ) -> Result<Reservation, BTreeSet<PageKey>> {
+    ) -> Result<Reservation, BTreeSet<PageId>> {
         loop {
             let keys = self.register_all(discover());
             self.fence(&keys);
@@ -131,9 +132,10 @@ impl PageHost {
             }
             drop(reservation);
             if input == Input::Refuse {
-                return Err(unsaved);
+                return Err(self.spellings(&unsaved));
             }
-            self.flush(&unsaved)?;
+            self.flush(&unsaved)
+                .map_err(|stuck| self.spellings(&stuck))?;
         }
     }
 
@@ -325,13 +327,15 @@ impl PageHost {
         });
         if let Some(key) = moved {
             graph.respelled(&key, &graph.root.join(page.as_str()));
+            self.store.publish_retired();
         }
     }
 
     /// The key naming `page`'s directory entry (§2), by the one identity
     /// rule (B1, [`crate::model::Graph::identify`]): a registered key the
     /// path names, or whose entry it reaches as an alias (Q4's test: the
-    /// same file, not listed apart); else the entry's spelling as a key.
+    /// same file, not listed apart); else a key for the new entry
+    /// ([`super::Host::key_for`]: never a live key spelling another entry).
     /// Also whether the host holds that page, and whether the path is proved
     /// to name that key's entry.
     pub(super) fn identify(&self, page: &PageId) -> (PageKey, PageId, bool, bool) {
@@ -369,14 +373,20 @@ impl PageHost {
         let host = &state.progress.host;
         let (key, spelling) = match named {
             Some(key) => (key.clone(), PageId::from(host.fs.spelling(&key))),
-            None => (
-                host.key_spelled(disk.as_str())
-                    .unwrap_or_else(|| disk.as_str().into()),
-                disk,
-            ),
+            None => (host.key_for(disk.as_str()), disk),
         };
         let held = host.pages.contains_key(&key);
         (key, spelling, held, proved)
+    }
+
+    /// `keys`' current spellings, the pages a refusal names (REVIEW-3a5):
+    /// a key is opaque, and need not be its page's spelling.
+    fn spellings(&self, keys: &BTreeSet<PageKey>) -> BTreeSet<PageId> {
+        let state = self.driver.shared.state.lock().unwrap();
+        let fs = &state.progress.host.fs;
+        keys.iter()
+            .map(|key| PageId::from(fs.spelling(key)))
+            .collect()
     }
 
     /// A key's current spelling, as the page it names.
@@ -543,13 +553,13 @@ impl PageHost {
     /// `consumed_last_id`, wait for its barrier, then stop. When it cannot
     /// complete without losing custody, admission reopens and the host
     /// comes back with the affected pages (none: the window had more to
-    /// drain, or trash custody cannot be listed); today's restore likewise
-    /// stops when its flush fails.
+    /// drain, or trash custody cannot be listed), named by their current
+    /// spellings; today's restore likewise stops when its flush fails.
     pub fn stop_saved(
         self,
         consumed_last_id: u64,
         mode: StopMode,
-    ) -> Result<Stopped, (Box<Self>, BTreeSet<PageKey>)> {
+    ) -> Result<Stopped, (Box<Self>, BTreeSet<PageId>)> {
         if !self.stop_begin(consumed_last_id, mode) {
             return Err((Box::new(self), BTreeSet::new()));
         }
@@ -566,6 +576,7 @@ impl PageHost {
                     Err(back) => host = back,
                 },
                 StopState::Aborted(pages) => {
+                    let pages = host.spellings(&pages);
                     host.stop_abort();
                     return Err((Box::new(host), pages));
                 }

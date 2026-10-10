@@ -923,7 +923,7 @@ fn q3_input_applied_before_the_reservation_is_found_under_it() {
     let discover = || vec![PageId::from("pages/r.md")];
     assert_eq!(
         live.host.reserve(discover, Input::Refuse).unwrap_err(),
-        BTreeSet::from([key.clone()]),
+        BTreeSet::from([PageId::from(key.clone())]),
         "Q3: a typed page that is not at risk still has unsaved input"
     );
     let reservation = live.host.reserve(discover, Input::Flush).unwrap();
@@ -958,7 +958,7 @@ fn q3_a_page_discovered_under_the_reservation_is_checked_too() {
     };
     assert_eq!(
         live.host.reserve(discover, Input::Refuse).unwrap_err(),
-        BTreeSet::from([key.clone()])
+        BTreeSet::from([PageId::from(key.clone())])
     );
     assert!(
         live.host
@@ -1032,6 +1032,30 @@ fn a_reservation_dropped_on_a_poisoned_host_does_not_panic() {
     drop(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
         || drop(live),
     )));
+}
+
+/// REVIEW-3a4 #2: a hold whose owner's first publication fails retires
+/// the page's disk-derived name: a view acquired after the open never
+/// names it from the file.
+#[test]
+fn a_failed_first_publication_leaves_no_disk_name_current() {
+    let live = Live::new(&[("pages/a.md", "title:: Disk\n- a\n")]);
+    let named = || {
+        matches!(
+            live.store.whole_graph().unwrap().resolve("Disk", false),
+            crate::Resolved::Existing { .. }
+        )
+    };
+    assert!(named());
+    live.index_faults(u32::MAX);
+    let (key, _page) = live.open("pages/a.md");
+    assert_eq!(live.indexed(&key), None);
+    assert!(
+        !named(),
+        "REVIEW-3a4 #2: a view acquired after the hold names the page from its file"
+    );
+    live.index_faults(0);
+    live.host.stop();
 }
 
 /// Q6 (REVIEW-3), second boundary: publication P fails and awaits retry;

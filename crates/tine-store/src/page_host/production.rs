@@ -267,12 +267,41 @@ impl super::Host<ProductionIo> {
             .then(|| spelling.into())
     }
 
+    /// The key for a new entry spelled `spelling` (REVIEW-3a4 #1): the key
+    /// spelled there, else the spelling itself unless a live key of that
+    /// name now spells another entry (a respelled key), in which case a
+    /// fresh key no path can equal. Keys are opaque; each entry keeps its
+    /// own buffer, lock and custody.
+    pub(super) fn key_for(&self, spelling: &str) -> String {
+        if let Some(key) = self.key_spelled(spelling) {
+            return key;
+        }
+        if !self.keys.contains(spelling) {
+            return spelling.into();
+        }
+        (1..)
+            .map(|n| fresh_key(spelling, n))
+            .find(|key| !self.keys.contains(key))
+            .expect("an unused key")
+    }
+
     /// The registered keys whose spelling's leaf folds to `fold`, with their
     /// spellings: [`crate::model::Graph::identify`]'s candidates (B1).
     pub(super) fn candidates(&self, fold: &str) -> Vec<(String, String)> {
         let keys = &self.keys;
         self.fs.spellings.candidates(fold, |key| keys.contains(key))
     }
+}
+
+/// The `n`th fresh key for `spelling`: NUL never occurs in a path, so the
+/// key equals no spelling and no other entry's key.
+fn fresh_key(spelling: &str, n: u64) -> String {
+    format!("{spelling}\u{0}{n}")
+}
+
+/// The spelling a recovered key was created for: a fresh key's base.
+pub(super) fn key_base(key: &str) -> &str {
+    key.split('\u{0}').next().unwrap_or(key)
 }
 
 // `HostIo::spelling` calls on this thread (A-R5's counting test).

@@ -35,7 +35,7 @@ pub(crate) fn reserved<T>(
             },
             input,
         )
-        .map_err(|pages| refused(pages.iter().next().map_or("", String::as_str)))?;
+        .map_err(|pages| refused(pages.iter().next().map_or("", PageId::as_str)))?;
     // Released when it drops, on a panic's unwind too (A-R1).
     let _reservation = reservation;
     found.and_then(|pages| write(Some(&pages)))

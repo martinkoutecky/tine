@@ -300,6 +300,17 @@ pub(crate) struct PublishedObservations {
 }
 
 impl Store {
+    /// Publish what ownership transitions settled that no publication has
+    /// captured yet (REVIEW-3a4 #2): the current snapshot stops showing a
+    /// pre-transition row, also when the owner's first publication fails.
+    /// The caller holds the writer, under which the transitions ran.
+    pub(crate) fn publish_retired(&self) {
+        if self.graph.has_retired() {
+            self.changes
+                .publish(Origin::External, Vec::new(), false, Vec::new());
+        }
+    }
+
     /// Whether the published snapshot names a page at `path`.
     pub(crate) fn snapshot_knows(&self, path: &Path) -> bool {
         let snapshot = self.changes.snapshot.read().unwrap();

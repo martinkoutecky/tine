@@ -8,8 +8,9 @@
 //! 1. Ancestors: the path's existing parent directory, canonicalized
 //!    (ancestor symlinks, Windows 8.3 names, ancestor case and `\\?\`
 //!    prefixes all resolve). A parent outside the canonical root is
-//!    [`Identity::Outside`]. The canonicalizations are memoized for one
-//!    call only, never kept.
+//!    [`Identity::Outside`], in every branch. Canonicalizations and
+//!    directory listings are memoized for one pass ([`Memo`]: one scan,
+//!    build or transition), never kept past it.
 //! 2. Leaf: in that directory, the exact leaf of a registered key's
 //!    spelling is that key. A leaf that collides with a registered leaf
 //!    (NFC plus a Unicode case fold: [`fold_leaf`], a candidate filter
@@ -154,10 +155,12 @@ impl Spellings {
     }
 }
 
-/// One identification's memo (never kept past the call): canonical
-/// directories and directory listings.
+/// One pass's identification memo (REVIEW-3a4 #6): canonical directories
+/// and directory listings, shared by every identification in one scan,
+/// build, certification or transition and dropped at its end. Never kept:
+/// a later pass sees the file system afresh.
 #[derive(Default)]
-struct Memo {
+pub(crate) struct Memo {
     root: Option<Option<PathBuf>>,
     dirs: HashMap<PathBuf, Option<PathBuf>>,
     listings: HashMap<PathBuf, Option<HashSet<OsString>>>,
@@ -203,6 +206,8 @@ impl Memo {
         self.listings
             .entry(dir.to_path_buf())
             .or_insert_with(|| {
+                #[cfg(test)]
+                LISTINGS.with(|n| n.set(n.get() + 1));
                 fs::read_dir(dir)
                     .and_then(|entries| {
                         entries
@@ -215,23 +220,31 @@ impl Memo {
     }
 }
 
-/// Whether `path` is spelled lexically under `root` with no `.`/`..`
-/// component: the spelling every listing, watcher event and key builds.
-fn lexically_inside(root: &Path, path: &Path) -> bool {
-    path.strip_prefix(root).is_ok_and(|rel| {
-        rel.components()
-            .all(|component| matches!(component, std::path::Component::Normal(_)))
-    })
+// Directory listings identification took on this thread (REVIEW-3a4 #6's
+// counting test).
+#[cfg(test)]
+thread_local! {
+    pub(crate) static LISTINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl Graph {
-    /// Which of the `registered` keys `path` names (B1; module doc).
-    /// `registered(fold)` returns the registered keys whose spelling's leaf
-    /// folds to `fold`, with their spellings. With none (no host, nothing
-    /// held, or no collision) the answer takes no file system call for a
-    /// lexical path under the root.
+    /// Which of the `registered` keys `path` names (B1; module doc), as a
+    /// pass of its own. `registered(fold)` returns the registered keys whose
+    /// spelling's leaf folds to `fold`, with their spellings.
     pub(crate) fn identify(
         &self,
+        path: &Path,
+        registered: &dyn Fn(&str) -> Vec<(String, String)>,
+    ) -> Identity {
+        self.identify_in(&mut Memo::default(), path, registered)
+    }
+
+    /// [`Self::identify`] within the pass whose memo is `memo`. The parent
+    /// is resolved in every branch (REVIEW-3a4 #7): a parent outside the
+    /// canonical root is `Outside` whether or not a key collides.
+    pub(crate) fn identify_in(
+        &self,
+        memo: &mut Memo,
         path: &Path,
         registered: &dyn Fn(&str) -> Vec<(String, String)>,
     ) -> Identity {
@@ -239,19 +252,12 @@ impl Graph {
             return Identity::Outside;
         };
         let found = registered(&fold_leaf(leaf));
-        let mut memo = Memo::default();
-        if found.is_empty() {
-            if lexically_inside(&self.root, path) {
-                return Identity::New;
-            }
-            return match memo.parent(&self.root, path) {
-                Some(_) => Identity::New,
-                None => Identity::Outside,
-            };
-        }
         let Some(dir) = memo.parent(&self.root, path) else {
             return Identity::Outside;
         };
+        if found.is_empty() {
+            return Identity::New;
+        }
         let mut colliders = Vec::new();
         for (key, spelling) in found {
             let candidate = self.root.join(&spelling);

@@ -62,7 +62,7 @@ fn a_restore_stop_that_cannot_save_hands_the_host_back() {
     let Err((host, pages)) = host.stop_saved(id.get(), StopMode::Restore) else {
         panic!("a conflict aborts the restore stop");
     };
-    assert_eq!(pages, BTreeSet::from([key.clone()]));
+    assert_eq!(pages, BTreeSet::from([PageId::from(key.clone())]));
     let live = Live {
         _dir,
         root,
@@ -190,4 +190,28 @@ fn retargeted_mail_reaches_the_adopting_window() {
     assert_eq!((mail.session, mail.key.as_str()), (session, key.as_str()));
     assert!(live.mail.try_recv().is_err(), "the old window gets none");
     live.host.stop();
+}
+
+/// REVIEW-3a5 neighbour: a restore stop that cannot save names the page by
+/// its current spelling (the restore error shows it), never by its opaque
+/// key.
+#[test]
+fn a_restore_stop_names_an_unsaved_page_by_its_spelling() {
+    let live = Live::new(&[("pages/a.md", "- old\n")]);
+    if super::rename::folds_case(&live.root) {
+        live.host.stop();
+        return;
+    }
+    super::rename::typed_fresh_entry(&live, "- typed\n");
+    let Live { host, id, .. } = live;
+    let Err((host, pages)) = host.stop_saved(id.get(), StopMode::Restore) else {
+        panic!("an unsaveable edit aborts the restore stop");
+    };
+    let pages: Vec<String> = pages.iter().map(|page| page.as_str().to_owned()).collect();
+    assert_eq!(
+        pages,
+        ["pages/b.md"],
+        "REVIEW-3a5: the restore stop named the page by its opaque key"
+    );
+    host.stop();
 }
