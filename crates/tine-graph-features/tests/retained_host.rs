@@ -358,3 +358,118 @@ fn the_guide_copy_waits_for_a_reservation_of_its_page() {
         |dir| dir.join(&page).is_file(),
     );
 }
+
+/// A-R3: a writer reserves only the pages it writes. While another
+/// reservation holds `held`, a page the writer leaves untouched, `write`
+/// finishes without waiting for it.
+fn finishes_while_held<T: Send>(
+    host: &PageHost,
+    held: &str,
+    write: impl FnOnce() -> T + Send,
+) -> T {
+    let reservation = host
+        .reserve(|| vec![PageId::from(held)], Input::Refuse)
+        .expect("nothing unsaved");
+    std::thread::scope(|scope| {
+        let (done, finished) = mpsc::channel();
+        scope.spawn(move || {
+            let _ = done.send(write());
+        });
+        let result = finished.recv_timeout(Duration::from_secs(5));
+        // Let a writer that does wait finish, so the scope can join.
+        drop(reservation);
+        result.unwrap_or_else(|_| {
+            panic!("A-R3: the writer waited for {held}, a page it does not write")
+        })
+    })
+}
+
+fn hosted(label: &str, files: &[(&str, &str)]) -> (PathBuf, PathBuf, Arc<Store>, PageHost) {
+    let dir = graph(label, files);
+    let app_data = scratch(&format!("{label}-app"));
+    fs::create_dir_all(&app_data).unwrap();
+    let store = Arc::new(Store::open(&dir, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let host = PageHost::start_for_tests(&store, &app_data).unwrap();
+    (dir, app_data, store, host)
+}
+
+/// A-R3, REVIEW-3a2 R3's schedule: proposals A and B are confirmed, then
+/// B goes stale (its target is taken), so the migration skips B without
+/// touching it. B's page, held elsewhere, never blocks A's migration.
+#[test]
+fn a_stale_journal_proposal_never_blocks_another() {
+    let (dir, app_data, store, host) = hosted(
+        "r3-journals",
+        &[
+            ("journals/Jun 19th, 2026.md", "- a\n"),
+            ("journals/Jun 21st, 2026.md", "- b\n"),
+        ],
+    );
+    let listed = journals::journal_filename_migrations(&store).unwrap();
+    assert_eq!(listed.len(), 2, "{listed:?}");
+    fs::write(dir.join("journals/2026_06_21.md"), "- taken\n").unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    let result = finishes_while_held(&host, "journals/Jun 21st, 2026.md", || {
+        journals::migrate_journal_filenames(&store, Some(&host), &listed).unwrap()
+    });
+    assert_eq!(result.migrated, 1);
+    let skipped: Vec<&str> = result.skipped.iter().map(|s| s.file.as_str()).collect();
+    assert_eq!(skipped, ["Jun 21st, 2026.md"]);
+    assert!(dir.join("journals/2026_06_19.md").is_file());
+    assert_eq!(
+        fs::read_to_string(dir.join("journals/Jun 21st, 2026.md")).unwrap(),
+        "- b\n"
+    );
+    drop(host);
+    store.close();
+    let _ = fs::remove_dir_all(dir);
+    let _ = fs::remove_dir_all(app_data);
+}
+
+/// A-R3: each eligible proposal still reserves the pages it moves.
+#[test]
+fn a_journal_migration_waits_for_a_reservation_of_its_page() {
+    waits_for_a_reservation(
+        "r3-journal-fence",
+        &[("journals/Jun 19th, 2026.md", "- a\n")],
+        "journals/Jun 19th, 2026.md",
+        |store, host| {
+            let listed = journals::journal_filename_migrations(store)?;
+            let result = journals::migrate_journal_filenames(store, Some(host), &listed)?;
+            assert_eq!(result.migrated, 1, "{:?}", result.skipped);
+            Ok(())
+        },
+        |dir| dir.join("journals/2026_06_19.md").is_file(),
+    );
+}
+
+/// A-R3, the Refuse neighbour (`RenamePlan::pages`): an interrupted title
+/// completion refuses unsaved input on the pages it writes, and reserves
+/// only those: a referrer it leaves byte-identical for its VCS conflict
+/// markers is not reserved, so a writer holding it never blocks the
+/// completion.
+#[test]
+fn a_refusing_rename_does_not_reserve_a_referrer_it_skips() {
+    let marked = "- [[Old]]\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n";
+    let (dir, app_data, store, host) = hosted(
+        "r3-rename",
+        &[
+            // A crash after the physical move left Old's title in New's file.
+            ("pages/New.md", "title:: Old\n\n- body\n"),
+            ("pages/m.md", marked),
+        ],
+    );
+    let report = finishes_while_held(&host, "pages/m.md", || {
+        pages::rename_or_merge_page(&store, Some(&host), "Old", "New", None, None, &[]).unwrap()
+    });
+    assert_eq!(report.skipped_conflicted_referrers, ["pages/m.md"]);
+    assert!(!fs::read_to_string(dir.join("pages/New.md"))
+        .unwrap()
+        .contains("title:: Old"));
+    assert_eq!(fs::read_to_string(dir.join("pages/m.md")).unwrap(), marked);
+    drop(host);
+    store.close();
+    let _ = fs::remove_dir_all(dir);
+    let _ = fs::remove_dir_all(app_data);
+}

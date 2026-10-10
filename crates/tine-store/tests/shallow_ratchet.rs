@@ -621,7 +621,7 @@ const CONCEPTS: &[&str] = &[
     "WholeGraph: Block refs",
     "WholeGraph: Search/Query",
     "WholeGraph: View meta",
-    // PENDING MARTIN (surface concept): STEP3 §7 retained writers and restore.
+    // Approved by Martin 2026-10-10 (surface concept): STEP3 §7 retained writers and restore.
     "Page host",
 ];
 

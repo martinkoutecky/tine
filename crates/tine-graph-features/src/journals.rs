@@ -7,7 +7,7 @@ use std::io;
 
 use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::model::{JournalConflict, JournalFile};
-use tine_store::{Area, Day, FileEntry, Input, PageHost, PageId, Store, StoreError};
+use tine_store::{Area, Day, FileEntry, FileId, Input, PageHost, PageId, Store, StoreError};
 
 use crate::{store_error, tx_error};
 
@@ -460,33 +460,15 @@ pub fn journal_filename_migrations(store: &Store) -> io::Result<Vec<JournalFilen
 /// only when `migration_plan` still gives the same `to` for its `from`;
 /// otherwise it is reported as skipped with the reason. A file not in
 /// `confirmed` is never renamed. References are not rewritten (the name stays
-/// the journal's title). Caller takes the pre-migration backup. A retained
-/// writer (STEP3 §7) of every confirmed source and target: their unsaved
-/// input is saved first. Cost O(J log J + confirmed × J + migrated file
+/// the journal's title). Caller takes the pre-migration backup. Each
+/// still-eligible proposal is its own retained writer (STEP3 §7, A-R3) of
+/// its source and target: their unsaved input is saved first, and a
+/// proposal whose page cannot be saved is skipped with that reason, never
+/// blocking the others. Cost O(J log J + confirmed × J + migrated file
 /// bytes).
 pub fn migrate_journal_filenames(
     store: &Store,
     host: Option<&PageHost>,
-    confirmed: &[JournalFilenameMigration],
-) -> io::Result<MigrationResult> {
-    let discover = || {
-        let names = confirmed.iter().flat_map(|p| [&p.from, &p.to]);
-        let files: Vec<_> = names
-            .filter_map(|name| store.file_id(Area::Journals, name).ok())
-            .collect();
-        Ok(crate::retained::pages(store, &files))
-    };
-    crate::retained::reserved(
-        host,
-        Input::Flush,
-        discover,
-        crate::retained::unsaved,
-        |_| migrate_confirmed(store, confirmed),
-    )
-}
-
-fn migrate_confirmed(
-    store: &Store,
     confirmed: &[JournalFilenameMigration],
 ) -> io::Result<MigrationResult> {
     let fmt = format(store);
@@ -521,38 +503,50 @@ fn migrate_confirmed(
             }
         };
         let target = proposal.to.clone();
-        let rev = match store.read(&entry, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-            Ok((_, rev)) => rev,
-            Err(error) => {
-                result
-                    .skipped
-                    .push(skip(format!("source could not be read: {error:?}")));
-                continue;
-            }
-        };
         let Ok(to) = store.file_id(Area::Journals, &target) else {
             continue; // `migration_plan` already refused an invalid name.
         };
-        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-        tx.move_file(&entry, rev, &to, None);
-        match tx_error(tx.commit()) {
-            Ok(_) => {
+        let pages = crate::retained::pages(store, [&entry, &to]);
+        let moved = crate::retained::reserved(
+            host,
+            Input::Flush,
+            || Ok(pages.clone()),
+            crate::retained::unsaved,
+            |_| Ok(migrate_one(store, &entry, &to)),
+        );
+        match moved.and_then(|moved| moved) {
+            Ok(()) => {
                 // The day count is unchanged: the moved file keeps its day.
                 listing.rels.remove(&proposal.from);
                 listing.rels.insert(target);
                 result.migrated += 1;
             }
-            Err(error) => {
-                let reason = if error.kind() == io::ErrorKind::AlreadyExists {
-                    "same-day .md/.org twin would be created".to_owned()
-                } else {
-                    format!("move refused: {error}")
-                };
-                result.skipped.push(skip(reason));
-            }
+            Err(reason) => result.skipped.push(skip(reason.to_string())),
         }
     }
     Ok(result)
+}
+
+/// Move one eligible journal file to `to` as its own transaction; the
+/// error is the reason the proposal is skipped.
+fn migrate_one(store: &Store, entry: &FileId, to: &FileId) -> io::Result<()> {
+    let rev = match store.read(entry, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
+        Ok((_, rev)) => rev,
+        Err(error) => {
+            return Err(io::Error::other(format!(
+                "source could not be read: {error:?}"
+            )))
+        }
+    };
+    let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+    tx.move_file(entry, rev, to, None);
+    tx_error(tx.commit()).map(drop).map_err(|error| {
+        if error.kind() == io::ErrorKind::AlreadyExists {
+            io::Error::other("same-day .md/.org twin would be created")
+        } else {
+            io::Error::other(format!("move refused: {error}"))
+        }
+    })
 }
 
 /// Duplicate-day files with first-line previews, canonical first. A file whose

@@ -864,7 +864,7 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
                 } else if *line == "}" && !test_file {
                     test_code = false;
                 }
-                // The retained-writer surface (PENDING MARTIN) is named only
+                // The retained-writer surface (approved by Martin 2026-10-10) is named only
                 // where a census writer reserves from a host or the binding
                 // keeps one (STEP3 §7), and no production path starts a host
                 // while the switch is off (lane 3b owns the switch).
@@ -903,7 +903,7 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
                     && [
                         "mod page_state;",
                         "mod page_host;",
-                        // The retained-writer export (PENDING MARTIN).
+                        // The retained-writer export (approved by Martin 2026-10-10).
                         "pub use page_host::{Input, PageHost, RenameRefusal, Reservation, StopMode, Stopped};",
                     ]
                     .contains(&line.trim())

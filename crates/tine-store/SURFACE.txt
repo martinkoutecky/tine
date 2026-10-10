@@ -20,6 +20,8 @@
 # GH #621: create_graph writes a graph and cannot suggest a name for a
 # cancellable prompt without creating anything. suggest_graph_name is the
 # read-only question about the user-picked parent, approved 2026-10-08.
+# Page host: the concept (STEP3 §7, commit 835713dcf, option (a)) was approved
+# by Martin 2026-10-10; A-R1 then cut PageHost::release (13 -> 12).
 ## Lifecycle (ceiling: 20)
 enum store::WatchMode
 enum store::OpenError
@@ -278,7 +280,7 @@ fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
 ## Page host (ceiling: 12)
-# PENDING MARTIN (surface concept, STEP3 §7): the binding's page host, exported
+# Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
 # only for its retained-writer callers (census writers in tine-graph-features,
 # backup restore in src-tauri). The page commands stay crate-private until 3b.
 struct page_host::PageHost

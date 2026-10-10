@@ -467,8 +467,8 @@ fn rename_page_after_inventory(
         let input = first.input();
         let last = std::cell::Cell::new(None);
         let discover = || {
-            let plan = plan()?;
-            let pages = plan.pages(store);
+            let mut plan = plan()?;
+            let pages = plan.pages(store)?;
             last.set(Some(plan));
             Ok(pages)
         };
@@ -493,20 +493,51 @@ struct RenamePlan {
     merge: Option<(PageId, PageId)>,
     ref_merge: bool,
     candidates: Vec<PageId>,
+    /// The candidates `pages` read to find the plan's write set, reused by
+    /// the commit so it writes exactly what was reserved (A-R3).
+    reads: HashMap<PageId, (String, FileRev)>,
 }
 
 impl RenamePlan {
-    /// Every page the plan can write: referrers, moved pages and their
-    /// destinations, and a merge's survivor and source.
-    fn pages(&self, store: &Store) -> Vec<PageId> {
-        let mut pages = self.candidates.clone();
+    /// Every page the plan writes (A-R3): moved pages and their
+    /// destinations, interrupted titles, a merge's survivor and source,
+    /// and the referrers whose references it changes. A referrer the
+    /// rename leaves byte-identical (unchanged, or carrying VCS conflict
+    /// markers) is not written, so its unsaved input blocks nothing. The
+    /// reads are kept for the commit, which decides on the same bytes.
+    fn pages(&mut self, store: &Store) -> io::Result<Vec<PageId>> {
+        let format = store.config().file_name_format;
+        let mut pages = Vec::new();
+        for id in &self.candidates {
+            if self.moves.contains_key(id) || self.moved_titles_to_rebind.contains(id) {
+                pages.push(id.clone());
+                continue;
+            }
+            let file = id.file();
+            let (content, rev) = read_text(store, &file)
+                .map_err(|e| error(e.kind(), &format!("{}: {e}", file.as_str())))?;
+            // As `commit_rename` decides: a referrer is written when the
+            // transaction's rewrite (Org by its exact `.org` extension)
+            // changes it and it carries no VCS conflict markers.
+            let org = std::path::Path::new(file.as_str())
+                .extension()
+                .is_some_and(|ext| ext == "org");
+            let syntax = Format::from_path(id.as_str().as_ref());
+            let changed = refs::rename_rewrite(&content, org, &self.map.0, format) != content;
+            if changed
+                && tine_core::concord_queue::vcs_conflict_markers(&content, syntax).is_empty()
+            {
+                pages.push(id.clone());
+            }
+            self.reads.insert(id.clone(), (content, rev));
+        }
         pages.extend(crate::retained::pages(store, self.moves.values()));
         pages.extend(
             self.merge
                 .iter()
                 .flat_map(|(src, dst)| [src.clone(), dst.clone()]),
         );
-        pages
+        Ok(pages)
     }
 
     /// An interrupted title completion refuses unsaved input; every other
@@ -695,6 +726,7 @@ fn plan_rename(
         merge,
         ref_merge,
         candidates,
+        reads: HashMap::new(),
     })
 }
 
@@ -715,6 +747,7 @@ fn commit_rename(
         merge,
         ref_merge,
         candidates,
+        mut reads,
     } = plan;
     let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
     // Crash order (I-2): survivor, then referrer rewrites, then namespace
@@ -747,8 +780,11 @@ fn commit_rename(
         // naming the file. Skipping it (v0.6.5 model.rs 3699) left a moved
         // page under Old while every referrer said New (C3W W2, I-2);
         // master page_rename.rs fails the same way (audit R15-09).
-        let (content, rev) = read_text(store, &file)
-            .map_err(|e| error(e.kind(), &format!("{}: {e}", file.as_str())))?;
+        let (content, rev) = match reads.remove(&id) {
+            Some(read) => read,
+            None => read_text(store, &file)
+                .map_err(|e| error(e.kind(), &format!("{}: {e}", file.as_str())))?,
+        };
         let org = Format::from_path(id.as_str().as_ref()) == Format::Org;
         let moved = moves.contains_key(&id);
         let rebind = moved_titles_to_rebind.contains(&id);
@@ -887,8 +923,8 @@ fn host_rename(
         Err(RenameRefusal::Alias) => {
             let last = std::cell::Cell::new(None);
             let discover = || {
-                let plan = plan()?;
-                let pages = plan.pages(store);
+                let mut plan = plan()?;
+                let pages = plan.pages(store)?;
                 last.set(Some(plan));
                 Ok(pages)
             };
