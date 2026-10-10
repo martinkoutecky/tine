@@ -8,7 +8,7 @@ use super::tests::text;
 use super::*;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 struct Fixture {
     root: tempfile::TempDir,
@@ -1556,6 +1556,28 @@ fn draft_after_failed_save(f: &mut Fixture, key: &str) {
     assert!(!f.host.fs.draft_files(true).is_empty());
 }
 
+/// Whether `dir`'s volume folds case (Windows NTFS, default macOS APFS),
+/// probed on the volume itself: never inferred from the target OS.
+fn folds_case(dir: &Path) -> bool {
+    let probe = dir.join(".Case-Probe");
+    fs::write(&probe, b"").unwrap();
+    let folds = dir.join(".case-probe").exists();
+    fs::remove_file(&probe).unwrap();
+    folds
+}
+
+/// The spellings in `dir` of entries named `name` up to case, as listed:
+/// on a folding volume `exists()` cannot tell `Foo.md` from `foo.md`.
+fn spelled(dir: &Path, name: &str) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|listed| listed.eq_ignore_ascii_case(name))
+        .collect();
+    names.sort();
+    names
+}
+
 fn relaunch_as(f: &mut Fixture, spellings: &[(&str, &str)]) {
     f.host.stop();
     f.host = binding(f);
@@ -1578,9 +1600,11 @@ fn relaunch_as(f: &mut Fixture, spellings: &[(&str, &str)]) {
 
 /// STEP3 §2 / Q4, folding semantics. On a folding volume the store's
 /// case-alias resolution spells a recovered `Foo.md` as its entry `foo.md`;
-/// Linux cannot fold, so the test registers that spelling. The draft and the
+/// the test registers that spelling on every volume. The draft and the
 /// custody marker name the old spelling and recover to the same key, and no
-/// I/O goes through the old spelling: here that would create a second file.
+/// I/O goes through the old spelling: on a case-sensitive volume that would
+/// create a second file, on a folding one respell the entry. Both show in
+/// the directory listing.
 #[test]
 fn an_old_spelling_draft_and_custody_marker_recover_through_the_entry_spelling() {
     let mut f = Fixture::new();
@@ -1597,7 +1621,7 @@ fn an_old_spelling_draft_and_custody_marker_recover_through_the_entry_spelling()
     assert!(!page.conflict && page.buf == text("draft"), "{page:?}");
     assert_eq!(f.save("Foo.md"), Outcome::Published);
     assert_eq!(fs::read(f.graph.join("foo.md")).unwrap(), b"draft");
-    assert!(!f.graph.join("Foo.md").exists());
+    assert_eq!(spelled(&f.graph, "foo.md"), ["foo.md"]);
     // Delete through the move, then crash holding the custody marker.
     assert_eq!(f.host.delete("Foo.md"), Disposition::Pending);
     f.drain();
@@ -1620,6 +1644,10 @@ fn an_old_spelling_draft_and_custody_marker_recover_through_the_entry_spelling()
 /// Q4, case-sensitive semantics: a case-only rename to an absent distinct
 /// entry is a host rename between two keys with its operation custody. An
 /// old-spelling draft does not recover a separate `Foo.md` after a crash.
+/// On a folding volume no distinct `foo.md` can exist: the target reads as
+/// the source's own entry, so the two-key rename refuses and writes nothing
+/// (a case-only move there is the single-key alias respell, tested by
+/// `a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it`).
 #[test]
 fn a_case_only_rename_to_a_distinct_entry_is_a_two_key_host_rename() {
     let mut f = Fixture::new();
@@ -1632,11 +1660,17 @@ fn a_case_only_rename_to_a_distinct_entry_is_a_two_key_host_rename() {
     draft_after_failed_save(&mut f, "Foo.md");
     assert_eq!(f.save("Foo.md"), Outcome::Published);
     let identity = |bytes: &Text, _: &str, _: bool| Ok(bytes.clone());
-    assert_eq!(
-        f.host
-            .rename_with("Foo.md", "foo.md", &BTreeSet::new(), identity),
-        Disposition::Pending
-    );
+    let renamed = f
+        .host
+        .rename_with("Foo.md", "foo.md", &BTreeSet::new(), identity);
+    if folds_case(&f.graph) {
+        assert_eq!(renamed, Disposition::Refused);
+        f.drain();
+        assert_eq!(spelled(&f.graph, "foo.md"), ["Foo.md"]);
+        assert_eq!(fs::read(f.graph.join("Foo.md")).unwrap(), b"edited");
+        return;
+    }
+    assert_eq!(renamed, Disposition::Pending);
     f.drain();
     // A crash before either save of the operation.
     relaunch_as(&mut f, &[]);
@@ -1645,12 +1679,14 @@ fn a_case_only_rename_to_a_distinct_entry_is_a_two_key_host_rename() {
     assert_eq!(f.save("foo.md"), Outcome::Published);
     assert_eq!(f.save("Foo.md"), Outcome::Published);
     assert_eq!(fs::read(f.graph.join("foo.md")).unwrap(), b"edited");
-    assert!(!f.graph.join("Foo.md").exists());
+    assert_eq!(spelled(&f.graph, "foo.md"), ["foo.md"]);
     assert!(trash_holds(&f, b"edited"));
 }
 
 /// STEP3 §2: a request queued before the alias spelling move applies to the
-/// same page after it, and the page's I/O follows the new spelling.
+/// same page after it, and the page's I/O follows the new spelling. The
+/// move is case-only, so on a folding volume it is the alias respell; on
+/// every volume the listed spelling must actually change.
 #[test]
 fn a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it() {
     let mut f = Fixture::new();
@@ -1680,7 +1716,7 @@ fn a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it() {
     assert_eq!(f.host.pages["a.md"].buf, text("typed"));
     assert_eq!(f.save("a.md"), Outcome::Published);
     assert_eq!(fs::read(f.graph.join("A.md")).unwrap(), b"typed");
-    assert!(!f.graph.join("a.md").exists());
+    assert_eq!(spelled(&f.graph, "a.md"), ["A.md"]);
 }
 
 fn twin_events(f: &Fixture) -> Vec<String> {
