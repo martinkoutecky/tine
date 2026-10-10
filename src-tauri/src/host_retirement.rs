@@ -140,6 +140,40 @@ impl HostRetirement {
         Some((slot.store.clone(), std::mem::take(&mut *host)))
     }
 
+    /// A retiring root that overlaps `root` (one contains the other), or
+    /// with `same` also `root` itself.
+    pub(crate) fn overlapping(&self, root: &std::path::Path, same: bool) -> Option<PathBuf> {
+        overlap(&self.0.retiring.lock().unwrap(), root, same)
+    }
+
+    /// Wait up to `bound` until no other retiring root overlaps `root`
+    /// (`root` itself is adopted, not waited for). `waiting` runs once,
+    /// with the root still saving, when the wait has to begin. The root
+    /// still retiring past the bound comes back.
+    pub(crate) fn wait_overlapping(
+        &self,
+        root: &std::path::Path,
+        bound: Duration,
+        waiting: impl FnOnce(&std::path::Path),
+    ) -> Result<(), PathBuf> {
+        let deadline = Instant::now() + bound;
+        let mut waiting = Some(waiting);
+        let mut retiring = self.0.retiring.lock().unwrap();
+        while let Some(saving) = overlap(&retiring, root, false) {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(saving);
+            }
+            if let Some(waiting) = waiting.take() {
+                drop(retiring);
+                waiting(&saving);
+                retiring = self.0.retiring.lock().unwrap();
+            }
+            retiring = self.0.idle.wait_timeout(retiring, left).unwrap().0;
+        }
+        Ok(())
+    }
+
     /// Whether no host is retiring.
     pub(crate) fn is_idle(&self) -> bool {
         self.0.retiring.lock().unwrap().is_empty()
@@ -163,11 +197,22 @@ impl HostRetirement {
     }
 }
 
+fn overlap(
+    retiring: &HashMap<PathBuf, Arc<GraphSlot>>,
+    root: &std::path::Path,
+    same: bool,
+) -> Option<PathBuf> {
+    retiring
+        .keys()
+        .find(|kept| (same || kept.as_path() != root) && crate::state::roots_overlap(kept, root))
+        .cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::GraphRegistry;
-    use std::sync::mpsc;
+    use crate::state::{wait_for_retiring_overlaps, GraphRegistry};
+    use std::sync::{mpsc, RwLock};
     use tine_store::{EditKind, Input, PageHost, PageId, PageMail, Store};
 
     struct Fixture {
@@ -462,5 +507,96 @@ mod tests {
         let released = registry.remove("graph-1").expect("returned");
         assert!(Arc::ptr_eq(&released, &slot));
         assert!(registry.retirement.is_idle());
+    }
+
+    /// A retiring host whose page input is admitted but held: it cannot stop
+    /// until `reservation` drops. Bound as `graph-1` in `graphs`, then
+    /// released.
+    fn retiring(f: &Fixture, graphs: &RwLock<GraphRegistry>) -> tine_store::Reservation {
+        let slot = f.bind(&mut graphs.write().unwrap(), "graph-1");
+        let window = window(&slot);
+        let reservation = hold(&slot);
+        submit(&slot, &window, "- two\n").unwrap();
+        assert!(graphs.write().unwrap().remove("graph-1").is_none());
+        reservation
+    }
+
+    /// Manager rule after P1: an open of a root overlapping a retiring
+    /// graph waits for it to save and close, says so once, and holds no
+    /// registry lock meanwhile (other windows' commands and closes go on).
+    #[test]
+    fn an_overlapping_open_waits_outside_the_registry_lock_until_the_retirement_ends() {
+        let f = Fixture::new("overlap-wait");
+        let graphs = RwLock::new(GraphRegistry::default());
+        let reservation = retiring(&f, &graphs);
+        let inner = f.root.join("pages");
+        let (began, waiting) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let open = scope.spawn(|| {
+                wait_for_retiring_overlaps(&graphs, &inner, Duration::from_secs(20), |saving| {
+                    began.send(saving.to_path_buf()).unwrap()
+                })
+            });
+            assert_eq!(
+                waiting.recv_timeout(Duration::from_secs(20)).unwrap(),
+                f.root
+            );
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while graphs.try_write().is_err() {
+                assert!(
+                    Instant::now() < deadline,
+                    "the open waits holding the registry lock"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(!open.is_finished(), "the open waits for the retirement");
+            drop(reservation);
+            assert_eq!(open.join().unwrap(), Ok(()));
+        });
+        assert_eq!(f.disk(), "- two\n");
+        assert!(f.closed(), "the open went on only once the Store closed");
+    }
+
+    /// Past the bound the open is refused, naming the graph still saving;
+    /// an open that raced past the wait is refused by `bind`, which counts
+    /// a retiring root as owned. The same root is adopted, never waited for.
+    #[test]
+    fn a_stuck_retirement_refuses_an_overlapping_open_naming_the_saving_graph() {
+        let f = Fixture::new("overlap-stuck");
+        let late = Fixture::new("overlap-late");
+        let graphs = RwLock::new(GraphRegistry::default());
+        let reservation = retiring(&f, &graphs);
+        let inner = f.root.join("pages");
+        let saving = f.root.display().to_string();
+        let mut told = None;
+        let error =
+            wait_for_retiring_overlaps(&graphs, &inner, Duration::from_millis(300), |root| {
+                told = Some(root.to_path_buf())
+            })
+            .unwrap_err();
+        assert_eq!(told.as_deref(), Some(f.root.as_path()));
+        assert!(
+            error.contains(&saving) && error.contains("still saving"),
+            "{error}"
+        );
+        let slot = Arc::new(GraphSlot::new(late.store.clone(), inner));
+        let Err(error) = graphs.write().unwrap().bind("graph-2".into(), slot) else {
+            panic!("a retiring root is owned");
+        };
+        assert!(
+            error.contains(&saving) && error.contains("still saving"),
+            "{error}"
+        );
+        assert_eq!(
+            wait_for_retiring_overlaps(&graphs, &f.root, Duration::ZERO, |_| {
+                panic!("the same root is adopted, not waited for")
+            }),
+            Ok(())
+        );
+        assert!(!f.closed());
+        drop(reservation);
+        let retirement = graphs.read().unwrap().retirement.clone();
+        retirement.wait_idle(Duration::from_secs(20)).unwrap();
+        assert!(f.closed());
     }
 }

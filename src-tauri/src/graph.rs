@@ -444,6 +444,9 @@ fn route_bound_root(
     }))
 }
 
+/// How long an open waits for an overlapping graph that is still saving.
+const RETIRING_OVERLAP_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub(crate) fn load_graph_for_label(
     path: String,
     app: &tauri::AppHandle,
@@ -475,6 +478,21 @@ pub(crate) fn load_graph_for_label(
     if let Some(result) = routed {
         return Ok(result);
     }
+    // A graph that overlaps this root and is still saving its pages closes
+    // first; the window hears that it waits (`graph-open-waiting`).
+    crate::state::wait_for_retiring_overlaps(
+        &state.graphs,
+        &root_key,
+        RETIRING_OVERLAP_WAIT,
+        |saving| {
+            crate::debug::diag("graph-open-waits-for-a-retiring-graph");
+            let _ = app.emit_to(
+                window_label,
+                "graph-open-waiting",
+                saving.display().to_string(),
+            );
+        },
+    )?;
     // A root whose page host is still retiring comes back with its Store
     // and host (plan v3 §3, S2): a fresh binding (lease, background work,
     // session on `page_window_reloaded`) and page mail to this window.

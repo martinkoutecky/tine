@@ -265,6 +265,37 @@ pub(crate) fn may_exit(own_slot: bool, graph_slots: usize, others_closing: usize
     others_closing == 0 && graph_slots <= usize::from(own_slot)
 }
 
+/// Whether one graph root contains the other: two Stores and hosts must
+/// never hold the same page files.
+pub(crate) fn roots_overlap(a: &Path, b: &Path) -> bool {
+    a.starts_with(b) || b.starts_with(a)
+}
+
+fn still_saving(root: &Path, saving: &Path) -> String {
+    format!(
+        "graph {} overlaps graph {}, which is still saving its pages; open it again once that graph has closed",
+        root.display(),
+        saving.display()
+    )
+}
+
+/// Before an open of `root`: wait, outside the registry lock, up to `bound`
+/// for each retiring graph whose root overlaps it (another root: the same
+/// root is adopted) to save and close. `waiting` runs once, with that
+/// graph's root, when the open has to wait. Past the bound, the refusal
+/// `bind` would give.
+pub(crate) fn wait_for_retiring_overlaps(
+    graphs: &RwLock<GraphRegistry>,
+    root: &Path,
+    bound: Duration,
+    waiting: impl FnOnce(&Path),
+) -> Result<(), String> {
+    let retirement = graphs.read().unwrap().retirement.clone();
+    retirement
+        .wait_overlapping(root, bound, waiting)
+        .map_err(|saving| still_saving(root, &saving))
+}
+
 #[derive(Default)]
 pub(crate) struct GraphRegistry {
     by_window: HashMap<WindowKey, Arc<GraphSlot>>,
@@ -305,15 +336,18 @@ impl GraphRegistry {
         slot: Arc<GraphSlot>,
     ) -> Result<Option<Arc<GraphSlot>>, String> {
         for (root, owner) in &self.by_root {
-            if owner != &window
-                && (root.starts_with(&slot.root_key) || slot.root_key.starts_with(root))
-            {
+            if owner != &window && roots_overlap(root, &slot.root_key) {
                 return Err(format!(
                     "graph {} overlaps graph {} already owned by window {owner}",
                     slot.root_key.display(),
                     root.display()
                 ));
             }
+        }
+        // A retiring host still owns its root (plan v3 §3, S2); the open
+        // waited for it first (`wait_for_retiring_overlaps`).
+        if let Some(saving) = self.retirement.overlapping(&slot.root_key, true) {
+            return Err(still_saving(&slot.root_key, &saving));
         }
         let displaced = self.by_window.insert(window.clone(), slot.clone());
         if let Some(old) = &displaced {
