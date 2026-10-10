@@ -27,11 +27,14 @@ enum ShareInbox {
 
   /// Must match share_inbox.rs (`MAX_RESOURCES`).
   static let maxResources = 32
+  /// The largest file one share may carry (as on Android, ShareIntake.kt).
+  static let maxResourceBytes = 64 * 1024 * 1024
 
   enum Failure: LocalizedError {
     case noContainer
     case empty
     case tooMany(Int)
+    case tooLarge(String)
     case io(String, Int32)
     var errorDescription: String? {
       switch self {
@@ -39,6 +42,7 @@ enum ShareInbox {
       case .empty: return "There was nothing to save."
       case .tooMany(let count):
         return "Tine saves at most \(ShareInbox.maxResources) files from one share; this one had \(count)."
+      case .tooLarge(let name): return "\(name) is larger than 64 MiB."
       case .io(let what, let code): return "\(what) failed: \(String(cString: strerror(code)))"
       }
     }
@@ -77,6 +81,11 @@ enum ShareInbox {
     return container.appendingPathComponent("share-inbox", isDirectory: true)
   }
 
+  /// Size of the file at `url` without reading it, when the file system says.
+  static func fileSize(_ url: URL) -> Int? {
+    try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+  }
+
   /// A plain, unique file name for a resource inside one item.
   private static func fileName(_ name: String, used: inout Set<String>) -> String {
     var base = name.replacingOccurrences(of: "/", with: "_")
@@ -107,10 +116,11 @@ enum ShareInbox {
     if resources.count > maxResources { throw Failure.tooMany(resources.count) }
     let fm = FileManager.default
     let root = try root()
-    if !fm.fileExists(atPath: root.path) {
-      try fm.createDirectory(at: root, withIntermediateDirectories: true)
-      try syncDirectory(root.deletingLastPathComponent())
-    }
+    // Every publication makes the inbox's own entry durable, whoever created
+    // it (the app's plugin, an earlier share cut short): an existing
+    // directory proves nothing about its parent (review round 2, R2-4).
+    try fm.createDirectory(at: root, withIntermediateDirectories: true)
+    try syncDirectory(root.deletingLastPathComponent())
     let id = UUID().uuidString.lowercased()
     let tmp = root.appendingPathComponent(".tmp-\(id)", isDirectory: true)
     try fm.createDirectory(at: tmp, withIntermediateDirectories: false)
@@ -124,10 +134,13 @@ enum ShareInbox {
         if let bytes = resource.data {
           data = bytes
         } else if let source = resource.source {
-          data = try Data(contentsOf: source)
+          // Refused before loading when the size is known (review round 2, R2-6).
+          if let size = fileSize(source), size > maxResourceBytes { throw Failure.tooLarge(resource.name) }
+          data = try Data(contentsOf: source, options: .mappedIfSafe)
         } else {
           throw Failure.io("reading \(resource.name)", EIO)
         }
+        if data.count > maxResourceBytes { throw Failure.tooLarge(resource.name) }
         try writeSynced(data, to: target)
         described.append(["file": file, "name": resource.name, "type": resource.type])
       }

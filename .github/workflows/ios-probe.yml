@@ -277,6 +277,8 @@ jobs:
             cp "$graph/journals/$journal_file" "artifacts/ios-journal-$slug.md"
             tail -n 1 "$graph/journals/$journal_file" | grep -F "$share_text"
             test ! -e "$inbox/ci-share-item"
+            # The commit leaves its redelivery tombstone (share_inbox.rs).
+            test -f "$inbox/.committed-ci-share-item"
             guide_page="$(find "$graph/pages" -maxdepth 1 -type f -name '*Tine Guide.md' -print -quit)"
             test -n "$guide_page"
             test -s "$guide_page"
