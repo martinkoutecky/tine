@@ -232,6 +232,19 @@ session drops it without a close. Proof `src/document/host/client.test.ts`
 "keeps a page open while a version the host took from it is unpublished (J6)"
 and "lets go when the session ends (J6)".
 
+**Trash collisions (K6).** A deletion's move into the trash never replaces
+what is there. Only that no-replace move's own target-exists is a collision.
+The host retires the unused custody marker and retries under a fresh name.
+Any other `AlreadyExists`, such as a file where the trash directory belongs,
+is an ordinary I/O failure. The third consecutive collision on one save job
+fails the save, so a persistent collision goes through the failure bound
+(backoff, then the save-error notice) and no retry loop runs uncounted.
+Scenario: sync delivery or an external tool keeps the name or the directory
+taken. Proof `page_host::production_tests`
+`a_file_at_the_trash_directory_fails_the_delete_instead_of_colliding` and
+`page_host::mutation_tests` `a_persistent_trash_collision_fails_the_save_on_the_third`.
+Unit cost: none (one memory counter per job).
+
 **Launch on failing draft I/O (B-Q1).** The host always starts. A drafts
 directory that cannot be created, synced or listed leaves draft I/O down:
 the launch recovers nothing and touches no vehicle (declared deviation M1
@@ -576,6 +589,13 @@ that entry unless the transaction changed `config.edn`. The own-write stamp
 takes its metadata from the publication read's handle; the watcher re-hashes
 the file only when a later `symlink_metadata` differs from it, and a racy
 stamp is reread on the next poll as for every other file.
+That racy re-read (storage spec §5.4) is an accepted cost: once the watcher
+settles it has re-read and re-stamped each graph file the operation wrote at
+most once, plus a small constant, on the watcher thread after publication.
+It is linear in the files written and does not grow with the graph (D-10).
+`rename_io.rs` bills publication only for reads on the publishing threads and
+bounds the watcher's settled re-reads separately (`watcher_hash_reads`,
+`watcher_stamps_by_path`).
 
 Unit cost: unchanged bytes, files and syncs per edit (22/1,320 bytes on the
 1-/60-block fixtures, one temporary file and two syncs per referrer); per

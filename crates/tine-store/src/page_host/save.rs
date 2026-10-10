@@ -2,6 +2,26 @@
 //! advancing its guarded phases.
 use super::*;
 
+/// The one page save in progress and the phase it reached.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct SaveJob {
+    pub(super) page: PageKey,
+    pub(super) phase: SavePhase,
+    pub(super) bytes: Text,
+    pub(super) base: Base,
+    pub(super) version: u64,
+    pub(super) epoch: u64,
+    pub(super) removed: Text,
+    /// A deletion's marker name and payload basename.
+    pub(super) marker: Option<(String, String)>,
+    pub(super) trash_durable: bool,
+    /// Consecutive trash-move collisions on this job (K6).
+    pub(super) collisions: u8,
+}
+
+/// Consecutive trash-move collisions one save job retries uncounted (K6).
+const COLLISIONS_BEFORE_FAILURE: u8 = 3;
+
 impl<F: HostIo> Host<F> {
     pub(super) fn start_save(&mut self, key: &str) -> Disposition {
         if !self.alive || self.job.is_some() {
@@ -34,6 +54,7 @@ impl<F: HostIo> Host<F> {
             removed: None,
             marker: None,
             trash_durable: true,
+            collisions: 0,
         });
         Disposition::Pending
     }
@@ -252,12 +273,21 @@ impl<F: HostIo> Host<F> {
                     }
                     // The occupied target is never adopted: retire the unused
                     // marker (it owes no custody; a failed unlink is
-                    // retire-only debt), then retry under a fresh one.
+                    // retire-only debt), then retry under a fresh one. The
+                    // third consecutive collision fails the save, so the
+                    // failure bound counts a persistent one (K6). Scenario:
+                    // sync delivery or an external tool keeps the name taken.
                     Err(e) if e.kind == ErrorKind::Collision => {
                         self.retire_marker(&key, &marker, payload);
                         job.marker = None;
-                        job.phase = SavePhase::Marker;
-                        None
+                        job.collisions += 1;
+                        if job.collisions < COLLISIONS_BEFORE_FAILURE {
+                            job.phase = SavePhase::Marker;
+                            None
+                        } else {
+                            cause = Some(e);
+                            Some(Outcome::Failed)
+                        }
                     }
                     Err(e) if e.completed => {
                         cause = Some(e);

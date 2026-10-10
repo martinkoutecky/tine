@@ -30,6 +30,17 @@ static CASE_LOCK: Mutex<()> = Mutex::new(());
 /// the target. Every file is backdated past the watcher's racy window so a
 /// fresh fixture's freshness re-hash is not counted as rename work.
 fn rename(pages_count: usize, referrers: usize) -> Counts {
+    rename_then(pages_count, referrers, false)
+}
+
+/// The watcher's re-reads of the files a rename wrote land after the rename
+/// returns: the path-scoped diff after its debounce, and the racy follow-up
+/// about 2 s later (contract §5.4). Quiet for longer than that means settled.
+const WATCHER_QUIET: Duration = Duration::from_secs(4);
+
+/// As [`rename`]; with `settle`, the counts are taken only after the watcher
+/// has gone quiet, so they include its re-reads.
+fn rename_then(pages_count: usize, referrers: usize, settle: bool) -> Counts {
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let temp = tempfile::Builder::new()
         .prefix("rename-io-")
@@ -69,6 +80,19 @@ fn rename(pages_count: usize, referrers: usize) -> Counts {
         pages::rename_page_expected(&store, host, "Target", "Renamed", None)
     })
     .unwrap();
+    if settle {
+        let watcher = |c: Counts| (c.watcher_hash_reads, c.watcher_stamps_by_path);
+        let mut last = watcher(cost_counters::snapshot());
+        let mut quiet_since = std::time::Instant::now();
+        while quiet_since.elapsed() < WATCHER_QUIET {
+            std::thread::sleep(Duration::from_millis(100));
+            let now = watcher(cost_counters::snapshot());
+            if now != last {
+                last = now;
+                quiet_since = std::time::Instant::now();
+            }
+        }
+    }
     let counts = cost_counters::snapshot();
     assert!(root.join("pages/Renamed.md").exists());
     assert_eq!(
@@ -121,10 +145,14 @@ fn rename_reads_each_referrer_once_per_guard() {
     );
 }
 
+/// Counted on the publishing threads only: the watcher's settle re-reads of
+/// the written files are an accepted cost off the publish path (contract
+/// §5.4), bounded separately below. On Windows they landed inside the
+/// measured window and were billed to publication.
 #[test]
 fn rename_publication_reopens_no_referrer() {
-    let few = rename(60, 2);
-    let many = rename(60, 30);
+    let few = rename_then(60, 2, true);
+    let many = rename_then(60, 30, true);
     assert_eq!(
         (many.preamble_reads + many.hash_reads) - (few.preamble_reads + few.hash_reads),
         0,
@@ -139,4 +167,16 @@ fn rename_publication_reopens_no_referrer() {
          the publication read's handle supplies the stamp it is compared with: \
          {few:?} vs {many:?}"
     );
+    // The graph files the rename wrote: each referrer plus the renamed page.
+    for (counts, written) in [(few, 2 + 1), (many, 30 + 1)] {
+        assert!(
+            counts.watcher_hash_reads <= written + 4
+                && counts.watcher_stamps_by_path <= written + 4,
+            "contract §5.4: once settled, the watcher re-reads each of the {written} graph \
+             files the operation wrote at most once (its racy follow-up), plus a small \
+             constant; a re-read that grows with the graph or repeats per file is not the \
+             accepted cost \
+             (exemplar watch/reconcile.rs racy::hash_settled): {counts:?}"
+        );
+    }
 }

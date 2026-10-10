@@ -839,6 +839,24 @@ fn collision_after_launch_rewrites_no_draft_and_leaves_no_unused_marker() {
     assert_eq!(markers(&mut f), 0);
 }
 
+/// K6 (1): only the no-replace move's target-exists is a collision. A file
+/// where the trash directory belongs (sync delivery or an external tool put
+/// it there) fails the directory step with `AlreadyExists` on Linux, macOS
+/// and Windows; that is an I/O failure the failure bound counts, never a
+/// retried collision (it spun uncounted on Windows, J7).
+#[test]
+fn a_file_at_the_trash_directory_fails_the_delete_instead_of_colliding() {
+    let mut f = Fixture::new();
+    fs::remove_dir(&f.trash).unwrap();
+    fs::write(&f.trash, b"not a dir").unwrap();
+    f.send("a.md", RequestKind::Open);
+    assert_eq!(f.host.delete("a.md"), Disposition::Pending);
+    f.drain();
+    assert_eq!(f.save("a.md"), Outcome::Failed);
+    assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"A");
+    assert_eq!(fs::read(&f.trash).unwrap(), b"not a dir");
+}
+
 /// REVIEW-2b F4: delete/recreate cycles whose trash witnesses are Unsupported
 /// leave zero markers and do bounded, non-growing work per cycle.
 #[test]

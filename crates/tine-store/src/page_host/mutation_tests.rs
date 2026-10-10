@@ -796,6 +796,56 @@ fn trash_collision_retries_with_a_fresh_name_without_removal() {
     assert!(!trash[0].ends_with(&payload), "fresh payload name");
 }
 
+/// K6 (2): a collision retries under a fresh name, but a persistent one is
+/// counted. The third consecutive collision on one job fails the save, so the
+/// failure bound (backoff, then the save-error notice) applies; no retry loop
+/// runs uncounted. Scenario: sync delivery or an external tool keeps
+/// occupying the trash name, or a platform reports target-exists for a move
+/// it cannot make (the Windows livelock, J7).
+#[test]
+fn a_persistent_trash_collision_fails_the_save_on_the_third() {
+    let mut h = host();
+    assert_eq!(h.delete("a.md"), Disposition::Pending);
+    drain(&mut h);
+    h.fs.inject(Phase::TrashMove, [Fault::Collision; 6]);
+    for attempt in 0..2 {
+        let start = h.events.len();
+        assert_eq!(h.start_save("a.md"), Disposition::Pending);
+        for _ in 0..12 {
+            if h.job.is_none() {
+                break;
+            }
+            h.advance_save(0);
+        }
+        assert!(
+            h.job.is_none(),
+            "attempt {attempt}: the collision loop ended"
+        );
+        let outcomes: Vec<_> = h.events[start..]
+            .iter()
+            .filter_map(|e| match e {
+                Event::SaveOutcome { outcome, .. } => Some(*outcome),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(outcomes, [Outcome::Failed], "attempt {attempt}");
+        assert!(h.pages["a.md"].risk);
+        assert_eq!(h.fs.files["graph/a.md"].as_ref(), b"A");
+        assert_eq!(custody_entries(&h), 0, "every unused marker retired");
+        assert!(!h.fs.files.keys().any(|k| k.starts_with("trash/")));
+    }
+    // The next attempt's move lands: the bound counted, it did not refuse.
+    assert_eq!(h.start_save("a.md"), Disposition::Pending);
+    for _ in 0..12 {
+        if h.job.is_none() {
+            break;
+        }
+        h.advance_save(0);
+    }
+    assert!(!h.fs.files.contains_key("graph/a.md"));
+    assert_eq!(custody_entries(&h), 0);
+}
+
 #[test]
 fn release_reconciles_fresh_versions_and_failed_reads_keep_reservations() {
     let mut h = host();

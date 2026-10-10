@@ -17,6 +17,7 @@ pub(super) fn run(
     wake: Sender<()>,
     rx: Receiver<()>,
 ) {
+    crate::cost_counters::mark_watcher_thread();
     let pending = Arc::new(Mutex::new(Pending::default()));
     let mut watcher: Option<notify::RecommendedWatcher> = None;
     let mut active = None;

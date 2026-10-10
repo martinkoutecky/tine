@@ -38,6 +38,7 @@ mod writer_census_tests;
 use drafts::{Record, Stage, Vehicle};
 use io::{ErrorKind, HostIo, IoFailure, Witness};
 use order::{Gates, OperationReply, Reply, ReplyId};
+use save::SaveJob;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -212,20 +213,6 @@ enum SavePhase {
     Rename,
     TrashSync,
     DirectorySync,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct SaveJob {
-    page: PageKey,
-    phase: SavePhase,
-    bytes: Text,
-    base: Base,
-    version: u64,
-    epoch: u64,
-    removed: Text,
-    /// A deletion's marker name and payload basename.
-    marker: Option<(String, String)>,
-    trash_durable: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -252,14 +252,13 @@ fn witness(value: DirectoryWitness) -> Witness {
     }
 }
 
+/// An I/O failure. A collision is only the trash move's own target-exists
+/// (`trash_move`, K6): any other `AlreadyExists`, such as a file where a
+/// directory is created, is a failure the failure bound counts.
 fn failure(error: io::Error) -> IoFailure {
     let step = crate::directory_durability::failure_step(&error);
     IoFailure {
-        kind: if error.kind() == io::ErrorKind::AlreadyExists {
-            ErrorKind::Collision
-        } else {
-            ErrorKind::Io
-        },
+        kind: ErrorKind::Io,
         completed: false,
         operation: step.map(|(operation, _)| operation),
         os_error: step.map_or(error.raw_os_error(), |(_, os_error)| os_error),
@@ -522,7 +521,17 @@ impl HostIo for ProductionIo {
                 graph.transaction_note_delete(&source);
             }
             let target = self.trash.join(payload);
-            crate::no_replace::move_file_noreplace(&source, &target).map_err(failure)?;
+            crate::no_replace::move_file_noreplace(&source, &target).map_err(|error| {
+                let collision = error.kind() == io::ErrorKind::AlreadyExists;
+                IoFailure {
+                    kind: if collision {
+                        ErrorKind::Collision
+                    } else {
+                        ErrorKind::Io
+                    },
+                    ..failure(error)
+                }
+            })?;
             // Read the actual moved bytes, including an R1 external replacement
             // between the guard and move; never claim the guard's stale bytes.
             fs::read(target)
