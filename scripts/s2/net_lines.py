@@ -220,10 +220,10 @@ def main():
     os.chdir(root)
     head = None if args.worktree else args.rev
     if head is None:
-        changed = git("diff", "--name-only", args.base).split("\n")
+        changed = git("diff", "--no-renames", "--name-only", args.base).split("\n")
         changed += git("ls-files", "--others", "--exclude-standard").split("\n")
     else:
-        changed = git("diff", "--name-only", args.base, head).split("\n")
+        changed = git("diff", "--no-renames", "--name-only", args.base, head).split("\n")
     changed = sorted({p for p in changed if p})
     before = tally(args.base, changed, declared_test_modules(args.base))
     after = tally(head, changed, declared_test_modules(head))
