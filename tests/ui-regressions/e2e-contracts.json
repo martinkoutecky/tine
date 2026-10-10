@@ -386,6 +386,15 @@
       "nonRequirements": ["Exact result-row geometry, highlight palette, or animation."],
       "stability": "stable"
     },
+    "scripts/e2e-seen-baseline.mjs": {
+      "contracts": [
+        { "class": "stateful-ux", "userOutcome": "After Mark page seen, a restart and an external edit of one block, reopening the page highlights exactly that block and counts one change since you last looked.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "Marking a page seen writes one record in app data and nothing in the graph folder; the page file keeps only the external edit.", "blocking": true, "authority": "Vision decision 9a (Martin 2026-10-04) and ADR 0073: seen state never enters the graph, which Logseq, other tools and sync share." }
+      ],
+      "acceptableVariations": ["Which entry reaches Mark page seen (Page actions or the palette).", "Bar colour and header wording around the count."],
+      "nonRequirements": ["Exact bar geometry or colour.", "The record's file name or directory layout beyond being under app data."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-selectwrap.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "Real editor selection wrapping preserves Logseq-compatible literal delimiter and Alt-modified behavior.", "blocking": true }],
       "acceptableVariations": ["Selection painting and browser key-event timing may vary."],
