@@ -67,7 +67,7 @@ fn a_restore_stop_that_cannot_save_hands_the_host_back() {
         _dir,
         root,
         store,
-        host,
+        host: *host,
         mail,
         id,
     };

@@ -199,9 +199,9 @@ impl PageHost {
         self,
         consumed_last_id: u64,
         mode: StopMode,
-    ) -> Result<Stopped, (Self, BTreeSet<PageKey>)> {
+    ) -> Result<Stopped, (Box<Self>, BTreeSet<PageKey>)> {
         if !self.stop_begin(consumed_last_id, mode) {
-            return Err((self, BTreeSet::new()));
+            return Err((Box::new(self), BTreeSet::new()));
         }
         let mut host = self;
         loop {
@@ -217,7 +217,7 @@ impl PageHost {
                 },
                 StopState::Aborted(pages) => {
                     host.stop_abort();
-                    return Err((host, pages));
+                    return Err((Box::new(host), pages));
                 }
             }
         }

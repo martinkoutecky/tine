@@ -160,12 +160,8 @@ impl<F: HostIo, C: Clock> State<F, C> {
     /// deadline (the job's progress or the release wakes the driver).
     fn observable(&self, key: &str) -> bool {
         let host = &self.progress.host;
-        !host.busy(key)
-            && !host.allocator_busy()
-            && !self
-                .contended
-                .get(key)
-                .is_some_and(|(_, retry)| *retry > Instant::now())
+        let retried = |(_, retry): &(u32, Instant)| *retry <= Instant::now();
+        !host.busy(key) && !host.allocator_busy() && self.contended.get(key).is_none_or(retried)
     }
 
     /// The earliest timed work, or None to sleep until woken. While another
