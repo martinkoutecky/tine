@@ -981,5 +981,35 @@ fn q6_a_failed_publication_never_overwrites_a_retained_transaction() {
     live.host.stop();
 }
 
+/// V5 (REVIEW-3a): a restore is not ready while a publication the driver
+/// collected is still being delivered; once its result is recorded, an
+/// index failure keeps the restore waiting and a success lets it close.
+#[test]
+fn v5_a_restore_waits_for_a_collected_publication_in_flight() {
+    for (indexing, ready) in [(Indexing::Failed, false), (Indexing::Indexed, true)] {
+        let mut u = Unit::new();
+        let version = u.version();
+        u.submit("saved", version, None, "saved");
+        u.progress.with_host(|h| saved(h, "a.md"));
+        let delivery = u.collect();
+        assert_eq!(own(&delivery).len(), 1);
+        let publication = own(&delivery)[0].clone();
+        u.progress
+            .with_host(|h| assert_eq!(h.switch_ready(h.last_applied), Disposition::Applied));
+        u.progress.stopping = Some(Stopping {
+            restore: true,
+            failed: BTreeSet::new(),
+        });
+        assert_eq!(
+            stop_state(&u.progress, &u.book),
+            StopState::Waiting,
+            "V5: the restore was ready with a publication in flight"
+        );
+        u.book.record(vec![(publication, indexing)], 0);
+        let state = stop_state(&u.progress, &u.book);
+        assert_eq!(state == StopState::Ready, ready, "{state:?}");
+    }
+}
+
 #[path = "binding_stop_tests.rs"]
 mod stop_saved;

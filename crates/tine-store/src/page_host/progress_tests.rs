@@ -1364,3 +1364,71 @@ fn q5_a_restore_over_clean_pages_manufactures_no_save() {
     assert_eq!(first(&p, Phase::PageTemp), None);
     assert_eq!(state(&p), StopState::Ready);
 }
+
+/// Put a page at risk with an exact durable draft, as an earlier failed
+/// ordinary save leaves it once its draft worker finished.
+fn drafted_after_a_failed_save(p: &mut Timed) {
+    begin_edit(p);
+    p.with_host(|h| {
+        risk(h, "a.md");
+        draft(h, "a.md");
+    });
+    assert!(p.host.worker.is_none() && p.host.logical_drafts().contains_key("a.md"));
+}
+
+/// V1 (REVIEW-3a): a switch over a page whose exact draft is already
+/// durable attempts the page's save before it is ready, even when the
+/// caller asks before the driver polls; the draft is the fallback only
+/// once that save fails (§6 step 3).
+#[test]
+fn v1_a_switch_attempts_the_save_of_a_drafted_page_before_it_is_ready() {
+    let mut p = timed();
+    drafted_after_a_failed_save(&mut p);
+    begin_stop(&mut p, false);
+    p.host.fs.calls.clear();
+    assert_eq!(
+        state(&p),
+        StopState::Waiting,
+        "V1: the switch was ready before its save was attempted"
+    );
+    pump(&mut p);
+    assert!(first(&p, Phase::PageTemp).is_some(), "the save ran");
+    assert!(p.host.pages["a.md"].clean());
+    assert_eq!(state(&p), StopState::Ready);
+}
+
+/// V1 (REVIEW-3a), the reviewer's schedule: a restore over a page with a
+/// recoverable draft closes only once the page is saved and the draft
+/// retired, so the host relaunched on the restored tree recovers nothing
+/// over the backup's bytes (§7 step 3).
+#[test]
+fn v1_a_restore_never_closes_over_a_recoverable_draft() {
+    let mut p = timed();
+    drafted_after_a_failed_save(&mut p);
+    let backup = p.host.fs.files["graph/a.md"].clone();
+    begin_stop(&mut p, true);
+    assert_eq!(
+        state(&p),
+        StopState::Waiting,
+        "V1: the restore was ready over a dirty page with a recoverable draft"
+    );
+    pump(&mut p);
+    time(&p, 500);
+    pump(&mut p);
+    assert!(p.host.pages["a.md"].clean());
+    assert!(p.host.logical_drafts().is_empty(), "the draft is retired");
+    assert_eq!(state(&p), StopState::Ready);
+    assert_eq!(p.with_host(|h| h.switch_finish()), Disposition::Applied);
+    // The restore writes the backup's bytes; one fresh host launches.
+    p.host.fs.external("a.md", Some(backup.clone()), true);
+    p.with_host(|h| {
+        h.launch();
+        drain(h);
+    });
+    time(&p, 5000);
+    pump(&mut p);
+    assert_eq!(
+        p.host.fs.files["graph/a.md"], backup,
+        "V1: a pre-restore draft was applied over the restored file"
+    );
+}

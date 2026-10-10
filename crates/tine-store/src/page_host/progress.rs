@@ -179,6 +179,14 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             && !self.host.retained.contains(key)
     }
 
+    /// A page the stop must still try to save first: its readiness waits
+    /// for that attempt even when the page already has an exact draft
+    /// (V1, REVIEW-3a).
+    pub fn owes_save_first(&self) -> bool {
+        let pages = &self.host.pages;
+        pages.iter().any(|(key, page)| self.save_first(key, page))
+    }
+
     /// A stop drafts a page only once it cannot be saved, and a restore
     /// never writes a fallback draft (§6 step 3, §7 step 3).
     fn held_back(&self, key: &str, page: &Page) -> bool {

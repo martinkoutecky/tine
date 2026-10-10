@@ -381,6 +381,9 @@ pub(super) struct Book {
     /// own save version the index has applied (§4.4).
     index: BTreeMap<PageKey, (Text, u64)>,
     retry: BTreeMap<PageKey, Retry>,
+    /// A collected delivery's publications are with the sink and their
+    /// results not yet recorded (V5, REVIEW-3a).
+    delivering: bool,
 }
 
 impl Book {
@@ -562,6 +565,7 @@ impl Book {
         let subscribed = &progress.host.subscriptions;
         self.notices.retain(|page, _| subscribed.contains(page));
         delivery.events = events;
+        self.delivering |= !delivery.publications.is_empty();
         delivery
     }
 
@@ -587,6 +591,7 @@ impl Book {
     /// the key's watermark; a failure retries with the save backoff; a
     /// reserved key waits for its release.
     pub fn record(&mut self, results: Vec<(Publication, Indexing)>, now: u64) {
+        self.delivering = false;
         for (publication, indexing) in results {
             let key = publication.key.clone();
             let failures = self.retry.get(&key).map_or(0, |retry| retry.failures);
@@ -1343,11 +1348,22 @@ pub(super) fn stop_state<F: HostIo, C: Clock>(progress: &Progress<F, C>, book: &
     if !affected.is_empty() {
         return StopState::Aborted(affected);
     }
-    // A restore closes only over completed work: no draft (can_switch: no
-    // page at risk), custody debt or index retry is left. A clean page
-    // needs no save (Q5).
+    // Readiness waits for every save the stop owes first, whatever the
+    // caller polls (V1): a page's exact draft from an earlier failure is a
+    // switch's fallback only once this stop's save of it failed.
+    if progress.owes_save_first() {
+        return StopState::Waiting;
+    }
+    // A restore closes only over completed work (§7 step 3, V1, V5): every
+    // page saved, no recoverable draft, no custody debt, and every
+    // publication delivered and indexed. A clean page needs no save (Q5).
     let complete = !stopping.restore
-        || (host.custody.is_empty() && host.retire.is_empty() && book.retry.is_empty());
+        || (host.pages.values().all(|page| page.clean())
+            && host.logical_drafts().is_empty()
+            && host.custody.is_empty()
+            && host.retire.is_empty()
+            && book.retry.is_empty()
+            && !book.delivering);
     if host.can_switch() && complete {
         StopState::Ready
     } else {
