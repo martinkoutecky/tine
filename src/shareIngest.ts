@@ -33,6 +33,7 @@
 import { createRoot, createEffect, on } from "solid-js";
 import { backend, isTauri } from "./backend";
 import { bindingOwner, writeOwned } from "./owned";
+import { clearOnBindingInvalidated } from "./binding";
 import { graphMeta } from "./graphSession";
 import { pushToast } from "./toasts";
 import { journalTitle, appNow } from "./journal";
@@ -48,9 +49,11 @@ export const CAPTURED_TOAST = "Captured to today's journal";
  * elsewhere: bound to another graph, kept silently; stale: the binding moved. */
 type Outcome = "done" | "kept" | "elsewhere" | "stale";
 
-/** This process's appends per item: where they went, their root block ids,
- *  and whether the flush reached disk. */
-const appended = new Map<string, { graph: string; day: string; ids: string[]; durable: boolean }>();
+/** This process's appends per item, for the bound graph only (cleared when
+ *  the binding goes): the day, the root block ids, and whether the flush
+ *  reached disk. */
+const appended = new Map<string, { day: string; ids: string[]; durable: boolean }>();
+clearOnBindingInvalidated(() => appended.clear());
 
 /** A process restart forgets `appended` (tests that simulate one). */
 export function resetShareIngestForTests(): void {
@@ -103,9 +106,8 @@ async function ingestOne(inbox: NativeShareInbox, item: ShareInboxItem, owner: (
     // day is still pending here (in its own graph only), then acknowledge.
     // A later edit or removal of the block is the user's (never re-appended).
     if (prepared.graph === graph) {
-      const flushed = await writeOwned(owner, flushPage(prepared.day));
-      if (flushed.kind === "stale") return "stale";
-      if (!flushed.value) return "kept";
+      const flushed = await saveDay(owner, prepared.day);
+      if (flushed !== "done") return flushed;
     }
     await inbox.commit(item.id);
     return "done";
@@ -131,13 +133,12 @@ async function ingestOne(inbox: NativeShareInbox, item: ShareInboxItem, owner: (
   const markdown = prepared.markdown;
   if (markdown === null) return "kept";
   const mine = appended.get(item.id);
-  if (mine && mine.graph === graph && mine.day === record.day) {
+  if (mine && mine.day === record.day) {
     if (mine.durable) return acknowledge(inbox, item.id, record);
     if (stillInStore(mine)) {
       // The earlier flush failed; these blocks are ours: save them, no copy.
-      const saved = await writeOwned(owner, flushPage(record.day));
-      if (saved.kind === "stale") return "stale";
-      if (!saved.value) return "kept";
+      const saved = await saveDay(owner, record.day);
+      if (saved !== "done") return saved;
       mine.durable = true;
       return acknowledge(inbox, item.id, record);
     }
@@ -145,7 +146,7 @@ async function ingestOne(inbox: NativeShareInbox, item: ShareInboxItem, owner: (
   appended.delete(item.id);
   // 3. Arm inside the admitted read, then append into exactly the recorded day.
   let armed = record;
-  const entry = { graph, day: record.day, ids: [] as string[], durable: false };
+  const entry = { day: record.day, ids: [] as string[], durable: false };
   const written = await writeOwned(owner, appendToJournalDay(record.day, markdown, async (before) => {
     armed = { ...record, armed: { before } };
     await inbox.prepare(item.id, armed);
@@ -158,6 +159,14 @@ async function ingestOne(inbox: NativeShareInbox, item: ShareInboxItem, owner: (
   if (!written.value) return "kept";
   entry.durable = true;
   return acknowledge(inbox, item.id, armed);
+}
+
+/** Save journal `day` of the bound graph through the audited path: "done"
+ *  once it is on disk (a no-op when nothing is pending). */
+async function saveDay(owner: () => boolean, day: string): Promise<Outcome> {
+  const saved = await writeOwned(owner, flushPage(day));
+  if (saved.kind === "stale") return "stale";
+  return saved.value ? "done" : "kept";
 }
 
 /** 4. The block is on disk: record `written`, then remove the item. */
