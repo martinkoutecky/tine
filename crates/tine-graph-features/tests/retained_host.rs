@@ -311,7 +311,7 @@ fn waits_for_a_reservation(
             before,
             "{label}: wrote under a held reservation"
         );
-        host.release(held);
+        drop(held);
         finished
             .recv_timeout(Duration::from_secs(20))
             .expect("the writer runs once the page is released")

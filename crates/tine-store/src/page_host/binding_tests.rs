@@ -918,7 +918,7 @@ fn q3_input_applied_before_the_reservation_is_found_under_it() {
     let reservation = live.host.reserve(discover, Input::Flush).unwrap();
     assert_eq!(live.disk(&key), "- v3\n", "flushed before the write");
     live.transaction(&key, "- v3\n", "- rewritten\n");
-    live.host.release(reservation);
+    drop(reservation);
     let page = live.wait(&key, "observed", |mail| {
         mail.page
             .as_ref()
@@ -965,6 +965,31 @@ fn q3_a_page_discovered_under_the_reservation_is_checked_too() {
     live.host.stop();
 }
 
+/// A-R1, REVIEW-3a2 R1 probe 2: discovery names A, then panics when it
+/// runs again under the fenced reservation; the unwind withdraws A.
+#[test]
+fn a_rediscovery_panic_withdraws_the_reservation() {
+    let live = Live::new(&[("pages/a.md", "- a\n")]);
+    let mut round = 0;
+    let discover = || {
+        round += 1;
+        assert!(round == 1, "the rediscovery panics");
+        vec![PageId::from("pages/a.md")]
+    };
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        live.host.reserve(discover, Input::Flush)
+    }));
+    assert!(unwound.is_err());
+    let state = live.host.driver.shared.state.lock().unwrap();
+    assert!(
+        state.progress.host.retained.is_empty(),
+        "A-R1: a rediscovery panic leaked the reservation: {:?}",
+        state.progress.host.retained
+    );
+    drop(state);
+    live.host.stop();
+}
+
 /// Q6 (REVIEW-3), second boundary: publication P fails and awaits retry;
 /// a retained writer reserves the page and commits T, which publishes its
 /// own index; P's retry must never overwrite T, and the release's
@@ -996,7 +1021,7 @@ fn q6_a_failed_publication_never_overwrites_a_retained_transaction() {
         Some(content_rev("- t\n")),
         "Q6: P's retry overwrote the retained transaction's index"
     );
-    live.host.release(reservation);
+    drop(reservation);
     live.wait(&key, "observed", |mail| {
         mail.page
             .as_ref()
@@ -1028,7 +1053,7 @@ fn v2_a_failed_release_observation_keeps_the_handover_protection() {
     live.until_indexed(&key, "- t\n");
     settle();
     live.faults(super::io::Phase::Read, 1_000_000);
-    live.host.release(reservation);
+    drop(reservation);
     let until = Instant::now() + Duration::from_millis(1500);
     while Instant::now() < until {
         live.host.driver.shared.with_state(|_| {});
@@ -1187,7 +1212,7 @@ fn a2_a_failing_release_observation_is_a_notice_that_clears_on_recovery() {
         .unwrap();
     live.transaction(&key, "- one\n", "- t\n");
     live.faults(super::io::Phase::Read, 1_000_000);
-    live.host.release(reservation);
+    drop(reservation);
     live.wait(&key, "the third failed read is reported", |mail| {
         mail.notice.observe_error
     });

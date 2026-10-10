@@ -36,9 +36,9 @@ pub(crate) fn reserved<T>(
             input,
         )
         .map_err(|pages| refused(pages.iter().next().map_or("", String::as_str)))?;
-    let result = found.and_then(|pages| write(Some(&pages)));
-    host.release(reservation);
-    result
+    // Released when it drops, on a panic's unwind too (A-R1).
+    let _reservation = reservation;
+    found.and_then(|pages| write(Some(&pages)))
 }
 
 /// The pages among `files`, for a writer whose key set is its arguments.
@@ -87,5 +87,46 @@ mod tests {
         );
         assert_eq!(result.unwrap(), 7);
         assert_eq!((discovered.get(), written.get()), (0, 1));
+    }
+
+    /// A-R1, REVIEW-3a2 R1 probe 1: a writer that panics releases its
+    /// reservation on the unwind, so the next writer reserves the page.
+    #[test]
+    fn a_panicking_writer_releases_its_reservation() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = dir.path().join("graph");
+        std::fs::create_dir_all(graph.join("pages")).unwrap();
+        std::fs::write(graph.join("pages/a.md"), "- a\n").unwrap();
+        let app = dir.path().join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        let store = std::sync::Arc::new(
+            tine_store::Store::open(&graph, Default::default())
+                .unwrap()
+                .0,
+        );
+        store.whole_graph().unwrap();
+        let host = std::sync::Arc::new(PageHost::start_for_tests(&store, &app).unwrap());
+        let page = PageId::from("pages/a.md");
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            reserved(
+                Some(&host),
+                Input::Flush,
+                || Ok(vec![page.clone()]),
+                |_| unreachable!("nothing unsaved"),
+                |_| -> io::Result<()> { panic!("the writer panics") },
+            )
+        }));
+        assert!(unwound.is_err());
+        let (done, next) = std::sync::mpsc::channel();
+        let (other, page) = (std::sync::Arc::clone(&host), page.clone());
+        std::thread::spawn(move || {
+            let reservation = other.reserve(|| vec![page.clone()], Input::Refuse);
+            let _ = done.send(reservation.is_ok());
+        });
+        assert_eq!(
+            next.recv_timeout(std::time::Duration::from_millis(750)),
+            Ok(true),
+            "A-R1: a panicking writer leaked its reservation; the next writer cannot reserve"
+        );
     }
 }

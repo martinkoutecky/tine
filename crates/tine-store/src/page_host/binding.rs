@@ -107,21 +107,6 @@ pub enum Input {
     Refuse,
 }
 
-/// The pages a retained writer holds (§7 step 3): none of them can be
-/// opened, loaded, saved or drafted until `release`.
-#[must_use = "a reservation is released through PageHost::release"]
-#[derive(Debug)]
-pub struct Reservation {
-    keys: BTreeSet<PageKey>,
-}
-
-impl Reservation {
-    /// The reserved keys.
-    pub(crate) fn keys(&self) -> &BTreeSet<PageKey> {
-        &self.keys
-    }
-}
-
 /// How the host stops (§6, §7).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StopMode {
@@ -1492,7 +1477,7 @@ impl Drop for PageHost {
 
 #[path = "binding_retained.rs"]
 mod retained;
-pub use retained::RenameRefusal;
+pub use retained::{RenameRefusal, Reservation};
 #[cfg(test)]
 #[path = "binding_tests.rs"]
 mod tests;

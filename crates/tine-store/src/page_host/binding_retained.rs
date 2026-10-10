@@ -25,6 +25,58 @@ pub enum RenameRefusal {
     Refused,
 }
 
+/// The pages a retained writer holds (§7 step 3): none of them can be
+/// opened, loaded, saved or drafted until it is dropped. Dropping it ends
+/// the retained transaction (§7 step 5), on every exit, a panic's unwind
+/// included (A-R1): the driver unreserves the keys and observes each,
+/// retrying a failed read with the save backoff. A save before that
+/// observation is safe: its guard check reads the writer's change. The
+/// transaction's index stands until that observation succeeds (V2).
+#[must_use = "dropping a reservation releases its pages"]
+pub struct Reservation {
+    keys: BTreeSet<PageKey>,
+    shared: Arc<crate::page_host::driver::Shared<ProductionIo, SystemClock>>,
+    /// Whether the writer may have written: false while `reserve` still
+    /// checks the set, when a withdrawal hands nothing over.
+    handover: bool,
+}
+
+impl Reservation {
+    /// The reserved keys.
+    pub(crate) fn keys(&self) -> &BTreeSet<PageKey> {
+        &self.keys
+    }
+}
+
+impl std::fmt::Debug for Reservation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Reservation")
+            .field("keys", &self.keys)
+            .finish()
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        // A poisoned state is a host that already panicked under its lock;
+        // every later step of it panics, and a panic here, during an
+        // unwind, would abort the app.
+        if self.shared.state.is_poisoned() {
+            return;
+        }
+        let keys = std::mem::take(&mut self.keys);
+        self.shared.with_state(|state| {
+            for key in keys {
+                state.progress.host.retained.remove(&key);
+                if self.handover {
+                    state.book.handover.insert(key.clone());
+                    state.observe.entry(key).or_default();
+                }
+            }
+        });
+    }
+}
+
 /// What the rename policy recorded for one attempt (pages by spelling).
 #[derive(Default)]
 struct Rewrites {
@@ -42,7 +94,9 @@ impl PageHost {
     /// clean (typed, at risk or on an unknown base) or a submit or move the
     /// host admitted but has not applied. `Refuse` returns those pages;
     /// `Flush` releases, waits for their saves holding nothing, and retries,
-    /// returning the pages whose save cannot complete.
+    /// returning the pages whose save cannot complete. The reservation
+    /// exists from the fence on, so an unwind out of the rediscovery or the
+    /// check withdraws it (A-R1).
     pub fn reserve(
         &self,
         mut discover: impl FnMut() -> Vec<PageId>,
@@ -51,35 +105,25 @@ impl PageHost {
         loop {
             let keys = self.register_all(discover());
             self.fence(&keys);
-            if !self.register_all(discover()).is_subset(&keys) {
-                self.unreserve(&keys);
+            let mut reservation = Reservation {
+                keys,
+                shared: Arc::clone(&self.driver.shared),
+                handover: false,
+            };
+            if !self.register_all(discover()).is_subset(reservation.keys()) {
                 continue;
             }
-            let unsaved = self.unsaved(&keys);
+            let unsaved = self.unsaved(reservation.keys());
             if unsaved.is_empty() {
-                return Ok(Reservation { keys });
+                reservation.handover = true;
+                return Ok(reservation);
             }
-            self.unreserve(&keys);
+            drop(reservation);
             if input == Input::Refuse {
                 return Err(unsaved);
             }
             self.flush(&unsaved)?;
         }
-    }
-
-    /// End a retained transaction (§7 step 5), returning at once: the
-    /// driver unreserves the keys and observes each, retrying a failed
-    /// read with the save backoff. A save before that observation is safe:
-    /// its guard check reads the writer's change. The transaction's index
-    /// stands until that observation succeeds (V2).
-    pub fn release(&self, reservation: Reservation) {
-        self.driver.shared.with_state(|state| {
-            for key in reservation.keys {
-                state.progress.host.retained.remove(&key);
-                state.book.handover.insert(key.clone());
-                state.observe.entry(key).or_default();
-            }
-        });
     }
 
     fn register_all(&self, pages: Vec<PageId>) -> BTreeSet<PageKey> {
@@ -101,14 +145,6 @@ impl PageHost {
         while state.progress.host.reserve(keys) == Disposition::Waiting {
             state = shared.wait(state, std::time::Duration::from_secs(1));
         }
-    }
-
-    /// Withdraw a reservation under which nothing was written.
-    fn unreserve(&self, keys: &BTreeSet<PageKey>) {
-        self.driver.shared.with_state(|state| {
-            let retained = &mut state.progress.host.retained;
-            retained.retain(|key| !keys.contains(key));
-        });
     }
 
     /// `page_rename` (§7, F10): rename `source`'s page to the absent

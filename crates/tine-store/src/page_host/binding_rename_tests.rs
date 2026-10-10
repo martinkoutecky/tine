@@ -272,7 +272,7 @@ fn an_alias_spelling_is_refused_for_a_respell_that_keeps_the_page() {
     live.host
         .respell(&PageId::from("pages/Foo.md"), &PageId::from("pages/foo.md"));
     assert!(live.held("pages/foo.md") && !live.held("pages/Foo.md"));
-    live.host.release(reservation);
+    drop(reservation);
     let id = live.id();
     let generation = live.host.generation();
     let dto = live.dto("pages/foo.md", "- typed\n");
