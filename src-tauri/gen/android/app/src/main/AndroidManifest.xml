@@ -37,7 +37,42 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="tine" />
             </intent-filter>
+            <!-- Share target (GH #608, ADR 0073): text, links and images go to
+                 the app-owned share inbox (NativeIntegrationsPlugin.kt), then
+                 to the bottom of today's journal. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
+
+        <service
+            android:name=".QuickCaptureTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_quick_capture"
+            android:label="@string/tile_quick_capture"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="false" />
+        </service>
 
         <provider
           android:name="androidx.core.content.FileProvider"

@@ -25,6 +25,9 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    // Read by NativeIntegrationsPlugin: a restored Activity repeats its launch
+    // intent, and a share that intent carried was already published.
+    restoredFromSavedState = savedInstanceState != null
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     // Android WebView 124 on API 35 reports CSS env(safe-area-inset-*) as zero
@@ -110,7 +113,11 @@ class MainActivity : TauriActivity() {
     ).show()
   }
 
-  private companion object {
-    const val BACK_NOTICE_THROTTLE_MS = 2_000L
+  companion object {
+    private const val BACK_NOTICE_THROTTLE_MS = 2_000L
+
+    /** Whether the current Activity was recreated from saved state. */
+    @Volatile
+    internal var restoredFromSavedState = false
   }
 }

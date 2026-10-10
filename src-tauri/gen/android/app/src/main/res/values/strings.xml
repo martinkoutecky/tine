@@ -1,4 +1,11 @@
 <resources>
     <string name="app_name">Tine</string>
     <string name="main_activity_title">Tine</string>
+    <string name="shortcut_today_short">Today</string>
+    <string name="shortcut_today_long">Today\'s journal</string>
+    <string name="shortcut_capture_short">Quick capture</string>
+    <string name="shortcut_capture_long">Quick capture</string>
+    <string name="shortcut_search_short">Search</string>
+    <string name="shortcut_search_long">Search Tine</string>
+    <string name="tile_quick_capture">Quick capture</string>
 </resources>

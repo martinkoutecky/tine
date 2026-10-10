@@ -20,7 +20,8 @@ function files(dir: string, keep: RegExp): string[] {
   });
 }
 
-const DERIVED = ["src-tauri/app-identity.json", "src-tauri/tauri.conf.json", "src-tauri/gen/android/app/build.gradle.kts"];
+const SHORTCUTS = "src-tauri/gen/android/app/src/main/res/xml/shortcuts.xml";
+const DERIVED = ["src-tauri/app-identity.json", "src-tauri/tauri.conf.json", "src-tauri/gen/android/app/build.gradle.kts", SHORTCUTS];
 // The released identity's packaging: Flatpak names its files and ids by it; its
 // workflow refuses an experiment tree (.github/workflows/flatpak.yml). The iOS
 // Info.ios.plist names the iCloud container Apple registered for the release
@@ -75,6 +76,10 @@ describe("app identity switch", () => {
         expect(conf.productName).toBe(identity.productName);
         expect(conf.app.windows.find((w: { label: string }) => w.label === "main").title).toBe(identity.productName);
         expect(derived["src-tauri/gen/android/app/build.gradle.kts"]).toContain(`applicationId = "${identity.androidApplicationId}"`);
+        // Launcher shortcuts target the installed package, or they open nothing.
+        const targets = [...derived[SHORTCUTS].matchAll(/android:targetPackage="([^"]*)"/g)].map((match) => match[1]);
+        expect(targets.length).toBeGreaterThan(0);
+        expect(new Set(targets)).toEqual(new Set([identity.androidApplicationId]));
         expect(JSON.parse(derived["src-tauri/app-identity.json"]).ship).toBe(ship);
         for (const key of ["identifier", "androidApplicationId", "deployName"] as const) {
           expect(seen.has(`${key}=${identity[key]}`), `${ship} shares ${key}`).toBe(false);

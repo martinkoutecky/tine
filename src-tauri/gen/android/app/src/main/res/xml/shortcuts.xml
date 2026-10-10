@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher app shortcuts (A2, ADR 0073): plain tine:// routes, handled by
+     src/deepLinkNavigation.ts. targetPackage is the application id and is kept
+     in step with src-tauri/app-identity.json by scripts/lib/app-identity.mjs. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+  <shortcut
+      android:shortcutId="today"
+      android:enabled="true"
+      android:icon="@drawable/ic_shortcut_today"
+      android:shortcutShortLabel="@string/shortcut_today_short"
+      android:shortcutLongLabel="@string/shortcut_today_long">
+    <intent
+        android:action="android.intent.action.VIEW"
+        android:data="tine://today"
+        android:targetPackage="page.tine.app"
+        android:targetClass="page.tine.app.MainActivity" />
+  </shortcut>
+  <shortcut
+      android:shortcutId="capture"
+      android:enabled="true"
+      android:icon="@drawable/ic_shortcut_capture"
+      android:shortcutShortLabel="@string/shortcut_capture_short"
+      android:shortcutLongLabel="@string/shortcut_capture_long">
+    <intent
+        android:action="android.intent.action.VIEW"
+        android:data="tine://capture"
+        android:targetPackage="page.tine.app"
+        android:targetClass="page.tine.app.MainActivity" />
+  </shortcut>
+  <shortcut
+      android:shortcutId="search"
+      android:enabled="true"
+      android:icon="@drawable/ic_shortcut_search"
+      android:shortcutShortLabel="@string/shortcut_search_short"
+      android:shortcutLongLabel="@string/shortcut_search_long">
+    <intent
+        android:action="android.intent.action.VIEW"
+        android:data="tine://search"
+        android:targetPackage="page.tine.app"
+        android:targetClass="page.tine.app.MainActivity" />
+  </shortcut>
+</shortcuts>
