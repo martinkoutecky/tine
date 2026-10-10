@@ -19,6 +19,16 @@ pub(crate) use restore::restore_backup;
 const BACKUP_KEEP_DEFAULT: usize = 12;
 static BACKUP_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
 
+/// The process-wide backup permit. Every snapshot write and every prune (with
+/// its blob collection) runs under it, so a prune never sees a snapshot whose
+/// blobs are written but whose manifest is not yet published.
+fn backup_work() -> std::sync::MutexGuard<'static, ()> {
+    BACKUP_WORK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct BackupFailure {
     phase: &'static str,
@@ -109,10 +119,7 @@ pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
         }
         // Bound whole-graph copying process-wide. Revoked bindings check again
         // after obtaining the permit and between directory entries/files.
-        let _worker = BACKUP_WORK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap();
+        let _worker = backup_work();
         if slot.background_cancelled.load(Ordering::Acquire) {
             return;
         }
@@ -207,16 +214,23 @@ impl BackupSource {
     }
 }
 
-/// Schema 3 (og-B, ADR 0062) keeps graph text under `graph/<graph-relative
-/// path>` and records the graph-text scope it covered; schema 2 kept only the
-/// configured `journals/` and `pages/` roots and still lists and restores.
-/// Both are master's wire formats, so either build reads the other's.
-const SNAPSHOT_SCHEMA: u32 = 3;
+/// Schema 4 (og-backup-cas, docs/storage-contract.md "Graph backups") lists
+/// the same paths as schema 3, but its snapshot directory holds only the
+/// manifest: each listed file's bytes live once in the backup base's blob
+/// store, `blobs/<sha256>`. Schema 3 (og-B, ADR 0062) keeps a full copy of
+/// graph text under `graph/<graph-relative path>` and records the graph-text
+/// scope it covered; schema 2 kept only the configured `journals/` and
+/// `pages/` roots. Both full-copy schemas are master's wire formats and still
+/// list, restore and prune.
+const SNAPSHOT_SCHEMA: u32 = 4;
+const GRAPH_COPY_SNAPSHOT_SCHEMA: u32 = 3;
 const LEGACY_SNAPSHOT_SCHEMA: u32 = 2;
+/// The blob store inside a backup base; never a snapshot.
+const BLOB_DIR: &str = "blobs";
 /// Master's `GRAPH_TEXT_SCOPE_VERSION`: the discovery exclusions this build's
 /// `graph_text_eligible` applies (`published-queries/` included).
 const GRAPH_TEXT_SCOPE_VERSION: u32 = 2;
-/// Marks this build's schema-3 snapshots; master ignores the field. Prune
+/// Marks this build's schema-3/4 snapshots; master ignores the field. Prune
 /// counts only snapshots this build wrote (docs/app-identity.md).
 const SNAPSHOT_WRITER: &str = "og";
 const SNAPSHOT_MANIFEST: &str = "snapshot.json";
@@ -278,22 +292,27 @@ pub(crate) fn root_backup_id(root: &std::path::Path) -> String {
     format!("{label}-{}", &digest[..32])
 }
 
-fn write_manifest(dir: &std::path::Path, manifest: &SnapshotManifest) -> std::io::Result<()> {
-    let path = dir.join(SNAPSHOT_MANIFEST);
-    let tmp = dir.join(".snapshot.json.tmp");
+/// Write the manifest into an unpublished snapshot directory; the
+/// directory's rename publishes it. `durable` makes it reach disk first.
+fn write_manifest(
+    dir: &std::path::Path,
+    manifest: &SnapshotManifest,
+    durable: bool,
+) -> std::io::Result<()> {
+    use std::io::Write;
     let bytes = serde_json::to_vec_pretty(manifest).map_err(std::io::Error::other)?;
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&tmp)?;
-    use std::io::Write;
+        .open(dir.join(SNAPSHOT_MANIFEST))?;
     file.write_all(&bytes)?;
-    file.sync_all()?;
-    record_backup_op("manifest_sync");
-    drop(file);
-    crate::device_io::move_file_noreplace(&tmp, &path)?;
-    tine_store::directory_durability::sync_directory_entry(dir)?;
-    record_backup_op("manifest_dir_sync");
+    record_backup_op("manifest_write");
+    if durable {
+        file.sync_all()?;
+        record_backup_op("manifest_sync");
+        tine_store::directory_durability::sync_directory_entry(dir)?;
+        record_backup_op("manifest_dir_sync");
+    }
     Ok(())
 }
 
@@ -309,56 +328,67 @@ fn record_backup_op(op: &'static str) {
     let _ = op;
 }
 
-fn write_payload(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_WRITE_THROUGH);
+/// Store `bytes`, whose SHA-256 is `sha256`, in the blob store unless an
+/// identical blob is already there. Called with `BACKUP_WORK` held, so no
+/// prune runs while a snapshot's blobs are still unreferenced.
+///
+/// Blobs are written without a sync (verification, not fsync, keeps a
+/// snapshot honest), so power loss can leave a blob name holding torn bytes.
+/// Every later snapshot of that unchanged content would reuse it, so a blob
+/// is reused only when its bytes equal the content, and a damaged one is
+/// replaced. The temp-and-rename keeps a crash from leaving a blob name with
+/// a partial write.
+fn put_blob(blobs: &std::path::Path, sha256: &str, bytes: &[u8]) -> std::io::Result<()> {
+    let path = blobs.join(sha256);
+    match std::fs::read(&path) {
+        Ok(existing) if existing == bytes => return Ok(()),
+        Ok(_) => record_backup_op("blob_repair"),
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
     }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    record_backup_op("payload_sync");
-    Ok(())
+    let tmp = blobs.join(format!(".tmp-{sha256}"));
+    let written = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, &path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    record_backup_op("blob_write");
+    written
 }
 
-/// Sync every payload directory, children before parents. An explicit stack:
-/// a snapshot mirrors the graph's depth, which costs heap, not stack (I-22).
-fn sync_payload_dirs(dir: &std::path::Path) -> std::io::Result<()> {
-    let mut pending = vec![(dir.to_path_buf(), false)];
-    while let Some((dir, children_synced)) = pending.pop() {
-        if children_synced {
-            tine_store::directory_durability::sync_directory_entry(&dir)?;
-            record_backup_op("payload_dir_sync");
-            continue;
-        }
-        pending.push((dir.clone(), true));
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
-            if entry.file_type()?.is_dir() {
-                pending.push((entry.path(), false));
-            }
-        }
-    }
-    Ok(())
-}
-
+/// Publish an unpublished snapshot directory under its final name. A
+/// `durable` snapshot (one taken before a rewrite or restore the user asked
+/// for, which the next launch cannot re-take) syncs every blob it lists and
+/// its manifest before the rename and the base directory after it. A launch
+/// snapshot syncs nothing: restore verifies every blob before any graph
+/// write, a torn launch snapshot is refused, and the next launch repairs a
+/// torn blob of content the graph still holds.
 fn publish_snapshot(
     partial: &std::path::Path,
     final_dest: &std::path::Path,
     manifest: &SnapshotManifest,
+    durable: bool,
 ) -> std::io::Result<()> {
-    sync_payload_dirs(partial)?;
-    write_manifest(partial, manifest)?;
+    let base = final_dest.parent().expect("snapshot has parent");
+    if durable {
+        let blobs = base.join(BLOB_DIR);
+        for file in &manifest.files {
+            // Windows flushes a file only through a handle that may write.
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(blobs.join(&file.sha256))?
+                .sync_all()?;
+            record_backup_op("blob_sync");
+        }
+        tine_store::directory_durability::sync_directory_entry(&blobs)?;
+        record_backup_op("blob_dir_sync");
+    }
+    write_manifest(partial, manifest, durable)?;
     crate::device_io::move_file_noreplace(partial, final_dest)?;
     record_backup_op("publish_rename");
-    tine_store::directory_durability::sync_directory_entry(
-        final_dest.parent().expect("snapshot has parent"),
-    )?;
-    record_backup_op("publication_dir_sync");
+    if durable {
+        tine_store::directory_durability::sync_directory_entry(base)?;
+        record_backup_op("publication_dir_sync");
+    }
     Ok(())
 }
 
@@ -366,11 +396,13 @@ fn read_manifest(dir: &std::path::Path) -> Option<SnapshotManifest> {
     let bytes = std::fs::read(dir.join(SNAPSHOT_MANIFEST)).ok()?;
     let manifest: SnapshotManifest = serde_json::from_slice(&bytes).ok()?;
     let supported = manifest.schema == LEGACY_SNAPSHOT_SCHEMA
-        || (manifest.schema == SNAPSHOT_SCHEMA
-            && manifest
-                .graph_text_policy
-                .as_ref()
-                .is_some_and(|policy| policy.version == GRAPH_TEXT_SCOPE_VERSION));
+        || (matches!(
+            manifest.schema,
+            GRAPH_COPY_SNAPSHOT_SCHEMA | SNAPSHOT_SCHEMA
+        ) && manifest
+            .graph_text_policy
+            .as_ref()
+            .is_some_and(|policy| policy.version == GRAPH_TEXT_SCOPE_VERSION));
     (supported && manifest.complete).then_some(manifest)
 }
 
@@ -425,10 +457,42 @@ fn snapshot_inventory(dir: &std::path::Path) -> std::io::Result<Vec<SnapshotFile
     Ok(files)
 }
 
+/// Where a listed file's bytes live: inside a full-copy snapshot, or in the
+/// backup base's blob store for schema 4. `None` when a schema-4 entry's hash
+/// is not a SHA-256 hex digest, so no manifest names a path outside the
+/// store.
+fn payload_path(
+    snapshot: &std::path::Path,
+    manifest: &SnapshotManifest,
+    file: &SnapshotFile,
+) -> Option<PathBuf> {
+    if manifest.schema != SNAPSHOT_SCHEMA {
+        return Some(snapshot.join(&file.path));
+    }
+    let digest = file.sha256.len() == 64
+        && file
+            .sha256
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+    digest.then(|| {
+        snapshot
+            .parent()
+            .map(|base| base.join(BLOB_DIR).join(&file.sha256))
+    })?
+}
+
+/// A full-copy snapshot holds exactly its manifest's files; a schema-4
+/// snapshot's every listed blob exists and hashes to its name.
 fn verify_snapshot(dir: &std::path::Path, manifest: &SnapshotManifest) -> bool {
-    snapshot_inventory(dir)
-        .map(|files| files == manifest.files)
-        .unwrap_or(false)
+    if manifest.schema != SNAPSHOT_SCHEMA {
+        return snapshot_inventory(dir)
+            .map(|files| files == manifest.files)
+            .unwrap_or(false);
+    }
+    manifest.files.iter().all(|file| {
+        payload_path(dir, manifest, file)
+            .is_some_and(|blob| hash_snapshot_file(&blob).is_ok_and(|hash| hash == file.sha256))
+    })
 }
 
 fn do_backup_source(
@@ -437,18 +501,19 @@ fn do_backup_source(
     source: BackupSource,
     suffix: &str,
 ) -> BackupOutcome {
-    let _worker = BACKUP_WORK
-        .get_or_init(|| std::sync::Mutex::new(()))
-        .lock()
-        .unwrap();
+    let _worker = backup_work();
     do_backup_source_cancellable(app, store, source, suffix, &|| false)
 }
 
+/// Read one store area's included files, put each in the blob store and list
+/// it in `files` as `<prefix>/<area-relative path>`.
 fn copy_store_area(
     store: &Store,
     area: Area,
-    dest: &std::path::Path,
+    blobs: &std::path::Path,
+    prefix: &str,
     include: fn(&tine_store::FileId) -> bool,
+    files: &mut Vec<SnapshotFile>,
     cancelled: &dyn Fn() -> bool,
 ) -> (usize, usize, Option<BackupFailure>) {
     let phase = match area {
@@ -466,16 +531,6 @@ fn copy_store_area(
             Some(BackupFailure {
                 phase,
                 kind: ErrorKind::Interrupted,
-            }),
-        );
-    }
-    if let Err(error) = std::fs::create_dir_all(dest) {
-        return (
-            0,
-            1,
-            Some(BackupFailure {
-                phase,
-                kind: error.kind(),
             }),
         );
     }
@@ -520,16 +575,17 @@ fn copy_store_area(
         if !include(&entry.id) {
             continue;
         }
-        let target = dest.join(&entry.rel);
         match store.read(&entry.id, None) {
             Ok((bytes, _)) => {
-                let result = target
-                    .parent()
-                    .ok_or_else(|| std::io::Error::from(ErrorKind::InvalidInput))
-                    .and_then(std::fs::create_dir_all)
-                    .and_then(|_| write_payload(&target, &bytes));
-                match result {
-                    Ok(()) => copied += 1,
+                let sha256 = format!("{:x}", Sha256::digest(&bytes));
+                match put_blob(blobs, &sha256, &bytes) {
+                    Ok(()) => {
+                        copied += 1;
+                        files.push(SnapshotFile {
+                            path: format!("{prefix}/{}", entry.rel),
+                            sha256,
+                        });
+                    }
                     Err(error) => {
                         failed += 1;
                         first_failure.get_or_insert(BackupFailure {
@@ -637,7 +693,9 @@ fn do_backup_source_cancellable(
     outcome
 }
 
-/// Copy one snapshot into `base` and publish it; the caller prunes.
+/// Put one snapshot's files in `base`'s blob store and publish its manifest;
+/// the caller prunes. A suffixed snapshot precedes a rewrite or restore the
+/// user asked for, so it is published durably (`publish_snapshot`).
 fn write_snapshot(
     base: &std::path::Path,
     store: &Store,
@@ -651,22 +709,26 @@ fn write_snapshot(
     } else {
         format!("{stamp}-{suffix}")
     };
-    // Reserve a UNIQUE destination directory. The stamp is second-granularity, so
-    // two snapshots in the same second (e.g. a launch snapshot racing a pre-restore
-    // snapshot) would otherwise share one directory — and copy_md_dir, which copies
-    // in but never removes files absent from the live graph, would mix both
-    // snapshots' files, leaving a later restore with stale notes/sidecars. `create_dir`
-    // (non-recursive) fails atomically if the name is taken, so we bump a counter
-    // until we win an unused name.
-    if let Err(error) = std::fs::create_dir_all(&base) {
+    // Reserve a UNIQUE name. The stamp is second-granularity, so two snapshots
+    // in the same second (e.g. a launch snapshot and a pre-restore snapshot)
+    // would otherwise collide. `create_dir` (non-recursive) fails atomically
+    // if the partial name is taken, and a published snapshot of that name
+    // bumps the counter too (the caller holds `BACKUP_WORK`, so nothing
+    // publishes in between).
+    if let Err(error) = std::fs::create_dir_all(base) {
         return BackupOutcome::failed(0, "reserve", error.kind());
     }
-    cleanup_partial_backups(&base);
+    cleanup_partial_backups(base);
     let mut final_dest = base.join(&name);
     let mut dest = base.join(format!(".partial-{name}"));
     let mut k = 2;
     loop {
-        match std::fs::create_dir(&dest) {
+        let reserved = if std::fs::symlink_metadata(&final_dest).is_ok() {
+            Err(ErrorKind::AlreadyExists.into())
+        } else {
+            std::fs::create_dir(&dest)
+        };
+        match reserved {
             Ok(()) => break,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 final_dest = base.join(format!("{name}-{k}"));
@@ -680,23 +742,32 @@ fn write_snapshot(
         path: dest.clone(),
         committed: false,
     };
+    let blobs = base.join(BLOB_DIR);
+    if let Err(error) = std::fs::create_dir_all(&blobs) {
+        return BackupOutcome::failed(0, "reserve", error.kind());
+    }
     let live_text_n = match count_store_text(store, Area::Graph) {
         Ok(count) => count,
         Err(kind) => return BackupOutcome::failed(0, "inventory", kind),
     };
+    let mut files = Vec::new();
     // Graph text anywhere in the graph-text scope, at its graph-relative path.
     let (ct, ft, et) = copy_store_area(
         store,
         Area::Graph,
-        &dest.join("graph"),
+        &blobs,
+        "graph",
         is_graph_text,
+        &mut files,
         cancelled,
     );
     let (ca, fa, ea) = copy_store_area(
         store,
         Area::Assets,
-        &dest.join(&source.assets_dir_name),
+        &blobs,
+        &source.assets_dir_name,
         is_asset_sidecar,
+        &mut files,
         cancelled,
     );
     let mut n = ct + ca;
@@ -723,12 +794,15 @@ fn write_snapshot(
                 if let Some(config) = listing.files.iter().find(|entry| entry.rel == "config.edn") {
                     match store.read(&config.id, None) {
                         Ok((bytes, _)) => {
-                            let result =
-                                std::fs::create_dir_all(dest.join("logseq")).and_then(|_| {
-                                    write_payload(&dest.join("logseq/config.edn"), &bytes)
-                                });
-                            match result {
-                                Ok(()) => n += 1,
+                            let sha256 = format!("{:x}", Sha256::digest(&bytes));
+                            match put_blob(&blobs, &sha256, &bytes) {
+                                Ok(()) => {
+                                    n += 1;
+                                    files.push(SnapshotFile {
+                                        path: "logseq/config.edn".into(),
+                                        sha256,
+                                    });
+                                }
                                 Err(error) => {
                                     failed += 1;
                                     first_failure.get_or_insert(BackupFailure {
@@ -775,13 +849,7 @@ fn write_snapshot(
     if n == 0 {
         return BackupOutcome::success(0);
     }
-    let files = match snapshot_inventory(&dest) {
-        Ok(files) => files,
-        Err(error) => return BackupOutcome::failed(n, "inventory", error.kind()),
-    };
-    if files.len() != n {
-        return BackupOutcome::failed(n, "inventory", ErrorKind::InvalidData);
-    }
+    files.sort_by(|a, b| a.path.cmp(&b.path));
     let manifest = SnapshotManifest {
         schema: SNAPSHOT_SCHEMA,
         root: source.root.display().to_string(),
@@ -796,7 +864,7 @@ fn write_snapshot(
         files,
         complete: true,
     };
-    if let Err(error) = publish_snapshot(&dest, &final_dest, &manifest) {
+    if let Err(error) = publish_snapshot(&dest, &final_dest, &manifest, !suffix.is_empty()) {
         return BackupOutcome::failed(n, "publish", error.kind());
     }
     partial.committed = true;
@@ -841,7 +909,7 @@ pub(crate) async fn set_backup_keep(
         // Apply the new (possibly lower) cap to the current graph's snapshots now.
         let slot = slot?;
         if let Some(base) = backup_base(&app, &slot.root_key) {
-            prune_backups(&base, keep);
+            prune_now(&base, keep);
         }
         Ok(())
     })
@@ -915,13 +983,24 @@ fn is_foreign_snapshot(dir: &std::path::Path) -> bool {
     match manifest.get("schema").and_then(serde_json::Value::as_u64) {
         None => false,
         Some(schema) if schema == u64::from(LEGACY_SNAPSHOT_SCHEMA) => false,
-        Some(schema) if schema == u64::from(SNAPSHOT_SCHEMA) => {
+        Some(schema)
+            if schema == u64::from(GRAPH_COPY_SNAPSHOT_SCHEMA)
+                || schema == u64::from(SNAPSHOT_SCHEMA) =>
+        {
             manifest.get("writer").and_then(serde_json::Value::as_str) != Some(SNAPSHOT_WRITER)
         }
         Some(_) => true,
     }
 }
 
+/// Prune outside a snapshot write (a lowered keep-count), under the permit.
+fn prune_now(base: &std::path::Path, keep: usize) {
+    let _worker = backup_work();
+    prune_backups(base, keep);
+}
+
+/// Apply the keep-count, then collect unreferenced blobs. The caller holds
+/// `BACKUP_WORK`.
 fn prune_backups(base: &std::path::Path, keep: usize) {
     let Ok(rd) = std::fs::read_dir(base) else {
         return;
@@ -934,6 +1013,7 @@ fn prune_backups(base: &std::path::Path, keep: usize) {
         .map(|e| e.path())
         .filter(|p| {
             p.is_dir()
+                && p.file_name() != Some(std::ffi::OsStr::new(BLOB_DIR))
                 && !p
                     .file_name()
                     .and_then(|s| s.to_str())
@@ -954,6 +1034,57 @@ fn prune_backups(base: &std::path::Path, keep: usize) {
     if dirs.len() > keep {
         for d in &dirs[..dirs.len() - keep] {
             let _ = std::fs::remove_dir_all(d);
+        }
+    }
+    collect_blobs(base);
+}
+
+/// Delete every blob that no snapshot directory's manifest lists. Every
+/// manifest counts, whatever its schema, writer or name (`.partial-*` and
+/// pre-restore ones included), read loosely as `files[].sha256`. Any doubt
+/// keeps the blobs: an unreadable backup base, entry or manifest (other than
+/// a missing one) stops the collection. A manifest that is not valid JSON
+/// names nothing: that snapshot is torn and never restores. A crash between
+/// a manifest's deletion and this collection only leaves unreferenced blobs,
+/// which the next prune collects.
+fn collect_blobs(base: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return;
+    };
+    let mut live = std::collections::HashSet::new();
+    for entry in entries {
+        let Ok((kind, entry)) = entry.and_then(|entry| Ok((entry.file_type()?, entry))) else {
+            return;
+        };
+        if entry.file_name() == BLOB_DIR || !kind.is_dir() {
+            continue;
+        }
+        let bytes = match std::fs::read(entry.path().join(SNAPSHOT_MANIFEST)) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(_) => return,
+        };
+        let Ok(manifest) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        let files = manifest.get("files").and_then(serde_json::Value::as_array);
+        for file in files.into_iter().flatten() {
+            if let Some(sha256) = file.get("sha256").and_then(serde_json::Value::as_str) {
+                live.insert(sha256.to_owned());
+            }
+        }
+    }
+    let Ok(blobs) = std::fs::read_dir(base.join(BLOB_DIR)) else {
+        return;
+    };
+    for blob in blobs.flatten() {
+        if !blob
+            .file_name()
+            .to_str()
+            .is_some_and(|name| live.contains(name))
+        {
+            let _ = std::fs::remove_file(blob.path());
+            record_backup_op("blob_collect");
         }
     }
 }
@@ -1013,58 +1144,286 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
-    /// I-22: a snapshot mirrors the graph's directory depth. Linux caps a
-    /// path near 2000 one-letter levels, Windows long paths near 16,000, so
-    /// the Linux-maximal tree runs on one ninth of a 2 MiB worker stack.
-    #[test]
-    fn deep_payload_directories_sync_without_recursion() {
-        let root = scratch("backup-deep-payload");
-        let mut dir = root.clone();
-        while dir.as_os_str().len() < 3990 {
-            dir.push("d");
-        }
-        std::fs::create_dir_all(&dir).unwrap();
-        std::thread::Builder::new()
-            .stack_size(2 * 1024 * 1024 / 9)
-            .spawn(move || sync_payload_dirs(&root))
-            .unwrap()
-            .join()
-            .unwrap()
-            .unwrap();
+    /// Read one area into a fresh blob store the way `write_snapshot` does.
+    fn copy_area(
+        store: &Store,
+        area: Area,
+        blobs: &std::path::Path,
+        include: fn(&tine_store::FileId) -> bool,
+        cancelled: &dyn Fn() -> bool,
+    ) -> (usize, usize, Option<BackupFailure>, Vec<SnapshotFile>) {
+        let mut files = Vec::new();
+        let (copied, failed, failure) =
+            copy_store_area(store, area, blobs, "area", include, &mut files, cancelled);
+        (copied, failed, failure, files)
     }
 
-    #[cfg(not(windows))]
-    #[test]
-    fn backup_payload_and_directories_sync_before_publication() {
-        let root = scratch("backup-publication-order");
-        let partial = root.join(".partial-1");
-        std::fs::create_dir_all(partial.join("pages/nested")).unwrap();
+    /// The bytes a listed file's blob holds.
+    fn blob_bytes(blobs: &std::path::Path, files: &[SnapshotFile], path: &str) -> Vec<u8> {
+        let file = files.iter().find(|file| file.path == path).unwrap();
+        std::fs::read(blobs.join(&file.sha256)).unwrap()
+    }
+
+    /// A small graph: two pages, a journal, config and an asset sidecar.
+    fn small_graph(graph: &std::path::Path) {
+        for (rel, bytes) in [
+            ("pages/A.md", "- a\n"),
+            ("pages/B.md", "- b\n"),
+            ("journals/2026_10_10.md", "- j\n"),
+            ("logseq/config.edn", "{}\n"),
+            ("assets/doc.edn", "{:a 1}\n"),
+        ] {
+            std::fs::create_dir_all(graph.join(rel).parent().unwrap()).unwrap();
+            std::fs::write(graph.join(rel), bytes).unwrap();
+        }
+    }
+
+    fn snapshot_now(
+        base: &std::path::Path,
+        graph: &std::path::Path,
+        suffix: &str,
+    ) -> (Vec<&'static str>, PathBuf) {
+        // Snapshot names have one-second resolution; a same-second name gets
+        // a counter, so the newest is the last published one.
+        let (store, _, _) = Store::open(graph, tine_store::OpenOptions::default()).unwrap();
+        let source = BackupSource::from_store(&store, graph).unwrap();
+        let before: std::collections::BTreeSet<_> = std::fs::read_dir(base)
+            .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+            .unwrap_or_default();
         BACKUP_OPS.with(|ops| ops.borrow_mut().clear());
-        write_payload(&partial.join("pages/nested/a.md"), b"- durable\n").unwrap();
-        let final_dest = root.join("complete-1");
-        let manifest = SnapshotManifest {
-            schema: LEGACY_SNAPSHOT_SCHEMA,
-            root: "test".into(),
-            journals_dir: "journals".into(),
-            pages_dir: "pages".into(),
-            graph_text_policy: None,
-            writer: None,
-            files: vec![],
-            complete: true,
-        };
-        publish_snapshot(&partial, &final_dest, &manifest).unwrap();
+        let outcome = write_snapshot(base, &store, source, suffix, &|| false);
+        assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
         let ops = BACKUP_OPS.with(|ops| ops.borrow().clone());
-        let position = |name| ops.iter().position(|op| *op == name).unwrap();
-        assert!(position("payload_sync") < position("payload_dir_sync"));
-        assert!(position("payload_dir_sync") < position("manifest_sync"));
-        assert!(position("manifest_sync") < position("publish_rename"));
-        assert!(position("publish_rename") < position("publication_dir_sync"),
-            "I-1/I-2: backup publication follows fsynced payload and directory; exemplar backup.rs publish_snapshot");
-        assert_eq!(
-            std::fs::read(final_dest.join("pages/nested/a.md")).unwrap(),
-            b"- durable\n"
+        store.close();
+        let published = std::fs::read_dir(base)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| !before.contains(path) && path.file_name().unwrap() != BLOB_DIR)
+            .unwrap();
+        (ops, published)
+    }
+
+    /// Restated for the content-addressed design (relaxation ledger: the old
+    /// test asserted per-file payload and directory fsyncs before every
+    /// publication). A launch snapshot publishes its manifest only after
+    /// every blob write and syncs nothing; restore verifies every listed
+    /// blob. A snapshot taken before a user-requested rewrite or restore
+    /// syncs every blob and its manifest before the rename, as before.
+    #[test]
+    fn publication_follows_every_blob_write_and_restore_verifies_every_blob() {
+        let root = scratch("backup-publication-order");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        small_graph(&graph);
+        let (ops, launch) = snapshot_now(&base, &graph, "");
+        let position = |ops: &[&str], name| ops.iter().position(|op| *op == name).unwrap();
+        let last = |ops: &[&str], name| ops.iter().rposition(|op| *op == name).unwrap();
+        assert_eq!(ops.iter().filter(|op| **op == "blob_write").count(), 5);
+        assert!(last(&ops, "blob_write") < position(&ops, "manifest_write"));
+        assert!(
+            position(&ops, "manifest_write") < position(&ops, "publish_rename"),
+            "I-1/I-2: backup publication follows every blob write; exemplar backup.rs publish_snapshot"
         );
-        std::fs::remove_dir_all(root).unwrap();
+        assert!(
+            !ops.iter().any(|op| op.ends_with("sync")),
+            "a launch snapshot syncs nothing: {ops:?}"
+        );
+        let manifest = read_manifest(&launch).unwrap();
+        assert_eq!(
+            std::fs::read_dir(&launch).unwrap().count(),
+            1,
+            "a schema-4 snapshot directory holds only its manifest"
+        );
+        PAYLOAD_HASH_READS.with(|reads| reads.set(0));
+        assert!(verify_snapshot(&launch, &manifest));
+        assert_eq!(
+            PAYLOAD_HASH_READS.with(|reads| reads.get()),
+            manifest.files.len(),
+            "restore verifies every listed blob"
+        );
+
+        let (ops, _) = snapshot_now(&base, &graph, "pre-restore");
+        assert_eq!(ops.iter().filter(|op| **op == "blob_sync").count(), 5);
+        assert!(last(&ops, "blob_sync") < position(&ops, "blob_dir_sync"));
+        assert!(position(&ops, "blob_dir_sync") < position(&ops, "manifest_sync"));
+        assert!(position(&ops, "manifest_sync") < position(&ops, "manifest_dir_sync"));
+        assert!(position(&ops, "manifest_dir_sync") < position(&ops, "publish_rename"));
+        assert!(
+            position(&ops, "publish_rename") < position(&ops, "publication_dir_sync"),
+            "I-1/I-2: a pre-rewrite snapshot is durable before the rewrite runs; exemplar backup.rs publish_snapshot"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// The cost the content-addressed store exists for: an unchanged launch
+    /// writes one manifest and no blob, and edits write only their own blobs.
+    #[test]
+    fn unchanged_launch_writes_no_blob_and_edits_write_only_theirs() {
+        let root = scratch("backup-unchanged-launch");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        small_graph(&graph);
+        let count = |ops: &[&str], name| ops.iter().filter(|op| **op == name).count();
+        let (ops, _) = snapshot_now(&base, &graph, "");
+        assert_eq!(count(&ops, "blob_write"), 5);
+        let (ops, _) = snapshot_now(&base, &graph, "");
+        assert_eq!(
+            (count(&ops, "blob_write"), count(&ops, "manifest_write")),
+            (0, 1),
+            "an unchanged graph writes one manifest"
+        );
+        std::fs::write(graph.join("pages/A.md"), "- a edited\n").unwrap();
+        std::fs::write(graph.join("journals/2026_10_10.md"), "- j edited\n").unwrap();
+        let (ops, latest) = snapshot_now(&base, &graph, "");
+        assert_eq!(count(&ops, "blob_write"), 2);
+        assert!(verify_snapshot(&latest, &read_manifest(&latest).unwrap()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Power loss after an unsynced blob write can leave the blob's name with
+    /// torn bytes (zero length, or zeroed at full length). The next snapshot
+    /// of that content repairs it instead of reusing it, so the torn blob
+    /// does not damage every later snapshot, and the older snapshot that
+    /// lists it verifies again.
+    #[test]
+    fn a_torn_blob_is_repaired_not_reused() {
+        let root = scratch("backup-torn-blob");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        small_graph(&graph);
+        let (_, first) = snapshot_now(&base, &graph, "");
+        let manifest = read_manifest(&first).unwrap();
+        let page = manifest
+            .files
+            .iter()
+            .find(|file| file.path == "graph/pages/A.md")
+            .unwrap();
+        let config = manifest
+            .files
+            .iter()
+            .find(|file| file.path == "logseq/config.edn")
+            .unwrap();
+        std::fs::write(base.join(BLOB_DIR).join(&page.sha256), b"").unwrap();
+        std::fs::write(base.join(BLOB_DIR).join(&config.sha256), [0u8; 3]).unwrap();
+        assert!(!verify_snapshot(&first, &manifest));
+        let (ops, latest) = snapshot_now(&base, &graph, "");
+        assert_eq!(
+            ops.iter().filter(|op| **op == "blob_repair").count(),
+            2,
+            "{ops:?}"
+        );
+        assert!(verify_snapshot(&latest, &read_manifest(&latest).unwrap()));
+        assert!(verify_snapshot(&first, &manifest));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A blob two snapshots share survives pruning one of them; a blob only
+    /// the pruned snapshot listed is collected; the blob store itself is
+    /// never counted or pruned as a snapshot.
+    #[test]
+    fn a_shared_blob_survives_pruning_one_of_its_snapshots() {
+        let root = scratch("backup-shared-blob");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        small_graph(&graph);
+        let (_, first) = snapshot_now(&base, &graph, "");
+        let old = read_manifest(&first).unwrap();
+        std::fs::write(graph.join("pages/B.md"), "- b edited\n").unwrap();
+        let (_, second) = snapshot_now(&base, &graph, "");
+        let hash = |manifest: &SnapshotManifest, path: &str| {
+            manifest
+                .files
+                .iter()
+                .find(|file| file.path == path)
+                .unwrap()
+                .sha256
+                .clone()
+        };
+        let (shared, old_b) = (
+            hash(&old, "graph/pages/A.md"),
+            hash(&old, "graph/pages/B.md"),
+        );
+        prune_backups(&base, 1);
+        assert!(!first.exists() && second.exists());
+        assert!(base.join(BLOB_DIR).join(&shared).is_file());
+        assert!(!base.join(BLOB_DIR).join(&old_b).exists());
+        assert!(verify_snapshot(&second, &read_manifest(&second).unwrap()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A prune (with its blob collection) that races a snapshot waits for the
+    /// backup permit, so it never deletes blobs the snapshot wrote before
+    /// publishing its manifest. Driven by the snapshot's cancellation hook,
+    /// which runs between files. A `.partial-*` manifest also keeps its blobs.
+    #[test]
+    fn a_prune_racing_a_snapshot_never_deletes_its_blobs() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+        let root = scratch("backup-gc-race");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        small_graph(&graph);
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        let (entered, release) = (std::sync::Barrier::new(2), std::sync::Barrier::new(2));
+        let calls = AtomicUsize::new(0);
+        let pruned = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let snapshot = scope.spawn(|| {
+                let _worker = backup_work();
+                write_snapshot(&base, &store, source, "", &|| {
+                    // Pause after the first blob is written, manifest unwritten.
+                    if calls.fetch_add(1, Ordering::SeqCst) == 2 {
+                        entered.wait();
+                        release.wait();
+                    }
+                    false
+                })
+            });
+            entered.wait();
+            let written = std::fs::read_dir(base.join(BLOB_DIR)).unwrap().count();
+            assert!(written >= 1, "the snapshot has written a blob");
+            let prune = scope.spawn(|| {
+                prune_now(&base, 1);
+                pruned.store(true, Ordering::SeqCst);
+            });
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            // Observe, release, then assert, so a failure cannot hang the test.
+            let pruned_early = pruned.load(Ordering::SeqCst);
+            let blobs_now = std::fs::read_dir(base.join(BLOB_DIR)).unwrap().count();
+            release.wait();
+            assert!(snapshot.join().unwrap().failure.is_none());
+            prune.join().unwrap();
+            assert!(!pruned_early, "the prune waits for the snapshot");
+            assert_eq!(
+                blobs_now, written,
+                "no blob of the unpublished snapshot is collected"
+            );
+        });
+        let published = std::fs::read_dir(&base)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| path.file_name().unwrap() != BLOB_DIR)
+            .unwrap();
+        assert!(verify_snapshot(
+            &published,
+            &read_manifest(&published).unwrap()
+        ));
+
+        // An in-progress snapshot's manifest names references too.
+        let partial = base.join(".partial-in-progress");
+        std::fs::create_dir_all(&partial).unwrap();
+        std::fs::write(base.join(BLOB_DIR).join("ab"), b"x").unwrap();
+        std::fs::write(
+            partial.join(SNAPSHOT_MANIFEST),
+            r#"{"files":[{"path":"graph/x.md","sha256":"ab"}]}"#,
+        )
+        .unwrap();
+        collect_blobs(&base);
+        assert!(base.join(BLOB_DIR).join("ab").is_file());
+        store.close();
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// Launch-backup cost on a real graph (dossier og-backup-cas): files
@@ -1075,7 +1434,8 @@ mod tests {
     #[test]
     #[ignore = "measurement; needs TINE_BACKUP_CORPUS (a scratch copy of a graph)"]
     fn launch_backup_cost_on_corpus() {
-        let graph = PathBuf::from(std::env::var_os("TINE_BACKUP_CORPUS").expect("TINE_BACKUP_CORPUS"));
+        let graph =
+            PathBuf::from(std::env::var_os("TINE_BACKUP_CORPUS").expect("TINE_BACKUP_CORPUS"));
         let base = graph.with_extension("backup-cost");
         let _ = std::fs::remove_dir_all(&base);
         let files_under = |dir: &std::path::Path| {
@@ -1106,7 +1466,10 @@ mod tests {
             let elapsed = started.elapsed();
             assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
             let after = files_under(&base);
-            let created: Vec<_> = after.keys().filter(|path| !before.contains_key(*path)).collect();
+            let created: Vec<_> = after
+                .keys()
+                .filter(|path| !before.contains_key(*path))
+                .collect();
             let bytes: u64 = created.iter().map(|path| after[*path]).sum();
             let ops = BACKUP_OPS.with(|ops| ops.borrow().clone());
             let syncs = ops.iter().filter(|op| op.ends_with("sync")).count();
@@ -1141,11 +1504,11 @@ mod tests {
         let root = scratch("launch-backup-copy-error");
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::write(root.join("pages/note.md"), b"- keep\n").unwrap();
-        let dest = root.join("blocked-destination");
-        std::fs::write(&dest, b"already a file").unwrap();
+        let blobs = root.join("blocked-destination");
+        std::fs::write(&blobs, b"already a file").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
-        let (copied, failed, failure) =
-            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| false);
+        let (copied, failed, failure, _) =
+            copy_area(&store, Area::Pages, &blobs, is_graph_text, &|| false);
         assert_eq!((copied, failed), (0, 1));
         let failure = failure.unwrap();
         let token = launch_failure_token(&BackupOutcome {
@@ -1179,16 +1542,17 @@ mod tests {
         std::fs::write(root.join("pages/nested/Note.md"), b"- note\n").unwrap();
         std::fs::write(root.join("pages/Ignore.txt"), b"skip").unwrap();
         let (store, _, _) = Store::open(&root, tine_store::OpenOptions::default()).unwrap();
-        let dest = root.join("backup-out");
-        let (copied, failed, failure) =
-            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| false);
+        let blobs = root.join("backup-out");
+        std::fs::create_dir_all(&blobs).unwrap();
+        let (copied, failed, failure, files) =
+            copy_area(&store, Area::Pages, &blobs, is_graph_text, &|| false);
         assert_eq!((copied, failed), (1, 0));
         assert!(failure.is_none());
         assert_eq!(
-            std::fs::read(dest.join("nested/Note.md")).unwrap(),
+            blob_bytes(&blobs, &files, "area/nested/Note.md"),
             b"- note\n"
         );
-        assert!(!dest.join("Ignore.txt").exists());
+        assert_eq!(files.len(), 1, "Ignore.txt is not graph text");
         store.close();
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1290,18 +1654,20 @@ mod tests {
         let root = scratch("backup-cancel");
         let graph = root.join("graph");
         let src = graph.join("pages");
-        let dest = root.join("dest");
+        let blobs = root.join("blobs");
         std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&blobs).unwrap();
         for dir in ["journals", "assets", "logseq"] {
             std::fs::create_dir_all(graph.join(dir)).unwrap();
         }
         std::fs::write(src.join("note.md"), b"secret").unwrap();
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-        let (copied, failed, failure) =
-            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| true);
+        let (copied, failed, failure, files) =
+            copy_area(&store, Area::Pages, &blobs, is_graph_text, &|| true);
         assert_eq!((copied, failed), (0, 1));
         assert_eq!(failure.unwrap().kind, ErrorKind::Interrupted);
-        assert!(!dest.exists());
+        assert!(files.is_empty());
+        assert_eq!(std::fs::read_dir(&blobs).unwrap().count(), 0);
         drop(store);
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1319,7 +1685,7 @@ mod tests {
             files: Vec::new(),
             complete: true,
         };
-        write_manifest(&root, &manifest).unwrap();
+        write_manifest(&root, &manifest, false).unwrap();
         let read = read_manifest(&root).unwrap();
         assert_eq!(read.pages_dir, "archive/pages");
         assert!(verify_snapshot(&root, &read));
@@ -1359,6 +1725,7 @@ mod tests {
                 }],
                 complete: true,
             },
+            false,
         )
         .unwrap();
 
@@ -1380,7 +1747,8 @@ mod tests {
         let root = scratch("copy-sidecars");
         let graph = root.join("graph");
         let src = graph.join("assets");
-        let dst = root.join("backup").join("assets");
+        let blobs = root.join("blobs");
+        std::fs::create_dir_all(&blobs).unwrap();
         std::fs::create_dir_all(src.join("nested")).unwrap();
         for dir in ["pages", "journals", "logseq"] {
             std::fs::create_dir_all(graph.join(dir)).unwrap();
@@ -1397,21 +1765,22 @@ mod tests {
         .unwrap();
 
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-        let (copied, failed, failure) =
-            copy_store_area(&store, Area::Assets, &dst, is_asset_sidecar, &|| false);
+        let (copied, failed, failure, files) =
+            copy_area(&store, Area::Assets, &blobs, is_asset_sidecar, &|| false);
         assert_eq!((copied, failed), (2, 0));
         assert!(failure.is_none());
+        assert_eq!(blob_bytes(&blobs, &files, "area/doc.edn"), b"{:a 1}\n");
         assert_eq!(
-            std::fs::read_to_string(dst.join("doc.edn")).unwrap(),
-            "{:a 1}\n"
+            blob_bytes(&blobs, &files, "area/nested/hl.edn"),
+            b"{:b 2}\n"
         );
+        let mut paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
+        paths.sort();
         assert_eq!(
-            std::fs::read_to_string(dst.join("nested").join("hl.edn")).unwrap(),
-            "{:b 2}\n"
+            paths,
+            ["area/doc.edn", "area/nested/hl.edn"],
+            "no images and no restore recovery"
         );
-        assert!(!dst.join("image.png").exists());
-        assert!(!dst.join("nested").join("image.png").exists());
-        assert!(!dst.join(ASSET_RESTORE_RECOVERY_DIR).exists());
         drop(store);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1422,7 +1791,8 @@ mod tests {
         let graph = root.join("graph");
         let pages = graph.join("pages");
         let journals = graph.join("journals");
-        let backup = root.join("backup");
+        let blobs = root.join("blobs");
+        std::fs::create_dir_all(&blobs).unwrap();
         std::fs::create_dir_all(pages.join("client-a")).unwrap();
         for dir in ["assets", "logseq"] {
             std::fs::create_dir_all(graph.join(dir)).unwrap();
@@ -1434,36 +1804,23 @@ mod tests {
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
         let live_pages = count_store_text(&store, Area::Pages).unwrap();
         let live_journals = count_store_text(&store, Area::Journals).unwrap();
-        let (copied_pages, failed_pages, _) = copy_store_area(
-            &store,
-            Area::Pages,
-            &backup.join("pages"),
-            is_graph_text,
-            &|| false,
-        );
-        let (copied_journals, failed_journals, _) = copy_store_area(
-            &store,
-            Area::Journals,
-            &backup.join("journals"),
-            is_graph_text,
-            &|| false,
-        );
+        let (copied_pages, failed_pages, _, pages_files) =
+            copy_area(&store, Area::Pages, &blobs, is_graph_text, &|| false);
+        let (copied_journals, failed_journals, _, journal_files) =
+            copy_area(&store, Area::Journals, &blobs, is_graph_text, &|| false);
         let copied = copied_pages + copied_journals;
         let failed = failed_pages + failed_journals;
         let complete = failed == 0 && copied == live_pages + live_journals;
         assert_eq!(live_pages, 2);
         assert_eq!(live_journals, 1);
         assert!(complete);
+        assert_eq!(blob_bytes(&blobs, &pages_files, "area/Top.md"), b"top\n");
         assert_eq!(
-            std::fs::read(backup.join("pages/Top.md")).unwrap(),
-            b"top\n"
-        );
-        assert_eq!(
-            std::fs::read(backup.join("pages/client-a/Deep.md")).unwrap(),
+            blob_bytes(&blobs, &pages_files, "area/client-a/Deep.md"),
             b"deep\n"
         );
         assert_eq!(
-            std::fs::read(backup.join("journals/2026_07_09.md")).unwrap(),
+            blob_bytes(&blobs, &journal_files, "area/2026_07_09.md"),
             b"journal\n"
         );
         drop(store);
