@@ -4,14 +4,13 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
-import java.security.MessageDigest
 
 /**
  * The platform-free half of the Android share producer (ADR 0073; GH #608):
- * what a share intent may carry, and how an inbox item and the intent's
- * publication state reach disk. Plain JVM code, so `app/src/test` covers it
- * without a device. `NativeIntegrationsPlugin` supplies the Android parts
- * (intent extras, the content resolver, directory fsync through `Os`).
+ * what a share intent may carry, how an inbox item reaches disk, and what a
+ * (re)delivery of one share occurrence does. Plain JVM code, so `app/src/test`
+ * covers it without a device. `NativeIntegrationsPlugin` supplies the Android
+ * parts (intent extras, the content resolver, directory fsync through `Os`).
  */
 
 /** Must match share_inbox.rs (`MAX_RESOURCES`). */
@@ -60,16 +59,29 @@ object ShareIntake {
     }
   }
 
-  /** The intent's stable identity across a restore or a Recents relaunch. */
-  fun fingerprint(action: String?, type: String?, text: String?, subject: String?, streams: List<String>): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    for (part in listOf(action, type, text, subject) + streams) {
-      val bytes = (part ?: "\u0000null").toByteArray(Charsets.UTF_8)
-      digest.update(bytes.size.toString().toByteArray(Charsets.UTF_8))
-      digest.update(':'.code.toByte())
-      digest.update(bytes)
+  /** An occurrence id the inbox accepts as an item name (share_inbox.rs `valid_id`). */
+  fun validId(id: String): Boolean =
+    id.isNotEmpty() && id.length <= 64 && id.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '-' || it == '_' }
+
+  /** Ids this process is delivering now: one copy per occurrence at a time. */
+  private val delivering = mutableSetOf<String>()
+
+  /**
+   * One delivery of occurrence `id` (fresh, restored, from history or seen
+   * before): if its item or its commit tombstone exists, it was published, so
+   * the inbox is synced (the barrier a cut-short earlier delivery may have
+   * missed) and the arrival announced; otherwise `publish` writes it. False
+   * when another delivery of the same occurrence is running in this process
+   * (that one announces). Errors propagate.
+   */
+  fun deliver(id: String, writer: InboxWriter, publish: () -> Unit): Boolean {
+    if (!synchronized(delivering) { delivering.add(id) }) return false
+    try {
+      if (writer.handled(id)) writer.syncInbox() else publish()
+      return true
+    } finally {
+      synchronized(delivering) { delivering.remove(id) }
     }
-    return digest.digest().joinToString("") { "%02x".format(it) }
   }
 
   /** A plain file name inside the item, unique among `used`. */
@@ -146,6 +158,12 @@ class DurableFiles(private val syncDirectory: (File) -> Unit) {
 class InboxWriter(private val root: File, private val files: DurableFiles) {
   fun published(id: String): Boolean = File(root, id).isDirectory
 
+  /** Published at some point: the item, or the tombstone its commit left
+   * (share_inbox.rs `commit`, `.committed-<id>`, kept 30 days). */
+  fun handled(id: String): Boolean = published(id) || File(root, ".committed-$id").exists()
+
+  fun syncInbox() = files.syncDir(root)
+
   fun publish(id: String, created: Long, text: String?, title: String?, resources: List<ShareResource>) {
     files.ensureDir(root)
     val tmp = File(root, ".tmp-$id")
@@ -183,67 +201,11 @@ class InboxWriter(private val root: File, private val files: DurableFiles) {
       files.syncDir(root)
     } catch (error: Exception) {
       tmp.deleteRecursively()
+      // Renamed but the inbox sync failed: the item is visible and will be
+      // ingested (its journal write is the durable confirmation); a
+      // redelivery syncs again. Not reported as unsaved.
+      if (published(id)) return
       throw error
-    }
-  }
-}
-
-/**
- * Per-intent publication state (finding 9), one small file per fingerprint
- * under `filesDir/share-state/`: `pending <id> <millis>` is written durably
- * before any copying starts, `published <id> <millis>` after the item is
- * durable, `abandoned <id> <millis>` once the user was told an interrupted
- * share was not saved. A redelivered intent (restored Activity, Recents) is
- * skipped only when its record proves it published or was reported;
- * a pending one resumes under the same id.
- */
-class ShareState(private val dir: File, private val files: DurableFiles) {
-  enum class Status { PENDING, PUBLISHED, ABANDONED }
-
-  data class Record(val fingerprint: String, val status: Status, val id: String, val at: Long)
-
-  fun lookup(fingerprint: String): Record? {
-    val text = try {
-      File(dir, fingerprint).readText(Charsets.UTF_8)
-    } catch (_: IOException) {
-      return null
-    }
-    val parts = text.trim().split(' ')
-    if (parts.size != 3) return null
-    val status = when (parts[0]) {
-      "pending" -> Status.PENDING
-      "published" -> Status.PUBLISHED
-      "abandoned" -> Status.ABANDONED
-      else -> return null
-    }
-    val at = parts[2].toLongOrNull() ?: return null
-    return Record(fingerprint, status, parts[1], at)
-  }
-
-  fun mark(fingerprint: String, status: Status, id: String, now: Long) {
-    files.ensureDir(dir)
-    files.replace(File(dir, fingerprint), "${status.name.lowercase()} $id $now")
-  }
-
-  fun forget(fingerprint: String) {
-    File(dir, fingerprint).delete()
-  }
-
-  fun pending(): List<Record> = (dir.list() ?: emptyArray())
-    .filter { !it.startsWith(".") }
-    .mapNotNull(::lookup)
-    .filter { it.status == Status.PENDING }
-
-  /** Drop settled records older than `maxAgeMillis`; pending ones stay until
-   * they are resumed or reported. */
-  fun prune(now: Long, maxAgeMillis: Long) {
-    for (name in dir.list() ?: emptyArray()) {
-      if (name.startsWith(".tmp-")) {
-        File(dir, name).delete()
-        continue
-      }
-      val record = lookup(name) ?: continue
-      if (record.status != Status.PENDING && now - record.at > maxAgeMillis) File(dir, name).delete()
     }
   }
 }
