@@ -25,6 +25,8 @@ mod progress;
 mod save;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod writer_census_tests;
 
 use drafts::{Record, Stage, Vehicle};
 use io::{ErrorKind, HostIo, IoFailure, Witness};
