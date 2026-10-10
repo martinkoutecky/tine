@@ -8,6 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- Android: Tine appears in the share sheet. Shared text, links and images become a new block at the bottom of today's journal, the same place quick capture files to, with the same "Captured to today's journal" notice. If an item can't be added yet, for example because no graph is open or saving fails, Tine keeps it and retries the next time it opens. Retrying never adds an item twice (GH #608, REG-GH608-SHARE-INBOX-EXACTLY-ONCE).
+- Android: long-press the launcher icon for **Today**, **Quick capture** and **Search**. A **Quick capture** Quick Settings tile opens today's journal with an empty block ready for typing (REG-GH608-ANDROID-SHARE-TARGET).
+- iOS: a **Tine** share extension saves text, web pages, links and up to five images ("Saved to Tine"), and they land at the bottom of today's journal the next time you open Tine. Pages of the open graph appear in Spotlight search; hidden pages never do. The Shortcuts app and Siri offer **Add to Tine journal**, **Search Tine** and **Open page**, and the Home Screen icon has **Today's journal**, **Quick capture** and **Search** quick actions (REG-IOS-NATIVE-INTEGRATIONS).
+- Shared items are shaped like Logseq's mobile share. Links become titled links, video links become `{{video}}` embeds and posts on X become `{{twitter}}` embeds, all using Logseq's `:quick-capture-templates` from `config.edn` (REG-GH608-SHARE-SHAPE-OG).
+- `tine://today`, `tine://capture`, `tine://search?q=…` and `tine://page/<name>` open those places in the current graph. They only navigate and never write (REG-NATIVE-APP-ROUTES).
+
 ## [0.7.1] - 2026-10-08
 
 ### Changed

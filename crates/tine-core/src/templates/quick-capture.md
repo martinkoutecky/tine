@@ -25,4 +25,4 @@ icon:: ⚡
 	- If you unbind **Quick-capture: file to today's journal** in Keyboard Shortcuts, the capture box shows a **File capture** button so filing remains available without a key.
 	- The box auto-grows as you type, and it keeps your draft if it loses focus — only **Esc** or filing it clears the text.
 - ## Where next
-	- Captures land in today's journal or on a page you name — [[Workflows/Capture and plan your day]] builds the rest of the daily flow on top. This capture window is a desktop feature; [[Reference/Platforms and mobile]] maps what each platform ships.
+	- Captures land in today's journal or on a page you name — [[Workflows/Capture and plan your day]] builds the rest of the daily flow on top. This capture window is a desktop feature. On Android and iOS, the share sheet, the **Quick capture** shortcut and iOS Shortcuts file to the same place: [[Reference/Platforms and mobile]] covers them and what each platform ships.

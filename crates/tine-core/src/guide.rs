@@ -569,6 +569,35 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn mobile_guide_says_how_to_capture_from_outside_tine() {
+        // GH #608 / ADR 0073: the share target, shortcuts, tile, Spotlight and
+        // App Intents are invisible until the Guide names them, and quick
+        // capture is no longer desktop-only.
+        let mobile = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "**Share to Tine from any app.**",
+            "a new block at the bottom of today's journal",
+            "keeps the item and tries again",
+            "Retrying never adds the same item twice.",
+            "**Launcher shortcuts and a Quick Settings tile.**",
+            "The sheet confirms **Saved to Tine**.",
+            "**Spotlight finds your pages.**",
+            "Hidden pages are never added.",
+            "**Add to Tine journal** (it saves without opening Tine, and the block appears the next time you open it)",
+            "`:quick-capture-templates`",
+            "`**{time}** [[quick capture]]: {text} {url}`",
+            "`tine://capture`",
+            "never writes to your graph",
+        ] {
+            assert!(
+                mobile.contains(outcome),
+                "missing mobile capture Guide outcome: {outcome}"
+            );
+        }
+        assert!(!mobile.contains("Global quick capture is desktop-only"));
+    }
+
+    #[test]
     fn mobile_guide_names_the_touch_gestures_and_the_one_back_ladder() {
         // GH #501 / #492: a gesture nothing announces reads as missing, so the
         // mobile page has to say what each swipe does and which one is Back.
