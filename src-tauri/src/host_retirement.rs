@@ -215,8 +215,11 @@ fn overlap(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{wait_for_retiring_overlaps, GraphRegistry, STALE_BINDING};
-    use std::sync::{mpsc, Barrier, RwLock};
+    use crate::state::{
+        exit_when_unowned, wait_for_retiring_overlaps, AppState, GraphRegistry, STALE_BINDING,
+    };
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{mpsc, Barrier, Mutex, RwLock};
     use tine_store::{EditKind, Input, PageHost, PageId, PageMail, Store};
 
     struct Fixture {
@@ -715,5 +718,130 @@ mod tests {
         assert!(matches!(host, PageHostSlot::Running(_)));
         assert_eq!(late_writer(&old, "- late\n"), Err(STALE_BINDING.to_owned()));
         drop(host);
+    }
+
+    fn app_state() -> AppState {
+        AppState {
+            graphs: RwLock::new(GraphRegistry::default()),
+            graph_load: Mutex::new(()),
+            last_focused: Mutex::new(None),
+            capture_graph: Mutex::new(Default::default()),
+            #[cfg(desktop)]
+            next_window: std::sync::atomic::AtomicU64::new(1),
+        }
+    }
+
+    /// The exit left pending by the last window's close (as `lib.rs`'s
+    /// `Destroyed` hook leaves it), run while `open` runs; whether it
+    /// exited, and whether `exit` ran.
+    fn pending_exit(state: &AppState, open: impl FnOnce()) -> (bool, bool) {
+        let exited = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let waiter = scope.spawn(|| {
+                exit_when_unowned(state, Duration::from_secs(20), || {
+                    exited.store(true, std::sync::atomic::Ordering::SeqCst)
+                })
+            });
+            open();
+            (
+                waiter.join().unwrap(),
+                exited.load(std::sync::atomic::Ordering::SeqCst),
+            )
+        })
+    }
+
+    /// Adopt `f`'s retiring root as an open does, and bind it to graph-2;
+    /// `paused` runs between the adoption and the bind.
+    fn reopen(f: &Fixture, state: &AppState, paused: impl FnOnce()) {
+        let _load = state.graph_load.lock().unwrap();
+        let retirement = state.graphs.read().unwrap().retirement.clone();
+        let (store, host) = retirement.adopt(&f.root).unwrap();
+        paused();
+        let mut fresh = GraphSlot::new(store, f.root.clone());
+        *fresh.host.get_mut().unwrap() = host;
+        let mut graphs = state.graphs.write().unwrap();
+        assert!(graphs
+            .bind("graph-2".into(), Arc::new(fresh))
+            .unwrap()
+            .is_none());
+    }
+
+    /// Tear down a state whose graph-2 adopted `f`'s host.
+    fn close_reopened(f: &Fixture, state: &AppState, reservation: tine_store::Reservation) {
+        drop(reservation);
+        assert!(state.graphs.write().unwrap().remove("graph-2").is_none());
+        let retirement = state.graphs.read().unwrap().retirement.clone();
+        assert_eq!(retirement.wait_idle(Duration::from_secs(20)), Ok(()));
+        assert!(f.closed());
+    }
+
+    /// Positive control: with no open, the pending exit runs once the
+    /// retirement ends.
+    #[test]
+    fn a_pending_exit_runs_once_the_last_retirement_ends() {
+        let f = Fixture::new("exit-runs");
+        let state = app_state();
+        let reservation = retiring(&f, &state.graphs);
+        assert_eq!(
+            pending_exit(&state, || {
+                std::thread::sleep(Duration::from_millis(200));
+                drop(reservation);
+            }),
+            (true, true)
+        );
+        assert_eq!(f.disk(), "- two\n");
+        assert!(f.closed());
+    }
+
+    /// REVIEW-3b-P1 B2: reopening the retiring root adopts it, which empties
+    /// the retirement and wakes the pending exit; the bound graph cancels it.
+    #[test]
+    fn review_p1_b2_a_same_root_adoption_cancels_the_pending_exit() {
+        let f = Fixture::new("exit-adopt");
+        let state = app_state();
+        let reservation = retiring(&f, &state.graphs);
+        assert_eq!(
+            pending_exit(&state, || reopen(&f, &state, || ())),
+            (false, false)
+        );
+        close_reopened(&f, &state, reservation);
+    }
+
+    /// B2: an open paused between its adoption and its bind while the exit
+    /// wakes. The exit waits for the open (`graph_load`), then cancels.
+    #[test]
+    fn review_p1_b2_an_open_paused_between_adopt_and_bind_cancels_the_pending_exit() {
+        let f = Fixture::new("exit-paused");
+        let state = app_state();
+        let reservation = retiring(&f, &state.graphs);
+        assert_eq!(
+            pending_exit(&state, || reopen(&f, &state, || {
+                assert!(state.graphs.read().unwrap().retirement.is_idle());
+                std::thread::sleep(Duration::from_millis(300));
+            })),
+            (false, false)
+        );
+        close_reopened(&f, &state, reservation);
+    }
+
+    /// B2: another root bound while the last retirement runs; the retirement
+    /// then ends normally, and the bound graph cancels the exit.
+    #[test]
+    fn review_p1_b2_an_other_root_bind_cancels_the_pending_exit() {
+        let (f, other) = (Fixture::new("exit-a"), Fixture::new("exit-b"));
+        let state = app_state();
+        let reservation = retiring(&f, &state.graphs);
+        let opened = pending_exit(&state, || {
+            {
+                let _load = state.graph_load.lock().unwrap();
+                other.bind(&mut state.graphs.write().unwrap(), "graph-2");
+            }
+            drop(reservation);
+        });
+        assert_eq!(opened, (false, false));
+        assert!(f.closed(), "the retirement ended");
+        assert!(state.graphs.write().unwrap().remove("graph-2").is_none());
+        let retirement = state.graphs.read().unwrap().retirement.clone();
+        assert_eq!(retirement.wait_idle(Duration::from_secs(20)), Ok(()));
     }
 }

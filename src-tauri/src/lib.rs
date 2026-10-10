@@ -840,27 +840,20 @@ pub fn run() {
                         && closing.others(label, |l| app.get_webview_window(l).is_some()) == 0
                     {
                         // A retiring page host finishes its admitted queue and
-                        // stops before the process exits (plan v3 §3).
-                        let retirement = state.graphs.read().unwrap().retirement.clone();
-                        let app = app.clone();
+                        // stops before the process exits (plan v3 §3); an open
+                        // meanwhile cancels the exit (REVIEW-3b-P1 B2). Off the
+                        // event thread: the decision waits for `graph_load`.
+                        let (app, exiting) = (app.clone(), app.clone());
                         let exit = move || {
                             #[cfg(target_os = "linux")]
                             platform::kill_webkit_children();
                             app.exit(0);
                         };
-                        if retirement.is_idle() {
-                            exit();
-                        } else {
-                            std::thread::spawn(move || {
-                                match retirement.wait_idle(std::time::Duration::from_secs(30)) {
-                                    Ok(()) => exit(),
-                                    // The host keeps its pages and Tine keeps
-                                    // running; the stuck-graph window is P2b
-                                    // (STEP3-DESIGN B-QA).
-                                    Err(_) => diag("page-host-retirement-stuck-at-exit"),
-                                }
-                            });
-                        }
+                        std::thread::spawn(move || {
+                            let state = exiting.state::<AppState>();
+                            let bound = std::time::Duration::from_secs(30);
+                            state::exit_when_unowned(&state, bound, exit);
+                        });
                     }
                 }
                 _ => {}

@@ -282,6 +282,32 @@ pub(crate) fn may_exit(own_slot: bool, graph_slots: usize, others_closing: usize
     others_closing == 0 && graph_slots <= usize::from(own_slot)
 }
 
+/// The exit the last graph window's close leaves pending (plan v3 §3,
+/// REVIEW-3b-P1 B2). It first waits up to `bound` for every retiring page
+/// host to stop. It then decides under `graph_load`, which an open holds
+/// from its routing through adoption and bind: it exits only if no graph is
+/// bound and none is retiring. An open that adopted or bound meanwhile, or
+/// that is still inside its load, cancels the exit, and a later last close
+/// leaves its own. True when it exited.
+pub(crate) fn exit_when_unowned(state: &AppState, bound: Duration, exit: impl FnOnce()) -> bool {
+    let retirement = state.graphs.read().unwrap().retirement.clone();
+    if retirement.wait_idle(bound).is_err() {
+        // The host keeps its pages and Tine keeps running; the stuck-graph
+        // window is P2b (STEP3-DESIGN B-QA).
+        crate::debug::diag("page-host-retirement-stuck-at-exit");
+        return false;
+    }
+    let _opens = state.graph_load.lock().unwrap();
+    let unowned = {
+        let graphs = state.graphs.read().unwrap();
+        graphs.len() == 0 && graphs.retirement.is_idle()
+    };
+    if unowned {
+        exit();
+    }
+    unowned
+}
+
 /// Whether one graph root contains the other: two Stores and hosts must
 /// never hold the same page files.
 pub(crate) fn roots_overlap(a: &Path, b: &Path) -> bool {

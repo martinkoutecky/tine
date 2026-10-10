@@ -209,7 +209,10 @@ Store, and one already inside finishes first. Lock order: registry, host
 gate, retirement map, host state; nothing under the gate takes the registry
 (`src-tauri/src/host_slot_guard_tests.rs`). The last
 window's exit waits for every retirement, 30 s at most; past that Tine
-keeps running with the host alive (the stuck-graph window is P2b). Proof
+keeps running with the host alive (the stuck-graph window is P2b). The exit
+is then decided under the open lock (`graph_load`): a graph bound or
+adopted meanwhile, or an open still inside its load, cancels it
+(`state::exit_when_unowned`). Proof
 `src-tauri/src/host_retirement.rs` tests,
 `crates/tine-store/src/page_host/binding_stop_tests.rs` (`an_orphan_stop_*`,
 `retargeted_mail_reaches_the_adopting_window`).
