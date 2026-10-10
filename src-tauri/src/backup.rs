@@ -1358,7 +1358,7 @@ mod tests {
     /// which runs between files. A `.partial-*` manifest also keeps its blobs.
     #[test]
     fn a_prune_racing_a_snapshot_never_deletes_its_blobs() {
-        use std::sync::atomic::{AtomicBool, AtomicUsize};
+        use std::sync::atomic::AtomicUsize;
         let root = scratch("backup-gc-race");
         let graph = root.join("graph");
         let base = root.join("backups");
@@ -1367,7 +1367,7 @@ mod tests {
         let source = BackupSource::from_store(&store, &graph).unwrap();
         let (entered, release) = (std::sync::Barrier::new(2), std::sync::Barrier::new(2));
         let calls = AtomicUsize::new(0);
-        let pruned = AtomicBool::new(false);
+        let (pruned_tx, pruned_rx) = std::sync::mpsc::channel();
         std::thread::scope(|scope| {
             let snapshot = scope.spawn(|| {
                 let _worker = backup_work();
@@ -1383,13 +1383,15 @@ mod tests {
             entered.wait();
             let written = std::fs::read_dir(base.join(BLOB_DIR)).unwrap().count();
             assert!(written >= 1, "the snapshot has written a blob");
-            let prune = scope.spawn(|| {
-                prune_now(&base, 1);
-                pruned.store(true, Ordering::SeqCst);
+            let base = &base;
+            let prune = scope.spawn(move || {
+                prune_now(base, 1);
+                let _ = pruned_tx.send(());
             });
-            std::thread::sleep(std::time::Duration::from_millis(200));
             // Observe, release, then assert, so a failure cannot hang the test.
-            let pruned_early = pruned.load(Ordering::SeqCst);
+            let pruned_early = pruned_rx
+                .recv_timeout(std::time::Duration::from_millis(200))
+                .is_ok();
             let blobs_now = std::fs::read_dir(base.join(BLOB_DIR)).unwrap().count();
             release.wait();
             assert!(snapshot.join().unwrap().failure.is_none());
@@ -1454,8 +1456,6 @@ mod tests {
             out
         };
         let run = |label: &str| {
-            // Snapshot names have one-second resolution.
-            std::thread::sleep(std::time::Duration::from_millis(1100));
             let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
             let source = BackupSource::from_store(&store, &graph).unwrap();
             let before = files_under(&base);
