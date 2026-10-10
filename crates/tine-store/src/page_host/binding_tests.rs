@@ -2,7 +2,7 @@
 //! its command path against a real Store with the driver thread running.
 use super::*;
 use crate::page_host::model_fs::ModelFs;
-use crate::page_host::tests::{open as open_page, risk, saved, send, text};
+use crate::page_host::tests::{edit, open as open_page, risk, saved, send, text};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -1087,6 +1087,94 @@ fn a3_page_mail_names_the_page_from_its_buffer() {
         .unwrap()
         .unwrap();
     assert_eq!(dto.name, "Fresh", "A3");
+    live.host.stop();
+}
+
+/// The binding notice the last delivery mailed for `page`, if any.
+fn mailed(delivery: &Delivery, page: &str) -> Option<BindingNotice> {
+    delivery
+        .mail
+        .iter()
+        .rev()
+        .find(|(key, ..)| key == page)
+        .map(|(.., facts)| facts.binding.clone())
+}
+
+/// Run `page`'s save to its end, collecting after each step.
+fn save_through(u: &mut Unit, page: &str, twin_at_rename: bool) -> Option<BindingNotice> {
+    let mut notice = None;
+    assert_eq!(u.progress.host.start_save(page), Disposition::Pending);
+    while let Some(job) = &u.progress.host.job {
+        if twin_at_rename && job.phase == SavePhase::Rename {
+            u.progress.host.fs.twins.insert(page.into(), "c.org".into());
+        }
+        u.progress.host.advance_save(0);
+        notice = mailed(&u.collect(), page).or(notice);
+    }
+    notice
+}
+
+/// A2 (REVIEW-3a): a twin reaches the window as a typed notice naming the
+/// other file, whether it failed the creating save (before Check) or
+/// appeared beside it (after the rename, beside its Published, which it
+/// neither invents nor cancels); a later save's publication clears it.
+#[test]
+fn a2_a_twin_is_a_binding_notice_until_a_later_save_publishes() {
+    for after_rename in [false, true] {
+        let mut u = Unit::new();
+        u.progress.with_host(|h| {
+            open_page(h, "c.md");
+            edit(h, "c.md", "created");
+        });
+        u.collect();
+        if !after_rename {
+            u.progress
+                .host
+                .fs
+                .twins
+                .insert("c.md".into(), "c.org".into());
+        }
+        let notice = save_through(&mut u, "c.md", after_rename).unwrap();
+        assert_eq!(notice.twin.as_deref(), Some("c.org"), "A2: {after_rename}");
+        assert_eq!(u.progress.host.pages["c.md"].clean(), after_rename);
+        u.progress.host.fs.twins.clear();
+        if after_rename {
+            u.progress.with_host(|h| edit(h, "c.md", "again"));
+            u.collect();
+        }
+        let notice = save_through(&mut u, "c.md", false).unwrap();
+        assert!(u.progress.host.pages["c.md"].clean());
+        assert_eq!(notice.twin, None, "A2: a later publication clears it");
+    }
+}
+
+/// A2 (REVIEW-3a), schedule (c): a retained writer releases and the
+/// release's observation fails three times running: the window gets a
+/// typed notice, and it clears once the read succeeds.
+#[test]
+fn a2_a_failing_release_observation_is_a_notice_that_clears_on_recovery() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, _) = live.open("pages/a.md");
+    let reservation = live
+        .host
+        .reserve(|| vec![PageId::from("pages/a.md")], Input::Flush)
+        .unwrap();
+    live.transaction(&key, "- one\n", "- t\n");
+    live.faults(super::io::Phase::Read, 1_000_000);
+    live.host.release(reservation);
+    live.wait(&key, "the third failed read is reported", |mail| {
+        mail.notice.observe_error
+    });
+    live.host.driver.shared.with_state(|state| {
+        state
+            .progress
+            .host
+            .fs
+            .faults
+            .remove(&super::io::Phase::Read);
+    });
+    let mail = live.wait(&key, "the report clears", |mail| !mail.notice.observe_error);
+    assert!(mail.page.is_some_and(|p| p.disk == Some(token("- t\n"))));
     live.host.stop();
 }
 

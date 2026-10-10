@@ -101,6 +101,7 @@ impl<F: HostIo, C: Clock> State<F, C> {
                 _ => {
                     self.observe.remove(&key);
                     self.book.handover.remove(&key);
+                    self.book.observe_errors.remove(&key);
                     return Disposition::Applied;
                 }
             }

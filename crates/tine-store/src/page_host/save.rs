@@ -125,6 +125,8 @@ impl<F: HostIo> Host<F> {
                             self.events.push(Event::Twin {
                                 page: key.clone(),
                                 existing,
+                                version: job.version,
+                                saved: false,
                             });
                             Some(Outcome::Failed)
                         }
@@ -156,6 +158,8 @@ impl<F: HostIo> Host<F> {
                         self.events.push(Event::Twin {
                             page: key.clone(),
                             existing,
+                            version: job.version,
+                            saved: true,
                         });
                     }
                     job.phase = SavePhase::DirectorySync;

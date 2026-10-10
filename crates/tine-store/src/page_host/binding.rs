@@ -246,6 +246,14 @@ pub struct MailNotice {
     /// The page's index publication failed a third time; it keeps retrying
     /// (§5). Search and references may lag the file meanwhile.
     pub index_error: bool,
+    /// The page's file could not be read three times running after a
+    /// watcher change or a retained writer's release; the driver keeps
+    /// retrying, and the notice clears once a read succeeds (§5, §7).
+    pub observe_error: bool,
+    /// Another page file claims this page's name (the alternate-extension
+    /// twin, §3.2, Q9): it failed the page's creation, or appeared beside
+    /// it. Cleared once a later save publishes.
+    pub twin: Option<String>,
 }
 
 /// `page-mail` (§3.3). The window checks `binding` and `generation` before
@@ -298,8 +306,17 @@ pub(super) struct MailFacts {
     pub refused: Option<Refusal>,
     /// The key's current spelling, to parse its bytes as that file.
     pub spelling: String,
+    /// The binding's own notices (§5, Q9).
+    pub binding: BindingNotice,
+}
+
+/// The page notices the binding keeps beside the host's (A2, REVIEW-3a).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct BindingNotice {
     /// The page's index publication failed a third time (§5).
     pub index_error: bool,
+    pub observe_error: bool,
+    pub twin: Option<String>,
 }
 
 /// An index publication the consumer owes (§5): a held key's disk state,
@@ -373,7 +390,7 @@ pub(super) struct Book {
     /// Edit kinds taken since the page's last publication (OG-RULES Rule 8).
     kinds: BTreeMap<PageKey, Vec<EditKind>>,
     /// The notice each subscribed page's window last received.
-    notices: BTreeMap<PageKey, (Notice, bool)>,
+    notices: BTreeMap<PageKey, (Notice, BindingNotice)>,
     /// Keys whose index the publication consumer owns (§5): from Open (or
     /// the host taking the key on) until actual eviction (Q6).
     pub owned: BTreeSet<PageKey>,
@@ -381,6 +398,10 @@ pub(super) struct Book {
     /// own save version the index has applied (§4.4).
     index: BTreeMap<PageKey, (Text, u64)>,
     retry: BTreeMap<PageKey, Retry>,
+    /// Keys whose file read failed a third time, until a read succeeds.
+    pub observe_errors: BTreeSet<PageKey>,
+    /// Each key's last twin: (existing file, save version, after the rename).
+    twins: BTreeMap<PageKey, (String, u64, bool)>,
     /// Released keys whose release observation has not yet succeeded
     /// (V2, REVIEW-3a): the retained transaction's index stands until the
     /// host has read its bytes, so older publications keep waiting.
@@ -441,6 +462,14 @@ impl Book {
                     if let Some(kinds) = self.kinds.remove(page) {
                         delivery.kinds.push((page.clone(), kinds));
                     }
+                    // A twin that failed a save clears once one publishes; a
+                    // twin found after a rename stays past that save's own
+                    // publication (Q9: it neither invents nor cancels it).
+                    if self.twins.get(page).is_some_and(|(_, at, saved)| {
+                        *version > *at || (!*saved && *version == *at)
+                    }) {
+                        self.twins.remove(page);
+                    }
                     let handoff = self.versions.get_mut(page).and_then(|v| v.remove(version));
                     let document = handoff.filter(|h| h.bytes == *bytes).map(|h| h.document);
                     self.retry.remove(page);
@@ -463,6 +492,18 @@ impl Book {
                 Event::Refused { page, id, reason } => {
                     refused.insert((page.clone(), *id), *reason);
                 }
+                Event::Twin {
+                    page,
+                    existing,
+                    version,
+                    saved,
+                } => {
+                    self.twins
+                        .insert(page.clone(), (existing.clone(), *version, *saved));
+                }
+                Event::ObserveError(page) => {
+                    self.observe_errors.insert(page.clone());
+                }
                 _ => {}
             }
         }
@@ -478,6 +519,8 @@ impl Book {
         for key in self.evictable(&progress.host, &delivery.publications) {
             self.owned.remove(&key);
             self.index.remove(&key);
+            self.twins.remove(&key);
+            self.observe_errors.remove(&key);
             delivery
                 .evicted
                 .push((key.clone(), progress.host.fs.spelling(&key)));
@@ -521,7 +564,7 @@ impl Book {
                     content: !exact,
                     refused,
                     spelling: String::new(),
-                    index_error: false,
+                    binding: BindingNotice::default(),
                 },
             ));
         }
@@ -540,7 +583,7 @@ impl Book {
             .cloned()
             .collect();
         for page in quiet {
-            let notice = (progress.notice(&page), self.index_error(&page));
+            let notice = (progress.notice(&page), self.binding_notice(&page));
             if self.notices.get(&page) != Some(&notice) {
                 delivery.mail.push((
                     page.clone(),
@@ -554,7 +597,7 @@ impl Book {
                         content: false,
                         refused: None,
                         spelling: String::new(),
-                        index_error: false,
+                        binding: BindingNotice::default(),
                     },
                 ));
             }
@@ -562,9 +605,9 @@ impl Book {
         for (page, _, facts) in &mut delivery.mail {
             facts.notice = progress.notice(page);
             facts.spelling = progress.host.fs.spelling(page);
-            facts.index_error = self.index_error(page);
+            facts.binding = self.binding_notice(page);
             self.notices
-                .insert(page.clone(), (facts.notice.clone(), facts.index_error));
+                .insert(page.clone(), (facts.notice.clone(), facts.binding.clone()));
         }
         let subscribed = &progress.host.subscriptions;
         self.notices.retain(|page, _| subscribed.contains(page));
@@ -655,6 +698,14 @@ impl Book {
             Owner::Consumer
         } else {
             Owner::Watcher
+        }
+    }
+
+    fn binding_notice(&self, key: &str) -> BindingNotice {
+        BindingNotice {
+            index_error: self.index_error(key),
+            observe_error: self.observe_errors.contains(key),
+            twin: self.twins.get(key).map(|(existing, ..)| existing.clone()),
         }
     }
 
@@ -835,7 +886,9 @@ fn page_mail(store: &Store, binding: u64, key: PageKey, mail: Mail, facts: MailF
             draft_error: facts.notice.draft_error,
             conflict_reported: facts.notice.conflict_reported,
             custody_error: !facts.notice.custody_error.is_empty(),
-            index_error: facts.index_error,
+            index_error: facts.binding.index_error,
+            observe_error: facts.binding.observe_error,
+            twin: facts.binding.twin,
         },
     }
 }

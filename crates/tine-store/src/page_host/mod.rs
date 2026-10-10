@@ -265,6 +265,10 @@ enum Event {
     Twin {
         page: PageKey,
         existing: String,
+        /// The save's version.
+        version: u64,
+        /// False: the twin failed the save; true: found after the rename.
+        saved: bool,
     },
 }
 
