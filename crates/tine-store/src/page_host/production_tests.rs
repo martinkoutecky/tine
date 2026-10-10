@@ -33,7 +33,7 @@ impl Fixture {
         fs::create_dir_all(&trash).unwrap();
         fs::write(graph.join("a.md"), b"A").unwrap();
         fs::write(graph.join("b.md"), b"B").unwrap();
-        let io = ProductionIo::new(&graph, &app, "test-graph", &trash).unwrap();
+        let io = ProductionIo::attach(&graph, &app, "test-graph", &trash);
         let locks = ["a.md", "b.md", "c.md"]
             .into_iter()
             .map(|key| (key.into(), Arc::new(Mutex::new(()))))
@@ -111,8 +111,7 @@ impl Fixture {
 
     fn restart(&mut self) {
         self.host.stop();
-        self.host.fs =
-            ProductionIo::new(&self.graph, &self.app, "test-graph", &self.trash).unwrap();
+        self.host.fs = ProductionIo::attach(&self.graph, &self.app, "test-graph", &self.trash);
         assert!(matches!(
             self.host.launch(),
             Disposition::Applied | Disposition::Pending
@@ -502,7 +501,7 @@ fn delete_through_move(f: &mut Fixture) {
 fn relaunch(f: &mut Fixture) -> Vec<PathBuf> {
     f.host.stop();
     let faults = std::mem::take(&mut f.host.fs.faults);
-    f.host.fs = ProductionIo::new(&f.graph, &f.app, "test-graph", &f.trash).unwrap();
+    f.host.fs = ProductionIo::attach(&f.graph, &f.app, "test-graph", &f.trash);
     f.host.fs.faults = faults;
     #[cfg(feature = "test-faults")]
     crate::directory_durability::take_synced_directories();
@@ -1095,7 +1094,7 @@ fn the_adapter_never_lists_the_graph_or_its_trash() {
     assert_eq!(
         listings,
         [
-            "for entry in fs::read_dir(&drafts)? {",
+            "for entry in fs::read_dir(drafts)? {",
             "for entry in fs::read_dir(&dir).map_err(report)? {"
         ],
         "only app-data directories are listed (REVIEW-A3 R1)"
@@ -1388,7 +1387,7 @@ fn windows_marker_publish_under_a_long_app_data_root() {
     fs::create_dir_all(&trash).unwrap();
     fs::create_dir_all(&app).unwrap();
     fs::write(graph.join("a.md"), b"A").unwrap();
-    let io = ProductionIo::new(&graph, &app, "test-graph", &trash).unwrap();
+    let io = ProductionIo::attach(&graph, &app, "test-graph", &trash);
     let locks = ["a.md"]
         .into_iter()
         .map(|key| (key.into(), Arc::new(Mutex::new(()))))
@@ -1420,7 +1419,7 @@ fn r2_listing_error_never_blocks_launch() {
     let dir = custody_dir(&f);
     let _ = fs::remove_dir(&dir);
     fs::write(&dir, b"not a directory").unwrap();
-    f.host.fs = ProductionIo::new(&f.graph, &f.app, "test-graph", &f.trash).unwrap();
+    f.host.fs = ProductionIo::attach(&f.graph, &f.app, "test-graph", &f.trash);
     assert_eq!(f.host.launch(), Disposition::Applied);
     assert!(f.host.alive);
     assert!(dir.is_dir());
@@ -1439,7 +1438,7 @@ fn r2_listing_error_never_blocks_launch() {
     // The reviewer's order: the swap happens after the adapter's scan, so
     // launch's listing meets it; the graph still opens, custody unknown.
     f.host.stop();
-    f.host.fs = ProductionIo::new(&f.graph, &f.app, "test-graph", &f.trash).unwrap();
+    f.host.fs = ProductionIo::attach(&f.graph, &f.app, "test-graph", &f.trash);
     fs::remove_dir(&dir).unwrap();
     fs::write(&dir, b"swapped").unwrap();
     assert_eq!(f.host.launch(), Disposition::Applied);
@@ -1455,7 +1454,7 @@ fn r2_listing_failure_opens_the_graph_until_a_retry_settles_the_debt() {
     let mut f = Fixture::new();
     delete_through_move(&mut f);
     f.host.stop();
-    f.host.fs = ProductionIo::new(&f.graph, &f.app, "test-graph", &f.trash).unwrap();
+    f.host.fs = ProductionIo::attach(&f.graph, &f.app, "test-graph", &f.trash);
     f.host
         .fs
         .faults
@@ -1537,7 +1536,7 @@ fn r2_marker_temp_crash_cuts_do_not_accumulate() {
 /// A new binding over the same graph and app data (STEP3 §2): no keys
 /// until the binding registers them.
 fn binding(f: &Fixture) -> Host<ProductionIo> {
-    let io = ProductionIo::new(&f.graph, &f.app, "test-graph", &f.trash).unwrap();
+    let io = ProductionIo::attach(&f.graph, &f.app, "test-graph", &f.trash);
     Host::new(io, BTreeMap::new())
 }
 
@@ -1799,4 +1798,200 @@ fn the_reverse_spelling_map_follows_respell_and_return() {
     assert_eq!(fs.respelled("X.md").as_deref(), Some("b.md"));
     fs.spell("b.md", "b.md");
     assert_eq!(fs.respelled("X.md").as_deref(), None);
+}
+
+/// Every file directly in the drafts directory, with its bytes.
+fn draft_dir(f: &Fixture) -> BTreeMap<String, Vec<u8>> {
+    fs::read_dir(f.app.join("drafts-v2/test-graph"))
+        .unwrap()
+        .map(Result::unwrap)
+        .filter(|entry| entry.file_type().unwrap().is_file())
+        .map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            (name, fs::read(entry.path()).unwrap())
+        })
+        .collect()
+}
+
+/// Durable page vehicles for a.md, one per (wseq, bytes).
+fn vehicles(f: &mut Fixture, records: &[(u64, &str)]) {
+    for &(seq, bytes) in records {
+        let mut vehicle = Vehicle::write(drafts::page_name("a.md"), &[record(seq, bytes)]);
+        for _ in 0..3 {
+            vehicle.advance(&mut f.host.fs);
+        }
+        assert_eq!(vehicle.stage, Stage::Present);
+    }
+}
+
+/// A process restart whose launch must open the graph whatever draft I/O
+/// does (plan v3 §4, B-Q1).
+fn start_over(f: &mut Fixture, faults: &[(Phase, io::ErrorKind)]) {
+    f.host.stop();
+    f.host.fs = ProductionIo::attach(&f.graph, &f.app, "test-graph", &f.trash);
+    for &(phase, kind) in faults {
+        f.host.fs.faults.entry(phase).or_default().push_back(kind);
+    }
+    assert!(matches!(
+        f.host.launch(),
+        Disposition::Applied | Disposition::Pending
+    ));
+    assert!(f.host.alive, "B-Q1: the host always starts");
+    f.drain();
+}
+
+/// A dirty page put at risk and its draft attempted: the draft error
+/// events it caused.
+fn attempt_draft(f: &mut Fixture, page: &str, bytes: &str) -> usize {
+    f.edit(page, bytes);
+    f.host.switch_request();
+    let start = f.host.events.len();
+    if f.host.begin_draft(page) == Disposition::Pending {
+        f.drain();
+    }
+    f.host.switch_abort();
+    f.host.events[start..]
+        .iter()
+        .filter(|event| matches!(event, Event::DraftError { .. }))
+        .count()
+}
+
+/// B-Q1 creation stage (M1): a drafts directory that cannot be created
+/// leaves draft I/O down. The graph opens and saves; no draft effect
+/// touches the filesystem; Retry brings draft I/O up once it can.
+#[test]
+fn b_q1_a_drafts_directory_that_cannot_be_created_opens_the_graph_without_drafts() {
+    let mut f = Fixture::new();
+    let dir = f.app.join("drafts-v2/test-graph");
+    fs::remove_dir_all(&dir).unwrap();
+    fs::write(&dir, b"in the way").unwrap();
+    start_over(&mut f, &[]);
+    let status = f.host.fs.draft_status();
+    assert!(status.unavailable.is_some(), "{status:?}");
+    assert_eq!(attempt_draft(&mut f, "a.md", "mine"), 1);
+    assert_eq!(f.save("a.md"), Outcome::Published, "saves proceed");
+    assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"mine");
+    assert_eq!(fs::read(&dir).unwrap(), b"in the way");
+    assert!(f.host.drafts_retry().is_err());
+    fs::remove_file(&dir).unwrap();
+    assert_eq!(f.host.drafts_retry(), Ok(Disposition::Applied));
+    assert_eq!(f.host.fs.draft_status(), DraftStatus::default());
+    assert_eq!(attempt_draft(&mut f, "b.md", "drafted"), 0);
+    assert_eq!(draft_dir(&f).len(), 1, "draft I/O is up again");
+}
+
+/// B-Q1 enumeration stage (M1): an unlistable drafts directory recovers
+/// nothing and reads no vehicle; every vehicle in it keeps its bytes, and
+/// the next launch that can list them recovers them. Recovery into a
+/// running host is not specified, so a Retry that finds vehicles leaves
+/// them to that launch.
+#[cfg(unix)]
+#[test]
+fn b_q1_an_unlistable_drafts_directory_touches_no_vehicle_until_a_launch_lists_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = Fixture::new();
+    vehicles(&mut f, &[(1, "older"), (2, "newest")]);
+    let before = draft_dir(&f);
+    let dir = f.app.join("drafts-v2/test-graph");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o300)).unwrap();
+    start_over(&mut f, &[]);
+    assert!(f.host.fs.draft_status().unavailable.is_some());
+    assert!(!f.host.pages.contains_key("a.md"), "nothing recovered");
+    assert_eq!(attempt_draft(&mut f, "b.md", "mine"), 1);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(draft_dir(&f), before, "no vehicle touched");
+    let retry = f.host.drafts_retry().unwrap_err();
+    assert!(retry.contains("2 draft file(s)"), "{retry}");
+    assert_eq!(draft_dir(&f), before, "a Retry touches none either");
+    start_over(&mut f, &[]);
+    assert_eq!(f.host.fs.draft_status(), DraftStatus::default());
+    assert_eq!(
+        f.host.pages["a.md"].buf.as_deref(),
+        Some(b"newest".as_slice())
+    );
+}
+
+/// B-Q1 quarantine stage: a vehicle that cannot be quarantined stays in
+/// place, is never touched, and is named; the graph opens and recovers the
+/// rest. Retry quarantines it.
+#[test]
+fn b_q1_a_failed_quarantine_leaves_the_vehicle_and_recovers_the_rest() {
+    let mut f = Fixture::new();
+    vehicles(&mut f, &[(1, "newest")]);
+    let dir = f.app.join("drafts-v2/test-graph");
+    let corrupt = b"unrecoverable bytes";
+    fs::write(dir.join("p-broken.draft"), corrupt).unwrap();
+    crate::no_replace::MOVE_ERRORS
+        .with(|errors| *errors.borrow_mut() = [io::ErrorKind::PermissionDenied].into());
+    start_over(&mut f, &[]);
+    assert_eq!(
+        f.host.pages["a.md"].buf.as_deref(),
+        Some(b"newest".as_slice())
+    );
+    let status = f.host.fs.draft_status();
+    assert_eq!(status.unavailable, None);
+    assert_eq!(status.unreadable, ["p-broken.draft"]);
+    assert_eq!(fs::read(dir.join("p-broken.draft")).unwrap(), corrupt);
+    assert!(f.host.fs.draft_unlink("p-broken.draft").is_err());
+    assert!(dir.join("p-broken.draft").exists(), "untouchable");
+    assert_eq!(f.host.drafts_retry(), Ok(Disposition::Applied));
+    assert_eq!(f.host.fs.draft_status(), DraftStatus::default());
+    assert!(!dir.join("p-broken.draft").exists());
+    let kept: Vec<_> = fs::read_dir(dir.join("unreadable")).unwrap().collect();
+    assert_eq!(fs::read(kept[0].as_ref().unwrap().path()).unwrap(), corrupt);
+}
+
+/// B-Q1 sync stage (M2): launch could not make the recovered census
+/// durable. The recovered buffer stays held, typed and at risk; no vehicle
+/// is retired or rewritten while draft I/O is down, and the census claims
+/// no durability. Retry (S3) re-probes in place: newer live input is never
+/// replaced, and the cleanup launch skipped runs.
+#[test]
+fn b_q1_m2_an_unsynced_census_retires_nothing_until_retry_keeps_newer_input() {
+    let mut f = Fixture::new();
+    vehicles(&mut f, &[(1, "older"), (2, "newest")]);
+    let before = draft_dir(&f);
+    start_over(&mut f, &[(Phase::DraftSync, io::ErrorKind::Other)]);
+    let page = &f.host.pages["a.md"];
+    assert_eq!(page.buf.as_deref(), Some(b"newest".as_slice()));
+    assert!(page.typed && page.risk && !page.conflict);
+    assert!(f.host.fs.draft_status().unavailable.is_some());
+    assert!(
+        f.host.fs.draft_files(true).is_empty(),
+        "M2: no durability claimed"
+    );
+    assert!(f.host.worker.is_none(), "M2: no retirement before a sync");
+    assert_eq!(attempt_draft(&mut f, "a.md", "newer"), 1);
+    assert_eq!(draft_dir(&f), before, "nothing retired or rewritten");
+    assert_eq!(f.host.begin_draft("a.md"), Disposition::Pending);
+    assert_eq!(
+        f.host.drafts_retry(),
+        Ok(Disposition::Waiting),
+        "a Retry waits for the draft effect in flight"
+    );
+    assert_eq!(draft_dir(&f), before);
+    f.drain();
+    f.host
+        .fs
+        .faults
+        .insert(Phase::DraftSync, [io::ErrorKind::Other].into());
+    assert!(f.host.drafts_retry().is_err());
+    assert_eq!(draft_dir(&f), before);
+    assert_eq!(f.host.drafts_retry(), Ok(Disposition::Pending));
+    f.drain();
+    assert_eq!(f.host.fs.draft_status(), DraftStatus::default());
+    assert_eq!(
+        f.host.pages["a.md"].buf.as_deref(),
+        Some(b"newer".as_slice())
+    );
+    assert_eq!(draft_dir(&f).len(), 1, "the superseded vehicle retired");
+    assert_eq!(attempt_draft(&mut f, "a.md", "newest typed"), 0);
+    let logical = f.host.logical_drafts();
+    assert_eq!(
+        logical["a.md"].bytes.as_deref(),
+        Some(b"newest typed".as_slice())
+    );
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"newest typed");
 }

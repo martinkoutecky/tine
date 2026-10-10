@@ -29,7 +29,7 @@ mod tests;
 mod writer_census_tests;
 
 use drafts::{Record, Stage, Vehicle};
-use io::{ErrorKind, HostIo, IoFailure, Witness};
+use io::{DraftStatus, ErrorKind, HostIo, IoFailure, Witness};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -1237,9 +1237,9 @@ impl<F: HostIo> Host<F> {
         }
         for name in &scan.unreadable {
             self.events.push(Event::Unreadable(name.clone()));
-            if self.fs.quarantine(name).is_err() {
-                return Disposition::Pending;
-            }
+            // One that fails stays in place and is never touched (§4): the
+            // graph opens anyway, and `draft_status` names it.
+            let _ = self.fs.quarantine(name);
         }
         self.version = scan.max_version;
         self.wseq = scan.max_wseq;
@@ -1275,21 +1275,57 @@ impl<F: HostIo> Host<F> {
                 );
             }
         });
-        // Make every readable recovered entry durable before retirement. This
-        // is essential for process-crash survivors not previously directory synced.
-        if !matches!(self.fs.draft_sync(), Ok(Witness::Durable)) {
-            return Disposition::Pending;
+        // Make every readable recovered entry durable before retirement.
+        // This is essential for process-crash survivors not previously
+        // directory synced. When that fails, the recovered buffers stay held
+        // at risk and draft I/O goes down, so nothing retires (M2).
+        let synced = matches!(self.fs.draft_sync(), Ok(Witness::Durable));
+        if !synced {
+            self.fs.drafts_unsynced();
         }
-        self.drafts = scan.files.clone();
+        self.drafts = drafts::scan(self.fs.draft_files(true)).files;
         self.fs.draft_changes();
+        self.alive = true;
+        if synced {
+            self.tidy_drafts()
+        } else {
+            Disposition::Applied
+        }
+    }
+
+    /// Retry (S3): re-probe down draft I/O in place, keeping the census,
+    /// the vehicles and every page, then run the cleanup launch skipped:
+    /// quarantine what it left in place, and tidy. The error says why draft
+    /// I/O is still down.
+    pub(super) fn drafts_retry(&mut self) -> Result<Disposition, String> {
+        let status = self.fs.draft_status();
+        if status == DraftStatus::default() {
+            return Ok(Disposition::Applied);
+        }
+        if self.worker.is_some() {
+            return Ok(Disposition::Waiting);
+        }
+        self.fs.drafts_reprobe()?;
+        for name in &status.unreadable {
+            let _ = self.fs.quarantine(name);
+        }
+        self.sync_drafts();
+        Ok(self.tidy_drafts())
+    }
+
+    /// Launch's representation cleanup over the durable index (§4):
+    /// explode operation vehicles into page copies and retire superseded
+    /// vehicles. Only once the census is durable (M2).
+    fn tidy_drafts(&mut self) -> Disposition {
+        let logical = drafts::logical(self.drafts.values());
         let mut tasks = VecDeque::new();
-        for (name, records) in &scan.files {
+        for (name, records) in &self.drafts {
             if name.starts_with("op-") {
                 let mut superseded = vec![];
                 for record in records {
                     let copy = drafts::page_name(&record.page);
                     tasks.push_back(Vehicle::write(copy.clone(), std::slice::from_ref(record)));
-                    if record.wseq < scan.logical[&record.page].wseq {
+                    if record.wseq < logical[&record.page].wseq {
                         superseded.push(Vehicle::remove(copy));
                     }
                 }
@@ -1297,38 +1333,36 @@ impl<F: HostIo> Host<F> {
                 tasks.extend(superseded);
             }
         }
-        for (key, record) in &scan.logical {
+        for (key, record) in &logical {
             tasks.extend(
-                drafts::older_vehicles(&scan.files, key, Some(record.wseq))
+                drafts::older_vehicles(&self.drafts, key, Some(record.wseq))
                     .into_iter()
                     .map(Vehicle::remove),
             );
         }
-        self.alive = true;
-        if let Some(task) = tasks.pop_front() {
-            let records = task
-                .bytes
-                .as_ref()
-                .and_then(|b| drafts::decode(b).ok())
-                .unwrap_or_default();
-            self.worker = Some(DraftWorker {
-                effect: task.name.clone(),
-                refresh: None,
-                pages: keys,
-                before: scan.logical,
-                application: Some(Application::Representation),
-                retry_copy: task.bytes.is_some(),
-                records,
-                task,
-                remaining: tasks,
-                allocator: true,
-                tidied: false,
-                failures: 0,
-                recover_notice: true,
-            });
-            Disposition::Pending
-        } else {
-            Disposition::Applied
-        }
+        let Some(task) = tasks.pop_front() else {
+            return Disposition::Applied;
+        };
+        let records = task
+            .bytes
+            .as_ref()
+            .and_then(|b| drafts::decode(b).ok())
+            .unwrap_or_default();
+        self.worker = Some(DraftWorker {
+            effect: task.name.clone(),
+            refresh: None,
+            pages: logical.keys().cloned().collect(),
+            before: logical,
+            application: Some(Application::Representation),
+            retry_copy: task.bytes.is_some(),
+            records,
+            task,
+            remaining: tasks,
+            allocator: true,
+            tidied: false,
+            failures: 0,
+            recover_notice: true,
+        });
+        Disposition::Pending
     }
 }

@@ -715,6 +715,51 @@ fn launch_takes_its_locks_before_quarantining_an_unreadable_vehicle() {
     assert_eq!(h.pages["a.md"].buf, text("one"));
 }
 
+/// M2 (plan v3 §4) on the model filesystem: process-crash survivors that
+/// launch cannot sync stay buffered at risk and unretired, every draft
+/// effect fails without touching a file, and the census claims no
+/// durability. A Retry's sync makes them durable and retires the older.
+#[test]
+fn m2_an_unsynced_launch_retires_nothing_until_a_retry_syncs_the_census() {
+    let mut h = host();
+    let mut names = vec![];
+    for (wseq, bytes) in [(1, "older"), (2, "newest")] {
+        let record = Record {
+            page: "a.md".into(),
+            wseq,
+            version: wseq,
+            base: Base::Unknown,
+            bytes: text(bytes),
+        };
+        let name = drafts::page_name("a.md");
+        h.fs.draft_temp(&name, &drafts::encode(&[record])).unwrap();
+        h.fs.draft_rename(&name).unwrap();
+        names.push(name);
+    }
+    h.stop();
+    h.fs.crash();
+    h.fs.inject(Phase::DraftSync, [Fault::Before]);
+    h.held = Some(BTreeSet::from(["a.md".into()]));
+    assert_eq!(h.launch(), Disposition::Applied);
+    assert!(h.alive && h.worker.is_none());
+    assert!(h.fs.draft_status().unavailable.is_some());
+    assert!(h.pages["a.md"].risk && h.pages["a.md"].typed);
+    assert_eq!(h.pages["a.md"].buf, text("newest"));
+    assert!(h.fs.draft_files(true).is_empty());
+    let files = h.fs.files.clone();
+    assert!(h.fs.draft_unlink(&names[0]).is_err());
+    assert!(h.fs.draft_temp("p-new.draft", b"x").is_err());
+    assert_eq!(h.fs.files, files);
+    assert_eq!(h.drafts_retry(), Ok(Disposition::Pending));
+    while h.worker.is_some() {
+        h.advance_draft();
+    }
+    assert_eq!(h.fs.draft_status(), DraftStatus::default());
+    let durable: Vec<_> = h.fs.draft_files(true).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(durable, [names[1].clone()]);
+    assert_eq!(h.pages["a.md"].buf, text("newest"));
+}
+
 #[test]
 fn unreadable_files_are_preserved_and_equal_wseq_disagreement_is_quarantined() {
     let mut h = host();
@@ -927,6 +972,7 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
             "binding_publication.rs",
             include_str!("binding_publication.rs"),
         ),
+        ("binding_launch.rs", include_str!("binding_launch.rs")),
         ("draft_worker.rs", include_str!("draft_worker.rs")),
         ("drafts.rs", include_str!("drafts.rs")),
         ("driver.rs", include_str!("driver.rs")),

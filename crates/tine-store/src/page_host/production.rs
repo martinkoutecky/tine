@@ -3,7 +3,7 @@
 //! The two physical censuses retain observed bytes and successful metadata
 //! witnesses, not logical drafts. Only drafts::scan selects logical records.
 //! Reconstruct this adapter after a process crash to enumerate actual survivors.
-use super::io::{ErrorKind, HostIo, IoFailure, IoResult, MoveResult, Witness};
+use super::io::{DraftStatus, ErrorKind, HostIo, IoFailure, IoResult, MoveResult, Phase, Witness};
 use super::Text;
 use crate::atomic_file::PreparedWrite;
 use crate::directory_durability::{self as durability, DirectoryWitness};
@@ -38,6 +38,12 @@ pub(super) struct ProductionIo {
     /// The graph whose self-write markers a save sets before its file step
     /// (STEP3 §5): the watcher's echo handling for paths it still owns.
     pub(super) marks: Option<std::sync::Arc<crate::model::Graph>>,
+    /// Draft I/O is down (plan v3 §4, B-Q1): every draft effect fails
+    /// without touching the filesystem until a re-probe succeeds.
+    down: Option<Down>,
+    /// Unreadable vehicles launch could not quarantine: left in place, and
+    /// every later effect on one but Retry's quarantine fails untouched (§4).
+    untouchable: std::collections::BTreeSet<String>,
     #[cfg(test)]
     pub faults: BTreeMap<super::io::Phase, std::collections::VecDeque<io::ErrorKind>>,
 }
@@ -46,43 +52,12 @@ impl ProductionIo {
     /// `trash` is the existing typed transaction-trash directory chosen by the
     /// store (pages/journals/conflicts). Step 3 supplies that classification.
     /// Graph/page keys and graph ID are already resolved by the store boundary.
-    pub(super) fn new(
-        graph: &Path,
-        app_data: &Path,
-        graph_id: &str,
-        trash: &Path,
-    ) -> io::Result<Self> {
+    /// Never fails (B-Q1): a drafts directory that cannot be created or
+    /// listed leaves draft I/O down, the census unknown (M1).
+    pub(super) fn attach(graph: &Path, app_data: &Path, graph_id: &str, trash: &Path) -> Self {
         let drafts = app_data.join("drafts-v2").join(graph_id);
-        // The custody directory is not created here: a malformed one must not
-        // stop the graph from opening (REVIEW-2b-r2 V1). The listing creates it.
-        durability::create_dir_all_with_sync(&drafts, durability::sync_private_directory)?;
-        // Also cover a directory chain left readable by an interrupted earlier
-        // creation attempt. Constructor failure is retryable, never weak success.
-        for dir in drafts.ancestors().filter(|dir| !dir.as_os_str().is_empty()) {
-            durability::sync_private_directory(dir)?;
-        }
-        let mut readable = BTreeMap::new();
-        let mut paths = BTreeMap::new();
-        for entry in fs::read_dir(&drafts)? {
-            let entry = entry?;
-            if ((entry.file_name() == "unreadable" || entry.file_name() == CUSTODY)
-                && entry.file_type()?.is_dir())
-                || entry.file_name().to_string_lossy().ends_with(".tmp")
-            {
-                continue;
-            }
-            let name = entry
-                .file_name()
-                .into_string()
-                .unwrap_or_else(|_| format!("invalid-name-{}", uuid::Uuid::new_v4().simple()));
-            // An unreadable file goes through the same preserving quarantine
-            // path as a checksum/format failure. Enumeration errors propagate;
-            // they must never masquerade as an empty store.
-            let bytes = fs::read(entry.path()).unwrap_or_default();
-            readable.insert(name.clone(), bytes);
-            paths.insert(name, entry.path());
-        }
-        Ok(Self {
+        let listing = list(&drafts);
+        let mut io = Self {
             graph: graph.to_path_buf(),
             drafts,
             trash: trash.to_path_buf(),
@@ -90,19 +65,47 @@ impl ProductionIo {
             draft_temps: BTreeMap::new(),
             creates: BTreeMap::new(),
             draft_payloads: BTreeMap::new(),
-            durable: readable.clone(),
-            readable,
+            durable: BTreeMap::new(),
+            readable: BTreeMap::new(),
             unsynced: Default::default(),
             changes: vec![],
-            paths,
+            paths: BTreeMap::new(),
             spellings: Default::default(),
             quarantines: BTreeMap::new(),
             directories: BTreeMap::new(),
             launch_warnings: vec![],
             marks: None,
+            down: None,
+            untouchable: Default::default(),
             #[cfg(test)]
             faults: BTreeMap::new(),
-        })
+        };
+        match listing {
+            // A listed vehicle is readable, not yet durable: a process crash
+            // can leave a rename without its directory sync. Launch's sync
+            // makes the census durable before anything retires (M2).
+            Ok(found) => {
+                for (name, (path, bytes)) in found {
+                    io.paths.insert(name.clone(), path);
+                    io.readable.insert(name.clone(), bytes);
+                    io.unsynced.insert(name);
+                }
+            }
+            Err(error) => io.down = Some(Down::Unlisted(error.to_string())),
+        }
+        io
+    }
+
+    /// Every draft effect starts here (§4): none runs while draft I/O is
+    /// down, or on a vehicle launch could not quarantine.
+    fn draft_effect(&mut self, phase: Phase, name: Option<&str>) -> IoResult<()> {
+        if self.down.is_some() || name.is_some_and(|name| self.untouchable.contains(name)) {
+            return Err(IoFailure {
+                kind: ErrorKind::Io,
+                completed: false,
+            });
+        }
+        self.before(phase)
     }
 
     fn before(&mut self, phase: super::io::Phase) -> IoResult<()> {
@@ -157,6 +160,47 @@ impl ProductionIo {
 
 /// A4 custody markers: only this device's unfinished deletions (D-10).
 const CUSTODY: &str = "trash-custody";
+
+/// Why draft I/O is down (plan v3 §4).
+enum Down {
+    /// The drafts directory could not be created or listed: the census is
+    /// unknown, so launch recovers nothing and reads no vehicle (M1).
+    Unlisted(String),
+    /// Launch could not sync the recovered census (M2).
+    Unsynced,
+}
+
+/// Create the drafts directory with the strict app-data recipe and read
+/// every vehicle in it, by name. An error is never an empty listing.
+fn list(drafts: &Path) -> io::Result<BTreeMap<String, (PathBuf, Vec<u8>)>> {
+    // The custody directory is not created here: a malformed one must not
+    // stop the graph from opening (REVIEW-2b-r2 V1). The listing creates it.
+    durability::create_dir_all_with_sync(drafts, durability::sync_private_directory)?;
+    // Also cover a directory chain left readable by an interrupted earlier
+    // creation attempt.
+    for dir in drafts.ancestors().filter(|dir| !dir.as_os_str().is_empty()) {
+        durability::sync_private_directory(dir)?;
+    }
+    let mut found = BTreeMap::new();
+    for entry in fs::read_dir(drafts)? {
+        let entry = entry?;
+        if ((entry.file_name() == "unreadable" || entry.file_name() == CUSTODY)
+            && entry.file_type()?.is_dir())
+            || entry.file_name().to_string_lossy().ends_with(".tmp")
+        {
+            continue;
+        }
+        let name = entry
+            .file_name()
+            .into_string()
+            .unwrap_or_else(|_| format!("invalid-name-{}", uuid::Uuid::new_v4().simple()));
+        // An unreadable file goes through the same preserving quarantine
+        // path as a checksum/format failure. Enumeration errors propagate.
+        let bytes = fs::read(entry.path()).unwrap_or_default();
+        found.insert(name, (entry.path(), bytes));
+    }
+    Ok(found)
+}
 
 /// `dir` and each of its ancestors up to and including the graph root.
 fn chain<'a>(graph: &'a Path, dir: &'a Path) -> impl Iterator<Item = &'a Path> {
@@ -453,7 +497,7 @@ impl HostIo for ProductionIo {
     }
 
     fn draft_temp(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {
-        self.before(super::io::Phase::DraftTemp)?;
+        self.draft_effect(Phase::DraftTemp, Some(name))?;
         self.draft_temps.insert(
             name.into(),
             PreparedWrite::new(&self.drafts.join(name), bytes).map_err(failure)?,
@@ -463,7 +507,7 @@ impl HostIo for ProductionIo {
     }
 
     fn draft_rename(&mut self, name: &str) -> IoResult<()> {
-        if let Err(error) = self.before(super::io::Phase::DraftRename) {
+        if let Err(error) = self.draft_effect(Phase::DraftRename, Some(name)) {
             self.draft_temps.remove(name);
             self.draft_payloads.remove(name);
             return Err(error);
@@ -488,7 +532,7 @@ impl HostIo for ProductionIo {
     }
 
     fn draft_unlink(&mut self, name: &str) -> IoResult<()> {
-        self.before(super::io::Phase::DraftUnlink)?;
+        self.draft_effect(Phase::DraftUnlink, Some(name))?;
         self.draft_temps.remove(name);
         self.draft_payloads.remove(name);
         remove_present(&self.draft_path(name)).map_err(failure)?;
@@ -499,7 +543,7 @@ impl HostIo for ProductionIo {
     }
 
     fn draft_sync(&mut self) -> IoResult<Witness> {
-        self.before(super::io::Phase::DraftSync)?;
+        self.draft_effect(Phase::DraftSync, None)?;
         durability::sync_private_directory(&self.drafts).map_err(sync_failure)?;
         // Only entries changed since the last sync differ between the two
         // censuses; every payload is not copied again (D-10).
@@ -520,34 +564,42 @@ impl HostIo for ProductionIo {
     }
 
     fn quarantine(&mut self, name: &str) -> IoResult<()> {
-        self.before(super::io::Phase::Quarantine)?;
-        let unreadable = self.drafts.join("unreadable");
-        durability::create_dir_all_with_sync(&unreadable, durability::sync_private_directory)
-            .map_err(failure)?;
-        if !self.quarantines.contains_key(name) {
-            let source = self.draft_path(name);
-            loop {
-                let target = unreadable.join(crate::atomic_file::prefixed_name(
-                    &format!("{}-", uuid::Uuid::new_v4().simple()),
-                    &source.file_name().unwrap().to_string_lossy(),
-                ));
-                match crate::no_replace::move_file_noreplace(&source, &target) {
-                    Ok(()) => {
-                        self.quarantines.insert(name.into(), (target, 0));
-                        break;
+        // The one effect a vehicle left in place still takes: Retry's.
+        self.draft_effect(Phase::Quarantine, None)?;
+        let result = (|| {
+            let unreadable = self.drafts.join("unreadable");
+            durability::create_dir_all_with_sync(&unreadable, durability::sync_private_directory)
+                .map_err(failure)?;
+            if !self.quarantines.contains_key(name) {
+                let source = self.draft_path(name);
+                loop {
+                    let target = unreadable.join(crate::atomic_file::prefixed_name(
+                        &format!("{}-", uuid::Uuid::new_v4().simple()),
+                        &source.file_name().unwrap().to_string_lossy(),
+                    ));
+                    match crate::no_replace::move_file_noreplace(&source, &target) {
+                        Ok(()) => {
+                            self.quarantines.insert(name.into(), (target, 0));
+                            break;
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                        Err(error) => return Err(failure(error)),
                     }
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-                    Err(error) => return Err(failure(error)),
                 }
             }
+            let (_, phase) = self.quarantines.get_mut(name).unwrap();
+            if *phase == 0 {
+                durability::sync_private_directory(&unreadable).map_err(failure)?;
+                *phase = 1;
+            }
+            let source = self.draft_path(name);
+            durability::sync_private_directory(source.parent().unwrap()).map_err(failure)
+        })();
+        if result.is_err() {
+            // Launch goes on without it (§4): left in place, never touched.
+            self.untouchable.insert(name.into());
+            return result;
         }
-        let (_, phase) = self.quarantines.get_mut(name).unwrap();
-        if *phase == 0 {
-            durability::sync_private_directory(&unreadable).map_err(failure)?;
-            *phase = 1;
-        }
-        let source = self.draft_path(name);
-        durability::sync_private_directory(source.parent().unwrap()).map_err(failure)?;
         self.readable.remove(name);
         if self.durable.remove(name).is_some() {
             self.changes.push((name.into(), None));
@@ -555,6 +607,47 @@ impl HostIo for ProductionIo {
         self.unsynced.remove(name);
         self.paths.remove(name);
         self.quarantines.remove(name);
+        self.untouchable.remove(name);
         Ok(())
+    }
+
+    fn draft_status(&self) -> DraftStatus {
+        let drafts = self.drafts.display();
+        DraftStatus {
+            unavailable: self.down.as_ref().map(|down| match down {
+                Down::Unlisted(error) => format!("{drafts}: {error}"),
+                Down::Unsynced => format!("{drafts}: the recovered drafts could not be synced"),
+            }),
+            unreadable: self.untouchable.iter().cloned().collect(),
+        }
+    }
+
+    fn drafts_unsynced(&mut self) {
+        self.down.get_or_insert(Down::Unsynced);
+    }
+
+    fn drafts_reprobe(&mut self) -> Result<(), String> {
+        match self.down.take() {
+            None => {}
+            Some(Down::Unsynced) => {
+                if !matches!(self.draft_sync(), Ok(Witness::Durable)) {
+                    self.down = Some(Down::Unsynced);
+                }
+            }
+            // The census was never known. Only a listing that finds no
+            // vehicle can bring draft I/O up in place; vehicles found now
+            // are left untouched for the next launch to recover.
+            Some(Down::Unlisted(_)) => match list(&self.drafts) {
+                Ok(found) if found.is_empty() => {}
+                Ok(found) => {
+                    self.down = Some(Down::Unlisted(format!(
+                        "{} draft file(s) from an earlier session are recovered at the next launch",
+                        found.len()
+                    )))
+                }
+                Err(error) => self.down = Some(Down::Unlisted(error.to_string())),
+            },
+        }
+        self.draft_status().unavailable.map_or(Ok(()), Err)
     }
 }

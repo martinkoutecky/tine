@@ -3,7 +3,7 @@
 //! persist independently at a power cut, constrained only by single-move
 //! atomicity and A4 rule 5. Each HostIo call is a sequence of system calls, and
 //! `Fault::Cut` lands between any two of them (REVIEW-2b-r2 R1).
-use super::io::{ErrorKind, HostIo, IoFailure, IoResult, MoveResult, Phase, Witness};
+use super::io::{DraftStatus, ErrorKind, HostIo, IoFailure, IoResult, MoveResult, Phase, Witness};
 use super::Text;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -62,6 +62,8 @@ pub(super) struct ModelFs {
     pub spellings: BTreeMap<String, String>,
     /// Alternate-extension twins a creating save finds (STEP3 §3.2).
     pub twins: BTreeMap<String, String>,
+    /// Draft I/O is down (M2): every draft effect fails untouched.
+    pub down: bool,
 }
 
 /// One power outcome for readable trash names that are not yet durable.
@@ -195,6 +197,7 @@ impl ModelFs {
         self.publications.clear();
         self.owed.clear();
         self.spellings.clear();
+        self.down = false;
     }
 
     /// The least surviving outcome: only forced trash names, with their data.
@@ -243,6 +246,20 @@ impl ModelFs {
         effect: impl FnOnce(&mut Self) -> IoResult<T>,
     ) -> IoResult<T> {
         self.calls.push(phase);
+        let draft = matches!(
+            phase,
+            Phase::DraftTemp
+                | Phase::DraftRename
+                | Phase::DraftUnlink
+                | Phase::DraftSync
+                | Phase::Quarantine
+        );
+        if self.down && draft {
+            return Err(IoFailure {
+                kind: ErrorKind::Io,
+                completed: false,
+            });
+        }
         let fault = self.faults.get_mut(&phase).and_then(VecDeque::pop_front);
         match fault {
             Some(Fault::Before | Fault::Unsupported) => Err(IoFailure {
@@ -616,5 +633,22 @@ impl HostIo for ModelFs {
             fs.sync_dir(&source[..=source.rfind('/').unwrap()]);
             Ok(())
         })
+    }
+
+    fn draft_status(&self) -> DraftStatus {
+        DraftStatus {
+            unavailable: self.down.then(|| "drafts unsynced".into()),
+            unreadable: vec![],
+        }
+    }
+
+    fn drafts_unsynced(&mut self) {
+        self.down = true;
+    }
+
+    fn drafts_reprobe(&mut self) -> Result<(), String> {
+        self.down = false;
+        self.down = !matches!(self.draft_sync(), Ok(Witness::Durable));
+        self.draft_status().unavailable.map_or(Ok(()), Err)
     }
 }

@@ -129,13 +129,12 @@ fn measure_anonymized_draft_unit_cost() {
             .join("/");
         let page = page.as_str();
         let app = tempfile::tempdir().unwrap();
-        let native = ProductionIo::new(
+        let native = ProductionIo::attach(
             &corpus,
             app.path(),
             "cost",
             &corpus.join("logseq/.tine-trash/pages"),
-        )
-        .unwrap();
+        );
         let mut host = Host::new(
             native,
             BTreeMap::from([(page.into(), Arc::new(Mutex::new(())))]),
@@ -193,13 +192,12 @@ fn measure_anonymized_draft_unit_cost() {
             payload: crate::atomic_file::prefixed_name(&format!("{id}__"), file),
         });
         let custody_store = tempfile::tempdir().unwrap();
-        let mut custody_io = ProductionIo::new(
+        let mut custody_io = ProductionIo::attach(
             &corpus,
             custody_store.path(),
             "cost",
             &corpus.join("logseq/.tine-trash/pages"),
-        )
-        .unwrap();
+        );
         reset_counts();
         custody_io
             .custody_write(&format!("{id}.tcm"), &marker)

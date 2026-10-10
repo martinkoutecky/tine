@@ -4,7 +4,7 @@
 //! API witnesses, not power-cut evidence. Power and speculative `.fail()` forks
 //! stay ModelFs-only, explicitly excluded by the corpus selector below.
 use super::*;
-use crate::page_host::io::{IoResult, MoveResult, Witness};
+use crate::page_host::io::{DraftStatus, IoResult, MoveResult, Witness};
 use crate::page_host::production::ProductionIo;
 use std::fs;
 use std::io;
@@ -152,7 +152,7 @@ impl ConformanceIo for NativeFs {
                 fs::write(graph.join(page), bytes).unwrap();
             }
         }
-        let native = ProductionIo::new(&graph, &app, "native", &trash).unwrap();
+        let native = ProductionIo::attach(&graph, &app, "native", &trash);
         Self {
             root,
             graph,
@@ -200,7 +200,7 @@ impl ConformanceIo for NativeFs {
     }
     fn crash(&mut self) {
         self.ledger.crash();
-        self.native = ProductionIo::new(&self.graph, &self.app, "native", &self.trash).unwrap();
+        self.native = ProductionIo::attach(&self.graph, &self.app, "native", &self.trash);
         self.check_readable();
     }
     fn power(&mut self, _keep: &BTreeSet<String>, _keep_drafts: bool) {
@@ -355,6 +355,19 @@ impl HostIo for NativeFs {
             |fs| fs.quarantine(name),
             |fs| fs.quarantine(name),
         )
+    }
+    fn draft_status(&self) -> DraftStatus {
+        self.native.draft_status()
+    }
+    fn drafts_unsynced(&mut self) {
+        self.ledger.drafts_unsynced();
+        self.native.drafts_unsynced();
+    }
+    fn drafts_reprobe(&mut self) -> Result<(), String> {
+        let expected = self.ledger.drafts_reprobe();
+        let actual = self.native.drafts_reprobe();
+        assert_eq!(actual.is_ok(), expected.is_ok(), "re-probe");
+        actual
     }
 }
 

@@ -949,6 +949,21 @@ impl<F: ConformanceIo> Driver<F> {
                 self.windows.fill(Window::default());
                 self.pending_ids.fill(None);
             }
+            // Declared deviations of draft I/O that fails at launch (plan v3
+            // §4, B-Q1); the model's launch (storage-s3.qnt:609-619) always
+            // lists and syncs. Neither is replayed here.
+            // - M1: a drafts directory that cannot be created or listed
+            //   recovers nothing, where the model makes every draft its
+            //   buffer; no vehicle is read or touched, so a later launch
+            //   recovers them (`production_tests::b_q1_a_drafts_directory_
+            //   that_cannot_be_created..`, `b_q1_an_unlistable_drafts_
+            //   directory..`).
+            // - M2: a census launch cannot sync keeps its buffers at risk but
+            //   retires nothing until a Retry's sync, where the model retires
+            //   at once; while draft I/O is down every draft effect fails
+            //   untouched, the model's failed draft write (:446-455), so a
+            //   switch waits as `canSwitch` (:462-467) says (`tests::m2_an_
+            //   unsynced_launch..`, `production_tests::b_q1_m2_..`).
             "launch" => {
                 for recovered in self.host.recovered_keys() {
                     self.register(index(&recovered));

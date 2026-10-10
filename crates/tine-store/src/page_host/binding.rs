@@ -992,126 +992,7 @@ impl Stopped {
 /// holds: host versions start at 1, so it is always stale.
 const STALE: u64 = 0;
 
-/// A launch that cannot reach a live host (its draft directory keeps
-/// failing) is retried this many times before the binding gives up.
-const LAUNCH_ATTEMPTS: usize = 3;
-
 impl PageHost {
-    /// Bind a page host to `store`'s graph: drafts under
-    /// `app_data/drafts-v2/<graph_id>`, recovered draft keys registered
-    /// before launch (§2), then the driver, which owns the index of every
-    /// page it holds (§5). `mail` runs on the driver thread. Each launch
-    /// draws a fresh session (E101). The error says why no host could
-    /// start; the app stays on the old engine (no production start until
-    /// step 3b P2b).
-    pub(crate) fn start(
-        store: &Arc<Store>,
-        app_data: &Path,
-        graph_id: &str,
-        mail: impl FnMut(PageMail) + Send + 'static,
-    ) -> Result<Self, String> {
-        Self::launch(Launch {
-            store: store.clone(),
-            app_data: app_data.to_path_buf(),
-            graph_id: graph_id.into(),
-            mail: Arc::new(Mutex::new(Box::new(mail))),
-        })
-    }
-
-    /// A host for tests outside this crate (retained writers in
-    /// tine-graph-features, the app's slot fixtures) under `app_data`, mail
-    /// discarded. Production starts hosts from step 3b P2b.
-    #[cfg(any(test, feature = "test-faults"))]
-    pub fn start_for_tests(store: &Arc<Store>, app_data: &Path) -> Result<Self, String> {
-        Self::start(store, app_data, "test-graph", |_| {})
-    }
-
-    fn launch(launch: Launch) -> Result<Self, String> {
-        let Launch {
-            store,
-            app_data,
-            graph_id,
-            ..
-        } = &launch;
-        let (app_data, graph_id) = (app_data.as_path(), graph_id.as_str());
-        let graph = store.graph.clone();
-        let trash = crate::model::trash_root(&graph.root).join("pages");
-        let mut io = ProductionIo::new(&graph.root, app_data, graph_id, &trash)
-            .map_err(|error| format!("page host drafts: {error}"))?;
-        let spellings = io.spellings().clone();
-        io.marks = Some(graph.clone());
-        let mut host = Host::new(io, BTreeMap::new());
-        host.stop();
-        let mut recovered = Vec::new();
-        for key in host.recovered_keys() {
-            let id = PageId::from(key.as_str());
-            let spelling = store.disk_spelling(&id).unwrap_or(id);
-            let lock = graph.page_lock(&graph.root.join(spelling.as_str()));
-            host.register(key.clone(), spelling.as_str(), lock);
-            recovered.push((key, spelling));
-        }
-        #[cfg(test)]
-        let index_faults = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        #[cfg(test)]
-        let published_kinds = Arc::new(Mutex::new(Vec::new()));
-        let bridge = Bridge {
-            store: store.clone(),
-            mail: launch.mail.clone(),
-            #[cfg(test)]
-            index_faults: index_faults.clone(),
-            #[cfg(test)]
-            published_kinds: published_kinds.clone(),
-        };
-        let driver = Driver::spawn(host, SystemClock::new(), bridge);
-        driver
-            .shared
-            .with_state(|state| state.book.session = next_session());
-        // A watcher read of a held page (§5): the driver owes the host an
-        // observation of it, taken under its path lock once the page is idle.
-        let shared = Arc::downgrade(&driver.shared);
-        let forward: crate::watch::Forward = Box::new(move |keys| {
-            if let Some(shared) = shared.upgrade() {
-                shared.with_state(|state| {
-                    for key in keys {
-                        state.observe.entry(key).or_default();
-                    }
-                });
-            }
-        });
-        let this = Self {
-            driver,
-            store: store.clone(),
-            launch: launch.clone(),
-            #[cfg(test)]
-            index_faults,
-            #[cfg(test)]
-            published_kinds,
-        };
-        // Recovered pages are held before launch reads them (§5), by the
-        // host's keys and spelling table (B1).
-        {
-            let _writer = store.writer.lock().unwrap();
-            store.watch.forward_held(forward, spellings);
-            for (key, _) in &recovered {
-                store.watch.hold(key.clone());
-            }
-            this.driver.shared.with_state(|state| {
-                state
-                    .book
-                    .owned
-                    .extend(recovered.into_iter().map(|(k, _)| k))
-            });
-        }
-        for _ in 0..LAUNCH_ATTEMPTS {
-            this.locked(|host| host.launch());
-            if this.driver.shared.state.lock().unwrap().progress.host.alive {
-                return Ok(this);
-            }
-        }
-        drop(this);
-        Err("page host drafts are unavailable".into())
-    }
-
     /// Plan, lock, revalidate on the command thread (§1), then wake the
     /// driver. None once the driver is stopping.
     fn locked<R>(&self, mut step: impl FnMut(&mut Host<ProductionIo>) -> R) -> Option<R> {
@@ -1473,6 +1354,9 @@ mod retained;
 
 #[path = "binding_publication.rs"]
 mod publication;
+
+#[path = "binding_launch.rs"]
+mod launch;
 pub use retained::{RenameRefusal, Reservation};
 #[cfg(test)]
 #[path = "binding_tests.rs"]

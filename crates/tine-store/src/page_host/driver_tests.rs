@@ -415,7 +415,7 @@ fn production_draft_sync_moves_only_the_synced_entry() {
     let (graph, app) = (dir.path().join("graph"), dir.path().join("app"));
     std::fs::create_dir_all(&graph).unwrap();
     let trash = graph.join("logseq/.tine-trash/pages");
-    let mut fs = production::ProductionIo::new(&graph, &app, "g", &trash).unwrap();
+    let mut fs = production::ProductionIo::attach(&graph, &app, "g", &trash);
     for n in 0..20 {
         let record = drafts::Record {
             page: format!("p{n}.md"),

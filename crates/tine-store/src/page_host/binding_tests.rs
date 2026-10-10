@@ -1579,3 +1579,47 @@ fn wait_published_is_true_on_publication_false_on_conflict_or_bound() {
     );
     live.host.stop();
 }
+
+/// B-Q1 (plan v3 §4): draft I/O that fails never stops a launch, at a
+/// restore's relaunch as at start. The relaunched host opens and publishes
+/// pages, `draft_status` says why crash recovery is unavailable, and Retry
+/// brings it up in the running host (S3).
+#[test]
+fn b_q1_a_restore_relaunches_into_unavailable_drafts_and_retry_restores_them() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    assert_eq!(live.host.draft_status(), DraftStatus::default());
+    let (key, _) = live.open("pages/a.md");
+    assert!(live.host.stop_begin(live.id.get(), StopMode::Restore));
+    assert_eq!(live.until_stop(), StopState::Ready);
+    let drafts = live.app().join("drafts-v2/test-graph");
+    let Live {
+        _dir,
+        root,
+        store,
+        host,
+        mail,
+        id,
+    } = live;
+    let stopped = host.stop_finish().ok().unwrap();
+    fs::remove_dir_all(&drafts).unwrap();
+    fs::write(&drafts, "in the way").unwrap();
+    let host = stopped.relaunch().expect("B-Q1: the host always starts");
+    let live = Live {
+        _dir,
+        root,
+        store,
+        host,
+        mail,
+        id,
+    };
+    assert!(live.host.draft_status().unavailable.is_some());
+    let page = live.open("pages/a.md").1;
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    let version = live.answer(&key, id).answer.unwrap().version;
+    live.until_published(&[(key.clone(), version, None)]);
+    assert_eq!(live.disk(&key), "- two\n");
+    assert!(live.host.drafts_retry().is_err());
+    fs::remove_file(&drafts).unwrap();
+    assert_eq!(live.host.drafts_retry(), Ok(()));
+    assert_eq!(live.host.draft_status(), DraftStatus::default());
+}

@@ -46,6 +46,16 @@ pub(super) struct MoveResult {
     pub result: IoResult<()>,
 }
 
+/// Crash-recovery availability (plan v3 §4, B-Q1), for the `load_graph`
+/// reply and Retry. `unavailable` is why draft I/O is down: while it is,
+/// every draft effect fails without touching the filesystem. `unreadable`
+/// names vehicles launch could not quarantine; they stay in place untouched.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DraftStatus {
+    pub unavailable: Option<String>,
+    pub unreadable: Vec<String>,
+}
+
 /// One invocation exposes one publication phase. No filesystem access escapes
 /// this seam. The 2b adapter must extend the existing audited primitives.
 pub(super) trait HostIo {
@@ -93,4 +103,10 @@ pub(super) trait HostIo {
     fn draft_unlink(&mut self, name: &str) -> IoResult<()>;
     fn draft_sync(&mut self) -> IoResult<Witness>;
     fn quarantine(&mut self, name: &str) -> IoResult<()>;
+    fn draft_status(&self) -> DraftStatus;
+    /// Launch could not make the recovered census durable (M2): draft I/O
+    /// stays down, so no vehicle is retired, until a re-probe succeeds.
+    fn drafts_unsynced(&mut self);
+    /// Retry (S3): re-probe down draft I/O in place; Ok once it is up.
+    fn drafts_reprobe(&mut self) -> Result<(), String>;
 }
