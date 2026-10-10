@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   PINNED_FORMAT_COUNT, PERSISTED_FORMATS,
-  checkFormatCount, checkSizeRatchet, checkWriterSites,
+  checkFormatCount, checkSizeRatchet, checkWriterSites, isProduction,
   readSizeCounts, readWriterSiteCounts, writerSiteCounts,
 } from "../scripts/lib/og-enforcement.mjs";
 
@@ -15,6 +15,13 @@ const sizeCounts = readSizeCounts(root);
 const writerCounts = readWriterSiteCounts(root);
 
 describe("og campaign enforcement", () => {
+  it("treats out-of-line Rust test modules as test code", () => {
+    expect(isProduction("crates/tine-store/src/page_host/tests.rs")).toBe(false);
+    expect(isProduction("crates/tine-store/src/page_host/driver_tests.rs")).toBe(false);
+    expect(isProduction("crates/tine-store/src/page_host/driver.rs")).toBe(true);
+    expect(isProduction("crates/tine-store/src/contests.rs")).toBe(true);
+  });
+
   it("ratchets production file size against the post-batch-5 baseline", () => {
     const { current, baseline } = sizeCounts;
     expect(() => checkSizeRatchet(current, baseline)).not.toThrow();

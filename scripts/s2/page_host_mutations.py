@@ -80,7 +80,7 @@ def main():
                "--", "--lib", args.test_filter, "--", "--skip", "scheduler_random_walks",
                "--skip", "committed_witnesses_through_host"]
     filters = []
-    command[command.index("--output"):command.index("--output")] = ["--exclude", "**/native_conformance.rs", "--exclude", "**/native_cost.rs"]
+    command[command.index("--output"):command.index("--output")] = ["--exclude", "**/native_conformance_tests.rs", "--exclude", "**/native_cost.rs"]
     if args.survivors:
         for outcome in json.loads(args.survivors.read_text())["outcomes"]:
             if outcome["summary"] == "MissedMutant":

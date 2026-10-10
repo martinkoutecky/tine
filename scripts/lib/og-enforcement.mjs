@@ -13,7 +13,7 @@ export function isProduction(file) {
   if (!roots.some((root) => file.startsWith(`${root}/`))) return false;
   if (!extensions.has(path.extname(file))) return false;
   if (/(^|\/)(tests|examples|fixtures|vendor|target|gen)\//.test(file)) return false;
-  if (/(^|\/)([^/]*\.test\.[^/]+|[^/]*_tests\.rs|test_[^/]*\.rs)$/.test(file)) return false;
+  if (/(^|\/)([^/]*\.test\.[^/]+|[^/]*_tests\.rs|tests\.rs|test_[^/]*\.rs)$/.test(file)) return false;
   return true;
 }
 
@@ -100,6 +100,9 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   "crates/tine-store/src/transaction/move_file.rs": { sites: 1, approval: "graph text via the audited save path; 3a40f0ca1 crash-durable rewritten moves" },
   // Compiled executable resource in a private temporary directory, removed on
   // exit; no durable layout or graph state. Uses the existing audited writer.
+  // Not a new format: rename_replace's one rename gained a Windows arm
+  // (MoveFileExW with WRITE_THROUGH, falling back to std's rename; REVIEW-2b F10).
+  "crates/tine-store/src/atomic_file.rs": { sites: 1, approval: "storage s3 step 2b (Martin 2026-10-08/09 delegation); same graph-text rename, per-platform arm" },
   "src-tauri/src/youtube_identity.rs": { sites: 1, approval: "Martin's OG-QBY native YouTube identity task; temporary bundled WebProcess module, no new persisted format" },
 });
 

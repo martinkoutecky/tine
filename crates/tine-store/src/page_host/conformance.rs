@@ -6,7 +6,7 @@ use io::Phase;
 use model_fs::{Fault, ModelFs};
 use serde_json::{json, Value};
 
-#[path = "native_conformance.rs"]
+#[path = "native_conformance_tests.rs"]
 mod native_conformance;
 
 /// Test physical environment; the native implementation independently checks
