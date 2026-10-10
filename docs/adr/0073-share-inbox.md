@@ -54,6 +54,13 @@ Layout, one directory per item:
 - `.committed-<id>`: an empty tombstone the commit writes durably before the
   item leaves; a listing removes it after 30 days. The Android producer
   reads it so a redelivered share occurrence is not published again.
+- `.receiving-<id>` (Android): written durably by the producer before it
+  copies a share, holding a short summary (the first 60 characters of the
+  text, or "N images"); deleted once the item is published or the share is
+  refused with a message. At the next start a leftover marker with no item
+  and no tombstone (the process died mid-copy) shows "A share to Tine was
+  interrupted and wasn't saved: <summary>. Please share it again." and is
+  deleted. The app's listing ignores it.
 - `.rejected-<id>/`: an item that could not be read, kept, never deleted.
 
 Ingest (src/shareIngest.ts) runs at launch, on resume and on the native
@@ -127,7 +134,9 @@ the day title, the shaped Markdown, asset names and the recorded revision;
 a written record for a 36-character block with a 35-character root and day
 `Oct 10th, 2026` is 171 bytes), i.e. 2 + resources files, all removed after
 ingest, plus one empty `.committed-<id>` tombstone (0 bytes, one file) kept
-30 days. The graph receives what OG writes:
+30 days, and on Android one `.receiving-<id>` marker (the summary, at most
+about 64 bytes) that exists only while a share is copied. The graph
+receives what OG writes:
 one appended block on the item's journal day (the existing whole-page save
 cost on 1- and 60-block journal pages) and one asset file per image.
 Ordinary edits on 1- and 60-block pages add zero inbox bytes, files or
@@ -156,6 +165,5 @@ Other effects:
 - an item that waits lands on its frozen day, not on the day it is retried;
 - Android: a share delivered to a running Activity (`onNewIntent`) whose
   process dies mid-copy is not redelivered by the system and is not saved;
-  nothing told the user it was (the item confirmation is the journal toast
-  after ingest);
+  the next start reports it from its `.receiving-<id>` marker, naming it;
 - Apple provisioning needs the App Group on the app and extension App IDs.

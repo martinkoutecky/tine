@@ -66,6 +66,15 @@ object ShareIntake {
   /** Ids this process is delivering now: one copy per occurrence at a time. */
   private val delivering = mutableSetOf<String>()
 
+  fun isDelivering(id: String): Boolean = synchronized(delivering) { id in delivering }
+
+  /** What the user shared, for an "interrupted" notice. */
+  fun summary(text: String?, images: Int): String = when {
+    text != null -> if (text.length > 60) text.take(60).trimEnd() + "…" else text
+    images == 1 -> "1 image"
+    else -> "$images images"
+  }
+
   /**
    * One delivery of occurrence `id` (fresh, restored, from history or seen
    * before): if its item or its commit tombstone exists, it was published, so
@@ -164,8 +173,44 @@ class InboxWriter(private val root: File, private val files: DurableFiles) {
 
   fun syncInbox() = files.syncDir(root)
 
-  fun publish(id: String, created: Long, text: String?, title: String?, resources: List<ShareResource>) {
+  /** Summaries of shares cut short before they were published (a leftover
+   * marker with no item and no tombstone); every leftover marker except
+   * `keep`'s (being redelivered now) is deleted. */
+  fun interrupted(keep: String?): List<String> {
+    val lost = ArrayList<String>()
+    for (name in root.list() ?: emptyArray()) {
+      if (!name.startsWith(RECEIVING)) continue
+      val id = name.removePrefix(RECEIVING)
+      if (id == keep || ShareIntake.isDelivering(id)) continue
+      val marker = File(root, name)
+      if (!handled(id)) lost.add(marker.readText(Charsets.UTF_8))
+      marker.delete()
+    }
+    return lost
+  }
+
+  companion object {
+    const val RECEIVING = ".receiving-"
+  }
+
+  /**
+   * Publish occurrence `id`. A durable `.receiving-<id>` marker holding
+   * `summary` exists from before the copy until the item is published (or
+   * refused with a message), so a share whose process dies mid-copy is
+   * reported at the next start ([ShareIntake.interrupted]).
+   */
+  fun publish(id: String, created: Long, text: String?, title: String?, resources: List<ShareResource>, summary: String) {
     files.ensureDir(root)
+    val marker = File(root, "$RECEIVING$id")
+    files.replace(marker, summary)
+    try {
+      write(id, created, text, title, resources)
+    } finally {
+      marker.delete()
+    }
+  }
+
+  private fun write(id: String, created: Long, text: String?, title: String?, resources: List<ShareResource>) {
     val tmp = File(root, ".tmp-$id")
     tmp.deleteRecursively() // an earlier attempt of the same share, cut short
     if (!tmp.mkdir()) throw IOException("couldn't create a share inbox item")
