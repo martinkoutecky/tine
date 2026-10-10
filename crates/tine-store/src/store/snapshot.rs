@@ -1,5 +1,7 @@
 //! Immutable publication capture: changed paths and names patch persistent roots.
 use super::*;
+use crate::model::derived::Named;
+use std::collections::HashSet;
 
 fn name_claimants<'a>(
     index: &'a SharedMap<(bool, String), Vec<PageEntry>>,
@@ -86,6 +88,17 @@ impl Snapshot {
         let config = config.read().unwrap().clone();
         let journal_format = graph.current_journal_format();
         let cache_generation = graph.cache_generation();
+        // Paths whose rows a hold or respelling retired since the last
+        // capture (E105): each is renamed from what it names now.
+        let mut files = files.to_vec();
+        let mut retired = HashSet::new();
+        for path in graph.take_retired() {
+            let id = FileId::from(graph.rel_path(&path));
+            if !files.iter().any(|(file, _, _)| *file == id) {
+                files.push((id.clone(), ChangeKind::Modified, None));
+                retired.insert(id);
+            }
+        }
         let changed_names: Vec<_> = files
             .iter()
             .filter_map(|(id, kind, _)| {
@@ -98,24 +111,38 @@ impl Snapshot {
                 {
                     return None;
                 }
+                let old_name = old.and_then(|snapshot| snapshot.name_by_path.get(&path));
+                // A removal is named by the path and its previous name alone
+                // (R2): no file is read for it.
+                let removed = || Some((ChangeKind::Removed, graph.tombstone(&path, old_name?)));
+                if *kind == ChangeKind::Removed {
+                    return removed();
+                }
                 // A transaction's own publication named the page from the
                 // bytes it cached, under the same writer lock and config; an
                 // external write since then is the watcher's next change.
                 let entry = match published.get(id) {
                     Some(entry) if !config_changed => entry.clone(),
-                    _ => graph.entry_for_path(&path)?,
+                    _ => match graph.named_entry(&path) {
+                        Named::Entry(entry) => entry,
+                        Named::Absent => return removed(),
+                        Named::NotAPage => return None,
+                    },
                 };
-                if *kind == ChangeKind::Modified && entry.kind == PageKind::Journal {
+                let kind = match retired.contains(id) {
+                    true if old_name.is_none() => ChangeKind::Created,
+                    _ => *kind,
+                };
+                if kind == ChangeKind::Modified && entry.kind == PageKind::Journal {
                     return None;
                 }
-                let old_name = old.and_then(|snapshot| snapshot.name_by_path.get(&path));
-                if *kind == ChangeKind::Modified
+                if kind == ChangeKind::Modified
                     && old_name
                         .is_some_and(|(kind, name)| *kind == entry.kind && *name == entry.name)
                 {
                     return None;
                 }
-                Some((*kind, entry))
+                Some((kind, entry))
             })
             .collect();
         // `rebuild` (the Settings "Rescan graph") recomputes every derived answer
@@ -273,6 +300,12 @@ pub(crate) struct PublishedObservations {
 }
 
 impl Store {
+    /// Whether the published snapshot names a page at `path`.
+    pub(crate) fn snapshot_knows(&self, path: &Path) -> bool {
+        let snapshot = self.changes.snapshot.read().unwrap();
+        (snapshot.as_ref()).is_some_and(|snapshot| snapshot.name_by_path.contains_key(path))
+    }
+
     pub(crate) fn publish_own(
         &self,
         files: Vec<(FileId, ChangeKind, Option<FileRev>)>,

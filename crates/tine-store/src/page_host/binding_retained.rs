@@ -285,14 +285,19 @@ impl PageHost {
     pub fn respell(&self, page: &PageId, to: &PageId) {
         let graph = &self.store.graph;
         let lock = graph.page_lock(&graph.root.join(to.as_str()));
+        // Holds change under the writer (lock order writer → state).
+        let _writer = self.store.writer.lock().unwrap();
         // The held index names the key, so it follows the host's spelling
-        // table with no step of its own (B1).
-        self.driver.shared.with_state(|state| {
+        // table; its installed rows move with it (A-H2).
+        let moved = self.driver.shared.with_state(|state| {
             let host = &mut state.progress.host;
-            if let Some(key) = host.key_spelled(page.as_str()) {
-                host.respell(&key, to.as_str(), lock);
-            }
+            let key = host.key_spelled(page.as_str())?;
+            host.respell(&key, to.as_str(), lock);
+            Some(key)
         });
+        if let Some(key) = moved {
+            graph.respelled(&key, &graph.root.join(page.as_str()));
+        }
     }
 
     /// The key naming `page`'s directory entry (§2), by the one identity

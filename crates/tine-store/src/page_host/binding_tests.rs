@@ -1390,3 +1390,42 @@ fn v4_a_read_or_rebuild_never_indexes_a_held_page() {
     live.until_indexed(&key, "- b\n");
     live.host.stop();
 }
+
+/// H1 #3 (REVIEW-AH2-AW1-plan R6, (G)): the consumer's external
+/// publication names the page from the bytes it publishes, while the file
+/// says something else.
+#[test]
+fn a_consumer_publication_names_the_bytes_it_publishes() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("pages")).unwrap();
+    fs::write(temp.path().join("pages/a.md"), "title:: First\n- a\n").unwrap();
+    let store = Store::open(temp.path(), Default::default()).unwrap().0;
+    store.whole_graph().unwrap();
+    let writer = store.writer.lock().unwrap();
+    store.graph.hold_unhosted("pages/a.md");
+    fs::write(temp.path().join("pages/a.md"), "title:: Disk\n- d\n").unwrap();
+    let publication = Publication {
+        key: "pages/a.md".into(),
+        spelling: "pages/a.md".into(),
+        bytes: Some(Arc::from(&b"title:: Owner\n- o\n"[..])),
+        own: None,
+    };
+    assert!(index(&store, &publication));
+    drop(writer);
+    let view = store.whole_graph().unwrap();
+    assert!(
+        matches!(
+            view.resolve("Owner", false),
+            crate::Resolved::Existing { .. }
+        ),
+        "(G): the publication's own name was not published"
+    );
+    assert!(
+        !matches!(
+            view.resolve("Disk", false),
+            crate::Resolved::Existing { .. }
+        ),
+        "(G): the publication named the page from its file"
+    );
+    store.close();
+}

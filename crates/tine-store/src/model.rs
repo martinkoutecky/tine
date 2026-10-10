@@ -5,6 +5,7 @@
 
 mod checkpoint_state;
 mod collapse_only;
+pub(crate) mod derived;
 pub(crate) mod entry_identity;
 pub(crate) mod held_index;
 pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
@@ -21,7 +22,6 @@ pub(crate) mod shape_stats;
 mod transaction_publish;
 #[cfg(test)]
 use page_identity::effective_page_name;
-use page_identity::list_graph_pages;
 pub(crate) use page_identity::{configured_hidden, portable_component};
 pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
@@ -266,15 +266,15 @@ mod depth_contract_tests {
         fs::write(root.join("pages/A.md"), "- first\n").unwrap();
         let graph = Graph::open(&root);
         let entry = graph.find_entry("A", PageKind::Page).unwrap();
-        assert!(graph.find_entry_cache.read().unwrap().is_some());
+        assert!(graph.claimant_memo_built());
         assert!(graph.load_page(&entry).unwrap().blocks[0]
             .raw
             .contains("first"));
-        assert!(graph.find_entry_cache.read().unwrap().is_some());
+        assert!(graph.claimant_memo_built());
         assert!(graph.load_page(&entry).unwrap().blocks[0]
             .raw
             .contains("first"));
-        assert!(graph.find_entry_cache.read().unwrap().is_some());
+        assert!(graph.claimant_memo_built());
         fs::remove_dir_all(root).unwrap();
     }
 }
@@ -348,13 +348,6 @@ pub(crate) struct Graph {
     /// store installs a live override after open and refreshes it on config edits.
     pub(crate) journal_format: Arc<JournalFormat>,
     live_journal_format: RwLock<Option<Arc<JournalFormat>>>,
-    /// In-memory cache of every parsed page, keyed implicitly by position.
-    /// Built once on first whole-graph query and kept in sync by edits, so
-    /// search / backlinks / `{{query}}` scan memory instead of re-reading and
-    /// re-parsing the entire tree on every keystroke. `None` = not yet built.
-    // `Arc<Document>` so a cache snapshot or a save's scoped-invalidation copy is
-    // an O(1) refcount bump, not a deep clone of the whole page (see cache_upsert).
-    cache: RwLock<Option<Arc<Pages>>>,
     /// Launch/diff/save timings and load-pass accounting behind `Store::diagnostics`.
     pub(crate) diag: crate::launch_diag::DiagRecorder,
     #[cfg(test)]
@@ -371,51 +364,24 @@ pub(crate) struct Graph {
     pub(crate) fail_sync_read_once: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     pub(crate) fail_sync_parse_once: std::sync::atomic::AtomicBool,
-    /// File times observed while publishing the parsed page cache. Readers
-    /// clone the table with their graph view, so later disk edits cannot alter it.
-    observed_mtimes: RwLock<Arc<SharedMap<String, std::time::SystemTime>>>,
-    /// Graph-relative paths of pages skipped by the latest whole-graph cache
-    /// build because their parse/projection panicked. Kept retrievable so an
-    /// lsdoc ownership gap can never degrade search completeness invisibly.
-    page_index_failures: RwLock<Vec<String>>,
-    unreadable_pages: RwLock<Arc<Vec<(crate::store::FileId, String)>>>,
-    pub(super) discovery_errors: RwLock<Vec<(crate::FileId, crate::IoError)>>,
-    /// Exact-path index into stable cache slots. Whole-graph iteration retains
-    /// the initial page order, with new pages appended and removed slots omitted.
-    /// `None` rebuilds this live index from the snapshot on next lookup.
-    cache_index: RwLock<Option<PageCacheIndex>>,
+    /// The installed derived page state; written only by `derived.rs` ((G)).
+    derived: derived::Derived,
+    /// Pages a page host holds, and what their owner last published.
+    pub(crate) held: derived::HeldPages,
     /// Bumped on every cache mutation (upsert/remove). The lock-free cache build
     /// captures this before reading disk and rebuilds if a mutation raced it
     /// (which would otherwise install stale content over a concurrent save).
     cache_gen: std::sync::atomic::AtomicU64,
-    /// Pages a page host holds, and what their index writer last indexed.
-    pub(crate) held: held_index::HeldPages,
     /// Serializes whole-graph cache builds so a racing warmup/search/query parses
     /// the graph ONCE, not once per caller. Held only during the build (not the
     /// cache lock), so it never blocks readers of an already-built cache.
     build_lock: std::sync::Mutex<()>,
-    /// Memoized `list_pages()` (the journals//pages/ directory scan), keyed by
-    /// cache_gen — which bumps on every page create/delete/rename (Tine or watcher)
-    /// — so quick-switch / [[ ]] autocomplete don't re-read both dirs on every
-    /// keystroke. An externally-created page not yet seen by the watcher is at most
-    /// one watcher tick (≤3s) stale here.
-    page_list_cache: RwLock<Option<(u64, Arc<Vec<PageEntry>>)>>,
-    /// Memoized exact `find_entry(name, kind)` resolution, keyed by `cache_gen`.
-    /// Unlike `list_pages()`, this index is built from raw `list_md` output so it
-    /// preserves `find_entry`'s duplicate selection: date-stem file first, else
-    /// first directory-walk match.
-    find_entry_cache: RwLock<Option<(u64, FindEntryIndex)>>,
     /// GH #623 / storage spec §5.1 step 1: what the launch load pass observed
     /// (each file's stamp, taken before its one read, the revision of the bytes
     /// it parsed, and whether the stamp was racy), for the watcher baseline.
     /// Taken once by the load worker; `None` when the cache was built by
     /// another path (an on-demand build), which falls back to a baseline walk.
     launch_observations: std::sync::Mutex<Option<LaunchObservations>>,
-    /// The launch pass's complete, effective-name page listing (duplicate
-    /// journal days included), keyed by `cache_gen`: the first publication's
-    /// name index is built from it instead of re-walking the graph and
-    /// re-opening every page preamble.
-    launch_listing: RwLock<Option<(u64, Arc<Vec<PageEntry>>)>>,
     /// When this graph was opened. A file the launch pass finds written since
     /// then may already have been read by a client (`Store::page` works while
     /// loading), so the Ready publication announces it (`LaunchObservations`).
@@ -428,25 +394,6 @@ pub(crate) struct Graph {
     /// bytes we wrote and suppress that false positive (the parse-cache comparison
     /// alone races that window). See `write_page` / `sync_file_content`.
     recent_writes: std::sync::Mutex<std::collections::HashMap<PathBuf, String>>,
-    /// `path → content_rev` of the on-disk bytes the cached page's
-    /// `Document` was parsed from. Invariant: an entry exists IFF the page is in
-    /// the cache, and `disk_revs[path] == content_rev(current disk bytes)` ⟹ the
-    /// cached doc reflects disk (is fresh). Lets `sync_file_content` skip the
-    /// parse→serialize→parse freshness comparison when a file is unchanged — the
-    /// common case on every page navigation and most watcher polls. A missing or
-    /// mismatched entry always falls through to the correct parse-compare path, so
-    /// the worst a desync can cause is redundant work, never a stale serve.
-    disk_revs: RwLock<std::collections::HashMap<PathBuf, String>>,
-    /// The cached pages whose bytes carry a column-0 VCS anchor line
-    /// (`tine_core::concord_queue::has_vcs_anchor`), observed from the SAME
-    /// bytes as `disk_revs[path]`. Invariant: a cached page (an entry in
-    /// `disk_revs`) with no entry here has no anchor line, so "which pages
-    /// might carry merge markers" is answered with no file read
-    /// ([`Graph::vcs_anchor_state`]); a page not in `disk_revs` is unknown.
-    /// Written only beside `disk_revs`, under the same locks (page_lock →
-    /// cache → disk_revs → vcs_anchored); a superset is harmless, a subset
-    /// would hide a conflicted page. Checkpointed (FORMAT 6).
-    vcs_anchored: RwLock<std::collections::HashSet<PathBuf>>,
     /// Per-resolved-path write locks. The same page file has TWO in-process
     /// writers — the editor (`save_page`/`write_page`) and the PDF highlight path
     /// (`write_highlights`, for an `hls__` page) — and a rename rewrites many
@@ -539,13 +486,7 @@ impl ReadSnapshot {
     ) -> Self {
         #[cfg(feature = "test-faults")]
         let capture_started = std::time::Instant::now();
-        let pages = graph
-            .cache
-            .read()
-            .unwrap()
-            .as_ref()
-            .cloned()
-            .expect("loaded graph");
+        let pages = graph.peek_pages().expect("loaded graph");
         let cache_generation = graph.cache_generation();
         // Build the indexes PRE warmed before ready. Block hints and referenced
         // names were first-use work there, so their OnceLocks remain cold.
@@ -2227,7 +2168,6 @@ impl Graph {
             journal_format: Arc::new(journal_format),
             live_config: RwLock::new(None),
             live_journal_format: RwLock::new(None),
-            cache: RwLock::new(None),
             diag: crate::launch_diag::DiagRecorder::new(),
             #[cfg(test)]
             cache_publish_pause: std::sync::Mutex::new(None),
@@ -2243,22 +2183,13 @@ impl Graph {
             fail_sync_read_once: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             fail_sync_parse_once: std::sync::atomic::AtomicBool::new(false),
-            observed_mtimes: RwLock::new(Arc::new(SharedMap::new())),
-            page_index_failures: RwLock::new(Vec::new()),
-            unreadable_pages: RwLock::new(Arc::new(Vec::new())),
-            discovery_errors: RwLock::new(Vec::new()),
-            cache_index: RwLock::new(None),
             cache_gen: std::sync::atomic::AtomicU64::new(0),
+            derived: Default::default(),
             held: Default::default(),
             build_lock: std::sync::Mutex::new(()),
-            page_list_cache: RwLock::new(None),
-            find_entry_cache: RwLock::new(None),
             launch_observations: std::sync::Mutex::new(None),
-            launch_listing: RwLock::new(None),
             opened_at: std::time::SystemTime::now(),
             recent_writes: std::sync::Mutex::new(std::collections::HashMap::new()),
-            disk_revs: RwLock::new(std::collections::HashMap::new()),
-            vcs_anchored: RwLock::new(std::collections::HashSet::new()),
             page_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -2277,11 +2208,7 @@ impl Graph {
         }
         let graph = Graph::open_inner(root);
         let entries = pages.iter().map(|(entry, _)| entry.clone()).collect();
-        let pages = Pages::from(pages);
-        let index = build_page_cache_index(&pages);
-        *graph.cache.write().unwrap() = Some(Arc::new(pages));
-        *graph.cache_index.write().unwrap() = Some(index);
-        *graph.page_list_cache.write().unwrap() = Some((0, Arc::new(entries)));
+        graph.install_test_pages(Pages::from(pages), entries);
         graph
     }
 
@@ -2315,68 +2242,6 @@ impl Graph {
     /// needlessly invalidate everything).
     pub(crate) fn cache_generation(&self) -> u64 {
         self.cache_gen.load(std::sync::atomic::Ordering::Acquire)
-    }
-
-    pub(crate) fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
-        Arc::clone(&self.observed_mtimes.read().unwrap())
-    }
-
-    pub(crate) fn unreadable_pages(&self) -> Arc<Vec<(crate::store::FileId, String)>> {
-        let mut rows = Arc::clone(&self.unreadable_pages.read().unwrap());
-        Arc::make_mut(&mut rows).extend(
-            self.discovery_errors
-                .read()
-                .unwrap()
-                .iter()
-                .map(|(id, error)| (id.clone(), error.to_string())),
-        );
-        Arc::make_mut(&mut rows).sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
-        Arc::make_mut(&mut rows).dedup_by(|a, b| a.0 == b.0);
-        rows
-    }
-
-    pub(crate) fn replace_unreadable_walk_errors(
-        &self,
-        previous: &std::collections::HashMap<PathBuf, String>,
-        current: &std::collections::HashMap<PathBuf, String>,
-    ) {
-        let affected: std::collections::HashSet<_> = previous
-            .keys()
-            .chain(current.keys())
-            .map(|path| crate::store::FileId::from(self.rel_path(path)))
-            .collect();
-        let mut guard = self.unreadable_pages.write().unwrap();
-        let rows = Arc::make_mut(&mut *guard);
-        rows.retain(|(id, _)| !affected.contains(id));
-        rows.extend(current.iter().map(|(path, reason)| {
-            (
-                crate::store::FileId::from(self.rel_path(path)),
-                reason.clone(),
-            )
-        }));
-        rows.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
-    }
-
-    pub(crate) fn observe_page_mtime(&self, path: &Path, mtime: Option<std::time::SystemTime>) {
-        let key = self.rel_path(path);
-        let mut observed = self.observed_mtimes.write().unwrap();
-        if observed.contains_key(&key) {
-            match mtime {
-                Some(value) => {
-                    Arc::make_mut(&mut observed).insert(key, value);
-                }
-                None => {
-                    Arc::make_mut(&mut observed).remove(&key);
-                }
-            }
-        }
-    }
-
-    /// Pages skipped by the latest whole-graph search-cache build because their
-    /// parse/projection panicked. Paths are graph-relative and safe to surface.
-    #[cfg(test)]
-    pub fn page_index_failures(&self) -> Vec<String> {
-        self.page_index_failures.read().unwrap().clone()
     }
 
     pub(crate) fn journals_path(&self) -> PathBuf {
@@ -2460,26 +2325,6 @@ impl Graph {
         self.list_pages_shared().as_ref().clone()
     }
 
-    pub(crate) fn list_pages_shared(&self) -> Arc<Vec<PageEntry>> {
-        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-        if let Some((g, entries)) = self.page_list_cache.read().unwrap().as_ref() {
-            if *g == gen {
-                return Arc::clone(entries);
-            }
-        }
-        let entries = list_graph_pages(self);
-        // A duplicate-day journal (canonical + leftover title-named file) must show
-        // once in quick-switch / All-Pages, not twice (both resolve to one page).
-        let entries = dedup_journal_days(
-            entries,
-            &self.current_journal_format(),
-            self.current_config().file_name_format,
-        );
-        let entries = Arc::new(entries);
-        *self.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&entries)));
-        entries
-    }
-
     /// Journals sorted newest-first.
     #[cfg(test)]
     pub fn journals_desc(&self) -> Vec<PageEntry> {
@@ -2487,7 +2332,7 @@ impl Graph {
         // by cache_upsert/cache_remove, so we avoid a directory read + parse on
         // every infinite-scroll feed append. Fall back to scanning the dir while
         // the cache isn't built yet.
-        let raw: Vec<PageEntry> = match self.cache.read().unwrap().as_ref() {
+        let raw: Vec<PageEntry> = match self.peek_pages().as_deref() {
             Some(pages) => pages
                 .iter()
                 .filter(|(e, _)| e.kind == PageKind::Journal && e.date_key.is_some())
@@ -2757,33 +2602,11 @@ impl Graph {
         Ok(None)
     }
 
-    /// Locate a page in the parsed-doc cache by its resolved physical path.
-    /// Callers must already hold either `cache.read()` or `cache.write()`; this
-    /// function only touches the companion index, preserving the lock order
-    /// cache -> cache_index.
-    fn cached_page_index_for_path(&self, pages: &Pages, path: &Path) -> Option<usize> {
-        if let Some(index) = self.cache_index.read().unwrap().as_ref() {
-            return index.by_path.get(path).copied();
-        }
-        let mut guard = self.cache_index.write().unwrap();
-        if guard.is_none() {
-            #[cfg(test)]
-            count_cache_linear_scan(pages.len());
-            *guard = Some(build_page_cache_index(pages));
-        }
-        guard
-            .as_ref()
-            .and_then(|index| index.by_path.get(path).copied())
-    }
-
     /// A page DTO from the cache ONLY if the cache is already built — never
     /// triggers a (synchronous, whole-graph) build. `None` on a cold cache or a
     /// page not yet cached, so latency-path callers can parse just one file.
     fn peek_cached_page(&self, entry: &PageEntry) -> Option<PageDto> {
-        let guard = self.cache.read().unwrap();
-        let pages = guard.as_ref()?;
-        let i = self.cached_page_index_for_path(pages, &entry.path)?;
-        pages.get(i).map(|(e, d)| page_dto(e, d))
+        self.with_cached(&entry.path, |row| row.map(|(e, d)| page_dto(e, d)))?
     }
 
     /// Read and validate the current page file on every call, then reconcile a
@@ -2803,7 +2626,9 @@ impl Graph {
         // disagree via a write landing between two reads), and — on a cache miss —
         // parse it below.
         let read = read_parse_input(&entry.path);
-        let cache_ready = self.cache.read().unwrap().is_some();
+        // A held page's installed row is its owner's ((G)): a direct read
+        // neither reconciles nor serves it.
+        let cache_ready = self.cache_built() && self.disk_sourced(&entry.path);
         if let Ok(content) = &read {
             if cache_ready {
                 self.sync_file_content(&entry.path, content, false)?;
@@ -2900,104 +2725,19 @@ impl Graph {
     /// (the background warm shares its parallel parse, `parse_pages_parallel`).
     ///
     fn load_all_pages(&self) -> PageCacheBuild {
-        let listed = self.list_pages_shared();
-        let (entries, _) = self.build_sources(&listed, listed.as_ref().clone());
+        // A held page's row is its owner's (`install_built`): never read.
+        let entries: Vec<PageEntry> = (self.list_pages_shared().iter())
+            .filter(|entry| self.disk_sourced(&entry.path))
+            .cloned()
+            .collect();
         let mut built = PageCacheBuild::with_capacity(entries.len());
-        let shards = parse_pages_parallel(entries, &|| true, &|(e, source)| {
-            self.parse_page_entry_isolated(e, source)
-        })
-        .expect("an unstoppable parse always finishes");
+        let shards =
+            parse_pages_parallel(entries, &|| true, &|e| self.parse_page_entry_isolated(e))
+                .expect("an unstoppable parse always finishes");
         for parsed in shards.into_iter().flatten() {
             built.collect(parsed);
         }
         built
-    }
-
-    /// Install a freshly-built whole-graph snapshot atomically: the parsed pages
-    /// into the cache, their on-disk revs into `disk_revs`. Cache set BEFORE
-    /// disk_revs so a reader never observes a fresh rev paired with a stale cache.
-    fn install_built(
-        &self,
-        built: PageCacheBuild,
-        (expected_gen, held_epoch): (u64, u64),
-        replace: bool,
-        observed: Option<&HashMap<PathBuf, crate::watch::Stamp>>,
-    ) -> bool {
-        let PageCacheBuild {
-            pages: built,
-            failures,
-            mut unreadable,
-        } = built;
-        unreadable.extend(
-            self.discovery_errors
-                .read()
-                .unwrap()
-                .iter()
-                .map(|(id, error)| (id.as_str().to_owned(), error.to_string())),
-        );
-        // One row per path: a discovery and a parse failure of the same file
-        // are one unreadable file (the stable sort keeps the parse reason).
-        unreadable.sort_by(|a, b| a.0.cmp(&b.0));
-        unreadable.dedup_by(|a, b| a.0 == b.0);
-        let revs: std::collections::HashMap<PathBuf, String> = built
-            .iter()
-            .map(|(e, _, obs)| (e.path.clone(), obs.rev.clone()))
-            .collect();
-        let anchored: std::collections::HashSet<PathBuf> = built
-            .iter()
-            .filter(|(_, _, obs)| obs.anchored)
-            .map(|(e, _, _)| e.path.clone())
-            .collect();
-        let pages: Vec<(PageEntry, Arc<Document>)> = built
-            .into_iter()
-            .map(|(e, d, _)| (e, Arc::new(d)))
-            .collect();
-        // The launch pass observed every file's stamp before reading it; an
-        // on-demand build did not, and stats each page here.
-        let mtimes = pages
-            .iter()
-            .filter_map(|(entry, _)| {
-                match observed {
-                    Some(observed) => observed.get(&entry.path).and_then(|stamp| stamp.modified()),
-                    None => fs::metadata(&entry.path)
-                        .and_then(|meta| meta.modified())
-                        .ok(),
-                }
-                .map(|mtime| (entry.rel_path_str().to_owned(), mtime))
-            })
-            .collect();
-        let pages = Pages::from(pages);
-        let index = build_page_cache_index(&pages);
-        // Publish cache + revs atomically under the cache lock (cache → disk_revs
-        // order), so no reader observes a fresh rev paired with a stale cache.
-        let mut guard = self.cache.write().unwrap();
-        if (guard.is_some() && !replace)
-            || self.cache_gen.load(std::sync::atomic::Ordering::Acquire) != expected_gen
-            || self.held.epoch() != held_epoch
-        {
-            return false;
-        }
-        *guard = Some(Arc::new(pages));
-        *self.observed_mtimes.write().unwrap() = Arc::new(mtimes);
-        *self.page_index_failures.write().unwrap() = failures;
-        *self.unreadable_pages.write().unwrap() = Arc::new(
-            unreadable
-                .into_iter()
-                .map(|(path, reason)| (crate::store::FileId::from(path), reason))
-                .collect(),
-        );
-        *self.cache_index.write().unwrap() = Some(index);
-        *self.disk_revs.write().unwrap() = revs;
-        *self.vcs_anchored.write().unwrap() = anchored;
-        if replace {
-            // A replaced cache is new content under the old generation: the
-            // generation-keyed page list, name index and block index must
-            // rebuild against it. Bumped after the content, as everywhere.
-            self.cache_gen
-                .fetch_add(1, std::sync::atomic::Ordering::Release);
-        }
-        drop(guard);
-        true
     }
 
     /// Run `f` over every parsed page, building the cache on first use.
@@ -3009,11 +2749,7 @@ impl Graph {
     /// use copy-on-write under `cache.write()` when a scan still holds an older
     /// snapshot.
     pub(crate) fn with_pages<T>(&self, f: impl FnOnce(&Pages) -> T) -> T {
-        let snapshot = {
-            let guard = self.cache.read().unwrap();
-            guard.as_ref().map(Arc::clone)
-        };
-        if let Some(snapshot) = snapshot {
+        if let Some(snapshot) = self.peek_pages() {
             return f(&snapshot);
         }
         // Single-flight build: serialize builders on `build_lock` (NOT the cache
@@ -3021,7 +2757,7 @@ impl Graph {
         // and so we never hold the cache write lock during the slow parse.
         use std::sync::atomic::Ordering;
         let _bl = self.build_lock.lock().unwrap();
-        if self.cache.read().unwrap().is_none() {
+        if !self.cache_built() {
             let build_began = std::time::Instant::now();
             loop {
                 let gen0 = (self.cache_gen.load(Ordering::Acquire), self.held.epoch());
@@ -3030,18 +2766,14 @@ impl Graph {
                 // because the cache was still None), its disk write is already
                 // done — rebuild so we don't install a stale snapshot. We hold
                 // build_lock, so no other builder competes.
-                if self.install_built(built, gen0, false, None) {
+                if self.install_built(built, gen0, false, None, None) {
                     break;
                 }
             }
             self.diag.on_demand_build(build_began.elapsed());
         }
         drop(_bl);
-        let snapshot = {
-            let guard = self.cache.read().unwrap();
-            guard.as_ref().map(Arc::clone).unwrap()
-        };
-        f(&snapshot)
+        f(&self.peek_pages().unwrap())
     }
 
     /// Build graph-open caches while allowing a revoked window binding to stop
@@ -3074,9 +2806,8 @@ impl Graph {
             return false;
         }
         if replace {
-            *self.page_list_cache.write().unwrap() = None;
-            *self.find_entry_cache.write().unwrap() = None;
-        } else if self.cache.read().unwrap().is_some() {
+            self.forget_name_memos();
+        } else if self.cache_built() {
             return true; // already built (e.g. by a query) — nothing to warm
         }
         // Build WITHOUT holding build_lock during the parse, so an on-demand
@@ -3106,11 +2837,12 @@ impl Graph {
         // Journal identity is the filename date, so the duplicate-day collapse
         // needs no content; non-journal entries pass through it unchanged.
         let entries = dedup_journal_days(listed.clone(), &journal_format, name_format);
-        // Held pages are sourced from their owners' bytes (A-H1), including
-        // one whose file the listing no longer finds.
-        let (entries, held_only) = self.build_sources(&listed, entries);
-        let mut listed = listed;
-        listed.extend(held_only);
+        // A held page's row is its owner's ((G), `install_built`): the build
+        // never reads it, and the watcher rereads its file.
+        let withheld = self.withheld(&listed);
+        let entries: Vec<PageEntry> = (entries.into_iter())
+            .filter(|entry| !withheld.contains(&entry.path))
+            .collect();
         pass.listing_us = diag::micros(began.elapsed());
         pass.entries = entries.len() as u64;
         let mut built = PageCacheBuild::with_capacity(entries.len());
@@ -3132,7 +2864,7 @@ impl Graph {
         // Each file's stamp comes from its directory entry in the listing
         // above (no per-file open on Windows), taken before its read.
         let listing_stamp = |path: &Path| listing_stamps.get(path).cloned();
-        let parse_one = |(mut e, source): (PageEntry, Source)| {
+        let parse_one = |mut e: PageEntry| {
             let phase = std::time::Instant::now();
             let (stamp, observed) = match listing_stamp(&e.path) {
                 Some((stamp, observed)) => (Some(stamp), observed),
@@ -3141,18 +2873,12 @@ impl Graph {
             clock.stat(phase.elapsed());
             let path = e.path.clone();
             let phase = std::time::Instant::now();
-            let held = !matches!(source, Source::Disk);
-            let read = self.source_content(&e.path, &source);
-            let read_len = match &read {
-                Ok(content) => content.as_ref().map(String::len),
-                Err(_) => None,
-            };
+            let read = read_parse_input(&e.path);
+            let read_len = read.as_ref().ok().map(String::len);
             clock.read(phase.elapsed(), read_len);
             let mut name_failure = None;
             let parsed = match read {
-                // Held, with nothing indexed yet: its owner indexes it.
-                Ok(None) => Ok(None),
-                Ok(Some(content)) => {
+                Ok(content) => {
                     match self.name_from(&e, &content) {
                         Ok(name) => e.name = name,
                         Err(error) => name_failure = Some(error),
@@ -3190,20 +2916,16 @@ impl Graph {
                         .and_then(|meta| meta.created())
                         .is_ok_and(|created| created >= self.opened_at)
                 });
-            (path, stamp, racy, (name_failure, since_open, held), parsed)
+            (path, stamp, racy, (name_failure, since_open), parsed)
         };
-        let mut held_paths = std::collections::HashSet::new();
         let mut take = |built: &mut PageCacheBuild,
-                        (path, stamp, is_racy, (name_failure, since_open, held), parsed): (
+                        (path, stamp, is_racy, (name_failure, since_open), parsed): (
             PathBuf,
             Option<crate::watch::Stamp>,
             bool,
-            (Option<io::Error>, Option<bool>, bool),
+            (Option<io::Error>, Option<bool>),
             PageParseResult,
         )| {
-            if held {
-                held_paths.insert(path.clone());
-            }
             if let Ok(Some((entry, _, rev))) = &parsed {
                 if entry.kind == PageKind::Page {
                     names.insert(path.clone(), entry.name.clone());
@@ -3212,11 +2934,9 @@ impl Graph {
                     announce.push((path.clone(), created, entry.kind, entry.name.clone()));
                 }
                 if let Some(stamp) = stamp {
-                    // A held page's bytes are its owner's, not this file's
-                    // (A-V4): the watcher rereads the file.
-                    let rev = (!held).then(|| crate::store::FileRev::from(rev.rev.clone()));
+                    let rev = Some(crate::store::FileRev::from(rev.rev.clone()));
                     stamps.insert(path.clone(), stamp.with_rev(rev));
-                    if is_racy || held {
+                    if is_racy {
                         racy.insert(path.clone());
                     }
                 }
@@ -3240,14 +2960,14 @@ impl Graph {
             #[cfg(test)]
             crate::store::pause_at_hook(&self.warm_after_first_page_pause);
         }
-        let still_wanted = || !cancelled() && (replace || self.cache.read().unwrap().is_none());
+        let still_wanted = || !cancelled() && (replace || !self.cache_built());
         let parallel_began = std::time::Instant::now();
         let Some(parsed_chunks) =
             parse_pages_parallel(entries.collect(), &still_wanted, &parse_one)
         else {
             // Either a query built the cache while we parsed, or we were cancelled.
             clock.fold(&mut pass, parallel_began.elapsed(), 0);
-            let built_meanwhile = !replace && self.cache.read().unwrap().is_some();
+            let built_meanwhile = !replace && self.cache_built();
             let outcome = if built_meanwhile {
                 diag::OUTCOME_CACHE_ALREADY_BUILT
             } else {
@@ -3261,8 +2981,9 @@ impl Graph {
         }
         drop(take);
         // Files the build does not read: duplicate-day journals the collapse
-        // set aside and sync conflict copies. The watcher tracks their stamps
-        // without a revision (§5.1); nothing parses them.
+        // set aside, sync conflict copies and held pages. The watcher tracks
+        // their stamps without a revision (§5.1); nothing parses them. A held
+        // page's stamp is racy, so the watcher rereads the file (A-V4).
         let phase = std::time::Instant::now();
         for path in listed
             .iter()
@@ -3271,7 +2992,7 @@ impl Graph {
         {
             if !stamps.contains_key(path) && !names.contains_key(path) {
                 if let Some((stamp, observed)) = listing_stamp(path) {
-                    if stamp.racy_at(observed) {
+                    if stamp.racy_at(observed) || withheld.contains(path) {
                         racy.insert(path.clone());
                     }
                     stamps.insert(path.clone(), stamp);
@@ -3285,15 +3006,12 @@ impl Graph {
         if replace {
             // A second listing, not a stamp per file: no file open on Windows.
             let (_, _, _, now) = page_identity::launch_listing_walk(self);
-            // A held page was built from its owner's bytes, not the file.
             let changed = built.pages.iter().any(|(entry, _, _)| {
-                !held_paths.contains(&entry.path)
-                    && now
+                now.get(&entry.path)
+                    .map(|(now, _)| (now.modified(), now.len()))
+                    != stamps
                         .get(&entry.path)
-                        .map(|(now, _)| (now.modified(), now.len()))
-                        != stamps
-                            .get(&entry.path)
-                            .map(|then| (then.modified(), then.len()))
+                        .map(|then| (then.modified(), then.len()))
             });
             if changed {
                 pass.recheck_us = diag::micros(phase.elapsed());
@@ -3314,28 +3032,20 @@ impl Graph {
                 entry
             })
             .collect();
-        {
-            let mut known = self.discovery_errors.write().unwrap();
-            known.clear();
-            known.extend(discovery);
-            known.extend(
-                walk_errors
-                    .into_iter()
-                    .map(|(path, error)| (crate::FileId::from(self.rel_path(&path)), error.into())),
-            );
-        }
+        discovery.extend(
+            walk_errors
+                .into_iter()
+                .map(|(path, error)| (crate::FileId::from(self.rel_path(&path)), error.into())),
+        );
         // Install only if nobody else built it and no Tine save/remove raced our
         // reads (its cache mutation would have no-op'd against the None cache, so
         // its disk write must be folded in by a rebuild — defer to the next
         // on-demand build rather than install a stale snapshot).
         let phase = std::time::Instant::now();
         let _bl = self.build_lock.lock().unwrap();
-        let installed = self.install_built(built, gen0, replace, Some(&stamps));
+        let installed = self.install_built(built, gen0, replace, Some(&stamps), Some(discovery));
         if installed {
-            let gen = self.cache_gen.load(Ordering::Acquire);
-            let deduped = dedup_journal_days(named.clone(), &journal_format, name_format);
-            *self.page_list_cache.write().unwrap() = Some((gen, Arc::new(deduped)));
-            *self.launch_listing.write().unwrap() = Some((gen, Arc::new(named)));
+            self.install_launch_listing(self.cache_gen.load(Ordering::Acquire), named);
             if !replace {
                 *self.launch_observations.lock().unwrap() = Some(LaunchObservations {
                     stamps,
@@ -3365,107 +3075,6 @@ impl Graph {
     /// built some other way (an on-demand build won the race).
     pub(crate) fn take_launch_observations(&self) -> Option<LaunchObservations> {
         self.launch_observations.lock().unwrap().take()
-    }
-
-    /// Discard the cache; it rebuilds on the next whole-graph query. Use when an
-    /// external change may have touched many files.
-    pub(crate) fn invalidate_cache(&self) {
-        let mut guard = self.cache.write().unwrap();
-        *guard = None;
-        *self.observed_mtimes.write().unwrap() = Arc::new(SharedMap::new());
-        self.page_index_failures.write().unwrap().clear();
-        *self.unreadable_pages.write().unwrap() = Arc::new(Vec::new());
-        self.discovery_errors.write().unwrap().clear();
-        *self.cache_index.write().unwrap() = None;
-        self.disk_revs.write().unwrap().clear(); // under the cache lock (cache → disk_revs)
-        self.vcs_anchored.write().unwrap().clear();
-        // Bump the generation AFTER discarding the cache (under the cache lock), so
-        // a reader that loads the new gen then reads the cache sees None (and
-        // rebuilds from disk) rather than the stale pre-invalidation content — same
-        // gen-after-content ordering as cache_upsert. The gen-keyed block index
-        // then rebuilds against fresh content too.
-        self.cache_gen
-            .fetch_add(1, std::sync::atomic::Ordering::Release);
-        drop(guard);
-    }
-
-    /// Update one page in the cache after we write it (no full rebuild). A no-op
-    /// if the cache hasn't been built yet. `disk_rev` is `content_rev` of the
-    /// exact on-disk bytes `doc` was produced from (the freshness key — see
-    /// `disk_revs`).
-    fn cache_upsert(&self, entry: PageEntry, mut doc: Document, disk: DiskObs) {
-        // Fill runtime ids for any block that lacks one (e.g. PDF-highlight writes)
-        // from this physical owner. Blocks saved from the frontend already carry
-        // live ids, which are deliberately kept through the in-memory save path.
-        assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
-        let path_key = entry.path.clone();
-        let doc = Arc::new(doc);
-        let evict_entry = entry.clone();
-        let mut guard = self.cache.write().unwrap();
-        #[cfg(test)]
-        crate::store::pause_at_hook(&self.cache_publish_pause);
-        if let Some(pages) = guard.as_mut() {
-            let pages = Arc::make_mut(pages);
-            match self.cached_page_index_for_path(pages, &entry.path) {
-                Some(i) => {
-                    let slot = pages.get_mut(i).unwrap();
-                    if slot.0.kind != entry.kind
-                        || tine_core::refs::page_key(&slot.0.name)
-                            != tine_core::refs::page_key(&entry.name)
-                    {
-                        if let Some(index) = self.cache_index.write().unwrap().as_mut() {
-                            index.remove(&slot.0, i);
-                            index.insert(&entry, i);
-                        }
-                    }
-                    *slot = (entry, doc);
-                }
-                None => {
-                    let slot = pages.push((entry, doc));
-                    if let Some(index) = self.cache_index.write().unwrap().as_mut() {
-                        index.insert(&pages[slot].0, slot);
-                    }
-                }
-            }
-            // Update disk_revs WHILE STILL HOLDING the cache write lock, so the
-            // cached doc and its freshness rev are published atomically and can
-            // never diverge across concurrent same-page writers (e.g. an editor
-            // save racing a PDF write_highlights on an hls__ page). If they could
-            // diverge, the sync_file_content fast-path could match disk against a
-            // rev that isn't the cached doc's and serve a stale doc. Lock order is
-            // always cache → disk_revs; readers never hold disk_revs while taking
-            // the cache lock, so this nesting can't deadlock. Sets only when the
-            // page is actually cached (preserves "entry exists IFF cached").
-            // The anchor observation moves with the rev, from the same bytes.
-            {
-                let mut anchored = self.vcs_anchored.write().unwrap();
-                if disk.anchored {
-                    anchored.insert(path_key.clone());
-                } else {
-                    anchored.remove(&path_key);
-                }
-            }
-            self.disk_revs.write().unwrap().insert(path_key, disk.rev);
-            if let Ok(mtime) = fs::metadata(&evict_entry.path).and_then(|meta| meta.modified()) {
-                Arc::make_mut(&mut self.observed_mtimes.write().unwrap())
-                    .insert(evict_entry.rel_path_str().to_owned(), mtime);
-            }
-            Arc::make_mut(&mut self.unreadable_pages.write().unwrap())
-                .retain(|(id, _)| id.as_str() != evict_entry.rel_path_str());
-        }
-        // Bump cache_gen AFTER publishing the new content (and disk_revs), still
-        // under the cache write lock. A reader loads cache_gen (Acquire) then takes
-        // the cache read lock; because the bump (Release) happens-after the slot
-        // write and before the lock is dropped, observing the new gen guarantees
-        // the new doc is visible. So any derived result computed at gen G reflects
-        // every edit whose gen is <= G — it can never be a stale whole-graph scan
-        // that reads the OLD doc yet gets tagged (and served) at the fresh gen.
-        // (Bumping FIRST left a window where the gen was new but the doc still old.)
-        // The bump is unconditional — even on a cold cache (no slot to update) — so
-        // a concurrent lock-free with_pages build still detects the race and retries.
-        self.cache_gen
-            .fetch_add(1, std::sync::atomic::Ordering::Release);
-        drop(guard);
     }
 }
 
@@ -3590,57 +3199,6 @@ impl SnapshotMemos {
             dc.lru.retain(|key| dc.results.contains_key(key));
             dc.gen = newgen; // survivors are valid for the post-bump generation
         }
-    }
-}
-
-impl Graph {
-    /// Whether the cached page at `path` has a VCS anchor line in the bytes
-    /// the store last observed for it: `Some(false)` means no read of the file
-    /// can find one, `Some(true)` that one may exist (the caller scans), `None`
-    /// that the page is not cached (not loaded yet, or never cached:
-    /// shadow journals, sync copies, unreadable or oversized files), so only
-    /// reading the file can tell. Cost O(1).
-    pub(crate) fn vcs_anchor_state(&self, path: &Path) -> Option<bool> {
-        let _cache = self.cache.read().unwrap();
-        if !self.disk_revs.read().unwrap().contains_key(path) {
-            return None;
-        }
-        Some(self.vcs_anchored.read().unwrap().contains(path))
-    }
-
-    /// `content_rev` of the bytes the cached page at `path` was parsed from;
-    /// None when it is not cached. Cost O(1).
-    pub(crate) fn cached_rev(&self, path: &Path) -> Option<String> {
-        let _cache = self.cache.read().unwrap();
-        self.disk_revs.read().unwrap().get(path).cloned()
-    }
-
-    /// Drop one physical page from the cache after its file disappears. Unlike
-    /// `cache_remove`, this preserves same-name siblings and rebuilds the logical
-    /// first-wins index from the surviving entries.
-    fn cache_remove_path(&self, entry: &PageEntry) {
-        let mut guard = self.cache.write().unwrap();
-        if let Some(pages) = guard.as_mut() {
-            let pages = Arc::make_mut(pages);
-            if let Some(i) = self.cached_page_index_for_path(pages, &entry.path) {
-                if let Some(index) = self.cache_index.write().unwrap().as_mut() {
-                    index.remove(&pages[i].0, i);
-                }
-                pages.remove(i);
-                // Drop the rev under the cache lock (same cache → disk_revs order
-                // as cache_upsert) so the two never diverge.
-                self.disk_revs.write().unwrap().remove(&entry.path);
-                self.vcs_anchored.write().unwrap().remove(&entry.path);
-                Arc::make_mut(&mut self.observed_mtimes.write().unwrap())
-                    .remove(entry.rel_path_str());
-            }
-        }
-        // Bump AFTER the removal is published (under the cache lock), so a reader
-        // that loads the new gen is guaranteed to see the page gone — see the
-        // gen-after-content note in cache_upsert.
-        self.cache_gen
-            .fetch_add(1, std::sync::atomic::Ordering::Release);
-        drop(guard);
     }
 }
 
@@ -4033,10 +3591,7 @@ impl Graph {
             Ok(entry) => Ok(entry),
             Err(_) => {
                 self.invalidate_cache();
-                self.page_index_failures
-                    .write()
-                    .unwrap()
-                    .push(self.rel_path(path));
+                self.record_index_failure(path);
                 Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "page parser panicked during sync",
@@ -4052,6 +3607,11 @@ impl Graph {
         consume_self_write: bool,
     ) -> Option<PageEntry> {
         let entry = self.cacheable_page_entry(path)?;
+        // A held page's rows are its owner's ((G)): the watcher forwards its
+        // file to the owner, and nothing here installs or retires them.
+        if !self.disk_sourced(path) {
+            return None;
+        }
         // Our own write: if the bytes on disk are exactly what Tine last wrote
         // here, this is not an external change — suppress it even if the parse
         // cache hasn't folded in the write yet (the rename→cache_upsert gap the
@@ -4085,17 +3645,8 @@ impl Graph {
         // the guard is dropped before the reconcile path below re-locks the cache.
         // A missing/mismatched entry falls through to the exact comparison, so this
         // can only ever save work, never serve stale content.
-        {
-            let _cache_guard = self.cache.read().unwrap();
-            if self
-                .disk_revs
-                .read()
-                .unwrap()
-                .get(path)
-                .is_some_and(|r| *r == disk_rev)
-            {
-                return None;
-            }
+        if self.cached_rev(path).is_some_and(|r| r == disk_rev) {
+            return None;
         }
         #[cfg(test)]
         if self
@@ -4105,69 +3656,49 @@ impl Graph {
             panic!("injected external sync parser panic");
         }
         let (mut newdoc, opts) = parse_doc_with_opts(path, content);
-        {
-            let guard = self.cache.read().unwrap();
-            if guard.is_none() {
-                drop(guard);
+        // Compare CONTENT, not the in-memory uuids: cached blocks carry
+        // generated uuids (assigned at cache build / upsert), while a fresh
+        // `parse` leaves them empty for non-ref-target blocks, so a direct
+        // `cached == newdoc` would never match and would flag every one of
+        // Tine's own writes as an external change. Normalize the cached doc
+        // through the same serialize→parse round-trip the file went through
+        // (both sides then have empty uuids) and compare.
+        let compared = self.with_cached(path, |row| {
+            row.map(|(_, cached)| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    match Format::from_path(path) {
+                        Format::Md => parse_doc(path, &doc::serialize_with(cached, &opts)),
+                        Format::Org => parse_doc(
+                            path,
+                            &tine_core::org::serialize_org_detect(cached, Some(content)),
+                        ),
+                    }
+                }))
+                .map(|cached_norm| cached_norm == newdoc)
+            })
+        });
+        match compared {
+            None => {
                 #[cfg(test)]
                 crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
-                // A builder can install between the read above and this lock.
-                // If it did, continue to cache_upsert below; otherwise bump the
-                // generation under the same lock used by install_built so its
-                // pre-write candidate cannot be installed afterward.
-                let cache = self.cache.write().unwrap();
-                if cache.is_none() {
-                    *self.page_list_cache.write().unwrap() = None;
-                    *self.find_entry_cache.write().unwrap() = None;
-                    *self.cache_index.write().unwrap() = None;
-                    self.cache_gen
-                        .fetch_add(1, std::sync::atomic::Ordering::Release);
+                // A builder can install between the look above and this
+                // bump; if it did, continue to cache_upsert below. Otherwise
+                // the generation moves under the lock install_built takes, so
+                // its pre-write candidate cannot be installed afterward.
+                if self.cold_reconcile_bump() {
                     return None;
                 }
-                drop(cache);
-            } else if let Some(i) = self.cached_page_index_for_path(guard.as_ref().unwrap(), path) {
-                let cache = guard.as_ref().unwrap();
-                let cached = &cache[i].1;
-                // Compare CONTENT, not the in-memory uuids: cached blocks carry
-                // generated uuids (assigned at cache build / upsert), while a
-                // fresh `parse` leaves them empty for non-ref-target blocks, so a
-                // direct `cached == newdoc` would never match and would flag every
-                // one of Tine's own writes as an external change. Normalize the
-                // cached doc through the same serialize→parse round-trip the file
-                // went through (both sides then have empty uuids) and compare.
-                let cached_norm =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                        || match Format::from_path(path) {
-                            Format::Md => parse_doc(path, &doc::serialize_with(cached, &opts)),
-                            Format::Org => parse_doc(
-                                path,
-                                &tine_core::org::serialize_org_detect(cached, Some(content)),
-                            ),
-                        },
-                    ));
-                let cached_norm = match cached_norm {
-                    Ok(doc) => doc,
-                    Err(_) => {
-                        drop(guard);
-                        panic!("page parser panicked during cached comparison");
-                    }
-                };
-                if cached_norm == newdoc {
-                    // Unchanged document, but not necessarily unchanged bytes:
-                    // parsing normalizes some lines (a column-0 continuation
-                    // line parses like an indented one), so these bytes may
-                    // carry an anchor line the cached bytes did not. The flag
-                    // may only err toward true, so raise it (still under the
-                    // cache lock: cache → vcs_anchored).
-                    if tine_core::concord_queue::has_vcs_anchor(content.as_bytes()) {
-                        self.vcs_anchored
-                            .write()
-                            .unwrap()
-                            .insert(path.to_path_buf());
-                    }
-                    return None; // unchanged / our own write
-                }
             }
+            Some(Some(Err(_))) => panic!("page parser panicked during cached comparison"),
+            Some(Some(Ok(true))) => {
+                // Unchanged document, but not necessarily unchanged bytes:
+                // parsing normalizes some lines (a column-0 continuation line
+                // parses like an indented one), so these bytes may carry an
+                // anchor line the cached bytes did not.
+                self.raise_vcs_anchor(path, content);
+                return None; // unchanged / our own write
+            }
+            Some(_) => {}
         }
         newdoc.roots.shrink_to_fit();
         let anchored = tine_core::concord_queue::has_vcs_anchor(content.as_bytes());
@@ -4191,11 +3722,14 @@ impl Graph {
             .unwrap()
             .remove(path)
             .is_some_and(|rev| rev == "<tx-deleted>");
+        // A disk disappearance never removes a held page's row (R1).
+        if !self.disk_sourced(path) {
+            return None;
+        }
         let entry = self.entry_for_path(path)?;
-        let cached_entry = self.cache.read().unwrap().as_ref().and_then(|pages| {
-            self.cached_page_index_for_path(pages, path)
-                .map(|index| pages[index].0.clone())
-        });
+        let cached_entry = self
+            .with_cached(path, |row| row.map(|(entry, _)| entry.clone()))
+            .flatten();
         self.cache_remove_path(&entry);
         cached_entry.filter(|_| !own_delete)
     }
@@ -4222,22 +3756,6 @@ impl Graph {
 
     pub(crate) fn transaction_clear_page_marker(&self, path: &Path) {
         self.recent_writes.lock().unwrap().remove(path);
-    }
-
-    pub(crate) fn transaction_bump_generation(&self) {
-        let before = self
-            .cache_gen
-            .fetch_add(1, std::sync::atomic::Ordering::Release);
-        if let Some((gen, _)) = self.page_list_cache.write().unwrap().as_mut() {
-            if *gen == before {
-                *gen = before + 1;
-            }
-        }
-        if let Some((gen, _)) = self.find_entry_cache.write().unwrap().as_mut() {
-            if *gen == before {
-                *gen = before + 1;
-            }
-        }
     }
 
     /// Bytes a save writes for `page`. Markdown reuses every unchanged block's
@@ -6086,7 +5604,7 @@ mod tests {
         let g = Graph::open(&dir);
         assert!(g.warm_cache_cancellable(|| false));
         assert!(
-            g.cache_index.read().unwrap().is_some(),
+            g.cache_index_built(),
             "warm cache should install the by-name parsed-doc index"
         );
 

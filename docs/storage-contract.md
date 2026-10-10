@@ -101,23 +101,37 @@ never from rereading every page's preamble. Proof:
 
 While a page host holds a page (STEP3 §5, amendment A-V4), its publication
 consumer, or a reservation's transaction, is the page's only index writer
-(R13). Held bytes are the page's *source*, not an overlay (A-H1): `page()`
-answers the bytes that writer last indexed before reading anything of the
-file (or, before its first publication, parses the file without publishing),
-and every full or on-demand build takes the page's presence, name and
-document from those same bytes, so a held page the owner indexed survives
-its file's removal and one it indexed absent is left out. The held key is
-the page's path under the store's own root (`PagePath`), so every platform's
-root spelling keys the same page. A build that read a page before its hold
-began declines its install. A newer disk read indexed there could be
-overwritten by an older host event still on its way. A write computed from a
-page parses the bytes whose revision guards it (`Store::read` then
+(R13). Invariant (G) (A-H2): every installed row about a held page (its
+cache document, revision, anchor, file time, error rows, listing entry and
+claimants, and the published snapshot's roots) comes from the bytes that
+writer last published, and its name and document come from those same bytes.
+A held page's row is installed only from those bytes; one held but not yet
+published, published absent, or whose identity is unknown (B1) has no row,
+and a new hold retires its current one. A disk disappearance never removes
+a held page's row; an owner's absent publication does. One identity rule
+(`Graph::identify`: the canonical existing parent, then the exact leaf; a
+folded collision is distinct only when both names are listed apart and are
+different files) decides which held key a path names, for the held map, the
+host and the watcher. The installing critical section decides authority, so
+a build that read files before a hold, release, respelling or owner
+publication declines its install. A snapshot removal is named by its path
+and the previous snapshot's name, with no file read. A launch checkpoint's
+rows carry no owner provenance: while any page is held, the whole
+checkpoint is declined and the launch builds. `page()` answers the bytes the
+owner last published before reading anything of the file (or, before its
+first publication, parses the file without publishing it). A write computed
+from a page parses the bytes whose revision guards it (`Store::read` then
 `Store::page_of`; A-V4b), never `page()`. With no host running nothing is
-held and both paths read the file. Proof:
+held and every path reads the file. Proof:
 `crates/tine-store/src/page_host/binding_tests.rs`
-`v4_a_read_or_rebuild_never_indexes_a_held_page`,
+`v4_a_read_or_rebuild_never_indexes_a_held_page` and
+`a_consumer_publication_names_the_bytes_it_publishes`,
+`crates/tine-store/src/model/derived_tests.rs`,
+`crates/tine-store/src/model/entry_identity_tests.rs`,
 `crates/tine-store/src/model/held_index.rs` (the `review2_*` tests and the
 seam guard),
+`crates/tine-store/src/store/checkpoint_tests.rs`
+`a_checkpoint_is_declined_whole_while_a_page_is_held`,
 `crates/tine-graph-features/tests/page_rename_merge.rs`
 `merge_keeps_edits_held_pages_have_not_indexed`.
 

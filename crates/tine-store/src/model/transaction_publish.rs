@@ -38,7 +38,7 @@ impl Graph {
                 if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     if let Some(saved) = saved {
                         #[cfg(test)]
-                        if self.cache.read().unwrap().is_none() {
+                        if !self.cache_built() {
                             crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
                         }
                         if let Some(entry) = self.cacheable_page_entry_in(path, Some(content)) {
@@ -62,10 +62,7 @@ impl Graph {
                 {
                     named = None;
                     self.invalidate_cache();
-                    self.page_index_failures
-                        .write()
-                        .unwrap()
-                        .push(self.rel_path(path));
+                    self.record_index_failure(path);
                 }
             }
             None => {
@@ -73,21 +70,11 @@ impl Graph {
             }
         }
         if file_set_changed {
-            *self.page_list_cache.write().unwrap() = None;
-            *self.find_entry_cache.write().unwrap() = None;
+            self.forget_name_memos();
         } else {
             let after_gen = self.cache_generation();
             if after_gen == before_gen || after_gen == before_gen + 1 {
-                if let Some((gen, _)) = self.page_list_cache.write().unwrap().as_mut() {
-                    if *gen == before_gen {
-                        *gen = after_gen;
-                    }
-                }
-                if let Some((gen, _)) = self.find_entry_cache.write().unwrap().as_mut() {
-                    if *gen == before_gen {
-                        *gen = after_gen;
-                    }
-                }
+                self.retag_name_memos(before_gen, after_gen);
             }
         }
         self.recent_writes.lock().unwrap().remove(path);

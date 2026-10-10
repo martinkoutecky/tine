@@ -200,37 +200,13 @@ impl Graph {
         &self,
         read: &Arc<ReadSnapshot>,
     ) -> Result<GraphState<PagesOut>, NotCaptured> {
-        let cache = self.cache.read().unwrap();
-        let Some(pages) = cache
-            .as_ref()
-            .filter(|pages| Arc::ptr_eq(pages, &read.pages))
-        else {
-            return Err(NotCaptured::Unpublished);
-        };
-        if read.cache_generation != self.cache_generation() {
-            return Err(NotCaptured::Unpublished);
-        }
-        if !self.unreadable_pages.read().unwrap().is_empty()
-            || !self.discovery_errors.read().unwrap().is_empty()
-        {
-            return Err(NotCaptured::Unreadable);
-        }
-        let mut disk_revs: Vec<(PathBuf, String)> = self
-            .disk_revs
-            .read()
-            .unwrap()
-            .iter()
-            .map(|(path, rev)| (path.clone(), rev.clone()))
-            .collect();
-        disk_revs.sort();
-        let mut vcs_anchored: Vec<PathBuf> =
-            self.vcs_anchored.read().unwrap().iter().cloned().collect();
-        vcs_anchored.sort();
+        let (failures, disk_revs, vcs_anchored) =
+            self.checkpoint_rows(&read.pages, read.cache_generation)?;
         Ok(GraphState {
-            pages: PagesOut(Arc::clone(pages)),
+            pages: PagesOut(Arc::clone(&read.pages)),
             cache_generation: read.cache_generation,
             observed_mtimes: Arc::clone(&read.observed_mtimes),
-            failures: self.page_index_failures.read().unwrap().clone(),
+            failures,
             disk_revs,
             vcs_anchored,
             list: read.list.to_parts(),
@@ -246,7 +222,8 @@ impl Graph {
 
     /// Install a loaded checkpoint as this graph's page cache and return the
     /// read evaluator over it, or `None` when a cache already exists (an
-    /// on-demand build won the race; the launch then completes as a cold one).
+    /// on-demand build won the race) or a page is held (its rows are its
+    /// owner's, R2); the launch then completes as a cold one.
     /// Entry paths are rebuilt under this root and runtime block ids are
     /// reassigned exactly as a parse assigns them. Cost O(blocks) for the ids
     /// plus O(pages) for the path index; nothing is parsed.
@@ -287,24 +264,15 @@ impl Graph {
             derived.query_index,
             &pages.positions,
         );
-        let index = build_page_cache_index(&pages);
-        let mut guard = self.cache.write().unwrap();
-        if guard.is_some() {
+        if !self.install_checkpoint_rows(
+            &pages,
+            &state.observed_mtimes,
+            state.failures,
+            (state.disk_revs, state.vcs_anchored),
+            (state.cache_generation, list.materialize()),
+        ) {
             return None;
         }
-        *guard = Some(Arc::clone(&pages));
-        *self.observed_mtimes.write().unwrap() = Arc::clone(&state.observed_mtimes);
-        *self.page_index_failures.write().unwrap() = state.failures;
-        *self.unreadable_pages.write().unwrap() = Arc::new(Vec::new());
-        *self.cache_index.write().unwrap() = Some(index);
-        *self.disk_revs.write().unwrap() = state.disk_revs.into_iter().collect();
-        *self.vcs_anchored.write().unwrap() = state.vcs_anchored.into_iter().collect();
-        // The loaded generation keeps its number, so the evaluator, the
-        // reference index and the generation-keyed listing agree with it.
-        self.cache_gen
-            .store(state.cache_generation, std::sync::atomic::Ordering::Release);
-        *self.page_list_cache.write().unwrap() = Some((state.cache_generation, list.materialize()));
-        drop(guard);
         let read = ReadSnapshot {
             pages,
             config,

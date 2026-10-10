@@ -797,22 +797,26 @@ fn index(store: &Store, publication: &Publication) -> bool {
         return false;
     }
     let graph = &store.graph;
-    graph
-        .held
-        .indexed(&publication.key, || publication.bytes.clone());
     let path = graph.root.join(&publication.spelling);
     let id = FileId::from(publication.spelling.clone());
     let bytes = publication.bytes.as_deref();
     let rev = bytes.map(FileRev::from_bytes);
     let cached = graph.cached_rev(&path);
     let text = bytes.and_then(|bytes| std::str::from_utf8(bytes).ok());
-    let kind = match (&cached, bytes) {
-        (Some(cached), Some(_)) if text.map(content_rev).as_ref() == Some(cached) => None,
-        (None, None) => None,
-        (None, Some(_)) => Some(ChangeKind::Created),
-        (Some(_), None) => Some(ChangeKind::Removed),
-        (Some(_), Some(_)) => Some(ChangeKind::Modified),
+    // A new hold retired the page's rows (R1): the published snapshot still
+    // knows it.
+    let known = cached.is_some() || store.snapshot_knows(&path);
+    let kind = match (known, bytes) {
+        _ if cached.is_some() && text.map(content_rev) == cached => None,
+        (false, None) => None,
+        (false, Some(_)) => Some(ChangeKind::Created),
+        (true, None) => Some(ChangeKind::Removed),
+        (true, Some(_)) => Some(ChangeKind::Modified),
     };
+    let document = publication.own.as_ref().and_then(|(_, d)| d.as_ref());
+    // The owner's bytes become the page's index and its row in one
+    // critical section (R1); an unchanged row is not touched.
+    let owned = graph.publish_owned(&publication.key, publication.bytes.clone(), document);
     let Some(kind) = kind else {
         graph.transaction_clear_page_marker(&path);
         let raced = store.watch.note_own(&[(id, rev)]);
@@ -820,14 +824,16 @@ fn index(store: &Store, publication: &Publication) -> bool {
         return true;
     };
     let before = graph.cache_generation();
-    let document = publication.own.as_ref().and_then(|(_, d)| d.as_ref());
-    let entry = graph.transaction_publish_page_inner(
-        &path,
-        bytes,
-        document,
-        kind != ChangeKind::Modified,
-        false,
-    );
+    let entry = match &owned {
+        Ok(entry) => entry.clone(),
+        Err(()) => graph.transaction_publish_page_inner(
+            &path,
+            bytes,
+            document,
+            kind != ChangeKind::Modified,
+            false,
+        ),
+    };
     if graph.cache_generation() == before {
         graph.transaction_bump_generation();
     }
@@ -839,8 +845,13 @@ fn index(store: &Store, publication: &Publication) -> bool {
         }
         store.publish_own(files, observations);
     } else {
-        let pages = graph
-            .entry_for_path(&path)
+        // Named from the owner's bytes (none for a removal, which the
+        // snapshot names by its previous name); with no owner, by path.
+        let entry = match &owned {
+            Ok(_) => entry,
+            Err(()) => entry.or_else(|| graph.entry_for_path(&path)),
+        };
+        let pages = entry
             .map(|entry| (id, entry.kind, entry.name))
             .into_iter()
             .collect();

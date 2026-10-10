@@ -245,18 +245,24 @@ impl Transaction<'_> {
                         && source_plans
                             .get(&id)
                             .is_some_and(|&index| matches!(steps[index], Step::Rewrite { .. }));
-                    // A held page's reservation publishes its index (A-V4).
-                    let held = || now.as_deref().map(std::sync::Arc::from);
-                    if let Some(key) = self.store.graph.held_key(&path) {
-                        self.store.graph.held.indexed(&key, held);
-                    }
-                    if let Some(entry) = self.store.graph.transaction_publish_page_inner(
-                        &path,
-                        now.as_deref(),
-                        saved_page,
-                        baseline.is_none() || now.is_none(),
-                        own_rename,
-                    ) {
+                    // A held page's reservation publishes its index, and
+                    // its row comes from those bytes (A-V4, (G)).
+                    let graph = &self.store.graph;
+                    let owned = graph.held_key(&path).and_then(|key| {
+                        let bytes = now.as_deref().map(std::sync::Arc::from);
+                        graph.publish_owned(&key, bytes, saved_page).ok()
+                    });
+                    let entry = match owned {
+                        Some(entry) => entry,
+                        None => graph.transaction_publish_page_inner(
+                            &path,
+                            now.as_deref(),
+                            saved_page,
+                            baseline.is_none() || now.is_none(),
+                            own_rename,
+                        ),
+                    };
+                    if let Some(entry) = entry {
                         observations.entries.insert(id.clone(), entry);
                     }
                 } else {

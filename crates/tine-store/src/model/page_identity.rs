@@ -65,53 +65,6 @@ impl Graph {
         }
     }
 
-    pub(crate) fn find_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
-        let key = (kind, tine_core::refs::page_key(name));
-        loop {
-            let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-            if let Some(found) = self.cached_claimants(&key, gen) {
-                return found;
-            }
-
-            let mut built = FindEntryIndex::new();
-            built.entries = page_claimants(self, &list_graph_pages_kind(self, Some(kind)));
-            built.mark_kind_loaded(kind);
-
-            let found = {
-                let mut guard = self.find_entry_cache.write().unwrap();
-                match guard.as_mut() {
-                    Some((g, index)) if *g == gen => {
-                        if !index.has_kind(kind) {
-                            index
-                                .entries
-                                .retain(|(loaded_kind, _), _| *loaded_kind != kind);
-                            index.entries.extend(built.entries);
-                            index.mark_kind_loaded(kind);
-                        }
-                        index.entries.get(&key).cloned().unwrap_or_default()
-                    }
-                    _ => {
-                        let found = built.entries.get(&key).cloned().unwrap_or_default();
-                        *guard = Some((gen, built));
-                        found
-                    }
-                }
-            };
-            if self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == gen {
-                return found;
-            }
-        }
-    }
-
-    /// The claimant index's answer for `key` at cache generation `gen`, if
-    /// it has one; `None` means only a walk can answer.
-    fn cached_claimants(&self, key: &(PageKind, String), gen: u64) -> Option<Vec<PageEntry>> {
-        let cache = self.find_entry_cache.read().unwrap();
-        let (g, index) = cache.as_ref()?;
-        (*g == gen && (index.has_kind(key.0) || index.entries.contains_key(key)))
-            .then(|| index.entries.get(key).cloned().unwrap_or_default())
-    }
-
     /// [`Self::find_entry`] that answers a name some file is named for from
     /// that file (GH #623 BR3). While the claimant index cannot answer, an
     /// ordinary page tries [`filename_claimants`] (a listing of file names
@@ -131,84 +84,10 @@ impl Graph {
         }
         self.find_entry(name, kind)
     }
-
-    /// A direct path read can observe a new or retitled file before the watcher.
-    /// Rebuild claimant ordering if that live file is missing from its bucket;
-    /// a proposed destination that does not exist must not become a claimant.
-    pub(super) fn observe_name_entry(&self, entry: &PageEntry) {
-        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-        let mut cache = self.find_entry_cache.write().unwrap();
-        if let Some((g, index)) = cache.as_ref() {
-            let key = (entry.kind, tine_core::refs::page_key(&entry.name));
-            let known = index.entries.get(&key).is_some_and(|entries| {
-                entries.iter().any(|candidate| candidate.path == entry.path)
-            });
-            if *g == gen
-                && !known
-                && fs::symlink_metadata(&entry.path).is_ok_and(|meta| meta.is_file())
-            {
-                *cache = None;
-            }
-        }
-    }
-
-    /// Cold journal inventory and its complete claimant index share one walk.
-    /// Only called at open, before the watcher and load worker start.
-    pub(crate) fn scan_journal_names(&self) -> Vec<PageEntry> {
-        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-        let entries = list_graph_pages_kind(self, Some(PageKind::Journal));
-        let mut index = FindEntryIndex::new();
-        index.entries = page_claimants(self, &entries);
-        index.mark_kind_loaded(PageKind::Journal);
-        *self.find_entry_cache.write().unwrap() = Some((gen, index));
-        entries
-    }
-
-    /// Build the page list and effective-name claimants from one cold walk.
-    pub(crate) fn snapshot_name_index(
-        &self,
-    ) -> (
-        Arc<Vec<PageEntry>>,
-        HashMap<(PageKind, String), Vec<PageEntry>>,
-    ) {
-        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-        let format = self.current_journal_format();
-        // The build that produced this generation already listed and named
-        // every file from its own reads (GH #623: one read per file); a
-        // later generation walks again.
-        let launch = self
-            .launch_listing
-            .write()
-            .unwrap()
-            .take()
-            .filter(|(listed_gen, _)| *listed_gen == gen);
-        let entries = match launch {
-            Some((_, entries)) => Arc::unwrap_or_clone(entries),
-            None => list_graph_pages(self),
-        };
-        let claimants = page_claimants(self, &entries);
-        *self.find_entry_cache.write().unwrap() = Some((
-            gen,
-            FindEntryIndex {
-                entries: claimants.clone(),
-                // Reuse known claims, but a first miss must discover files
-                // that arrived after this published snapshot.
-                pages_loaded: false,
-                journals_loaded: false,
-            },
-        ));
-        let list = Arc::new(dedup_journal_days(
-            entries,
-            &format,
-            self.current_config().file_name_format,
-        ));
-        *self.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&list)));
-        (list, claimants)
-    }
 }
 
 /// The same claimant ordering for cold direct reads, journal open and snapshots.
-fn page_claimants(
+pub(super) fn page_claimants(
     graph: &Graph,
     entries: &[PageEntry],
 ) -> HashMap<(PageKind, String), Vec<PageEntry>> {
@@ -682,18 +561,11 @@ impl Graph {
         };
         match name {
             Ok(name) => {
-                let id = crate::FileId::from(self.rel_path(path));
-                self.discovery_errors
-                    .write()
-                    .unwrap()
-                    .retain(|(failed, _)| *failed != id);
+                self.record_name_discovery(path, None);
                 Some(name)
             }
             Err(error) => {
-                self.discovery_errors
-                    .write()
-                    .unwrap()
-                    .push((crate::FileId::from(self.rel_path(path)), error.into()));
+                self.record_name_discovery(path, Some(error));
                 // Physical access remains possible; page reads still return
                 // their typed decode/size error. No complete name inventory
                 // may use this tentative filename while discovery is partial.
@@ -807,13 +679,7 @@ fn list_pages(graph: &Graph, kind: Option<PageKind>, stem_key: Option<&str>) -> 
             .into_iter()
             .map(|(path, error)| (crate::FileId::from(graph.rel_path(&path)), error.into())),
     );
-    let mut known = graph.discovery_errors.write().unwrap();
-    known.retain(|(id, _)| match kind {
-        None => false,
-        Some(PageKind::Journal) => !root.join(id.as_str()).starts_with(&journals),
-        Some(PageKind::Page) => root.join(id.as_str()).starts_with(&journals),
-    });
-    known.extend(failures);
+    graph.replace_discovery_errors(kind, failures);
     entries
 }
 

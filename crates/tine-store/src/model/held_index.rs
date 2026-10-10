@@ -1,42 +1,19 @@
-//! Pages a page host holds (STEP3 §5, R13, A-V4, A-H1). While a host
-//! holds a page, its publication consumer (or a reservation's transaction)
-//! is the page's only index writer. Held bytes are a page *source*, not an
-//! overlay: every whole-graph build and every page read takes a page's
-//! content from [`Graph::source`], before anything else reads that page's
-//! file, so the page set, the name and the document all come from the
-//! bytes that writer last indexed, never from disk: a newer disk read
-//! indexed there could be overwritten by an older host event still on its
-//! way to the consumer (REVIEW-3a V4, REVIEW-3a2 R2). With no host running
-//! nothing is held, every source is the file, and builds and reads do the
-//! I/O they did before.
+//! Pages a page host holds (STEP3 §5, R13, A-V4, A-H1, A-H2). While a
+//! host holds a page, its publication consumer (or a reservation's
+//! transaction) is the page's only index writer, and everything installed
+//! about the page comes from the bytes that writer last published
+//! (`derived.rs`, (G)): a newer disk read installed there could be
+//! overwritten by an older host event still on its way to the consumer
+//! (REVIEW-3a V4, REVIEW-3a2 R2). A page read takes a held page's content
+//! from [`Graph::source`] before anything else reads that page's file. With
+//! no host running nothing is held, every source is the file, and builds
+//! and reads do the I/O they did before.
 
-use super::entry_identity::{fold_leaf, Identity, Spellings};
+use super::entry_identity::{fold_leaf, Identity};
 use super::*;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-/// What a held key's index writer last indexed since the hold began:
-/// `None` until the first publication, `Some(None)` for no file. The bytes
-/// are the consumer's own buffer, shared, not copied.
-type Indexed = Option<Option<Arc<[u8]>>>;
-
-/// The held pages, by host key (B1): a key is the page's identity, its
-/// spelling (the host's [`Spellings`], attached while a host runs) is only
-/// where its I/O goes. A path reaches a held key only through
-/// [`Graph::identify`], the one identity rule the host also uses.
-#[derive(Default)]
-pub(crate) struct HeldPages {
-    /// Changed only under the store writer (holds, releases, and every
-    /// index publication), so a reconcile holding it sees a fixed set.
-    keys: RwLock<HashMap<String, Indexed>>,
-    /// The running host's spelling table; a fresh empty one with no host.
-    spellings: RwLock<Arc<Spellings>>,
-    /// Bumped by every new hold. A whole-graph build that read its files
-    /// before a hold began declines its install, as for a cache mutation.
-    epoch: AtomicU64,
-}
-
-/// Where a whole-graph build or a page read takes one page's content.
+/// Where a page read takes one page's content.
 pub(crate) enum Source {
     /// No host holds it: the file.
     Disk,
@@ -45,84 +22,21 @@ pub(crate) enum Source {
     /// Held, and its owner indexed no file.
     HeldAbsent,
     /// Held and not indexed yet (its pending publication will), or a path
-    /// whose identity against the held keys is unknown (B1): a build
-    /// leaves it out; a read parses the file, unpublished.
+    /// whose identity against the held keys is unknown (B1): a read parses
+    /// the file, unpublished.
     HeldUnindexed,
-}
-
-impl HeldPages {
-    /// The running host's spelling table becomes the held keys' (one
-    /// table, owned by the host, B1). The caller holds the writer.
-    pub(crate) fn attach(&self, spellings: Arc<Spellings>) {
-        *self.spellings.write().unwrap() = spellings;
-    }
-
-    pub(crate) fn spellings(&self) -> Arc<Spellings> {
-        Arc::clone(&self.spellings.read().unwrap())
-    }
-
-    /// Hand `key`'s index to its owner. Holding it again keeps what that
-    /// owner already indexed.
-    pub(crate) fn hold(&self, key: String) {
-        let mut keys = self.keys.write().unwrap();
-        if keys.contains_key(&key) {
-            return;
-        }
-        keys.insert(key, None);
-        self.epoch.fetch_add(1, Ordering::AcqRel);
-    }
-
-    /// Hold `key` at its own spelling with no host running (test stores).
-    #[cfg(any(test, feature = "test-faults"))]
-    pub(crate) fn hold_unhosted(&self, key: &str) {
-        self.spellings().spell(key, key);
-        self.hold(key.into());
-    }
-
-    /// Return `key` to the watcher: its page file, when it was held.
-    pub(crate) fn release(&self, root: &Path, key: &str) -> Option<PathBuf> {
-        let held = self.keys.write().unwrap().remove(key).is_some();
-        held.then(|| root.join(self.spellings().spelling(key)))
-    }
-
-    /// Return every held key to the watcher and detach the host's spelling
-    /// table: their page files.
-    pub(crate) fn release_all(&self, root: &Path) -> Vec<PathBuf> {
-        let keys: Vec<String> = self.keys.write().unwrap().drain().map(|(k, _)| k).collect();
-        let spellings = std::mem::take(&mut *self.spellings.write().unwrap());
-        keys.iter()
-            .map(|key| root.join(spellings.spelling(key)))
-            .collect()
-    }
-
-    /// Record the bytes an index writer is about to publish for `key`, if
-    /// it is held. Called before the publication moves the cache
-    /// generation, so a build that read the earlier bytes declines.
-    pub(crate) fn indexed(&self, key: &str, bytes: impl FnOnce() -> Option<Arc<[u8]>>) {
-        if let Some(indexed) = self.keys.write().unwrap().get_mut(key) {
-            *indexed = Some(bytes());
-        }
-    }
-
-    pub(crate) fn epoch(&self) -> u64 {
-        self.epoch.load(Ordering::Acquire)
-    }
 }
 
 impl Graph {
     /// What `path` names among the held keys (B1, [`Graph::identify`]).
     /// With nothing held, `New` at no cost.
     pub(crate) fn held_identity(&self, path: &Path) -> Identity {
-        let keys = self.held.keys.read().unwrap();
-        if keys.is_empty() {
+        if self.held.is_empty() {
             return Identity::New;
         }
-        let spellings = self.held.spellings();
-        let leaf = path.file_name().map(fold_leaf);
-        let found = leaf.map_or_else(Vec::new, |fold| {
-            spellings.candidates(&fold, |key| keys.contains_key(key))
-        });
-        drop(keys);
+        let found = path
+            .file_name()
+            .map_or_else(Vec::new, |leaf| self.held.candidates(&fold_leaf(leaf)));
         self.identify(path, &|_| found.clone())
     }
 
@@ -139,11 +53,11 @@ impl Graph {
         match identity {
             Identity::New | Identity::Outside => Source::Disk,
             Identity::Unknown { .. } => Source::HeldUnindexed,
-            Identity::Key(key) => match self.held.keys.read().unwrap().get(key) {
+            Identity::Key(key) => match self.held.indexed_of(key) {
                 None => Source::Disk,
                 Some(None) => Source::HeldUnindexed,
                 Some(Some(None)) => Source::HeldAbsent,
-                Some(Some(Some(bytes))) => Source::Held(Arc::clone(bytes)),
+                Some(Some(Some(bytes))) => Source::Held(bytes),
             },
         }
     }
@@ -154,94 +68,17 @@ impl Graph {
         self.source_of(&self.held_identity(path))
     }
 
-    /// The content `source` gives the page at `path`: the file's, or its
-    /// owner's validated bytes; None for a held page with none to build.
-    /// The only content read of a whole-graph build.
-    pub(super) fn source_content(
-        &self,
-        path: &Path,
-        source: &Source,
-    ) -> io::Result<Option<String>> {
-        match source {
-            Source::Disk => read_parse_input(path).map(Some),
-            Source::Held(bytes) => {
-                validate_parse_bytes_for_path(bytes, path)?;
-                String::from_utf8(bytes.to_vec())
-                    .map(Some)
-                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
-            }
-            Source::HeldAbsent | Source::HeldUnindexed => Ok(None),
+    /// The listed paths a whole-graph build leaves out: those a held or
+    /// unknown identity names ((G)); their rows are their owners'.
+    pub(super) fn withheld(&self, listed: &[PageEntry]) -> HashSet<PathBuf> {
+        if self.held.is_empty() {
+            return HashSet::new();
         }
-    }
-
-    /// A whole-graph build's pages and their sources (A-H1): `entries`
-    /// (the build's selection from the listing `listed`) with each page's
-    /// source, plus every held key its owner indexed bytes for that no
-    /// listed path names (a removal the owner has not observed yet, or an
-    /// entry listed only under a spelling of unknown identity, B1), at the
-    /// key's spelling. The added entries are returned apart, for the
-    /// build's named listing.
-    pub(super) fn build_sources(
-        &self,
-        listed: &[PageEntry],
-        entries: Vec<PageEntry>,
-    ) -> (Vec<(PageEntry, Source)>, Vec<PageEntry>) {
-        let held: Vec<(String, Arc<[u8]>)> = {
-            let keys = self.held.keys.read().unwrap();
-            if keys.is_empty() {
-                let sourced = entries.into_iter().map(|e| (e, Source::Disk)).collect();
-                return (sourced, Vec::new());
-            }
-            keys.iter()
-                .filter_map(|(key, indexed)| Some((key.clone(), indexed.clone()??)))
-                .collect()
-        };
-        let identities: HashMap<&Path, Identity> = listed
+        listed
             .iter()
-            .map(|entry| (entry.path.as_path(), self.held_identity(&entry.path)))
-            .collect();
-        let mut sourced: Vec<(PageEntry, Source)> = entries
-            .into_iter()
-            .map(|entry| {
-                let source = match identities.get(entry.path.as_path()) {
-                    Some(identity) => self.source_of(identity),
-                    None => self.source(&entry.path),
-                };
-                (entry, source)
-            })
-            .collect();
-        let covered: HashSet<&str> = identities
-            .values()
-            .filter_map(|identity| match identity {
-                Identity::Key(key) => Some(key.as_str()),
-                _ => None,
-            })
-            .collect();
-        let spellings = self.held.spellings();
-        let held: Vec<(PathBuf, Arc<[u8]>)> = held
-            .into_iter()
-            .filter(|(key, _)| !covered.contains(key.as_str()))
-            .map(|(key, bytes)| (self.root.join(spellings.spelling(&key)), bytes))
-            .collect();
-        if held.is_empty() {
-            return (sourced, Vec::new());
-        }
-        let config = self.current_config();
-        let (format, journals) = (self.current_journal_format(), self.journals_path());
-        let formats = (&*format, journals.as_path(), config.file_name_format);
-        let mut added = Vec::new();
-        for (path, bytes) in held {
-            if path_is_sync_conflict(&path)
-                || !page_identity::graph_text_eligible(&self.root, &path, &config)
-            {
-                continue;
-            }
-            if let Some(entry) = page_identity::listed_entry(self, formats, path) {
-                added.push(entry.clone());
-                sourced.push((entry, Source::Held(bytes)));
-            }
-        }
-        (sourced, added)
+            .filter(|entry| !self.disk_sourced(&entry.path))
+            .map(|entry| entry.path.clone())
+            .collect()
     }
 
     /// A page's name from the content its document is built from (A-H1),
@@ -271,7 +108,7 @@ mod tests {
     /// A build that read a page before a host held it declines its
     /// install even when the owner has not published yet (A-V4): its disk
     /// bytes could be newer than the owner's pending first observation.
-    /// Forced and on-demand builds of a held, indexed page parse the
+    /// Forced and on-demand builds of a held, indexed page install the
     /// owner's bytes.
     #[test]
     fn a_build_that_read_a_page_before_its_hold_declines() {
@@ -312,31 +149,20 @@ mod tests {
                     .0;
             }
         }
-        let gen = store
-            .graph
-            .cache_gen
-            .load(std::sync::atomic::Ordering::Acquire);
-        store.graph.held.hold_unhosted("pages/a.md");
+        store.graph.hold_unhosted("pages/a.md");
         pause.0.lock().unwrap().1 = true;
         pause.1.notify_all();
         assert!(
             !build.join().unwrap(),
             "A-V4: a build installed a page it read before the page's hold began"
         );
-        // Declined for the hold, not for a cache mutation.
-        assert_eq!(
-            store
-                .graph
-                .cache_gen
-                .load(std::sync::atomic::Ordering::Acquire),
-            gen
-        );
+        // A new hold retires the page's row (R1): nothing about it is
+        // installed until its owner publishes.
+        assert_eq!(store.graph.cached_rev(&path), None);
         *store.graph.warm_after_first_page_pause.lock().unwrap() = None;
-        // Held and indexed: the next build parses the owner's bytes.
-        store
-            .graph
-            .held
-            .indexed("pages/a.md", || Some(Arc::from(&b"- owner\n"[..])));
+        // Held and indexed: the next build installs the owner's bytes.
+        let owner = Some(Arc::from(&b"- owner\n"[..]));
+        assert!(store.graph.publish_owned("pages/a.md", owner, None).is_ok());
         assert!(store.graph.rebuild_cache_cancellable(|| false));
         assert_eq!(
             store.graph.cached_rev(&path),
@@ -459,111 +285,150 @@ mod tests {
         panic!("unclosed {signature}")
     }
 
-    /// Where whole-graph builds and page reads could reach page content
-    /// other than through the seam.
-    fn bypasses(sources: &[(&str, &str, &str)]) -> Vec<String> {
-        const CONTENT: &[&str] = &[
-            "read_parse_input(",
-            "read_parse_bytes(",
-            "fs::read(",
-            "read_to_string(",
-            "entry_for_path(",
-            "load_page(",
-            "load_by_validated_path(",
-            "page_target(",
-        ];
-        let mut found = Vec::new();
-        for (file, signature, source) in sources {
-            let body = body(source, signature);
-            let site = format!("{file} `{signature}`");
-            let build = !signature.contains("page(&self, id");
-            if build {
-                if !body.contains("source_content(") && !body.contains("build_sources(") {
-                    found.push(format!("{site} takes no content from the seam"));
+    /// Calls that read page content or name a page from its file.
+    const CONTENT: &[&str] = &[
+        "read_parse_input(",
+        "read_parse_bytes(",
+        "fs::read(",
+        "read_to_string(",
+        "entry_for_path(",
+        "load_page(",
+        "load_by_validated_path(",
+        "page_target(",
+        "page_entry(",
+        "parse_page(",
+    ];
+
+    /// The calls a page read may make before it asks the seam: none reads
+    /// page content (`page_spot`'s own body is checked for that).
+    const BEFORE_SEAM: &[&str] = &[
+        "matches",
+        "lock",
+        "unwrap",
+        "is_closed",
+        "Err",
+        "now",
+        "page_writer_wait",
+        "elapsed",
+        "cache_generation",
+        "page_spot",
+        "Some",
+    ];
+
+    /// The calls in `body` that no `held_page(` dominates: one is
+    /// dominated when a `held_page(` precedes it in a block that still
+    /// encloses it. Line comments are ignored.
+    fn undominated_calls(body: &str) -> Vec<String> {
+        let code: String = body
+            .lines()
+            .map(|line| line.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (mut depth, mut seam) = (0usize, None::<usize>);
+        let mut calls = Vec::new();
+        for (at, c) in code.char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    if seam == Some(depth) {
+                        seam = None;
+                    }
+                    depth -= 1;
                 }
-                for call in CONTENT {
-                    if body.contains(call) {
-                        found.push(format!("{site} reads page content with {call}"));
+                '(' if seam.is_none() => {
+                    let before = code[..at].trim_end_matches('!');
+                    let start = before
+                        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .map_or(0, |i| i + 1);
+                    if start < before.len() {
+                        calls.push(before[start..].to_owned());
                     }
                 }
-            } else {
-                // A read asks the seam before it names or reads the file.
-                let held: Vec<_> = body.match_indices("held_page(").map(|(i, _)| i).collect();
-                for call in [
-                    "page_entry(",
-                    "parse_page(",
-                    "page_target(",
-                    "entry_for_path(",
-                ] {
-                    for (at, _) in body.match_indices(call) {
-                        if !held.iter().any(|&h| h < at) {
-                            found.push(format!("{site} calls {call} before the seam"));
-                        }
-                    }
-                }
+                _ => {}
+            }
+            if seam.is_none() && code[at..].starts_with("held_page(") {
+                seam = Some(depth);
+            }
+        }
+        calls
+    }
+
+    /// Where a page read could reach page content before it asks the seam
+    /// (`held_page`): `page`, a `Store::page` body, and `spot`, the
+    /// `page_spot` body it may call first.
+    fn bypasses(site: &str, page: &str, spot: &str) -> Vec<String> {
+        let mut found: Vec<String> = undominated_calls(page)
+            .into_iter()
+            .filter(|call| !BEFORE_SEAM.contains(&call.as_str()))
+            .map(|call| format!("{site} calls {call}( before the seam"))
+            .collect();
+        for call in CONTENT {
+            if spot.contains(call) {
+                found.push(format!("{site} page_spot reads page content with {call}"));
             }
         }
         found
     }
 
-    /// A-H1: whole-graph builds and page reads reach a page's content only
-    /// through the seam (`Graph::source`/`source_content`/`build_sources`),
-    /// so a held page's set membership, name and document all come from
-    /// its owner's bytes (I-1-style census; exemplar `Graph::load_all_pages`).
+    /// A-H1/A-H2: a page read asks the seam (`Store::held_page`) before
+    /// anything names or reads the page's file, so a held page's read
+    /// answers its owner's bytes. Builds need no such rule: they may read
+    /// any file, and installation applies (G) (`derived.rs`). I-1-style
+    /// census; exemplar `Store::page`.
     #[test]
-    fn builds_and_reads_take_page_content_only_through_the_seam() {
+    fn page_reads_ask_the_seam_before_reading_the_file() {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let read = |file: &str| std::fs::read_to_string(src.join(file)).unwrap();
-        let (model, parse, store) = (
-            read("model.rs"),
-            read("model/page_parse.rs"),
-            read("store.rs"),
+        let (store, page_read) = (read("store.rs"), read("store/page_read.rs"));
+        let found = bypasses(
+            "store.rs `Store::page`",
+            body(&store, "pub fn page(&self, id: &PageId)"),
+            body(&page_read, "fn page_spot("),
         );
-        let sources = [
-            ("model.rs", "fn warm_page_cache_inner(", model.as_str()),
-            ("model.rs", "fn load_all_pages(", model.as_str()),
-            (
-                "model/page_parse.rs",
-                "fn parse_page_entry_isolated(",
-                parse.as_str(),
-            ),
-            (
-                "store.rs",
-                "pub fn page(&self, id: &PageId)",
-                store.as_str(),
-            ),
-        ];
-        let found = bypasses(&sources);
         assert!(
             found.is_empty(),
-            "A-H1: a whole-graph build or page read reaches page content outside the \
-             held-page seam: {found:?}. Exemplar model.rs Graph::load_all_pages \
-             (build_sources, then source_content per page)"
+            "A-H1: a page read reaches page content before the held-page seam: {found:?}. \
+             Exemplar store.rs Store::page (page_spot, then held_page, then the file)"
         );
     }
 
+    /// The guard catches a direct read, a helper called before the seam
+    /// (which the pre-A-H2 guard, a list of named content calls, let
+    /// through) and a content read inside `page_spot`.
     #[test]
     fn a_planted_bypass_of_the_seam_fails_the_guard() {
-        let planted = r#"
-            fn load_all_pages(&self) { let t = read_parse_input(&e.path); }
-            fn warm_page_cache_inner(&self) { let (e, s) = self.build_sources(l, e); self.source_content(&p, &s); }
+        let direct = r#"
             pub fn page(&self, id: &PageId) {
+                let (id, path) = self.page_spot(id)?;
                 let entry = self.page_entry(&id, &path)?;
                 if let Some(doc) = self.held_page(&path)? { return doc; }
             }
         "#;
-        let found = bypasses(&[
-            ("p.rs", "fn load_all_pages(", planted),
-            ("p.rs", "fn warm_page_cache_inner(", planted),
-            ("p.rs", "pub fn page(&self, id: &PageId)", planted),
-        ]);
+        let helper = r#"
+            pub fn page(&self, id: &PageId) {
+                let (id, path) = self.page_spot(id)?;
+                self.warm_one(&path);
+                if let Some(doc) = self.held_page(&path)? { return doc; }
+                let entry = self.page_entry(&id, &path)?;
+            }
+        "#;
+        let spot = "fn page_spot(&self) { let text = fs::read(&path)?; }";
+        let page = |source| body(source, "pub fn page(&self, id: &PageId)");
         assert_eq!(
-            found,
-            [
-                "p.rs `fn load_all_pages(` takes no content from the seam",
-                "p.rs `fn load_all_pages(` reads page content with read_parse_input(",
-                "p.rs `pub fn page(&self, id: &PageId)` calls page_entry( before the seam",
-            ]
+            bypasses("p.rs", page(direct), "{}"),
+            ["p.rs calls page_entry( before the seam"]
+        );
+        assert_eq!(
+            bypasses("p.rs", page(helper), "{}"),
+            ["p.rs calls warm_one( before the seam"]
+        );
+        assert_eq!(
+            bypasses(
+                "p.rs",
+                page(helper.replace("self.warm_one(&path);", "").as_str()),
+                spot
+            ),
+            ["p.rs page_spot reads page content with fs::read("]
         );
     }
 }

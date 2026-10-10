@@ -120,10 +120,8 @@ impl Store {
         let _writer = self.writer.lock().unwrap();
         let (id, path, _) = self.page_target(id)?;
         let bytes = fs::read(&path).map_err(StoreError::from_io)?;
-        self.graph.held.hold_unhosted(id.as_str());
-        self.graph
-            .held
-            .indexed(id.as_str(), || Some(Arc::from(bytes)));
+        self.graph.hold_unhosted(id.as_str());
+        let _ = (self.graph).publish_owned(id.as_str(), Some(Arc::from(bytes)), None);
         Ok(())
     }
 

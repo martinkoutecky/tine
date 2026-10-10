@@ -1285,3 +1285,36 @@ fn a_read_only_session_that_builds_a_lazy_index_is_checkpointed() {
     );
     next.close();
 }
+
+/// R2 (REVIEW-AH2-AW1-plan): a checkpoint's rows, indexes and claimants
+/// carry no owner provenance, so while any page is held (unindexed or
+/// indexed) the whole checkpoint is declined and the launch builds.
+#[test]
+fn a_checkpoint_is_declined_whole_while_a_page_is_held() {
+    let root = graph();
+    let dir = tempfile::tempdir().unwrap();
+    let cp = dir.path().join("graph.bin");
+    write_checkpoint(root.path(), &cp);
+    let bytes = fs::read(&cp).unwrap();
+    let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let header: Header = postcard::from_bytes(&bytes[16..16 + len]).unwrap();
+    let installs = |held: Option<Option<&str>>| {
+        let graph = crate::model::Graph::open(&header.root);
+        if let Some(published) = held {
+            graph.hold_unhosted("pages/A.md");
+            if let Some(text) = published {
+                let bytes = Some(Arc::from(text.as_bytes()));
+                assert!(graph.publish_owned("pages/A.md", bytes, None).is_ok());
+            }
+        }
+        let body = decode(&bytes, &header.root, &header.config_key).unwrap();
+        let config = (*graph.current_config()).clone();
+        graph.checkpoint_install(body.graph, config).is_some()
+    };
+    assert!(installs(None), "control: nothing held");
+    assert!(!installs(Some(None)), "R2: installed while a page is held");
+    assert!(
+        !installs(Some(Some("- owner\n"))),
+        "R2: installed while a held page is indexed"
+    );
+}

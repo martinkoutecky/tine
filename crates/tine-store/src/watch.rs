@@ -946,22 +946,21 @@ impl WatchHandle {
         forward: Forward,
         spellings: std::sync::Arc<crate::model::entry_identity::Spellings>,
     ) {
-        self.core.graph.held.attach(spellings);
+        self.core.graph.attach_spellings(spellings);
         *self.core.forward.lock().unwrap() = Some(forward);
     }
 
     /// Hand `key`'s index to its owner (STEP3 §5). The caller holds the
     /// writer, which excludes a reconcile already running for it.
     pub(crate) fn hold(&self, key: String) {
-        self.core.graph.held.hold(key);
+        self.core.graph.hold(key);
     }
 
     /// Hand `key`'s index back to the watcher, which reconciles its file
     /// against the owner's last publication at once. The caller holds the
     /// writer.
     pub(crate) fn release_hold(&self, key: &str) {
-        let graph = &self.core.graph;
-        if let Some(path) = graph.held.release(&graph.root, key) {
+        if let Some(path) = self.core.graph.release(key) {
             self.reconcile_raced(&HashSet::from([path]));
         }
     }
@@ -975,8 +974,7 @@ impl WatchHandle {
     /// caller holds the writer.
     pub(crate) fn release_holds(&self) {
         *self.core.forward.lock().unwrap() = None;
-        let graph = &self.core.graph;
-        let paths: HashSet<PathBuf> = graph.held.release_all(&graph.root).into_iter().collect();
+        let paths: HashSet<PathBuf> = self.core.graph.release_all().into_iter().collect();
         self.reconcile_raced(&paths);
     }
 

@@ -74,6 +74,21 @@ const ALLOWED_GRAPH_UNIT_CALLS: &[(&str, &str, &str)] = &[
         "invalidate_cache",
     ),
     (
+        "crates/tine-store/src/model/derived_tests.rs",
+        "a_removal_after_cache_eviction_unnames_the_page",
+        "invalidate_cache",
+    ),
+    (
+        "crates/tine-store/src/model/derived_tests.rs",
+        "a_removed_duplicate_claimant_leaves_the_other",
+        "invalidate_cache",
+    ),
+    (
+        "crates/tine-store/src/model/derived_tests.rs",
+        "journal_twins_and_shadows_keep_their_claimants",
+        "invalidate_cache",
+    ),
+    (
         "crates/tine-store/src/model.rs",
         "search_cache_isolates_one_page_projection_panic",
         "warm_cache_cancellable",
