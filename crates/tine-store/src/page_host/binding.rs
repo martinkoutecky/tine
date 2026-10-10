@@ -795,6 +795,7 @@ fn index(store: &Store, publication: &Publication) -> bool {
     }
     let graph = &store.graph;
     let path = graph.root.join(&publication.spelling);
+    graph.held.indexed(&path, || publication.bytes.clone());
     let id = FileId::from(publication.spelling.clone());
     let bytes = publication.bytes.as_deref();
     let rev = bytes.map(FileRev::from_bytes);

@@ -1918,7 +1918,8 @@ impl Store {
     /// same bytes, and the load or launch diff takes the file in, so a page
     /// opens in parse time whatever the graph is doing. Target parse costs
     /// O(bytes + blocks); publication adds O(P) metadata. Reads write no
-    /// page bytes.
+    /// page bytes. A page a page host holds answers the bytes the host last
+    /// indexed and publishes nothing (A-V4).
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
             if self.is_closed() {
@@ -1944,50 +1945,6 @@ impl Store {
             self.publish_observed(&read, &path, entry);
         }
         Ok(read)
-    }
-
-    /// Parse one page file: the canonical claimant through the cache (which
-    /// it reconciles), any other file directly.
-    fn parse_page(
-        &self,
-        path: &Path,
-        entry: &PageEntry,
-        canonical: bool,
-    ) -> Result<PageDto, StoreError> {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            #[cfg(test)]
-            if fs::read_to_string(&path)
-                .is_ok_and(|text| text.contains("__TINE_TEST_PAGE_PARSE_PANIC__"))
-            {
-                panic!("deterministic test page parser panic");
-            }
-            if canonical {
-                self.graph.load_page(entry).map(Some)
-            } else {
-                self.graph.load_by_validated_path(path)
-            }
-        }))
-        .map_err(|panic| {
-            let reason = panic
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
-                .unwrap_or_else(|| "page parser panicked".to_owned());
-            StoreError::Unparseable(reason)
-        })?
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::InvalidData
-                && error
-                    .get_ref()
-                    .and_then(|inner| inner.downcast_ref::<crate::model::ParseInputTooLarge>())
-                    .is_none()
-            {
-                StoreError::Undecodable
-            } else {
-                StoreError::from_io(error)
-            }
-        })?
-        .ok_or(StoreError::NotFound)
     }
 
     /// Resolve a page name (or alias) and read its current file: the one

@@ -50,6 +50,24 @@ impl Store {
         })
     }
 
+    /// Parse one page file (`Graph::read_page`; a held page: A-V4).
+    pub(super) fn parse_page(
+        &self,
+        path: &Path,
+        entry: &PageEntry,
+        canonical: bool,
+    ) -> Result<PageDto, StoreError> {
+        page_dto(|| {
+            #[cfg(test)]
+            if fs::read_to_string(path)
+                .is_ok_and(|text| text.contains("__TINE_TEST_PAGE_PARSE_PANIC__"))
+            {
+                panic!("deterministic test page parser panic");
+            }
+            self.graph.read_page(path, entry, canonical)
+        })
+    }
+
     /// Publish a change `read` observed on disk (its cache entry moved): a
     /// file the published claimants know is `Modified`, any other `Created`.
     pub(super) fn publish_observed(&self, read: &PageRead, path: &Path, entry: PageEntry) {
@@ -86,4 +104,33 @@ impl Store {
         );
         self.watch.reconcile_raced(&raced);
     }
+}
+
+/// One page's DTO from `parse`, with lsdoc's deliberate panics and the
+/// read's errors mapped to the store's.
+fn page_dto(
+    parse: impl FnOnce() -> std::io::Result<Option<PageDto>>,
+) -> Result<PageDto, StoreError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(parse))
+        .map_err(|panic| {
+            let reason = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                .unwrap_or_else(|| "page parser panicked".to_owned());
+            StoreError::Unparseable(reason)
+        })?
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::InvalidData
+                && error
+                    .get_ref()
+                    .and_then(|inner| inner.downcast_ref::<crate::model::ParseInputTooLarge>())
+                    .is_none()
+            {
+                StoreError::Undecodable
+            } else {
+                StoreError::from_io(error)
+            }
+        })?
+        .ok_or(StoreError::NotFound)
 }

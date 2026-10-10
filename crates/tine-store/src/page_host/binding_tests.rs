@@ -1282,3 +1282,55 @@ fn v5_a_restore_waits_for_a_collected_publication_in_flight() {
 
 #[path = "binding_stop_tests.rs"]
 mod stop_saved;
+
+/// REVIEW-3a V4, amendment A-V4: while a host holds a page, its publication
+/// consumer is the page's only index writer. The reviewer's schedule: the
+/// host has not observed disk B yet (another transaction holds the page's
+/// path lock) when a `Store::page` read and a whole-graph rebuild run. Both
+/// answer from the bytes the consumer last indexed, A, and index nothing,
+/// so no consumer publication captured before B can regress the index past
+/// them; once the host observes B, its consumer indexes B.
+/// REVIEW-3a V4 / A-V4: while the host holds a page whose newer disk bytes
+/// it has not observed (its read is blocked on the path lock), a read, a
+/// forced rebuild and an on-demand build answer the bytes the consumer
+/// indexed. Indexing disk there could be overwritten by the host's older
+/// pending event.
+#[test]
+fn v4_a_read_or_rebuild_never_indexes_a_held_page() {
+    let live = Live::new(&[("pages/a.md", "- a\n")]);
+    let (key, _) = live.open("pages/a.md");
+    live.until_indexed(&key, "- a\n");
+    let lock = live.store.graph.page_lock(&live.root.join(&key));
+    let held = lock.lock().unwrap();
+    fs::write(live.root.join(&key), "- b\n").unwrap();
+    let read = live.store.page(&PageId::from(key.as_str())).unwrap();
+    assert_eq!(
+        read.rev,
+        FileRev::from_bytes(b"- a\n"),
+        "V4: the read answers A"
+    );
+    assert_eq!(read.doc.blocks[0].raw, "a");
+    assert_eq!(
+        live.indexed(&key),
+        Some(content_rev("- a\n")),
+        "V4: Store::page indexed a held page from disk"
+    );
+    assert!(live.store.graph.rebuild_cache_cancellable(|| false));
+    assert_eq!(
+        live.indexed(&key),
+        Some(content_rev("- a\n")),
+        "V4: the rebuild indexed a held page from disk"
+    );
+    // A failed publication drops the cache (transaction.rs); the next
+    // whole-graph question builds it on demand.
+    live.store.graph.invalidate_cache();
+    live.store.graph.with_pages(|_| ());
+    assert_eq!(
+        live.indexed(&key),
+        Some(content_rev("- a\n")),
+        "V4: an on-demand build indexed a held page from disk"
+    );
+    drop(held);
+    live.until_indexed(&key, "- b\n");
+    live.host.stop();
+}

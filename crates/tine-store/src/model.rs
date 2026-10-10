@@ -5,6 +5,7 @@
 
 mod checkpoint_state;
 mod collapse_only;
+pub(crate) mod held_index;
 pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
 mod layout_retention;
 pub(crate) mod persistent;
@@ -24,10 +25,7 @@ pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
     graph_text_watch_relevant,
 };
-use page_parse::{
-    carry_saved_runtime_ids, isolate_page_parse, page_dto, parse_page_content,
-    parse_page_entry_isolated,
-};
+use page_parse::{carry_saved_runtime_ids, isolate_page_parse, page_dto, parse_page_content};
 
 use crate::path_identity::canonical_existing_path;
 use std::collections::HashMap;
@@ -388,6 +386,8 @@ pub(crate) struct Graph {
     /// captures this before reading disk and rebuilds if a mutation raced it
     /// (which would otherwise install stale content over a concurrent save).
     cache_gen: std::sync::atomic::AtomicU64,
+    /// Pages a page host holds, and what their index writer last indexed.
+    pub(crate) held: held_index::HeldPages,
     /// Serializes whole-graph cache builds so a racing warmup/search/query parses
     /// the graph ONCE, not once per caller. Held only during the build (not the
     /// cache lock), so it never blocks readers of an already-built cache.
@@ -2247,6 +2247,7 @@ impl Graph {
             discovery_errors: RwLock::new(Vec::new()),
             cache_index: RwLock::new(None),
             cache_gen: std::sync::atomic::AtomicU64::new(0),
+            held: Default::default(),
             build_lock: std::sync::Mutex::new(()),
             page_list_cache: RwLock::new(None),
             find_entry_cache: RwLock::new(None),
@@ -2898,8 +2899,9 @@ impl Graph {
     fn load_all_pages(&self) -> PageCacheBuild {
         let entries = self.list_pages();
         let mut built = PageCacheBuild::with_capacity(entries.len());
-        let shards = parse_pages_parallel(entries, &|| true, &parse_page_entry_isolated)
-            .expect("an unstoppable parse always finishes");
+        let shards =
+            parse_pages_parallel(entries, &|| true, &|e| self.parse_page_entry_isolated(e))
+                .expect("an unstoppable parse always finishes");
         for parsed in shards.into_iter().flatten() {
             built.collect(parsed);
         }
@@ -2912,7 +2914,7 @@ impl Graph {
     fn install_built(
         &self,
         built: PageCacheBuild,
-        expected_gen: u64,
+        (expected_gen, held_epoch): (u64, u64),
         replace: bool,
         observed: Option<&HashMap<PathBuf, crate::watch::Stamp>>,
     ) -> bool {
@@ -2966,6 +2968,7 @@ impl Graph {
         let mut guard = self.cache.write().unwrap();
         if (guard.is_some() && !replace)
             || self.cache_gen.load(std::sync::atomic::Ordering::Acquire) != expected_gen
+            || self.held.epoch() != held_epoch
         {
             return false;
         }
@@ -3016,7 +3019,7 @@ impl Graph {
         if self.cache.read().unwrap().is_none() {
             let build_began = std::time::Instant::now();
             loop {
-                let gen0 = self.cache_gen.load(Ordering::Acquire);
+                let gen0 = (self.cache_gen.load(Ordering::Acquire), self.held.epoch());
                 let built = self.load_all_pages();
                 // If a save/remove raced our read (its cache mutation no-op'd
                 // because the cache was still None), its disk write is already
@@ -3077,7 +3080,7 @@ impl Graph {
         // build's parallel parse (`parse_pages_parallel`). GH #623: it used to be paced
         // (one thread, 2 ms sleep every 24 files), which on a 13k-page graph
         // spent ~1.2 s of a 2.65 s parse asleep, on every launch.
-        let gen0 = self.cache_gen.load(Ordering::Acquire);
+        let gen0 = (self.cache_gen.load(Ordering::Acquire), self.held.epoch());
         #[cfg(test)]
         self.warm_passes.fetch_add(1, Ordering::Relaxed);
         // Phase timings for `Store::diagnostics`: local accumulators, one
@@ -3128,15 +3131,20 @@ impl Graph {
             clock.stat(phase.elapsed());
             let path = e.path.clone();
             let phase = std::time::Instant::now();
-            let read = read_parse_input(&e.path);
+            let (read, held) = match self.build_input(&e.path) {
+                Ok((content, held)) => (Ok(content), held),
+                Err(error) => (Err(error), false),
+            };
             let read_len = match &read {
-                Ok(content) => Some(content.len()),
+                Ok(content) => content.as_ref().map(String::len),
                 Err(_) => None,
             };
             clock.read(phase.elapsed(), read_len);
             let mut name_failure = None;
             let parsed = match read {
-                Ok(content) => {
+                // Held, with nothing indexed yet: its owner indexes it.
+                Ok(None) => Ok(None),
+                Ok(Some(content)) => {
                     if e.kind == PageKind::Page {
                         match page_identity::effective_page_name_from_text(
                             &e.path, &e.name, &content,
@@ -3178,16 +3186,20 @@ impl Graph {
                         .and_then(|meta| meta.created())
                         .is_ok_and(|created| created >= self.opened_at)
                 });
-            (path, stamp, racy, (name_failure, since_open), parsed)
+            (path, stamp, racy, (name_failure, since_open, held), parsed)
         };
+        let mut held_paths = std::collections::HashSet::new();
         let mut take = |built: &mut PageCacheBuild,
-                        (path, stamp, is_racy, (name_failure, since_open), parsed): (
+                        (path, stamp, is_racy, (name_failure, since_open, held), parsed): (
             PathBuf,
             Option<crate::watch::Stamp>,
             bool,
-            (Option<io::Error>, Option<bool>),
+            (Option<io::Error>, Option<bool>, bool),
             PageParseResult,
         )| {
+            if held {
+                held_paths.insert(path.clone());
+            }
             if let Ok(Some((entry, _, rev))) = &parsed {
                 if entry.kind == PageKind::Page {
                     names.insert(path.clone(), entry.name.clone());
@@ -3196,11 +3208,11 @@ impl Graph {
                     announce.push((path.clone(), created, entry.kind, entry.name.clone()));
                 }
                 if let Some(stamp) = stamp {
-                    stamps.insert(
-                        path.clone(),
-                        stamp.with_rev(Some(crate::store::FileRev::from(rev.rev.clone()))),
-                    );
-                    if is_racy {
+                    // A held page's bytes are its owner's, not this file's
+                    // (A-V4): the watcher rereads the file.
+                    let rev = (!held).then(|| crate::store::FileRev::from(rev.rev.clone()));
+                    stamps.insert(path.clone(), stamp.with_rev(rev));
+                    if is_racy || held {
                         racy.insert(path.clone());
                     }
                 }
@@ -3269,12 +3281,15 @@ impl Graph {
         if replace {
             // A second listing, not a stamp per file: no file open on Windows.
             let (_, _, _, now) = page_identity::launch_listing_walk(self);
+            // A held page was built from its owner's bytes, not the file.
             let changed = built.pages.iter().any(|(entry, _, _)| {
-                now.get(&entry.path)
-                    .map(|(now, _)| (now.modified(), now.len()))
-                    != stamps
+                !held_paths.contains(&entry.path)
+                    && now
                         .get(&entry.path)
-                        .map(|then| (then.modified(), then.len()))
+                        .map(|(now, _)| (now.modified(), now.len()))
+                        != stamps
+                            .get(&entry.path)
+                            .map(|then| (then.modified(), then.len()))
             });
             if changed {
                 pass.recheck_us = diag::micros(phase.elapsed());

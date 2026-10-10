@@ -99,6 +99,18 @@ never from rereading every page's preamble. Proof:
 `crates/tine-store/src/store/page_open_tests.rs`,
 `crates/tine-graph-features/tests/br3_page_open_before_ready.rs`.
 
+While a page host holds a page (STEP3 §5, amendment A-V4), its publication
+consumer, or a reservation's transaction, is the page's only index writer
+(R13). `page()` then answers the bytes that writer last indexed (or, before
+its first publication, parses the file without publishing), and a full or
+on-demand build parses those same bytes; a build that read a page before its
+hold began declines its install. A newer disk read indexed there could be
+overwritten by an older host event still on its way. With no host running
+nothing is held and both paths read the file. Proof:
+`crates/tine-store/src/page_host/binding_tests.rs`
+`v4_a_read_or_rebuild_never_indexes_a_held_page`,
+`crates/tine-store/src/model/held_index.rs`.
+
 A save that changes only blocks' `collapsed::` property (value `true`, `false`
 or absent, decided by the parser, `model/collapse_only.rs`) publishes a
 generation that inherits the alias list and every unaffected memo, and does

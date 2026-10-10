@@ -328,7 +328,6 @@ impl Core {
             files.push(config_file);
         }
         let mut pages = Vec::new();
-        let held = self.held.lock().unwrap();
         let mut forwarded = Vec::new();
         for path in names {
             let before = snapshot.get(&path);
@@ -396,8 +395,8 @@ impl Core {
                 continue;
             };
             // STEP3 §5: the owner observes, indexes and publishes this read.
-            if let Some(key) = held.get(&path) {
-                forwarded.push(key.clone());
+            if let Some(key) = self.graph.held.key(&path) {
+                forwarded.push(key);
                 retry_baseline(&mut now, &path, before);
                 continue;
             }
@@ -479,7 +478,6 @@ impl Core {
         } else {
             false
         };
-        drop(held);
         drop(racy);
         drop(snapshot);
         if !forwarded.is_empty() {

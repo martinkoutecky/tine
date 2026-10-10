@@ -245,6 +245,9 @@ impl Transaction<'_> {
                         && source_plans
                             .get(&id)
                             .is_some_and(|&index| matches!(steps[index], Step::Rewrite { .. }));
+                    // A held page's reservation publishes its index (A-V4).
+                    let held = || now.as_deref().map(std::sync::Arc::from);
+                    self.store.graph.held.indexed(&path, held);
                     if let Some(entry) = self.store.graph.transaction_publish_page_inner(
                         &path,
                         now.as_deref(),
