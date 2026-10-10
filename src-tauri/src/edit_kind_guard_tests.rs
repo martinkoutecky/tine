@@ -163,9 +163,12 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "delete_page_expected",
             "transaction(Some(tine_store::EditKind::DeletePage))",
         ),
+        // A rename's transaction is `commit_rename` (no host, or a retained
+        // rename under a page host's reservation).
+        (PAGES, "rename_page_after_inventory", "commit_rename("),
         (
             PAGES,
-            "rename_page_after_inventory",
+            "commit_rename",
             "transaction(Some(tine_store::EditKind::RenamePage))",
         ),
         (
@@ -183,9 +186,12 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "create_if_absent",
             "transaction(Some(tine_store::EditKind::ReplacePage))",
         ),
+        // The migration's transaction is `migrate_confirmed` (under a page
+        // host's reservation of every journal it moves).
+        (JOURNALS, "migrate_journal_filenames", "migrate_confirmed("),
         (
             JOURNALS,
-            "migrate_journal_filenames",
+            "migrate_confirmed",
             "transaction(Some(tine_store::EditKind::RenamePage))",
         ),
         (

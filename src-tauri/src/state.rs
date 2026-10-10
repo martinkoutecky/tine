@@ -90,6 +90,12 @@ impl GraphSlot {
         }
     }
 
+    /// The host slot, read for a census writer's whole call: a restore
+    /// cannot take the host out from under the writer's reservation.
+    pub(crate) fn host_slot(&self) -> std::sync::RwLockReadGuard<'_, PageHostSlot> {
+        self.host.read().unwrap()
+    }
+
     pub(crate) fn begin_startup_warm(&self) -> u64 {
         let mut idle = self.startup_idle.lock().unwrap();
         *idle = None;

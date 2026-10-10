@@ -165,6 +165,10 @@ fn every_content_mutation_has_a_reviewed_owner() {
         // validates it like any checkpoint (header, config key, stamps) and
         // rebuilds on any mismatch.
         ("src-tauri/src/graph.rs", "forget_launch_checkpoint"),
+        // Not a filesystem call: `PageHost::rename`, the page host's rename
+        // operation (STEP3 §7). Crash matrix: the host's operation custody
+        // and drafts (`page_host`, `binding_rename_tests` Q4 crash traces).
+        ("crates/tine-graph-features/src/pages.rs", "host_rename"),
         ("src-tauri/src/device_io.rs", "atomic_write"),
         ("src-tauri/src/device_io.rs", "atomic_write_new"),
     ]
