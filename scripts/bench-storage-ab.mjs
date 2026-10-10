@@ -216,7 +216,8 @@ function renderMarkdown(report) {
 }
 
 // -- main ------------------------------------------------------------------------
-const loadAvgStart = os.loadavg()[0];
+const stored = opts.summarizeOnly ? JSON.parse(fs.readFileSync(path.join(path.resolve(opts.out), "summary.json"), "utf8")) : null;
+const loadAvgStart = stored ? stored.loadAvgStart : os.loadavg()[0];
 let arms;
 if (opts.summarizeOnly) {
   arms = JSON.parse(fs.readFileSync(path.join(opts.outAbs, "summary.json"), "utf8")).arms;
@@ -253,7 +254,7 @@ if (opts.summarizeOnly) {
 const noise = opts.noiseFloor ? JSON.parse(fs.readFileSync(path.resolve(opts.noiseFloor), "utf8")) : null;
 const summary = summarize(results, arms, noise);
 const report = { schemaVersion: 1, mode, arms, runs: opts.runs, corpus: opts.corpus, scenarios, probe: "rAF gap over 100 ms where PerformanceObserver longtask is unsupported",
-  loadAvgStart, loadAvgEnd: os.loadavg()[0],
+  loadAvgStart, loadAvgEnd: stored ? stored.loadAvgEnd : os.loadavg()[0],
   trialLoad: (() => { const l = results.map((r) => r.loadAvgBefore).filter(Number.isFinite); const d = describe(l); return d ? { median: d.median, max: d.max, trialsWaitingForLoad: results.filter((r) => r.waitedForLoadMs > 0).length } : null; })(),
   noiseFloorFrom: opts.noiseFloor ?? null, summary,
   failures: results.filter((r) => Object.keys(r.failures).length).map((r) => ({ arm: r.arm, scenario: r.scenario, run: r.run, failures: r.failures })) };
