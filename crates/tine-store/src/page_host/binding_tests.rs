@@ -424,11 +424,13 @@ fn f9_create_checks_run_at_open_of_a_page_with_no_file() {
     live.host.stop();
 }
 
-/// Q1 (REVIEW-3): the window was shown disk A; C is observed before its
-/// Keep mine is serialized, and A again before anything could apply it.
-/// The resolve's comparison source is exactly the bytes its token names,
-/// never another observation: the corrupting DTO never reaches disk, and
-/// once A is current again the firewall refuses it against A.
+/// Q1 under amendment A-A1, the reviewer's literal ABA cut: the window
+/// was shown disk A; C is observed before its Keep mine over A serializes;
+/// A returns between serialization and application. The old token is stale
+/// input (E27, a declared conservative deviation): the corrupt bytes, which
+/// were never checked against A, never reach disk, the page stays
+/// conflicted, and the follow-up resolve against A runs the firewall and
+/// refuses.
 fn q1_trace(
     rel: &str,
     (start, mine): (&str, &str),
@@ -454,22 +456,42 @@ fn q1_trace(
     assert!(against(c).is_ok());
     let current = live.external(&key, c);
     assert!(current.conflict);
+    // Serialized while C is current; applied only after A returned.
+    let lock = live.store.graph.page_lock(&live.root.join(&key));
+    let held = lock.lock().unwrap();
     let id = live
         .submit(&key, corrupt, current.version, Some(&token(a)))
         .expect("an old token is admitted as stale input, not refused");
+    fs::write(live.root.join(&key), a).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let owed = || {
+        live.host
+            .driver
+            .shared
+            .with_state(|s| s.observe.contains_key(&key))
+    };
+    while !owed() {
+        assert!(Instant::now() < deadline, "the watcher never forwarded A");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    drop(held);
     let page = live.answer(&key, id).page.unwrap();
-    assert!(page.conflict, "Q1: an old token's request stays conflicted");
-    settle();
-    assert_eq!(live.disk(&key), c, "Q1: nothing was checked against C");
-    let current = live.external(&key, a);
-    assert!(current.conflict);
+    assert_eq!(
+        page.disk,
+        Some(token(a)),
+        "the cut: A is current at application"
+    );
+    assert!(
+        page.conflict,
+        "Q1/A-A1: an old token's request stays conflicted"
+    );
     settle();
     assert_eq!(
         live.disk(&key),
         a,
-        "Q1: A returned, the request was never checked against it"
+        "Q1/A-A1: bytes unchecked against A never reach disk"
     );
-    let again = live.submit(&key, corrupt, current.version, Some(&token(a)));
+    let again = live.submit(&key, corrupt, page.version, Some(&token(a)));
     assert!(
         again.as_ref().is_err_and(&refused),
         "Q1: Keep mine over A compares with A: {again:?}"
