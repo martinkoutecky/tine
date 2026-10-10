@@ -10,7 +10,9 @@ use tauri::Manager;
 use tine_store::{is_asset_sidecar, is_graph_text, Area, RestoreFile, Store};
 
 mod collect;
+mod naming;
 mod restore;
+use naming::{highest_counter, snapshot_order};
 pub(crate) use restore::restore_backup;
 
 // Snapshot the graph's Markdown/Org into the OS app-data dir on open, keeping the
@@ -297,21 +299,6 @@ fn now_unix() -> u64 {
 /// (`FileTooLarge`), so restore can refuse a bigger blob as damaged before
 /// reading or hashing it, which bounds restore's memory.
 const SNAPSHOT_FILE_MAX_BYTES: u64 = 256 * 1024 * 1024;
-
-/// Chronological order of snapshot names, `<stamp>[-<suffix>][-<k>]`: the
-/// stamp, then the same-second counter `k` as a number (none is 1), then the
-/// name (REVIEW N5: `-10` is newer than `-9`).
-fn snapshot_order(name: &str) -> (&str, u64, &str) {
-    let (stamp, rest) = match (name.get(..19), name.get(19..)) {
-        (Some(stamp), Some(rest)) => (stamp, rest),
-        _ => (name, ""),
-    };
-    let counter = rest
-        .rsplit_once('-')
-        .and_then(|(_, k)| k.parse().ok())
-        .unwrap_or(1);
-    (stamp, counter, name)
-}
 
 #[cfg(test)]
 std::thread_local! {
@@ -1145,16 +1132,23 @@ fn write_snapshot(
     let blobs = cas.join(BLOB_DIR);
     // Reserve a UNIQUE name. The stamp is second-granularity, so two snapshots
     // in the same second (e.g. a launch snapshot and a pre-restore snapshot)
-    // would otherwise collide. `create_dir` (non-recursive) fails atomically
-    // if the partial name is taken, and a published snapshot of that name in
-    // either namespace bumps the counter too, so a name restores one snapshot.
-    if let Err(error) =
-        std::fs::create_dir_all(&snapshots).and_then(|()| std::fs::create_dir_all(&blobs))
-    {
-        return BackupOutcome::failed(0, "reserve", error.kind());
-    }
-    let mut published = name.clone();
-    let mut k = 2;
+    // would otherwise collide. The counter starts above every counter this
+    // second already has, published or partial, in either namespace, so a
+    // freed lower name is never reused below a surviving one (which would
+    // order the new snapshot as older). `create_dir` (non-recursive) fails
+    // atomically if the partial name is taken anyway.
+    let highest = std::fs::create_dir_all(&snapshots)
+        .and_then(|()| std::fs::create_dir_all(&blobs))
+        .and_then(|()| Ok(highest_counter(&snapshots, &name)?.max(highest_counter(base, &name)?)));
+    let mut k = match highest {
+        Ok(highest) => highest + 1,
+        Err(error) => return BackupOutcome::failed(0, "reserve", error.kind()),
+    };
+    let mut published = if k == 1 {
+        name.clone()
+    } else {
+        format!("{name}-{k}")
+    };
     let (final_dest, dest) = loop {
         let final_dest = snapshots.join(&published);
         let dest = snapshots.join(format!(".partial-{published}"));
@@ -1168,8 +1162,8 @@ fn write_snapshot(
         match reserved {
             Ok(()) => break (final_dest, dest),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                k = k.max(1) + 1;
                 published = format!("{name}-{k}");
-                k += 1;
             }
             Err(error) => return BackupOutcome::failed(0, "reserve", error.kind()),
         }
@@ -1945,10 +1939,7 @@ mod tests {
         let graph = root.join("graph");
         let base = root.join("app-data").join("backups").join("graph-id");
         small_graph(&graph);
-        // Keep 2, not 1: at keep 1, same-second launches reuse a pruned name
-        // that orders before the newest (a pre-existing naming defect,
-        // reported in the og-backup-cas round-3 receipt, not patched here).
-        let (outcome, anchor, _, syncs) = launch(&base, &graph, 2);
+        let (outcome, anchor, _, syncs) = launch(&base, &graph, 1);
         assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
         let anchor = anchor.unwrap();
         let manifest = read_manifest(&anchor).unwrap();
@@ -1960,14 +1951,14 @@ mod tests {
         );
         for edit in 0..3 {
             std::fs::write(graph.join("pages/A.md"), format!("- a {edit}\n")).unwrap();
-            let (outcome, latest, _, syncs) = launch(&base, &graph, 2);
+            let (outcome, latest, _, syncs) = launch(&base, &graph, 1);
             assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
             let latest = latest.unwrap();
             assert!(!read_manifest(&latest).unwrap().anchor);
             assert_eq!(syncs, [], "a routine launch syncs nothing");
             let left = cas_snapshots(&base);
             assert_eq!(left[0], anchor, "the anchor is never pruned");
-            assert_eq!(left.len(), 1 + (edit + 1).min(2), "keep 2 plus the anchor");
+            assert_eq!(left.len(), 2, "keep 1 plus the anchor");
             assert_eq!(left.last(), Some(&latest));
         }
         prune_now(&base, 1);
@@ -2086,6 +2077,91 @@ mod tests {
 
     /// REVIEW N5: same-second counters order numerically, `-10` after `-9`,
     /// for the keep-count and the listing alike, across both namespaces.
+    /// og-backup-cas D6: a file `fsync` cannot be observed in-process, so
+    /// the backup module keeps exactly one file-sync and one directory-sync
+    /// call, both inside `sync_durable`, the seam every durable step goes
+    /// through and the tests record. A second site would be unrecorded.
+    #[test]
+    fn every_backup_sync_goes_through_the_one_seam() {
+        let production =
+            |source: &'static str| source.split("\n#[cfg(test)]\nmod tests {").next().unwrap();
+        let sources = [
+            production(include_str!("backup.rs")),
+            production(include_str!("backup/collect.rs")),
+            production(include_str!("backup/naming.rs")),
+            production(include_str!("backup/restore.rs")),
+        ];
+        let seam = sources[0]
+            .split("\nfn sync_durable(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .expect("sync_durable exists");
+        for (call, count_in_seam) in [
+            (".sync_all(", 1),
+            (".sync_data(", 0),
+            ("sync_directory_entry(", 1),
+            ("sync_private_directory(", 0),
+        ] {
+            let total: usize = sources
+                .iter()
+                .map(|source| source.matches(call).count())
+                .sum();
+            assert_eq!(
+                (total, seam.matches(call).count()),
+                (count_in_seam, count_in_seam),
+                "I-1/D6: `{call}` in the backup module must be exactly the sync_durable seam's; exemplar backup.rs sync_durable"
+            );
+        }
+    }
+
+    /// A same-second name is reserved above every counter that second
+    /// already has, published or partial: after a prune freed `<s>` and
+    /// `<s>-2` and left `<s>-3`, the next snapshot is `<s>-4` and sorts
+    /// newest (reusing `<s>` would order it oldest, and the keep-count would
+    /// then delete the newest snapshot).
+    #[test]
+    fn a_same_second_name_never_reuses_a_freed_lower_counter() {
+        let root = scratch("backup-counter-reuse");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        small_graph(&graph);
+        let snapshots = cas_dir(&base).join(CAS_SNAPSHOTS);
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let snapshot = || {
+            let source = BackupSource::from_store(&store, &graph).unwrap();
+            let outcome = write_snapshot(&base, &store, source, "", false, &|| false);
+            assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
+            outcome.published.unwrap()
+        };
+        // Each attempt takes milliseconds; one that straddles a second
+        // boundary gets a fresh stamp and is retried.
+        for _attempt in 0..10 {
+            let _ = std::fs::remove_dir_all(cas_dir(&base));
+            let stamp = snapshot();
+            std::fs::rename(snapshots.join(&stamp), snapshots.join(format!("{stamp}-3"))).unwrap();
+            let next = snapshot();
+            if !next.starts_with(&stamp) {
+                continue;
+            }
+            assert_eq!(next, format!("{stamp}-4"));
+            assert_eq!(
+                cas_snapshots(&base).last(),
+                Some(&snapshots.join(&next)),
+                "sorts newest"
+            );
+            std::fs::create_dir(snapshots.join(format!(".partial-{stamp}-6"))).unwrap();
+            let after = snapshot();
+            if !after.starts_with(&stamp) {
+                continue;
+            }
+            assert_eq!(after, format!("{stamp}-7"), "a partial's counter counts");
+            store.close();
+            let _ = std::fs::remove_dir_all(root);
+            return;
+        }
+        panic!("ten attempts each crossed a second boundary");
+    }
+
     #[test]
     fn same_second_counters_order_numerically() {
         let root = scratch("backup-counter-order");

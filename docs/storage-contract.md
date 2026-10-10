@@ -307,7 +307,10 @@ The layout and protocol:
   (`.tmp-<sha256>-<pid>-<n>`), then renamed over its name. The manifest is
   written last into `snapshots/.partial-<name>/`, and a no-replace rename
   publishes it. A name taken in the same second gets a counter `-2`, `-3`, …,
-  ordered numerically (`-10` after `-9`).
+  ordered numerically (`-10` after `-9`), one above the highest counter that
+  second already has, published or partial, in either namespace: a name a
+  prune freed is never reused below a surviving one, which would order the
+  new snapshot as older.
 - **Manifest checksum.** `checksum` is the SHA-256 of the manifest's other
   fields serialized as compact JSON with object keys sorted recursively
   (unknown fields included). Listing and restore read a schema-4 manifest
@@ -405,6 +408,8 @@ Proof `src-tauri/src/backup.rs`
 `a_shared_blob_survives_pruning_one_of_its_snapshots`,
 `a_prune_racing_a_snapshot_never_deletes_its_blobs`,
 `same_second_counters_order_numerically`,
+`a_same_second_name_never_reuses_a_freed_lower_counter`,
+`every_backup_sync_goes_through_the_one_seam`,
 `launches_that_delete_nothing_never_enumerate_the_blob_store`,
 `the_collector_stops_on_a_listing_entry_error`,
 `the_collector_stops_on_a_manifest_read_error`,
