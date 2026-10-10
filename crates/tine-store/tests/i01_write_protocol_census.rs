@@ -151,19 +151,32 @@ fn every_content_mutation_has_a_reviewed_owner() {
         ("crates/tine-store/src/transaction.rs", "apply"),
         ("crates/tine-store/src/transaction.rs", "commit_timed"),
         ("src-tauri/src/backup.rs", "cleanup_partial_backups"),
-        // Deletes blobs no snapshot manifest lists (og-backup-cas), in app
-        // data, never graph content, under BACKUP_WORK. Crash matrix: a crash
-        // mid-collection leaves unreferenced blobs the next prune collects;
-        // any unreadable manifest or directory stops it before a delete.
+        // Deletes every blob-store entry no manifest in the schema-4 backup
+        // namespace lists (og-backup-cas), in app data, never graph content,
+        // under the namespace's cross-process lock and only after a crashed
+        // or failed snapshot. Crash matrix: a crash mid-collection leaves
+        // unreferenced blobs, still beside the partial that triggers the next
+        // collection; any unreadable manifest or directory stops it before a
+        // delete.
         ("src-tauri/src/backup.rs", "collect_blobs"),
+        // Deletes pruned schema-4 snapshots and the blobs only they listed,
+        // under the namespace lock. Crash matrix: each snapshot is renamed to
+        // `.partial-*` before any delete, so a crash leaves a partial whose
+        // cleanup collects the whole blob store; doubt deletes nothing.
+        ("src-tauri/src/backup.rs", "drop_cas_snapshots"),
         ("src-tauri/src/backup.rs", "drop"),
+        // Opens (creating if absent) the empty lock file of a graph's schema-4
+        // backup namespace; never writes it. Crash matrix: none, the file
+        // holds no data and the OS releases the lock with the process.
+        ("src-tauri/src/backup.rs", "lock_cas"),
         ("src-tauri/src/backup.rs", "prune_backups"),
         ("src-tauri/src/backup.rs", "publish_snapshot"),
-        // Writes one content-addressed backup blob (temp name in `blobs/`,
-        // then rename) under BACKUP_WORK; never graph content. Crash matrix:
-        // a leftover temp is listed by no manifest, so the next prune collects
-        // it; a torn blob fails restore's hash check and is rewritten by the
-        // next snapshot of that content.
+        // Writes one content-addressed backup blob (its own `create_new`
+        // temp in `blobs/`, then rename) under the namespace lock; never
+        // graph content. Crash matrix: a leftover temp sits beside the
+        // crashed snapshot's partial, whose cleanup collects it; a torn blob
+        // fails restore's hash check and is rewritten by the next snapshot
+        // of that content.
         ("src-tauri/src/backup.rs", "put_blob"),
         ("src-tauri/src/backup.rs", "write_manifest"),
         // Thumbnail cache cleanup is outside graph/private-durable state.

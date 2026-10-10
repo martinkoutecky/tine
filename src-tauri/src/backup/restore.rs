@@ -118,64 +118,82 @@ fn restore_from_backup_source(
     source: BackupSource,
     snapshot_current: impl FnOnce(&BackupSource) -> BackupOutcome,
 ) -> Result<(), String> {
-    let src = base.join(stamp);
-    if !src.is_dir() {
-        return Err("backup not found".into());
-    }
-    let manifest = read_manifest(&src).ok_or(DAMAGED)?;
-    if manifest.root != source.root.display().to_string() {
-        return Err("backup belongs to a different graph".into());
-    }
-    if !verify_snapshot(&src, &manifest) {
-        return Err(DAMAGED.into());
-    }
-    let safe_dir = |raw: &str| -> Result<(), String> {
-        let rel = std::path::Path::new(raw);
-        if raw.is_empty()
-            || raw.contains('\\')
-            || rel.is_absolute()
-            || rel
-                .components()
-                .any(|c| !matches!(c, std::path::Component::Normal(_)))
-        {
-            return Err("backup contains an unsafe graph directory".into());
+    let cas = cas_dir(base);
+    // Read and check everything under the namespace lock, so no prune or
+    // blob repair changes the snapshot mid-read; the restore then consumes
+    // exactly the verified bytes (REVIEW N1) and never reads the snapshot
+    // again. The lock is released before the safety snapshot takes it.
+    let (manifest, payloads, scope) = {
+        let _lock = match lock_cas(&cas, Some(CAS_LOCK_WAIT)) {
+            Ok(Some(lock)) => lock,
+            Ok(None) => return Err(BUSY.into()),
+            Err(error) => return Err(format!("backup-failed:lock:{:?}", error.kind())),
+        };
+        let src = [cas.join(CAS_SNAPSHOTS).join(stamp), base.join(stamp)]
+            .into_iter()
+            .find(|dir| dir.is_dir())
+            .ok_or("backup not found")?;
+        let manifest = read_manifest(&src).ok_or(DAMAGED)?;
+        if manifest.root != source.root.display().to_string() {
+            return Err("backup belongs to a different graph".into());
         }
-        Ok(())
-    };
-    // Schema 3 text sits at its graph-relative path, so the recorded pages and
-    // journals directories do not steer it (master 336833b13); `hidden` is
-    // the graph-text scope it covered. `[""]` hides all: master's fail-closed
-    // `:hidden` snapshot holds no text, so it must retire none.
-    let scope = match (&manifest.graph_text_policy, manifest.schema) {
-        (Some(policy), GRAPH_COPY_SNAPSHOT_SCHEMA | SNAPSHOT_SCHEMA)
-            if policy.hidden_parse_failed_closed =>
-        {
-            Some(vec![String::new()])
+        let payloads = load_verified_payloads(&src, &cas, &manifest).ok_or(DAMAGED)?;
+        let safe_dir = |raw: &str| -> Result<(), String> {
+            let rel = std::path::Path::new(raw);
+            if raw.is_empty()
+                || raw.contains('\\')
+                || rel.is_absolute()
+                || rel
+                    .components()
+                    .any(|c| !matches!(c, std::path::Component::Normal(_)))
+            {
+                return Err("backup contains an unsafe graph directory".into());
+            }
+            Ok(())
+        };
+        // Schema 3/4 text sits at its graph-relative path, so the recorded
+        // pages and journals directories do not steer it (master 336833b13);
+        // `hidden` is the graph-text scope it covered. `[""]` hides all:
+        // master's fail-closed `:hidden` snapshot holds no text, so it must
+        // retire none.
+        let scope = match (&manifest.graph_text_policy, manifest.schema) {
+            (Some(policy), GRAPH_COPY_SNAPSHOT_SCHEMA | SNAPSHOT_SCHEMA)
+                if policy.hidden_parse_failed_closed =>
+            {
+                Some(vec![String::new()])
+            }
+            (Some(policy), GRAPH_COPY_SNAPSHOT_SCHEMA | SNAPSHOT_SCHEMA) => {
+                Some(policy.hidden.clone())
+            }
+            _ => None,
+        };
+        let areas = if scope.is_some() {
+            vec!["graph", source.assets_dir_name.as_str()]
+        } else {
+            safe_dir(&manifest.journals_dir)?;
+            safe_dir(&manifest.pages_dir)?;
+            // A schema-2 restore targets the open graph's current layout; a
+            // backup taken under a different :pages-directory /
+            // :journals-directory is not restored (v0.6.5 wrote into the
+            // backup's old directory names).
+            if manifest.journals_dir != source.journals_dir
+                || manifest.pages_dir != source.pages_dir
+            {
+                return Err(
+                    "backup was made with a different pages or journals directory setting".into(),
+                );
+            }
+            vec!["journals", "pages", source.assets_dir_name.as_str()]
+        };
+        // A missing full-copy area would read as "no files" and retire the
+        // live ones. A schema-4 snapshot has no areas on disk: its manifest
+        // is its only listing, and its checksum matched.
+        if manifest.schema != SNAPSHOT_SCHEMA && areas.iter().any(|area| !src.join(area).is_dir()) {
+            return Err(DAMAGED.into());
         }
-        (Some(policy), GRAPH_COPY_SNAPSHOT_SCHEMA | SNAPSHOT_SCHEMA) => Some(policy.hidden.clone()),
-        _ => None,
+        (manifest, payloads, scope)
     };
-    let areas = if scope.is_some() {
-        vec!["graph", source.assets_dir_name.as_str()]
-    } else {
-        safe_dir(&manifest.journals_dir)?;
-        safe_dir(&manifest.pages_dir)?;
-        // A schema-2 restore targets the open graph's current layout; a backup
-        // taken under a different :pages-directory / :journals-directory is not
-        // restored (v0.6.5 wrote into the backup's old directory names).
-        if manifest.journals_dir != source.journals_dir || manifest.pages_dir != source.pages_dir {
-            return Err(
-                "backup was made with a different pages or journals directory setting".into(),
-            );
-        }
-        vec!["journals", "pages", source.assets_dir_name.as_str()]
-    };
-    // A missing full-copy area would read as "no files" and retire the live
-    // ones. A schema-4 snapshot has no areas on disk: its manifest is its
-    // only listing, and it parsed complete.
-    if manifest.schema != SNAPSHOT_SCHEMA && areas.iter().any(|area| !src.join(area).is_dir()) {
-        return Err(DAMAGED.into());
-    }
+    let selected = select_restore_files(&manifest, &source, scope.is_some())?;
     let snapshot = snapshot_current(&source);
     let live_n = [Area::Graph, Area::Assets]
         .into_iter()
@@ -205,17 +223,48 @@ fn restore_from_backup_source(
         .into_iter()
         .sum::<usize>();
     require_safety_snapshot(snapshot, live_n)?;
-    let files = open_verified_restore_files(&src, &manifest, &source, scope.is_some())?;
+    let files = selected
+        .into_iter()
+        .map(|(area, rel, index)| {
+            let bytes = &payloads[index];
+            let source = stage_restore_bytes(&cas, bytes)
+                .map_err(|error| format!("restore-failed:{:?}: stage", error.kind()))?;
+            Ok(RestoreFile {
+                area,
+                rel,
+                source,
+                len: bytes.len() as u64,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    #[cfg(test)]
+    if let Some(hook) = BEFORE_STORE_RESTORE.with(|hook| hook.take()) {
+        hook();
+    }
     store
         .restore(tine_store::EditKind::ReplacePage, files, scope.as_deref())
         .map_err(|error| format_restore_failure(&error))?;
     Ok(())
 }
 
+#[cfg(test)]
+std::thread_local! {
+    /// Runs once between staging and `Store::restore`.
+    static BEFORE_STORE_RESTORE: std::cell::Cell<Option<Box<dyn FnOnce()>>> = const { std::cell::Cell::new(None) };
+}
+
 /// Every refusal of a snapshot whose own bytes are missing, torn or
-/// unverifiable (power loss, a disk error). Nothing in the graph has changed.
-/// Refusal row: docs/storage-contract.md, `src-tauri::backup` restore selection.
+/// unverifiable, its manifest checksum included (power loss, a disk error).
+/// Nothing in the graph has changed. Refusal row: docs/storage-contract.md,
+/// `src-tauri::backup` restore selection.
 const DAMAGED: &str = "this backup is damaged; pick another snapshot";
+
+/// A restore that waited its bound for another Tine process's backup work
+/// on this graph (concurrent honest instances). Nothing in the graph has
+/// changed. Refusal row: docs/storage-contract.md, `src-tauri::backup`
+/// namespace lock.
+const BUSY: &str =
+    "backups are busy in another Tine window or process; try the restore again in a moment";
 
 fn require_safety_snapshot(snapshot: BackupOutcome, live_n: usize) -> Result<(), String> {
     if live_n > 0 && (snapshot.copied == 0 || snapshot.failure.is_some()) {
@@ -257,15 +306,16 @@ fn format_restore_failure(error: &tine_store::RestoreFailed) -> String {
     )
 }
 
-fn open_verified_restore_files(
-    snapshot: &std::path::Path,
+/// The verified files a restore writes, as (area, area-relative path,
+/// index into the manifest's files), in the old area order: graph text (or
+/// journals, pages), asset sidecars, config. An unsafe path refuses the
+/// restore before the safety snapshot.
+fn select_restore_files(
     manifest: &SnapshotManifest,
     source: &BackupSource,
     graph_wide: bool,
-) -> Result<Vec<RestoreFile>, String> {
+) -> Result<Vec<(Area, String, usize)>, String> {
     let mut files = Vec::new();
-    // Preserve the old area order: graph text (or journals, pages), asset
-    // sidecars, config.
     let text: &[(&str, Area)] = if graph_wide {
         &[("graph", Area::Graph)]
     } else {
@@ -275,7 +325,7 @@ fn open_verified_restore_files(
         (source.assets_dir_name.as_str(), Area::Assets),
         ("logseq", Area::Meta),
     ]) {
-        for entry in &manifest.files {
+        for (index, entry) in manifest.files.iter().enumerate() {
             let Some(rel) = entry
                 .path
                 .strip_prefix(prefix)
@@ -306,30 +356,7 @@ fn open_verified_restore_files(
             {
                 return Err(DAMAGED.into());
             }
-            let payload = payload_path(snapshot, manifest, entry).ok_or(DAMAGED)?;
-            let mut file = std::fs::File::open(payload).map_err(|_| DAMAGED)?;
-            let meta = file.metadata().map_err(|_| DAMAGED)?;
-            if !meta.is_file() {
-                return Err(DAMAGED.into());
-            }
-            let mut hasher = Sha256::new();
-            let mut buf = [0u8; 64 * 1024];
-            loop {
-                let n = file.read(&mut buf).map_err(|_| DAMAGED)?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buf[..n]);
-            }
-            if format!("{:x}", hasher.finalize()) != entry.sha256 {
-                return Err(DAMAGED.into());
-            }
-            files.push(RestoreFile {
-                area,
-                rel: rel.into(),
-                source: file,
-                len: meta.len(),
-            });
+            files.push((area, rel.to_owned(), index));
         }
     }
     Ok(files)
@@ -576,7 +603,15 @@ mod tests {
             &|| false,
         );
         assert_eq!((copied, failed), (0, 3));
-        assert!(require_safety_snapshot(BackupOutcome { copied, failure }, 2).is_err());
+        assert!(require_safety_snapshot(
+            BackupOutcome {
+                copied,
+                failure,
+                published: None,
+            },
+            2,
+        )
+        .is_err());
         assert_eq!(std::fs::read(&non_utf_path).unwrap(), b"- keep A\n");
         assert_eq!(std::fs::read(&invalid_id_path).unwrap(), b"- keep B\n");
         store.close();
@@ -766,13 +801,8 @@ mod tests {
         let source = BackupSource::from_store(&store, &graph).unwrap();
         let outcome = write_snapshot(&base, &store, source.clone(), "", &|| false);
         assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
-        let stamp = std::fs::read_dir(&base)
-            .unwrap()
-            .flatten()
-            .map(|entry| entry.file_name().into_string().unwrap())
-            .find(|name| name != BLOB_DIR)
-            .unwrap();
-        let manifest = read_manifest(&base.join(&stamp)).unwrap();
+        let stamp = outcome.published.clone().unwrap();
+        let manifest = read_manifest(&cas_dir(&base).join(CAS_SNAPSHOTS).join(&stamp)).unwrap();
         let mut paths: Vec<&str> = manifest.files.iter().map(|f| f.path.as_str()).collect();
         paths.sort();
         assert_eq!(
@@ -980,13 +1010,8 @@ mod tests {
         let source = BackupSource::from_store(&store, &graph).unwrap();
         let outcome = write_snapshot(&base, &store, source.clone(), "", &|| false);
         assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
-        let stamp = std::fs::read_dir(&base)
-            .unwrap()
-            .flatten()
-            .map(|entry| entry.file_name().into_string().unwrap())
-            .find(|name| name != BLOB_DIR)
-            .unwrap();
-        let manifest = read_manifest(&base.join(&stamp)).unwrap();
+        let stamp = outcome.published.clone().unwrap();
+        let manifest = read_manifest(&cas_dir(&base).join(CAS_SNAPSHOTS).join(&stamp)).unwrap();
         assert!(
             manifest
                 .graph_text_policy
@@ -1096,13 +1121,8 @@ mod tests {
         let source = BackupSource::from_store(&store, &graph).unwrap();
         let outcome = write_snapshot(&base, &store, source.clone(), "", &|| false);
         assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
-        let stamp = std::fs::read_dir(&base)
-            .unwrap()
-            .flatten()
-            .map(|entry| entry.file_name().into_string().unwrap())
-            .find(|name| name != BLOB_DIR)
-            .unwrap();
-        let snapshot = base.join(&stamp);
+        let stamp = outcome.published.clone().unwrap();
+        let snapshot = cas_dir(&base).join(CAS_SNAPSHOTS).join(&stamp);
         let manifest = read_manifest(&snapshot).unwrap();
         assert_eq!(manifest.schema, SNAPSHOT_SCHEMA);
         let original = tree(&graph);
@@ -1129,7 +1149,7 @@ mod tests {
                 .iter()
                 .find(|file| file.path == path)
                 .unwrap();
-            base.join(BLOB_DIR).join(&file.sha256)
+            cas_dir(&base).join(BLOB_DIR).join(&file.sha256)
         };
         let corrupt = blob("graph/pages/Crlf.md");
         let missing = blob("graph/Root.md");
@@ -1236,9 +1256,107 @@ mod tests {
             left[0], "2026-09-01_00-00-00",
             "the older full copy is pruned"
         );
-        assert!(base.join(BLOB_DIR).is_dir());
-        let newest = base.join(&left[0]);
+        assert!(cas_dir(&base).join(BLOB_DIR).is_dir());
+        let newest = cas_dir(&base).join(CAS_SNAPSHOTS).join(&left[0]);
         assert!(verify_snapshot(&newest, &read_manifest(&newest).unwrap()));
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// REVIEW-backup-cas B1: one flipped bit in a listed path (`A` to `C`)
+    /// leaves valid JSON and a blob that hashes right, and would restore A's
+    /// bytes as C.md and retire A.md. The manifest checksum makes it damage:
+    /// not listed, and refused before the safety snapshot. A schema-4
+    /// manifest without its checksum is damaged too.
+    #[test]
+    fn a_bit_flip_in_a_manifest_path_is_refused() {
+        let root = scratch("manifest-bit-flip");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        small_graph_with_root(&graph);
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        let outcome = write_snapshot(&base, &store, source.clone(), "", &|| false);
+        let stamp = outcome.published.unwrap();
+        let path = cas_dir(&base)
+            .join(CAS_SNAPSHOTS)
+            .join(&stamp)
+            .join(SNAPSHOT_MANIFEST);
+        let saved = std::fs::read(&path).unwrap();
+        let at = saved
+            .windows(b"graph/pages/A.md".len())
+            .position(|window| window == b"graph/pages/A.md")
+            .unwrap()
+            + b"graph/pages/".len();
+        let mut flipped = saved.clone();
+        flipped[at] ^= 0b10;
+        assert_eq!(flipped[at], b'C');
+        assert!(serde_json::from_slice::<serde_json::Value>(&flipped).is_ok());
+        let live = tree(&graph);
+        let refused = |label: &str| {
+            assert!(
+                list_backups_from_base(&base, &graph).is_empty(),
+                "{label}: not listed"
+            );
+            let result = restore_from_backup_source(&stamp, &base, &store, source.clone(), |_| {
+                panic!("{label}: a damaged manifest must be refused before the safety snapshot")
+            });
+            assert_eq!(result.unwrap_err(), DAMAGED, "{label}");
+            assert_eq!(tree(&graph), live, "{label}: nothing written to the graph");
+        };
+        std::fs::write(&path, &flipped).unwrap();
+        refused("bit flip in a path");
+        let mut unchecked: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+        unchecked.as_object_mut().unwrap().remove(MANIFEST_CHECKSUM);
+        std::fs::write(&path, serde_json::to_vec_pretty(&unchecked).unwrap()).unwrap();
+        refused("no checksum");
+        std::fs::write(&path, &saved).unwrap();
+        assert_eq!(list_backups_from_base(&base, &graph).len(), 1);
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// REVIEW N1: restore writes the bytes it verified. A blob changed in
+    /// place (same length, so no length check sees it) after verification
+    /// and right before `Store::restore` copies never reaches the graph.
+    #[test]
+    fn a_blob_changed_after_verification_never_reaches_the_graph() {
+        let root = scratch("restore-verified-bytes");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        small_graph_with_root(&graph);
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        let outcome = write_snapshot(&base, &store, source.clone(), "", &|| false);
+        let stamp = outcome.published.unwrap();
+        let manifest = read_manifest(&cas_dir(&base).join(CAS_SNAPSHOTS).join(&stamp)).unwrap();
+        let sha256 = &manifest
+            .files
+            .iter()
+            .find(|file| file.path == "graph/pages/A.md")
+            .unwrap()
+            .sha256;
+        let blob = cas_dir(&base).join(BLOB_DIR).join(sha256);
+        write(&graph.join("pages/A.md"), "- live\n");
+        let changed = blob.clone();
+        BEFORE_STORE_RESTORE.with(|hook| {
+            hook.set(Some(Box::new(move || {
+                use std::io::Write;
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&changed)
+                    .unwrap();
+                file.write_all(b"- X\n").unwrap();
+            })))
+        });
+        restore_from_backup_source(&stamp, &base, &store, source, |_| BackupOutcome::success(1))
+            .unwrap();
+        assert_eq!(std::fs::read(&blob).unwrap(), b"- X\n", "the blob changed");
+        assert_eq!(
+            std::fs::read_to_string(graph.join("pages/A.md")).unwrap(),
+            "- a\n",
+            "the graph holds the verified bytes"
+        );
         drop(store);
         let _ = std::fs::remove_dir_all(root);
     }
