@@ -274,7 +274,7 @@ fn copy_guide_into_graph_writes_whole_lowercase_namespace_and_assets() {
     let dir = scratch("whole");
     fs::create_dir_all(dir.join("pages")).unwrap();
     let store = open(&dir);
-    let copied = guide::copy_guide_into_graph(&store, "Features/Sheets").unwrap();
+    let copied = guide::copy_guide_into_graph(&store, None, "Features/Sheets").unwrap();
     assert_eq!(copied.name, "tine-guide/Features/Sheets");
     assert!(copied.created);
     assert_eq!(copied.created_pages.len(), GUIDE_TEMPLATES.len());
@@ -313,7 +313,7 @@ fn recopy_guide_skips_existing_pages_without_clobbering_user_edits() {
     let dir = scratch("recopy");
     fs::create_dir_all(dir.join("pages")).unwrap();
     let store = open(&dir);
-    guide::copy_guide_into_graph(&store, "Tine Guide").unwrap();
+    guide::copy_guide_into_graph(&store, None, "Tine Guide").unwrap();
     let edited = guide_copy_page_name("Features/Sheets");
     let edited_path = store
         .path_for_os_handoff(&page_id(&store, &edited).file(), false)
@@ -330,7 +330,7 @@ fn recopy_guide_skips_existing_pages_without_clobbering_user_edits() {
             (name, fs::read_to_string(path).unwrap())
         })
         .collect();
-    let existing = guide::copy_guide_into_graph(&store, "Features/Sheets").unwrap();
+    let existing = guide::copy_guide_into_graph(&store, None, "Features/Sheets").unwrap();
     assert_eq!(existing.name, edited);
     assert!(!existing.created);
     assert!(existing.created_pages.is_empty());
@@ -361,7 +361,7 @@ fn copy_guide_rejects_pages_directory_symlink_swap() {
     let store = open(&dir);
     fs::remove_dir(dir.join("pages")).unwrap();
     symlink(&outside, dir.join("pages")).unwrap();
-    assert!(guide::copy_guide_into_graph(&store, "Tine Guide").is_err());
+    assert!(guide::copy_guide_into_graph(&store, None, "Tine Guide").is_err());
     assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
 }
 
@@ -376,7 +376,7 @@ fn copy_guide_rejects_assets_directory_symlink_swap() {
     let store = open(&dir);
     fs::remove_dir(dir.join("assets")).unwrap();
     symlink(&outside, dir.join("assets")).unwrap();
-    assert!(guide::copy_guide_into_graph(&store, "Tine Guide").is_err());
+    assert!(guide::copy_guide_into_graph(&store, None, "Tine Guide").is_err());
     assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
 }
 

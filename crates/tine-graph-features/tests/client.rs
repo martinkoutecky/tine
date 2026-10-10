@@ -374,7 +374,7 @@ fn guide_copy_rewrites_inter_guide_links_and_keeps_existing_files() {
             expected.remove("assets/quick-capture.png");
         }
         store.refresh(tine_store::Depth::Stamps).unwrap();
-        let actual = guide::copy_guide_into_graph(&store, "Features/Sheets").unwrap();
+        let actual = guide::copy_guide_into_graph(&store, None, "Features/Sheets").unwrap();
         if case == "page" {
             assert!(actual
                 .skipped_pages
@@ -400,7 +400,7 @@ fn guide_copy_rewrites_inter_guide_links_and_keeps_existing_files() {
     }
     let (_, store) = fixture("guide-unknown");
     assert_eq!(
-        guide::copy_guide_into_graph(&store, "missing")
+        guide::copy_guide_into_graph(&store, None, "missing")
             .unwrap_err()
             .to_string(),
         "unknown bundled guide page"

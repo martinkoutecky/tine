@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use tine_core::model::PageKind;
 use tine_core::pdf::{self, Highlight};
-use tine_graph_features::{conflicts, journals, pages, pdf as features_pdf};
+use tine_graph_features::{conflicts, guide, journals, pages, pdf as features_pdf};
 use tine_store::{Input, PageHost, PageId, Store};
 
 const CONFIG: &str = "{:file/name-format :triple-lowbar\n :default-home {:page \"Start\"}}\n";
@@ -267,45 +267,94 @@ fn other_census_writers_with_a_host_write_what_the_plain_writers_write() {
             )
         )
     }));
+    ok(same_with_a_host("guide", &files, |store, host| {
+        format!(
+            "{:?}",
+            guide::copy_guide_into_graph(store, host, "Tine Guide")
+        )
+    }));
 }
 
 /// A writer reserves the pages it touches: while another reservation holds
-/// one, the writer waits, and it writes once that reservation is released.
-#[test]
-fn a_census_writer_waits_for_a_reservation_of_its_page() {
-    let dir = graph("fence", &[("pages/A.md", "- a\n"), ("pages/B.md", "- b\n")]);
-    let app_data = scratch("fence-app");
+/// `page`, `write` waits, and it writes once that reservation is released;
+/// `written` then holds.
+fn waits_for_a_reservation(
+    label: &str,
+    files: &[(&str, &str)],
+    page: &str,
+    write: impl Fn(&Store, &PageHost) -> std::io::Result<()> + Sync,
+    written: impl Fn(&Path) -> bool,
+) {
+    let dir = graph(label, files);
+    let app_data = scratch(&format!("{label}-app"));
     fs::create_dir_all(&app_data).unwrap();
     let store = Arc::new(Store::open(&dir, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     let host = PageHost::start_for_tests(&store, &app_data).unwrap();
     let held = host
-        .reserve(|| vec![PageId::from("pages/B.md")], Input::Refuse)
+        .reserve(|| vec![PageId::from(page)], Input::Refuse)
         .expect("nothing unsaved");
+    let before = tree(&dir);
     std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();
-        let (store, host) = (&store, &host);
+        let (store, host, write) = (&store, &host, &write);
         scope.spawn(move || {
-            let merged = pages::merge_pages(store, Some(host), "pages/A.md", "pages/B.md");
-            done.send(merged.map_err(|error| error.to_string()))
+            done.send(write(store, host).map_err(|error| error.to_string()))
                 .unwrap();
         });
         assert!(
             finished.recv_timeout(Duration::from_millis(500)).is_err(),
-            "R6: the writer wrote a page another reservation holds"
+            "R6: {label} wrote while another reservation holds {page}"
         );
-        assert_eq!(fs::read_to_string(dir.join("pages/B.md")).unwrap(), "- b\n");
+        assert_eq!(
+            tree(&dir),
+            before,
+            "{label}: wrote under a held reservation"
+        );
         host.release(held);
         finished
             .recv_timeout(Duration::from_secs(20))
             .expect("the writer runs once the page is released")
             .unwrap();
     });
-    assert!(fs::read_to_string(dir.join("pages/B.md"))
-        .unwrap()
-        .contains("- a"));
+    assert!(written(&dir), "{label}: the writer's write is missing");
     drop(host);
     store.close();
     let _ = fs::remove_dir_all(dir);
     let _ = fs::remove_dir_all(app_data);
+}
+
+#[test]
+fn a_census_writer_waits_for_a_reservation_of_its_page() {
+    waits_for_a_reservation(
+        "fence",
+        &[("pages/A.md", "- a\n"), ("pages/B.md", "- b\n")],
+        "pages/B.md",
+        |store, host| pages::merge_pages(store, Some(host), "pages/A.md", "pages/B.md").map(drop),
+        |dir| {
+            fs::read_to_string(dir.join("pages/B.md"))
+                .unwrap()
+                .contains("- a")
+        },
+    );
+}
+
+/// A-K2: the Guide copy reserves the page it creates, so a page the host
+/// holds as a fileless draft is not created behind it.
+#[test]
+fn the_guide_copy_waits_for_a_reservation_of_its_page() {
+    let page = format!(
+        "pages/{}.md",
+        tine_core::model::encode_page_name(
+            &tine_core::guide::guide_copy_page_name("Tine Guide"),
+            tine_core::config::Config::parse(CONFIG).file_name_format
+        )
+    );
+    waits_for_a_reservation(
+        "guide-fence",
+        &[],
+        &page,
+        |store, host| guide::copy_guide_into_graph(store, Some(host), "Tine Guide").map(drop),
+        |dir| dir.join(&page).is_file(),
+    );
 }

@@ -45,10 +45,6 @@ const EXEMPT: &[(&str, &str)] = &[
         "writes custom.css; no page",
     ),
     (
-        "crates/tine-graph-features/src/guide.rs::create_if_absent",
-        "creates absent Guide files only; a host page with no file meets it as an external create",
-    ),
-    (
         "crates/tine-graph-features/src/pages.rs::save_pages",
         "the old engine's save path; lane 3b deletes it (STEP3: no production save_pages)",
     ),

@@ -380,8 +380,12 @@ pub(crate) async fn load_graph(
                 &worker_label,
                 Some(binding_generation),
             )?;
-            tine_graph_features::guide::copy_guide_into_graph(&slot.store, "Tine Guide")
-                .map_err(|error| error.to_string())
+            tine_graph_features::guide::copy_guide_into_graph(
+                &slot.store,
+                slot.host_slot().running(),
+                "Tine Guide",
+            )
+            .map_err(|error| error.to_string())
         })
         .await
         .map_err(|error| format!("iOS Guide-copy probe worker failed: {error}"))?

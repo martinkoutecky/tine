@@ -678,8 +678,12 @@ pub(crate) async fn copy_guide_into_graph(
 ) -> Result<tine_graph_features::guide::GuideCopyResult, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::guide::copy_guide_into_graph(&slot.store, &title)
-            .map_err(|error| error.to_string())
+        tine_graph_features::guide::copy_guide_into_graph(
+            &slot.store,
+            slot.host_slot().running(),
+            &title,
+        )
+        .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
