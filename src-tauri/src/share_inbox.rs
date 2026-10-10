@@ -460,14 +460,36 @@ mod tests {
             r#"{"version":1,"source":"android","resources":[{"file":"gone.png"}]}"#,
             &[],
         );
-        publish(root, "empty", r#"{"version":1,"source":"android","text":"  "}"#, &[]);
+        publish(
+            root,
+            "empty",
+            r#"{"version":1,"source":"android","text":"  "}"#,
+            &[],
+        );
         publish(root, "nosource", r#"{"version":1,"text":"t"}"#, &[]);
-        publish(root, "badsource", r#"{"version":1,"source":"web","text":"t"}"#, &[]);
-        publish(root, "ok", r#"{"version":1,"source":"android","text":"kept"}"#, &[]);
+        publish(
+            root,
+            "badsource",
+            r#"{"version":1,"source":"web","text":"t"}"#,
+            &[],
+        );
+        publish(
+            root,
+            "ok",
+            r#"{"version":1,"source":"android","text":"kept"}"#,
+            &[],
+        );
         let listing = list(root).unwrap();
         assert_eq!(listing.rejected, 6);
         assert_eq!(listing.items.len(), 1);
-        for id in ["torn", "escape", "missing", "empty", "nosource", "badsource"] {
+        for id in [
+            "torn",
+            "escape",
+            "missing",
+            "empty",
+            "nosource",
+            "badsource",
+        ] {
             assert!(root
                 .join(format!(".rejected-{id}"))
                 .join(ITEM_FILE)
@@ -481,7 +503,12 @@ mod tests {
     fn prepare_is_durable_and_listed_back() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
-        publish(root, "a", r#"{"version":1,"source":"android","text":"t"}"#, &[]);
+        publish(
+            root,
+            "a",
+            r#"{"version":1,"source":"android","text":"t"}"#,
+            &[],
+        );
         let prepared = Prepared {
             graph: "/g".into(),
             day: "Oct 10th, 2026".into(),
@@ -505,7 +532,12 @@ mod tests {
     fn commit_removes_the_item_and_is_idempotent() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
-        publish(root, "a", r#"{"version":1,"source":"android","text":"t"}"#, &[("f", b"x")]);
+        publish(
+            root,
+            "a",
+            r#"{"version":1,"source":"android","text":"t"}"#,
+            &[("f", b"x")],
+        );
         commit(root, "a").unwrap();
         assert!(!root.join("a").exists());
         assert!(!root.join(".trash-a").exists());
@@ -518,7 +550,12 @@ mod tests {
     fn a_committed_item_left_by_a_crash_is_removed_and_never_listed() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
-        let dir = publish(root, "a", r#"{"version":1,"source":"android","text":"t"}"#, &[]);
+        let dir = publish(
+            root,
+            "a",
+            r#"{"version":1,"source":"android","text":"t"}"#,
+            &[],
+        );
         fs::rename(dir, root.join(".trash-a")).unwrap();
         assert!(list(root).unwrap().items.is_empty());
         assert!(!root.join(".trash-a").exists());

@@ -347,6 +347,9 @@ pub(crate) async fn load_graph(
                 .write()
                 .unwrap()
                 .release_binding(&label, binding_generation);
+            if released.is_some() {
+                crate::spotlight::released(&app, &label, Some(binding_generation));
+            }
             // Closed (and its ~200 ms Store teardown) outside the lock.
             drop(released);
         }
@@ -488,10 +491,9 @@ pub(crate) fn load_graph_for_label(
         .bind(window_label.to_string(), slot.clone())?;
     // The replaced graph's Store closes here, after the registry lock is
     // released, so other graph commands do not wait on its teardown.
-    if displaced.is_some() {
-        // Its pages leave Spotlight; the new graph's reindex follows its warm.
-        crate::spotlight::clear(app, window_label);
-    }
+    // The previous binding's pages leave Spotlight; this graph's reindex
+    // follows its warm.
+    crate::spotlight::bound(app, window_label, &slot);
     drop(displaced);
     state.note_focused(window_label);
     crate::concord_ledger::attach(app.path().app_data_dir().ok(), &slot);
@@ -581,6 +583,7 @@ pub(crate) async fn open_graph_window(
                 }
                 Err(error) => {
                     let _ = crate::state::release_window_graph(&state.graphs, &label);
+                    crate::spotlight::released(&app, &label, None);
                     return Err(format!("couldn't create graph window: {error}"));
                 }
             }

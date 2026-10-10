@@ -799,6 +799,7 @@ pub fn run() {
                     }
                 }
                 tauri::WindowEvent::Destroyed => {
+                    spotlight::released(app, label, None);
                     if state::release_window_graph(&state.graphs, label) {
                         #[cfg(target_os = "linux")]
                         platform::kill_webkit_children();
@@ -826,6 +827,8 @@ pub fn run() {
                 flight::persist_init(dir.join("diagnostics"));
             }
             diag("setup() begin");
+            // The persisted Spotlight index may hold a graph this launch never binds.
+            spotlight::launched(app.handle());
             #[cfg(target_os = "linux")]
             youtube_identity::create_windows(app, &youtube_windows);
             #[cfg(desktop)]
