@@ -20,6 +20,7 @@ blockRef
 blockSubtreeMarkdown
 blockWritable
 buildClipboardPayload
+captureEmptyPage  # why: the tine://capture route admits today's journal exactly as the capture append does (ADR 0073); batchNativeIntegrations
 captureScratchPage
 captureToPage
 carryTodayPage
@@ -30,6 +31,7 @@ collapseEpochOf  # why: embed occurrence folds compare the source collapse write
 collapsibleDescendantIds
 conflictReason  # why: conflict bar reason text; batch03
 conflicts
+countRootBlocks  # why: the share inbox counts its block before and after a crash so it is never appended twice (ADR 0073); batchNativeIntegrations
 createPage
 cycleSelectionTasks
 deleteBlock

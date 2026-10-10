@@ -72,7 +72,8 @@ pub(crate) fn inbox_root(app: &AppHandle) -> Result<PathBuf, String> {
 pub(crate) fn spotlight(app: &AppHandle, update: &crate::spotlight::Update) -> Result<(), String> {
     plugin(app)?
         .handle
-        .run_mobile_plugin::<()>("spotlight", update)
+        .run_mobile_plugin::<serde_json::Value>("spotlight", update)
+        .map(|_| ())
         .map_err(|error| error.to_string())
 }
 

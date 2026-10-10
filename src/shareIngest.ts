@@ -41,7 +41,8 @@ function firstBody(markdown: string): string {
 }
 
 /** Import the item's files and shape its block (OG transcription in shareShape.ts). */
-async function shape(item: ShareInboxItem, day: string, owner: () => boolean): Promise<string | "stale" | null> {
+async function shape(item: ShareInboxItem, day: string, live: () => boolean): Promise<string | "stale" | null> {
+  const owner = bindingOwner(live);
   const format = formatForPage(day);
   const pagePath = pageByName(day)?.id;
   const assets: string[] = [];

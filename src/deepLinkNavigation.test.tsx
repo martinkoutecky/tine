@@ -6,7 +6,8 @@ import { copyTineLink } from "./components/blockLinkCopy";
 import { pageLink, blockLink } from "./deepLinks";
 import { DeepLinkGraphChoice } from "./components/DeepLinkGraphChoice";
 import { ContextMenu } from "./components/ContextMenu";
-import { openPageContextMenu, openContextMenu, closeContextMenu, setSwitcherOpen, switcherOpen, switcherPrefill } from "./ui";
+import { openPageContextMenu, openContextMenu, closeContextMenu, setSwitcherOpen, switcherOpen, switcherPrefill, pageIdentityKey } from "./ui";
+import { resetPageIndex } from "./pageIndex";
 import { journalTitle, appNow } from "./journal";
 import { editingId } from "./editorController";
 import { initParser } from "./render/parse";
@@ -142,6 +143,7 @@ describe("GH #181 literal menu and navigation boundaries", () => {
   });
 });
 describe("current-graph app routes (ADR 0073): quick actions, shortcuts, intents, Spotlight", () => {
+  afterEach(() => resetPageIndex());
   const today = () => journalTitle(appNow());
   it("today opens today's journal without writing", async () => {
     const api = setup(); const save = vi.spyOn(api, "savePages");
@@ -158,13 +160,14 @@ describe("current-graph app routes (ADR 0073): quick actions, shortcuts, intents
   });
   it("a graph-less page (Spotlight, Open page intent) opens the existing page of the open graph", async () => {
     const api = setup();
-    vi.spyOn(api, "resolvePage").mockImplementation(async (_name, kind) => (kind === "page" ? { kind: "existing", id: dto.id, others: [] } : { kind: "absent", id: "" }));
+    vi.spyOn(api, "pageInventory").mockResolvedValue({ rev: "1", entries: [
+      { key: pageIdentityKey(dto.name), name: dto.name, is_journal: false, day: null, target: { kind: "existing", id: dto.id, others: [] } }] });
     await openTineLink({ kind: "url", url: `tine://page/${encodeURIComponent(dto.name.toLowerCase())}` });
     expect(focusedRouter().route()).toMatchObject({ kind: "page", name: dto.name, path: dto.id });
   });
   it("a missing page is an error and nothing is created", async () => {
     const api = setup(); const before = focusedRouter().route(); const save = vi.spyOn(api, "savePages");
-    vi.spyOn(api, "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/Gone.md" });
+    vi.spyOn(api, "pageInventory").mockResolvedValue({ rev: "1", entries: [] });
     await openTineLink({ kind: "url", url: "tine://page/Gone" });
     expect(focusedRouter().route()).toEqual(before);
     expect(save).not.toHaveBeenCalled();
