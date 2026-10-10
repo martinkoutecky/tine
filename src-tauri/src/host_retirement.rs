@@ -11,7 +11,6 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -66,6 +65,8 @@ impl HostRetirement {
             }
             let pause = match &*host {
                 PageHostSlot::Off => None,
+                // Revoked only by an adoption, which `claims` saw.
+                PageHostSlot::Revoked => return,
                 PageHostSlot::Running(running) => match running.orphan_stop() {
                     tine_store::StopState::Ready => {
                         let PageHostSlot::Running(running) = std::mem::take(&mut *host) else {
@@ -116,8 +117,8 @@ impl HostRetirement {
     /// Take over the retiring binding of `root`, if any: its Store and its
     /// running host. A stop the retirement began ends when the adopting
     /// window reloads (`PageHost::window_reloaded`, the model's
-    /// `windowCrash`), as every window's first command. The old slot no
-    /// longer closes the Store. Called outside the registry lock; the
+    /// `windowCrash`), as every window's first command. The old slot is
+    /// revoked and no longer closes the Store. Called outside the registry lock; the
     /// caller binds a fresh slot around them.
     pub(crate) fn adopt(
         &self,
@@ -136,8 +137,11 @@ impl HostRetirement {
             retiring.remove(root);
         }
         self.0.idle.notify_all();
-        slot.handed_over.store(true, Ordering::Release);
-        Some((slot.store.clone(), std::mem::take(&mut *host)))
+        // Revoked under the gate (REVIEW-3b-P1 B1): a writer, transaction or
+        // restore that still holds the old slot gets the stale-binding
+        // outcome; one already under the gate finished before this write.
+        let taken = std::mem::replace(&mut *host, PageHostSlot::Revoked);
+        Some((slot.store.clone(), taken))
     }
 
     /// A retiring root that overlaps `root` (one contains the other), or
@@ -211,8 +215,8 @@ fn overlap(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{wait_for_retiring_overlaps, GraphRegistry};
-    use std::sync::{mpsc, RwLock};
+    use crate::state::{wait_for_retiring_overlaps, GraphRegistry, STALE_BINDING};
+    use std::sync::{mpsc, Barrier, RwLock};
     use tine_store::{EditKind, Input, PageHost, PageId, PageMail, Store};
 
     struct Fixture {
@@ -290,7 +294,7 @@ mod tests {
     fn running<T>(slot: &GraphSlot, work: impl FnOnce(&PageHost) -> T) -> T {
         match &*slot.host.read().unwrap() {
             PageHostSlot::Running(host) => work(host),
-            PageHostSlot::Off => panic!("no host"),
+            _ => panic!("no host"),
         }
     }
 
@@ -382,7 +386,7 @@ mod tests {
         assert_eq!(retirement.wait_idle(Duration::from_secs(20)), Ok(()));
         assert_eq!(f.disk(), "- two\n", "the admitted input is saved first");
         assert!(f.closed(), "then the Store closes");
-        assert!(matches!(*slot.host_slot(), PageHostSlot::Off));
+        assert!(matches!(*slot.host_slot().unwrap(), PageHostSlot::Off));
     }
 
     /// Plan v3 §3 (B2): a stop that cannot keep custody (neither the save
@@ -407,7 +411,10 @@ mod tests {
         assert!(registry.remove("graph-1").is_none());
         let retirement = registry.retirement.clone();
         assert!(retirement.wait_idle(Duration::from_millis(2500)).is_err());
-        assert!(slot.host_slot().running().is_some(), "the host stays alive");
+        assert!(
+            slot.host_slot().unwrap().running().is_some(),
+            "the host stays alive"
+        );
         assert!(!f.closed());
         mode(&pages, 0o755);
         mode(&drafts, 0o755);
@@ -598,5 +605,115 @@ mod tests {
         let retirement = graphs.read().unwrap().retirement.clone();
         retirement.wait_idle(Duration::from_secs(20)).unwrap();
         assert!(f.closed());
+    }
+
+    /// Old-engine conflict resolution of page a to `body`, the census
+    /// writer's shape (`commands/concord.rs`), on `slot` as a worker that
+    /// captured it finds it.
+    fn late_writer(slot: &GraphSlot, body: &str) -> Result<(), String> {
+        let rev = String::from(slot.store.page(&PageId::from("pages/a.md")).unwrap().rev);
+        tine_graph_features::live_conflict::resolve_live_conflict(
+            &slot.store,
+            slot.host_slot()?.running(),
+            "pages/a.md",
+            &host_dto(slot, body),
+            &rev,
+            None,
+            &[],
+            &Default::default(),
+            "union",
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+    }
+
+    /// REVIEW-3b-P1 B1: a retained writer that captured the old slot before
+    /// its root was adopted gets the stale-binding outcome under the gate.
+    /// It never takes the no-host arm past the adopted host's reservation.
+    #[test]
+    fn review_p1_late_old_slot_writer_cannot_bypass_adopted_reservation() {
+        let f = Fixture::new("late-writer");
+        let mut registry = GraphRegistry::default();
+        let old = f.bind(&mut registry, "graph-1");
+        let reservation = hold(&old);
+        assert!(registry.remove("graph-1").is_none());
+        let retirement = registry.retirement.clone();
+        let (store, host) = retirement.adopt(&f.root).unwrap();
+        let mut fresh = GraphSlot::new(store, f.root.clone());
+        *fresh.host.get_mut().unwrap() = host;
+        let fresh = Arc::new(fresh);
+        assert!(registry
+            .bind("graph-2".into(), fresh.clone())
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            late_writer(&old, "- stale queued command\n"),
+            Err(STALE_BINDING.to_owned())
+        );
+        assert_eq!(f.disk(), "- one\n", "the adopted reservation holds");
+        drop(reservation);
+        assert_eq!(
+            late_writer(&old, "- stale queued command\n"),
+            Err(STALE_BINDING.to_owned()),
+            "revoked for good, not only while the page is reserved"
+        );
+        assert!(fresh.host_slot().unwrap().running().is_some());
+        assert!(registry.remove("graph-2").is_none());
+        assert_eq!(retirement.wait_idle(Duration::from_secs(20)), Ok(()));
+        assert_eq!(f.disk(), "- one\n");
+        assert!(f.closed());
+    }
+
+    /// B1: a writer already under the gate keeps custody. The adoption waits
+    /// for it, and only then revokes the slot for writers still to come.
+    #[test]
+    fn a_writer_inside_the_gate_finishes_before_its_slot_is_adopted() {
+        let f = Fixture::new("inside-gate");
+        let mut old = GraphSlot::new(f.store.clone(), f.root.clone());
+        let host = PageHost::start_for_tests(&f.store, &f.app_data).unwrap();
+        *old.host.get_mut().unwrap() = PageHostSlot::Running(host);
+        let old = Arc::new(old);
+        // Retiring, as `retire` leaves it, with no thread to finish it.
+        let retirement = HostRetirement::default();
+        retirement
+            .0
+            .retiring
+            .lock()
+            .unwrap()
+            .insert(f.root.clone(), old.clone());
+        let (entered, release) = (Barrier::new(2), Barrier::new(2));
+        let adopted = std::thread::scope(|scope| {
+            let writer = scope.spawn(|| {
+                let gate = old.host_slot().unwrap();
+                entered.wait();
+                release.wait();
+                let rev = String::from(f.store.page(&PageId::from("pages/a.md")).unwrap().rev);
+                tine_graph_features::live_conflict::resolve_live_conflict(
+                    &old.store,
+                    gate.running(),
+                    "pages/a.md",
+                    &host_dto(&old, "- inside\n"),
+                    &rev,
+                    None,
+                    &[],
+                    &Default::default(),
+                    "union",
+                )
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+            });
+            entered.wait();
+            let adopt = scope.spawn(|| retirement.adopt(&f.root));
+            std::thread::sleep(Duration::from_millis(200));
+            assert!(!adopt.is_finished(), "the adoption waits for the writer");
+            release.wait();
+            assert_eq!(writer.join().unwrap(), Ok(()));
+            adopt.join().unwrap()
+        });
+        assert_eq!(f.disk(), "- inside\n", "the writer under the gate finished");
+        let (_, host) = adopted.expect("then the adoption");
+        assert!(matches!(host, PageHostSlot::Running(_)));
+        assert_eq!(late_writer(&old, "- late\n"), Err(STALE_BINDING.to_owned()));
+        drop(host);
     }
 }

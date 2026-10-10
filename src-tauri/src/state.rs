@@ -49,9 +49,12 @@ pub(crate) struct GraphSlot {
     /// binding's host transition gate (plan v3 S8): a backup restore holds
     /// it across stop, file restore and relaunch, and retirement and
     /// adoption take it, so each waits for the others' outcome.
+    ///
+    /// Lock order (REVIEW-3b-P1 B1): registry, then this gate, then the
+    /// retirement map, then the host's own state. Nothing holding this gate
+    /// takes the registry; a writer checks revocation from the gate's own
+    /// state (`host_slot`).
     pub(crate) host: RwLock<PageHostSlot>,
-    /// The Store went to an adopting binding (`HostRetirement::adopt`).
-    pub(crate) handed_over: AtomicBool,
 }
 
 /// Where the binding's page host stands. `Off` until lane 3b's switch
@@ -61,17 +64,28 @@ pub(crate) enum PageHostSlot {
     #[default]
     Off,
     Running(tine_store::PageHost),
+    /// An open adopted this binding's Store and host
+    /// (`HostRetirement::adopt`): a worker that captured the slot before
+    /// gets the stale-binding outcome, never the no-host arm on the adopted
+    /// Store (REVIEW-3b-P1 B1), and the slot no longer closes the Store.
+    Revoked,
 }
 
 impl PageHostSlot {
     /// The running host, which census writers reserve their pages from.
+    /// Reached only through `GraphSlot::host_slot`, which refuses a revoked
+    /// slot.
     pub(crate) fn running(&self) -> Option<&tine_store::PageHost> {
         match self {
             Self::Running(host) => Some(host),
-            Self::Off => None,
+            Self::Off | Self::Revoked => None,
         }
     }
 }
+
+/// A revoked slot's outcome: the existing stale-binding refusal (scenario:
+/// a command queued before its window closed and the root was reopened).
+pub(crate) const STALE_BINDING: &str = "stale-graph-binding";
 
 impl GraphSlot {
     pub(crate) fn new(store: impl Into<Arc<Store>>, root_key: PathBuf) -> Self {
@@ -90,15 +104,19 @@ impl GraphSlot {
             concord_ledger: Default::default(),
             rescan: Default::default(),
             host: Default::default(),
-            handed_over: AtomicBool::new(false),
         }
     }
 
     /// The host slot, read for a census writer's whole call: a restore
     /// cannot take the host out from under the writer's reservation, and a
-    /// writer waits for a restore's outcome (S8).
-    pub(crate) fn host_slot(&self) -> std::sync::RwLockReadGuard<'_, PageHostSlot> {
-        self.host.read().unwrap()
+    /// writer waits for a restore's outcome (S8). A revoked slot refuses
+    /// here, under the gate, before the writer starts (B1).
+    pub(crate) fn host_slot(&self) -> Result<std::sync::RwLockReadGuard<'_, PageHostSlot>, String> {
+        let slot = self.host.read().unwrap();
+        if matches!(*slot, PageHostSlot::Revoked) {
+            return Err(STALE_BINDING.into());
+        }
+        Ok(slot)
     }
 
     pub(crate) fn begin_startup_warm(&self) -> u64 {
@@ -195,8 +213,7 @@ impl Drop for GraphSlot {
             probe(&self.root_key);
         }
         let host = self.host.get_mut().unwrap_or_else(|e| e.into_inner());
-        drop(std::mem::take(host));
-        if !*self.handed_over.get_mut() {
+        if !matches!(std::mem::take(host), PageHostSlot::Revoked) {
             self.store.close();
         }
     }
@@ -574,7 +591,7 @@ pub(crate) fn slot_for_bound_window(
     let slot = slot_for_window(state, window)?;
     let generation = binding_generation.ok_or("missing-graph-binding")?;
     if generation != slot.binding_generation {
-        return Err("stale-graph-binding".into());
+        return Err(STALE_BINDING.into());
     }
     Ok(slot)
 }
@@ -595,11 +612,11 @@ pub(crate) fn capture_quick_switch_slot(
         .ok_or("no graph bound for quick capture")?;
     let generation = binding_generation.ok_or("missing-graph-binding")?;
     if generation != capture.binding_generation {
-        return Err("stale-graph-binding".into());
+        return Err(STALE_BINDING.into());
     }
     let slot = slot_for_window(state, &capture.target)?;
     if slot.binding_generation != capture.binding_generation {
-        return Err("stale-graph-binding".into());
+        return Err(STALE_BINDING.into());
     }
     Ok(slot)
 }

@@ -72,6 +72,11 @@ pub(super) fn restore_hosted(
 ) -> Result<RestoreReply, String> {
     use crate::state::PageHostSlot;
     let mut slot = slot.write().unwrap_or_else(|e| e.into_inner());
+    if matches!(*slot, PageHostSlot::Revoked) {
+        // Adopted by another window's binding (REVIEW-3b-P1 B1): never the
+        // no-host arm, whose restore would bypass the adopted host.
+        return Err(crate::state::STALE_BINDING.into());
+    }
     let PageHostSlot::Running(host) = std::mem::take(&mut *slot) else {
         restore()?;
         return Ok(RestoreReply {
@@ -448,9 +453,52 @@ mod tests {
             let idle = retirement.wait_idle(std::time::Duration::from_secs(20));
             assert_eq!(idle, Ok(()));
         });
-        assert!(matches!(*slot.host_slot(), PageHostSlot::Off));
+        assert!(matches!(*slot.host_slot().unwrap(), PageHostSlot::Off));
         assert!(closed());
         drop(slot);
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(app_data).unwrap();
+    }
+
+    /// REVIEW-3b-P1 B1: a restore queued on a slot whose root another
+    /// binding adopted gets the stale-binding outcome under the gate. It
+    /// never enters the no-host arm on the adopted Store.
+    #[test]
+    fn review_p1_a_queued_restore_cannot_enter_after_slot_adoption() {
+        use crate::state::{GraphRegistry, GraphSlot, PageHostSlot, STALE_BINDING};
+        use std::sync::Arc;
+        let root = scratch("restore-adopted");
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::write(root.join("pages/a.md"), "- a\n").unwrap();
+        let app_data = scratch("restore-adopted-app");
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let canonical = Store::canonical_root(&root).unwrap();
+        let mut old = GraphSlot::new(store.clone(), canonical.clone());
+        let host = tine_store::PageHost::start_for_tests(&store, &app_data).unwrap();
+        let reservation = host
+            .reserve(
+                || vec![tine_store::PageId::from("pages/a.md")],
+                tine_store::Input::Refuse,
+            )
+            .unwrap();
+        *old.host.get_mut().unwrap() = PageHostSlot::Running(host);
+        let old = Arc::new(old);
+        let mut registry = GraphRegistry::default();
+        registry.bind("graph-1".into(), old.clone()).unwrap();
+        assert!(registry.remove("graph-1").is_none(), "retiring");
+        let (adopted, host) = registry.retirement.adopt(&canonical).unwrap();
+        let mut fresh = GraphSlot::new(adopted, canonical);
+        *fresh.host.get_mut().unwrap() = host;
+        let mut entered = false;
+        let reply = restore_hosted(&old.host, 0, || {
+            entered = true;
+            Ok(())
+        });
+        assert_eq!(reply, Err(STALE_BINDING.to_owned()));
+        assert!(!entered, "the restore never ran on the adopted Store");
+        assert!(fresh.host_slot().unwrap().running().is_some());
+        drop(reservation);
+        drop((fresh, old));
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(app_data).unwrap();
     }

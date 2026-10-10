@@ -19,6 +19,7 @@ fn with_host<T>(slot: &GraphSlot, work: impl FnOnce(&PageHost) -> T) -> Result<T
     match &*slot.host.read().unwrap_or_else(|e| e.into_inner()) {
         PageHostSlot::Running(host) => Ok(work(host)),
         PageHostSlot::Off => Err("no page host runs for this graph".into()),
+        PageHostSlot::Revoked => Err(crate::state::STALE_BINDING.into()),
     }
 }
 

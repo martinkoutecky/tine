@@ -384,7 +384,7 @@ pub(crate) async fn load_graph(
             )?;
             tine_graph_features::guide::copy_guide_into_graph(
                 &slot.store,
-                slot.host_slot().running(),
+                slot.host_slot()?.running(),
                 "Tine Guide",
             )
             .map_err(|error| error.to_string())

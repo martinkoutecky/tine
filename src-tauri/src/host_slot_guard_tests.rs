@@ -2,10 +2,14 @@
 //! it. `std::sync::RwLock` read guards are not reentrant: once a restore
 //! waits for the write lock, a nested read waits for the restore, which waits
 //! for the outer read. Every guard is therefore one statement's temporary,
-//! `slot.host_slot().running()`, passed straight to a `tine_graph_features`
+//! `slot.host_slot()?.running()`, passed straight to a `tine_graph_features`
 //! writer (a crate that cannot name the slot), and nothing else that
 //! statement runs (closures, callbacks, chained calls) reaches a function
 //! that takes the slot's host lock. Exemplar: `commands.rs` `merge_pages`.
+//!
+//! It also pins the lock order (REVIEW-3b-P1 B1, `GraphSlot::host`):
+//! registry, then the host gate. Nothing that runs under a census guard or
+//! under a restore's gate (`restore_hosted`) takes the registry.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -38,12 +42,26 @@ fn ident_char(c: char) -> bool {
 }
 
 /// Whether `text` runs function `ident`: calls it, or passes it as a value
-/// (a callback) to a call. A borrowed `&name` is a variable.
+/// (a callback) to a call. A borrowed `&name` is a variable, and a
+/// standard-library path (`std::fs::read`) is not this crate's function.
 fn uses(text: &str, ident: &str) -> bool {
     text.match_indices(ident).any(|(at, _)| {
         let (before, after) = (&text[..at], &text[at + ident.len()..]);
         if before.chars().next_back().is_some_and(ident_char)
             || after.chars().next().is_some_and(ident_char)
+        {
+            return false;
+        }
+        let path = before.len()
+            - before
+                .chars()
+                .rev()
+                .take_while(|c| ident_char(*c) || *c == ':')
+                .map(char::len_utf8)
+                .sum::<usize>();
+        if ["std::", "core::", "alloc::"]
+            .iter()
+            .any(|root| before[path..].starts_with(root))
         {
             return false;
         }
@@ -86,16 +104,30 @@ fn functions(source: &str) -> Vec<(String, String)> {
     found
 }
 
-/// Functions that take the slot's host lock, directly or through a callee
-/// (by name; an over-approximation fails loudly, never silently).
+/// Functions that take the slot's host lock or the registry, directly or
+/// through a callee (by name; an over-approximation fails loudly, never
+/// silently).
 fn acquirers(files: &[(String, String)]) -> BTreeSet<String> {
-    let all: Vec<(String, String)> = files.iter().flat_map(|(_, s)| functions(s)).collect();
+    let all: Vec<(String, String)> = files
+        .iter()
+        .flat_map(|(file, s)| {
+            // The app entry `lib.rs` `run` takes the registry only in the
+            // event handlers it registers, never on a command's call path;
+            // by name it would claim every other `run`. A `Drop::drop` is
+            // never called by name: `drop(x)` is the prelude's.
+            functions(s).into_iter().filter(move |(name, _)| {
+                !(file.ends_with("lib.rs") && name == "run") && name != "drop"
+            })
+        })
+        .collect();
     let mut found: BTreeSet<String> = all
         .iter()
         .filter(|(_, body)| {
             body.contains("host_slot()")
                 || body.contains(".host.read()")
                 || body.contains(".host.write()")
+                || body.contains("graphs.read()")
+                || body.contains("graphs.write()")
         })
         .map(|(name, _)| name.clone())
         .collect();
@@ -125,13 +157,13 @@ fn violations(files: &[(String, String)], feature_module: &dyn Fn(&str) -> bool)
             let line = source[..at].lines().count();
             let site = format!("{file}:{line}");
             let shaped = source[..at].ends_with("slot.")
-                && source[at..].starts_with("host_slot().running()")
+                && source[at..].starts_with("host_slot()?.running()")
                 && source[..at - "slot.".len()]
                     .trim_end()
                     .ends_with(['(', ',']);
             if !shaped {
                 found.push(format!(
-                    "{site}: not a `slot.host_slot().running()` call argument"
+                    "{site}: not a `slot.host_slot()?.running()` call argument"
                 ));
                 continue;
             }
@@ -165,34 +197,52 @@ fn violations(files: &[(String, String)], feature_module: &dyn Fn(&str) -> bool)
                 ));
                 continue;
             }
-            // The statement the guard lives for: to its `;` or enclosing closer.
-            let mut depth = 0i32;
-            let end = source[open..]
-                .char_indices()
-                .find_map(|(i, c)| {
-                    depth += match c {
-                        '(' | '[' | '{' => 1,
-                        ')' | ']' | '}' => -1,
-                        _ => 0,
-                    };
-                    (depth < 0 || (depth == 0 && c == ';')).then_some(open + i)
-                })
-                .unwrap_or(source.len());
-            let statement = &source[open..end];
+            let statement = statement(source, open);
             if statement.matches("host_slot()").count() != 1 {
                 found.push(format!("{site}: the statement takes host_slot() twice"));
             }
-            let rest = statement.replacen("slot.host_slot().running()", "", 1);
-            for name in &acquirers {
-                if uses(&rest, name) {
-                    found.push(format!(
-                        "{site}: {name} takes the host lock and runs under the guard"
-                    ));
-                }
+            let rest = statement.replacen("slot.host_slot()?.running()", "", 1);
+            under_the_gate(&acquirers, &site, &rest, &mut found);
+        }
+        // A restore holds the gate's write lock for its whole call.
+        for (at, _) in source.match_indices("restore_hosted(") {
+            if source[..at].ends_with("fn ") {
+                continue;
             }
+            let site = format!("{file}:{}", source[..at].lines().count());
+            let open = at + "restore_hosted".len();
+            under_the_gate(&acquirers, &site, statement(source, open), &mut found);
         }
     }
     found
+}
+
+/// The statement a call opened at `open` lives for: to its `;` or
+/// enclosing closer.
+fn statement(source: &str, open: usize) -> &str {
+    let mut depth = 0i32;
+    let end = source[open..]
+        .char_indices()
+        .find_map(|(i, c)| {
+            depth += match c {
+                '(' | '[' | '{' => 1,
+                ')' | ']' | '}' => -1,
+                _ => 0,
+            };
+            (depth < 0 || (depth == 0 && c == ';')).then_some(open + i)
+        })
+        .unwrap_or(source.len());
+    &source[open..end]
+}
+
+fn under_the_gate(acquirers: &BTreeSet<String>, site: &str, rest: &str, found: &mut Vec<String>) {
+    for name in acquirers {
+        if uses(rest, name) {
+            found.push(format!(
+                "{site}: {name} takes the host lock or the registry and runs under the gate"
+            ));
+        }
+    }
 }
 
 fn feature_modules() -> impl Fn(&str) -> bool {
@@ -218,7 +268,7 @@ fn no_call_path_reacquires_the_host_slot_while_holding_it() {
         "A-K3: no call path takes host_slot() while holding it (a nested std RwLock read \
          deadlocks once a restore waits for the write lock): {found:?}. Exemplar \
          src-tauri/src/commands.rs merge_pages: one statement-temporary \
-         `slot.host_slot().running()` passed to a tine_graph_features writer"
+         `slot.host_slot()?.running()` passed to a tine_graph_features writer"
     );
     // The writers' crate cannot name the slot, so cannot reacquire it.
     let features = Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/tine-graph-features/src");
@@ -236,17 +286,17 @@ fn no_call_path_reacquires_the_host_slot_while_holding_it() {
 fn a_planted_reacquisition_fails_the_guard() {
     let planted = r#"
 fn ok_writer(slot: &GraphSlot) {
-    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot().running(), &a)
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running(), &a)
         .map_err(|error| error.to_string());
 }
 fn bound(slot: &GraphSlot) {
     let held = slot.host_slot();
 }
 fn twice(slot: &GraphSlot) {
-    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot().running(), slot.host_slot().running());
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running(), slot.host_slot()?.running());
 }
 fn nested(slot: &GraphSlot) {
-    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot().running(), &a)
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running(), &a)
         .map_err(|_| report(slot));
 }
 fn report(slot: &GraphSlot) -> String {
@@ -257,11 +307,28 @@ fn helper(slot: &GraphSlot) -> String {
     String::new()
 }
 fn callback(slot: &GraphSlot) {
-    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot().running(), &a)
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running(), &a)
         .map_err(report);
 }
 fn local(slot: &GraphSlot) {
-    own_writer(&slot.store, slot.host_slot().running());
+    own_writer(&slot.store, slot.host_slot()?.running());
+}
+fn registry(slot: &GraphSlot) {
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running(), &a)
+        .map_err(|_| bound_windows(state));
+}
+fn bound_windows(state: &AppState) -> usize {
+    state.graphs.read().unwrap().len()
+}
+fn restore(slot: &GraphSlot) {
+    restore_hosted(&slot.host, 0, || bound_windows(state));
+}
+fn read(slot: &GraphSlot) {
+    let _ = slot.host.read();
+}
+fn standard(slot: &GraphSlot) {
+    tine_graph_features::pages::merge_pages(&slot.store, slot.host_slot()?.running(), &a)
+        .map(|_| std::fs::read(path));
 }
 "#;
     let files = vec![("planted.rs".to_owned(), planted.to_owned())];
@@ -273,12 +340,14 @@ fn local(slot: &GraphSlot) {
     assert_eq!(
         lines,
         [
-            "not a `slot.host_slot().running()` call argument",
+            "not a `slot.host_slot()?.running()` call argument",
             "the statement takes host_slot() twice",
             "the statement takes host_slot() twice",
-            "report takes the host lock and runs under the guard",
-            "report takes the host lock and runs under the guard",
+            "report takes the host lock or the registry and runs under the gate",
+            "report takes the host lock or the registry and runs under the gate",
             "the guard is passed to \"own_writer\", not a tine_graph_features writer",
+            "bound_windows takes the host lock or the registry and runs under the gate",
+            "bound_windows takes the host lock or the registry and runs under the gate",
         ],
         "{found:?}"
     );
