@@ -48,6 +48,58 @@ fn a_host_rename_rewrites_referrers_and_leaves_marked_ones() {
     live.host.stop();
 }
 
+/// OG-RULES Rule 8 (A-K1): a host operation declares its edit kind. Every
+/// page a host rename writes publishes with `RenamePage`, and a host
+/// delete's page with `DeletePage`, through the per-page kinds a submit
+/// uses; no publication of either goes without a kind.
+#[test]
+fn host_rename_and_delete_publish_their_edit_kinds() {
+    let live = Live::new(&[
+        ("pages/Old.md", "- old\n"),
+        ("pages/r.md", "- see [[Old]]\n"),
+        ("pages/gone.md", "- gone\n"),
+    ]);
+    let renamed = live.host.rename(
+        &PageId::from("pages/Old.md"),
+        &PageId::from("pages/New.md"),
+        &[PageId::from("pages/r.md")],
+        &map("Old", "New"),
+    );
+    assert!(renamed.is_ok(), "{renamed:?}");
+    let deleted = live.host.delete(&PageId::from("pages/gone.md"));
+    assert_eq!(deleted, PageOperation::Pending);
+    let expected = [
+        ("pages/New.md", EditKind::RenamePage),
+        ("pages/Old.md", EditKind::RenamePage),
+        ("pages/r.md", EditKind::RenamePage),
+        ("pages/gone.md", EditKind::DeletePage),
+    ];
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let kinds = loop {
+        let kinds: BTreeMap<PageKey, Vec<EditKind>> = live
+            .host
+            .published_kinds
+            .lock()
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect();
+        if expected.iter().all(|(key, _)| kinds.contains_key(*key)) {
+            break kinds;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Rule 8: a host operation's write published without its kind: {kinds:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    for (key, kind) in expected {
+        assert_eq!(kinds[key], vec![kind], "Rule 8: {key}");
+    }
+    assert!(!live.root.join("pages/gone.md").exists());
+    live.host.stop();
+}
+
 /// F10: a changed Org referrer that does not round-trip refuses the whole
 /// rename before any write, naming it; a referrer with unsaved input does
 /// too.

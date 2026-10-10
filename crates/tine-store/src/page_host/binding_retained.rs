@@ -143,45 +143,54 @@ impl PageHost {
         let format = self.store.config().file_name_format;
         let destination = root.join(dst_spelling.as_str());
         let seen = loop {
-            let outcome = self.locked(|host| {
-                let spellings: BTreeMap<PageKey, String> = host
-                    .keys
-                    .iter()
-                    .map(|key| (key.clone(), host.fs.spelling(key).to_owned()))
-                    .collect();
-                let record = Mutex::new(Rewrites::default());
-                let policy = |bytes: &Text, key: &str, moving: bool| {
-                    let Some(old) = bytes else { return Ok(None) };
-                    let spelling = &spellings[key];
-                    let path = root.join(spelling);
-                    let rewritten = if moving {
-                        rewrite_move(old, &destination, map, format)
-                    } else {
-                        rewrite_refs(old, &path, map, format)
+            let outcome = self.driver.shared.locked_step(|state| {
+                let (disposition, seen, written) = state.progress.with_host(|host| {
+                    let spellings: BTreeMap<PageKey, String> = host
+                        .keys
+                        .iter()
+                        .map(|key| (key.clone(), host.fs.spelling(key).to_owned()))
+                        .collect();
+                    let record = Mutex::new(Rewrites::default());
+                    let policy = |bytes: &Text, key: &str, moving: bool| {
+                        let Some(old) = bytes else { return Ok(None) };
+                        let spelling = &spellings[key];
+                        let path = root.join(spelling);
+                        let rewritten = if moving {
+                            rewrite_move(old, &destination, map, format)
+                        } else {
+                            rewrite_refs(old, &path, map, format)
+                        };
+                        let mut record = record.lock().unwrap();
+                        let Ok(new) = rewritten else {
+                            record.unwritable = Some(spelling.clone());
+                            return Err(());
+                        };
+                        if new.as_slice() == &old[..] {
+                            return Ok(bytes.clone());
+                        }
+                        let syntax = tine_core::model::Format::from_path(&path);
+                        let marked = std::str::from_utf8(old).is_ok_and(|text| {
+                            !tine_core::concord_queue::vcs_conflict_markers(text, syntax).is_empty()
+                        });
+                        if marked {
+                            record.skipped.insert(spelling.clone());
+                            return Ok(bytes.clone());
+                        }
+                        if !moving {
+                            record.changed.insert(spelling.clone());
+                        }
+                        Ok(Some(Arc::from(new)))
                     };
-                    let mut record = record.lock().unwrap();
-                    let Ok(new) = rewritten else {
-                        record.unwritable = Some(spelling.clone());
-                        return Err(());
-                    };
-                    if new.as_slice() == &old[..] {
-                        return Ok(bytes.clone());
-                    }
-                    let syntax = tine_core::model::Format::from_path(&path);
-                    let marked = std::str::from_utf8(old).is_ok_and(|text| {
-                        !tine_core::concord_queue::vcs_conflict_markers(text, syntax).is_empty()
-                    });
-                    if marked {
-                        record.skipped.insert(spelling.clone());
-                        return Ok(bytes.clone());
-                    }
-                    if !moving {
-                        record.changed.insert(spelling.clone());
-                    }
-                    Ok(Some(Arc::from(new)))
-                };
-                let disposition = host.rename_with(&src, &dst, &refs, policy);
-                (disposition, record.into_inner().unwrap())
+                    let disposition = host.rename_with(&src, &dst, &refs, policy);
+                    let written = host.worker.as_ref().map(|w| w.pages.clone());
+                    (disposition, record.into_inner().unwrap(), written)
+                });
+                // OG-RULES Rule 8 (A-K1): the operation's writes are renames.
+                if disposition == Disposition::Pending {
+                    let written = written.unwrap_or_default();
+                    state.book.took(written, EditKind::RenamePage);
+                }
+                (disposition, seen)
             });
             let Some((disposition, seen)) = outcome else {
                 return Err(RenameRefusal::Refused);

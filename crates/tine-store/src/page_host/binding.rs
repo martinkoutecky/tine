@@ -24,6 +24,9 @@ pub struct PageHost {
     /// Index publications to fail before the next success (tests).
     #[cfg(test)]
     index_faults: Arc<std::sync::atomic::AtomicU32>,
+    /// Each publication's edit kinds as delivered (tests, Rule 8).
+    #[cfg(test)]
+    published_kinds: Arc<Mutex<Vec<(PageKey, Vec<EditKind>)>>>,
 }
 
 /// Why a command did not admit its request. Nothing was sent: the window
@@ -412,6 +415,17 @@ pub(super) struct Book {
 }
 
 impl Book {
+    /// Record `kind` for each written page until its next publication
+    /// (OG-RULES Rule 8): a submit's kinds, or a host operation's own.
+    fn took(&mut self, pages: impl IntoIterator<Item = PageKey>, kind: EditKind) {
+        for page in pages {
+            let kinds = self.kinds.entry(page).or_default();
+            if !kinds.contains(&kind) {
+                kinds.push(kind);
+            }
+        }
+    }
+
     /// Take this step's results: events (drained once progress has read
     /// them), handoffs routed to answers and publications, and every mail.
     pub fn collect<F: HostIo, C: Clock>(&mut self, progress: &mut Progress<F, C>) -> Delivery {
@@ -441,11 +455,8 @@ impl Book {
                     };
                     if answer.took {
                         answered.insert((page.clone(), answer.id), handoff.bytes.clone());
-                        let kinds = self.kinds.entry(page.clone()).or_default();
                         for kind in &handoff.kinds {
-                            if !kinds.contains(kind) {
-                                kinds.push(*kind);
-                            }
+                            self.took([page.clone()], *kind);
                         }
                         self.versions
                             .entry(page.clone())
@@ -722,6 +733,8 @@ struct Bridge {
     mail: MailSink,
     #[cfg(test)]
     index_faults: Arc<std::sync::atomic::AtomicU32>,
+    #[cfg(test)]
+    published_kinds: Arc<Mutex<Vec<(PageKey, Vec<EditKind>)>>>,
 }
 
 impl Sink for Bridge {
@@ -738,6 +751,11 @@ impl Sink for Bridge {
     ) -> Vec<(Publication, Indexing)> {
         let store = &*self.store;
         let mut results = Vec::new();
+        #[cfg(test)]
+        self.published_kinds
+            .lock()
+            .unwrap()
+            .extend(delivery.kinds.iter().cloned());
         if !delivery.claimed.is_empty()
             || !delivery.publications.is_empty()
             || !delivery.evicted.is_empty()
@@ -988,12 +1006,16 @@ impl PageHost {
         }
         #[cfg(test)]
         let index_faults = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        #[cfg(test)]
+        let published_kinds = Arc::new(Mutex::new(Vec::new()));
         let bridge = Bridge {
             store: store.clone(),
             binding,
             mail: launch.mail.clone(),
             #[cfg(test)]
             index_faults: index_faults.clone(),
+            #[cfg(test)]
+            published_kinds: published_kinds.clone(),
         };
         let driver = Driver::spawn(host, SystemClock::new(), bridge);
         // A watcher read of a held page (§5): the driver owes the host an
@@ -1014,6 +1036,8 @@ impl PageHost {
             launch: launch.clone(),
             #[cfg(test)]
             index_faults,
+            #[cfg(test)]
+            published_kinds,
         };
         // Recovered pages are held before launch reads them (§5).
         {
@@ -1330,7 +1354,15 @@ impl PageHost {
     pub(crate) fn delete(&self, page: &PageId) -> PageOperation {
         let (key, spelling, _) = self.identify(page);
         self.register(&key, &spelling);
-        match self.locked(|host| host.delete(&key)) {
+        let deleted = self.driver.shared.locked_step(|state| {
+            let disposition = state.progress.with_host(|host| host.delete(&key));
+            // OG-RULES Rule 8 (A-K1): the operation's write is a deletion.
+            if disposition == Disposition::Pending {
+                state.book.took([key.clone()], EditKind::DeletePage);
+            }
+            disposition
+        });
+        match deleted {
             Some(Disposition::Applied) => PageOperation::Applied,
             Some(Disposition::Pending) => PageOperation::Pending,
             Some(Disposition::Waiting) => PageOperation::Waiting,
