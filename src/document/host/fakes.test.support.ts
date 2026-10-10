@@ -21,7 +21,7 @@ export const NOTICE: MailNotice = { failures: 0, saveError: false, draftError: f
   custodyError: false, indexError: false, observeError: false, twin: null };
 
 export type Call =
-  | { cmd: "open"; id: number; name: string; path: string | null }
+  | { cmd: "open"; id: number; name: string; kind: PageKind; path: string | null }
   | { cmd: "submit"; id: number; key: string; dto: PageDto; version: number; resolve: DiskToken | null; kinds: EditKinds }
   | { cmd: "move"; id: number; source: [string, PageDto, number]; receiver: [string, PageDto, number] }
   | { cmd: "discard"; id: number; key: string; version: number }
@@ -42,7 +42,7 @@ export class FakeHost implements HostPort {
   refuse: PageRefusal | null = null;
   owedPages: OwedPage[] = [];
   /** Runs inside `waitPublished` before it resolves (to model work arriving meanwhile). */
-  onWait: ((needs: PublishedNeed[]) => boolean | void | Promise<boolean | void>) | null = null;
+  onWait: ((needs: PublishedNeed[]) => boolean | null | void | Promise<boolean | null | void>) | null = null;
   /** Runs inside the second and later `owed` reads. */
   onOwed: (() => void) | null = null;
   /** Answers admitted commands with these mails (see `autoAnswer`). */
@@ -77,7 +77,7 @@ export class FakeHost implements HostPort {
     resolve?.(this.replyValues.get(id));
   }
 
-  open(_session: number, id: number, page: { name: string; path: string | null }) {
+  open(_session: number, id: number, page: { name: string; kind: PageKind; path: string | null }) {
     this.calls.push({ cmd: "open", id, ...page });
     const admitted = this.admit(id, this.refuse ?? { key: this.keyOf(page.name), baselineEntry: this.baselineEntry });
     this.answerLater(this.calls[this.calls.length - 1], admitted);
@@ -112,18 +112,23 @@ export class FakeHost implements HostPort {
     return admitted;
   }
 
-  async saveNow(keys: readonly string[]) { this.calls.push({ cmd: "saveNow", keys: [...keys] }); }
+  async saveNow(_session: number, keys: readonly string[]) { this.calls.push({ cmd: "saveNow", keys: [...keys] }); }
 
-  async waitPublished(needs: readonly PublishedNeed[]) {
+  /** `onWait` returning null models one bounded wait passing (F1). */
+  async waitPublished(_session: number, needs: readonly PublishedNeed[]) {
     this.calls.push({ cmd: "wait", needs: [...needs] });
     const result = await this.onWait?.([...needs]);
+    if (result === null) return null;
+    // A publication proven here is no longer debt, as `page_owed` says.
+    if (result !== false) this.owedPages = this.owedPages.filter((owed) =>
+      !needs.some((need) => need.key === owed.key && need.version >= owed.version));
     return result !== false;
   }
 
-  async owed(paths: readonly string[] | null) {
+  async owed(session: number, paths: readonly string[] | null) {
     this.calls.push({ cmd: "owed", paths });
     if (this.calls.filter((call) => call.cmd === "owed").length > 1) this.onOwed?.();
-    return [...this.owedPages];
+    return session === this.session ? [...this.owedPages] : null;
   }
 
   last<K extends Call["cmd"]>(cmd: K): Extract<Call, { cmd: K }> {
@@ -259,11 +264,14 @@ export function autoAnswer(ctx: { host: FakeHost; doc: FakeDoc; client: HostClie
       case "submit":
         version += 1;
         disk.set(call.key, `r${version}`);
+        // The host holds what it took until it publishes, after a close too.
+        host.owedPages.push({ key: call.key, version });
         return [mail(s, call.key, mailPage(version, { kind: "unchanged", rev: `r${version}` }), took(call.id, version))];
       case "move":
         version += 1;
         disk.set(call.source[0], `r${version}`);
         disk.set(call.receiver[0], `r${version}`);
+        host.owedPages.push({ key: call.source[0], version }, { key: call.receiver[0], version });
         return [call.source[0], call.receiver[0]].map((key) =>
           mail(s, key, mailPage(version, { kind: "unchanged", rev: `r${version}` }), took(call.id, version)));
       case "close":

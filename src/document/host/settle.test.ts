@@ -146,11 +146,45 @@ describe("rename's drain (S6)", () => {
     client.receive(mail(7, "pages/Q.md", mailPage(5, { kind: "unchanged" }, { conflict: true })));
     edit(ctx, "P", "[[Old]] new reference");
     host.owedPages = [{ key: "pages/Q.md", version: 5 }, { key: "pages/Recovered.md", version: 2 }];
-    host.onWait = (needs) => !needs.some((need) => need.key === "pages/Q.md");
+    host.onWait = (needs) => {
+      // P's save lands; only the conflicted Q fails the barrier.
+      host.owedPages = host.owedPages.filter((owed) => owed.key !== "pages/P.md");
+      return !needs.some((need) => need.key === "pages/Q.md");
+    };
     expect(await unpublishedAfterDrain(client)).toEqual([
       { key: "pages/Q.md", name: "Q", state: "owed", conflict: true },
       { key: "pages/Recovered.md", name: null, state: "owed", conflict: false },
     ]);
     expect(client.busy("P")).toBe(false);
+  });
+});
+
+describe("publication results are the session's (REVIEW-3b-P1 F1)", () => {
+  it("asks again while each bounded host wait passes, and succeeds when the needs publish", async () => {
+    const ctx = await healthy();
+    edit(ctx, "P", "ab");
+    ctx.host.onWait = () => (ctx.host.count("wait") < 3 ? null : true);
+    expect(await settle(ctx.client, ["P"])).toBe(true);
+    expect(ctx.host.count("wait")).toBe(3);
+  });
+
+  it("a rebind during a pending wait fails the barrier: no result of session N vouches for N+1", async () => {
+    const ctx = await healthy();
+    edit(ctx, "P", "ab");
+    ctx.host.onWait = async () => {
+      ctx.host.session = 8;
+      await ctx.client.rebind();
+      return true;
+    };
+    expect(await settle(ctx.client, ["P"])).toBe(false);
+    expect(ctx.host.count("wait")).toBe(1);
+  });
+
+  it("debt listed for an earlier session fails the barrier instead of reading as none", async () => {
+    const { host, client } = await setup();
+    expect(await settle(client, "all")).toBe(true);
+    host.session = 9;
+    expect(await settle(client, "all")).toBe(false);
+    expect(host.count("wait")).toBe(0);
   });
 });

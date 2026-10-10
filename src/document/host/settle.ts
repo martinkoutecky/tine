@@ -31,12 +31,19 @@ export async function settle(client: HostClient, scope: SettleScope, options: Se
     const start = { clock: client.editClock, edits: client.editSeqs(names), assets: client.assets.started() };
     await client.drain(names);
     const paths = scope === "all" ? null : pathsOf(client, names);
-    const needs = merge(client.needs(names), await client.host.owed(paths), options.witness);
+    // What the host took from this window, read before the debt query: a close
+    // answered meanwhile drops the client page, and the host's debt list then
+    // names it instead.
+    const taken = client.needs(names);
+    const owed = await client.owed(paths);
+    if (!owed) return false;
+    const needs = merge(taken, owed, options.witness);
     if (needs.length) {
-      await client.host.saveNow(needs.map((need) => need.key));
-      if (!await client.host.waitPublished(needs)) return false;
+      await client.saveNow(needs.map((need) => need.key));
+      if (!await client.published(needs)) return false;
     }
-    const after = await client.host.owed(paths);
+    const after = await client.owed(paths);
+    if (!after) return false;
     // Final synchronous proof: nothing below awaits, so no edit, answer, asset
     // write or host debt can arrive between this check and the caller's next step.
     if (quiescent(client, scope, start, needs, after, options)) return true;
@@ -86,7 +93,7 @@ function quiescent(
 export async function unpublishedAfterDrain(client: HostClient):
   Promise<{ key: string | null; name: string | null; state: "unsent" | "owed"; conflict: boolean }[]> {
   await settle(client, "all", { assets: true });
-  const owed = await client.host.owed(null);
+  const owed = await client.owed(null) ?? [];
   const local = client.names().filter((name) => client.busy(name));
   const listed = new Set(local);
   return [

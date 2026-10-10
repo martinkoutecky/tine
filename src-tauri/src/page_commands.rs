@@ -162,28 +162,36 @@ pub(crate) struct PublishedNeed {
     witness: Option<String>,
 }
 
-/// True once every need is published; false on a terminal notice for a
-/// needed key or at `bound_ms` (S1). The wait holds the host read lock, so a
-/// restore or retirement of this binding waits at most `bound_ms` for it.
+/// The longest one `page_wait` holds the slot's host read lock (REVIEW-3b-P1
+/// F1): a restore or a retirement of this binding waits at most this long
+/// for it. The window asks again while its barrier still waits.
+const PAGE_WAIT_BOUND: Duration = Duration::from_secs(5);
+
+/// For the window `session` (F1): true once every need is published; false
+/// on a terminal notice for a needed key, or when the session is no longer
+/// current; null at `bound_ms` (at most 5 s), never success there (S1).
 #[tauri::command]
 pub(crate) async fn page_wait(
+    session: u64,
     needs: Vec<PublishedNeed>,
     bound_ms: u64,
     ctx: GraphContext<'_>,
-) -> Result<bool, String> {
+) -> Result<Option<bool>, String> {
     let needs: Vec<_> = needs
         .into_iter()
         .map(|need| (need.key, need.version, need.witness))
         .collect();
-    hosted(ctx, move |host| {
-        host.wait_published(&needs, Duration::from_millis(bound_ms))
-    })
-    .await
+    let bound = Duration::from_millis(bound_ms).min(PAGE_WAIT_BOUND);
+    hosted(ctx, move |host| host.wait_published(session, &needs, bound)).await
 }
 
 #[tauri::command]
-pub(crate) async fn page_save_now(keys: Vec<String>, ctx: GraphContext<'_>) -> Result<(), String> {
-    hosted(ctx, move |host| host.save_now(&keys)).await
+pub(crate) async fn page_save_now(
+    session: u64,
+    keys: Vec<String>,
+    ctx: GraphContext<'_>,
+) -> Result<(), String> {
+    hosted(ctx, move |host| host.save_now(session, &keys)).await
 }
 
 /// One `page_owed` entry (`protocol.ts` `OwedPage`).
@@ -193,11 +201,14 @@ pub(crate) struct OwedPage {
     version: u64,
 }
 
+/// The window `session`'s publication debt; null when that session is not
+/// current (F1).
 #[tauri::command]
 pub(crate) async fn page_owed(
+    session: u64,
     paths: Option<Vec<String>>,
     ctx: GraphContext<'_>,
-) -> Result<Vec<OwedPage>, String> {
+) -> Result<Option<Vec<OwedPage>>, String> {
     hosted(ctx, move |host| {
         let paths: Option<Vec<PageId>> = paths.map(|paths| {
             paths
@@ -205,10 +216,11 @@ pub(crate) async fn page_owed(
                 .map(|path| PageId::from(path.as_str()))
                 .collect()
         });
-        host.owed(paths.as_deref())
-            .into_iter()
-            .map(|(key, version)| OwedPage { key, version })
-            .collect()
+        host.owed(session, paths.as_deref()).map(|owed| {
+            owed.into_iter()
+                .map(|(key, version)| OwedPage { key, version })
+                .collect()
+        })
     })
     .await
 }

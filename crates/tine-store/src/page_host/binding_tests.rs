@@ -1511,6 +1511,64 @@ fn e101_every_host_instance_and_reload_draws_a_fresh_session() {
     host.stop();
 }
 
+/// REVIEW-3b-P1 F1: the publication queries are the window session's. A
+/// wait begun under one session ends unsuccessful when the window reloads
+/// meanwhile, and the debt list and the hurry of an earlier session are
+/// refused (an empty list would vouch for pages it never saw), on the same
+/// host and on a relaunched one.
+#[test]
+fn f1_publication_queries_never_answer_for_another_session() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let first = live.host.session();
+    let (key, page) = live.open("pages/a.md");
+    let unpublished = [(key.clone(), page.version + 1, None)];
+    let started = Instant::now();
+    let waited = std::thread::scope(|scope| {
+        let wait = scope.spawn(|| {
+            live.host
+                .wait_published(first, &unpublished, Duration::from_secs(20))
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        live.host.window_reloaded();
+        wait.join().unwrap()
+    });
+    assert_eq!(
+        waited,
+        Some(false),
+        "F1: a reload ends the old session's wait"
+    );
+    assert!(started.elapsed() < Duration::from_secs(10));
+    let published = [(key.clone(), page.version, None)];
+    let now = live.host.session();
+    assert_eq!(
+        live.host
+            .wait_published(now, &published, Duration::from_secs(20)),
+        Some(true)
+    );
+    assert_eq!(
+        live.host
+            .wait_published(first, &published, Duration::from_secs(20)),
+        Some(false),
+        "F1: never success for an earlier session"
+    );
+    assert_eq!(live.host.owed(first, None), None);
+    assert_eq!(live.host.owed(now, None), Some(vec![]));
+    let app = live.app();
+    let Live { store, host, .. } = live;
+    host.stop();
+    let host = PageHost::start(&store, &app, "test-graph", |_| {}).unwrap();
+    assert_eq!(
+        host.owed(now, None),
+        None,
+        "F1: a relaunched host refuses it too"
+    );
+    assert_eq!(
+        host.wait_published(now, &published, Duration::from_secs(1)),
+        Some(false)
+    );
+    host.stop();
+}
+
 /// E101 (P1): a page the host let go and loads again gets a version above
 /// every version it had before, so no answer or need of the old load can
 /// be mistaken for the new one.
@@ -1554,14 +1612,16 @@ fn owed_lists_unpublished_held_pages_and_released_index_debt() {
         .submit(&key, "- one\n- two\n", page.version, None)
         .unwrap();
     let version = live.answer(&key, id).answer.unwrap().version;
-    assert_eq!(live.host.owed(None), vec![(key.clone(), version)]);
+    let session = live.host.session();
+    let owed = |paths: Option<&[PageId]>| live.host.owed(session, paths).unwrap();
+    assert_eq!(owed(None), vec![(key.clone(), version)]);
     let a = [PageId::from("pages/a.md")];
-    assert_eq!(live.host.owed(Some(&a)), vec![(key.clone(), version)]);
-    assert_eq!(live.host.owed(Some(&[PageId::from("pages/b.md")])), vec![]);
+    assert_eq!(owed(Some(&a)), vec![(key.clone(), version)]);
+    assert_eq!(owed(Some(&[PageId::from("pages/b.md")])), vec![]);
     live.close(&key);
     let until = |owed: Vec<(String, u64)>, what: &str| {
         let deadline = Instant::now() + Duration::from_secs(20);
-        while live.host.owed(None) != owed {
+        while live.host.owed(session, None) != Some(owed.clone()) {
             assert!(Instant::now() < deadline, "owed never {what}");
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -1581,13 +1641,15 @@ fn wait_published_is_true_on_publication_false_on_conflict_or_bound() {
     let id = live.submit(&key, "- two\n", page.version, None).unwrap();
     let version = live.answer(&key, id).answer.unwrap().version;
     let long = Duration::from_secs(20);
-    assert!(live
-        .host
-        .wait_published(&[(key.clone(), version, None)], long));
+    let session = live.host.session();
+    let wait = |needs: &[(String, u64, Option<String>)], bound| {
+        live.host.wait_published(session, needs, bound)
+    };
+    assert_eq!(wait(&[(key.clone(), version, None)], long), Some(true));
     assert_eq!(live.disk(&key), "- two\n");
     let start = Instant::now();
     let later = [(key.clone(), version + 1, None)];
-    assert!(!live.host.wait_published(&later, Duration::from_millis(300)));
+    assert_eq!(wait(&later, Duration::from_millis(300)), None);
     assert!(
         start.elapsed() >= Duration::from_millis(300),
         "S1: no early false"
@@ -1596,7 +1658,7 @@ fn wait_published_is_true_on_publication_false_on_conflict_or_bound() {
     let mine = live.answer(&key, id).answer.unwrap().version;
     fs::write(live.root.join(&key), "- theirs\n").unwrap();
     let start = Instant::now();
-    assert!(!live.host.wait_published(&[(key.clone(), mine, None)], long));
+    assert_eq!(wait(&[(key.clone(), mine, None)], long), Some(false));
     assert!(
         start.elapsed() < Duration::from_secs(10),
         "a conflict ends the wait"

@@ -61,19 +61,27 @@ impl PageHost {
         })
     }
 
-    /// `page_wait` (§4.4): wait until `pages_published` holds for `needs`
-    /// (true), or false once a needed page cannot publish without the user
-    /// (a conflict, a third failed save, a third failed index publication)
-    /// or at `bound`. Never success at a bound (S1).
+    /// `page_wait` (§4.4) for window `session` (REVIEW-3b-P1 F1): wait
+    /// until `pages_published` holds for `needs` (`Some(true)`), or
+    /// `Some(false)` once a needed page cannot publish without the user (a
+    /// conflict, a third failed save, a third failed index publication) or
+    /// the session is not current, so a result never vouches for another
+    /// session's pages. `None` at `bound`: never success at a bound (S1);
+    /// the window asks again.
     pub fn wait_published(
         &self,
+        session: u64,
         needs: &[(String, u64, Option<String>)],
         bound: std::time::Duration,
-    ) -> bool {
+    ) -> Option<bool> {
         let deadline = std::time::Instant::now() + bound;
+        let current = || self.driver.shared.state.lock().unwrap().book.session == session;
         loop {
+            if !current() {
+                return Some(false);
+            }
             if self.pages_published(needs) {
-                return true;
+                return Some(current());
             }
             let shared = &self.driver.shared;
             let state = shared.state.lock().unwrap();
@@ -87,21 +95,26 @@ impl PageHost {
                     || progress.notice(key).save_error
                     || state.book.index_error(key)
             });
+            if stuck {
+                return Some(false);
+            }
             let now = std::time::Instant::now();
-            if stuck || now >= deadline {
-                return false;
+            if now >= deadline {
+                return None;
             }
             let pause = (deadline - now).min(std::time::Duration::from_millis(100));
             drop(shared.wait(state, pause));
         }
     }
 
-    /// `page_save_now` (§4.4): make these keys' saves due at once, for a
-    /// barrier or a block reference; a failing save keeps its backoff.
-    pub fn save_now(&self, keys: &[String]) {
-        self.driver
-            .shared
-            .with_state(|state| state.progress.save_now(keys));
+    /// `page_save_now`: make these keys' saves due now (a hint), for the
+    /// current window `session` only (F1).
+    pub fn save_now(&self, session: u64, keys: &[String]) {
+        self.driver.shared.with_state(|state| {
+            if state.book.session == session {
+                state.progress.save_now(keys)
+            }
+        });
     }
 
     /// `page_owed` (§4.4, R2): every held page whose text or index is not
@@ -110,13 +123,18 @@ impl PageHost {
     /// 0). A draft still to retire is not publication debt. `paths` limits
     /// the list to the keys those paths name (the shared entry identity);
     /// None lists every key. Bounded by the held pages; no filesystem scan.
-    pub fn owed(&self, paths: Option<&[PageId]>) -> Vec<(PageKey, u64)> {
+    /// None when `session` is not the current window session (F1): an
+    /// empty list would claim no debt.
+    pub fn owed(&self, session: u64, paths: Option<&[PageId]>) -> Option<Vec<(PageKey, u64)>> {
         let only: Option<BTreeSet<PageKey>> =
             paths.map(|paths| paths.iter().map(|page| self.identify(page).0).collect());
         let wanted = |key: &PageKey| only.as_ref().is_none_or(|only| only.contains(key));
         let state = self.driver.shared.state.lock().unwrap();
         let host = &state.progress.host;
         let book = &state.book;
+        if book.session != session {
+            return None;
+        }
         let held = host.pages.iter().filter_map(|(key, page)| {
             let indexed = book.index.get(key);
             let published = indexed.is_some_and(|(bytes, watermark)| {
@@ -129,8 +147,10 @@ impl PageHost {
             .iter()
             .filter(|key| !host.pages.contains_key(*key))
             .map(|key| (key.clone(), 0));
-        held.chain(released)
-            .filter(|(key, _)| wanted(key))
-            .collect()
+        Some(
+            held.chain(released)
+                .filter(|(key, _)| wanted(key))
+                .collect(),
+        )
     }
 }

@@ -13,7 +13,8 @@ import type { EditKind, EditKinds } from "../../editKind";
 import type { Format, PageDto, PageKind } from "../../types";
 import { cutSourceMatches } from "../cutSource";
 import {
-  STALE_VERSION, type DiskToken, type HostPort, type MailNotice, type MailPage, type PageMail, type PageRefusal,
+  STALE_VERSION, type DiskToken, type HostPort, type MailNotice, type MailPage, type OwedPage, type PageMail,
+  type PageRefusal, type PublishedNeed,
 } from "./protocol";
 
 /** What the installed text's bytes were: a file revision, a proved absence, or unknown. */
@@ -427,12 +428,36 @@ export class HostClient {
         current ? page.version ?? STALE_VERSION : STALE_VERSION, null, options.kinds ?? ["create-page"]));
       if (!answer.took || page.needed === null) return { kind: "refused", refusal: answer.refusal };
       const version = page.needed;
-      await this.host.saveNow([page.key!]);
-      return await this.host.waitPublished([{ key: page.key!, version }])
+      await this.saveNow([page.key!]);
+      return await this.published([{ key: page.key!, version }])
         ? { kind: "created", key: page.key!, version } : { kind: "unpublished" };
     } finally {
       release();
     }
+  }
+
+  // ------------------------------------------------------------- publication (§4.4, F1)
+
+  saveNow(keys: readonly string[]): Promise<void> {
+    return this.host.saveNow(this.session, keys);
+  }
+
+  /** Whether every need published under this session: asks again while each
+   * bounded host wait passes, false on a terminal notice or a new session. */
+  async published(needs: readonly PublishedNeed[]): Promise<boolean> {
+    const session = this.session;
+    for (;;) {
+      const result = await this.host.waitPublished(session, needs);
+      if (this.session !== session) return false;
+      if (result !== null) return result;
+    }
+  }
+
+  /** The host's publication debt under this session; null after a new session. */
+  async owed(paths: readonly string[] | null): Promise<OwedPage[] | null> {
+    const session = this.session;
+    const owed = await this.host.owed(session, paths);
+    return this.session === session ? owed : null;
   }
 
   // ------------------------------------------------------------- mail (§3.3, model wRecv)
@@ -557,7 +582,8 @@ export class HostClient {
     page.refusal = null;
     const id = this.nextId++;
     page.phase = { kind: "sending", id, request: "open", editSeq: page.sentSeq };
-    void this.host.open(this.session, id, { name: page.name, path: facts?.path ?? null }).then((reply) => {
+    void this.host.open(this.session, id, { name: page.name, kind: facts?.kind ?? "page", path: facts?.path ?? null })
+      .then((reply) => {
       if (this.pages.get(page.name) !== page || page.phase.kind !== "sending" || page.phase.id !== id) return;
       if ("reason" in reply) { this.admitted(page, id, reply); return; }
       page.key = reply.key;

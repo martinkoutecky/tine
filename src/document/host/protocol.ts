@@ -8,7 +8,7 @@
 // (`boundary.guard.test.ts`, "P2a client is unwired").
 
 import type { EditKinds } from "../../editKind";
-import type { PageDto } from "../../types";
+import type { PageDto, PageKind } from "../../types";
 
 /** The host's "this request carries no current version" (`binding.rs` `STALE`):
  * input sent on it is admitted as stale and becomes a conflict, never a write
@@ -77,7 +77,10 @@ export type PageRefusal =
   | { reason: "undecodable" }
   | { reason: "unreadable-owner"; file: string }
   | { reason: "failed"; message: string }
-  | { reason: "not-admitted" };
+  | { reason: "not-admitted" }
+  /** Client side, before any command: the page's name is an alias of these
+   * existing files, so its text belongs to their owner (`resolve_page`). */
+  | { reason: "alias"; owners: string[] };
 
 /** Publication debt the host holds for a key (save or index), at a version. */
 export interface OwedPage {
@@ -98,9 +101,12 @@ export interface PublishedNeed {
  * admitted watermark; a resolved `PageRefusal` means "not admitted". */
 export interface HostPort {
   windowReloaded(): Promise<{ session: number; nextId: number }>;
-  /** `baseline` is the file the window's text was installed from; the reply says
-   * whether it names the opened entry under the host's page identity (A-H2/Q4). */
-  open(session: number, id: number, page: { name: string; path: string | null }):
+  /** `path` is the file the window's text was installed from, or, for a page
+   * with no file yet, null: the port resolves the file it will be created as
+   * (`resolve_page`) and sends that, never null (REVIEW-3b-P1). The reply says
+   * whether the path names the opened entry under the host's page identity
+   * (A-H2/Q4). */
+  open(session: number, id: number, page: { name: string; kind: PageKind; path: string | null }):
     Promise<{ key: string; baselineEntry: boolean } | PageRefusal>;
   submit(session: number, id: number, key: string, dto: PageDto, version: number,
     resolve: DiskToken | null, kinds: EditKinds): Promise<PageRefusal | null>;
@@ -108,12 +114,16 @@ export interface HostPort {
     kinds: EditKinds): Promise<PageRefusal | null>;
   discard(session: number, id: number, key: string, version: number): Promise<PageRefusal | null>;
   close(session: number, id: number, key: string): Promise<PageRefusal | null>;
+  // The publication queries are the session's (REVIEW-3b-P1 F1): a result never
+  // vouches for another session's pages.
   /** Make these keys' saves due now (a scheduling hint; no answer). */
-  saveNow(keys: readonly string[]): Promise<void>;
+  saveNow(session: number, keys: readonly string[]): Promise<void>;
   /** True once every entry is published (and indexed) at ≥ its version; false on
-   * a terminal notice for a needed key or at the caller's bound. */
-  waitPublished(needs: readonly PublishedNeed[]): Promise<boolean>;
+   * a terminal notice for a needed key or once the session is not current; null
+   * when one bounded wait (≤ 5 s) passed first: the client asks again. */
+  waitPublished(session: number, needs: readonly PublishedNeed[]): Promise<boolean | null>;
   /** Publication debt; `paths` (graph-relative files) filters through the host's
-   * page identity, null lists all. Bounded by held pages; no filesystem scan. */
-  owed(paths: readonly string[] | null): Promise<OwedPage[]>;
+   * page identity, null lists all. Bounded by held pages; no filesystem scan.
+   * Null when the session is not current. */
+  owed(session: number, paths: readonly string[] | null): Promise<OwedPage[] | null>;
 }
