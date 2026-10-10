@@ -249,6 +249,27 @@ describe("S5 edit-intent acquisition and baseline provenance", () => {
     expect(await reopenWithInput(ctx, [3, { kind: "page", dto: page("P", "a", "r3") }, { risk: true, disk: { kind: "file", rev: "r3" } }])).toBe(3);
   });
 
+  it("E101: a version remembered under one session never grants under the next", async () => {
+    const ctx = await setup();
+    const { host, doc, client } = ctx;
+    await closed(ctx);
+    host.session = 8;
+    host.nextId = 50;
+    await client.rebind();
+    doc.type("P", "typed early");
+    client.noteEdit("P", "save-block", false);
+    await tick();
+    const open = host.last("open");
+    expect(open.id).toBe(50);
+    // The new host instance happens to answer at the old number (3); only the
+    // reopen clause could grant it, and the remembered 3 is the old session's.
+    client.receive(mail(8, KEY, mailPage(3, { kind: "page", dto: page("P", "a", "r3") }, { risk: true, disk: { kind: "file", rev: "r3" } }),
+      applied(open.id, 3)));
+    client.sendNow("P");
+    await tick();
+    expect(host.last("submit").version).toBe(0);
+  });
+
   it("a clean Open whose disk is the installed bytes grants its version", async () => {
     const ctx = await setup();
     await closed(ctx);

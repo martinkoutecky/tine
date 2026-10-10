@@ -229,7 +229,7 @@ fn q4_a_case_only_rename_to_an_absent_entry_recovers_after_a_crash() {
             ..
         } = live;
         drop(host);
-        let host = PageHost::start(&store, &app, "test-graph", 7, |_| {}).unwrap();
+        let host = PageHost::start(&store, &app, "test-graph", |_| {}).unwrap();
         let live = Live {
             _dir,
             root,
@@ -299,7 +299,7 @@ fn an_alias_spelling_is_refused_for_a_respell_that_keeps_the_page() {
     assert!(live.held("pages/foo.md") && !live.held("pages/Foo.md"));
     drop(reservation);
     let id = live.id();
-    let generation = live.host.generation();
+    let generation = live.host.session();
     let dto = live.dto("pages/foo.md", "- typed\n");
     // The release's observation reads the same bytes at the new spelling,
     // so it changes nothing and mails nothing; the page kept its version.
@@ -400,6 +400,44 @@ fn the_host_and_the_held_index_agree_on_an_alias_spelling() {
             .count()
     });
     assert_eq!(rows, 1, "B1: one entry, one installed row");
+    live.host.stop();
+}
+
+/// P1 (`page_open`'s `baselineEntry`): the reply says whether the opened
+/// path is proved to name the key's entry under the shared identity: the
+/// key's own leaf, or Q4's alias of it (a case-folding disk). A symlinked
+/// case variant on a case-sensitive disk is a second listed entry of the
+/// same file: Unknown with no alias, so not proved, though it resolves to
+/// the same key.
+#[test]
+fn an_open_reply_says_whether_the_path_is_proved_the_entry() {
+    let live = Live::new(&[("pages/Foo.md", "- one\n")]);
+    let alias = live.root.join("pages/foo.md");
+    if !folds_case(&live.root) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(live.root.join("pages/Foo.md"), &alias).unwrap();
+        #[cfg(not(unix))]
+        {
+            live.host.stop();
+            return;
+        }
+    }
+    let open = |rel: &str| {
+        let session = live.host.session();
+        let opened = live
+            .host
+            .open(session, live.id(), &PageId::from(rel), "foo");
+        opened.unwrap()
+    };
+    let own = open("pages/Foo.md");
+    assert!(own.baseline_entry, "a page's own spelling");
+    let aliased = open("pages/foo.md");
+    assert_eq!(aliased.key, own.key);
+    assert_eq!(
+        aliased.baseline_entry,
+        folds_case(&live.root),
+        "only Q4's alias is proved the same entry"
+    );
     live.host.stop();
 }
 

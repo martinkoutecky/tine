@@ -923,6 +923,10 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
         ("mod.rs", include_str!("mod.rs")),
         ("binding.rs", include_str!("binding.rs")),
         ("binding_retained.rs", include_str!("binding_retained.rs")),
+        (
+            "binding_publication.rs",
+            include_str!("binding_publication.rs"),
+        ),
         ("draft_worker.rs", include_str!("draft_worker.rs")),
         ("drafts.rs", include_str!("drafts.rs")),
         ("driver.rs", include_str!("driver.rs")),

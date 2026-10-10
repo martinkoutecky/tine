@@ -141,7 +141,7 @@ impl PageHost {
         pages
             .iter()
             .map(|page| {
-                let (key, spelling, _) = self.identify(page);
+                let (key, spelling, ..) = self.identify(page);
                 self.register(&key, &spelling);
                 key
             })
@@ -183,8 +183,8 @@ impl PageHost {
         map: &RenameMap,
         view: &crate::WholeGraph,
     ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
-        let (src, src_spelling, _) = self.identify(source);
-        let (dst, dst_spelling, _) = self.identify(target);
+        let (src, src_spelling, ..) = self.identify(source);
+        let (dst, dst_spelling, ..) = self.identify(target);
         if src == dst {
             return Err(RenameRefusal::Alias);
         }
@@ -332,8 +332,9 @@ impl PageHost {
     /// rule (B1, [`crate::model::Graph::identify`]): a registered key the
     /// path names, or whose entry it reaches as an alias (Q4's test: the
     /// same file, not listed apart); else the entry's spelling as a key.
-    /// Also whether the host holds that page.
-    pub(super) fn identify(&self, page: &PageId) -> (PageKey, PageId, bool) {
+    /// Also whether the host holds that page, and whether the path is proved
+    /// to name that key's entry.
+    pub(super) fn identify(&self, page: &PageId) -> (PageKey, PageId, bool, bool) {
         let graph = &self.store.graph;
         let registered = |fold: &str| {
             self.driver
@@ -345,7 +346,15 @@ impl PageHost {
                 .host
                 .candidates(fold)
         };
-        let named = match graph.identify(&graph.root.join(page.as_str()), &registered) {
+        let identity = graph.identify(&graph.root.join(page.as_str()), &registered);
+        // The path names the key's entry: its own leaf, Q4's same-file alias,
+        // or no registered collision. An unproved collision or a path outside
+        // the root does not (step 3b P1: `page_open`'s baseline entry).
+        let proved = !matches!(
+            identity,
+            Identity::Outside | Identity::Unknown { alias: None, .. }
+        );
+        let named = match identity {
             Identity::Key(key)
             | Identity::Unknown {
                 alias: Some(key), ..
@@ -367,7 +376,7 @@ impl PageHost {
             ),
         };
         let held = host.pages.contains_key(&key);
-        (key, spelling, held)
+        (key, spelling, held, proved)
     }
 
     /// A key's current spelling, as the page it names.

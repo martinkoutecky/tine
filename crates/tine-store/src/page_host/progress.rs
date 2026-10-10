@@ -23,6 +23,10 @@ struct Timing {
     page: Page,
     first: Option<u64>,
     last: u64,
+    /// `save_now` asked for this page's save at once (a barrier or a block
+    /// reference, §4.4): until the page is clean the debounce is skipped; a
+    /// failure's backoff is not.
+    urgent: bool,
     retry: Option<u64>,
     last_draft: Option<u64>,
     notice: Notice,
@@ -52,6 +56,9 @@ impl Timing {
     fn deadline(&self) -> Option<u64> {
         self.retry.or_else(|| {
             self.first.map(|first| {
+                if self.urgent {
+                    return first;
+                }
                 (first.checked_add(1000).expect("clock exhausted"))
                     .min(self.last.checked_add(400).expect("clock exhausted"))
             })
@@ -116,6 +123,17 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 .times
                 .get(key)
                 .map_or(Notice::default(), |t| t.notice.clone())
+        }
+    }
+
+    /// Make these pages' saves due now (`page_save_now`): only the debounce
+    /// is skipped. A clean page has nothing to hurry: the next reconcile
+    /// ends its urgency.
+    pub fn save_now(&mut self, keys: &[PageKey]) {
+        for key in keys {
+            if let Some(t) = self.times.get_mut(key) {
+                t.urgent = true;
+            }
         }
     }
 
@@ -221,6 +239,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 page: page.clone(),
                 first: None,
                 last: now,
+                urgent: false,
                 retry: None,
                 last_draft: None,
                 notice: Notice::default(),
@@ -228,6 +247,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             let changed = t.page.buf != page.buf || t.page.version != page.version;
             if page.clean() {
                 t.first = None;
+                t.urgent = false;
                 t.retry = None;
                 // An unapplied operation can fail while its old pages remain
                 // clean. Keep its surfaced draft error across unrelated calls.

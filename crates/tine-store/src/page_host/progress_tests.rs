@@ -1432,3 +1432,44 @@ fn v1_a_restore_never_closes_over_a_recoverable_draft() {
         "V1: a pre-restore draft was applied over the restored file"
     );
 }
+
+/// `page_save_now` (§4.4): a barrier skips only the debounce of a page it
+/// needs. A clean page has nothing to hurry, a failed save keeps its
+/// backoff, and the urgency ends once the page is clean.
+#[test]
+fn save_now_skips_the_debounce_but_not_a_failed_saves_backoff() {
+    let mut p = timed();
+    p.with_host(|h| open(h, "a.md"));
+    p.save_now(&["a.md".into()]);
+    p.with_host(|h| edit(h, "a.md", "first"));
+    pump(&mut p);
+    assert!(
+        !p.host.pages["a.md"].clean(),
+        "a clean page was not hurried"
+    );
+    time(&p, 10);
+    p.host.fs.inject(Phase::PageTemp, [Fault::Before]);
+    p.save_now(&["a.md".into()]);
+    pump(&mut p);
+    assert!(
+        p.host.fs.calls.contains(&Phase::PageTemp),
+        "the save ran at once"
+    );
+    assert!(!p.host.pages["a.md"].clean());
+    time(&p, 109);
+    pump(&mut p);
+    assert!(
+        !p.host.pages["a.md"].clean(),
+        "the backoff holds after a failure"
+    );
+    time(&p, 110);
+    pump(&mut p);
+    assert!(p.host.pages["a.md"].clean());
+    assert_eq!(p.host.fs.files["graph/a.md"].as_ref(), &b"first"[..]);
+    p.with_host(|h| edit(h, "a.md", "second"));
+    pump(&mut p);
+    assert!(
+        !p.host.pages["a.md"].clean(),
+        "the next edit debounces again"
+    );
+}

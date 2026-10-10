@@ -219,7 +219,7 @@ impl Live {
         store.whole_graph_reconciled().unwrap();
         let root = store.graph.root.clone();
         let (sender, mail) = mpsc::channel();
-        let host = PageHost::start(&store, &app, "test-graph", 7, move |mail| {
+        let host = PageHost::start(&store, &app, "test-graph", move |mail| {
             let _ = sender.send(mail);
         })
         .unwrap();
@@ -246,7 +246,11 @@ impl Live {
                 .mail
                 .recv_timeout(left)
                 .unwrap_or_else(|_| panic!("no mail: {what}"));
-            assert_eq!(mail.binding, 7);
+            assert_eq!(
+                mail.session,
+                self.host.session(),
+                "mail of the current host instance"
+            );
             if mail.key == key && test(&mail) {
                 return mail;
             }
@@ -261,12 +265,13 @@ impl Live {
 
     fn open(&self, rel: &str) -> (PageKey, MailPage) {
         let id = self.id();
-        let generation = self.host.generation();
+        let generation = self.host.session();
         let name = rel.rsplit('/').next().unwrap().split('.').next().unwrap();
         let key = self
             .host
             .open(generation, id, &PageId::from(rel), name)
-            .unwrap();
+            .unwrap()
+            .key;
         let mail = self.answer(&key, id);
         (key, mail.page.unwrap())
     }
@@ -289,7 +294,7 @@ impl Live {
     ) -> Result<u64, PageRefusal> {
         let id = self.id();
         let dto = self.dto(key, body);
-        let generation = self.host.generation();
+        let generation = self.host.session();
         self.host
             .submit(
                 generation,
@@ -363,7 +368,7 @@ impl Live {
     }
 
     fn close(&self, key: &str) {
-        let generation = self.host.generation();
+        let generation = self.host.session();
         self.host.close(generation, self.id(), key).unwrap();
     }
 }
@@ -395,7 +400,13 @@ fn open_submit_and_mail_round_trip_through_a_real_store() {
     let answer = mail.answer.unwrap();
     assert!(answer.took);
     assert_eq!(answer.outcome, AnswerOutcome::Applied);
-    assert!(matches!(mail.page.unwrap().text, MailText::Unchanged));
+    // P1: the unchanged text's revision is the DTO revision of the buffer,
+    // so the window can match it against the text it installed.
+    let MailText::Unchanged { rev } = mail.page.unwrap().text else {
+        panic!("an answer that took the submit carries no text");
+    };
+    let typed = live.dto(&key, "- one\n- two\n").rev;
+    assert_eq!(rev.map(String::from), typed);
     live.until_disk(&key, "- one\n- two\n");
     // A page with no file yet is opened, then created by its first save.
     let (key, page) = live.open("pages/new.md");
@@ -409,7 +420,7 @@ fn open_submit_and_mail_round_trip_through_a_real_store() {
 #[test]
 fn f9_create_checks_run_at_open_of_a_page_with_no_file() {
     let live = Live::new(&[("pages/c.org", "* c\n")]);
-    let generation = live.host.generation();
+    let generation = live.host.session();
     let refused = live
         .host
         .open(generation, 1, &PageId::from("pages/c.md"), "c");
@@ -825,7 +836,7 @@ fn a_restore_stop_saves_every_edit_and_a_fresh_host_reads_the_restored_tree() {
         fs::write(root.join(&a), "- restored\n").unwrap();
     }
     let (sender, mail) = mpsc::channel();
-    let host = PageHost::start(&store, &app, "test-graph", 7, move |mail| {
+    let host = PageHost::start(&store, &app, "test-graph", move |mail| {
         let _ = sender.send(mail);
     })
     .unwrap();
@@ -1428,4 +1439,143 @@ fn a_consumer_publication_names_the_bytes_it_publishes() {
         "(G): the publication named the page from its file"
     );
     store.close();
+}
+
+/// E101 (P1): every host instance and every window reload draws a fresh
+/// session. A command of an earlier session is never admitted, whatever
+/// version it carries; ids continue above the host's admitted watermark.
+#[test]
+fn e101_every_host_instance_and_reload_draws_a_fresh_session() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let first = live.host.session();
+    let (key, page) = live.open("pages/a.md");
+    let reloaded = live.host.window_reloaded();
+    assert_eq!(reloaded.session, live.host.session());
+    assert_ne!(
+        reloaded.session, first,
+        "E101: a reload draws a new session"
+    );
+    let dto = live.dto(&key, "- stale\n");
+    let submit = |session, id| {
+        let kinds = [EditKind::SaveBlock];
+        live.host
+            .submit(session, id, &key, &dto, page.version, None, &kinds)
+    };
+    assert_eq!(
+        submit(first, reloaded.next_id),
+        Err(PageRefusal::NotAdmitted),
+        "E101: a version remembered under an earlier session never grants"
+    );
+    assert_eq!(
+        submit(reloaded.session, reloaded.next_id - 1),
+        Err(PageRefusal::NotAdmitted),
+        "ids continue above the admitted watermark"
+    );
+    live.id.set(reloaded.next_id - 1);
+    // Admitted at `next_id`; `Live::wait` checks the mail's session.
+    assert_eq!(live.open("pages/a.md").0, key);
+    let app = live.app();
+    let Live { store, host, .. } = live;
+    host.stop();
+    let host = PageHost::start(&store, &app, "test-graph", |_| {}).unwrap();
+    assert!(
+        ![first, reloaded.session].contains(&host.session()),
+        "E101: a relaunched host draws a new session"
+    );
+    let open = host.open(reloaded.session, 1 << 20, &PageId::from("pages/a.md"), "a");
+    assert_eq!(open, Err(PageRefusal::NotAdmitted));
+    host.stop();
+}
+
+/// E101 (P1): a page the host let go and loads again gets a version above
+/// every version it had before, so no answer or need of the old load can
+/// be mistaken for the new one.
+#[test]
+fn e101_an_evicted_and_reloaded_page_gets_a_greater_version() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let mut seen = page.version;
+    for body in ["- one\n- two\n", "- one\n- three\n"] {
+        let id = live.submit(&key, body, seen, None).unwrap();
+        seen = live.answer(&key, id).answer.unwrap().version;
+    }
+    live.until_published(&[(key.clone(), seen, None)]);
+    live.close(&key);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while live.held(&key) {
+        assert!(Instant::now() < deadline, "the closed page is never let go");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let (_, again) = live.open("pages/a.md");
+    assert!(
+        again.version > seen,
+        "E101: reloaded at {} after {seen}",
+        again.version
+    );
+    live.host.stop();
+}
+
+/// `page_owed` (R2): a held page owes its unpublished version; a page the
+/// host let go owes its index (version 0) until it publishes; a path
+/// filter names keys through the shared entry identity.
+#[test]
+fn owed_lists_unpublished_held_pages_and_released_index_debt() {
+    let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- b\n")]);
+    // b stays held and published: it owes nothing.
+    let (b, opened) = live.open("pages/b.md");
+    live.until_published(&[(b, opened.version, None)]);
+    let (key, page) = live.open("pages/a.md");
+    live.index_faults(3);
+    let id = live
+        .submit(&key, "- one\n- two\n", page.version, None)
+        .unwrap();
+    let version = live.answer(&key, id).answer.unwrap().version;
+    assert_eq!(live.host.owed(None), vec![(key.clone(), version)]);
+    let a = [PageId::from("pages/a.md")];
+    assert_eq!(live.host.owed(Some(&a)), vec![(key.clone(), version)]);
+    assert_eq!(live.host.owed(Some(&[PageId::from("pages/b.md")])), vec![]);
+    live.close(&key);
+    let until = |owed: Vec<(String, u64)>, what: &str| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while live.host.owed(None) != owed {
+            assert!(Instant::now() < deadline, "owed never {what}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    until(vec![(key.clone(), 0)], "the released index debt");
+    until(vec![], "empty");
+    live.until_indexed(&key, "- one\n- two\n");
+    live.host.stop();
+}
+
+/// `page_wait` (§4.4): true once the needs publish; false at once on a
+/// conflict of a needed page, and false at the bound, never success.
+#[test]
+fn wait_published_is_true_on_publication_false_on_conflict_or_bound() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    let version = live.answer(&key, id).answer.unwrap().version;
+    let long = Duration::from_secs(20);
+    assert!(live
+        .host
+        .wait_published(&[(key.clone(), version, None)], long));
+    assert_eq!(live.disk(&key), "- two\n");
+    let start = Instant::now();
+    let later = [(key.clone(), version + 1, None)];
+    assert!(!live.host.wait_published(&later, Duration::from_millis(300)));
+    assert!(
+        start.elapsed() >= Duration::from_millis(300),
+        "S1: no early false"
+    );
+    let id = live.submit(&key, "- mine\n", version, None).unwrap();
+    let mine = live.answer(&key, id).answer.unwrap().version;
+    fs::write(live.root.join(&key), "- theirs\n").unwrap();
+    let start = Instant::now();
+    assert!(!live.host.wait_published(&[(key.clone(), mine, None)], long));
+    assert!(
+        start.elapsed() < Duration::from_secs(10),
+        "a conflict ends the wait"
+    );
+    live.host.stop();
 }

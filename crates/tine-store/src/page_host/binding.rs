@@ -1,8 +1,8 @@
 //! One page host per graph binding (STEP3 §1–§3): the driver thread, the
 //! command path that serializes a window's page DTO against the right
-//! comparison source and admits it, and the page-mail bridge. Constructed
-//! only behind the `TINE_PAGE_HOST` switch (lane 3b flips it); until then
-//! the app saves through the old engine.
+//! comparison source and admits it, and the page-mail bridge. No production
+//! path starts one yet (step 3b P1 is inert; P2b starts it at graph open);
+//! until then the app saves through the old engine.
 use super::driver::{Driver, Owner, Sink, SystemClock};
 use super::production::ProductionIo;
 use super::progress::{backoff, Clock, Notice, Progress, Stopping};
@@ -64,8 +64,42 @@ pub enum PageRefusal {
         message: String,
     },
     /// The host did not admit the request: admission closed (a switch), a
-    /// stale window generation, an id out of order, or a stopped host.
+    /// stale session, an id out of order, or a stopped host.
     NotAdmitted,
+}
+
+/// A window session (plan v3 §5, R8): process-unique, drawn at every host
+/// launch and every window reload. Commands carry it and mail names it, so
+/// nothing from an earlier host or window load is ever applied: versions
+/// from different sessions are never compared (E101).
+static NEXT_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_session() -> u64 {
+    NEXT_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// `page_window_reloaded`'s reply: the window's new session, and the first
+/// request id the host can admit (ids never restart below its watermark).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reloaded {
+    /// The session every later command carries.
+    pub session: u64,
+    /// One past the host's last admitted request id.
+    pub next_id: u64,
+}
+
+/// `page_open`'s reply.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Opened {
+    /// The host's key for the page (its entry identity, A-H2).
+    pub key: String,
+    /// The opened path names the key's entry under the shared entry-identity
+    /// rule (B1): the window's text, read from that path, is the key's. False
+    /// when the path only collides with a registered entry unproved (the
+    /// window then sends its text as stale input, D-b, S5).
+    pub baseline_entry: bool,
 }
 
 impl From<Why> for PageRefusal {
@@ -159,7 +193,12 @@ impl DiskToken {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum MailText {
     /// Exactly the state the window submitted (R3), or a notice-only mail.
-    Unchanged,
+    /// `rev` names the buffer's bytes (none for no file), so the window's
+    /// baseline advances with the text the host took (S5).
+    Unchanged {
+        /// The buffer's revision.
+        rev: Option<FileRev>,
+    },
     /// The page has no file.
     NoFile,
     /// The page's bytes, parsed.
@@ -244,15 +283,12 @@ pub struct MailNotice {
     pub twin: Option<String>,
 }
 
-/// `page-mail` (§3.3). The window checks `binding` and `generation` before
-/// applying anything.
+/// `page-mail` (§3.3). The window checks `session` before applying anything.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PageMail {
-    /// The graph binding that sent it.
-    pub binding: u64,
-    /// The window generation it is for.
-    pub generation: u64,
+    /// The window session it is for (0: none, never current).
+    pub session: u64,
     /// The page key.
     pub key: String,
     /// The page's state, None once the host released it.
@@ -296,6 +332,8 @@ pub(super) struct MailFacts {
     pub spelling: String,
     /// The binding's own notices (§5, Q9).
     pub binding: BindingNotice,
+    /// The window session current when the mail was collected.
+    pub session: u64,
 }
 
 /// The page notices the binding keeps beside the host's (A2, REVIEW-3a).
@@ -397,6 +435,9 @@ pub(super) struct Book {
     /// A collected delivery's publications are with the sink and their
     /// results not yet recorded (V5, REVIEW-3a).
     delivering: bool,
+    /// The current window session: the host's generation under a
+    /// process-unique name (E97). 0 until launch draws one.
+    pub session: u64,
 }
 
 impl Book {
@@ -561,6 +602,7 @@ impl Book {
                     refused,
                     spelling: String::new(),
                     binding: BindingNotice::default(),
+                    session: 0,
                 },
             ));
         }
@@ -594,11 +636,16 @@ impl Book {
                         refused: None,
                         spelling: String::new(),
                         binding: BindingNotice::default(),
+                        session: 0,
                     },
                 ));
             }
         }
+        // `window_crash` clears the outbox under this lock, so all mail here
+        // is the current window's; mail a reload overtakes in flight keeps
+        // its old session, and the window drops it.
         for (page, _, facts) in &mut delivery.mail {
+            facts.session = self.session;
             facts.notice = progress.notice(page);
             facts.spelling = progress.host.fs.spelling(page);
             facts.binding = self.binding_notice(page);
@@ -714,7 +761,6 @@ impl Book {
 /// window (§3.3).
 struct Bridge {
     store: Arc<Store>,
-    binding: u64,
     mail: MailSink,
     #[cfg(test)]
     index_faults: Arc<std::sync::atomic::AtomicU32>,
@@ -765,7 +811,7 @@ impl Sink for Bridge {
             }
         }
         for (key, mail, facts) in delivery.mail {
-            let mail = page_mail(store, self.binding, key, mail, facts);
+            let mail = page_mail(store, key, mail, facts);
             (self.mail.lock().unwrap())(mail);
         }
         results
@@ -860,7 +906,7 @@ fn index(store: &Store, publication: &Publication) -> bool {
     true
 }
 
-fn page_mail(store: &Store, binding: u64, key: PageKey, mail: Mail, facts: MailFacts) -> PageMail {
+fn page_mail(store: &Store, key: PageKey, mail: Mail, facts: MailFacts) -> PageMail {
     let graph = &store.graph;
     let page = mail.page.map(|page| MailPage {
         version: page.version,
@@ -868,7 +914,9 @@ fn page_mail(store: &Store, binding: u64, key: PageKey, mail: Mail, facts: MailF
         risk: page.risk,
         disk: page.obs.as_ref().map(DiskToken::of),
         text: match &page.buf {
-            _ if !facts.content => MailText::Unchanged,
+            _ if !facts.content => MailText::Unchanged {
+                rev: page.buf.as_deref().map(FileRev::from_bytes),
+            },
             None => MailText::NoFile,
             Some(bytes) => match graph.page_dto_for_bytes(&graph.root.join(&facts.spelling), bytes)
             {
@@ -892,8 +940,7 @@ fn page_mail(store: &Store, binding: u64, key: PageKey, mail: Mail, facts: MailF
         },
     });
     PageMail {
-        binding,
-        generation: mail.generation,
+        session: facts.session,
         key,
         page,
         answer,
@@ -922,7 +969,6 @@ struct Launch {
     store: Arc<Store>,
     app_data: std::path::PathBuf,
     graph_id: String,
-    binding: u64,
     mail: MailSink,
 }
 
@@ -954,31 +1000,30 @@ impl PageHost {
     /// Bind a page host to `store`'s graph: drafts under
     /// `app_data/drafts-v2/<graph_id>`, recovered draft keys registered
     /// before launch (§2), then the driver, which owns the index of every
-    /// page it holds (§5). `mail` runs on the driver thread. The error says
-    /// why no host could start; the app stays on the old engine (the switch
-    /// is off in production until lane 3b).
+    /// page it holds (§5). `mail` runs on the driver thread. Each launch
+    /// draws a fresh session (E101). The error says why no host could
+    /// start; the app stays on the old engine (no production start until
+    /// step 3b P2b).
     pub(crate) fn start(
         store: &Arc<Store>,
         app_data: &Path,
         graph_id: &str,
-        binding: u64,
         mail: impl FnMut(PageMail) + Send + 'static,
     ) -> Result<Self, String> {
         Self::launch(Launch {
             store: store.clone(),
             app_data: app_data.to_path_buf(),
             graph_id: graph_id.into(),
-            binding,
             mail: Arc::new(Mutex::new(Box::new(mail))),
         })
     }
 
     /// A host for tests outside this crate (retained writers in
-    /// tine-graph-features): binding 0 under `app_data`, mail discarded.
-    /// Production binds hosts through lane 3b's switch.
+    /// tine-graph-features, the app's slot fixtures) under `app_data`, mail
+    /// discarded. Production starts hosts from step 3b P2b.
     #[cfg(any(test, feature = "test-faults"))]
     pub fn start_for_tests(store: &Arc<Store>, app_data: &Path) -> Result<Self, String> {
-        Self::start(store, app_data, "test-graph", 0, |_| {})
+        Self::start(store, app_data, "test-graph", |_| {})
     }
 
     fn launch(launch: Launch) -> Result<Self, String> {
@@ -986,10 +1031,9 @@ impl PageHost {
             store,
             app_data,
             graph_id,
-            binding,
             ..
         } = &launch;
-        let (app_data, graph_id, binding) = (app_data.as_path(), graph_id.as_str(), *binding);
+        let (app_data, graph_id) = (app_data.as_path(), graph_id.as_str());
         let graph = store.graph.clone();
         let trash = crate::model::trash_root(&graph.root).join("pages");
         let mut io = ProductionIo::new(&graph.root, app_data, graph_id, &trash)
@@ -1012,7 +1056,6 @@ impl PageHost {
         let published_kinds = Arc::new(Mutex::new(Vec::new()));
         let bridge = Bridge {
             store: store.clone(),
-            binding,
             mail: launch.mail.clone(),
             #[cfg(test)]
             index_faults: index_faults.clone(),
@@ -1020,6 +1063,9 @@ impl PageHost {
             published_kinds: published_kinds.clone(),
         };
         let driver = Driver::spawn(host, SystemClock::new(), bridge);
+        driver
+            .shared
+            .with_state(|state| state.book.session = next_session());
         // A watcher read of a held page (§5): the driver owes the host an
         // observation of it, taken under its path lock once the page is idle.
         let shared = Arc::downgrade(&driver.shared);
@@ -1074,26 +1120,27 @@ impl PageHost {
             .locked_step(|state| state.progress.with_host(&mut step))
     }
 
-    /// The window generation commands must carry.
-    pub(crate) fn generation(&self) -> u64 {
-        self.driver
-            .shared
-            .state
-            .lock()
-            .unwrap()
-            .progress
-            .host
-            .generation
+    /// The session commands must carry now (tests; the window learns it
+    /// from `window_reloaded`).
+    #[cfg(test)]
+    pub(crate) fn session(&self) -> u64 {
+        self.driver.shared.state.lock().unwrap().book.session
     }
 
-    /// A window reload (`window_crash`): unsent input is lost, admitted
-    /// requests keep their custody. Returns the new generation.
-    pub(crate) fn window_reloaded(&self) -> u64 {
+    /// A window (re)load (`window_crash`): unsent input is lost, admitted
+    /// requests keep their custody, and the window gets a fresh session and
+    /// the first request id the host can admit (R8).
+    pub(crate) fn window_reloaded(&self) -> Reloaded {
         self.driver.shared.with_state(|state| {
-            state.progress.with_host(|host| {
+            let next_id = state.progress.with_host(|host| {
                 host.window_crash();
-                host.generation
-            })
+                host.last_admitted.saturating_add(1)
+            });
+            state.book.session = next_session();
+            Reloaded {
+                session: state.book.session,
+                next_id,
+            }
         })
     }
 
@@ -1107,15 +1154,21 @@ impl PageHost {
         });
     }
 
-    /// Admit `request`; on admission its handoffs wait for its answer, and
-    /// an Open's key is the consumer's (§5) in the same step, so no
-    /// collection can evict it in between.
+    /// Admit `request` under `session`'s window generation; on admission
+    /// its handoffs wait for its answer, and an Open's key is the
+    /// consumer's (§5) in the same step, so no collection can evict it in
+    /// between. A session that is not current is not admitted.
     fn admit(
         &self,
-        request: Request,
+        session: u64,
+        mut request: Request,
         handoffs: Vec<(PageKey, Handoff)>,
     ) -> Result<(), PageRefusal> {
         self.driver.shared.with_state(|state| {
+            if session != state.book.session {
+                return Err(PageRefusal::NotAdmitted);
+            }
+            request.generation = state.progress.host.generation;
             let id = request.id;
             let open = (request.kind == RequestKind::Open).then(|| request.page.clone());
             match state.progress.with_host(|host| host.admit(request)) {
@@ -1133,19 +1186,20 @@ impl PageHost {
 
     /// `page_open` (§2, F4): every editable page, including one with no file
     /// yet, is opened first. With no file the create-only checks run here,
-    /// never on its keystrokes. Returns the page's key.
+    /// never on its keystrokes. Returns the page's key, and whether `page`
+    /// names that key's entry (the window's baseline, S5).
     /// The page's index moves to the publication consumer here (§5), under
     /// the writer: a watcher reconcile already running for it finishes
     /// first, and the consumer publishes the Open read.
     pub(crate) fn open(
         &self,
-        generation: u64,
+        session: u64,
         id: u64,
         page: &PageId,
         name: &str,
-    ) -> Result<PageKey, PageRefusal> {
+    ) -> Result<Opened, PageRefusal> {
         let store = &*self.store;
-        let (key, spelling, held) = self.identify(page);
+        let (key, spelling, held, baseline_entry) = self.identify(page);
         if !held {
             store
                 .transaction(None)
@@ -1154,13 +1208,13 @@ impl PageHost {
         self.register(&key, &spelling);
         let request = Request {
             id,
-            generation,
+            generation: 0,
             page: key.clone(),
             kind: RequestKind::Open,
         };
         let _writer = store.writer.lock().unwrap();
         store.watch.hold(key.clone());
-        let admitted = self.admit(request, vec![]);
+        let admitted = self.admit(session, request, vec![]);
         if admitted.is_err()
             && !self
                 .driver
@@ -1169,7 +1223,10 @@ impl PageHost {
         {
             store.watch.release_hold(&key);
         }
-        admitted.map(|()| key)
+        admitted.map(|()| Opened {
+            key,
+            baseline_entry,
+        })
     }
 
     /// The comparison source for a page DTO typed on `version` (§3.2, Q1),
@@ -1239,7 +1296,7 @@ impl PageHost {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn submit(
         &self,
-        generation: u64,
+        session: u64,
         id: u64,
         key: &str,
         dto: &PageDto,
@@ -1251,7 +1308,7 @@ impl PageHost {
         let (bytes, handoff) = self.serialize(&spelling, dto, source.as_ref(), kinds)?;
         let request = Request {
             id,
-            generation,
+            generation: 0,
             page: key.into(),
             kind: RequestKind::Submit {
                 bytes,
@@ -1259,7 +1316,7 @@ impl PageHost {
                 resolve: base,
             },
         };
-        self.admit(request, vec![(key.into(), handoff)])
+        self.admit(session, request, vec![(key.into(), handoff)])
     }
 
     /// `page_move` (§3.1, §8): both endpoints serialized as ordinary submits
@@ -1267,7 +1324,7 @@ impl PageHost {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn move_blocks(
         &self,
-        generation: u64,
+        session: u64,
         id: u64,
         source: (&str, &PageDto, u64),
         receiver: (&str, &PageDto, u64),
@@ -1283,7 +1340,7 @@ impl PageHost {
             self.serialize(&spelling, receiver_dto, old.as_ref(), kinds)?;
         let request = Request {
             id,
-            generation,
+            generation: 0,
             page: source_key.into(),
             kind: RequestKind::Move {
                 receiver: receiver_key.into(),
@@ -1294,6 +1351,7 @@ impl PageHost {
             },
         };
         self.admit(
+            session,
             request,
             vec![
                 (source_key.into(), source_handoff),
@@ -1305,35 +1363,35 @@ impl PageHost {
     /// `page_discard` (§3.1): the window consumed its unsent input first.
     pub(crate) fn discard(
         &self,
-        generation: u64,
+        session: u64,
         id: u64,
         key: &str,
         version: u64,
     ) -> Result<(), PageRefusal> {
         let request = Request {
             id,
-            generation,
+            generation: 0,
             page: key.into(),
             kind: RequestKind::Discard { version },
         };
-        self.admit(request, vec![])
+        self.admit(session, request, vec![])
     }
 
     /// `page_close` (§3.1): the last surface showing the page released it.
-    pub(crate) fn close(&self, generation: u64, id: u64, key: &str) -> Result<(), PageRefusal> {
+    pub(crate) fn close(&self, session: u64, id: u64, key: &str) -> Result<(), PageRefusal> {
         let request = Request {
             id,
-            generation,
+            generation: 0,
             page: key.into(),
             kind: RequestKind::Close,
         };
-        self.admit(request, vec![])
+        self.admit(session, request, vec![])
     }
 
     /// `page_delete` (§7): the host's delete operation. D4 refuses a page
     /// with unsaved input; Waiting means the page is busy (retry when clean).
     pub(crate) fn delete(&self, page: &PageId) -> PageOperation {
-        let (key, spelling, _) = self.identify(page);
+        let (key, spelling, ..) = self.identify(page);
         self.register(&key, &spelling);
         let deleted = self.driver.shared.locked_step(|state| {
             let disposition = state.progress.with_host(|host| host.delete(&key));
@@ -1349,63 +1407,6 @@ impl PageHost {
             Some(Disposition::Waiting) => PageOperation::Waiting,
             _ => PageOperation::Refused,
         }
-    }
-
-    /// `pages_recoverable` (§4.4): every listed page is clean at or past
-    /// that version, or its durable draft holds a version at or past it. A
-    /// page the host does not hold has nothing to recover.
-    pub(crate) fn pages_recoverable(&self, pages: &[(String, u64)]) -> bool {
-        let state = self.driver.shared.state.lock().unwrap();
-        let host = &state.progress.host;
-        let drafts = host.logical_drafts();
-        pages
-            .iter()
-            .all(|(key, version)| match host.pages.get(key) {
-                None => true,
-                Some(page) => {
-                    (page.clean() && page.version >= *version)
-                        || drafts
-                            .get(key)
-                            .is_some_and(|draft| draft.version >= *version)
-                }
-            })
-    }
-
-    /// `pages_published` (§4.4): every listed page the host holds is clean
-    /// with its index observation complete (Q5), or the publication
-    /// consumer has indexed an own save at or past that version. With a
-    /// witness block id (a block reference's target, §8), the page's last
-    /// indexed bytes must also hold that block (Q2): a later version without
-    /// it does not do, nor does an unsent local restoration. A page the
-    /// host does not hold has no save owed, but cannot witness a block.
-    pub(crate) fn pages_published(&self, pages: &[(String, u64, Option<String>)]) -> bool {
-        let mut witnesses = Vec::new();
-        {
-            let state = self.driver.shared.state.lock().unwrap();
-            let host = &state.progress.host;
-            for (key, version, witness) in pages {
-                let Some(page) = host.pages.get(key) else {
-                    if witness.is_some() || state.book.owned.contains(key) {
-                        return false;
-                    }
-                    continue;
-                };
-                let Some((indexed, watermark)) = state.book.index.get(key) else {
-                    return false;
-                };
-                let clean = page.clean() && page.version >= *version && *indexed == page.buf;
-                if !clean && *watermark < *version {
-                    return false;
-                }
-                if let Some(witness) = witness {
-                    witnesses.push((host.fs.spelling(key), indexed.clone(), witness));
-                }
-            }
-        }
-        let root = &self.store.graph.root;
-        witnesses.into_iter().all(|(spelling, bytes, id)| {
-            bytes.is_some_and(|bytes| bytes_hold_block_id(&root.join(spelling), &bytes, id))
-        })
     }
 }
 
@@ -1469,6 +1470,9 @@ impl Drop for PageHost {
 
 #[path = "binding_retained.rs"]
 mod retained;
+
+#[path = "binding_publication.rs"]
+mod publication;
 pub use retained::{RenameRefusal, Reservation};
 #[cfg(test)]
 #[path = "binding_tests.rs"]
