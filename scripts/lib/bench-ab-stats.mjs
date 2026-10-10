@@ -50,10 +50,11 @@ export const NOISY_PCT = 10;
 export function verdict({ delta, floor, lowerIsBetter = true, absDelta, absFloor }) {
   if (delta == null) return "n/a";
   if (floor == null) return "no A/A floor";
+  // A tiny absolute change on a tiny value is not a finding however large the percentage (timer
+  // quantization makes 7 ms vs 8 ms a 13 % "spread"), so the absolute tolerance is checked first.
+  if (absFloor != null && absDelta != null && Math.abs(absDelta) <= absFloor) return "within noise (absolute)";
   if (floor > NOISY_PCT) return `noisy metric (A/A ${floor.toFixed(0)}%)`;
   if (Math.abs(delta) <= Math.max(floor, 0) * 1.0 + 1e-9) return "within noise";
-  // A tiny absolute change on a tiny value is not a finding even if the percentage clears the floor.
-  if (absFloor != null && absDelta != null && Math.abs(absDelta) <= absFloor) return "within noise (absolute)";
   const worse = lowerIsBetter ? delta > 0 : delta < 0;
   return worse ? "WORSE (beyond noise)" : "better (beyond noise)";
 }

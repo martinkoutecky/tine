@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { answerNativeDialog } from "./e2e-native-dialog.mjs";
 import { makeToken, mib } from "./bench-ab-session.mjs";
-import { Adapter } from "./bench-ab-adapters.mjs";
+import { Adapter, armWatch, readWatch } from "./bench-ab-adapters.mjs";
 import { describe, keyToPublish, typedPrefixIn, allSeenAt, slopePerMinute, summarizeIo, parseNdjson, median } from "./bench-ab-stats.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -335,6 +335,7 @@ export const SCENARIOS = {
       await s.browser.waitUntil(() => s.browser.execute(() =>
         [...document.querySelectorAll(".autocomplete .ac-item")].some((e) => /refpick target/.test(e.textContent))),
       { timeout: 20000, interval: 50, timeoutMsg: "the block picker never offered the target" });
+      await s.browser.execute(armWatch, "blockref", []);
       const t0 = Date.now();
       await s.browser.keys(["Enter"]);
       let shown = null;
@@ -345,7 +346,8 @@ export const SCENARIOS = {
         else await sleep(5);
       }
       if (shown == null) throw new Error("the picked reference never appeared in the editor");
-      s.m("blockref.shownMs", shown - t0);
+      const watch = await s.browser.execute(readWatch);
+      s.m("blockref.shownMs", watch?.dt ?? shown - t0); // the in-page stopwatch when it fired
       // The reference is meaningful only once the id is on disk: the first publish carrying `id::`.
       for (;;) {
         const r = await s.records();
@@ -581,6 +583,7 @@ function carryScenario(k) {
       await s.settle(1500);
       await s.journey(`carry${k}`);
       await s.browser.$(".carry-btn-days").waitForExist({ timeout: 30000 });
+      await s.browser.execute(armWatch, "carry", needles);
       const t0 = Date.now();
       await s.browser.execute(() => document.querySelector(".carry-btn-days").click());
       let visible = null;
@@ -591,7 +594,8 @@ function carryScenario(k) {
         else await sleep(10);
       }
       if (visible == null) throw new Error("the carried tasks never appeared in today's journal");
-      s.m(`carry${k}.visibleMs`, visible - t0);
+      const watch = await s.browser.execute(readWatch);
+      s.m(`carry${k}.visibleMs`, watch?.dt ?? visible - t0); // the in-page stopwatch when it fired (no WebDriver latency)
       let publishedAt = null;
       while (Date.now() < deadline && publishedAt == null) {
         const r = await s.records();
@@ -697,6 +701,8 @@ function draftLaunch(title, configs, pagePrefix, tag, maxRunsCap = Infinity) {
 export const DEFAULT_SCENARIOS = ["launch", "typing", "delete", "rename", "external", "blockref", "carry2", "carry5", "custody", "drafts", "unitcost"];
 
 // -- metric registry ----------------------------------------------------------------
+/** WebKit rounds timers to 1 ms and the typing probe sees 6..10 ms, so a 1-3 ms move is quantization, not signal. */
+const TIMER_FLOOR_MS = 3;
 const METRIC_LIST = [
   ["launch.firstPageMs", "ms", "cold launch (request) to first painted page"],
   ["launch.firstEditableMs", "ms", "cold launch (request) to first block that opens an editor"],
@@ -704,19 +710,22 @@ const METRIC_LIST = [
   ["launch.rssTreeMiB", "MiB", "RSS of the app's process tree (webview helpers included)"],
   ...["typing1", "typing60", "typingBig"].flatMap((p) => [
     [`${p}.afterLastKeyMs`, "ms", "last key of an isolated edit -> Published (matched publish for that typed text)"],
-    [`${p}.iso.typingP50Ms`, "ms", "typing latency (input -> next paint), isolated edit"],
-    [`${p}.iso.typingP95Ms`, "ms", "typing latency p95, isolated edit"],
+    [`${p}.iso.typingP50Ms`, "ms", "typing latency (input -> next paint), isolated edit; 1 ms timer resolution", { absFloor: TIMER_FLOOR_MS }],
+    [`${p}.iso.typingP95Ms`, "ms", "typing latency p95, isolated edit", { absFloor: TIMER_FLOOR_MS }],
     [`${p}.burstKeyToPublishP50Ms`, "ms", "continuous 5 s burst at 10 keys/s: keystroke -> first publish carrying it, p50"],
     [`${p}.burstKeyToPublishP95Ms`, "ms", "same, p95"],
     [`${p}.burstTailMs`, "ms", "burst: last key -> final Published"],
     [`${p}.burstPublishCount`, "count", "burst: publishes during/after the burst (write cost: SPEC-s2 §4.9 cap 3 s -> 1 s)", { neutral: true }],
     [`${p}.burstLostKeys`, "count", "burst: keys never covered by any publish (must be 0)", { neutral: true }],
     [`${p}.burstKeys`, "count", "burst: keystrokes delivered", { neutral: true }],
-    [`${p}.burst.typingP50Ms`, "ms", "typing latency p50 during the burst"],
-    [`${p}.burst.typingP95Ms`, "ms", "typing latency p95 during the burst"],
-    [`${p}.burst.typingDuringSaveP50Ms`, "ms", "typing latency p50 for keys typed while a save was running"],
-    [`${p}.burst.typingDuringSaveP95Ms`, "ms", "typing latency p95 for keys typed while a save was running"],
-    [`${p}.burst.typingDuringSaveN`, "count", "keys typed while a save was running", { neutral: true }],
+    [`${p}.burst.typingP50Ms`, "ms", "typing latency p50 during the burst", { absFloor: TIMER_FLOOR_MS }],
+    [`${p}.burst.typingP95Ms`, "ms", "typing latency p95 during the burst", { absFloor: TIMER_FLOOR_MS }],
+    [`${p}.burst.typingDuringSaveP50Ms`, "ms", "typing latency p50 for keys typed while a save was running", { absFloor: TIMER_FLOOR_MS }],
+    [`${p}.burst.typingDuringSaveP95Ms`, "ms", "typing latency p95 for keys typed while a save was running", { absFloor: TIMER_FLOOR_MS }],
+    [`${p}.burst.typingDuringSaveN`, "count", "keys typed while a save was running (few: saves take tens of ms)", { neutral: true }],
+    [`${p}.burst.typingNearSaveP50Ms`, "ms", "typing latency p50 for keys typed during a save or up to 500 ms after it ended", { absFloor: TIMER_FLOOR_MS }],
+    [`${p}.burst.typingNearSaveP95Ms`, "ms", "same, p95", { absFloor: TIMER_FLOOR_MS }],
+    [`${p}.burst.typingNearSaveN`, "count", "keys in that window", { neutral: true }],
     [`${p}.burst.longTaskCount`, "count", "main-thread gaps over 100 ms during the burst"],
     [`${p}.burst.longTaskMaxMs`, "ms", "longest gap during the burst", { absFloor: 20 }],
     [`${p}.admissionRttP95Ms`, "ms", "candidate: page_submit round trip p95 during ordinary saves (R9)", { candidateOnly: true }],
@@ -737,14 +746,14 @@ const METRIC_LIST = [
   ["ext.cleanPageRewritten", "count", "clean held page rewritten by Tine (must be 0)", { neutral: true }],
   ["ext.mailParseP50Us", "us", "candidate: page-mail DTO parse cost p50 (mail_parse events)", { candidateOnly: true }],
   ["ext.mailParseP95Us", "us", "candidate: same, p95", { candidateOnly: true }],
-  ["blockref.shownMs", "ms", "picker Enter -> ((uuid)) shown in the editor"],
+  ["blockref.shownMs", "ms", "picker Enter -> ((uuid)) shown in the editor (in-page stopwatch)", { absFloor: 10 }],
   ["blockref.targetPublishedMs", "ms", "picker Enter -> publish carrying the target's id::"],
   ["custody.failMs", "ms", "last key -> draft durable, saves failing (pages dir read-only)"],
   ["custody.conflictMs", "ms", "last key -> draft durable, external edit under a dirty page"],
-  ["carry2.visibleMs", "ms", "carry-over from 2 sources: click -> tasks shown"],
+  ["carry2.visibleMs", "ms", "carry-over from 2 sources: click -> tasks shown (in-page stopwatch)", { absFloor: 15 }],
   ["carry2.publishedMs", "ms", "carry-over from 2 sources: click -> tasks published"],
   ["carry2.unfreezeMs", "ms", "candidate: click -> unfreeze event", { candidateOnly: true }],
-  ["carry5.visibleMs", "ms", "carry-over from 5 sources: click -> tasks shown"],
+  ["carry5.visibleMs", "ms", "carry-over from 5 sources: click -> tasks shown (in-page stopwatch)", { absFloor: 15 }],
   ["carry5.publishedMs", "ms", "carry-over from 5 sources: click -> tasks published"],
   ["carry5.unfreezeMs", "ms", "candidate: click -> unfreeze event", { candidateOnly: true }],
   ...["drafts0", "drafts20"].flatMap((p) => [
@@ -758,7 +767,7 @@ const METRIC_LIST = [
     [`${p}.firstPageMs`, "ms", "scaling probe: relaunch with recovered drafts -> first page"],
     [`${p}.firstEditableMs`, "ms", "scaling probe: -> first editable"],
   ]),
-  ["session.rssMainSlopeMiBPerMin", "MiB/min", "RSS growth of the main process over the scripted session (after warm-up)", { absFloor: 0.05 }],
+  ["session.rssMainSlopeMiBPerMin", "MiB/min", "RSS growth of the main process over the scripted session (after warm-up); A/A on 5-minute sessions differed by ~1 MiB/min, so 1.0 is the provisional tolerance until a 30-minute A/A is run", { absFloor: 1.0 }],
   ["session.rssTreeSlopeMiBPerMin", "MiB/min", "RSS growth of the process tree"],
   ["session.rssMainMaxMiB", "MiB", "peak RSS of the main process"],
   ["session.eventVectorMaxLen", "count", "candidate: largest Host::events length sampled (host_stats)", { candidateOnly: true }],

@@ -24,7 +24,7 @@ nice -n 5 xvfb-run -a -s "-screen 0 1920x1080x24" node scripts/bench-storage-ab.
 - The binaries are copied into `<out>/binaries/<arm>/tine`, and each receipt (`tine.build.json`
   from `scripts/deploy.sh`) is checked against the copy's SHA-256; a mismatch reports the revision
   as unverified.
-- One bench process at a time; run it at `nice -n 5`, record `uptime`. The report prints the load
+- One bench process at a time; run it at `nice -n 5` and with `--max-load 6` (each trial waits up to 10 minutes for the 1-minute load average to fall below it; other lanes build on this machine and one A/A whose trials started at load up to 47 gave a 39-51 % spread on the rename metrics). The report prints the load
   average at start and end.
 - `--runs` is at least 5 (the stability budget); `--pilot` allows fewer and is for harness
   debugging only. Arms alternate who goes first each run.

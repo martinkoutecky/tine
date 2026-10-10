@@ -9,6 +9,7 @@
 //       [--runs 7] [--scenarios default|all|a,b,..] [--noise-floor <aa/summary.json>]
 //   ... --aa <bin>        the same binary on both arms (the A/A validation run)
 //   ... --session-minutes <n> --session-runs <n>   the `session` scenario (spec: 30 minutes; 1 run by default)
+//   ... --max-load <n>   before each trial wait (up to 10 min) for the 1-minute load average to fall below n
 //   ... --list            print scenarios and metrics, run nothing
 //   ... --summarize-only  recompute summary.json / comparison.md from --out
 //
@@ -115,13 +116,23 @@ async function prepareCorpus() {
 
 const trialFiles = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => fs.existsSync(path.join(dir, n, "result.json"))) : []);
 
+/** Other lanes build on this machine; a trial started at load 40 measures the neighbours. */
+async function waitForQuiet() {
+  const limit = Number(opts.maxLoad);
+  if (!Number.isFinite(limit) || limit <= 0) return 0;
+  const started = Date.now();
+  while (os.loadavg()[0] > limit && Date.now() - started < 600000) await sleep(10000);
+  return Date.now() - started;
+}
+
 async function runTrial(arm, scenarioId, run, corpusDir, tauriDriver) {
+  const waitedMs = await waitForQuiet();
   const scenario = SCENARIOS[scenarioId];
   const timeoutMs = scenario.timeoutMs(opts);
   const s = new Session({ arm, group: scenarioId, run, corpusDir, outDir: opts.outAbs, repoRoot: ROOT, tauriDriver,
     webDriver: process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver", timeoutMs });
   s.prepare();
-  const result = { arm: arm.id, scenario: scenarioId, run, loadAvgBefore: os.loadavg()[0], metrics: {}, series: {}, notes: {}, failures: {} };
+  const result = { arm: arm.id, scenario: scenarioId, run, waitedForLoadMs: waitedMs, loadAvgBefore: os.loadavg()[0], metrics: {}, series: {}, notes: {}, failures: {} };
   let watchdog;
   try {
     await Promise.race([
@@ -162,12 +173,14 @@ function summarize(results, arms, noise) {
     const floor = noise?.summary?.metrics?.[name]?.spreadPct ?? null;
     summary.metrics[name] = { unit: info.unit, candidateOnly: !!info.candidateOnly, cells, spreadPct: spread, deltaPct: deltaPct(base, cand),
       noisy: spread != null && spread > NOISY_PCT,
+      absDiff: base && cand ? cand.median - base.median : null, absFloor: info.absFloor ?? null,
       verdict: verdict({ delta: deltaPct(base, cand), floor, lowerIsBetter: !info.neutral, absDelta: base && cand ? cand.median - base.median : null, absFloor: info.absFloor }) };
   }
   for (const name of [...seriesNames].sort()) {
     const cells = Object.fromEntries(arms.map((a) => [a.id, describe(collectSeries(results, a.id, name))]));
     const spread = medianSpreadPct(cells.baseline, cells.candidate);
-    summary.series[name] = { unit: "ms", cells, spreadPct: spread, deltaPct: deltaPct(cells.baseline, cells.candidate), noisy: spread != null && spread > NOISY_PCT };
+    summary.series[name] = { unit: "ms", cells, spreadPct: spread, deltaPct: deltaPct(cells.baseline, cells.candidate), noisy: spread != null && spread > NOISY_PCT,
+      absDiff: cells.baseline && cells.candidate ? cells.candidate.median - cells.baseline.median : null, absFloor: /typing/.test(name) ? 3 : null };
   }
   return summary;
 }
@@ -178,7 +191,7 @@ function renderMarkdown(report) {
   const lines = [`# Storage A/B bench (${mode})`, "",
     ...arms.map((a) => `- ${a.id}: ${a.source} sha256 ${a.sha256.slice(0, 16)}... revision ${a.sourceRevision}; publish signal: ${a.adapter === "ipc" ? "save_pages IPC response" : "bench events file (TINE_BENCH_EVENTS)"}`),
     `- runs per arm: ${runs}; corpus: ${report.corpus}; scenarios: ${report.scenarios.join(", ")}; probe: ${report.probe}`,
-    `- load average at start: ${report.loadAvgStart.toFixed(2)}; at end: ${report.loadAvgEnd.toFixed(2)}`, "",
+    `- load average at start: ${report.loadAvgStart.toFixed(2)}; at end: ${report.loadAvgEnd.toFixed(2)}; at the start of each trial: median ${fmt(report.trialLoad?.median, 1)}, max ${fmt(report.trialLoad?.max, 1)}; trials that waited for --max-load: ${report.trialLoad?.trialsWaitingForLoad ?? 0}`, "",
     aa ? "A/A spread = |median(A) - median(B)| / mean of the two medians, in percent; a metric above 10% needs more runs or a better signal."
       : "delta = candidate median vs baseline median; verdict uses the A/A floor from --noise-floor when given.", "",
     "| Metric | unit | baseline med [min,max] n | candidate med [min,max] n | p95 base / cand | delta % | A/B-or-A/A spread % | verdict |", "|---|---|---|---|---|---|---|---|"];
@@ -189,12 +202,12 @@ function renderMarkdown(report) {
     const none = !c.baseline && !c.candidate;
     if (none) { unmeasured.push(m.candidateOnly ? `${name} (candidate-only)` : name); continue; }
     const note = m.candidateOnly && !c.baseline ? "candidate-only" : m.verdict;
-    lines.push(`| ${name} | ${m.unit} | ${cell(c.baseline)} | ${cell(c.candidate)} | ${fmt(c.baseline?.p95, 2)} / ${fmt(c.candidate?.p95, 2)} | ${fmt(m.deltaPct)} | ${fmt(m.spreadPct)}${m.noisy ? " NOISY" : ""} | ${note} |`);
+    lines.push(`| ${name} | ${m.unit} | ${cell(c.baseline)} | ${cell(c.candidate)} | ${fmt(c.baseline?.p95, 2)} / ${fmt(c.candidate?.p95, 2)} | ${fmt(m.deltaPct)} | ${fmt(m.spreadPct)}${m.noisy ? (m.absFloor != null && Math.abs(m.absDiff) <= m.absFloor ? ` NOISY-relative (abs diff ${fmt(m.absDiff, 1)} <= tolerance ${m.absFloor})` : " NOISY") : ""} | ${note} |`);
   }
   lines.push("", "## Pooled samples (all keystrokes / calls across runs)", "", "| Series | baseline p50 / p95 (n) | candidate p50 / p95 (n) | spread % |", "|---|---|---|---|");
   for (const [name, m] of Object.entries(summary.series)) {
     const f = (c) => (c ? `${fmt(c.median, 2)} / ${fmt(c.p95, 2)} (${c.n})` : "-");
-    lines.push(`| ${name} | ${f(m.cells.baseline)} | ${f(m.cells.candidate)} | ${fmt(m.spreadPct)}${m.noisy ? " NOISY" : ""} |`);
+    lines.push(`| ${name} | ${f(m.cells.baseline)} | ${f(m.cells.candidate)} | ${fmt(m.spreadPct)}${m.noisy ? (m.absFloor != null && Math.abs(m.absDiff) <= m.absFloor ? ` NOISY-relative (abs diff ${fmt(m.absDiff, 1)} <= tolerance ${m.absFloor})` : " NOISY") : ""} |`);
   }
   lines.push("", "## Metrics with no samples in this run", "", unmeasured.length ? unmeasured.join(", ") : "none");
   const failed = report.failures;
@@ -240,7 +253,9 @@ if (opts.summarizeOnly) {
 const noise = opts.noiseFloor ? JSON.parse(fs.readFileSync(path.resolve(opts.noiseFloor), "utf8")) : null;
 const summary = summarize(results, arms, noise);
 const report = { schemaVersion: 1, mode, arms, runs: opts.runs, corpus: opts.corpus, scenarios, probe: "rAF gap over 100 ms where PerformanceObserver longtask is unsupported",
-  loadAvgStart, loadAvgEnd: os.loadavg()[0], noiseFloorFrom: opts.noiseFloor ?? null, summary,
+  loadAvgStart, loadAvgEnd: os.loadavg()[0],
+  trialLoad: (() => { const l = results.map((r) => r.loadAvgBefore).filter(Number.isFinite); const d = describe(l); return d ? { median: d.median, max: d.max, trialsWaitingForLoad: results.filter((r) => r.waitedForLoadMs > 0).length } : null; })(),
+  noiseFloorFrom: opts.noiseFloor ?? null, summary,
   failures: results.filter((r) => Object.keys(r.failures).length).map((r) => ({ arm: r.arm, scenario: r.scenario, run: r.run, failures: r.failures })) };
 fs.writeFileSync(path.join(opts.outAbs, "summary.json"), JSON.stringify(report, null, 2) + "\n");
 fs.writeFileSync(path.join(opts.outAbs, "comparison.md"), renderMarkdown(report));

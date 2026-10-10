@@ -114,6 +114,28 @@ export function setJourney(name) {
   window.__abProbe.last = performance.now();
 }
 
+/** In-page stopwatch for "action -> visible" timings. Timing in the page uses one clock and no
+ *  WebDriver round trips (which cost 10-40 ms each and made a 20 ms interval read as 17..108 ms).
+ *  kind "carry": starts at the click on the carry button, stops when every needle is in the
+ *  journal section. kind "blockref": starts at the Enter keydown, stops when ((uuid)) is in the
+ *  editor. Self-contained: serialized by WebDriver. */
+export function armWatch(kind, needles) {
+  const w = { kind, t0: null, dt: null };
+  window.__abWatch = w;
+  const cond = kind === "carry"
+    ? () => { const text = document.querySelector(".page-section")?.innerText ?? ""; return needles.every((n) => text.includes(n)); }
+    : () => /\(\([0-9a-f-]{36}\)\)/.test(document.querySelector("textarea.block-editor")?.value ?? "");
+  const check = () => {
+    if (w.dt != null) return;
+    if (cond()) { w.dt = performance.now() - w.t0; return; }
+    setTimeout(check, 0);
+  };
+  const start = () => { if (w.t0 == null) { w.t0 = performance.now(); check(); } };
+  if (kind === "carry") document.addEventListener("click", (e) => { if (e.target.closest?.(".carry-btn-days")) start(); }, true);
+  else document.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); }, true);
+}
+export function readWatch() { return window.__abWatch ? { t0: window.__abWatch.t0, dt: window.__abWatch.dt } : null; }
+
 /** Neutral records from the in-page call log (the "ipc" arm). */
 function fromCalls(calls) {
   const publishes = [];

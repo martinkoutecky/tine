@@ -302,6 +302,13 @@ export class Session {
     const dd = describe(during);
     this.m(`${prefix}.typingDuringSaveN`, during.length);
     if (dd) { this.m(`${prefix}.typingDuringSaveP50Ms`, dd.median); this.m(`${prefix}.typingDuringSaveP95Ms`, dd.p95); this.addSeries(`${prefix}.typingDuringSaveMs`, during); }
+    // Both arms save in tens of milliseconds on these pages, so few keys land INSIDE a save. The
+    // UI work a save causes (change events, refreshes) follows its end, so keys in the save span
+    // plus a grace period after it are the ones a save can slow.
+    const near = keys.filter((k) => spans.some((sp) => k.t >= sp.t0 && k.t <= sp.t1 + NEAR_SAVE_GRACE_MS)).map((k) => k.lat).filter(Number.isFinite);
+    const dn = describe(near);
+    this.m(`${prefix}.typingNearSaveN`, near.length);
+    if (dn) { this.m(`${prefix}.typingNearSaveP50Ms`, dn.median); this.m(`${prefix}.typingNearSaveP95Ms`, dn.p95); this.addSeries(`${prefix}.typingNearSaveMs`, near); }
   }
 
   longTasks(records, journey, prefix) {
@@ -310,6 +317,9 @@ export class Session {
     this.m(`${prefix}.longTaskMaxMs`, events.length ? Math.max(...events) : 0);
   }
 }
+
+/** Keys typed up to this long after a save ends count as near it. */
+export const NEAR_SAVE_GRACE_MS = 500;
 
 export function makeToken(code, length) {
   let s = `qzx${code}`;
