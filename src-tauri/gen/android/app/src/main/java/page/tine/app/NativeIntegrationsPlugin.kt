@@ -8,6 +8,8 @@ import android.system.Os
 import android.system.OsConstants
 import android.util.Log
 import android.webkit.WebView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import app.tauri.annotation.Command
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
@@ -51,10 +53,14 @@ internal const val SHARE_OCCURRENCE_EXTRA = "page.tine.app.SHARE_OCCURRENCE"
  * `EXTRA_STREAM` images the resources.
  *
  * Routes (launcher shortcuts, the Quick Settings tile) are plain `tine://`
- * VIEW intents and need nothing here.
+ * VIEW intents. Their one native need is `showKeyboard`: Android shows the
+ * keyboard for a focus the user tapped, never for one script made, so after a
+ * route focuses its search box or capture block the frontend asks for it.
  */
 @TauriPlugin
 class NativeIntegrationsPlugin(private val activity: Activity) : Plugin(activity) {
+  private var webView: WebView? = null
+
   private fun inboxRoot(): File = File(activity.filesDir, "share-inbox")
 
   private val files = DurableFiles { dir ->
@@ -77,7 +83,22 @@ class NativeIntegrationsPlugin(private val activity: Activity) : Plugin(activity
     invoke.resolve(JSObject().apply { put("path", root.absolutePath) })
   }
 
+  /** Show the keyboard for the input the frontend just focused (a route
+   * opened search or quick capture without a tap). */
+  @Command
+  fun showKeyboard(invoke: Invoke) {
+    activity.runOnUiThread {
+      val view = webView
+      if (view != null) {
+        view.requestFocus()
+        WindowCompat.getInsetsController(activity.window, view).show(WindowInsetsCompat.Type.ime())
+      }
+      invoke.resolve()
+    }
+  }
+
   override fun load(webView: WebView) {
+    this.webView = webView
     val intent = activity.intent
     // A redelivered occurrence (restored intent) is republished, not reported.
     val keep = try {
