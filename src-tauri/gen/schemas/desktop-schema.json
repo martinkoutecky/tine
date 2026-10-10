@@ -2337,10 +2337,10 @@
           "markdownDescription": "Denies the save command without any pre-configured scope."
         },
         {
-          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-registerListener`\n- `allow-removeListener`",
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-registerListener`\n- `allow-removeListener`\n- `allow-showKeyboard`",
           "type": "string",
           "const": "native-integrations:default",
-          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-registerListener`\n- `allow-removeListener`"
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-registerListener`\n- `allow-removeListener`\n- `allow-showKeyboard`"
         },
         {
           "description": "Enables the registerListener command without any pre-configured scope.",
@@ -2355,6 +2355,12 @@
           "markdownDescription": "Enables the removeListener command without any pre-configured scope."
         },
         {
+          "description": "Enables the showKeyboard command without any pre-configured scope.",
+          "type": "string",
+          "const": "native-integrations:allow-showKeyboard",
+          "markdownDescription": "Enables the showKeyboard command without any pre-configured scope."
+        },
+        {
           "description": "Denies the registerListener command without any pre-configured scope.",
           "type": "string",
           "const": "native-integrations:deny-registerListener",
@@ -2365,6 +2371,12 @@
           "type": "string",
           "const": "native-integrations:deny-removeListener",
           "markdownDescription": "Denies the removeListener command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the showKeyboard command without any pre-configured scope.",
+          "type": "string",
+          "const": "native-integrations:deny-showKeyboard",
+          "markdownDescription": "Denies the showKeyboard command without any pre-configured scope."
         },
         {
           "description": "This permission set configures which\nprocess features are by default exposed.\n\n#### Granted Permissions\n\nThis enables to quit via `allow-exit` and restart via `allow-restart`\nthe application.\n\n#### This default permission set includes:\n\n- `allow-exit`\n- `allow-restart`",
