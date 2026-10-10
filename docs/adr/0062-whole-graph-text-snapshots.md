@@ -6,10 +6,12 @@
   master's snapshots: rare in practice, and the safer rule.
 - **Amended 2026-10-10 (og-backup-cas, design approved by Martin):** og now
   writes schema 4, which keeps this ADR's scope, policy and `graph/` paths but
-  stores each distinct content once in `blobs/<sha256>` beside the snapshots;
-  the snapshot directory holds only the manifest. og still lists, restores
-  and prunes schema 3 and 2. Contract: docs/storage-contract.md, Graph
-  backups.
+  stores each distinct content once in `blobs/<sha256>`; the snapshot
+  directory holds only the manifest, which carries a checksum. Schema 4
+  lives in its own namespace `backups/<graph-id>.cas/`, which builds
+  without schema 4 never open, under one OS file lock. og still lists,
+  restores and prunes schema 3 and 2 in `backups/<graph-id>/`. Contract:
+  docs/storage-contract.md, Graph backups.
 - **Date:** 2026-09-29
 - **Unit cost:** 0 bytes and 0 files per edit on a 1-block or a 60-block page
   (snapshots are taken at launch and before user-requested rewrites, never per
