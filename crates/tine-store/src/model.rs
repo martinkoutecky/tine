@@ -5,9 +5,10 @@
 
 mod checkpoint_state;
 mod collapse_only;
+pub(crate) mod entry_identity;
 pub(crate) mod held_index;
 pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
-pub(crate) use held_index::{PagePath, Source};
+pub(crate) use held_index::Source;
 mod layout_retention;
 pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};

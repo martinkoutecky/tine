@@ -335,3 +335,43 @@ fn rename_and_reserve_cost_is_independent_of_registered_keys() {
          key_spelled and operations.rs rename_with's version allocation"
     );
 }
+
+/// B1: the host and the held index decide a spelling's identity by the
+/// same rule. Another spelling of an open page's entry (a folding volume's
+/// case alias; elsewhere a symlink, the Q4 test's stand-in) opens the same
+/// key, is never sourced from disk while the page is held, and the entry
+/// keeps one installed row.
+#[test]
+fn the_host_and_the_held_index_agree_on_an_alias_spelling() {
+    let live = Live::new(&[("pages/Foo.md", "- one\n")]);
+    let alias = live.root.join("pages/foo.md");
+    if !folds_case(&live.root) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(live.root.join("pages/Foo.md"), &alias).unwrap();
+        #[cfg(not(unix))]
+        {
+            live.host.stop();
+            return;
+        }
+    }
+    let (key, _) = live.open("pages/Foo.md");
+    let (again, _) = live.open("pages/foo.md");
+    assert_eq!(
+        again, key,
+        "B1: the host gave an alias spelling its own key"
+    );
+    assert!(
+        !matches!(live.store.graph.source(&alias), crate::model::Source::Disk),
+        "B1: the held index sourced an alias spelling of a held page from disk"
+    );
+    let graph = &live.store.graph;
+    assert!(graph.rebuild_cache_cancellable(|| false));
+    let rows = graph.with_pages(|pages| {
+        pages
+            .iter()
+            .filter(|(entry, _)| entry.path == alias || entry.path == live.root.join(&key))
+            .count()
+    });
+    assert_eq!(rows, 1, "B1: one entry, one installed row");
+    live.host.stop();
+}

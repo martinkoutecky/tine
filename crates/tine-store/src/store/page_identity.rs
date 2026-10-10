@@ -42,7 +42,9 @@ impl Store {
     /// another case spelling. Canonicalization reveals the disk spelling;
     /// accept it only when case is the entire difference and it remains an
     /// eligible graph text file. The normal page path guard runs afterward.
-    pub(crate) fn disk_spelling_for_case_alias(&self, id: &PageId) -> Option<PageId> {
+    /// A spelling resolver only (for a read and a new host key): which page
+    /// a path names is [`crate::model::Graph::identify`]'s (B1).
+    pub(crate) fn disk_spelling(&self, id: &PageId) -> Option<PageId> {
         let root = canonical_existing_path(&self.graph.root).ok()?;
         let actual = canonical_existing_path(&root.join(id.as_str())).ok()?;
         let rel = actual.strip_prefix(&root).ok()?;

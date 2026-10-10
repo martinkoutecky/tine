@@ -395,9 +395,15 @@ impl Core {
                 continue;
             };
             // STEP3 §5: the owner observes, indexes and publishes this read.
-            let held = self.graph.page_path_of(&path);
-            if let Some(key) = held.and_then(|held| self.graph.held.key(&held)) {
-                forwarded.push(key);
+            // B1: a path of unknown identity against the held keys is never
+            // installed from disk; each candidate's owner observes its page.
+            let owners = match self.graph.held_identity(&path) {
+                crate::model::entry_identity::Identity::Key(key) => vec![key],
+                crate::model::entry_identity::Identity::Unknown { candidates, .. } => candidates,
+                _ => Vec::new(),
+            };
+            if !owners.is_empty() {
+                forwarded.extend(owners);
                 retry_baseline(&mut now, &path, before);
                 continue;
             }

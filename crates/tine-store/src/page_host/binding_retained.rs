@@ -2,6 +2,7 @@
 //! switch/restore stop (STEP3 §6–§7): the binding commands that fence
 //! pages away from the host or run a page operation for a writer.
 use super::*;
+use crate::model::entry_identity::Identity;
 use crate::transaction::validation::{rewrite as rewrite_refs, rewrite_move};
 use crate::RenameMap;
 
@@ -284,19 +285,56 @@ impl PageHost {
     pub fn respell(&self, page: &PageId, to: &PageId) {
         let graph = &self.store.graph;
         let lock = graph.page_lock(&graph.root.join(to.as_str()));
-        let key = self.driver.shared.with_state(|state| {
+        // The held index names the key, so it follows the host's spelling
+        // table with no step of its own (B1).
+        self.driver.shared.with_state(|state| {
             let host = &mut state.progress.host;
-            let key = key_spelled(host, page.as_str())?;
-            host.respell(&key, to.as_str(), lock);
-            Some(key)
+            if let Some(key) = host.key_spelled(page.as_str()) {
+                host.respell(&key, to.as_str(), lock);
+            }
         });
-        if key.is_some() {
-            let _writer = self.store.writer.lock().unwrap();
-            graph.held.respell(
-                &graph.page_path(page.as_str()),
-                graph.page_path(to.as_str()),
-            );
-        }
+    }
+
+    /// The key naming `page`'s directory entry (§2), by the one identity
+    /// rule (B1, [`crate::model::Graph::identify`]): a registered key the
+    /// path names, or whose entry it reaches as an alias (Q4's test: the
+    /// same file, not listed apart); else the entry's spelling as a key.
+    /// Also whether the host holds that page.
+    pub(super) fn identify(&self, page: &PageId) -> (PageKey, PageId, bool) {
+        let graph = &self.store.graph;
+        let registered = |fold: &str| {
+            self.driver
+                .shared
+                .state
+                .lock()
+                .unwrap()
+                .progress
+                .host
+                .candidates(fold)
+        };
+        let named = match graph.identify(&graph.root.join(page.as_str()), &registered) {
+            Identity::Key(key)
+            | Identity::Unknown {
+                alias: Some(key), ..
+            } => Some(key),
+            _ => None,
+        };
+        let disk = self
+            .store
+            .disk_spelling(page)
+            .unwrap_or_else(|| page.clone());
+        let state = self.driver.shared.state.lock().unwrap();
+        let host = &state.progress.host;
+        let (key, spelling) = match named {
+            Some(key) => (key.clone(), PageId::from(host.fs.spelling(&key))),
+            None => (
+                host.key_spelled(disk.as_str())
+                    .unwrap_or_else(|| disk.as_str().into()),
+                disk,
+            ),
+        };
+        let held = host.pages.contains_key(&key);
+        (key, spelling, held)
     }
 
     /// A key's current spelling, as the page it names.

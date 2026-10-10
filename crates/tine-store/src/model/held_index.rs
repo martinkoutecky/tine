@@ -10,41 +10,27 @@
 //! nothing is held, every source is the file, and builds and reads do the
 //! I/O they did before.
 
+use super::entry_identity::{fold_leaf, Identity, Spellings};
 use super::*;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// A page file's path under the store's resolved root: the held map's
-/// only key (A-H1). Only [`Graph::page_path`] and [`Graph::page_path_of`]
-/// build one, so a hold, its indexing and every lookup spell the root the
-/// same way on every platform (a Windows temp dir's 8.3 or `\\?\` form, a
-/// symlinked or `..` root).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct PagePath(PathBuf);
+/// What a held key's index writer last indexed since the hold began:
+/// `None` until the first publication, `Some(None)` for no file. The bytes
+/// are the consumer's own buffer, shared, not copied.
+type Indexed = Option<Option<Arc<[u8]>>>;
 
-impl std::ops::Deref for PagePath {
-    type Target = Path;
-    fn deref(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl From<PagePath> for PathBuf {
-    fn from(path: PagePath) -> Self {
-        path.0
-    }
-}
-
-/// A held path's owner key and what its index writer last indexed since
-/// the hold began: `None` until the first publication, `Some(None)` for no
-/// file. The bytes are the consumer's own buffer, shared, not copied.
-type Entry = (String, Option<Option<Arc<[u8]>>>);
-
+/// The held pages, by host key (B1): a key is the page's identity, its
+/// spelling (the host's [`Spellings`], attached while a host runs) is only
+/// where its I/O goes. A path reaches a held key only through
+/// [`Graph::identify`], the one identity rule the host also uses.
 #[derive(Default)]
 pub(crate) struct HeldPages {
     /// Changed only under the store writer (holds, releases, and every
     /// index publication), so a reconcile holding it sees a fixed set.
-    paths: RwLock<HashMap<PagePath, Entry>>,
+    keys: RwLock<HashMap<String, Indexed>>,
+    /// The running host's spelling table; a fresh empty one with no host.
+    spellings: RwLock<Arc<Spellings>>,
     /// Bumped by every new hold. A whole-graph build that read its files
     /// before a hold began declines its install, as for a cache mutation.
     epoch: AtomicU64,
@@ -58,54 +44,62 @@ pub(crate) enum Source {
     Held(Arc<[u8]>),
     /// Held, and its owner indexed no file.
     HeldAbsent,
-    /// Held, and its owner has not indexed it yet: its pending publication
-    /// will. A build leaves it out; a read parses the file, unpublished.
+    /// Held and not indexed yet (its pending publication will), or a path
+    /// whose identity against the held keys is unknown (B1): a build
+    /// leaves it out; a read parses the file, unpublished.
     HeldUnindexed,
 }
 
 impl HeldPages {
-    /// Hand `path`'s index to `key`'s owner. Holding it again for the same
-    /// key keeps what that owner already indexed.
-    pub(crate) fn hold(&self, path: PagePath, key: String) {
-        let mut paths = self.paths.write().unwrap();
-        if paths.get(&path).is_some_and(|(held, _)| *held == key) {
+    /// The running host's spelling table becomes the held keys' (one
+    /// table, owned by the host, B1). The caller holds the writer.
+    pub(crate) fn attach(&self, spellings: Arc<Spellings>) {
+        *self.spellings.write().unwrap() = spellings;
+    }
+
+    pub(crate) fn spellings(&self) -> Arc<Spellings> {
+        Arc::clone(&self.spellings.read().unwrap())
+    }
+
+    /// Hand `key`'s index to its owner. Holding it again keeps what that
+    /// owner already indexed.
+    pub(crate) fn hold(&self, key: String) {
+        let mut keys = self.keys.write().unwrap();
+        if keys.contains_key(&key) {
             return;
         }
-        paths.insert(path, (key, None));
+        keys.insert(key, None);
         self.epoch.fetch_add(1, Ordering::AcqRel);
     }
 
-    /// Return `path` to the watcher; true when it was held.
-    pub(crate) fn release(&self, path: &PagePath) -> bool {
-        self.paths.write().unwrap().remove(path).is_some()
+    /// Hold `key` at its own spelling with no host running (test stores).
+    #[cfg(any(test, feature = "test-faults"))]
+    pub(crate) fn hold_unhosted(&self, key: &str) {
+        self.spellings().spell(key, key);
+        self.hold(key.into());
     }
 
-    /// Return every held path to the watcher.
-    pub(crate) fn release_all(&self) -> Vec<PagePath> {
-        let mut paths = self.paths.write().unwrap();
-        paths.drain().map(|(path, _)| path).collect()
+    /// Return `key` to the watcher: its page file, when it was held.
+    pub(crate) fn release(&self, root: &Path, key: &str) -> Option<PathBuf> {
+        let held = self.keys.write().unwrap().remove(key).is_some();
+        held.then(|| root.join(self.spellings().spelling(key)))
     }
 
-    /// The owner's page moved to `to`, another spelling of the same entry
-    /// (an alias spelling move, STEP3 Q4): what it indexed stays its own.
-    pub(crate) fn respell(&self, from: &PagePath, to: PagePath) {
-        let mut paths = self.paths.write().unwrap();
-        if let Some(entry) = paths.remove(from) {
-            paths.insert(to, entry);
-        }
+    /// Return every held key to the watcher and detach the host's spelling
+    /// table: their page files.
+    pub(crate) fn release_all(&self, root: &Path) -> Vec<PathBuf> {
+        let keys: Vec<String> = self.keys.write().unwrap().drain().map(|(k, _)| k).collect();
+        let spellings = std::mem::take(&mut *self.spellings.write().unwrap());
+        keys.iter()
+            .map(|key| root.join(spellings.spelling(key)))
+            .collect()
     }
 
-    /// The owner key of a held path.
-    pub(crate) fn key(&self, path: &PagePath) -> Option<String> {
-        let paths = self.paths.read().unwrap();
-        paths.get(path).map(|(key, _)| key.clone())
-    }
-
-    /// Record the bytes an index writer is about to publish for `path`, if
+    /// Record the bytes an index writer is about to publish for `key`, if
     /// it is held. Called before the publication moves the cache
     /// generation, so a build that read the earlier bytes declines.
-    pub(crate) fn indexed(&self, path: &PagePath, bytes: impl FnOnce() -> Option<Arc<[u8]>>) {
-        if let Some((_, indexed)) = self.paths.write().unwrap().get_mut(path) {
+    pub(crate) fn indexed(&self, key: &str, bytes: impl FnOnce() -> Option<Arc<[u8]>>) {
+        if let Some(indexed) = self.keys.write().unwrap().get_mut(key) {
             *indexed = Some(bytes());
         }
     }
@@ -116,30 +110,48 @@ impl HeldPages {
 }
 
 impl Graph {
-    /// The page file `rel` (a root-relative spelling) under the store's root.
-    pub(crate) fn page_path(&self, rel: &str) -> PagePath {
-        PagePath(self.root.join(rel))
+    /// What `path` names among the held keys (B1, [`Graph::identify`]).
+    /// With nothing held, `New` at no cost.
+    pub(crate) fn held_identity(&self, path: &Path) -> Identity {
+        let keys = self.held.keys.read().unwrap();
+        if keys.is_empty() {
+            return Identity::New;
+        }
+        let spellings = self.held.spellings();
+        let leaf = path.file_name().map(fold_leaf);
+        let found = leaf.map_or_else(Vec::new, |fold| {
+            spellings.candidates(&fold, |key| keys.contains_key(key))
+        });
+        drop(keys);
+        self.identify(path, &|_| found.clone())
     }
 
-    /// The page file at `abs`, a path a listing or the watcher found under
-    /// the store's root; None for one outside it, which nothing holds.
-    pub(crate) fn page_path_of(&self, abs: &Path) -> Option<PagePath> {
-        let rel = abs.strip_prefix(&self.root).ok()?;
-        Some(PagePath(self.root.join(rel)))
+    /// The held key `path` names, if it names one.
+    pub(crate) fn held_key(&self, path: &Path) -> Option<String> {
+        match self.held_identity(path) {
+            Identity::Key(key) => Some(key),
+            _ => None,
+        }
+    }
+
+    /// The source of a path whose identity against the held keys is known.
+    fn source_of(&self, identity: &Identity) -> Source {
+        match identity {
+            Identity::New | Identity::Outside => Source::Disk,
+            Identity::Unknown { .. } => Source::HeldUnindexed,
+            Identity::Key(key) => match self.held.keys.read().unwrap().get(key) {
+                None => Source::Disk,
+                Some(None) => Source::HeldUnindexed,
+                Some(Some(None)) => Source::HeldAbsent,
+                Some(Some(Some(bytes))) => Source::Held(Arc::clone(bytes)),
+            },
+        }
     }
 
     /// The one per-page seam (A-H1): where a build or read takes the page
     /// at `path` from. With no host, `Disk` for every page.
     pub(crate) fn source(&self, path: &Path) -> Source {
-        let Some(path) = self.page_path_of(path) else {
-            return Source::Disk;
-        };
-        match self.held.paths.read().unwrap().get(&path) {
-            None => Source::Disk,
-            Some((_, None)) => Source::HeldUnindexed,
-            Some((_, Some(None))) => Source::HeldAbsent,
-            Some((_, Some(Some(bytes)))) => Source::Held(Arc::clone(bytes)),
-        }
+        self.source_of(&self.held_identity(path))
     }
 
     /// The content `source` gives the page at `path`: the file's, or its
@@ -164,45 +176,67 @@ impl Graph {
 
     /// A whole-graph build's pages and their sources (A-H1): `entries`
     /// (the build's selection from the listing `listed`) with each page's
-    /// source, plus every held page its owner indexed bytes for that the
-    /// listing lacks (a removal the owner has not observed yet). The added
-    /// entries are returned apart, for the build's named listing.
+    /// source, plus every held key its owner indexed bytes for that no
+    /// listed path names (a removal the owner has not observed yet, or an
+    /// entry listed only under a spelling of unknown identity, B1), at the
+    /// key's spelling. The added entries are returned apart, for the
+    /// build's named listing.
     pub(super) fn build_sources(
         &self,
         listed: &[PageEntry],
         entries: Vec<PageEntry>,
     ) -> (Vec<(PageEntry, Source)>, Vec<PageEntry>) {
+        let held: Vec<(String, Arc<[u8]>)> = {
+            let keys = self.held.keys.read().unwrap();
+            if keys.is_empty() {
+                let sourced = entries.into_iter().map(|e| (e, Source::Disk)).collect();
+                return (sourced, Vec::new());
+            }
+            keys.iter()
+                .filter_map(|(key, indexed)| Some((key.clone(), indexed.clone()??)))
+                .collect()
+        };
+        let identities: HashMap<&Path, Identity> = listed
+            .iter()
+            .map(|entry| (entry.path.as_path(), self.held_identity(&entry.path)))
+            .collect();
         let mut sourced: Vec<(PageEntry, Source)> = entries
             .into_iter()
             .map(|entry| {
-                let source = self.source(&entry.path);
+                let source = match identities.get(entry.path.as_path()) {
+                    Some(identity) => self.source_of(identity),
+                    None => self.source(&entry.path),
+                };
                 (entry, source)
             })
             .collect();
-        let held: Vec<(PagePath, Arc<[u8]>)> = self
-            .held
-            .paths
-            .read()
-            .unwrap()
-            .iter()
-            .filter_map(|(path, (_, indexed))| Some((path.clone(), indexed.clone()??)))
+        let covered: HashSet<&str> = identities
+            .values()
+            .filter_map(|identity| match identity {
+                Identity::Key(key) => Some(key.as_str()),
+                _ => None,
+            })
+            .collect();
+        let spellings = self.held.spellings();
+        let held: Vec<(PathBuf, Arc<[u8]>)> = held
+            .into_iter()
+            .filter(|(key, _)| !covered.contains(key.as_str()))
+            .map(|(key, bytes)| (self.root.join(spellings.spelling(&key)), bytes))
             .collect();
         if held.is_empty() {
             return (sourced, Vec::new());
         }
-        let listed: HashSet<&Path> = listed.iter().map(|entry| entry.path.as_path()).collect();
         let config = self.current_config();
         let (format, journals) = (self.current_journal_format(), self.journals_path());
         let formats = (&*format, journals.as_path(), config.file_name_format);
         let mut added = Vec::new();
         for (path, bytes) in held {
-            if listed.contains(&*path)
-                || path_is_sync_conflict(&path)
+            if path_is_sync_conflict(&path)
                 || !page_identity::graph_text_eligible(&self.root, &path, &config)
             {
                 continue;
             }
-            if let Some(entry) = page_identity::listed_entry(self, formats, path.into()) {
+            if let Some(entry) = page_identity::listed_entry(self, formats, path) {
                 added.push(entry.clone());
                 sourced.push((entry, Source::Held(bytes)));
             }
@@ -249,13 +283,13 @@ mod tests {
         // keys it, by the store's root.
         let given = temp.path().join("pages").join("..");
         let store = Arc::new(Store::open(&given, Default::default()).unwrap().0);
-        let path = store.graph.page_path("pages/a.md");
+        let path = store.graph.root.join("pages/a.md");
         assert!(
             store
                 .graph
                 .list_pages()
                 .iter()
-                .any(|entry| entry.path.as_path() == &*path),
+                .any(|entry| entry.path == path),
             "A-H1: a hold's key is not the path the whole-graph build looks up"
         );
         store.page(&PageId::from("pages/a.md")).unwrap();
@@ -282,7 +316,7 @@ mod tests {
             .graph
             .cache_gen
             .load(std::sync::atomic::Ordering::Acquire);
-        store.graph.held.hold(path.clone(), "pages/a.md".into());
+        store.graph.held.hold_unhosted("pages/a.md");
         pause.0.lock().unwrap().1 = true;
         pause.1.notify_all();
         assert!(
@@ -302,7 +336,7 @@ mod tests {
         store
             .graph
             .held
-            .indexed(&path, || Some(Arc::from(&b"- owner\n"[..])));
+            .indexed("pages/a.md", || Some(Arc::from(&b"- owner\n"[..])));
         assert!(store.graph.rebuild_cache_cancellable(|| false));
         assert_eq!(
             store.graph.cached_rev(&path),
@@ -354,8 +388,8 @@ mod tests {
         let (_temp, store) = graph(&[("pages/a.md", b"- a\n")]);
         let id = PageId::from("pages/a.md");
         store.hold_page(&id).unwrap();
-        let path = store.graph.page_path("pages/a.md");
-        std::fs::remove_file(&*path).unwrap();
+        let path = store.graph.root.join("pages/a.md");
+        std::fs::remove_file(&path).unwrap();
         assert!(store.graph.rebuild_cache_cancellable(|| false));
         let owner = Some(crate::model::content_rev("- a\n"));
         assert_eq!(store.graph.cached_rev(&path), owner, "forced rebuild");
@@ -372,8 +406,8 @@ mod tests {
     fn review2_ondemand_names_a_held_page_from_owner_bytes() {
         let (_temp, store) = graph(&[("pages/a.md", b"title:: Owner\n- a\n")]);
         store.hold_page(&PageId::from("pages/a.md")).unwrap();
-        let path = store.graph.page_path("pages/a.md");
-        std::fs::write(&*path, "title:: Disk\n- b\n").unwrap();
+        let path = store.graph.root.join("pages/a.md");
+        std::fs::write(&path, "title:: Disk\n- b\n").unwrap();
         store.graph.invalidate_cache();
         assert_eq!(names(&store, &path), ["Owner"], "on-demand build");
         assert!(store.graph.rebuild_cache_cancellable(|| false));
@@ -388,8 +422,8 @@ mod tests {
         let (_temp, store) = graph(&[("pages/a.md", b"title:: A\n- a\n")]);
         let id = PageId::from("pages/a.md");
         store.hold_page(&id).unwrap();
-        let path = store.graph.page_path("pages/a.md");
-        std::fs::write(&*path, b"title:: \xff\xfe\n- b\n").unwrap();
+        let path = store.graph.root.join("pages/a.md");
+        std::fs::write(&path, b"title:: \xff\xfe\n- b\n").unwrap();
         crate::model::GRAPH_PREAMBLE_READS.with(|reads| reads.set(0));
         let read = store.page(&id).unwrap();
         assert_eq!(read.doc.name, "A");

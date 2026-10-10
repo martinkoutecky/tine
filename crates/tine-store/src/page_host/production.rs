@@ -27,13 +27,11 @@ pub(super) struct ProductionIo {
     unsynced: std::collections::BTreeSet<String>,
     changes: Vec<(String, Option<Vec<u8>>)>,
     paths: BTreeMap<String, PathBuf>,
-    /// Each page key's current graph-relative spelling (STEP3 §2), when it
-    /// differs from the key: a key resolved through a case alias at
-    /// registration, or moved by the alias spelling move (Q4).
-    spellings: BTreeMap<String, String>,
-    /// `spellings` inverted: the key moved to each spelling (A-R5, D-10:
-    /// a key is found by lookup, not by a walk over every registered key).
-    respelled: std::collections::HashMap<String, String>,
+    /// Each page key's current graph-relative spelling (STEP3 §2): a key
+    /// resolved through a case alias at registration, or moved by the alias
+    /// spelling move (Q4). The one table (B1); the store's held index reads
+    /// it while this host runs.
+    spellings: std::sync::Arc<crate::model::entry_identity::Spellings>,
     quarantines: BTreeMap<String, (PathBuf, u8)>,
     directories: BTreeMap<PathBuf, durability::DirectoryCreation>,
     pub(super) launch_warnings: Vec<(PathBuf, io::ErrorKind)>,
@@ -97,8 +95,7 @@ impl ProductionIo {
             unsynced: Default::default(),
             changes: vec![],
             paths,
-            spellings: BTreeMap::new(),
-            respelled: Default::default(),
+            spellings: Default::default(),
             quarantines: BTreeMap::new(),
             directories: BTreeMap::new(),
             launch_warnings: vec![],
@@ -130,8 +127,7 @@ impl ProductionIo {
 
     /// The page's file, through its key's current spelling.
     fn page_path(&self, key: &str) -> PathBuf {
-        self.graph
-            .join(self.spellings.get(key).map_or(key, String::as_str))
+        self.graph.join(self.spellings.spelling(key))
     }
 
     fn draft_path(&self, name: &str) -> PathBuf {
@@ -205,8 +201,33 @@ fn sync_failure(error: io::Error) -> IoFailure {
 impl ProductionIo {
     /// The key moved to `spelling` (a case alias or the alias spelling
     /// move), if any.
-    pub(super) fn respelled(&self, spelling: &str) -> Option<&str> {
-        self.respelled.get(spelling).map(String::as_str)
+    pub(super) fn respelled(&self, spelling: &str) -> Option<String> {
+        self.spellings.respelled(spelling)
+    }
+
+    /// The spelling table, shared with the store's held index (B1).
+    pub(super) fn spellings(&self) -> &std::sync::Arc<crate::model::entry_identity::Spellings> {
+        &self.spellings
+    }
+}
+
+impl super::Host<ProductionIo> {
+    /// The registered key whose current spelling is `spelling` (§2), by
+    /// lookup (A-R5, D-10): a key moved to that spelling, or the key
+    /// spelled as itself.
+    pub(super) fn key_spelled(&self, spelling: &str) -> Option<String> {
+        if let Some(key) = self.fs.respelled(spelling) {
+            return Some(key);
+        }
+        (self.keys.contains(spelling) && self.fs.spelling(spelling) == spelling)
+            .then(|| spelling.into())
+    }
+
+    /// The registered keys whose spelling's leaf folds to `fold`, with their
+    /// spellings: [`crate::model::Graph::identify`]'s candidates (B1).
+    pub(super) fn candidates(&self, fold: &str) -> Vec<(String, String)> {
+        let keys = &self.keys;
+        self.fs.spellings.candidates(fold, |key| keys.contains(key))
     }
 }
 
@@ -220,24 +241,11 @@ impl HostIo for ProductionIo {
     fn spelling(&self, key: &str) -> String {
         #[cfg(test)]
         SPELLING_LOOKUPS.with(|n| n.set(n.get() + 1));
-        self.spellings
-            .get(key)
-            .cloned()
-            .unwrap_or_else(|| key.into())
+        self.spellings.spelling(key)
     }
 
     fn spell(&mut self, key: &str, spelling: &str) {
-        // The reverse entry goes only if it is this key's: a later spelling
-        // of another key to `old` keeps its claim.
-        if let Some(old) = self.spellings.remove(key) {
-            if self.respelled.get(&old).is_some_and(|owner| owner == key) {
-                self.respelled.remove(&old);
-            }
-        }
-        if key != spelling {
-            self.spellings.insert(key.into(), spelling.into());
-            self.respelled.insert(spelling.into(), key.into());
-        }
+        self.spellings.spell(key, spelling);
     }
 
     fn graph_launch(&mut self, pages: &std::collections::BTreeSet<String>) {

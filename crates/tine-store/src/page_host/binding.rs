@@ -746,8 +746,8 @@ impl Sink for Bridge {
             || !delivery.evicted.is_empty()
         {
             let _writer = store.writer.lock().unwrap();
-            for (key, spelling) in delivery.claimed {
-                store.watch.hold(store.graph.page_path(&spelling), key);
+            for (key, _) in delivery.claimed {
+                store.watch.hold(key);
             }
             for publication in delivery.publications {
                 let indexing = match owner(&publication.key) {
@@ -758,9 +758,9 @@ impl Sink for Bridge {
                 };
                 results.push((publication, indexing));
             }
-            for (key, spelling) in delivery.evicted {
+            for (key, _) in delivery.evicted {
                 if owner(&key) == Owner::Watcher {
-                    store.watch.release_hold(&store.graph.page_path(&spelling));
+                    store.watch.release_hold(&key);
                 }
             }
         }
@@ -797,9 +797,10 @@ fn index(store: &Store, publication: &Publication) -> bool {
         return false;
     }
     let graph = &store.graph;
-    let held = graph.page_path(&publication.spelling);
-    graph.held.indexed(&held, || publication.bytes.clone());
-    let path = held.to_path_buf();
+    graph
+        .held
+        .indexed(&publication.key, || publication.bytes.clone());
+    let path = graph.root.join(&publication.spelling);
     let id = FileId::from(publication.spelling.clone());
     let bytes = publication.bytes.as_deref();
     let rev = bytes.map(FileRev::from_bytes);
@@ -982,13 +983,14 @@ impl PageHost {
         let trash = crate::model::trash_root(&graph.root).join("pages");
         let mut io = ProductionIo::new(&graph.root, app_data, graph_id, &trash)
             .map_err(|error| format!("page host drafts: {error}"))?;
+        let spellings = io.spellings().clone();
         io.marks = Some(graph.clone());
         let mut host = Host::new(io, BTreeMap::new());
         host.stop();
         let mut recovered = Vec::new();
         for key in host.recovered_keys() {
             let id = PageId::from(key.as_str());
-            let spelling = store.disk_spelling_for_case_alias(&id).unwrap_or(id);
+            let spelling = store.disk_spelling(&id).unwrap_or(id);
             let lock = graph.page_lock(&graph.root.join(spelling.as_str()));
             host.register(key.clone(), spelling.as_str(), lock);
             recovered.push((key, spelling));
@@ -1010,7 +1012,7 @@ impl PageHost {
         // A watcher read of a held page (§5): the driver owes the host an
         // observation of it, taken under its path lock once the page is idle.
         let shared = Arc::downgrade(&driver.shared);
-        store.watch.forward_held(Box::new(move |keys| {
+        let forward: crate::watch::Forward = Box::new(move |keys| {
             if let Some(shared) = shared.upgrade() {
                 shared.with_state(|state| {
                     for key in keys {
@@ -1018,7 +1020,7 @@ impl PageHost {
                     }
                 });
             }
-        }));
+        });
         let this = Self {
             driver,
             store: store.clone(),
@@ -1028,13 +1030,13 @@ impl PageHost {
             #[cfg(test)]
             published_kinds,
         };
-        // Recovered pages are held before launch reads them (§5).
+        // Recovered pages are held before launch reads them (§5), by the
+        // host's keys and spelling table (B1).
         {
             let _writer = store.writer.lock().unwrap();
-            for (key, spelling) in &recovered {
-                store
-                    .watch
-                    .hold(graph.page_path(spelling.as_str()), key.clone());
+            store.watch.forward_held(forward, spellings);
+            for (key, _) in &recovered {
+                store.watch.hold(key.clone());
             }
             this.driver.shared.with_state(|state| {
                 state
@@ -1082,21 +1084,6 @@ impl PageHost {
                 host.generation
             })
         })
-    }
-
-    /// The key naming `page`'s directory entry (§2): a registered key whose
-    /// current spelling is the entry's, or the entry's spelling as a new key.
-    /// Also whether the host holds that page.
-    fn identify(&self, page: &PageId) -> (PageKey, PageId, bool) {
-        let spelling = self
-            .store
-            .disk_spelling_for_case_alias(page)
-            .unwrap_or_else(|| page.clone());
-        let state = self.driver.shared.state.lock().unwrap();
-        let host = &state.progress.host;
-        let key = key_spelled(host, spelling.as_str()).unwrap_or_else(|| spelling.as_str().into());
-        let held = host.pages.contains_key(&key);
-        (key, spelling, held)
     }
 
     fn register(&self, key: &str, spelling: &PageId) {
@@ -1161,8 +1148,7 @@ impl PageHost {
             kind: RequestKind::Open,
         };
         let _writer = store.writer.lock().unwrap();
-        let path = store.graph.page_path(spelling.as_str());
-        store.watch.hold(path.clone(), key.clone());
+        store.watch.hold(key.clone());
         let admitted = self.admit(request, vec![]);
         if admitted.is_err()
             && !self
@@ -1170,7 +1156,7 @@ impl PageHost {
                 .shared
                 .with_state(|s| s.book.owned.contains(&key))
         {
-            store.watch.release_hold(&path);
+            store.watch.release_hold(&key);
         }
         admitted.map(|()| key)
     }
@@ -1468,16 +1454,6 @@ impl Drop for PageHost {
         let _writer = self.store.writer.lock().unwrap();
         self.store.watch.release_holds();
     }
-}
-
-/// The registered key whose current spelling is `spelling` (§2), by lookup
-/// (A-R5, D-10): a key moved to that spelling, or the key spelled as itself.
-fn key_spelled(host: &Host<ProductionIo>, spelling: &str) -> Option<PageKey> {
-    if let Some(key) = host.fs.respelled(spelling) {
-        return Some(key.into());
-    }
-    (host.keys.contains(spelling) && host.fs.spelling(spelling) == spelling)
-        .then(|| spelling.into())
 }
 
 #[path = "binding_retained.rs"]

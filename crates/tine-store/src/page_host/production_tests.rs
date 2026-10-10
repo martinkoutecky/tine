@@ -1776,21 +1776,27 @@ fn the_reverse_spelling_map_follows_respell_and_return() {
     let mut f = Fixture::new();
     let fs = &mut f.host.fs;
     fs.spell("a.md", "a.md");
-    assert_eq!(fs.respelled("a.md"), None);
+    assert_eq!(fs.respelled("a.md").as_deref(), None);
     fs.spell("a.md", "A.md");
     assert_eq!(
-        (fs.respelled("A.md"), fs.spelling("a.md").as_str()),
+        (
+            fs.respelled("A.md").as_deref(),
+            fs.spelling("a.md").as_str()
+        ),
         (Some("a.md"), "A.md")
     );
     fs.spell("a.md", "a.md");
     assert_eq!(
-        (fs.respelled("A.md"), fs.spelling("a.md").as_str()),
+        (
+            fs.respelled("A.md").as_deref(),
+            fs.spelling("a.md").as_str()
+        ),
         (None, "a.md")
     );
     fs.spell("a.md", "X.md");
     fs.spell("b.md", "X.md");
     fs.spell("a.md", "a.md");
-    assert_eq!(fs.respelled("X.md"), Some("b.md"));
+    assert_eq!(fs.respelled("X.md").as_deref(), Some("b.md"));
     fs.spell("b.md", "b.md");
-    assert_eq!(fs.respelled("X.md"), None);
+    assert_eq!(fs.respelled("X.md").as_deref(), None);
 }

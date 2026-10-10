@@ -21,9 +21,7 @@ impl Store {
         if self.as_page(&id.file()).is_none() {
             return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
         }
-        let id = self
-            .disk_spelling_for_case_alias(id)
-            .unwrap_or_else(|| id.clone());
+        let id = self.disk_spelling(id).unwrap_or_else(|| id.clone());
         // v0.6.5's page walker never indexes a symlinked page file (it could
         // expose a file outside the graph), so no listing hands out such an
         // id; refuse one here too. Ancestors must stay inside the area. The
@@ -122,9 +120,10 @@ impl Store {
         let _writer = self.writer.lock().unwrap();
         let (id, path, _) = self.page_target(id)?;
         let bytes = fs::read(&path).map_err(StoreError::from_io)?;
-        let held = self.graph.page_path(id.as_str());
-        self.watch.hold(held.clone(), id.as_str().to_owned());
-        self.graph.held.indexed(&held, || Some(Arc::from(bytes)));
+        self.graph.held.hold_unhosted(id.as_str());
+        self.graph
+            .held
+            .indexed(id.as_str(), || Some(Arc::from(bytes)));
         Ok(())
     }
 
