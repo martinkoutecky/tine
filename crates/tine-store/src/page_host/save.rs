@@ -136,12 +136,7 @@ impl<F: HostIo> Host<F> {
                         self.job = Some(job);
                         return Disposition::Waiting;
                     }
-                    let mut page = self.pages[&key].clone();
-                    page.observe(bytes, self.next_version());
-                    if page.version == self.next_version() {
-                        self.version = page.version;
-                    }
-                    self.set_page(&key, Some(page));
+                    self.adopt_read(&key, bytes);
                     self.fs.page_finish(&key);
                     return Disposition::Applied;
                 }

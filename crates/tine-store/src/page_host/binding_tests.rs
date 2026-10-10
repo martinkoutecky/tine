@@ -1036,6 +1036,34 @@ fn v2_a_failed_release_observation_keeps_the_handover_protection() {
     live.host.stop();
 }
 
+/// V3 (REVIEW-3a): an own save of P publishes P while the last observation
+/// is still A; an honest external writer restores A before the host ever
+/// observes P. Adopting A must publish A, although it equals the old
+/// observation.
+#[test]
+fn v3_an_external_return_to_the_pre_save_observation_updates_the_index() {
+    let live = Live::new(&[("pages/a.md", "- a\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let writer = live.store.writer.lock().unwrap();
+    let id = live.submit(&key, "- p\n", page.version, None).unwrap();
+    let saved = live.answer(&key, id).page.unwrap().version;
+    live.until_disk(&key, "- p\n");
+    fs::write(live.root.join(&key), "- a\n").unwrap();
+    drop(writer);
+    live.wait(&key, "the adopted return", |mail| {
+        mail.page
+            .as_ref()
+            .is_some_and(|p| p.disk == Some(token("- a\n")) && p.version > saved)
+    });
+    settle();
+    assert_eq!(
+        live.indexed(&key),
+        Some(content_rev("- a\n")),
+        "V3: the index stayed at the saved bytes"
+    );
+    live.host.stop();
+}
+
 /// V5 (REVIEW-3a): a restore is not ready while a publication the driver
 /// collected is still being delivered; once its result is recorded, an
 /// index failure keeps the restore waiting and a success lets it close.

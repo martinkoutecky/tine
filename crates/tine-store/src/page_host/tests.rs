@@ -919,3 +919,63 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
         }
     }
 }
+
+/// The disk publications (Observed events) since event `from`.
+fn observed_since(h: &Host<ModelFs>, from: usize) -> Vec<Text> {
+    h.events[from..]
+        .iter()
+        .filter_map(|event| match event {
+            Event::Observed { bytes, .. } => Some(bytes.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// V3 (REVIEW-3a), the observation path: an own save of P leaves the last
+/// observation at A; reading A back adopts it and publishes it, although
+/// it equals that observation. A submit publishes no disk state.
+#[test]
+fn v3_an_observed_return_to_the_old_observation_publishes_it() {
+    let mut h = host();
+    open(&mut h, "a.md");
+    edit(&mut h, "a.md", "P");
+    saved(&mut h, "a.md");
+    assert_eq!(h.pages["a.md"].obs, Some(text("A")));
+    h.fs.external("a.md", text("A"), true);
+    let from = h.events.len();
+    assert_eq!(h.observe("a.md"), Disposition::Applied);
+    assert_eq!(h.pages["a.md"].buf, text("A"));
+    assert_eq!(observed_since(&h, from), vec![text("A")], "V3");
+    let from = h.events.len();
+    edit(&mut h, "a.md", "Q");
+    assert!(observed_since(&h, from).is_empty(), "a submit is no read");
+}
+
+/// V3 (REVIEW-3a), the save's mismatch path: after an own save of P the
+/// file returns to the old observation A while Q is typed; the next save's
+/// guard reads A, conflicts, and publishes A.
+#[test]
+fn v3_a_save_mismatch_back_to_the_old_observation_publishes_it() {
+    let mut h = host();
+    open(&mut h, "a.md");
+    edit(&mut h, "a.md", "P");
+    saved(&mut h, "a.md");
+    edit(&mut h, "a.md", "Q");
+    h.fs.external("a.md", text("A"), true);
+    let from = h.events.len();
+    assert_eq!(h.start_save("a.md"), Disposition::Pending);
+    for _ in 0..10 {
+        if h.job.is_none() {
+            break;
+        }
+        let epoch = h.fs.epochs.get("a.md").copied().unwrap_or(0);
+        h.advance_save(epoch);
+    }
+    assert!(h.pages["a.md"].conflict);
+    assert_eq!(
+        h.fs.files["graph/a.md"],
+        Arc::from(&b"A"[..]),
+        "no overwrite"
+    );
+    assert_eq!(observed_since(&h, from), vec![text("A")], "V3");
+}

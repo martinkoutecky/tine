@@ -928,17 +928,36 @@ impl<F: HostIo> Host<F> {
             let Ok(bytes) = host.fs.read_page(key) else {
                 return Disposition::Refused;
             };
-            let mut page = host.pages[key].clone();
-            page.observe(bytes, host.next_version());
-            if page == host.pages[key] {
-                return Disposition::Disabled;
+            if host.adopt_read(key, bytes) {
+                Disposition::Applied
+            } else {
+                Disposition::Disabled
             }
-            if page.version == host.next_version() {
-                host.version = page.version;
-            }
-            host.set_page(key, Some(page));
-            Disposition::Applied
         })
+    }
+
+    /// Apply a disk read of `key` to its page (SPEC read table); false when
+    /// the page is unchanged. A read that changes the page publishes its
+    /// bytes even when they equal the last observation: an own save may
+    /// have moved the index past them since (V3, REVIEW-3a).
+    fn adopt_read(&mut self, key: &str, bytes: Text) -> bool {
+        let mut page = self.pages[key].clone();
+        page.observe(bytes.clone(), self.next_version());
+        if page == self.pages[key] {
+            return false;
+        }
+        if page.version == self.next_version() {
+            self.version = page.version;
+        }
+        let again = self.pages[key].obs.as_ref() == Some(&bytes);
+        self.set_page(key, Some(page));
+        if again {
+            self.events.push(Event::Observed {
+                page: key.into(),
+                bytes,
+            });
+        }
+        true
     }
 
     /// STEP3 §2 registration: a key with no page, the model's state of a
@@ -1006,12 +1025,8 @@ impl<F: HostIo> Host<F> {
                 observed.insert(key.clone(), bytes);
             }
             for (key, bytes) in observed {
-                if let Some(mut page) = host.pages.get(&key).cloned() {
-                    page.observe(bytes, host.next_version());
-                    if page.version == host.next_version() {
-                        host.version = page.version;
-                    }
-                    host.set_page(&key, Some(page));
+                if host.pages.contains_key(&key) {
+                    host.adopt_read(&key, bytes);
                 }
             }
             Disposition::Applied
