@@ -63,11 +63,25 @@ final class ShareViewController: UIViewController {
     init(_ message: String) { errorDescription = message }
   }
 
+  private static func tooLarge(_ name: String) -> Refusal {
+    Refusal("\(name) is larger than 64 MiB.")
+  }
+
   private static func imageResource(_ url: URL) throws -> ShareInbox.Resource {
     guard isImage(url) else {
       throw Refusal("Tine saves text, links and images; \(url.lastPathComponent) is another kind of file.")
     }
-    return .init(data: try Data(contentsOf: url), source: nil, name: url.lastPathComponent, type: mimeType(url))
+    // The 64 MiB limit is checked before the file is read (review round 2,
+    // R2-6), and again on what was read when the size was not known.
+    if let size = ShareInbox.fileSize(url), size > ShareInbox.maxResourceBytes { throw tooLarge(url.lastPathComponent) }
+    let data = try Data(contentsOf: url, options: .mappedIfSafe)
+    return try sized(.init(data: data, source: nil, name: url.lastPathComponent, type: mimeType(url)))
+  }
+
+  /// `resource`, unless its bytes are over the limit.
+  private static func sized(_ resource: ShareInbox.Resource) throws -> ShareInbox.Resource {
+    if (resource.data?.count ?? 0) > ShareInbox.maxResourceBytes { throw tooLarge(resource.name) }
+    return resource
   }
 
   /// Every attachment, or a refusal: nothing is saved in part.
@@ -76,6 +90,13 @@ final class ShareViewController: UIViewController {
     var webURL: String?
     var resources: [ShareInbox.Resource] = []
     let items = (extensionContext?.inputItems as? [NSExtensionItem]) ?? []
+    // At most 32 files: the 33rd is refused before it is loaded (review
+    // round 2, R2-6), and the share with it.
+    let room: () throws -> Void = {
+      if resources.count >= ShareInbox.maxResources {
+        throw Refusal("Tine saves at most \(ShareInbox.maxResources) files from one share; this one had more.")
+      }
+    }
     for item in items {
       for attachment in item.attachments ?? [] {
         if attachment.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
@@ -91,6 +112,7 @@ final class ShareViewController: UIViewController {
           default: throw Refusal("A shared link couldn't be read.")
           }
           if url.isFileURL {
+            try room()
             resources.append(try Self.imageResource(url))
           } else if webURL == nil || webURL == url.absoluteString {
             webURL = url.absoluteString
@@ -110,15 +132,16 @@ final class ShareViewController: UIViewController {
           default: throw Refusal("Shared text couldn't be read.")
           }
         } else if attachment.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+          try room()
           let loaded = try await attachment.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil)
           switch loaded {
           case let image as UIImage:
             guard let data = image.pngData() else { throw Refusal("A shared image couldn't be read.") }
-            resources.append(.init(data: data, source: nil, name: Self.timestampName("png"), type: "image/png"))
+            resources.append(try Self.sized(.init(data: data, source: nil, name: Self.timestampName("png"), type: "image/png")))
           case let url as URL:
             resources.append(try Self.imageResource(url))
           case let data as Data:
-            resources.append(.init(data: data, source: nil, name: Self.timestampName("png"), type: "image/png"))
+            resources.append(try Self.sized(.init(data: data, source: nil, name: Self.timestampName("png"), type: "image/png")))
           default:
             throw Refusal("A shared image couldn't be read.")
           }

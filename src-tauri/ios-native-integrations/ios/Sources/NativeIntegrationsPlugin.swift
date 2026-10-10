@@ -137,6 +137,16 @@ final class NativeIntegrationsPlugin: Plugin {
     }
     do {
       try fm.createDirectory(at: root, withIntermediateDirectories: true)
+      // Make the inbox's entry durable on every call, not only when this call
+      // created it: existence proves nothing about the parent's metadata
+      // (review round 2, R2-4; the producers do the same, ShareInbox.swift).
+      let parent = root.deletingLastPathComponent().path
+      let fd = open(parent, O_RDONLY)
+      if fd < 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+      defer { close(fd) }
+      if fcntl(fd, F_FULLFSYNC) == -1 && fsync(fd) != 0 {
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+      }
       invoke.resolve(["path": root.path])
     } catch {
       invoke.reject(error.localizedDescription)
