@@ -124,7 +124,7 @@ fn restore_from_backup_source(
     // exactly the verified bytes (REVIEW N1) and never reads the snapshot
     // again. The lock is released before the safety snapshot takes it.
     let (manifest, payloads, scope) = {
-        let _lock = match lock_cas(&cas, Some(CAS_LOCK_WAIT)) {
+        let _lock = match lock_namespace(&cas, Some(CAS_LOCK_WAIT)) {
             Ok(Some(lock)) => lock,
             Ok(None) => return Err(BUSY.into()),
             Err(error) => return Err(format!("backup-failed:lock:{:?}", error.kind())),
@@ -195,7 +195,8 @@ fn restore_from_backup_source(
     };
     let selected = select_restore_files(&manifest, &source, scope.is_some())?;
     let snapshot = snapshot_current(&source);
-    let live_n = [Area::Graph, Area::Assets]
+    // Config is live content too (REVIEW-backup-cas-2 N2).
+    let live_n = [Area::Graph, Area::Assets, Area::Meta]
         .into_iter()
         .map(|area| {
             store.scan_area(area, None).ok().map(|listing| {
@@ -204,6 +205,7 @@ fn restore_from_backup_source(
                     .iter()
                     .filter(|entry| match area {
                         Area::Assets => is_asset_sidecar(&entry.id),
+                        Area::Meta => entry.rel == "config.edn",
                         _ => is_graph_text(&entry.id),
                     })
                     .count()
@@ -266,8 +268,10 @@ const DAMAGED: &str = "this backup is damaged; pick another snapshot";
 const BUSY: &str =
     "backups are busy in another Tine window or process; try the restore again in a moment";
 
+/// Any safety-snapshot failure refuses the restore, whatever the live count
+/// (og-backup-cas D5); so does an empty snapshot of a nonempty graph.
 fn require_safety_snapshot(snapshot: BackupOutcome, live_n: usize) -> Result<(), String> {
-    if live_n > 0 && (snapshot.copied == 0 || snapshot.failure.is_some()) {
+    if snapshot.failure.is_some() || (live_n > 0 && snapshot.copied == 0) {
         let token = snapshot.failure.map_or_else(
             || {
                 BackupFailure {
@@ -619,6 +623,48 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// og-backup-cas D5 (REVIEW-backup-cas-2 N2): config is live content, so
+    /// an empty safety snapshot of a config-only graph refuses the restore.
+    #[test]
+    fn a_config_only_graph_needs_a_nonempty_safety_snapshot() {
+        let root = scratch("restore-config-only");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        std::fs::create_dir_all(graph.join("logseq")).unwrap();
+        std::fs::write(graph.join("logseq/config.edn"), "{:live true}\n").unwrap();
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        let outcome = write_snapshot(&base, &store, source.clone(), "", false, &|| false);
+        assert_eq!(outcome.copied, 1, "the snapshot holds config");
+        std::fs::write(graph.join("logseq/config.edn"), "{:edited true}\n").unwrap();
+        let result =
+            restore_from_backup_source(&outcome.published.unwrap(), &base, &store, source, |_| {
+                BackupOutcome::success(0)
+            });
+        store.close();
+        assert!(result.unwrap_err().contains("safety snapshot"));
+        assert_eq!(
+            std::fs::read_to_string(graph.join("logseq/config.edn")).unwrap(),
+            "{:edited true}\n",
+            "nothing restored"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// og-backup-cas D5: a failed safety snapshot refuses the restore even
+    /// when the graph holds no live content to count.
+    #[test]
+    fn any_safety_snapshot_failure_refuses_the_restore() {
+        assert!(require_safety_snapshot(
+            BackupOutcome::failed(0, "reserve", ErrorKind::PermissionDenied),
+            0
+        )
+        .unwrap_err()
+        .starts_with("backup-failed:reserve:PermissionDenied"));
+        assert!(require_safety_snapshot(BackupOutcome::success(0), 0).is_ok());
+        assert!(require_safety_snapshot(BackupOutcome::success(0), 1).is_err());
+    }
+
     #[test]
     fn restore_verifies_a_selected_snapshot_before_mutating_the_graph() {
         let root = scratch("restore-verification-before-mutation");
@@ -645,8 +691,9 @@ mod tests {
                     sha256: "does not match the payload".into(),
                 }],
                 complete: true,
+                anchor: false,
+                created_unix: None,
             },
-            false,
         )
         .unwrap();
         let source = BackupSource {
@@ -698,8 +745,10 @@ mod tests {
             writer: None,
             files: snapshot_inventory(&snapshot).unwrap(),
             complete: true,
+            anchor: false,
+            created_unix: None,
         };
-        write_manifest(&snapshot, &manifest, false).unwrap();
+        write_manifest(&snapshot, &manifest).unwrap();
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
         let source = BackupSource::from_store(&store, &graph).unwrap();
         restore_from_backup_source(
@@ -739,8 +788,9 @@ mod tests {
                 writer: None,
                 files: Vec::new(),
                 complete: true,
+                anchor: false,
+                created_unix: None,
             },
-            false,
         )
         .unwrap();
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
@@ -799,7 +849,7 @@ mod tests {
         whole_graph(&graph);
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
         let source = BackupSource::from_store(&store, &graph).unwrap();
-        let outcome = write_snapshot(&base, &store, source.clone(), "", &|| false);
+        let outcome = write_snapshot(&base, &store, source.clone(), "", false, &|| false);
         assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
         let stamp = outcome.published.clone().unwrap();
         let manifest = read_manifest(&cas_dir(&base).join(CAS_SNAPSHOTS).join(&stamp)).unwrap();
@@ -829,7 +879,9 @@ mod tests {
         write(&graph.join("archive/Later.md"), "- later\n");
         write(&graph.join("private/Later.md"), "- hidden later\n");
         restore_from_backup_source(&stamp, &base, &store, source, |source| {
-            write_snapshot(&base, &store, source.clone(), "pre-restore", &|| false)
+            write_snapshot(&base, &store, source.clone(), "pre-restore", false, &|| {
+                false
+            })
         })
         .unwrap();
         assert_eq!(
@@ -969,7 +1021,7 @@ mod tests {
             .unwrap();
             assert_eq!(list_backups_from_base(&base, &graph).len(), 1);
             assert!(
-                is_foreign_snapshot(&snapshot),
+                keep_count_exempt(&snapshot),
                 "master's snapshots are not ours to prune"
             );
             let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
@@ -1008,7 +1060,7 @@ mod tests {
         }
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
         let source = BackupSource::from_store(&store, &graph).unwrap();
-        let outcome = write_snapshot(&base, &store, source.clone(), "", &|| false);
+        let outcome = write_snapshot(&base, &store, source.clone(), "", false, &|| false);
         assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
         let stamp = outcome.published.clone().unwrap();
         let manifest = read_manifest(&cas_dir(&base).join(CAS_SNAPSHOTS).join(&stamp)).unwrap();
@@ -1119,7 +1171,7 @@ mod tests {
         write(&graph.join("pages/Same.md"), "- a\n");
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
         let source = BackupSource::from_store(&store, &graph).unwrap();
-        let outcome = write_snapshot(&base, &store, source.clone(), "", &|| false);
+        let outcome = write_snapshot(&base, &store, source.clone(), "", false, &|| false);
         assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
         let stamp = outcome.published.clone().unwrap();
         let snapshot = cas_dir(&base).join(CAS_SNAPSHOTS).join(&stamp);
@@ -1223,15 +1275,18 @@ mod tests {
                 writer: Some(SNAPSHOT_WRITER.into()),
                 files: snapshot_inventory(&old).unwrap(),
                 complete: true,
+                anchor: false,
+                created_unix: None,
             },
-            false,
         )
         .unwrap();
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
         let source = BackupSource::from_store(&store, &graph).unwrap();
-        assert!(write_snapshot(&base, &store, source.clone(), "", &|| false)
-            .failure
-            .is_none());
+        assert!(
+            write_snapshot(&base, &store, source.clone(), "", false, &|| false)
+                .failure
+                .is_none()
+        );
         assert_eq!(list_backups_from_base(&base, &graph).len(), 2);
         restore_from_backup_source("2026-09-01_00-00-00", &base, &store, source, |_| {
             BackupOutcome::success(1)
@@ -1276,7 +1331,7 @@ mod tests {
         small_graph_with_root(&graph);
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
         let source = BackupSource::from_store(&store, &graph).unwrap();
-        let outcome = write_snapshot(&base, &store, source.clone(), "", &|| false);
+        let outcome = write_snapshot(&base, &store, source.clone(), "", false, &|| false);
         let stamp = outcome.published.unwrap();
         let path = cas_dir(&base)
             .join(CAS_SNAPSHOTS)
@@ -1327,7 +1382,7 @@ mod tests {
         small_graph_with_root(&graph);
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
         let source = BackupSource::from_store(&store, &graph).unwrap();
-        let outcome = write_snapshot(&base, &store, source.clone(), "", &|| false);
+        let outcome = write_snapshot(&base, &store, source.clone(), "", false, &|| false);
         let stamp = outcome.published.unwrap();
         let manifest = read_manifest(&cas_dir(&base).join(CAS_SNAPSHOTS).join(&stamp)).unwrap();
         let sha256 = &manifest

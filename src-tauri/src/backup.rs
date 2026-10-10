@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tauri::Manager;
 use tine_store::{is_asset_sidecar, is_graph_text, Area, RestoreFile, Store};
 
+mod collect;
 mod restore;
 pub(crate) use restore::restore_backup;
 
@@ -21,7 +22,7 @@ static BACKUP_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceL
 
 /// The process-wide backup permit: one whole-graph copy at a time across
 /// every open graph. It is a throttle, not the backup protocol's exclusion;
-/// that is the cross-process `lock_cas` (REVIEW-backup-cas B2). Lock order:
+/// that is the cross-process `lock_namespace` (REVIEW-backup-cas B2). Lock order:
 /// this permit, then a namespace's lock.
 fn backup_work() -> std::sync::MutexGuard<'static, ()> {
     BACKUP_WORK
@@ -258,64 +259,44 @@ fn cas_dir(base: &std::path::Path) -> PathBuf {
     base.with_file_name(name)
 }
 
-/// The exclusive OS lock on a schema-4 namespace (REVIEW-backup-cas B2). Only
-/// Tine writes the namespace (assumption A-bk1), and every reservation, blob
-/// write or repair, partial cleanup, collection and restore read happens
-/// under this lock, so a process holding it sees no other writer. Released
-/// on drop.
-struct CasLock(std::fs::File);
-
-impl Drop for CasLock {
-    fn drop(&mut self) {
-        let _ = self.0.unlock();
-    }
-}
-
-/// Take the namespace lock. `wait: None` tries once; otherwise the wait is
-/// bounded. `Ok(None)`: another process holds it. A thread does the blocking
-/// lock, so a timed-out wait leaves it to release the lock when it arrives.
-fn lock_cas(
+/// Take the exclusive OS lock on a schema-4 namespace (REVIEW-backup-cas B2,
+/// og-backup-cas D1). Only Tine writes the namespace (assumption A-bk1), and
+/// every reservation, blob write or repair, publication, prune, collection
+/// and restore read happens under this lock, so a process holding it sees
+/// no other writer. `wait: None` tries once; otherwise the wait is a
+/// contention bound on this thread. `Ok(None)`: another process holds it.
+fn lock_namespace(
     cas: &std::path::Path,
     wait: Option<std::time::Duration>,
-) -> std::io::Result<Option<CasLock>> {
+) -> std::io::Result<Option<crate::file_lock::FileLock>> {
     std::fs::create_dir_all(cas)?;
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(cas.join(CAS_LOCK))?;
-    match file.try_lock() {
-        Ok(()) => return Ok(Some(CasLock(file))),
-        Err(std::fs::TryLockError::Error(error)) => return Err(error),
-        Err(std::fs::TryLockError::WouldBlock) => {}
-    }
-    let Some(wait) = wait else {
-        return Ok(None);
-    };
-    let (sent, received) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = sent.send(file.lock().map(|()| CasLock(file)));
-    });
-    match received.recv_timeout(wait) {
-        Ok(locked) => locked.map(Some),
-        Err(_) => Ok(None),
+    let path = cas.join(CAS_LOCK);
+    match wait {
+        None => crate::file_lock::try_lock_exclusive(&path),
+        Some(wait) => {
+            crate::file_lock::lock_exclusive_until(&path, std::time::Instant::now() + wait)
+        }
     }
 }
 
-/// This process's latest launch snapshot in each namespace. It may not have
-/// been through OS writeback yet, so the keep-count never counts it: an older
-/// snapshot remains after a power cut (REVIEW N3, assumption A-bk2).
-static FRESH_SNAPSHOT: std::sync::Mutex<std::collections::BTreeMap<PathBuf, String>> =
-    std::sync::Mutex::new(std::collections::BTreeMap::new());
+/// A launch publishes a new anchor when the newest valid one is this old
+/// (og-backup-cas D2), by the clock in either direction.
+const ANCHOR_ROTATION_SECS: u64 = 7 * 24 * 60 * 60;
 
-fn fresh_snapshot(cas: &std::path::Path) -> Option<String> {
-    FRESH_SNAPSHOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(cas)
-        .cloned()
+/// Seconds since the Unix epoch; tests shift the clock.
+fn now_unix() -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    #[cfg(test)]
+    let now = now.saturating_add_signed(CLOCK_SHIFT.with(std::cell::Cell::get));
+    now
 }
+
+/// The largest file a snapshot holds: a backup refuses a bigger one
+/// (`FileTooLarge`), so restore can refuse a bigger blob as damaged before
+/// reading or hashing it, which bounds restore's memory.
+const SNAPSHOT_FILE_MAX_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Chronological order of snapshot names, `<stamp>[-<suffix>][-<k>]`: the
 /// stamp, then the same-second counter `k` as a number (none is 1), then the
@@ -355,6 +336,13 @@ struct SnapshotManifest {
     writer: Option<String>,
     files: Vec<SnapshotFile>,
     complete: bool,
+    /// A durably published snapshot the keep-count never counts or prunes
+    /// (og-backup-cas D2); covered by the checksum like every field.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    anchor: bool,
+    /// When the snapshot was taken (Unix seconds); anchor rotation reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    created_unix: Option<u64>,
 }
 
 /// The graph-text scope a schema-3 snapshot covered: restore retires only
@@ -389,21 +377,52 @@ pub(crate) fn root_backup_id(root: &std::path::Path) -> String {
     format!("{label}-{}", &digest[..32])
 }
 
-/// The SHA-256 of a manifest's JSON without its checksum field (REVIEW B1).
-/// `serde_json` objects keep sorted keys, so the compact form is canonical.
+/// The SHA-256 of a manifest's JSON without its checksum field (REVIEW B1),
+/// over its canonical form: compact, object keys sorted at every level,
+/// strings unescaped beyond JSON's minimum (Python's `json.dumps(v,
+/// sort_keys=True, separators=(",", ":"), ensure_ascii=False)`).
 fn manifest_checksum(manifest: &serde_json::Value) -> String {
-    let bytes = serde_json::to_vec(manifest).expect("a JSON value serializes");
+    let mut bytes = Vec::new();
+    canonical_json(manifest, &mut bytes);
     format!("{:x}", Sha256::digest(bytes))
 }
 
+fn canonical_json(value: &serde_json::Value, out: &mut Vec<u8>) {
+    fn leaf(value: &impl serde::Serialize, out: &mut Vec<u8>) {
+        serde_json::to_writer(out, value).expect("a JSON value serializes");
+    }
+    match value {
+        serde_json::Value::Object(fields) => {
+            let mut keys: Vec<&String> = fields.keys().collect();
+            keys.sort();
+            out.push(b'{');
+            for (i, key) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(b',');
+                }
+                leaf(key, out);
+                out.push(b':');
+                canonical_json(&fields[key], out);
+            }
+            out.push(b'}');
+        }
+        serde_json::Value::Array(items) => {
+            out.push(b'[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(b',');
+                }
+                canonical_json(item, out);
+            }
+            out.push(b']');
+        }
+        other => leaf(other, out),
+    }
+}
+
 /// Write the manifest, with its checksum, into an unpublished snapshot
-/// directory; the directory's rename publishes it. `durable` makes it reach
-/// disk first.
-fn write_manifest(
-    dir: &std::path::Path,
-    manifest: &SnapshotManifest,
-    durable: bool,
-) -> std::io::Result<()> {
+/// directory; the directory's rename publishes it.
+fn write_manifest(dir: &std::path::Path, manifest: &SnapshotManifest) -> std::io::Result<()> {
     use std::io::Write;
     let mut value = serde_json::to_value(manifest).map_err(std::io::Error::other)?;
     let checksum = manifest_checksum(&value);
@@ -417,25 +436,30 @@ fn write_manifest(
         .open(dir.join(SNAPSHOT_MANIFEST))?;
     file.write_all(&bytes)?;
     record_backup_op("manifest_write");
-    if durable {
-        sync_step("manifest_sync", || file.sync_all())?;
-        sync_step("manifest_dir_sync", || {
-            tine_store::directory_durability::sync_directory_entry(dir)
-        })?;
-    }
     Ok(())
 }
 
 #[cfg(test)]
 type PauseHook = Option<(&'static str, Box<dyn FnOnce()>)>;
 
+/// What the sync seam makes durable: a file's bytes or a directory's entries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Synced {
+    File,
+    Dir,
+}
+
 #[cfg(test)]
 std::thread_local! {
     static BACKUP_OPS: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
     /// Runs once when this thread records the named op.
     static PAUSE_AT: std::cell::RefCell<PauseHook> = const { std::cell::RefCell::new(None) };
-    /// The sync step that fails on this thread.
-    static FAIL_SYNC: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+    /// Every sync this thread completed, in order (og-backup-cas D6).
+    static SYNCS: std::cell::RefCell<Vec<(Synced, PathBuf)>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Fails this thread's sync once `SYNCS` holds this many.
+    static FAIL_SYNC: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// Seconds added to this thread's clock.
+    static CLOCK_SHIFT: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
 }
 
 fn record_backup_op(op: &'static str) {
@@ -458,14 +482,25 @@ fn record_backup_op(op: &'static str) {
     let _ = op;
 }
 
-/// One sync of a durable snapshot; tests make a named one fail.
-fn sync_step(op: &'static str, sync: impl FnOnce() -> std::io::Result<()>) -> std::io::Result<()> {
+/// The one seam every backup sync goes through (og-backup-cas D6). A test
+/// observes a sync only after the real call returned Ok, so a publication
+/// that skips a call loses its observation; tests make the n-th one fail.
+fn sync_durable(kind: Synced, path: &std::path::Path) -> std::io::Result<()> {
     #[cfg(test)]
-    if FAIL_SYNC.with(|fail| fail.get() == Some(op)) {
+    if FAIL_SYNC.with(std::cell::Cell::get) == Some(SYNCS.with(|syncs| syncs.borrow().len())) {
         return Err(std::io::Error::other("injected sync failure"));
     }
-    sync()?;
-    record_backup_op(op);
+    match kind {
+        // Windows flushes a file only through a handle that may write.
+        Synced::File => std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)?
+            .sync_all()?,
+        Synced::Dir => tine_store::directory_durability::sync_directory_entry(path)?,
+    }
+    #[cfg(test)]
+    SYNCS.with(|syncs| syncs.borrow_mut().push((kind, path.to_path_buf())));
+    record_backup_op("sync");
     Ok(())
 }
 
@@ -538,14 +573,15 @@ fn put_blob(blobs: &std::path::Path, sha256: &str, bytes: &[u8]) -> std::io::Res
 }
 
 /// Publish an unpublished snapshot directory under its final name. A
-/// `durable` snapshot (one taken before a rewrite or restore the user asked
-/// for, which the next launch cannot re-take) syncs every blob it lists and
-/// its manifest before the rename and the snapshots directory after it; a
-/// failed sync fails the snapshot, and with it the rewrite or restore. A
-/// launch snapshot syncs nothing: restore verifies every blob before any
-/// graph write, a torn launch snapshot is refused, the next launch repairs a
-/// torn blob of content the graph still holds, and the keep-count keeps the
-/// earlier launches' snapshots (A-bk2).
+/// `durable` snapshot (an anchor, or one taken before a rewrite or restore
+/// the user asked for) syncs, every time and in this order (og-backup-cas
+/// D4): every blob it lists, `blobs/`, the manifest, the unpublished
+/// directory, then after the rename `snapshots/`, `<id>.cas/`, `backups/`
+/// and the app-data directory. Existence is no durability witness: a launch
+/// may have written those entries without a sync. A failed sync fails the
+/// snapshot. A routine launch snapshot syncs nothing: restore verifies every
+/// blob before any graph write, a torn one is refused, and the anchor
+/// remains (docs/storage-contract.md "Graph backups").
 fn publish_snapshot(
     partial: &std::path::Path,
     final_dest: &std::path::Path,
@@ -553,34 +589,39 @@ fn publish_snapshot(
     durable: bool,
 ) -> std::io::Result<()> {
     let snapshots = final_dest.parent().expect("snapshot has parent");
+    let cas = snapshots.parent().expect("namespace has parent");
     if durable {
-        let blobs = snapshots.with_file_name(BLOB_DIR);
-        for file in &manifest.files {
-            // Windows flushes a file only through a handle that may write.
-            let blob = std::fs::OpenOptions::new()
-                .write(true)
-                .open(blobs.join(&file.sha256))?;
-            sync_step("blob_sync", || blob.sync_all())?;
+        let blobs = cas.join(BLOB_DIR);
+        let listed: std::collections::BTreeSet<&str> = manifest
+            .files
+            .iter()
+            .map(|file| file.sha256.as_str())
+            .collect();
+        for sha256 in listed {
+            sync_durable(Synced::File, &blobs.join(sha256))?;
         }
-        sync_step("blob_dir_sync", || {
-            tine_store::directory_durability::sync_directory_entry(&blobs)
-        })?;
+        sync_durable(Synced::Dir, &blobs)?;
     }
-    write_manifest(partial, manifest, durable)?;
+    write_manifest(partial, manifest)?;
+    if durable {
+        sync_durable(Synced::File, &partial.join(SNAPSHOT_MANIFEST))?;
+        sync_durable(Synced::Dir, partial)?;
+    }
     crate::device_io::move_file_noreplace(partial, final_dest)?;
     record_backup_op("publish_rename");
     if durable {
-        sync_step("publication_dir_sync", || {
-            tine_store::directory_durability::sync_directory_entry(snapshots)
-        })?;
+        let backups = cas.parent().expect("backups dir");
+        let app_data = backups.parent().expect("app-data dir");
+        for dir in [snapshots, cas, backups, app_data] {
+            sync_durable(Synced::Dir, dir)?;
+        }
     }
     Ok(())
 }
 
-/// A listable, restorable manifest: a supported schema, complete, and for
-/// schema 4 a checksum that matches (REVIEW B1: a bit flip in a path or the
-/// scope can leave valid JSON). Listing and restore both read through this.
-fn read_manifest(dir: &std::path::Path) -> Option<SnapshotManifest> {
+/// A manifest's JSON without its checksum field, and whether that checksum
+/// matched; `None` when it is unreadable or not a JSON object.
+fn manifest_json(dir: &std::path::Path) -> Option<(serde_json::Value, bool)> {
     let bytes = std::fs::read(dir.join(SNAPSHOT_MANIFEST)).ok()?;
     let mut value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     let checksum = value
@@ -589,6 +630,14 @@ fn read_manifest(dir: &std::path::Path) -> Option<SnapshotManifest> {
         .map(|(_, checksum)| checksum);
     let checksum_ok =
         checksum.as_ref().and_then(serde_json::Value::as_str) == Some(&manifest_checksum(&value));
+    Some((value, checksum_ok))
+}
+
+/// A listable, restorable manifest: a supported schema, complete, and for
+/// schema 4 a checksum that matches (REVIEW B1: a bit flip in a path or the
+/// scope can leave valid JSON). Listing and restore both read through this.
+fn read_manifest(dir: &std::path::Path) -> Option<SnapshotManifest> {
+    let (value, checksum_ok) = manifest_json(dir)?;
     let manifest: SnapshotManifest = serde_json::from_value(value).ok()?;
     let supported = manifest.schema == LEGACY_SNAPSHOT_SCHEMA
         || (matches!(
@@ -692,12 +741,40 @@ fn load_verified_payloads(
         .files
         .iter()
         .map(|file| {
+            let mut input =
+                std::fs::File::open(payload_path(snapshot, cas, manifest, file)?).ok()?;
+            // No backup writes a file over the cap, so a bigger one is damage,
+            // refused before it is read or hashed.
+            if input.metadata().ok()?.len() > SNAPSHOT_FILE_MAX_BYTES {
+                return None;
+            }
             #[cfg(test)]
             PAYLOAD_HASH_READS.with(|reads| reads.set(reads.get() + 1));
-            let bytes = std::fs::read(payload_path(snapshot, cas, manifest, file)?).ok()?;
+            let mut bytes = Vec::new();
+            (&mut input)
+                .take(SNAPSHOT_FILE_MAX_BYTES + 1)
+                .read_to_end(&mut bytes)
+                .ok()?;
+            if bytes.len() as u64 > SNAPSHOT_FILE_MAX_BYTES {
+                return None;
+            }
             (format!("{:x}", Sha256::digest(&bytes)) == file.sha256).then_some(bytes)
         })
         .collect()
+}
+
+/// Whether every blob a schema-4 manifest lists hashes to its name,
+/// streaming each once: an anchor's check before older anchors go (D2).
+fn blobs_verify(cas: &std::path::Path, manifest: &SnapshotManifest) -> bool {
+    let listed: std::collections::BTreeSet<&str> = manifest
+        .files
+        .iter()
+        .map(|file| file.sha256.as_str())
+        .collect();
+    listed.into_iter().all(|sha256| {
+        is_digest(sha256)
+            && hash_snapshot_file(&cas.join(BLOB_DIR).join(sha256)).is_ok_and(|hash| hash == sha256)
+    })
 }
 
 /// Test helper: whether a snapshot verifies, for one in either namespace.
@@ -811,7 +888,7 @@ fn copy_store_area(
         if !include(&entry.id) {
             continue;
         }
-        match store.read(&entry.id, None) {
+        match store.read(&entry.id, Some(SNAPSHOT_FILE_MAX_BYTES)) {
             Ok((bytes, _)) => {
                 let sha256 = format!("{:x}", Sha256::digest(&bytes));
                 match put_blob(blobs, &sha256, &bytes) {
@@ -892,27 +969,18 @@ impl Drop for PartialBackup {
     }
 }
 
-/// Remove every unpublished snapshot in a namespace's `snapshots/`, and say
-/// whether there was one. The caller holds the namespace lock, so each is
-/// abandoned: a live writer would hold the lock. The legacy namespace's
-/// `.partial-*` entries are left alone; an older build may be writing one.
-fn cleanup_partial_backups(snapshots: &std::path::Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(snapshots) else {
-        return false;
-    };
-    let mut found = false;
-    for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().starts_with(".partial-") {
-            found = true;
-            let path = entry.path();
-            if path.is_dir() {
-                let _ = std::fs::remove_dir_all(path);
-            } else {
-                let _ = std::fs::remove_file(path);
-            }
-        }
+/// Whether a crashed snapshot left an unpublished directory in a
+/// namespace's `snapshots/`. An unreadable listing counts as one, so the
+/// collection that follows reports it. The collector removes them.
+fn has_partials(snapshots: &std::path::Path) -> bool {
+    match std::fs::read_dir(snapshots) {
+        Ok(entries) => entries.into_iter().any(|entry| {
+            entry.map_or(true, |entry| {
+                entry.file_name().to_string_lossy().starts_with(".partial-")
+            })
+        }),
+        Err(error) => error.kind() != ErrorKind::NotFound,
     }
-    found
 }
 
 fn do_backup_source_cancellable(
@@ -937,8 +1005,13 @@ fn do_backup_source_cancellable(
 /// refused: another Tine process is backing up this graph now. A suffixed
 /// snapshot waits, bounded, and fails on timeout, which refuses the rewrite
 /// or restore it precedes (concurrent honest instances; refusal row
-/// docs/storage-contract.md, `src-tauri::backup` namespace lock). The whole blob store is enumerated only after a
-/// crashed or failed snapshot (REVIEW F2).
+/// docs/storage-contract.md, `src-tauri::backup` namespace lock).
+///
+/// A launch with no valid anchor, or whose newest is `ANCHOR_ROTATION_SECS`
+/// old, publishes its snapshot as the new anchor, durably, verifies it, and
+/// only then deletes the older anchors (og-backup-cas D2). The collector
+/// runs only after a crashed partial, a failed snapshot or a deletion, never
+/// on a launch that removed nothing (REVIEW F2).
 fn backup_locked(
     base: &std::path::Path,
     store: &Store,
@@ -948,7 +1021,7 @@ fn backup_locked(
     cancelled: &dyn Fn() -> bool,
 ) -> BackupOutcome {
     let cas = cas_dir(base);
-    let _lock = match lock_cas(&cas, (!suffix.is_empty()).then_some(CAS_LOCK_WAIT)) {
+    let _lock = match lock_namespace(&cas, (!suffix.is_empty()).then_some(CAS_LOCK_WAIT)) {
         Ok(Some(lock)) => lock,
         Ok(None) if suffix.is_empty() => {
             crate::debug::diag_private(
@@ -960,32 +1033,105 @@ fn backup_locked(
         Ok(None) => return BackupOutcome::failed(0, "lock", ErrorKind::TimedOut),
         Err(error) => return BackupOutcome::failed(0, "lock", error.kind()),
     };
-    let crashed = cleanup_partial_backups(&cas.join(CAS_SNAPSHOTS));
-    let outcome = write_snapshot(base, store, source, suffix, cancelled);
+    let crashed = has_partials(&cas.join(CAS_SNAPSHOTS));
+    let anchors = if suffix.is_empty() {
+        valid_anchors(&cas)
+    } else {
+        Vec::new()
+    };
+    let newest = anchors.iter().filter_map(|(_, created)| *created).max();
+    let rotate = suffix.is_empty()
+        && newest.is_none_or(|newest| now_unix().abs_diff(newest) >= ANCHOR_ROTATION_SECS);
+    let mut outcome = write_snapshot(base, store, source, suffix, rotate, cancelled);
+    let mut removed = 0;
     if outcome.failure.is_none() && outcome.copied > 0 {
-        if let (true, Some(name)) = (suffix.is_empty(), &outcome.published) {
-            FRESH_SNAPSHOT
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(cas.clone(), name.clone());
+        if let (true, Some(name)) = (rotate, &outcome.published) {
+            match settle_anchor(&cas, name, &anchors) {
+                Ok(older) => removed += older,
+                Err(kind) => outcome = BackupOutcome::failed(outcome.copied, "anchor", kind),
+            }
         }
-        prune_backups(base, keep);
+        removed += prune_backups(base, keep);
     }
-    if crashed || outcome.failure.is_some() {
-        collect_blobs(&cas);
+    if crashed || removed > 0 || outcome.failure.is_some() {
+        report_collection(collect::collect(&cas));
     }
     outcome
 }
 
+/// The namespace's valid anchors: a checksummed manifest marked `anchor`,
+/// with its creation time. An unreadable listing reads as none, which only
+/// makes the launch publish one.
+fn valid_anchors(cas: &std::path::Path) -> Vec<(String, Option<u64>)> {
+    std::fs::read_dir(cas.join(CAS_SNAPSHOTS))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            if name.starts_with(".partial-") {
+                return None;
+            }
+            let manifest = read_manifest(&entry.path())?;
+            manifest.anchor.then_some((name, manifest.created_unix))
+        })
+        .collect()
+}
+
+/// Verify a just-published anchor by hashing every blob it lists, then
+/// delete the older anchors; returns how many went. A failed check removes
+/// the new anchor instead, so every older one stays (refusal scenario:
+/// docs/storage-contract.md I-8 row `src-tauri::backup::settle_anchor`).
+fn settle_anchor(
+    cas: &std::path::Path,
+    name: &str,
+    older: &[(String, Option<u64>)],
+) -> Result<usize, ErrorKind> {
+    let snapshots = cas.join(CAS_SNAPSHOTS);
+    let dir = snapshots.join(name);
+    record_backup_op("anchor_published");
+    if !read_manifest(&dir).is_some_and(|manifest| blobs_verify(cas, &manifest)) {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(ErrorKind::InvalidData);
+    }
+    record_backup_op("anchor_verified");
+    for (old, _) in older {
+        let _ = std::fs::remove_dir_all(snapshots.join(old));
+    }
+    Ok(older.len())
+}
+
+/// Log what a collection could not do; it never fails the snapshot.
+fn report_collection(result: std::io::Result<collect::CollectReport>) {
+    match result {
+        Ok(report) if report.failed.is_empty() && report.damaged.is_empty() => {}
+        Ok(report) => crate::debug::diag_private(
+            "backup-collect",
+            format!(
+                "backup collection: {} removed, failed {:?}, damaged {:?}",
+                report.removed, report.failed, report.damaged
+            ),
+        ),
+        Err(error) => {
+            record_backup_op("collect_failed");
+            crate::debug::diag_private(
+                "backup-collect-failed",
+                format!("backup collection stopped before deleting anything: {error}"),
+            );
+        }
+    }
+}
+
 /// Put one snapshot's files in the blob store of `base`'s schema-4
 /// namespace and publish its manifest there; the caller holds the namespace
-/// lock and prunes. A suffixed snapshot precedes a rewrite or restore the
-/// user asked for, so it is published durably (`publish_snapshot`).
+/// lock and prunes. An anchor, and a suffixed snapshot (one before a rewrite
+/// or restore the user asked for), are published durably (`publish_snapshot`).
 fn write_snapshot(
     base: &std::path::Path,
     store: &Store,
     source: BackupSource,
     suffix: &str,
+    anchor: bool,
     cancelled: &dyn Fn() -> bool,
 ) -> BackupOutcome {
     let stamp = tine_core::date::utc_backup_stamp();
@@ -1078,7 +1224,7 @@ fn write_snapshot(
                         });
                 }
                 if let Some(config) = listing.files.iter().find(|entry| entry.rel == "config.edn") {
-                    match store.read(&config.id, None) {
+                    match store.read(&config.id, Some(SNAPSHOT_FILE_MAX_BYTES)) {
                         Ok((bytes, _)) => {
                             let sha256 = format!("{:x}", Sha256::digest(&bytes));
                             match put_blob(&blobs, &sha256, &bytes) {
@@ -1151,8 +1297,12 @@ fn write_snapshot(
         writer: Some(SNAPSHOT_WRITER.into()),
         files,
         complete: true,
+        anchor,
+        created_unix: Some(now_unix()),
     };
-    if let Err(error) = publish_snapshot(&dest, &final_dest, &manifest, !suffix.is_empty()) {
+    if let Err(error) =
+        publish_snapshot(&dest, &final_dest, &manifest, anchor || !suffix.is_empty())
+    {
         return BackupOutcome::failed(n, "publish", error.kind());
     }
     partial.committed = true;
@@ -1268,14 +1418,15 @@ fn list_backups_from_base(base: &std::path::Path, root: &std::path::Path) -> Vec
     out
 }
 
-/// A snapshot the keep-count must leave alone: another Tine wrote it.
-fn is_foreign_snapshot(dir: &std::path::Path) -> bool {
-    let Some(manifest) = std::fs::read(dir.join(SNAPSHOT_MANIFEST))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-    else {
+/// A snapshot the keep-count leaves alone: another Tine wrote it, or it is
+/// a valid anchor (og-backup-cas D2). A damaged anchor counts as routine.
+fn keep_count_exempt(dir: &std::path::Path) -> bool {
+    let Some((manifest, checksum_ok)) = manifest_json(dir) else {
         return false;
     };
+    if checksum_ok && manifest.get("anchor") == Some(&serde_json::Value::Bool(true)) {
+        return true;
+    }
     match manifest.get("schema").and_then(serde_json::Value::as_u64) {
         None => false,
         Some(schema) if schema == u64::from(LEGACY_SNAPSHOT_SCHEMA) => false,
@@ -1294,157 +1445,44 @@ fn is_foreign_snapshot(dir: &std::path::Path) -> bool {
 /// launch applies the keep-count instead.
 fn prune_now(base: &std::path::Path, keep: usize) {
     let cas = cas_dir(base);
-    let Ok(Some(_lock)) = lock_cas(&cas, Some(CAS_LOCK_WAIT)) else {
+    let Ok(Some(_lock)) = lock_namespace(&cas, Some(CAS_LOCK_WAIT)) else {
         return;
     };
-    let crashed = cleanup_partial_backups(&cas.join(CAS_SNAPSHOTS));
-    prune_backups(base, keep);
-    if crashed {
-        collect_blobs(&cas);
+    let crashed = has_partials(&cas.join(CAS_SNAPSHOTS));
+    if prune_backups(base, keep) > 0 || crashed {
+        report_collection(collect::collect(&cas));
     }
 }
 
-/// Apply the keep-count across both namespaces. The caller holds the
-/// namespace lock. Only routine snapshots this build wrote in earlier
-/// launches count: tagged snapshots (e.g. "...-pre-restore") are deliberate
-/// safety points and are never auto-pruned; another Tine's snapshots are
-/// not ours to delete; and this launch's own snapshot is extra (N3), so at
-/// most keep + 1 routine snapshots remain.
-fn prune_backups(base: &std::path::Path, keep: usize) {
-    let cas = cas_dir(base);
-    let fresh = fresh_snapshot(&cas);
+/// Apply the keep-count across both namespaces, newest `keep` by name; the
+/// caller holds the namespace lock. Only routine snapshots this build wrote
+/// count: tagged snapshots (e.g. "...-pre-restore") are deliberate safety
+/// points and are never auto-pruned, anchors are never pruned, and another
+/// Tine's snapshots are not ours to delete. Returns how many schema-4
+/// snapshots it deleted; their blobs wait for the collector (a crash
+/// mid-delete leaves a directory without a manifest, which it removes).
+fn prune_backups(base: &std::path::Path, keep: usize) -> usize {
+    let snapshots = cas_dir(base).join(CAS_SNAPSHOTS);
     let mut dirs: Vec<(String, PathBuf)> = snapshot_dirs(base)
         .into_iter()
         .filter(|(name, dir)| {
             !name.contains("-pre-restore")
-                && Some(name) != fresh.as_ref()
                 // A snapshot another Tine sharing this app-data dir wrote
                 // (master's schema 3, which carries no og writer mark;
                 // docs/app-identity.md) is listed and restorable here but is
                 // not ours to count or delete.
-                && !is_foreign_snapshot(dir)
+                && !keep_count_exempt(dir)
         })
         .collect();
     dirs.sort_by(|(a, _), (b, _)| snapshot_order(a).cmp(&snapshot_order(b)));
     let doomed = &dirs[..dirs.len().saturating_sub(keep)];
-    let snapshots = cas.join(CAS_SNAPSHOTS);
-    let mut cas_doomed = Vec::new();
-    for (name, dir) in doomed {
-        if dir.parent() == Some(snapshots.as_path()) {
-            cas_doomed.push((name.as_str(), dir.as_path()));
-        } else {
-            let _ = std::fs::remove_dir_all(dir);
-        }
-    }
-    if !cas_doomed.is_empty() {
-        drop_cas_snapshots(&cas, &cas_doomed);
-    }
-}
-
-/// The blob names a manifest lists, read loosely (any schema, any validity
-/// beyond JSON). A missing manifest lists none; so does one that is not JSON,
-/// which never restores. Another read error is doubt, which keeps blobs.
-fn manifest_refs(dir: &std::path::Path) -> std::io::Result<Vec<String>> {
-    let bytes = match std::fs::read(dir.join(SNAPSHOT_MANIFEST)) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
-    let Ok(manifest) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-        return Ok(Vec::new());
-    };
-    let files = manifest.get("files").and_then(serde_json::Value::as_array);
-    Ok(files
-        .into_iter()
-        .flatten()
-        .filter_map(|file| file.get("sha256")?.as_str().map(str::to_owned))
-        .collect())
-}
-
-/// Delete pruned schema-4 snapshots and the blobs only they listed, without
-/// enumerating the blob store (REVIEW F2). The caller holds the namespace
-/// lock, so every other manifest is published or abandoned. Each pruned
-/// snapshot is first renamed to `.partial-*`: a crash before its blobs and
-/// directory are gone leaves a partial, and the next cleanup that finds it
-/// collects the whole store. Any doubt deletes nothing.
-fn drop_cas_snapshots(cas: &std::path::Path, doomed: &[(&str, &std::path::Path)]) {
-    let snapshots = cas.join(CAS_SNAPSHOTS);
-    let mut victims = std::collections::BTreeSet::new();
     for (_, dir) in doomed {
-        let Ok(refs) = manifest_refs(dir) else {
-            return;
-        };
-        victims.extend(refs.into_iter().filter(|name| is_digest(name)));
+        let _ = std::fs::remove_dir_all(dir);
     }
-    let Ok(entries) = std::fs::read_dir(&snapshots) else {
-        return;
-    };
-    for entry in entries {
-        let Ok(entry) = entry else {
-            return;
-        };
-        let path = entry.path();
-        if !path.is_dir() || doomed.iter().any(|(_, dir)| *dir == path) {
-            continue;
-        }
-        let Ok(refs) = manifest_refs(&path) else {
-            return;
-        };
-        let kept: std::collections::BTreeSet<String> = refs.into_iter().collect();
-        victims.retain(|name| !kept.contains(name));
-    }
-    let mut hidden = Vec::new();
-    for (name, dir) in doomed {
-        let partial = snapshots.join(format!(".partial-{name}"));
-        if crate::device_io::move_file_noreplace(dir, &partial).is_err() {
-            return;
-        }
-        hidden.push(partial);
-    }
-    for name in victims {
-        let _ = std::fs::remove_file(cas.join(BLOB_DIR).join(name));
-        record_backup_op("blob_collect");
-    }
-    for partial in hidden {
-        let _ = std::fs::remove_dir_all(partial);
-    }
-}
-
-/// Delete every blob-store entry no manifest in the namespace lists: blobs
-/// and temps a crashed or failed snapshot left. Only after one (F2), under
-/// the namespace lock. Any doubt (an unreadable directory or manifest) keeps
-/// everything.
-fn collect_blobs(cas: &std::path::Path) {
-    let Ok(entries) = std::fs::read_dir(cas.join(CAS_SNAPSHOTS)) else {
-        return;
-    };
-    let mut live = std::collections::HashSet::new();
-    for entry in entries {
-        let Ok(entry) = entry else {
-            return;
-        };
-        if !entry.path().is_dir() {
-            continue;
-        }
-        let Ok(refs) = manifest_refs(&entry.path()) else {
-            return;
-        };
-        live.extend(refs);
-    }
-    let Ok(blobs) = std::fs::read_dir(cas.join(BLOB_DIR)) else {
-        return;
-    };
-    record_backup_op("blob_dir_scan");
-    for blob in blobs.flatten() {
-        if !blob
-            .file_name()
-            .to_str()
-            .is_some_and(|name| live.contains(name))
-        {
-            let _ = std::fs::remove_file(blob.path());
-            record_backup_op("blob_collect");
-        }
-    }
+    doomed
+        .iter()
+        .filter(|(_, dir)| dir.parent() == Some(snapshots.as_path()))
+        .count()
 }
 
 #[cfg(test)]
@@ -1546,7 +1584,8 @@ mod tests {
         let (store, _, _) = Store::open(graph, tine_store::OpenOptions::default()).unwrap();
         let source = BackupSource::from_store(&store, graph).unwrap();
         BACKUP_OPS.with(|ops| ops.borrow_mut().clear());
-        let outcome = write_snapshot(base, &store, source, suffix, &|| false);
+        take_syncs();
+        let outcome = write_snapshot(base, &store, source, suffix, false, &|| false);
         assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
         let ops = BACKUP_OPS.with(|ops| ops.borrow().clone());
         store.close();
@@ -1556,12 +1595,79 @@ mod tests {
         (ops, published)
     }
 
+    /// The syncs this thread completed since the last call (og-backup-cas D6).
+    fn take_syncs() -> Vec<(Synced, PathBuf)> {
+        SYNCS.with(|syncs| std::mem::take(&mut *syncs.borrow_mut()))
+    }
+
+    /// The exact syncs a durable publication of `published` makes, in order
+    /// (og-backup-cas D4/D6): each listed blob once, `blobs/`, the manifest,
+    /// the unpublished directory, then `snapshots/`, `<id>.cas/`, `backups/`
+    /// and the app-data directory, leaf to root.
+    fn durable_chain(
+        base: &std::path::Path,
+        published: &std::path::Path,
+        manifest: &SnapshotManifest,
+    ) -> Vec<(Synced, PathBuf)> {
+        let cas = cas_dir(base);
+        let snapshots = cas.join(CAS_SNAPSHOTS);
+        let name = published.file_name().unwrap().to_str().unwrap();
+        let partial = snapshots.join(format!(".partial-{name}"));
+        let listed: std::collections::BTreeSet<&str> = manifest
+            .files
+            .iter()
+            .map(|file| file.sha256.as_str())
+            .collect();
+        let mut chain: Vec<_> = listed
+            .into_iter()
+            .map(|sha256| (Synced::File, cas.join(BLOB_DIR).join(sha256)))
+            .collect();
+        chain.push((Synced::Dir, cas.join(BLOB_DIR)));
+        chain.push((Synced::File, partial.join(SNAPSHOT_MANIFEST)));
+        chain.push((Synced::Dir, partial));
+        let backups = base.parent().unwrap().to_path_buf();
+        let app_data = backups.parent().unwrap().to_path_buf();
+        for dir in [snapshots, cas, backups, app_data] {
+            chain.push((Synced::Dir, dir));
+        }
+        chain
+    }
+
+    /// One launch backup through `backup_locked`: its outcome, published
+    /// snapshot (if any), ops and syncs.
+    fn launch(
+        base: &std::path::Path,
+        graph: &std::path::Path,
+        keep: usize,
+    ) -> (
+        BackupOutcome,
+        Option<PathBuf>,
+        Vec<&'static str>,
+        Vec<(Synced, PathBuf)>,
+    ) {
+        let (store, _, _) = Store::open(graph, tine_store::OpenOptions::default()).unwrap();
+        let source = BackupSource::from_store(&store, graph).unwrap();
+        BACKUP_OPS.with(|ops| ops.borrow_mut().clear());
+        take_syncs();
+        let outcome = backup_locked(base, &store, source, "", keep, &|| false);
+        store.close();
+        let published = outcome
+            .published
+            .as_ref()
+            .map(|name| cas_dir(base).join(CAS_SNAPSHOTS).join(name));
+        let ops = BACKUP_OPS.with(|ops| ops.borrow().clone());
+        (outcome, published, ops, take_syncs())
+    }
+
+    fn sha256_of(bytes: &[u8]) -> String {
+        format!("{:x}", Sha256::digest(bytes))
+    }
+
     /// Restated for the content-addressed design (relaxation ledger: the old
     /// test asserted per-file payload and directory fsyncs before every
-    /// publication). A launch snapshot publishes its manifest only after
-    /// every blob write and syncs nothing; restore verifies every listed
-    /// blob. A snapshot taken before a user-requested rewrite or restore
-    /// syncs every blob and its manifest before the rename, as before.
+    /// publication). A routine launch snapshot publishes its manifest only
+    /// after every blob write and syncs nothing; restore verifies every
+    /// listed blob. Durable publication: `a_durable_snapshot_syncs_*`.
     #[test]
     fn publication_follows_every_blob_write_and_restore_verifies_every_blob() {
         let root = scratch("backup-publication-order");
@@ -1577,10 +1683,7 @@ mod tests {
             position(&ops, "manifest_write") < position(&ops, "publish_rename"),
             "I-1/I-2: backup publication follows every blob write; exemplar backup.rs publish_snapshot"
         );
-        assert!(
-            !ops.iter().any(|op| op.ends_with("sync")),
-            "a launch snapshot syncs nothing: {ops:?}"
-        );
+        assert_eq!(take_syncs(), [], "a routine launch snapshot syncs nothing");
         let manifest = read_manifest(&launch).unwrap();
         assert_eq!(
             std::fs::read_dir(&launch).unwrap().count(),
@@ -1594,17 +1697,84 @@ mod tests {
             manifest.files.len(),
             "restore verifies every listed blob"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
 
-        let (ops, _) = snapshot_now(&base, &graph, "pre-restore");
-        assert_eq!(ops.iter().filter(|op| **op == "blob_sync").count(), 5);
-        assert!(last(&ops, "blob_sync") < position(&ops, "blob_dir_sync"));
-        assert!(position(&ops, "blob_dir_sync") < position(&ops, "manifest_sync"));
-        assert!(position(&ops, "manifest_sync") < position(&ops, "manifest_dir_sync"));
-        assert!(position(&ops, "manifest_dir_sync") < position(&ops, "publish_rename"));
-        assert!(
-            position(&ops, "publish_rename") < position(&ops, "publication_dir_sync"),
-            "I-1/I-2: a pre-rewrite snapshot is durable before the rewrite runs; exemplar backup.rs publish_snapshot"
+    /// og-backup-cas D4/D6, same process: a snapshot before a rewrite or
+    /// restore syncs every blob it lists, even ones an earlier launch wrote
+    /// without a sync, then the manifest, then every directory from its own
+    /// to the app-data directory, each through the sync seam, in order, with
+    /// the rename after the unpublished directory's sync. The directory
+    /// syncs reach the store's directory helper.
+    #[test]
+    fn a_durable_snapshot_syncs_its_whole_chain_after_a_launch_in_this_process() {
+        let root = scratch("backup-durable-chain");
+        let graph = root.join("graph");
+        let base = root.join("app-data").join("backups").join("graph-id");
+        small_graph(&graph);
+        snapshot_now(&base, &graph, "");
+        tine_store::directory_durability::take_synced_directories();
+        let (ops, published) = snapshot_now(&base, &graph, "pre-restore");
+        let manifest = read_manifest(&published).unwrap();
+        let chain = durable_chain(&base, &published, &manifest);
+        assert_eq!(
+            take_syncs(),
+            chain,
+            "I-1/I-2: a durable snapshot syncs blobs, blobs/, manifest, then each directory leaf to root; exemplar backup.rs publish_snapshot"
         );
+        let synced_before_rename = ops
+            .iter()
+            .take_while(|op| **op != "publish_rename")
+            .filter(|op| **op == "sync")
+            .count();
+        assert_eq!(synced_before_rename, chain.len() - 4, "{ops:?}");
+        let dirs = tine_store::directory_durability::take_synced_directories();
+        for (kind, path) in &chain {
+            if *kind == Synced::Dir {
+                assert!(
+                    dirs.contains(path),
+                    "{} reached the directory helper",
+                    path.display()
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// og-backup-cas D4, other process: a durable snapshot syncs the blobs
+    /// and directories another process's routine launch wrote, every time.
+    #[test]
+    fn a_durable_snapshot_syncs_its_whole_chain_after_a_launch_in_another_process() {
+        let root = scratch("backup-durable-chain-process");
+        let graph = root.join("graph");
+        let base = root.join("app-data").join("backups").join("graph-id");
+        small_graph(&graph);
+        let (anchor, ..) = launch(&base, &graph, 12);
+        assert!(anchor.failure.is_none());
+        std::fs::write(graph.join("pages/A.md"), "- a from the other process\n").unwrap();
+        let child = ChildBackup::spawn(&graph, &base, ":never");
+        assert_eq!(child.finish(), "done None");
+        let routine = cas_snapshots(&base).pop().unwrap();
+        assert!(
+            !read_manifest(&routine).unwrap().anchor,
+            "the other process's launch is routine"
+        );
+        let (published_name, syncs) = {
+            let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+            let source = BackupSource::from_store(&store, &graph).unwrap();
+            take_syncs();
+            let outcome = backup_locked(&base, &store, source, "pre-restore", 12, &|| false);
+            store.close();
+            assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
+            (outcome.published.unwrap(), take_syncs())
+        };
+        let published = cas_dir(&base).join(CAS_SNAPSHOTS).join(published_name);
+        let manifest = read_manifest(&published).unwrap();
+        assert!(manifest
+            .files
+            .iter()
+            .any(|file| file.sha256 == sha256_of(b"- a from the other process\n")));
+        assert_eq!(syncs, durable_chain(&base, &published, &manifest));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1697,7 +1867,7 @@ mod tests {
             hash(&old, "graph/pages/A.md"),
             hash(&old, "graph/pages/B.md"),
         );
-        prune_backups(&base, 1);
+        prune_now(&base, 1);
         assert!(!first.exists() && second.exists());
         let blobs = cas_dir(&base).join(BLOB_DIR);
         assert!(blobs.join(&shared).is_file());
@@ -1709,7 +1879,7 @@ mod tests {
     /// A prune that races a snapshot in another thread waits for the
     /// namespace lock, so it never deletes blobs the snapshot wrote before
     /// publishing its manifest. Driven by the snapshot's cancellation hook,
-    /// which runs between files. A `.partial-*` manifest also keeps its blobs.
+    /// which runs between files.
     #[test]
     fn a_prune_racing_a_snapshot_never_deletes_its_blobs() {
         use std::sync::atomic::AtomicUsize;
@@ -1762,53 +1932,155 @@ mod tests {
             &published[0],
             &read_manifest(&published[0]).unwrap()
         ));
-
-        // An in-progress snapshot's manifest names references too.
-        let partial = cas.join(CAS_SNAPSHOTS).join(".partial-in-progress");
-        std::fs::create_dir_all(&partial).unwrap();
-        std::fs::write(cas.join(BLOB_DIR).join("ab"), b"x").unwrap();
-        std::fs::write(
-            partial.join(SNAPSHOT_MANIFEST),
-            r#"{"files":[{"path":"graph/x.md","sha256":"ab"}]}"#,
-        )
-        .unwrap();
-        collect_blobs(&cas);
-        assert!(cas.join(BLOB_DIR).join("ab").is_file());
         store.close();
         let _ = std::fs::remove_dir_all(root);
     }
 
-    /// REVIEW-backup-cas N3 (A-bk2): the keep-count counts only snapshots
-    /// from earlier launches. This launch's own one may not have been through
-    /// writeback, so at keep 1 neither the launch's prune nor a keep-count
-    /// change later in the session deletes the only earlier snapshot.
+    /// og-backup-cas D2: the first backup is an anchor, published with the
+    /// full durable chain; later routine launches sync nothing; neither the
+    /// launch keep-count nor a keep-count change ever prunes the anchor.
     #[test]
-    fn a_launch_never_prunes_the_last_earlier_snapshot() {
-        let root = scratch("backup-keep-plus-one");
+    fn the_first_backup_is_a_durable_anchor_the_keep_count_never_prunes() {
+        let root = scratch("backup-anchor-first");
         let graph = root.join("graph");
-        let base = root.join("backups");
+        let base = root.join("app-data").join("backups").join("graph-id");
         small_graph(&graph);
-        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-        let launch = || {
-            let source = BackupSource::from_store(&store, &graph).unwrap();
-            let outcome = backup_locked(&base, &store, source, "", 1, &|| false);
+        // Keep 2, not 1: at keep 1, same-second launches reuse a pruned name
+        // that orders before the newest (a pre-existing naming defect,
+        // reported in the og-backup-cas round-3 receipt, not patched here).
+        let (outcome, anchor, _, syncs) = launch(&base, &graph, 2);
+        assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
+        let anchor = anchor.unwrap();
+        let manifest = read_manifest(&anchor).unwrap();
+        assert!(manifest.anchor && manifest.created_unix.is_some());
+        assert_eq!(
+            syncs,
+            durable_chain(&base, &anchor, &manifest),
+            "the first backup pays the full sync"
+        );
+        for edit in 0..3 {
+            std::fs::write(graph.join("pages/A.md"), format!("- a {edit}\n")).unwrap();
+            let (outcome, latest, _, syncs) = launch(&base, &graph, 2);
             assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
-            cas_dir(&base)
-                .join(CAS_SNAPSHOTS)
-                .join(outcome.published.unwrap())
-        };
-        let first = launch();
-        let second = launch();
-        assert_eq!(cas_snapshots(&base), [first.clone(), second.clone()]);
+            let latest = latest.unwrap();
+            assert!(!read_manifest(&latest).unwrap().anchor);
+            assert_eq!(syncs, [], "a routine launch syncs nothing");
+            let left = cas_snapshots(&base);
+            assert_eq!(left[0], anchor, "the anchor is never pruned");
+            assert_eq!(left.len(), 1 + (edit + 1).min(2), "keep 2 plus the anchor");
+            assert_eq!(left.last(), Some(&latest));
+        }
         prune_now(&base, 1);
+        assert_eq!(cas_snapshots(&base).len(), 2);
+        assert_eq!(
+            cas_snapshots(&base)[0],
+            anchor,
+            "a keep-count change keeps the anchor"
+        );
+        assert!(verify_snapshot(&anchor, &manifest));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// og-backup-cas D2: an anchor 7 days old by its recorded creation time,
+    /// in either clock direction, is replaced at the next launch: the new
+    /// anchor is published durably and verified, then the old one goes.
+    #[test]
+    fn a_week_old_anchor_rotates_after_its_successor_is_durable() {
+        let root = scratch("backup-anchor-rotate");
+        let graph = root.join("graph");
+        let base = root.join("app-data").join("backups").join("graph-id");
+        small_graph(&graph);
+        let (_, first, ..) = launch(&base, &graph, 12);
+        assert!(read_manifest(&first.unwrap()).unwrap().anchor);
+        let (_, routine, _, syncs) = launch(&base, &graph, 12);
+        assert_eq!(syncs, [], "a fresh anchor does not rotate");
+        let routine = routine.unwrap();
+        for (shift, label) in [(8 * 86_400, "clock forward"), (0, "clock back")] {
+            CLOCK_SHIFT.with(|clock| clock.set(shift));
+            let before = cas_snapshots(&base);
+            let (outcome, rotated, ops, syncs) = launch(&base, &graph, 12);
+            assert!(outcome.failure.is_none(), "{label}: {:?}", outcome.failure);
+            let rotated = rotated.unwrap();
+            let manifest = read_manifest(&rotated).unwrap();
+            assert!(manifest.anchor, "{label}");
+            assert_eq!(syncs, durable_chain(&base, &rotated, &manifest), "{label}");
+            assert!(ops.contains(&"anchor_verified"), "{label}: {ops:?}");
+            let anchors: Vec<_> = cas_snapshots(&base)
+                .into_iter()
+                .filter(|dir| read_manifest(dir).unwrap().anchor)
+                .collect();
+            assert_eq!(
+                anchors,
+                [rotated.clone()],
+                "{label}: exactly the newest anchor"
+            );
+            assert!(!before.contains(&rotated), "{label}: a new anchor");
+            assert!(before.iter().any(|dir| dir == &routine) && routine.is_dir());
+        }
+        CLOCK_SHIFT.with(|clock| clock.set(0));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// og-backup-cas D2: a new anchor that fails verification is removed and
+    /// the old anchor stays; the next launch rotates.
+    #[test]
+    fn a_new_anchor_that_fails_verification_never_replaces_the_old_one() {
+        let root = scratch("backup-anchor-verify");
+        let graph = root.join("graph");
+        let base = root.join("app-data").join("backups").join("graph-id");
+        small_graph(&graph);
+        let (_, old, ..) = launch(&base, &graph, 12);
+        let old = old.unwrap();
+        let edited = b"- a edited for the new anchor\n";
+        std::fs::write(graph.join("pages/A.md"), edited).unwrap();
+        CLOCK_SHIFT.with(|clock| clock.set(8 * 86_400));
+        let blob = cas_dir(&base).join(BLOB_DIR).join(sha256_of(edited));
+        let torn = blob.clone();
+        PAUSE_AT.with(|hook| {
+            *hook.borrow_mut() = Some((
+                "anchor_published",
+                Box::new(move || std::fs::write(&torn, b"bit rot").unwrap()),
+            ))
+        });
+        let (outcome, ..) = launch(&base, &graph, 12);
+        assert_eq!(
+            outcome.failure.as_ref().map(|failure| failure.phase),
+            Some("anchor")
+        );
         assert_eq!(
             cas_snapshots(&base),
-            [first.clone(), second.clone()],
-            "a keep-count change keeps the earlier launch's snapshot too"
+            [old.clone()],
+            "the failed anchor is gone, the old one stays"
         );
-        let third = launch();
-        assert_eq!(cas_snapshots(&base), [second, third], "at most keep + 1");
-        store.close();
+        assert!(verify_snapshot(&old, &read_manifest(&old).unwrap()));
+        let (outcome, rotated, ..) = launch(&base, &graph, 12);
+        CLOCK_SHIFT.with(|clock| clock.set(0));
+        assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
+        assert_eq!(cas_snapshots(&base), [rotated.unwrap()]);
+        assert!(!old.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// og-backup-cas D2 across processes: an anchor another process published
+    /// is never pruned by this process's keep-count.
+    #[test]
+    fn another_processs_anchor_survives_this_processs_keep_count() {
+        let root = scratch("backup-anchor-process");
+        let graph = root.join("graph");
+        let base = root.join("app-data").join("backups").join("graph-id");
+        small_graph(&graph);
+        let child = ChildBackup::spawn(&graph, &base, ":never");
+        assert_eq!(child.finish(), "done None");
+        let anchor = cas_snapshots(&base).pop().unwrap();
+        assert!(read_manifest(&anchor).unwrap().anchor);
+        for edit in 0..3 {
+            std::fs::write(graph.join("pages/B.md"), format!("- b {edit}\n")).unwrap();
+            let (outcome, ..) = launch(&base, &graph, 1);
+            assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
+        }
+        let left = cas_snapshots(&base);
+        assert_eq!((left.len(), &left[0]), (2, &anchor));
+        assert!(verify_snapshot(&anchor, &read_manifest(&anchor).unwrap()));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1834,6 +2106,8 @@ mod tests {
             writer: Some(SNAPSHOT_WRITER.into()),
             files: Vec::new(),
             complete: true,
+            anchor: false,
+            created_unix: None,
         };
         let snapshots = cas_dir(&base).join(CAS_SNAPSHOTS);
         for name in [
@@ -1842,11 +2116,11 @@ mod tests {
             "2026-10-10_01-00-00-9",
         ] {
             std::fs::create_dir_all(snapshots.join(name)).unwrap();
-            write_manifest(&snapshots.join(name), &manifest(SNAPSHOT_SCHEMA), false).unwrap();
+            write_manifest(&snapshots.join(name), &manifest(SNAPSHOT_SCHEMA)).unwrap();
         }
         let legacy = base.join("2026-10-09_23-00-00-11");
         std::fs::create_dir_all(&legacy).unwrap();
-        write_manifest(&legacy, &manifest(GRAPH_COPY_SNAPSHOT_SCHEMA), false).unwrap();
+        write_manifest(&legacy, &manifest(GRAPH_COPY_SNAPSHOT_SCHEMA)).unwrap();
         let listed = || {
             list_backups_from_base(&base, &graph)
                 .into_iter()
@@ -1867,32 +2141,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    /// REVIEW F2: a launch enumerates the blob store only after a crashed or
-    /// failed snapshot. Steady-state launches do not, including those whose
-    /// keep-count deletes a snapshot and collects the blobs only it listed.
+    /// REVIEW F2 as amended by og-backup-cas D3: a launch that deleted
+    /// nothing never enumerates the blob store. One whose keep-count deleted
+    /// a snapshot, or that found a crashed partial, runs the collector, which
+    /// removes exactly the blobs and temps no manifest lists.
     #[test]
-    fn steady_state_launches_never_enumerate_the_blob_store() {
+    fn launches_that_delete_nothing_never_enumerate_the_blob_store() {
         let root = scratch("backup-no-blob-scan");
         let graph = root.join("graph");
         let base = root.join("backups");
         let cas = cas_dir(&base);
         small_graph(&graph);
-        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-        let launch = || {
-            let source = BackupSource::from_store(&store, &graph).unwrap();
-            BACKUP_OPS.with(|ops| ops.borrow_mut().clear());
-            let outcome = backup_locked(&base, &store, source, "", 2, &|| false);
-            assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
-            BACKUP_OPS.with(|ops| ops.borrow().clone())
-        };
-        let mut collected = 0;
-        for edit in 0..5 {
+        for edit in 0..3 {
             std::fs::write(graph.join("pages/A.md"), format!("- a {edit}\n")).unwrap();
-            let ops = launch();
+            let (outcome, _, ops, _) = launch(&base, &graph, 2);
+            assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
             assert!(!ops.contains(&"blob_dir_scan"), "launch {edit}: {ops:?}");
-            collected += ops.iter().filter(|op| **op == "blob_collect").count();
         }
-        assert_eq!(collected, 2, "two pruned snapshots' own page blobs");
+        std::fs::write(graph.join("pages/A.md"), "- a 3\n").unwrap();
+        let (_, _, ops, _) = launch(&base, &graph, 2);
+        assert!(
+            ops.contains(&"blob_dir_scan"),
+            "a deletion runs the collector: {ops:?}"
+        );
+        assert_eq!(
+            ops.iter().filter(|op| **op == "blob_collect").count(),
+            1,
+            "only the pruned snapshot's own page blob: {ops:?}"
+        );
+        assert!(!cas.join(BLOB_DIR).join(sha256_of(b"- a 1\n")).exists());
+        // Anchor + two routine snapshots: 4 shared blobs and 3 page versions.
         assert_eq!(
             std::fs::read_dir(cas.join(BLOB_DIR)).unwrap().count(),
             4 + 3
@@ -1901,50 +2179,59 @@ mod tests {
         // A crash left a partial and a temp: the next launch collects both.
         std::fs::create_dir_all(cas.join(CAS_SNAPSHOTS).join(".partial-crashed")).unwrap();
         std::fs::write(cas.join(BLOB_DIR).join(".tmp-crashed"), b"half").unwrap();
-        let ops = launch();
+        let (_, _, ops, _) = launch(&base, &graph, 12);
         assert!(ops.contains(&"blob_dir_scan"), "{ops:?}");
         assert!(!cas.join(BLOB_DIR).join(".tmp-crashed").exists());
-        store.close();
+        assert!(!cas.join(CAS_SNAPSHOTS).join(".partial-crashed").exists());
         let _ = std::fs::remove_dir_all(root);
     }
 
-    /// REVIEW N6: a sync that fails while a snapshot before a rewrite or
-    /// restore is published fails that snapshot (so the rewrite or restore
-    /// is refused), and before the rename nothing is published.
+    /// og-backup-cas D6 (REVIEW N6): any sync of a durable publication that
+    /// fails fails that snapshot (so the rewrite or restore is refused);
+    /// before the rename nothing is published.
     #[test]
     fn a_failed_sync_fails_a_snapshot_taken_before_a_rewrite() {
-        for op in [
-            "blob_sync",
-            "blob_dir_sync",
-            "manifest_sync",
-            "manifest_dir_sync",
-            "publication_dir_sync",
-        ] {
-            let root = scratch(&format!("backup-sync-fault-{op}"));
+        let probe = scratch("backup-sync-fault-probe");
+        small_graph(&probe.join("graph"));
+        let (_, published) =
+            snapshot_now(&probe.join("backups"), &probe.join("graph"), "pre-restore");
+        let steps = durable_chain(
+            &probe.join("backups"),
+            &published,
+            &read_manifest(&published).unwrap(),
+        )
+        .len();
+        let _ = std::fs::remove_dir_all(probe);
+        for step in 0..steps {
+            let root = scratch(&format!("backup-sync-fault-{step}"));
             let graph = root.join("graph");
             let base = root.join("backups");
             small_graph(&graph);
             let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
             let source = BackupSource::from_store(&store, &graph).unwrap();
-            FAIL_SYNC.with(|fail| fail.set(Some(op)));
-            let outcome = write_snapshot(&base, &store, source, "pre-restore", &|| false);
+            take_syncs();
+            FAIL_SYNC.with(|fail| fail.set(Some(step)));
+            let outcome = write_snapshot(&base, &store, source, "pre-restore", false, &|| false);
             FAIL_SYNC.with(|fail| fail.set(None));
             store.close();
             assert_eq!(
+                take_syncs().len(),
+                step,
+                "step {step}: the failed sync is not observed"
+            );
+            assert_eq!(
                 outcome.failure.as_ref().map(|failure| failure.phase),
                 Some("publish"),
-                "{op}"
+                "step {step}"
             );
-            assert!(rewrite_snapshot_result(outcome).is_err(), "{op}");
-            let entries: Vec<_> = std::fs::read_dir(cas_dir(&base).join(CAS_SNAPSHOTS))
+            assert!(rewrite_snapshot_result(outcome).is_err(), "step {step}");
+            let entries = std::fs::read_dir(cas_dir(&base).join(CAS_SNAPSHOTS))
                 .unwrap()
-                .flatten()
-                .collect();
-            let published = usize::from(op == "publication_dir_sync");
+                .count();
+            let published = usize::from(step >= steps - 4);
             assert_eq!(
-                entries.len(),
-                published,
-                "{op}: no partial, published only after the rename"
+                entries, published,
+                "step {step}: no partial, published only after the rename"
             );
             let _ = std::fs::remove_dir_all(root);
         }
@@ -1971,8 +2258,10 @@ mod tests {
                 sha256: "0".repeat(64),
             }],
             complete: true,
+            anchor: false,
+            created_unix: None,
         };
-        write_manifest(&root, &manifest, false).unwrap();
+        write_manifest(&root, &manifest).unwrap();
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.join(SNAPSHOT_MANIFEST)).unwrap()).unwrap();
         // Independently: Python `json.dumps(m, sort_keys=True, separators=(",", ":"))`.
@@ -1981,6 +2270,299 @@ mod tests {
             "ad39ef957dde5983d530aace08391907d2ef25673b7659fcb0f83dc63fd3f059"
         );
         assert!(read_manifest(&root).is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// The checksum's canonical form is an explicit recursive key sort, not
+    /// `serde_json`'s map order (a `preserve_order` feature anywhere in the
+    /// build would change that). Pinned encoding vector with a Unicode
+    /// string, escapes and a numeric unknown field, cross-checked with Python
+    /// `json.dumps(v, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`.
+    #[test]
+    fn the_manifest_checksum_canonical_form_is_pinned() {
+        let value = serde_json::json!({
+            "zeta": 1,
+            "files": [{"path": "graph/pages/Č.md", "sha256": "a".repeat(64)}],
+            "name": "Příliš žluťoučký kůň 🐎 \"quoted\" \\ tab\t ctrl\u{1}",
+            "unknown_number": 12345,
+            "nested": {"b": -7, "a": [true, null, "\u{2028}"]},
+        });
+        let mut bytes = Vec::new();
+        canonical_json(&value, &mut bytes);
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(
+            text.starts_with(r#"{"files":[{"path":"graph/pages/Č.md","#),
+            "{text}"
+        );
+        assert!(
+            text.ends_with(
+                "\"nested\":{\"a\":[true,null,\"\u{2028}\"],\"b\":-7},\"unknown_number\":12345,\"zeta\":1}"
+            ),
+            "{text}"
+        );
+        assert_eq!(
+            manifest_checksum(&value),
+            "fc6ea8639cd4f2786ad10c743d3112ebc85fa741e72200c5d9325b439071ac20"
+        );
+    }
+
+    /// A namespace for the collector tests: one routine snapshot and one
+    /// planted unreferenced blob a fail-open collector would delete.
+    fn collector_fixture(tag: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+        let root = scratch(tag);
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        small_graph(&graph);
+        let (_, snapshot) = snapshot_now(&base, &graph, "");
+        let stray = cas_dir(&base).join(BLOB_DIR).join("f".repeat(64));
+        std::fs::write(&stray, b"unreferenced").unwrap();
+        (root, base, snapshot, stray)
+    }
+
+    /// The collector removed nothing: the snapshot still verifies and the
+    /// unreferenced blob is still there.
+    fn nothing_collected(snapshot: &std::path::Path, stray: &std::path::Path) -> bool {
+        stray.is_file() && verify_snapshot(snapshot, &read_manifest(snapshot).unwrap())
+    }
+
+    /// og-backup-cas D3 (REVIEW-backup-cas-2 R2-B2): an error item while
+    /// listing `snapshots/` or `blobs/` stops the collection before any
+    /// removal.
+    #[test]
+    fn the_collector_stops_on_a_listing_entry_error() {
+        let (root, base, snapshot, stray) = collector_fixture("collect-entry-error");
+        let cas = cas_dir(&base);
+        for dir in [CAS_SNAPSHOTS, BLOB_DIR] {
+            collect::FAIL_LISTING.with(|fail| *fail.borrow_mut() = Some(cas.join(dir)));
+            let result = collect::collect(&cas);
+            collect::FAIL_LISTING.with(|fail| *fail.borrow_mut() = None);
+            assert!(result.is_err(), "{dir}");
+            assert!(nothing_collected(&snapshot, &stray), "{dir}");
+        }
+        assert_eq!(
+            collect::collect(&cas).unwrap().removed,
+            1,
+            "the fixture collects when listing works"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// og-backup-cas D3: a manifest that cannot be read (here: permission)
+    /// stops the collection; its blobs and every other survive.
+    #[cfg(unix)]
+    #[test]
+    fn the_collector_stops_on_a_manifest_read_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let (root, base, snapshot, stray) = collector_fixture("collect-read-error");
+        let manifest = snapshot.join(SNAPSHOT_MANIFEST);
+        std::fs::set_permissions(&manifest, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let result = collect::collect(&cas_dir(&base));
+        std::fs::set_permissions(&manifest, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::PermissionDenied);
+        assert!(nothing_collected(&snapshot, &stray));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// og-backup-cas D3: the mark is independent of restore eligibility. A
+    /// manifest whose checksum fails, or of an unfamiliar schema, still keeps
+    /// every blob it lists (and is reported); valid JSON whose references
+    /// cannot be read, or an entry the collector did not create, stops it.
+    #[test]
+    fn the_collector_keeps_unverifiable_refs_and_stops_on_uninterpretable_ones() {
+        let (root, base, snapshot, stray) = collector_fixture("collect-formats");
+        let cas = cas_dir(&base);
+        let manifest = snapshot.join(SNAPSHOT_MANIFEST);
+        let original = std::fs::read_to_string(&manifest).unwrap();
+        let flipped = original.replace("graph/pages/A.md", "graph/pages/X.md");
+        assert_ne!(flipped, original);
+        std::fs::write(&manifest, &flipped).unwrap();
+        assert!(read_manifest(&snapshot).is_none(), "the checksum fails");
+        let report = collect::collect(&cas).unwrap();
+        assert_eq!((report.removed, report.damaged.len()), (1, 1), "{report:?}");
+        assert!(!stray.exists());
+        let unfamiliar: serde_json::Value = serde_json::from_str(&original).unwrap();
+        let unfamiliar =
+            serde_json::json!({"schema": 99, "files": unfamiliar["files"].clone(), "extra": 1});
+        std::fs::write(&manifest, unfamiliar.to_string()).unwrap();
+        std::fs::write(&stray, b"unreferenced").unwrap();
+        let report = collect::collect(&cas).unwrap();
+        assert_eq!((report.removed, report.damaged.len()), (1, 1), "{report:?}");
+        std::fs::write(&manifest, &original).unwrap();
+        assert!(
+            verify_snapshot(&snapshot, &read_manifest(&snapshot).unwrap()),
+            "every listed blob survived"
+        );
+
+        std::fs::write(&stray, b"unreferenced").unwrap();
+        for malformed in [
+            r#"{"files":"none"}"#,
+            r#"{"schema":4}"#,
+            r#"{"files":[{"sha256":"not-a-digest"}]}"#,
+            r#"{"files":[{"path":"graph/x.md"}]}"#,
+            r#"[1,2]"#,
+        ] {
+            std::fs::write(&manifest, malformed).unwrap();
+            assert!(collect::collect(&cas).is_err(), "{malformed}");
+            assert!(stray.is_file(), "{malformed}: nothing removed");
+        }
+        std::fs::write(&manifest, &original).unwrap();
+        for (unexpected, dir) in [("loose-file", false), ("not-a-digest", true)] {
+            let path = if dir {
+                cas.join(BLOB_DIR).join(unexpected)
+            } else {
+                cas.join(CAS_SNAPSHOTS).join(unexpected)
+            };
+            std::fs::write(&path, b"?").unwrap();
+            assert!(collect::collect(&cas).is_err(), "{unexpected}");
+            assert!(nothing_collected(&snapshot, &stray), "{unexpected}");
+            std::fs::remove_file(&path).unwrap();
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// og-backup-cas D3: under the lock, a torn manifest (not JSON), a
+    /// published directory without a manifest and any unpublished directory
+    /// are abandoned: the collector removes them, reports the damage, and
+    /// collects the blobs and temps nothing else lists.
+    #[test]
+    fn the_collector_removes_torn_manifestless_and_abandoned_snapshots() {
+        let (root, base, snapshot, stray) = collector_fixture("collect-torn");
+        let cas = cas_dir(&base);
+        let snapshots = cas.join(CAS_SNAPSHOTS);
+        let torn = snapshots.join("2026-01-01_00-00-00");
+        std::fs::create_dir_all(&torn).unwrap();
+        std::fs::write(torn.join(SNAPSHOT_MANIFEST), r#"{"files":[{"sha"#).unwrap();
+        let empty = snapshots.join("2026-01-02_00-00-00");
+        std::fs::create_dir_all(&empty).unwrap();
+        let partial = snapshots.join(".partial-2026-01-03_00-00-00");
+        std::fs::create_dir_all(&partial).unwrap();
+        std::fs::write(
+            partial.join(SNAPSHOT_MANIFEST),
+            &std::fs::read(snapshot.join(SNAPSHOT_MANIFEST)).unwrap(),
+        )
+        .unwrap();
+        let temp = cas.join(BLOB_DIR).join(".tmp-abandoned");
+        std::fs::write(&temp, b"half").unwrap();
+        let report = collect::collect(&cas).unwrap();
+        assert_eq!(report.removed, 2, "{report:?}");
+        assert_eq!(report.damaged.len(), 2, "{report:?}");
+        assert!(report.failed.is_empty(), "{report:?}");
+        for gone in [&torn, &empty, &partial, &temp, &stray] {
+            assert!(!gone.exists(), "{}", gone.display());
+        }
+        assert!(verify_snapshot(
+            &snapshot,
+            &read_manifest(&snapshot).unwrap()
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// R2-B2's fixture (og-backup-cas D3): an unsearchable `snapshots/` fails
+    /// the launch's snapshot, and the collection that follows removes nothing
+    /// and logs that it stopped.
+    #[cfg(unix)]
+    #[test]
+    fn an_unsearchable_snapshots_dir_fails_the_snapshot_and_collects_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        let (root, base, snapshot, stray) = collector_fixture("collect-unsearchable");
+        let graph = root.join("graph");
+        std::fs::write(graph.join("pages/A.md"), "- a edited\n").unwrap();
+        let snapshots = cas_dir(&base).join(CAS_SNAPSHOTS);
+        std::fs::set_permissions(&snapshots, std::fs::Permissions::from_mode(0o400)).unwrap();
+        let (outcome, _, ops, _) = launch(&base, &graph, 12);
+        std::fs::set_permissions(&snapshots, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(outcome.failure.is_some(), "the snapshot fails");
+        assert!(
+            ops.contains(&"collect_failed"),
+            "the collection's error is logged: {ops:?}"
+        );
+        assert!(nothing_collected(&snapshot, &stray));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// og-backup-cas D3: a removal that fails stays in the report, is not
+    /// fatal, and the next deletion-prune's collection removes that blob.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_blob_removal_is_retried_by_the_next_deletion() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("collect-unlink-retry");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        small_graph(&graph);
+        for edit in 0..3 {
+            std::fs::write(graph.join("pages/A.md"), format!("- a {edit}\n")).unwrap();
+            assert!(launch(&base, &graph, 12).0.failure.is_none());
+        }
+        let blobs = cas_dir(&base).join(BLOB_DIR);
+        let leaked = blobs.join(sha256_of(b"- a 1\n"));
+        std::fs::set_permissions(&blobs, std::fs::Permissions::from_mode(0o555)).unwrap();
+        BACKUP_OPS.with(|ops| ops.borrow_mut().clear());
+        prune_now(&base, 1);
+        std::fs::set_permissions(&blobs, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(leaked.is_file(), "the removal failed");
+        assert_eq!(cas_snapshots(&base).len(), 2, "the prune itself went ahead");
+        assert!(!BACKUP_OPS.with(|ops| ops.borrow().contains(&"collect_failed")));
+        std::fs::write(graph.join("pages/A.md"), "- a 3\n").unwrap();
+        let (outcome, _, ops, _) = launch(&base, &graph, 1);
+        assert!(outcome.failure.is_none());
+        assert!(ops.contains(&"blob_dir_scan"));
+        assert!(
+            !leaked.exists(),
+            "the next deletion's collection retried it"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Restore staging bound: a blob over the cap is damage (no backup writes
+    /// one) and is refused before it is read or hashed.
+    #[test]
+    fn an_oversized_blob_is_refused_before_it_is_read() {
+        let root = scratch("backup-oversized-blob");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        small_graph(&graph);
+        let (_, snapshot) = snapshot_now(&base, &graph, "");
+        let manifest = read_manifest(&snapshot).unwrap();
+        let first = cas_dir(&base)
+            .join(BLOB_DIR)
+            .join(&manifest.files[0].sha256);
+        std::fs::File::options()
+            .write(true)
+            .open(&first)
+            .unwrap()
+            .set_len(SNAPSHOT_FILE_MAX_BYTES + 1)
+            .unwrap();
+        PAYLOAD_HASH_READS.with(|reads| reads.set(0));
+        assert!(!verify_snapshot(&snapshot, &manifest));
+        assert_eq!(
+            PAYLOAD_HASH_READS.with(|reads| reads.get()),
+            0,
+            "refused before it is read"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// The other half of the staging bound: a backup never lists a file over
+    /// the cap; it fails with `FileTooLarge` instead.
+    #[test]
+    fn a_file_over_the_cap_fails_the_backup() {
+        let root = scratch("backup-oversized-file");
+        let graph = root.join("graph");
+        small_graph(&graph);
+        std::fs::File::create(graph.join("assets/huge.edn"))
+            .unwrap()
+            .set_len(SNAPSHOT_FILE_MAX_BYTES + 1)
+            .unwrap();
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        let outcome = write_snapshot(&root.join("backups"), &store, source, "", false, &|| false);
+        store.close();
+        let failure = outcome.failure.expect("refused");
+        assert_eq!(
+            (failure.phase, failure.kind),
+            ("assets", ErrorKind::FileTooLarge)
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2103,7 +2685,7 @@ mod tests {
             let mut child = ChildBackup::spawn(&graph, &base, &format!(":{pause}"));
             child.line("paused");
             assert!(
-                lock_cas(&cas_dir(&base), None).unwrap().is_none(),
+                lock_namespace(&cas_dir(&base), None).unwrap().is_none(),
                 "the writer holds the namespace lock"
             );
             let (pruned_tx, pruned_rx) = std::sync::mpsc::channel();
@@ -2121,11 +2703,18 @@ mod tests {
             assert!(!pruned_early, "{pause}: the prune waits for the writer");
             assert_eq!(done, "done None", "{pause}");
             let left = cas_snapshots(&base);
-            assert_eq!(left.len(), 1, "{pause}: keep 1 keeps the writer's snapshot");
+            let writer = left.last().unwrap();
             assert!(
-                verify_snapshot(&left[0], &read_manifest(&left[0]).unwrap()),
-                "{pause}: every blob of the writer's snapshot survived the prune"
+                read_manifest(writer).unwrap().anchor,
+                "{pause}: the first launch anchors"
             );
+            assert_eq!(left.len(), 2, "{pause}: keep 1 plus the writer's anchor");
+            for snapshot in &left {
+                assert!(
+                    verify_snapshot(snapshot, &read_manifest(snapshot).unwrap()),
+                    "{pause}: every blob of the writer's snapshot survived the prune"
+                );
+            }
             let _ = std::fs::remove_dir_all(root);
         }
     }
@@ -2216,20 +2805,25 @@ mod tests {
 
     /// Launch-backup cost on a real graph (dossier og-backup-cas), through
     /// the launch path (`backup_locked`): files created and bytes written in
-    /// the namespace, sync calls, wall time, for a first backup, an unchanged
-    /// second one, and one after three page edits, asserting the expected
-    /// counters. Created files count surviving new paths, not every write
-    /// (temps, repairs). Runs only on a scratch COPY of a graph:
+    /// the namespace, syncs (seam observations), wall time, for a first
+    /// backup (the anchor), an unchanged second one, one after three page
+    /// edits, an anchor rotation (clock 8 days on), and a launch whose
+    /// keep-count deletes a snapshot (collection). Created files count
+    /// surviving new paths, not every write (temps, repairs). Runs only on a
+    /// scratch COPY of a graph:
     /// `TINE_BACKUP_CORPUS=<copy> cargo test -p tine launch_backup_cost -- --ignored --nocapture`.
     #[test]
     #[ignore = "measurement; needs TINE_BACKUP_CORPUS (a scratch copy of a graph)"]
     fn launch_backup_cost_on_corpus() {
         let graph =
             PathBuf::from(std::env::var_os("TINE_BACKUP_CORPUS").expect("TINE_BACKUP_CORPUS"));
-        let base = graph.with_extension("backup-cost");
+        let base = graph
+            .with_extension("backup-cost-app")
+            .join("backups")
+            .join("graph-id");
+        let app_data = base.parent().unwrap().parent().unwrap().to_path_buf();
         let cas = cas_dir(&base);
-        let _ = std::fs::remove_dir_all(&base);
-        let _ = std::fs::remove_dir_all(&cas);
+        let _ = std::fs::remove_dir_all(&app_data);
         let files_under = |dir: &std::path::Path| {
             let mut out = std::collections::BTreeMap::new();
             let mut stack = vec![dir.to_path_buf()];
@@ -2245,13 +2839,14 @@ mod tests {
             }
             out
         };
-        let run = |label: &str| {
+        let run = |label: &str, keep: usize| {
             let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
             let source = BackupSource::from_store(&store, &graph).unwrap();
             let before = files_under(&cas);
             BACKUP_OPS.with(|ops| ops.borrow_mut().clear());
+            take_syncs();
             let started = std::time::Instant::now();
-            let outcome = backup_locked(&base, &store, source, "", BACKUP_KEEP_DEFAULT, &|| false);
+            let outcome = backup_locked(&base, &store, source, "", keep, &|| false);
             let elapsed = started.elapsed();
             assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
             let after = files_under(&cas);
@@ -2261,24 +2856,25 @@ mod tests {
                 .collect();
             let bytes: u64 = created.iter().map(|path| after[*path]).sum();
             let ops = BACKUP_OPS.with(|ops| ops.borrow().clone());
-            let syncs = ops.iter().filter(|op| op.ends_with("sync")).count();
+            let syncs = take_syncs().len();
             let blob_writes = ops.iter().filter(|op| **op == "blob_write").count();
+            let scans = ops.iter().filter(|op| **op == "blob_dir_scan").count();
             eprintln!(
-                "BACKUP-COST {label}: graph_files={} created_files={} bytes_written={bytes} syncs={syncs} blob_writes={blob_writes} wall_ms={:.1}",
+                "BACKUP-COST {label}: graph_files={} created_files={} bytes_written={bytes} syncs={syncs} blob_writes={blob_writes} blob_scans={scans} wall_ms={:.1}",
                 outcome.copied,
                 created.len(),
                 elapsed.as_secs_f64() * 1000.0
             );
-            assert!(
-                !ops.contains(&"blob_dir_scan"),
-                "{label}: no blob-store scan"
-            );
-            assert_eq!(syncs, 0, "{label}: a launch syncs nothing");
             store.close();
-            (created.len(), blob_writes)
+            (created.len(), blob_writes, syncs, scans)
         };
-        run("first");
-        assert_eq!(run("unchanged"), (1, 0), "one manifest, no blob");
+        let (_, _, first_syncs, _) = run("first-anchor", BACKUP_KEEP_DEFAULT);
+        assert!(first_syncs > 0, "the first backup is a durable anchor");
+        assert_eq!(
+            run("unchanged", BACKUP_KEEP_DEFAULT),
+            (1, 0, 0, 0),
+            "one manifest, no blob, no sync"
+        );
         let mut pages: Vec<PathBuf> = std::fs::read_dir(graph.join("pages"))
             .unwrap()
             .flatten()
@@ -2291,9 +2887,26 @@ mod tests {
             text.extend_from_slice(b"\n- backup cost probe edit\n");
             std::fs::write(page, text).unwrap();
         }
-        assert_eq!(run("three-edits"), (4, 3), "three blobs and a manifest");
-        let _ = std::fs::remove_dir_all(&base);
-        let _ = std::fs::remove_dir_all(&cas);
+        assert_eq!(
+            run("three-edits", BACKUP_KEEP_DEFAULT),
+            (4, 3, 0, 0),
+            "three blobs and a manifest"
+        );
+        CLOCK_SHIFT.with(|clock| clock.set(8 * 86_400));
+        let (_, _, rotation_syncs, _) = run("anchor-rotation", BACKUP_KEEP_DEFAULT);
+        assert!(
+            rotation_syncs > 8,
+            "a rotation pays the full durable chain once"
+        );
+        // Same clock, so the fresh anchor does not rotate again.
+        let (_, _, prune_syncs, scans) = run("prune-keep-1", 1);
+        CLOCK_SHIFT.with(|clock| clock.set(0));
+        assert_eq!(
+            (prune_syncs, scans),
+            (0, 1),
+            "a deletion runs the collector"
+        );
+        let _ = std::fs::remove_dir_all(&app_data);
     }
 
     #[test]
@@ -2402,7 +3015,7 @@ mod tests {
         let source = BackupSource::from_store(&store, &graph).unwrap();
         let locked = graph.join("pages/locked");
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let outcome = write_snapshot(&root.join("backups"), &store, source, "", &|| false);
+        let outcome = write_snapshot(&root.join("backups"), &store, source, "", false, &|| false);
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
         let failure = outcome
             .failure
@@ -2416,7 +3029,7 @@ mod tests {
         // A store closed under the backup reports that, not `Other`.
         let source = BackupSource::from_store(&store, &graph).unwrap();
         store.close();
-        let outcome = write_snapshot(&root.join("backups"), &store, source, "", &|| false);
+        let outcome = write_snapshot(&root.join("backups"), &store, source, "", false, &|| false);
         let failure = outcome.failure.expect("a closed store fails the backup");
         assert_eq!(
             (failure.phase, failure.kind),
@@ -2439,12 +3052,11 @@ mod tests {
         }
         assert!(!failed.exists());
 
+        assert!(!has_partials(&root));
         let crashed = root.join(".partial-crashed");
         std::fs::create_dir_all(&crashed).unwrap();
-        std::fs::write(crashed.join("half.md"), b"partial").unwrap();
-        assert!(cleanup_partial_backups(&root));
-        assert!(!crashed.exists());
-        assert!(!cleanup_partial_backups(&root), "nothing left to clean up");
+        assert!(has_partials(&root), "a crashed partial triggers collection");
+        assert!(!has_partials(&root.join("missing")));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2483,8 +3095,10 @@ mod tests {
             writer: None,
             files: Vec::new(),
             complete: true,
+            anchor: false,
+            created_unix: None,
         };
-        write_manifest(&root, &manifest, false).unwrap();
+        write_manifest(&root, &manifest).unwrap();
         let read = read_manifest(&root).unwrap();
         assert_eq!(read.pages_dir, "archive/pages");
         assert!(verify_snapshot(&root, &read));
@@ -2523,8 +3137,9 @@ mod tests {
                     sha256: "manifest metadata only".into(),
                 }],
                 complete: true,
+                anchor: false,
+                created_unix: None,
             },
-            false,
         )
         .unwrap();
 
