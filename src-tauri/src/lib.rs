@@ -32,6 +32,8 @@ mod flight;
 mod flight_store;
 mod graph;
 mod graph_verification;
+#[cfg(test)]
+mod host_slot_guard_tests;
 #[cfg(target_os = "ios")]
 mod ios_folder_picker;
 #[cfg(target_os = "linux")]
