@@ -206,6 +206,25 @@ function isPromotablePageHeaderRoot(node: Node): boolean {
   );
 }
 
+/** Page `p`'s pre-block and outline roots as its file holds them: a marked
+ *  page-header root (`beginPageHeaderEdit`) folds back into the pre-block,
+ *  with the terminal newlines Enter leaves in the live editor removed. Null
+ *  for an invalid header draft, which never reaches the disk. O(1). */
+export function foldMarkedPageHeader(p: FeedPage): { preBlock: string | null; rootIds: string[] } | null {
+  const first = doc.byId[p.roots[0]];
+  if (!first?.originatedFromPageHeader) return { preBlock: p.preBlock, rootIds: p.roots };
+  // Tolerate only Enter's authoring artifact at the disk firewall; keep the
+  // strict shared display predicate and live raw intact.
+  const canonicalRaw = first.raw.replace(/\n+$/, "");
+  if (first.children.length > 0 || (first.raw !== "" && !isPageHeaderPropertiesOnly(canonicalRaw))) {
+    return null;
+  }
+  // Exact raw is authoritative here: ordinary toDto trimming must never eat a
+  // page-header value or its separator trivia. An empty draft deletes the
+  // header and emits no stray outline bullet.
+  return { preBlock: canonicalRaw ? canonicalRaw + (p.preBlock ?? "") : p.preBlock, rootIds: p.roots.slice(1) };
+}
+
 /** Project one loaded page for guarded save. Cost: O(loaded pages + blocks and
  * text bytes of this page). Ordinary loaded blocks with unchanged raw keep it exactly;
  * edited ones get OG's trailing-space trim (which retains a bare list marker's
@@ -216,23 +235,11 @@ function isPromotablePageHeaderRoot(node: Node): boolean {
 export function pageToDto(pageName: string): PageDto | null {
   const p = doc.pages.find((x) => x.name === pageName);
   if (!p) return null;
-  let rootIds = p.roots;
-  let preBlock = p.preBlock;
-  const first = doc.byId[rootIds[0]];
-  if (first?.originatedFromPageHeader) {
-    // Enter temporarily leaves one or more trailing newlines in the live
-    // page-header editor. Tolerate only that authoring artifact at the disk
-    // firewall; keep the strict shared display predicate and live raw intact.
-    const canonicalRaw = first.raw.replace(/\n+$/, "");
-    if (first.children.length > 0 || (first.raw !== "" && !isPageHeaderPropertiesOnly(canonicalRaw))) {
-      return null;
-    }
-    // Exact raw is authoritative here: ordinary toDto trimming must never eat a
-    // page-header value or its separator trivia. An empty draft deletes the
-    // header and emits no stray outline bullet.
-    preBlock = canonicalRaw ? canonicalRaw + (p.preBlock ?? "") : p.preBlock;
-    rootIds = rootIds.slice(1);
-  } else if (first && !p.preBlock && isPromotablePageHeaderRoot(first)) {
+  const folded = foldMarkedPageHeader(p);
+  if (!folded) return null;
+  let { rootIds, preBlock } = folded;
+  const first = doc.byId[p.roots[0]];
+  if (first && !first.originatedFromPageHeader && !p.preBlock && isPromotablePageHeaderRoot(first)) {
     // GH #198: a flagless "properties-only first bullet" (empty preBlock) IS the
     // page header — the same shape setPageProperty/beginPageHeaderEdit already
     // treat as the header. Fold it into pre_block so the DTO is honest, instead

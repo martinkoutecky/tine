@@ -8,7 +8,7 @@ import { clearSeededFacets } from "./render/facets";
 import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
 import { reloadPage, forgetPage } from "./document/workingSet";
 import { setBlockMoving, isBlockMoving } from "./document/edits/moves";
-import { loadSingle, reloadDisposition } from "./document/workingSet";
+import { loadSingle, reloadDisposition, installPageContent } from "./document/workingSet";
 import { trailingVisibleEmptyLeaf } from "./document/tree";
 import { pageToDto } from "./document/convert";
 import { doc, setDoc } from "./document/model";
@@ -241,6 +241,24 @@ describe("properties-only first block", () => {
     redo();
     expect(doc.pages[0].roots).toEqual([body.id]);
     expect(doc.byId[id]).toBeUndefined();
+  });
+
+  it("keeps the page-header editor when the host installs the text it already shows (J5)", () => {
+    // Opening the header editor sends the host an Open; its answer installs
+    // the host's text. That text equals the window's once the unfolded header
+    // folds back into the pre-block, so it is an echo, not a reload that
+    // would move the editor onto the first body block.
+    const dto: PageDto = {
+      name: "Test", kind: "page", title: "Test",
+      pre_block: "alias:: book\n\nklíč:: hodnota\n\nIntro", blocks: [blk("Body")], format: "md",
+    };
+    loadSingle(structuredClone(dto));
+    const id = beginPageHeaderEdit("Test")!;
+    startEditing(id, 0);
+    installPageContent("Test", structuredClone(dto));
+    expect(editingId()).toBe(id);
+    expect(doc.pages[0].roots[0]).toBe(id);
+    expect(doc.byId[id].raw).toBe("alias:: book\n\nklíč:: hodnota");
   });
 
   it("does not synthesize page-header editors for Org, Guide, read-only, prose or fenced preambles", () => {

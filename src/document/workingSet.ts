@@ -4,7 +4,7 @@ import { baseRevFor, deletePageOnDisk, forgetSaveState, hostBlocksReload, hostHo
 import { clearCollapseEpochs, doc, setDoc, FeedPage, pageByName } from "./model";
 import { batch } from "solid-js";
 import { produce } from "solid-js/store";
-import { purgePageNodes, toFeedPage, emptyPage } from "./convert";
+import { purgePageNodes, toFeedPage, emptyPage, foldMarkedPageHeader } from "./convert";
 import { invalidateAllMatrixDimensions, clearMatrixDimensionCache } from "../sheet/matrix";
 import { invalidateUndoForPage, clearUndoHistory } from "./history";
 import { captureBinding, bindingCurrent, invalidateBinding } from "../binding";
@@ -171,13 +171,18 @@ function reopenEditor(pageName: string, carried: CarriedEditor): void {
  *  undo history for content we already hold. */
 function pageContentMatches(dto: PageDto & { id?: string }, page: FeedPage): boolean {
   if ((dto.id ?? "") !== (page.id ?? "")) return false;
-  if ((dto.pre_block ?? null) !== (page.preBlock ?? null)) return false;
+  // An open page-header editor is the pre-block shown as a root (J5): compare
+  // the file's form, or the host's answer to the editor's own Open reads as
+  // a change and the reload moves the editor off the header.
+  const folded = foldMarkedPageHeader(page);
+  if (!folded || (dto.pre_block ?? null) !== (folded.preBlock ?? null)) return false;
+  const roots = folded.rootIds;
   const eq = (b: BlockDto, id: string): boolean => {
     const n = doc.byId[id];
     if (!n || n.raw !== b.raw || n.children.length !== b.children.length) return false;
     return b.children.every((cb, i) => eq(cb, n.children[i]));
   };
-  return dto.blocks.length === page.roots.length && dto.blocks.every((b, i) => eq(b, page.roots[i]));
+  return dto.blocks.length === roots.length && dto.blocks.every((b, i) => eq(b, roots[i]));
 }
 
 /** Does file read `dto` hold exactly the content loaded page `name` holds now
