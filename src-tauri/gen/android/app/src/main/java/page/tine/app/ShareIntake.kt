@@ -21,6 +21,11 @@ const val MAX_SHARE_RESOURCE_BYTES = 64L * 1024L * 1024L
  * keeps the whole share out: nothing is saved in part (review finding 6). */
 class ShareRefused(message: String) : Exception(message)
 
+/** The item is visible in the inbox but its publishing rename could not be
+ * made durable (review round 3, R3-1): it is still ingested, its
+ * `.receiving-<id>` marker is kept, and the user is told. */
+class ShareUnconfirmed(message: String) : Exception(message)
+
 object ShareIntake {
   /**
    * `EXTRA_STREAM` as delivered: one Parcelable for SEND, a list for
@@ -138,10 +143,15 @@ class DurableFiles(private val syncDirectory: (File) -> Unit) {
 
   fun syncDir(dir: File) = syncDirectory(dir)
 
-  /** `mkdirs` that also makes each created entry durable in its parent. */
+  /** `mkdirs` that also makes `dir`'s entry durable in its parent on every
+   * call: an existing directory may be left from a creation whose parent
+   * sync failed (review round 3, R3-1). One fsync. */
   fun ensureDir(dir: File) {
-    if (dir.isDirectory) return
-    dir.parentFile?.let(::ensureDir)
+    if (dir.isDirectory) {
+      dir.parentFile?.let(syncDirectory)
+      return
+    }
+    dir.parentFile?.takeIf { !it.isDirectory }?.let(::ensureDir)
     if (!dir.mkdir() && !dir.isDirectory) throw IOException("couldn't create ${dir.name}")
     dir.parentFile?.let(syncDirectory)
   }
@@ -173,18 +183,49 @@ class InboxWriter(private val root: File, private val files: DurableFiles) {
 
   fun syncInbox() = files.syncDir(root)
 
-  /** Summaries of shares cut short before they were published (a leftover
-   * marker with no item and no tombstone); every leftover marker except
-   * `keep`'s (being redelivered now) is deleted. */
-  fun interrupted(keep: String?): List<String> {
-    val lost = ArrayList<String>()
+  /** A share cut short before it was published: say `summary`, then call
+   * `acknowledge` (it deletes the marker), only once the notice is shown. */
+  class Interrupted(val summary: String, private val marker: File) {
+    fun acknowledge() {
+      marker.delete()
+    }
+  }
+
+  /**
+   * Leftover `.receiving-<id>` markers, except `keep`'s (being redelivered
+   * now) and in-flight ones. A marker whose item or tombstone exists is
+   * settled: deleted after the inbox is synced (a visible item is not yet
+   * a durable one); if that sync fails, it stays for the next start. Any
+   * other marker is returned, still on disk, and is deleted only by
+   * [Interrupted.acknowledge] (review round 3, R3-2). Each marker is read
+   * on its own; an unreadable one is reported without its summary.
+   */
+  fun interrupted(keep: String?): List<Interrupted> {
+    val lost = ArrayList<Interrupted>()
+    val settled = ArrayList<File>()
     for (name in root.list() ?: emptyArray()) {
       if (!name.startsWith(RECEIVING)) continue
       val id = name.removePrefix(RECEIVING)
       if (id == keep || ShareIntake.isDelivering(id)) continue
       val marker = File(root, name)
-      if (!handled(id)) lost.add(marker.readText(Charsets.UTF_8))
-      marker.delete()
+      if (handled(id)) {
+        settled.add(marker)
+        continue
+      }
+      val summary = try {
+        marker.readText(Charsets.UTF_8)
+      } catch (_: Exception) {
+        "a shared item"
+      }
+      lost.add(Interrupted(summary, marker))
+    }
+    if (settled.isNotEmpty()) {
+      try {
+        files.syncDir(root)
+        settled.forEach { it.delete() }
+      } catch (_: Exception) {
+        // Kept: the next start syncs and checks again.
+      }
     }
     return lost
   }
@@ -205,9 +246,13 @@ class InboxWriter(private val root: File, private val files: DurableFiles) {
     files.replace(marker, summary)
     try {
       write(id, created, text, title, resources)
-    } finally {
-      marker.delete()
+    } catch (unconfirmed: ShareUnconfirmed) {
+      throw unconfirmed // the marker stays: the item may not survive power loss
+    } catch (error: Exception) {
+      marker.delete() // refused or failed before publishing; the caller says so
+      throw error
     }
+    marker.delete()
   }
 
   private fun write(id: String, created: Long, text: String?, title: String?, resources: List<ShareResource>) {
@@ -243,14 +288,20 @@ class InboxWriter(private val root: File, private val files: DurableFiles) {
       files.write(File(tmp, "item.json")) { it.write(json.toString().toByteArray(Charsets.UTF_8)) }
       files.syncDir(tmp)
       files.rename(tmp, File(root, id))
-      files.syncDir(root)
     } catch (error: Exception) {
       tmp.deleteRecursively()
-      // Renamed but the inbox sync failed: the item is visible and will be
-      // ingested (its journal write is the durable confirmation); a
-      // redelivery syncs again. Not reported as unsaved.
-      if (published(id)) return
       throw error
+    }
+    // Renamed: the item is visible and will be ingested. Its rename is
+    // durable only after this sync; retried once, then reported (R3-1).
+    try {
+      files.syncDir(root)
+    } catch (_: Exception) {
+      try {
+        files.syncDir(root)
+      } catch (error: Exception) {
+        throw ShareUnconfirmed("Tine couldn't make sure the share was saved (${error.message}). If it doesn't appear in today's journal, please share it again.")
+      }
     }
   }
 }

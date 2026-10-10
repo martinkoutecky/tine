@@ -56,11 +56,16 @@ Layout, one directory per item:
   reads it so a redelivered share occurrence is not published again.
 - `.receiving-<id>` (Android): written durably by the producer before it
   copies a share, holding a short summary (the first 60 characters of the
-  text, or "N images"); deleted once the item is published or the share is
-  refused with a message. At the next start a leftover marker with no item
-  and no tombstone (the process died mid-copy) shows "A share to Tine was
-  interrupted and wasn't saved: <summary>. Please share it again." and is
-  deleted. The app's listing ignores it.
+  text, or "N images"); deleted once the item is published and its inbox
+  sync succeeded, or the share is refused with a message. At the next start
+  a leftover marker whose item or tombstone exists is deleted only after an
+  inbox sync succeeds; one with neither (the process died mid-copy, or an
+  unsynced rename was lost) shows "A share to Tine was interrupted and
+  wasn't saved: <summary>. Please share it again." and is deleted only
+  after that notice is shown, so a crash in between repeats the notice. An
+  unreadable marker reports "a shared item" without affecting the others.
+  The app's listing ignores it. Creating the inbox, or finding it existing,
+  always syncs its parent directory before the first marker is written.
 - `.rejected-<id>/`: an item that could not be read, kept, never deleted.
 
 Ingest (src/shareIngest.ts) runs at launch, on resume and on the native
@@ -122,7 +127,7 @@ Every refusal keeps the item; none refuses to open the graph.
 | Android share with a malformed `EXTRA_STREAM` (another Parcelable, null entry, unparcel failure) | malformed input from another app | whole share refused, user told; no crash |
 | share with more than 32 files, a file over 64 MiB, an unreadable file or a non-image file (both platforms); iOS: a second different web link or an unsupported attachment | provider error; content Tine does not store | whole share refused, user told; never saved in part |
 | producer write, file or staging-directory sync, or rename fails | disk error, full disk | nothing published, user told |
-| producer's inbox sync fails after the publishing rename | disk error | the item is visible and is ingested (its journal write is the durable confirmation); not reported as unsaved. Android: a redelivery syncs again |
+| producer's inbox sync fails after the publishing rename | disk error | Android: retried once; if it fails again the user is told the share may not be saved and to share it again if it does not appear, and the `.receiving-<id>` marker is kept. The visible item is still ingested normally, but ingestion is not guaranteed if another crash or power loss discards the unsynced rename first; a lost item is then reported at the next start from its marker. iOS: the item is visible and is ingested; not reported as unsaved |
 | item id not `[A-Za-z0-9_-]{1,64}` | malformed producer output | ignored by prepare/commit; listing never yields it |
 
 ## Unit cost
