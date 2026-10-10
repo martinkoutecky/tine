@@ -93,15 +93,15 @@ them.
 | Scenario | Measures | Notes |
 |---|---|---|
 | `launch` | cold launch to first page and to first editable block; RSS | median of runs |
-| `typing` | keystroke to Published on a 1-block, 60-block and 1500-block page, isolated (tail after the last key) and during a 5 s burst (10 keys/s); lost keys; typing latency (input to next paint) p50/p95 overall and during a running save; long tasks | the 1500-block page is where a save is long enough to type during |
+| `typing` | keystroke to Published on a 1-block, 60-block and 1500-block page, isolated (tail after the last key) and during a 5 s burst (10 keys/s); lost keys; typing latency (input to next paint) p50/p95 overall, during a running save, and near a save (during it or up to 500 ms after, because both arms save in tens of ms and few keys land inside); long tasks | the 1500-block page is where a save is long enough to type during |
 | `delete` | source gone, trash entry present, "Deleted" toast | base trash: `<graph>/logseq/.tine-trash/pages` |
 | `rename` | referrers rewritten (200), file moved, new page shows its linked references | |
 | `external` | external edit burst over a held and 20 unheld pages: time until visible; no conflict banner on clean pages; clean held page not rewritten | |
-| `blockref` | picker Enter to the reference shown; target's `id::` published | |
+| `blockref` | picker Enter to the reference shown (in-page stopwatch); target's `id::` published | |
 | `custody` | last key to draft durable with saves failing (`pages/` read-only) and under an external replacement | |
 | `drafts` | launch with 0 and 20 kept drafts: first page/editable, RSS, offer visible (base: sticky toast), drafts listed, first draft's text present | recovery is simulated with a hard kill of the process group and a relaunch on the same dirs |
 | `draftscale` | the same over count (1, 10, 50) and bytes (small vs 60-block pages) | long; not in the default set |
-| `carry2`, `carry5` | carry-over from 2 and 5 sources: tasks shown and published; candidate: click to unfreeze | |
+| `carry2`, `carry5` | carry-over from 2 and 5 sources: tasks shown (in-page stopwatch) and published; candidate: click to unfreeze | |
 | `unitcost` | bytes, files created/touched, renames, fsync and directory-sync calls per edit | next section |
 | `session` | RSS slope over a scripted session; candidate: event-vector size | `--session-minutes` |
 
