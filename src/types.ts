@@ -552,6 +552,10 @@ export interface GraphMeta {
   /** OG `:mobile {:gestures/disabled-in-block-with-tags [..]}`: tags that turn the
    *  block swipe gestures off inside a block carrying them. */
   mobile_gestures_disabled_in_block_with_tags: string[];
+  /** OG `:quick-capture-templates {:text "…"}`; null/absent = OG default (shareShape.ts). */
+  quick_capture_template_text?: string | null;
+  /** OG `:quick-capture-templates {:media "…"}`; null/absent = OG default (shareShape.ts). */
+  quick_capture_template_media?: string | null;
   journal_page_title_format: string; // :journal/page-title-format (default "MMM do, yyyy")
   journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
   preferred_format: Format; // :preferred-format — new pages/journals ("md" | "org")

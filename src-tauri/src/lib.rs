@@ -38,6 +38,8 @@ mod linux_window_identity;
 mod load_wait_guard_tests;
 mod media_protocol;
 mod migrate_identifier;
+#[cfg(any(target_os = "android", target_os = "ios"))]
+mod native_integrations;
 mod native_mouse_history;
 mod pdf_crop_rollback;
 mod platform;
@@ -48,7 +50,9 @@ mod query_export;
 mod query_ir;
 mod search_workspace;
 mod settings;
+mod share_inbox;
 mod spellcheck;
+mod spotlight;
 mod state;
 mod watcher;
 mod youtube_identity;
@@ -751,6 +755,11 @@ pub fn run() {
     let builder = builder.plugin(android_safe_back::init());
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(ios_folder_picker::init());
+    // Share inbox, Spotlight and routes (native_integrations.rs, ADR 0073).
+    // Desktop has no share sheet producer: share_inbox.rs and spotlight.rs
+    // name all five targets in their own platform splits.
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let builder = builder.plugin(native_integrations::init());
     // Mobile has no xdg-open/open/explorer, so `open_external` routes URL opens
     // through this plugin's platform Intent instead (GH #49). Windows uses it
     // for ShellExecute, because `explorer <url>` opens a File Explorer window
@@ -877,6 +886,9 @@ pub fn run() {
             deep_links::scan_known_graphs_for_link,
             deep_links::take_tine_links,
             deep_links::handoff_tine_link,
+            share_inbox::share_inbox_list,
+            share_inbox::share_inbox_prepare,
+            share_inbox::share_inbox_commit,
             open_graph_window,
             startup_graph_path,
             capture_target,

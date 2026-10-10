@@ -488,6 +488,10 @@ pub(crate) fn load_graph_for_label(
         .bind(window_label.to_string(), slot.clone())?;
     // The replaced graph's Store closes here, after the registry lock is
     // released, so other graph commands do not wait on its teardown.
+    if displaced.is_some() {
+        // Its pages leave Spotlight; the new graph's reindex follows its warm.
+        crate::spotlight::clear(app, window_label);
+    }
     drop(displaced);
     state.note_focused(window_label);
     crate::concord_ledger::attach(app.path().app_data_dir().ok(), &slot);
@@ -765,6 +769,10 @@ pub(crate) fn warm_cache_async(
                 });
                 if still_current && current.unwrap().finish_startup_warm(warm_generation) {
                     let _ = app.emit_to(&window_label, "warm-cache-done", ());
+                }
+                if still_current {
+                    // The graph is warm: (re)build its Spotlight index (iOS).
+                    crate::spotlight::reindex(&app, &window_label, &slot);
                 }
             },
         );

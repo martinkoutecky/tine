@@ -69,6 +69,10 @@ tauri-plugin-opener = "2"
 # src/ios_folder_picker.rs keeps its rlib in the link graph.
 [target.'cfg(target_os = "ios")'.dependencies]
 tine-ios-folder-picker-native = { path = "ios-folder-picker-native" }
+# iOS native integrations (ADR 0073): share inbox location, Core Spotlight,
+# quick-action and Spotlight routing. Build-only crate, kept in the link by
+# src/native_integrations.rs.
+tine-ios-native-integrations = { path = "ios-native-integrations" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console"] }

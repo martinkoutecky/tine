@@ -110,6 +110,12 @@ jobs:
       - name: tauri ios init
         run: npx tauri ios init --ci --verbose
 
+      # The committed project patch (ADR 0073, I1): app-target Swift (App
+      # Intents, share inbox producer), the Share Extension target, App Group
+      # entitlements, PrivacyInfo and icons. Unsigned here: no signing env.
+      - name: Prepare the generated iOS project
+        run: npm run ios:prepare-project
+
       # Simulator builds are unsigned. This catches Swift/plugin/plist failures
       # that the Rust cross-compiles cannot see.
       - name: tauri ios build (simulator, unsigned)
@@ -168,6 +174,13 @@ jobs:
           test -n "$APP_PATH"
           /usr/libexec/PlistBuddy -c 'Print :UIFileSharingEnabled' "$APP_PATH/Info.plist" | grep -qx true
           /usr/libexec/PlistBuddy -c 'Print :LSSupportsOpeningDocumentsInPlace' "$APP_PATH/Info.plist" | grep -qx true
+          # Native integrations (ADR 0073): the Share Extension is built and
+          # embedded, and the quick actions are declared.
+          APPEX="$APP_PATH/PlugIns/TineShareExtension.appex"
+          test -d "$APPEX"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APPEX/Info.plist" | grep -qx page.tine.Tine.ShareExtension
+          /usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$APPEX/Info.plist" | grep -qx com.apple.share-services
+          /usr/libexec/PlistBuddy -c 'Print :UIApplicationShortcutItems' "$APP_PATH/Info.plist" | grep -q 'tine://capture'
 
           smoke_one() {
             local family="$1" slug="$2"
@@ -203,6 +216,20 @@ jobs:
               '- This graph lives in the on-device Tine folder.' > "$graph/journals/$journal_file"
             printf '%s\n' '- The iOS local-container smoke graph is open and writable.' > "$graph/pages/ci-ios-smoke.md"
 
+            # S1 end to end: a share inbox item, laid out exactly as the Share
+            # Extension publishes it (src-tauri/ios-app/Shared/ShareInbox.swift),
+            # must land at the bottom of today's journal and leave the inbox.
+            local inbox_base inbox share_text="Shared through the CI share inbox ($slug)"
+            inbox_base="$(xcrun simctl get_app_container "$udid" page.tine.Tine group.page.tine.Tine 2>/dev/null || true)"
+            if [ -z "$inbox_base" ]; then
+              echo "no App Group container on this simulator; using the app's fallback inbox"
+              inbox_base="$app_data/Library/Application Support"
+            fi
+            inbox="$inbox_base/share-inbox"
+            mkdir -p "$inbox/ci-share-item"
+            printf '{"version":1,"created":1,"text":"%s","resources":[]}' "$share_text" \
+              > "$inbox/ci-share-item/item.json"
+
             debug_log="$app_data/Documents/tine-debug.log"
             # The stale path goes in through TINE_GRAPH: a positional launch
             # argument is a desktop-only CLI request (src-tauri/src/graph.rs
@@ -236,6 +263,9 @@ jobs:
 
             test -f "$app_data/Documents/.tine-container"
             test -s "$graph/journals/$journal_file"
+            cp "$graph/journals/$journal_file" "artifacts/ios-journal-$slug.md"
+            tail -n 1 "$graph/journals/$journal_file" | grep -F "$share_text"
+            test ! -e "$inbox/ci-share-item"
             guide_page="$(find "$graph/pages" -maxdepth 1 -type f -name '*Tine Guide.md' -print -quit)"
             test -n "$guide_page"
             test -s "$guide_page"
@@ -259,4 +289,5 @@ jobs:
             artifacts/tine-simulator-*.log
             artifacts/tine-debug-*.log
             artifacts/ios-graph-files-*.txt
+            artifacts/ios-journal-*.md
             artifacts/ua-*.txt

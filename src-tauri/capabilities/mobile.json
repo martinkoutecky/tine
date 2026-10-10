@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/mobile-schema.json",
   "identifier": "mobile",
-  "description": "Mobile-only permissions. Tine's SafeBack plugin is the Android Back owner and the frontend must be able to register its listener; the plugin is compiled only on Android, so its permission must not apply to desktop.",
+  "description": "Mobile-only permissions. Tine's SafeBack plugin is the Android Back owner and the frontend must be able to register its listener; the plugin is compiled only on Android, so its permission must not apply to desktop. The native-integrations plugin (share inbox arrivals, ADR 0073) is compiled on Android and iOS only, for the same reason.",
   "platforms": ["android", "iOS"],
   "windows": ["main", "graph-*"],
-  "permissions": ["safe-back:default"]
+  "permissions": ["safe-back:default", "native-integrations:default"]
 }

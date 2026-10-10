@@ -868,6 +868,10 @@ pub struct GraphMeta {
     /// `:mobile {:gestures/disabled-in-block-with-tags [..]}` (OG): tags that
     /// switch the block swipe gestures off inside a block carrying them.
     pub mobile_gestures_disabled_in_block_with_tags: Vec<String>,
+    /// OG `:quick-capture-templates {:text …}`; `None` = the OG default.
+    pub quick_capture_template_text: Option<String>,
+    /// OG `:quick-capture-templates {:media …}`; `None` = the OG default.
+    pub quick_capture_template_media: Option<String>,
     /// Effective journal title format (`:journal/page-title-format`, default
     /// `MMM do, yyyy`) — so the frontend formats "today" to match the backend.
     pub journal_page_title_format: String,
@@ -981,6 +985,8 @@ impl GraphMeta {
             mobile_gestures_disabled_in_block_with_tags: config
                 .mobile_gestures_disabled_in_block_with_tags
                 .clone(),
+            quick_capture_template_text: config.quick_capture_template_text.clone(),
+            quick_capture_template_media: config.quick_capture_template_media.clone(),
             journal_page_title_format: journal_format.title_format().to_string(),
             journal_file_name_format: journal_format.file_format().to_string(),
             preferred_format: config.preferred_format.ext().to_string(),

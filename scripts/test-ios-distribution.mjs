@@ -81,6 +81,24 @@ assert.match(
   /name: Verify signed IPA contract[\s\S]*?expect_plist[\s\S]*?CFBundleIdentifier[\s\S]*?page\.tine\.Tine[\s\S]*?CFBundleDisplayName[\s\S]*?TineOutline[\s\S]*?root privacy manifest[\s\S]*?embedded provisioning profile[\s\S]*?com\.apple\.developer\.icloud-container-identifiers[\s\S]*?codesign --verify --deep --strict[\s\S]*?CloudDocuments/,
   "the signed IPA is not checked against Tine's identity, privacy, provisioning, and signature contract"
 );
+// Native integrations (ADR 0073): the Share Extension's own profile is a
+// required secret, checked for its identity and the shared App Group, and
+// the signed IPA must embed the extension with the app's versions.
+assert.match(
+  iosTestFlightWorkflow,
+  /name: Require iOS distribution secrets[\s\S]*?for name in [^\n]*IOS_SHARE_EXTENSION_MOBILE_PROVISION/,
+  "the Share Extension provisioning profile must be a required secret",
+);
+assert.match(
+  iosTestFlightWorkflow,
+  /name: Install iOS signing materials[\s\S]*?application-groups[\s\S]*?group\.page\.tine\.Tine[\s\S]*?page\.tine\.Tine\.ShareExtension[\s\S]*?IOS_SHARE_EXTENSION_PROFILE_UUID=/,
+  "both profiles must be checked for the App Group and the extension profile exported to prepare-ios-project",
+);
+assert.match(
+  iosTestFlightWorkflow,
+  /name: Verify signed IPA contract[\s\S]*?PlugIns\/TineShareExtension\.appex[\s\S]*?page\.tine\.Tine\.ShareExtension[\s\S]*?CFBundleVersion[\s\S]*?extension App Group[\s\S]*?UIApplicationShortcutItems/,
+  "the signed IPA must embed the Share Extension with its identity, versions and App Group",
+);
 assert.match(iosTestFlightWorkflow, /name: Validate IPA with App Store Connect\n\s+if: inputs\.action != 'build-only'/);
 assert.match(iosTestFlightWorkflow, /name: Upload IPA to TestFlight\n\s+if: inputs\.action == 'upload'/);
 assert.match(
@@ -144,6 +162,8 @@ for (const entitlement of [
   "CloudDocuments",
   "com.apple.developer.ubiquity-container-identifiers",
   `iCloud.${IDENTITIES.release.identifier}`,
+  "com.apple.security.application-groups",
+  `group.${IDENTITIES.release.identifier}`,
 ]) {
   assert.ok(iosEntitlements.includes(entitlement), `iOS entitlements are missing ${entitlement}`);
 }
@@ -173,13 +193,22 @@ try {
   fs.writeFileSync(
     path.join(fixtureApple, "project.yml"),
     [
+      "name: tine",
       "targets:",
       "  tine_iOS:",
       "    sources:",
+      "      - path: Sources",
       "      - path: Assets.xcassets",
+      "    info:",
+      "      properties:",
+      "        CFBundleShortVersionString: 0.7.1",
+      '        CFBundleVersion: "0.7.1"',
       "    settings:",
       "      base:",
       "        ENABLE_BITCODE: false",
+      "    dependencies:",
+      "      - framework: libapp.a",
+      "        embed: false",
       "",
     ].join("\n"),
   );
@@ -194,6 +223,7 @@ try {
       APPLE_DEVELOPMENT_TEAM: "RQ5V4LK7N2",
       IOS_PROVISIONING_PROFILE_UUID: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
       IOS_SIGNING_IDENTITY: "Apple Distribution: Martin Koutecky (RQ5V4LK7N2)",
+      IOS_SHARE_EXTENSION_PROFILE_UUID: "11111111-2222-3333-4444-555555555555",
       TINE_XCODEGEN_BIN: fakeXcodegen,
     },
     stdio: "pipe",
@@ -207,6 +237,30 @@ try {
   const exportOptions = fs.readFileSync(path.join(fixtureApple, "ExportOptions.plist"), "utf8");
   assert.match(exportOptions, /<key>signingStyle<\/key>\s*<string>manual<\/string>/);
   assert.match(exportOptions, /<key>page\.tine\.Tine<\/key>\s*<string>AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE<\/string>/);
+  // Native integrations (ADR 0073): app-target Swift, the embedded Share
+  // Extension with its own bundle id, versions and profile.
+  assert.match(exportOptions, /<key>page\.tine\.Tine\.ShareExtension<\/key>\s*<string>11111111-2222-3333-4444-555555555555<\/string>/);
+  assert.match(preparedProject, /- path: \.\.\/\.\.\/ios-app\/App\n\s+- path: \.\.\/\.\.\/ios-app\/Shared/);
+  assert.match(preparedProject, /dependencies:\n\s+- target: TineShareExtension\n\s+embed: true\n\s+- sdk: AppIntents\.framework\n\s+weak: true/);
+  const extensionTarget = preparedProject.split("\n  TineShareExtension:\n")[1] ?? "";
+  assert.match(extensionTarget, /type: app-extension/);
+  assert.match(extensionTarget, /PRODUCT_BUNDLE_IDENTIFIER: page\.tine\.Tine\.ShareExtension/);
+  assert.match(extensionTarget, /MARKETING_VERSION: "0\.7\.1"[\s\S]*?CURRENT_PROJECT_VERSION: "0\.7\.1"/);
+  assert.match(extensionTarget, /CODE_SIGN_ENTITLEMENTS: \.\.\/\.\.\/ios-app\/ShareExtension\/TineShareExtension\.entitlements/);
+  assert.match(extensionTarget, /PROVISIONING_PROFILE_SPECIFIER: "11111111-2222-3333-4444-555555555555"/);
+  assert.equal(
+    (preparedProject.match(/PROVISIONING_PROFILE_SPECIFIER: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"/g) ?? []).length,
+    1,
+    "the app target keeps its own profile",
+  );
+  for (const tracked of [
+    "src-tauri/ios-app/ShareExtension/Info.plist",
+    "src-tauri/ios-app/ShareExtension/TineShareExtension.entitlements",
+    "src-tauri/ios-app/ShareExtension/Sources/ShareViewController.swift",
+    "src-tauri/ios-app/Shared/ShareInbox.swift",
+    "src-tauri/ios-app/App/TineAppIntents.swift",
+  ]) assert.ok(fs.existsSync(path.join(process.cwd(), tracked)), `missing ${tracked}`);
+  assert.match(read("src-tauri/ios-app/ShareExtension/TineShareExtension.entitlements"), /group\.page\.tine\.Tine/);
   assert.equal(
     fs.readFileSync(path.join(fixtureTarget, "tine_iOS.entitlements"), "utf8"),
     iosEntitlements,

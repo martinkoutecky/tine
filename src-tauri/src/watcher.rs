@@ -401,7 +401,7 @@ fn page_event_payloads(
 
 /// Emit one publication's window events; an external publication is also
 /// recorded as a fixed-shape `watcher.batch` diagnostic event (counts only).
-fn dispatch(app: &tauri::AppHandle, label: &str, slot: &GraphSlot, change: Change) {
+fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: Change) {
     let binding_generation = slot.binding_generation;
     let config_changed = change.origin == Origin::External
         && change
@@ -409,6 +409,15 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &GraphSlot, change: Chang
             .iter()
             .any(|(id, _, _)| id.as_str() == "logseq/config.edn");
     let (events, copies_changed) = window_events(&change);
+    crate::spotlight::observe(
+        app,
+        label,
+        slot,
+        events
+            .iter()
+            .map(|event| (event.name.clone(), event.kind, event.removed))
+            .collect(),
+    );
     let conflicts_dirty = concord_observe(slot, &change) || copies_changed;
     let pages = events.len();
     // Own publications also update derived answers for deletes/renames and

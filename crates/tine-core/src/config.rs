@@ -83,6 +83,14 @@ pub struct Config {
     /// nothing (`frontend.handler.block/target-disable-swipe?`). Only a vector
     /// of strings directly inside a top-level `:mobile` map counts.
     pub mobile_gestures_disabled_in_block_with_tags: Vec<String>,
+    /// `:quick-capture-templates {:text "…"}` — OG's template for shared or
+    /// quick-captured text (`frontend.quick-capture/quick-capture`,
+    /// `frontend.mobile.intent/handle-payload`). `None` means the caller's OG
+    /// default; only a string directly inside the top-level map counts.
+    pub quick_capture_template_text: Option<String>,
+    /// `:quick-capture-templates {:media "…"}` — OG's template for one shared
+    /// image or file (`frontend.mobile.intent/embed-asset-file`).
+    pub quick_capture_template_media: Option<String>,
     /// `:tine/favorites-page "Name"` — the page holding the Favorites arrangement
     /// (labels, nesting, order). Logseq ignores the key; `:favorites` stays the
     /// flat membership list Logseq reads.
@@ -197,6 +205,8 @@ impl Default for Config {
             favorites: Vec::new(),
             favorites_page: None,
             mobile_gestures_disabled_in_block_with_tags: Vec::new(),
+            quick_capture_template_text: None,
+            quick_capture_template_media: None,
             journal_file_name_format: None,
             journal_page_title_format: None,
             preferred_format: crate::model::Format::Md,
@@ -272,6 +282,8 @@ impl Config {
         cfg.favorites = parse_string_vector(edn, ":favorites");
         cfg.mobile_gestures_disabled_in_block_with_tags =
             nested_string_vector(edn, ":mobile", ":gestures/disabled-in-block-with-tags");
+        cfg.quick_capture_template_text = nested_string(edn, ":quick-capture-templates", ":text");
+        cfg.quick_capture_template_media = nested_string(edn, ":quick-capture-templates", ":media");
         cfg.favorites_page =
             string_value(edn, ":tine/favorites-page").filter(|s| !s.trim().is_empty());
         cfg.journal_file_name_format =
@@ -1517,5 +1529,39 @@ mod mobile_gestures_tests {
         assert!(tags(r#"{:mobile {:gestures/disabled-in-block-with-tags "kanban"}}"#).is_empty());
         assert!(tags(r#"{:mobile "kanban"}"#).is_empty());
         assert!(tags(r#"{:mobile {:gestures/disabled-in-block-with-tags"#).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod quick_capture_template_tests {
+    use super::*;
+
+    /// OG `:quick-capture-templates {:text … :media …}` (frontend.quick-capture,
+    /// frontend.mobile.intent): absent keys are `None`, so the share shaper falls
+    /// back to OG's own defaults; a custom template is read verbatim.
+    #[test]
+    fn reads_custom_templates_and_leaves_absent_ones_to_the_og_default() {
+        let config = Config::parse("{}");
+        assert_eq!(config.quick_capture_template_text, None);
+        assert_eq!(config.quick_capture_template_media, None);
+        let config = Config::parse(
+            r#"{:quick-capture-templates {:text "{date} {text} {url}" :media "> {url}"}}"#,
+        );
+        assert_eq!(
+            config.quick_capture_template_text.as_deref(),
+            Some("{date} {text} {url}")
+        );
+        assert_eq!(
+            config.quick_capture_template_media.as_deref(),
+            Some("> {url}")
+        );
+    }
+
+    #[test]
+    fn a_nested_map_cannot_shadow_the_template() {
+        let config = Config::parse(r#"{:other {:quick-capture-templates {:text "no"}}}"#);
+        assert_eq!(config.quick_capture_template_text, None);
+        let config = Config::parse(r#"{:quick-capture-templates {:text :not-a-string}}"#);
+        assert_eq!(config.quick_capture_template_text, None);
     }
 }
