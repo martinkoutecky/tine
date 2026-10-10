@@ -12,9 +12,10 @@
 //! - `<id>/prepared.json`: written here, through the audited
 //!   [`crate::device_io::atomic_write`], by the frontend's ingest: the graph
 //!   and journal day the item is bound to, its shaped Markdown and imported
-//!   assets, and (once an append is armed) the journal's revision and match
-//!   count just before it, which make recovery after a crash loss-free
-//!   (see `src/shareIngest.ts` and ADR 0073);
+//!   assets, the journal's revision recorded just before the append
+//!   (`armed`), and `written` once that append reached disk; recovery after
+//!   a crash re-appends anything not `written` (see `src/shareIngest.ts` and
+//!   ADR 0073);
 //! - `.trash-<id>/`: a committed item between its rename and its removal;
 //! - `.rejected-<id>/`: an item that could not be read, kept for the user.
 //!
@@ -94,6 +95,8 @@ pub(crate) struct Prepared {
     pub assets: Vec<String>,
     /// Set inside the admitted read just before the append.
     pub armed: Option<Armed>,
+    /// The append reached disk: recovery only commits.
+    pub written: bool,
 }
 
 /// The journal as the append found it.
@@ -102,8 +105,6 @@ pub(crate) struct Prepared {
 pub(crate) struct Armed {
     /// The day file's revision (`None`: the day had no file).
     pub before: Option<String>,
-    /// Blocks on the day equal to the appended block.
-    pub matches: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -514,10 +515,8 @@ mod tests {
             day: "Oct 10th, 2026".into(),
             markdown: Some("- t".into()),
             assets: vec!["p_1.png".into()],
-            armed: Some(Armed {
-                before: None,
-                matches: 2,
-            }),
+            armed: Some(Armed { before: None }),
+            written: true,
         };
         prepare(root, "a", &prepared).unwrap();
         assert_eq!(

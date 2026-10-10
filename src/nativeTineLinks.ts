@@ -9,14 +9,16 @@ import type { LinkTarget, LinkDelivery } from "./deepLinkNavigation";
 export interface ShareInboxResource { path: string; name?: string | null; type?: string | null }
 /** The ingest's durable record for an item (share_inbox.rs `Prepared`, ADR 0073):
  * the graph and frozen journal day it is bound to, its shaped Markdown (null
- * while its files are imported), the asset names imported for it, and the
- * journal state recorded inside the admitted read just before the append. */
+ * while its files are imported), the asset names imported for it, the day
+ * file's revision recorded inside the admitted read just before the append,
+ * and `written` once that append reached disk. */
 export interface SharePrepared {
   graph: string;
   day: string;
   markdown: string | null;
   assets: string[];
-  armed: { before: string | null; matches: number } | null;
+  armed: { before: string | null } | null;
+  written: boolean;
 }
 /** Which OG share path an item follows: Android's legacy `SendIntent` result
  * (`handle-result`) or the iOS share-sheet payload (`handle-payload`). */
