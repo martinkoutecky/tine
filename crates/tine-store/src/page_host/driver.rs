@@ -196,12 +196,20 @@ impl<F: HostIo, C: Clock> Shared<F, C> {
     /// Run `action` under the state mutex and wake the driver: the wake
     /// source for admission, watcher reads, reservations and switches.
     pub fn with_state<R>(&self, action: impl FnOnce(&mut State<F, C>) -> R) -> R {
-        let mut state = self.state.lock().unwrap();
+        self.try_with_state(action)
+            .expect("page host state poisoned")
+    }
+
+    /// [`Self::with_state`], or None when the state is poisoned: a host
+    /// that already panicked under its lock. The lock result is the only
+    /// check, so a poison landing just before it is seen, not raced (E90).
+    pub fn try_with_state<R>(&self, action: impl FnOnce(&mut State<F, C>) -> R) -> Option<R> {
+        let mut state = self.state.lock().ok()?;
         let result = action(&mut state);
         state.wake();
         drop(state);
         self.condition.notify_all();
-        result
+        Some(result)
     }
 
     /// Run one host step on a command thread as plan, lock, revalidate

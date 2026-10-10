@@ -56,16 +56,26 @@ impl std::fmt::Debug for Reservation {
     }
 }
 
+// Runs in `Reservation::drop` just before it takes the state lock (E90's
+// test plants a poison there).
+#[cfg(test)]
+thread_local! {
+    pub(super) static BEFORE_RELEASE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 impl Drop for Reservation {
     fn drop(&mut self) {
+        let keys = std::mem::take(&mut self.keys);
+        #[cfg(test)]
+        if let Some(hook) = BEFORE_RELEASE.with(|hook| hook.borrow_mut().take()) {
+            hook();
+        }
         // A poisoned state is a host that already panicked under its lock;
         // every later step of it panics, and a panic here, during an
-        // unwind, would abort the app.
-        if self.shared.state.is_poisoned() {
-            return;
-        }
-        let keys = std::mem::take(&mut self.keys);
-        self.shared.with_state(|state| {
+        // unwind, would abort the app. The lock result is checked once
+        // (E90): a poison between a separate check and the lock would panic.
+        self.shared.try_with_state(|state| {
             for key in keys {
                 state.progress.host.retained.remove(&key);
                 if self.handover {

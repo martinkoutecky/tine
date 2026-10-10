@@ -990,6 +990,39 @@ fn a_rediscovery_panic_withdraws_the_reservation() {
     live.host.stop();
 }
 
+/// E90 (REVIEW-3a3): a reservation dropped while its host's state is
+/// poisoned under it returns without a second panic, which during an
+/// unwind would abort the app. The poison lands just before the drop's
+/// lock, past where a separate `is_poisoned` check would have looked.
+#[test]
+fn a_reservation_dropped_on_a_poisoned_host_does_not_panic() {
+    let live = Live::new(&[("pages/a.md", "- a\n")]);
+    let reservation = live
+        .host
+        .reserve(|| vec![PageId::from("pages/a.md")], Input::Refuse)
+        .unwrap();
+    let shared = Arc::clone(&live.host.driver.shared);
+    retained::BEFORE_RELEASE.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            let poisoner = std::thread::spawn(move || {
+                let _state = shared.state.lock().unwrap();
+                panic!("E90 test: poison the host state");
+            });
+            assert!(poisoner.join().is_err());
+        }))
+    });
+    let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(reservation)));
+    assert!(
+        dropped.is_ok(),
+        "E90: dropping a reservation on a poisoned host panicked; exemplar binding_retained.rs \
+         Reservation::drop (try_with_state)"
+    );
+    // The host is failed by construction; its own teardown panics.
+    drop(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || drop(live),
+    )));
+}
+
 /// Q6 (REVIEW-3), second boundary: publication P fails and awaits retry;
 /// a retained writer reserves the page and commits T, which publishes its
 /// own index; P's retry must never overwrite T, and the release's
