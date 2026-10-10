@@ -238,7 +238,7 @@ jobs:
             echo "share inbox: ${inbox:-<not created>}"
             test -n "$inbox"
             mkdir -p "$inbox/ci-share-item"
-            printf '{"version":1,"created":1,"text":"%s","resources":[]}' "$share_text" \
+            printf '{"version":1,"source":"ios","created":1,"text":"%s","resources":[]}' "$share_text" \
               > "$inbox/ci-share-item/item.json"
 
             debug_log="$app_data/Documents/tine-debug.log"
