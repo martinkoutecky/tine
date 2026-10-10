@@ -78,7 +78,23 @@ class NativeIntegrationsPlugin(private val activity: Activity) : Plugin(activity
   }
 
   override fun load(webView: WebView) {
-    activity.intent?.let(::receive)
+    val intent = activity.intent
+    // A redelivered occurrence (restored intent) is republished, not reported.
+    val keep = try {
+      intent?.getStringExtra(SHARE_OCCURRENCE_EXTRA)
+    } catch (_: Exception) {
+      null
+    }
+    Thread {
+      try {
+        for (summary in InboxWriter(inboxRoot(), files).interrupted(keep)) {
+          toast("A share to Tine was interrupted and wasn't saved: $summary. Please share it again.")
+        }
+      } catch (error: Exception) {
+        Log.e(TAG, "couldn't check interrupted shares", error)
+      }
+    }.start()
+    intent?.let(::receive)
   }
 
   override fun onNewIntent(intent: Intent) {
@@ -149,7 +165,7 @@ class NativeIntegrationsPlugin(private val activity: Activity) : Plugin(activity
             stream ?: throw ShareRefused("$name couldn't be read. Nothing was saved; please share it again.")
           }
         }
-        writer.publish(id, System.currentTimeMillis(), share.text, share.title, resources)
+        writer.publish(id, System.currentTimeMillis(), share.text, share.title, resources, ShareIntake.summary(share.text ?: share.title, resources.size))
       }
       if (announce) activity.runOnUiThread { trigger(INBOX_CHANGED, JSObject()) }
     } catch (error: Exception) {
