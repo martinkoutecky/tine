@@ -26,14 +26,15 @@ function openPage() {
 }
 const rowOf = (host: Element, id: string) => host.querySelector(`[data-block-id="${id}"] > .block-main`);
 
-let saved: Backend["seenBaseline"];
+type SeenIo = Pick<Backend, "readSeenBaseline" | "writeSeenBaseline">;
+let saved: SeenIo;
 beforeEach(() => {
-  saved = backend().seenBaseline;
+  saved = { readSeenBaseline: backend().readSeenBaseline, writeSeenBaseline: backend().writeSeenBaseline };
   resetSeenBaselinesForTests();
   setGraphMeta({ root: "/graphs/seen" } as never);
 });
 afterEach(() => {
-  (backend() as { seenBaseline?: Backend["seenBaseline"] }).seenBaseline = saved;
+  Object.assign(backend(), saved);
   vi.restoreAllMocks();
   resetStore();
   resetTabsToJournals();
@@ -42,19 +43,19 @@ afterEach(() => {
 });
 
 it("vision 9a: an untracked page renders exactly as on a backend that keeps no seen state", async () => {
-  const records = new Map<string, string[]>();
-  const io = vi.fn(async (r: { op: string; page: string }) => records.get(r.page) ?? null);
-  (backend() as { seenBaseline?: unknown }).seenBaseline = io;
+  const io = vi.fn(async (_graph: string, _page: string) => null);
+  backend().readSeenBaseline = io;
   const tracked = openPage();
   await vi.waitFor(() => expect(tracked.host.querySelectorAll(".ls-block")).toHaveLength(3));
-  await vi.waitFor(() => expect(io).toHaveBeenCalledWith(expect.objectContaining({ op: "load" })));
+  await vi.waitFor(() => expect(io).toHaveBeenCalledWith("/graphs/seen", "seen"));
   await Promise.resolve();
   const withSeen = tracked.host.innerHTML;
   tracked.dispose();
   resetStore();
   document.body.replaceChildren();
 
-  delete (backend() as { seenBaseline?: unknown }).seenBaseline;
+  delete (backend() as Partial<SeenIo>).readSeenBaseline;
+  delete (backend() as Partial<SeenIo>).writeSeenBaseline;
   const plain = openPage();
   await vi.waitFor(() => expect(plain.host.querySelectorAll(".ls-block")).toHaveLength(3));
   expect(withSeen).toBe(plain.host.innerHTML);

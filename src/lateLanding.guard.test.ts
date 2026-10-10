@@ -111,7 +111,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard",
   "writeHighlights", "savePdfAreaImage", "rollbackPdfAreaImage",
   "setBackupKeep", "setCaptureEnterFiles", "setWatchMode", "restoreBackup",
-  "saveSession", "saveWorkspaces", "storeDraft", "retireDraft", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
+  "saveSession", "saveWorkspaces", "storeDraft", "retireDraft", "writeSeenBaseline", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
   "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
   "saveGraphVerificationReport", "addDefenderExclusion", "dismissDefenderHint",
 ]);
@@ -124,7 +124,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "captureTarget", "bindCaptureGraph", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
   "readPluginEntry", "verifyPluginRegistry", "loadPluginRegistryCache", "defaultGraphParent", "suggestGraphName", "quit",
   "closeGraphWindow", "trayApply", "openDevtools", "pageInventory", "journalFeedPage", "journalContentDays",
-  "getPage", "resolvePage", "loadDrafts", "graphSourceFiles", "guidePages", "getBacklinks",
+  "getPage", "resolvePage", "loadDrafts", "readSeenBaseline", "graphSourceFiles", "guidePages", "getBacklinks",
   "getBacklinkFilterContext", "getUnlinkedRefs", "warmDone", "getBlockRefCounts", "getBlockReferrers",
   "pagePrintHtml", "sheetExportInputs", "exportQuerySubtrees", "parseQuery", "printQuery", "queryOgExpressible", "queryRegistry",
   "queryRun", "queryExplainEmpty", "queryFacets", "publishQueryPlan", "pageIcons",

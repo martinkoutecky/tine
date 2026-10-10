@@ -1520,7 +1520,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     },
     async loadSession(): Promise<string | null> { return mockSession; },
     async saveSession(data: string): Promise<void> { mockSession = data; },
-    seenBaseline: mockSeenBaseline(),
+    ...mockSeenBaseline(),
     async loadDrafts(): Promise<DraftLoad> {
       return { drafts: [...mockDrafts.values()].map((record) => structuredClone(record)), set_aside: null };
     },

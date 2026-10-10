@@ -49,7 +49,7 @@ import type {
   PublicationReceipt,
   DraftRecord, DraftLoad,
 } from "./types";
-import type { GraphSources, GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus, SeenBaselineRequest } from "./backendTypes";
+import type { GraphSources, GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus, SeenBaselineWrite } from "./backendTypes";
 import { dbg } from "./debug";
 import type { EditKinds } from "./editKind";
 import { mockBackend } from "./mock";
@@ -617,8 +617,9 @@ export interface Backend {
   storeDraft?(record: DraftRecord, graphRoot?: string): Promise<string | null>;
   /** Remove one draft record by id (a missing id is no error); a set-aside path as above. */
   retireDraft?(id: string): Promise<string | null>;
-  /** Seen baseline (ADR 0073): load / mark / forget one page's block hashes in app data; absent in a published export. */
-  seenBaseline?(request: SeenBaselineRequest): Promise<string[] | null>;
+  /** Seen baseline (ADR 0073): read one page's block hashes in app data (null: untracked), or mark / forget them; absent in a published export. */
+  readSeenBaseline?(graph: string, page: string): Promise<string[] | null>;
+  writeSeenBaseline?(request: SeenBaselineWrite): Promise<void>;
   /** Load the current graph's device-local named-workspace registry JSON. */
   loadWorkspaces(): Promise<string>;
   /** Replace the registry atomically. A failed post-rename directory sync reports
@@ -698,7 +699,7 @@ export interface Backend {
   watcherLatencyRecent(): Promise<unknown[]>;
 }
 
-export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, SavePageEntry, GraphAnswersChange, SavePagesResult, GraphSourceFile, GraphSources, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, SeenBaselineRequest } from "./backendTypes";
+export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, SavePageEntry, GraphAnswersChange, SavePagesResult, GraphSourceFile, GraphSources, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, SeenBaselineWrite } from "./backendTypes";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, SavePageEntry, GraphAnswersChange, SavePagesResult } from "./backendTypes";
 
 export function isTauri(): boolean {
@@ -1400,7 +1401,8 @@ class TauriBackend implements Backend {
   retireDraft(id: string) {
     return this.call<string | null>("retire_draft", { id });
   }
-  seenBaseline(request: SeenBaselineRequest) { return this.call<string[] | null>("seen_baseline", { request }); }
+  readSeenBaseline(graph: string, page: string) { return this.call<string[] | null>("seen_baseline", { request: { op: "load", graph, page } }); }
+  async writeSeenBaseline(request: SeenBaselineWrite) { await this.call<null>("seen_baseline", { request }); }
   loadWorkspaces() {
     return this.call<string>("load_workspaces");
   }

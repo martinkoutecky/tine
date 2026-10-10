@@ -4,8 +4,9 @@
 // a page's baseline once, writes it only on "Mark page seen", and drops it on
 // "Forget seen state" or when Tine renames or deletes the page. Nothing here
 // runs per edit, at page open beyond one load, or at close.
-import { createSignal, untrack } from "solid-js";
-import { backend, type SeenBaselineRequest } from "../backend";
+import { createSignal } from "solid-js";
+import { backend } from "../backend";
+import { clearOnBindingInvalidated } from "../binding";
 import { graphMeta } from "../graphSession";
 import { pageIdentityKey } from "../pageIdentity";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
@@ -17,30 +18,37 @@ import { pageBlockIds, seenBlockHash } from "./hash";
 /** A page's baseline: its block hashes, or null for a page that is not tracked. */
 export type SeenBaseline = ReadonlySet<string> | null;
 
-// Keyed by graph root + page identity key, so a graph switch never shows
-// another graph's answer and a spelling change of one page reads one record.
-const [baselines, setBaselines] = createSignal<ReadonlyMap<string, SeenBaseline>>(new Map());
+// Keyed by graph root + page identity key, so a late answer never lands under
+// another graph and a spelling change of one page reads one record. Both end
+// with the graph binding (I-21), so the cache holds at most the pages this
+// graph session opened.
+const baselines = new Map<string, SeenBaseline>();
 const inflight = new Set<string>();
+const [version, setVersion] = createSignal(0);
+clearOnBindingInvalidated(() => {
+  baselines.clear();
+  inflight.clear();
+  setVersion((n) => n + 1);
+});
 
 const cacheKey = (root: string, pageName: string): string => `${root}\n${pageIdentityKey(pageName)}`;
-const publish = (key: string, value: SeenBaseline) => setBaselines((prev) => new Map(prev).set(key, value));
-
-function request(op: SeenBaselineRequest): Promise<string[] | null> {
-  const io = backend().seenBaseline;
-  if (!io) return Promise.reject(new Error("This build keeps no seen state."));
-  return io.call(backend(), op);
-}
+const publish = (key: string, value: SeenBaseline) => {
+  baselines.set(key, value);
+  setVersion((n) => n + 1);
+};
 
 /** Can this backend keep seen state? A published export cannot. */
 export function seenSupported(): boolean {
-  return typeof backend().seenBaseline === "function";
+  const io = backend();
+  return typeof io.readSeenBaseline === "function" && typeof io.writeSeenBaseline === "function";
 }
 
 /** Reactive: the page's baseline, null when it is not tracked, undefined until
  *  its one load has answered. */
 export function seenBaselineFor(pageName: string): SeenBaseline | undefined {
   const root = graphMeta()?.root;
-  return root ? baselines().get(cacheKey(root, pageName)) : undefined;
+  version();
+  return root ? baselines.get(cacheKey(root, pageName)) : undefined;
 }
 
 /** Load the page's baseline once per graph session. A missing, unreadable or
@@ -50,10 +58,10 @@ export function loadSeenBaseline(pageName: string): void {
   const root = graphMeta()?.root;
   if (!root || !seenSupported()) return;
   const key = cacheKey(root, pageName);
-  if (untrack(baselines).has(key) || inflight.has(key)) return;
+  if (baselines.has(key) || inflight.has(key)) return;
   inflight.add(key);
   const owner = graphOwner();
-  void readOwned(owner, request({ op: "load", graph: root, page: pageIdentityKey(pageName) }))
+  void readOwned(owner, backend().readSeenBaseline!(root, pageIdentityKey(pageName)))
     .then((result) => {
       if (result.kind !== "stale") publish(key, result.value ? new Set(result.value) : null);
     }, (error) => {
@@ -81,7 +89,7 @@ export async function markPageSeen(pageName: string): Promise<boolean> {
   try {
     // The record names the graph the hashes came from, so a graph switch while
     // it is in flight cannot file it under another graph.
-    await writeOwned(bindingOwner(), request({ op: "mark", graph: root, page: pageIdentityKey(pageName), hashes }));
+    await writeOwned(bindingOwner(), backend().writeSeenBaseline!({ op: "mark", graph: root, page: pageIdentityKey(pageName), hashes }));
     publish(cacheKey(root, pageName), new Set(hashes));
     return true;
   } catch (error) {
@@ -96,7 +104,7 @@ export async function forgetPageSeen(pageName: string, quiet = false): Promise<v
   const root = graphMeta()?.root;
   if (!root || !seenSupported()) return;
   try {
-    await writeOwned(bindingOwner(), request({ op: "forget", graph: root, page: pageIdentityKey(pageName) }));
+    await writeOwned(bindingOwner(), backend().writeSeenBaseline!({ op: "forget", graph: root, page: pageIdentityKey(pageName) }));
     publish(cacheKey(root, pageName), null);
   } catch (error) {
     if (quiet) dbg(`seen: forgetting ${pageName} failed: ${String(error)}`);
@@ -106,6 +114,7 @@ export async function forgetPageSeen(pageName: string, quiet = false): Promise<v
 
 /** Test seam: drop every cached answer. */
 export function resetSeenBaselinesForTests(): void {
-  setBaselines(new Map());
+  baselines.clear();
   inflight.clear();
+  setVersion((n) => n + 1);
 }

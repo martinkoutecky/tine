@@ -7,7 +7,8 @@ import { resetStore, setRaw, deleteBlock, indentBlock, insertEmptyChildBlock, to
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import { setGraphMeta } from "../graphSession";
-import { backend } from "../backend";
+import { backend, type SeenBaselineWrite } from "../backend";
+import { resetStore as resetGraphStore } from "../document";
 import { pageIdentityKey } from "../pageIdentity";
 import type { BlockDto, PageDto } from "../types";
 import { pageBlockIds, seenBlockHash } from "./hash";
@@ -141,34 +142,51 @@ describe("seen tracker", () => {
 describe("seen baseline record", () => {
   function fakeStore() {
     const records = new Map<string, string[]>();
-    const io = vi.fn(async (request: { op: string; graph: string; page: string; hashes?: string[] }) => {
-      const key = `${request.graph}\n${request.page}`;
-      if (request.op === "mark") records.set(key, request.hashes!);
-      else if (request.op === "forget") records.delete(key);
-      else return records.get(key) ?? null;
-      return null;
+    const ops: string[] = [];
+    const read = vi.fn(async (graph: string, page: string) => {
+      ops.push("load");
+      return records.get(`${graph}\n${page}`) ?? null;
     });
-    (backend() as unknown as { seenBaseline: typeof io }).seenBaseline = io;
-    return { records, io };
+    const write = vi.fn(async (request: SeenBaselineWrite) => {
+      ops.push(request.op);
+      const key = `${request.graph}\n${request.page}`;
+      if (request.op === "mark") records.set(key, request.hashes);
+      else records.delete(key);
+    });
+    Object.assign(backend(), { readSeenBaseline: read, writeSeenBaseline: write });
+    return { records, read, ops };
   }
 
   it("is written only by Mark page seen, keyed by graph and page identity", async () => {
-    const { records, io } = fakeStore();
+    const { records, ops } = fakeStore();
     load([blk("a"), blk("b")], "Reading List");
     loadSeenBaseline("Reading List");
     await vi.waitFor(() => expect(seenBaselineFor("Reading List")).toBeNull());
-    expect(io.mock.calls.map(([r]) => r.op)).toEqual(["load"]);
+    expect(ops).toEqual(["load"]);
     expect(await markPageSeen("Reading List")).toBe(true);
     expect([...records.keys()]).toEqual([`/graphs/seen\n${pageIdentityKey("Reading List")}`]);
     expect(seenBaselineFor("reading list")?.size).toBe(2);
     // Editing writes nothing.
     setRaw(doc.pages[0].roots[0], "a edited");
-    expect(io.mock.calls.map(([r]) => r.op)).toEqual(["load", "mark"]);
+    expect(ops).toEqual(["load", "mark"]);
+  });
+
+  it("ends its cache with the graph binding (I-21) and reloads once in the next session", async () => {
+    const { ops } = fakeStore();
+    load([blk("a")], "Reading List");
+    await markPageSeen("Reading List");
+    expect(seenBaselineFor("Reading List")?.size).toBe(1);
+    resetGraphStore();
+    expect(seenBaselineFor("Reading List")).toBeUndefined();
+    load([blk("a")], "Reading List");
+    loadSeenBaseline("Reading List");
+    await vi.waitFor(() => expect(seenBaselineFor("Reading List")?.size).toBe(1));
+    expect(ops).toEqual(["mark", "load"]);
   });
 
   it("treats a failed or empty read as no baseline, never an error", async () => {
-    const { io } = fakeStore();
-    io.mockRejectedValueOnce(new Error("unreadable"));
+    const { read } = fakeStore();
+    read.mockRejectedValueOnce(new Error("unreadable"));
     load([blk("a")]);
     loadSeenBaseline("Seen");
     await vi.waitFor(() => expect(seenBaselineFor("Seen")).toBeNull());
