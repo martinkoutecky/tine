@@ -158,7 +158,7 @@ async function showKeyboardForFocusedInput(current: () => boolean): Promise<void
   }
   if (!current() || !editableFocused()) return;
   try { await show(); }
-  catch (error) { console.warn("[tine] couldn't show the keyboard", error); }
+  catch { console.warn("[tine] couldn't show the keyboard"); }
 }
 
 export async function installTineLinks(alive: () => boolean): Promise<() => void> {
