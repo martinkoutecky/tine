@@ -219,13 +219,24 @@ jobs:
             # S1 end to end: a share inbox item, laid out exactly as the Share
             # Extension publishes it (src-tauri/ios-app/Shared/ShareInbox.swift),
             # must land at the bottom of today's journal and leave the inbox.
-            local inbox_base inbox share_text="Shared through the CI share inbox ($slug)"
-            inbox_base="$(xcrun simctl get_app_container "$udid" page.tine.Tine group.page.tine.Tine 2>/dev/null || true)"
-            if [ -z "$inbox_base" ]; then
-              echo "no App Group container on this simulator; using the app's fallback inbox"
-              inbox_base="$app_data/Library/Application Support"
-            fi
-            inbox="$inbox_base/share-inbox"
+            # The inbox is wherever the app itself resolves it (the App Group
+            # container, which the Simulator creates only on the app's first
+            # request, else its Application Support fallback), so a warm-up
+            # launch with the graph lets the app create it, and the item is
+            # then placed there before the measured launch.
+            local inbox containers share_text="Shared through the CI share inbox ($slug)"
+            SIMCTL_CHILD_TINE_GRAPH="$stale_graph" \
+              xcrun simctl launch --terminate-running-process "$udid" page.tine.Tine
+            containers="$(dirname "$(dirname "$(dirname "$app_data")")")"
+            for _ in $(seq 1 60); do
+              inbox="$(find "$containers/Shared/AppGroup" "$app_data/Library/Application Support" \
+                -mindepth 1 -maxdepth 2 -type d -name share-inbox -print -quit 2>/dev/null || true)"
+              [ -n "$inbox" ] && break
+              sleep 1
+            done
+            xcrun simctl terminate "$udid" page.tine.Tine || true
+            echo "share inbox: ${inbox:-<not created>}"
+            test -n "$inbox"
             mkdir -p "$inbox/ci-share-item"
             printf '{"version":1,"created":1,"text":"%s","resources":[]}' "$share_text" \
               > "$inbox/ci-share-item/item.json"
