@@ -38,6 +38,7 @@ import { cutBlocks } from "./cut";
 import { deleteRenderedTextSelection } from "./editor/renderedSelectionDelete";
 import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { openInPageFind } from "./inpageFind";
+import { seenCommands } from "./seen/commands";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
 import {
@@ -305,6 +306,8 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/split-down", binding: "mod+alt+shift+\\", label: "Split down", scope: "global", run: () => void splitPane(focusedPaneId(), "col"), global: true },
   { id: "pane/close", binding: "", label: "Close pane", scope: "global", run: () => void closePane(focusedPaneId()), global: true },
   { id: "pane/toggle-maximize", binding: "mod+alt+m", label: "Toggle maximize active pane", scope: "global", run: () => { togglePaneMaximize(); }, global: true },
+  { id: "page/mark-seen", binding: "", label: "Mark page seen", scope: "global", available: seenCommands.markAvailable, run: seenCommands.mark, global: true },
+  { id: "page/forget-seen", binding: "", label: "Forget seen state", scope: "global", available: seenCommands.forgetAvailable, run: seenCommands.forget, global: true },
   { id: "window/open-in-new-window", binding: "", label: "Open current page in new window", scope: "global", available: () => workspaceWindowsSupported(), run: () => { if (workspaceWindowsSupported()) openWorkspaceWindow({ snapshot: focusedRouter().duplicateActiveSnapshot() }); }, global: true },
   { id: "sidebar/grow-width", binding: "", label: "Grow left sidebar width", scope: "global", run: () => adjustSidebarWidth("left", true), global: true },
   { id: "sidebar/shrink-width", binding: "", label: "Shrink left sidebar width", scope: "global", run: () => adjustSidebarWidth("left", false), global: true },

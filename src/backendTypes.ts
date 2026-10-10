@@ -203,3 +203,11 @@ export type SavePagesResult =
 export interface CustomCssChange {
   binding_generation?: number;
 }
+
+/** One seen-baseline operation (vision 9a, ADR 0073) on the app-data record of
+ *  one page (`page`: its identity key) of one graph (`graph`: its root, chosen
+ *  when the operation began). `load` resolves to the stored hashes, or null
+ *  when there is no baseline or the stored one is unreadable. */
+export type SeenBaselineRequest =
+  | { op: "load" | "forget"; graph: string; page: string }
+  | { op: "mark"; graph: string; page: string; hashes: string[] };

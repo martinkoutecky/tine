@@ -90,7 +90,7 @@ import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor } from "./Macro";
 import { Rendered, detectMacro } from "./Rendered";
-import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, type ThreadLineDecoration } from "./block/rowChrome";
+import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, seenRowClasses, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
 import { dataRev, graphEpoch } from "../graphSession";
@@ -332,7 +332,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           dragging: dragId() === props.id,
           selected: isSelected(props.id),
           // Marks the row being edited; drives dim-mode's active-block spotlight.
-          editing: editing(),
+          editing: editing(), ...seenRowClasses(props.id),
         }}
         onContextMenu={(e) => {
           if (!shouldOpenBlockContextMenu(e.target)) return;

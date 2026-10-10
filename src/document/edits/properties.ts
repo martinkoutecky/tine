@@ -12,6 +12,7 @@ import { isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPr
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
+import { trimBlockTrailingSpace } from "../../editor/format";
 import { pushToast } from "../../toasts";
 
 /** Pure Markdown property rewrite for one compound store mutation. It scans only
@@ -492,6 +493,17 @@ export function rawWithCollapsed(raw: string, collapsed: boolean, format: Format
   const { visible, hidden } = splitProps(raw, isBuiltinHidden, format);
   const nextHidden = upsertPropertyLine(hidden, "collapsed", collapsed ? "true" : null) ?? "";
   return joinProps(visible, nextHidden, format);
+}
+
+/** A block's own content as the seen baseline compares it (ADR 0073): its raw
+ *  text with every property line, minus the fold state (`collapsed::`, which a
+ *  fold writes but which is not content) and the trailing whitespace a save
+ *  trims. The parser-owned `rawWithCollapsed` decides what the fold property
+ *  is; the substring test only skips that parse for blocks that cannot carry
+ *  it, so a page open does not split every block's properties. O(raw). */
+export function blockContentKey(raw: string, format: Format): string {
+  const unfolded = raw.toLowerCase().includes("collapsed") ? rawWithCollapsed(raw, false, format) : raw;
+  return trimBlockTrailingSpace(unfolded);
 }
 
 /** Set a block's collapsed state AND mirror it into its raw `collapsed::` so it

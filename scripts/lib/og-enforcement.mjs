@@ -82,8 +82,10 @@ export const PERSISTED_FORMATS = Object.freeze([
   "backup-graph-text-copy",
   "launch-checkpoint",
   "graph-link-identity",
+  // Vision decision 9a, Martin 2026-10-04; ADR 0073 Proposed.
+  "seen-baseline",
 ]);
-export const PINNED_FORMAT_COUNT = 29;
+export const PINNED_FORMAT_COUNT = 30;
 // Writer sites Martin approved after the base, each with its ADR. Only an
 // approved format may add sites here; the count is exact, not a budget.
 export const APPROVED_WRITER_SITES = Object.freeze({
@@ -100,6 +102,8 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   "crates/tine-store/src/transaction/move_file.rs": { sites: 1, approval: "graph text via the audited save path; 3a40f0ca1 crash-durable rewritten moves" },
   // Compiled executable resource in a private temporary directory, removed on
   // exit; no durable layout or graph state. Uses the existing audited writer.
+  // One record per tracked page, written only on Mark page seen, via the audited atomic_write.
+  "src-tauri/src/seen_baseline.rs": { sites: 1, approval: "vision decision 9a, Martin 2026-10-04; ADR 0073 Proposed" },
   "src-tauri/src/youtube_identity.rs": { sites: 1, approval: "Martin's OG-QBY native YouTube identity task; temporary bundled WebProcess module, no new persisted format" },
 });
 

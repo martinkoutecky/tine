@@ -49,6 +49,7 @@ mod query_export;
 #[path = "commands/query_ir.rs"]
 mod query_ir;
 mod search_workspace;
+mod seen_baseline;
 mod settings;
 mod spellcheck;
 #[cfg(test)]
@@ -1074,6 +1075,7 @@ pub fn run() {
             drafts::load_drafts,
             drafts::store_draft,
             drafts::retire_draft,
+            seen_baseline::seen_baseline,
             save_session,
             load_workspaces,
             save_workspaces,

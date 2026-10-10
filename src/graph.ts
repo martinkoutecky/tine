@@ -33,6 +33,7 @@ import { reportUiFailure } from "./uiFailure";
 import { reportGraphOpenFailure } from "./graphOpenFailure";
 import { activeElement, isHTMLElementNode } from "./windowRealm";
 import { askGraphName } from "./graphNamePrompt";
+import { forgetPageSeen } from "./seen/baseline";
 export const [graphConfigProblem, setGraphConfigProblem] = createSignal<unknown>(null);
 
 const GRAPH_KEY = "tine.graphPath";
@@ -389,6 +390,9 @@ export async function renameOrMergePage(
     if (confirmed.kind === "stale" || !confirmed.value) return "cancelled";
   }
   const done = await renamePageOnDisk(from, to, target, into, onRefreshed);
+  // ADR 0073 rename policy: the old name's seen baseline is dropped, never
+  // carried, so no later page of that name inherits it.
+  if (done === "renamed" || done === "merged") void forgetPageSeen(from, true);
   return done === "stale" ? "cancelled" : done;
 }
 

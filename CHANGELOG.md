@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Deleting referenced blocks shows how many references are now broken, with **Undo** to restore the blocks and their ids (GH #635).
 - Merging blocks with Backspace/Delete shows how many references now point to the surviving block, or broke when both blocks had ids, with **Undo** (GH #652).
 - Linked and Unlinked References: click a breadcrumb ancestor to show its subtree inline while keeping your place; Shift+click opens it in the right sidebar. Inline context resets when the reference group closes (GH #526).
+- "Changed since you last looked": **Mark page seen** (Page actions or the command palette) remembers a page as it is now; when you come back, blocks that are new or whose text changed carry a thin margin bar under a "N changes since you last looked" line with **Mark seen**. Moved or folded blocks do not count. The record is a small per-page file in app data, never in the graph; untracked pages look exactly as before (vision decision 9a, ADR 0073).
 
 ### Changed
 

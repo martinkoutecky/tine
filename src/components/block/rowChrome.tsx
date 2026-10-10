@@ -1,6 +1,7 @@
 import { createMemo, type JSX } from "solid-js";
 import { collapsibleDescendantIds, node as docNode, setCollapsedDescendants } from "../../document";
 import type { CollapseSurfaceApi } from "../Block";
+export { seenRowClasses } from "../../seen/SeenHeader";
 
 // Row chrome of `Block` that only some rows need, split out so `Block.tsx` (over
 // the 1,500-line ceiling) does not grow (og I3, master 0350c00b6 / ce9a796fb).

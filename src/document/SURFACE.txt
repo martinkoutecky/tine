@@ -11,6 +11,7 @@ appendToTodayJournal
 applyGraphChange
 applyGraphChangesBulk  # why: a checkout-sized watcher batch (graph-changed-bulk) is applied once (family 10); batch22a
 beginPageHeaderEdit
+blockContentKey  # why: the seen baseline hashes a block's own content without its fold state (vision 9a, ADR 0073); batchog-seen
 blockExternalId
 blockIsGridView
 blockPageReadOnly

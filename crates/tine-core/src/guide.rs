@@ -1485,6 +1485,27 @@ mod external_link_guide_tests {
     }
 
     #[test]
+    fn guide_explains_seen_since_you_last_looked() {
+        // Vision decision 9a (ADR 0073): a highlight nobody is told how to start reads as missing.
+        let guide = include_str!("templates/find-and-revisit.md");
+        for outcome in [
+            "**Page actions** (⋯) → **Mark page seen**",
+            "a page you never mark looks exactly as before",
+            "**N changes since you last looked**",
+            "A block that only moved",
+            "**Mark seen**",
+            "**Forget seen state**",
+            "never in the graph folder",
+            "a renamed page starts untracked",
+        ] {
+            assert!(
+                guide.contains(outcome),
+                "vision 9a Guide is missing {outcome}"
+            );
+        }
+    }
+
+    #[test]
     fn guide_explains_reference_breadcrumb_context() {
         // GH #526: a clickable breadcrumb nobody is told about reads as missing.
         let guide = include_str!("templates/find-and-revisit.md");

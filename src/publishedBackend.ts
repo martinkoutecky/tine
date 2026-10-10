@@ -239,6 +239,8 @@ const OPTIONAL_METHODS = new Set([
   "loadDrafts",
   "storeDraft",
   "retireDraft",
+  // ADR 0073: a published page keeps no seen state.
+  "seenBaseline",
   // GH #181: external Tine links need the native URL handler; a published guide has none.
   "tineLinks",
 ]);

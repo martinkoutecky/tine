@@ -31,6 +31,8 @@ import { copyBlockLink, copyTineLink } from "./blockLinkCopy";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 import { isHTMLElementNode, requestFrame, viewportOf } from "../windowRealm";
+import { forgetPageSeen } from "../seen/baseline";
+import { seenPageMenuItems } from "../seen/commands";
 
 function reportCopy(write: Promise<void>, okMsg: string): void {
   void write.then(() => pushToast(okMsg, "success"))
@@ -865,6 +867,7 @@ function PageMenu(props: {
           const refused = restoreTodayJournalInFeed();
           if (refused) reportPageLoadRefusal(refused);
         }
+        void forgetPageSeen(name, true); // ADR 0073: a deleted page's baseline goes with it
         pushToast(`Deleted “${name}”`, "success");
       })
       .catch(() => { pushToast("Delete failed", "error"); });
@@ -916,6 +919,7 @@ function PageMenu(props: {
           { id: "open-default-app", label: "Open with default app", run: () => void runFileAction(false) },
         ]
       : []),
+    ...seenPageMenuItems(props.name),
     ...(!readOnly() ? [{ id: "page-properties", label: "Page properties…", run: () => openPageProps(props.name, props.x, props.y) }] : []),
     // Carry a past day's unfinished tasks to today (journal days only, not today).
     ...(!readOnly() && props.pageKind === "journal" && props.name !== journalTitle(appNow())

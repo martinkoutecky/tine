@@ -44,6 +44,7 @@ import { conflictForPage } from "../conflictQueue";
 import { pageIdentityKey } from "../pageIdentity";
 import { liveConflictForPage } from "../liveConflicts";
 import { ExternalChangeBar } from "./ExternalChangeBar";
+import { SeenHeader, SeenRows, usePageSeen } from "../seen/SeenHeader";
 import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow } from "../windowRealm";
 
 installPageIdentityNavigation((from, to) => {
@@ -634,7 +635,7 @@ export function PageView(): JSX.Element {
         <div class="page">
           <For each={pagesToRender()}>
             {(p) => (
-              <PageSection page={p}>
+              <PageSection page={p} seen={currentRoute().kind === "page"}>
                 {/* OG page/today-queries and journal: queries precede agenda. */}
                 <Show when={p.kind === "journal" && p.name === journalTitle(localDateFromDayKey(currentDayKey()))}>
                   <For each={graphMeta()?.journal_config_diagnostics ?? []}>
@@ -825,8 +826,11 @@ function ZoomedView(props: { id: string }): JSX.Element {
   );
 }
 
-function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Element {
+/** `seen`: this is the routed single-page view, the surface that shows "changed
+ *  since you last looked" (ADR 0073); the journal feed does not. */
+function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Element }): JSX.Element {
   const pane = paneContextFromContext();
+  const seen = usePageSeen(() => (props.seen && !props.page.guide ? props.page.name : null));
   const router = pane.router;
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
@@ -1075,7 +1079,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         </div>
       </Show>
       <Show when={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
-        <div class="page-properties" onClick={editPageHeader}>
+        <div class="page-properties" classList={{ "seen-changed": seen.changed(firstPropertiesId() ?? "") }} onClick={editPageHeader}>
           {/* `alias`/`icon` are surfaced elsewhere (chips / title icon) — see PAGE_PROPS_HIDDEN. */}
           <For each={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
             {([key, value]) => (
@@ -1104,6 +1108,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         </div>
       </Show>
       <ExternalChangeBar name={props.page.name} />
+      <SeenHeader seen={seen} pageName={props.page.name} />
       {/* Concord: a queued conflict is resolved AT the page, block by block. */}
       <Show when={conflictForPage(props.page.id) ?? liveConflictForPage(props.page.name, props.page.id)}>
         {(conflict) => (
@@ -1130,7 +1135,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
             </div>
           )}
         </Show>
-        <BlockList ids={rootsToRender()} />
+        <SeenRows seen={seen}><BlockList ids={rootsToRender()} /></SeenRows>
       </div>
       {props.children}
       <PageTypingTarget page={() => props.page} surface={editSurface()} />

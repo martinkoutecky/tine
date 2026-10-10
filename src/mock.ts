@@ -7,6 +7,7 @@ import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticRepo
 import { ASSET_INGRESS_MAX_BYTES } from "./backend";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
+import { mockSeenBaseline } from "./seen/mockSeen";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, DraftRecord, BlockPreview, DraftLoad, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { previewDtoSubtree } from "./previewProjection";
@@ -1517,12 +1518,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async restoreBackup(): Promise<void> {
       // no-op in the browser mock
     },
-    async loadSession(): Promise<string | null> {
-      return mockSession;
-    },
-    async saveSession(data: string): Promise<void> {
-      mockSession = data;
-    },
+    async loadSession(): Promise<string | null> { return mockSession; },
+    async saveSession(data: string): Promise<void> { mockSession = data; },
+    seenBaseline: mockSeenBaseline(),
     async loadDrafts(): Promise<DraftLoad> {
       return { drafts: [...mockDrafts.values()].map((record) => structuredClone(record)), set_aside: null };
     },

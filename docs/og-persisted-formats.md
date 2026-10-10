@@ -1,6 +1,6 @@
 # og persisted-format census (batch 5b)
 
-The pinned count is **29 durable layouts** in `scripts/lib/og-enforcement.mjs`.
+The pinned count is **30 durable layouts** in `scripts/lib/og-enforcement.mjs`.
 Several rows share a low-level writer. A format means a byte layout or durable
 directory convention, not each JSON key or filename. Temporary files used for
 atomic publication have the same payload as their final name.
@@ -36,6 +36,7 @@ atomic publication have the same payload as their final name.
 | Concord base ledger | app data `concord-ledger-og/<graph-id>/` (never master's `concord-ledger/`, whose layout differs; og never reads, prunes or writes it): per page `pages/<sha(path)>/index.json` + ≤ 2 text blobs, per sync copy `pins/<sha(path)>.{json,blob}`; disposable, never under the graph root (ADR 0056) | `src-tauri/src/concord_ledger.rs` `LedgerFiles::write` (via `device_io::atomic_write`) |
 | Draft store JSON | app data `drafts/<graph-id>.v1.json`, unsaved drafts of pages that could not be saved, ≤ 64 records and 8 MiB, enforced on read (a file past either bound is set aside) and on write (ADR 0061) | `src-tauri/src/drafts.rs` `write_unlocked`, `bounded_records` |
 | Launch checkpoint | app data `launch-checkpoints/<graph-id>.bin`: magic `TINECKPT`, format version, a postcard header (lsdoc tag, graph root, config key of the build-read settings, lengths, SHA-256) and a zstd postcard dump of the whole published generation with per-file stamps; disposable, never under the graph root, any mismatch or damage means a full build (ADR 0070) | `crates/tine-store/src/store/checkpoint.rs` `Publisher::write_once` (via `atomic_file::atomic_write_with_check`) |
+| Seen baseline | app data `seen/<graph-id>/<sha256(page identity key)>.bin`, one per tracked page: magic `TINESEEN`, `u32` LE version 1, `u32` LE count, then `count` sorted unique `u64` LE block hashes (computed only by `src/seen/hash.ts`); written only on Mark page seen, removed on Forget seen state or a Tine rename/delete of the page; ≤ 2^20 hashes, a file past it or not exactly one record reads as "no baseline"; never under the graph root (vision decision 9a, Martin 2026-10-04; ADR 0073 Proposed) | `src-tauri/src/seen_baseline.rs` `mark_at` (via `device_io::atomic_write`) |
 
 Opening a graph PDF reads its existing primary or active legacy sidecar without
 creating, rewriting or moving graph files. The first highlight or annotation
@@ -74,3 +75,7 @@ writer sites are approved in `APPROVED_WRITER_SITES`. The same document classifi
 app-data entry the released Tine writes as read as-is or master-only.
 
 Graph link identity costs one tiny file per graph written once, zero bytes/files per ordinary 1- or 60-block edit and zero transport. Opening and browsing only read it; a copied graph shares it, with a device-local choice remembered in the existing settings JSON. Existing malformed identity is preserved and reported.
+
+A seen baseline costs 16 + 8 bytes per distinct block on Mark page seen (24 B
+for a 1-block page, 496 B for 60 blocks), one file, and zero bytes, files and
+transport per ordinary edit (ADR 0073).
