@@ -15,6 +15,7 @@ import { parseTineLink, parseAppRoute, type AppRoute } from "./deepLinks";
 import { admitPageFile, captureEmptyPage, pageByName, reportPageLoadRefusal } from "./document";
 import { journalTitle, appNow } from "./journal";
 import { openSwitcher } from "./ui";
+import { platformKind } from "./nativeChrome";
 import { focusPageTrailing } from "./components/pageTrailing";
 import { resolvedTarget, refreshPageIndex } from "./pageIndex";
 import { chooseLinkGraph } from "./components/DeepLinkGraphChoice";
@@ -107,7 +108,11 @@ async function openAppRoute(app: AppRoute, current: () => boolean): Promise<void
   if (!graphMeta()) throw new Error("open a graph first");
   const owner = ownedWhen(current);
   const router = focusedRouter();
-  if (app.route === "search") { openSwitcher(app.query ? { prefill: app.query } : undefined); return; }
+  if (app.route === "search") {
+    openSwitcher(app.query ? { prefill: app.query } : undefined);
+    await showKeyboardForFocusedInput(current);
+    return;
+  }
   const today = journalTitle(appNow());
   if (app.route === "page") {
     // The one frontend name answerer (pageIndex.ts); a cold launch waits for it.
@@ -131,7 +136,29 @@ async function openAppRoute(app: AppRoute, current: () => boolean): Promise<void
   if (admitted && admitted !== "stale") reportPageLoadRefusal(admitted, "Nothing was opened for writing.");
   if (admitted || !owner()) return;
   const pane = focusedPaneId();
-  focusPageTrailing(pageByName(today), pane === "main" ? "main" : `pane:${pane}`);
+  if (focusPageTrailing(pageByName(today), pane === "main" ? "main" : `pane:${pane}`)) await showKeyboardForFocusedInput(current);
+}
+
+const ROUTE_FOCUS_FRAMES = 60;
+
+function editableFocused(): boolean {
+  const active = document.activeElement;
+  return active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
+    || (active instanceof HTMLElement && active.isContentEditable);
+}
+
+/** A route's focus is script-made, so Android leaves the keyboard down until
+ * the user taps the input. Ask the host for it once the routed input holds
+ * focus (it is focused after a render: wait at most ~1 s of frames). */
+async function showKeyboardForFocusedInput(current: () => boolean): Promise<void> {
+  const show = backend().tineLinks?.showKeyboard;
+  if (platformKind !== "android" || !show) return;
+  for (let frame = 0; frame < ROUTE_FOCUS_FRAMES && !editableFocused(); frame++) {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  }
+  if (!current() || !editableFocused()) return;
+  try { await show(); }
+  catch { console.warn("[tine] couldn't show the keyboard"); }
 }
 
 export async function installTineLinks(alive: () => boolean): Promise<() => void> {
