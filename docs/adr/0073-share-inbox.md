@@ -37,7 +37,7 @@ Layout, one directory per item:
   they report success, so a partial item is never visible and a confirmed
   one survives power loss (Android `ShareIntake.kt` `InboxWriter`, iOS
   `ShareInbox.swift`, `F_FULLFSYNC`).
-- `<id>/prepared.json`: `{graph, day, markdown, assets, armed}`, written by
+- `<id>/prepared.json`: `{graph, day, markdown, assets, armed, written}`, written by
   the app through `device_io::atomic_write` (src-tauri/src/share_inbox.rs)
   before each step that touches the graph:
   - `graph`: the canonical root of the graph the item is bound to;
@@ -45,40 +45,56 @@ Layout, one directory per item:
     (`{date}` is this day);
   - `markdown`, `assets`: the shaped block and the asset files imported for
     it, recorded before any append (null/empty until then);
-  - `armed`: `{before, matches}`, recorded inside the admitted read the append
-    uses, immediately before the insert: the day file's content revision
-    (null when absent) and the number of blocks on that day equal to the
-    shaped block.
+  - `armed`: `{before}`, recorded inside the admitted read the append uses,
+    immediately before the insert: the day file's content revision (null
+    when absent). Diagnostic only: recovery never compares content;
+  - `written`: set as soon as the append's flush returned ok, before the
+    commit.
 - `.trash-<id>/`: a committed item between its rename and its removal.
+- `.committed-<id>`: an empty tombstone the commit writes durably before the
+  item leaves; a listing removes it after 30 days. The Android producer
+  reads it so a redelivered share occurrence is not published again.
 - `.rejected-<id>/`: an item that could not be read, kept, never deleted.
 
 Ingest (src/shareIngest.ts) runs at launch, on resume and on the native
 `inboxChanged` event, one item at a time. Loss-free comes first, then no
-duplicates (losing a shared item is worse than one rare duplicate):
-1. bind: record `{graph, day}` for the bound graph and today;
-2. shape: import the item's files into that graph (once; the names are
-   recorded) and shape the block (OG transcription, src/shareShape.ts);
-3. arm and append: inside `writeOwned`, `appendToJournalDay(day, …)` admits
-   the day's journal, records `armed`, inserts the block and flushes it
-   through the audited save path, with no await between arming and insert;
-4. commit: remove the item.
+duplicates (losing a shared item is worse than one rare duplicate). The
+states, each durable in `prepared.json` before the next step (review round 2):
+1. bound: record `{graph, day}` for the bound graph and today;
+2. shaped: import the item's files into that graph (once; the names are
+   recorded) and record the shaped block (OG transcription, src/shareShape.ts);
+3. armed: inside `writeOwned`, `appendToJournalDay(day, …)` admits the day's
+   journal and records `armed` (if the revision moved while that record was
+   written, it is recorded again), then inserts the block and flushes it
+   through the audited save path, with no further await;
+4. written: recorded right after the flush returned ok;
+5. commit: tombstone, then remove the item.
 
-Recovery of an item with a `prepared.json`:
+Recovery never acknowledges an item on content equality:
+- `written`: flush the day (a no-op unless edits are pending) in its own
+  graph, then commit. A later edit or removal of the block is the user's;
 - recorded graph is not the bound one: keep the item silently until that
   graph is bound (no toast, no import, no write into another graph);
-- never armed: append (its append never started);
-- armed, and the day now holds more equal blocks than `armed.matches`: the
-  append landed; flush and commit;
-- armed otherwise (the landed block was edited, moved into another block's
-  text, or the append never ran): append again.
+- anything else (bound, shaped or armed, whatever the revision is now):
+  append. Within one process, the block ids the item's own append put in
+  the store are remembered (identity, not content): a failed flush is
+  retried on those blocks rather than appending a copy, and a flush that
+  succeeded is marked `written` even if writing that marker failed.
 A failed write keeps the item and shows an error toast.
 
-Producers save a share whole or refuse it with a message. Android accepts
-only `content:` images from another app's provider, decodes and validates
-the whole intent before any work, and keeps a durable per-intent
-pending/published record (`filesDir/share-state/`) so a restored or Recents
-redelivery resumes a pending share and skips a settled one; a share cut
-short and never redelivered is reported at the next start.
+Producers save a share whole or refuse it with a message: at most 32 files,
+none over 64 MiB, enforced while collecting (iOS checks a file's size before
+reading it). Android accepts only `content:` images from another app's
+provider and decodes and validates the whole intent before any work. Each
+Android share intent is one occurrence: its first receipt stamps a random id
+on the intent (`page.tine.app.SHARE_OCCURRENCE`, carried across process
+death in the Activity's saved state), and the item is named by it. Every
+delivery of that intent (fresh, restored, from Recents) checks for `<id>` or
+`.committed-<id>`: if either exists, the inbox is synced and the arrival
+announced; otherwise the item is (re)published with the full barrier order.
+One delivery per occurrence runs at a time; equal content shared twice is
+two occurrences and two items. A redelivery whose files can no longer be
+read (the sender's grant ended) is refused with a toast naming the file.
 
 Routes stay open-only (ADR 0071): `tine://today`, `tine://search[?q=]`,
 `tine://capture` and graph-less `tine://page/<name>` (current graph) open or
@@ -98,42 +114,48 @@ Every refusal keeps the item; none refuses to open the graph.
 | Android share whose stream is not a `content:` URI, or one Tine's own package provides | another app (malformed or hostile) asks the exported share target to copy a file only Tine can read | whole share refused, user told |
 | Android share with a malformed `EXTRA_STREAM` (another Parcelable, null entry, unparcel failure) | malformed input from another app | whole share refused, user told; no crash |
 | share with more than 32 files, a file over 64 MiB, an unreadable file or a non-image file (both platforms); iOS: a second different web link or an unsupported attachment | provider error; content Tine does not store | whole share refused, user told; never saved in part |
-| producer sync or rename fails | disk error, full disk | nothing published, user told |
+| producer write, file or staging-directory sync, or rename fails | disk error, full disk | nothing published, user told |
+| producer's inbox sync fails after the publishing rename | disk error | the item is visible and is ingested (its journal write is the durable confirmation); not reported as unsaved. Android: a redelivery syncs again |
 | item id not `[A-Za-z0-9_-]{1,64}` | malformed producer output | ignored by prepare/commit; listing never yields it |
 
 ## Unit cost
 Per share: one item directory with `item.json` (71 bytes of envelope plus
 the text/title/URL; a 5-character text share is 86 bytes), the resource files
-at their original size, and one `prepared.json` rewritten up to three times
-(97 bytes of envelope plus the graph root, the day title, the shaped Markdown
-and asset names; that share's final record is 182 bytes with a 35-character
-root), i.e. 2 + resources files, all removed after ingest. Android also keeps
-one publication record per share (`share-state/<fingerprint>`, about 60
-bytes), pruned 30 days after it settles. The graph receives what OG writes:
+at their original size, and one `prepared.json` rewritten up to four times
+(bound, shaped, armed, written; 78 bytes of envelope plus the graph root,
+the day title, the shaped Markdown, asset names and the recorded revision;
+a written record for a 36-character block with a 35-character root and day
+`Oct 10th, 2026` is 171 bytes), i.e. 2 + resources files, all removed after
+ingest, plus one empty `.committed-<id>` tombstone (0 bytes, one file) kept
+30 days. The graph receives what OG writes:
 one appended block on the item's journal day (the existing whole-page save
 cost on 1- and 60-block journal pages) and one asset file per image.
 Ordinary edits on 1- and 60-block pages add zero inbox bytes, files or
 transport. The inbox is device-local and never synced. Measured 2026-10-10
 by serializing those example records exactly as the producers and
-`share_inbox::prepare` write them (compact JSON).
+`share_inbox::prepare` write them (compact JSON); remeasured 2026-10-10 for
+the round-2 record.
 
 ## Consequences
-What can still duplicate (never lose) an item, all needing a crash or kill
-at a precise point:
-- the landed block was edited, deleted or merged before the item was
-  committed: it is appended again;
-- another writer added a block exactly equal to the shaped one (same
-  minute, same text) after arming and the item's own insert then never
-  reached disk: the item counts as landed. This is the one narrow window
-  where an item is committed without its own block; the equal block holds
-  the same content.
+Nothing can lose an item. What can duplicate one:
+- the one ingest window: the app is killed (or `prepared.json` cannot be
+  written) after the journal flush reached disk and before `written` did.
+  The next process appends the item again. This includes a failed flush
+  whose block the editor's autosave later wrote before the process ended;
+- Android: a share intent the system relaunches from Recents after its
+  Activity finished, or after a reboot, comes back without its stamped
+  occurrence id (the saved state is gone) and is published again; one whose
+  files can no longer be read is refused with a message instead;
+- Android: a redelivery more than 30 days after its commit (the tombstone
+  was pruned);
 - an item interrupted between importing its files and recording them is
   re-imported on retry, leaving orphan asset files (no duplicate block).
 Other effects:
 - an item bound to a graph the user no longer opens waits in the inbox
   until that graph is opened again; it is not moved to the current graph;
 - an item that waits lands on its frozen day, not on the day it is retried;
-- Android: a share whose process died mid-copy and whose intent never comes
-  back cannot be recovered (the source is gone); the user is told at the
-  next start to share it again;
+- Android: a share delivered to a running Activity (`onNewIntent`) whose
+  process dies mid-copy is not redelivered by the system and is not saved;
+  nothing told the user it was (the item confirmation is the journal toast
+  after ingest);
 - Apple provisioning needs the App Group on the app and extension App IDs.
