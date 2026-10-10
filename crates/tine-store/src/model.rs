@@ -2870,12 +2870,14 @@ impl Graph {
         abs: &Path,
         bytes: &[u8],
     ) -> io::Result<Option<PageDto>> {
-        let Some(entry) = self.entry_for_path(abs) else {
-            return Ok(None);
-        };
         validate_parse_bytes_for_path(bytes, abs)?;
         let content = std::str::from_utf8(bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        // Named from these bytes, not the file (A3, REVIEW-3a), and without
+        // touching the name index, which describes disk.
+        let Some(entry) = self.page_entry_in(abs, Some(content)) else {
+            return Ok(None);
+        };
         Ok(Some(Self::dto_of(&entry, abs, content)))
     }
 
@@ -3798,6 +3800,13 @@ impl Graph {
     /// [`Self::entry_for_path`] whose page preamble comes from `text`, the
     /// file's bytes already in hand, instead of a fresh open (GH #623).
     pub(crate) fn entry_for_path_in(&self, path: &Path, text: Option<&str>) -> Option<PageEntry> {
+        let entry = self.page_entry_in(path, text)?;
+        self.observe_name_entry(&entry);
+        Some(entry)
+    }
+
+    /// The page entry `path` names, its page name from `text` when given.
+    fn page_entry_in(&self, path: &Path, text: Option<&str>) -> Option<PageEntry> {
         if !graph_text_eligible(&self.root, path, &self.current_config()) {
             return None;
         }
@@ -3831,7 +3840,6 @@ impl Graph {
                 path: path.to_path_buf(),
             }
         };
-        self.observe_name_entry(&entry);
         Some(entry)
     }
 

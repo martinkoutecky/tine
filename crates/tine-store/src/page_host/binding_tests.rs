@@ -1064,6 +1064,32 @@ fn v3_an_external_return_to_the_pre_save_observation_updates_the_index() {
     live.host.stop();
 }
 
+/// A3 (REVIEW-3a): page mail's DTO (`page_dto_for_bytes`, its only
+/// conversion) names the page from the buffer it carries, not from a fresh
+/// read of the file: disk says `title:: Disk` while a conflicted or
+/// recovered buffer says `title:: Mine`; and a file that is gone never
+/// blanks a valid buffer's name.
+#[test]
+fn a3_page_mail_names_the_page_from_its_buffer() {
+    let live = Live::new(&[("pages/p.md", "title:: Disk\n\n- one\n")]);
+    let graph = &live.store.graph;
+    let dto = graph
+        .page_dto_for_bytes(&live.root.join("pages/p.md"), b"title:: Mine\n\n- mine\n")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (dto.name.as_str(), dto.title.as_str()),
+        ("Mine", "Mine"),
+        "A3"
+    );
+    let dto = graph
+        .page_dto_for_bytes(&live.root.join("pages/gone.md"), b"title:: Fresh\n\n- x\n")
+        .unwrap()
+        .unwrap();
+    assert_eq!(dto.name, "Fresh", "A3");
+    live.host.stop();
+}
+
 /// V5 (REVIEW-3a): a restore is not ready while a publication the driver
 /// collected is still being delivered; once its result is recorded, an
 /// index failure keeps the restore waiting and a success lets it close.
