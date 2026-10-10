@@ -70,6 +70,7 @@ jobs:
           IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
           IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+          IOS_SHARE_EXTENSION_MOBILE_PROVISION: ${{ secrets.IOS_SHARE_EXTENSION_MOBILE_PROVISION }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -77,7 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for name in IOS_CERTIFICATE IOS_CERTIFICATE_PASSWORD IOS_MOBILE_PROVISION APPLE_TEAM_ID; do
+          for name in IOS_CERTIFICATE IOS_CERTIFICATE_PASSWORD IOS_MOBILE_PROVISION IOS_SHARE_EXTENSION_MOBILE_PROVISION APPLE_TEAM_ID; do
             if [ -z "${!name:-}" ]; then
               echo "::error::required iOS distribution secret $name is missing"
               missing=1
@@ -109,6 +110,7 @@ jobs:
           IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
           IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+          IOS_SHARE_EXTENSION_MOBILE_PROVISION: ${{ secrets.IOS_SHARE_EXTENSION_MOBILE_PROVISION }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
@@ -146,12 +148,26 @@ jobs:
           [ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$profile_plist")" = "false" ]
           /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.icloud-container-identifiers' "$profile_plist" | grep -Fq 'iCloud.page.tine.Tine'
           /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.ubiquity-container-identifiers' "$profile_plist" | grep -Fq 'iCloud.page.tine.Tine'
+          # The share inbox lives in the App Group the app and its Share
+          # Extension share (ADR 0073); both profiles must grant it.
+          /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$profile_plist" | grep -Fq 'group.page.tine.Tine'
+
+          ext_profile="$RUNNER_TEMP/tine-ios-share-extension.mobileprovision"
+          ext_profile_plist="$RUNNER_TEMP/tine-share-extension-profile.plist"
+          printf '%s' "$IOS_SHARE_EXTENSION_MOBILE_PROVISION" | base64 --decode > "$ext_profile"
+          security cms -D -i "$ext_profile" > "$ext_profile_plist"
+          ext_profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$ext_profile_plist")"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$ext_profile_plist")" = "$APPLE_TEAM_ID.page.tine.Tine.ShareExtension" ]
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$ext_profile_plist")" = "false" ]
+          /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$ext_profile_plist" | grep -Fq 'group.page.tine.Tine'
 
           legacy_profiles="$HOME/Library/MobileDevice/Provisioning Profiles"
           xcode_profiles="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
           install -d -m 700 "$legacy_profiles" "$xcode_profiles"
           install -m 600 "$profile" "$legacy_profiles/$profile_uuid.mobileprovision"
           install -m 600 "$profile" "$xcode_profiles/$profile_uuid.mobileprovision"
+          install -m 600 "$ext_profile" "$legacy_profiles/$ext_profile_uuid.mobileprovision"
+          install -m 600 "$ext_profile" "$xcode_profiles/$ext_profile_uuid.mobileprovision"
 
           rm -f "$p12"
           echo "IOS_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
@@ -159,6 +175,9 @@ jobs:
           echo "IOS_PROVISIONING_PROFILE_UUID=$profile_uuid" >> "$GITHUB_ENV"
           echo "IOS_PROVISIONING_PROFILE_LEGACY=$legacy_profiles/$profile_uuid.mobileprovision" >> "$GITHUB_ENV"
           echo "IOS_PROVISIONING_PROFILE_XCODE=$xcode_profiles/$profile_uuid.mobileprovision" >> "$GITHUB_ENV"
+          echo "IOS_SHARE_EXTENSION_PROFILE_UUID=$ext_profile_uuid" >> "$GITHUB_ENV"
+          echo "IOS_SHARE_EXTENSION_PROFILE_LEGACY=$legacy_profiles/$ext_profile_uuid.mobileprovision" >> "$GITHUB_ENV"
+          echo "IOS_SHARE_EXTENSION_PROFILE_XCODE=$xcode_profiles/$ext_profile_uuid.mobileprovision" >> "$GITHUB_ENV"
 
       - name: Install iCloud entitlements and manual signing config
         run: npm run ios:prepare-project
@@ -240,6 +259,23 @@ jobs:
           expect_plist_contains "$RUNNER_TEMP/tine-ios-entitlements.plist" com.apple.developer.icloud-container-identifiers iCloud.page.tine.Tine "signed iCloud container"
           expect_plist_contains "$RUNNER_TEMP/tine-ios-entitlements.plist" com.apple.developer.icloud-services CloudDocuments "signed iCloud service"
           expect_plist_contains "$RUNNER_TEMP/tine-ios-entitlements.plist" com.apple.developer.ubiquity-container-identifiers iCloud.page.tine.Tine "signed ubiquity container"
+          expect_plist_contains "$RUNNER_TEMP/tine-ios-entitlements.plist" com.apple.security.application-groups group.page.tine.Tine "signed App Group"
+
+          # The embedded Share Extension (ADR 0073): its own identity and
+          # profile, the shared App Group, and the app's exact versions.
+          appex="$app/PlugIns/TineShareExtension.appex"
+          [ -d "$appex" ] || fail "the Share Extension is not embedded"
+          expect_plist "$appex/Info.plist" CFBundleIdentifier page.tine.Tine.ShareExtension "extension bundle identifier"
+          expect_plist "$appex/Info.plist" NSExtension:NSExtensionPointIdentifier com.apple.share-services "extension point"
+          expect_plist "$appex/Info.plist" CFBundleVersion "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info")" "extension build version"
+          expect_plist "$appex/Info.plist" CFBundleShortVersionString "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info")" "extension marketing version"
+          require_file "$appex/embedded.mobileprovision" "extension provisioning profile"
+          security cms -D -i "$appex/embedded.mobileprovision" > "$RUNNER_TEMP/tine-ext-profile.plist"
+          expect_plist "$RUNNER_TEMP/tine-ext-profile.plist" Entitlements:application-identifier "$APPLE_TEAM_ID.page.tine.Tine.ShareExtension" "extension profile application identifier"
+          codesign -d --entitlements :- "$appex" > "$RUNNER_TEMP/tine-ext-entitlements.plist"
+          expect_plist_contains "$RUNNER_TEMP/tine-ext-entitlements.plist" com.apple.security.application-groups group.page.tine.Tine "extension App Group"
+          # Quick actions (I5).
+          expect_plist_contains "$info" UIApplicationShortcutItems tine://capture "Home Screen quick actions"
 
           staged="artifacts/TineOutline-${GITHUB_RUN_NUMBER}.ipa"
           cp "$ipa" "$staged"
@@ -301,6 +337,9 @@ jobs:
             security delete-keychain "$IOS_SIGNING_KEYCHAIN" || true
           fi
           rm -f "${IOS_PROVISIONING_PROFILE_LEGACY:-}" "${IOS_PROVISIONING_PROFILE_XCODE:-}"
+          rm -f "${IOS_SHARE_EXTENSION_PROFILE_LEGACY:-}" "${IOS_SHARE_EXTENSION_PROFILE_XCODE:-}"
+          rm -f "$RUNNER_TEMP/tine-ios-share-extension.mobileprovision" "$RUNNER_TEMP/tine-share-extension-profile.plist"
+          rm -f "$RUNNER_TEMP/tine-ext-profile.plist" "$RUNNER_TEMP/tine-ext-entitlements.plist"
           rm -rf "$HOME/.appstoreconnect/private_keys"
           rm -rf "$RUNNER_TEMP/tine-ipa"
           rm -f "$RUNNER_TEMP/tine-ios-distribution.p12" "$RUNNER_TEMP/tine-ios.mobileprovision"

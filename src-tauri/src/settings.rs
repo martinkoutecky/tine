@@ -226,6 +226,7 @@ pub(crate) fn list_known_graphs(app: tauri::AppHandle) -> Vec<KnownGraph> {
 pub(crate) async fn forget_known_graph(path: String, app: tauri::AppHandle) -> Result<(), String> {
     crate::state::off_ui(move || {
         update_settings(&app, |json| forget_graph_json(json, &path))?;
+        crate::spotlight::forget(&app, &path);
         // Best-effort, after the removal itself; never fails it (ADR 0070).
         crate::graph::forget_launch_checkpoint(
             crate::graph::checkpoint_app_data(&app).as_deref(),

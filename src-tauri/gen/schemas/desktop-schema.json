@@ -2337,6 +2337,36 @@
           "markdownDescription": "Denies the save command without any pre-configured scope."
         },
         {
+          "description": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-registerListener`\n- `allow-removeListener`",
+          "type": "string",
+          "const": "native-integrations:default",
+          "markdownDescription": "Default plugin permissions.\n#### This default permission set includes:\n\n- `allow-registerListener`\n- `allow-removeListener`"
+        },
+        {
+          "description": "Enables the registerListener command without any pre-configured scope.",
+          "type": "string",
+          "const": "native-integrations:allow-registerListener",
+          "markdownDescription": "Enables the registerListener command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the removeListener command without any pre-configured scope.",
+          "type": "string",
+          "const": "native-integrations:allow-removeListener",
+          "markdownDescription": "Enables the removeListener command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the registerListener command without any pre-configured scope.",
+          "type": "string",
+          "const": "native-integrations:deny-registerListener",
+          "markdownDescription": "Denies the registerListener command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the removeListener command without any pre-configured scope.",
+          "type": "string",
+          "const": "native-integrations:deny-removeListener",
+          "markdownDescription": "Denies the removeListener command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures which\nprocess features are by default exposed.\n\n#### Granted Permissions\n\nThis enables to quit via `allow-exit` and restart via `allow-restart`\nthe application.\n\n#### This default permission set includes:\n\n- `allow-exit`\n- `allow-restart`",
           "type": "string",
           "const": "process:default",

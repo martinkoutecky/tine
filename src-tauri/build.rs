@@ -113,13 +113,22 @@ fn main() {
     // before it reaches Android, the frontend's Back listener never registers,
     // and the native owner consumes every gesture with nowhere to send it —
     // invisible from Rust and from the emulator alike (master 61a663291 line).
+    // `native-integrations` (src/native_integrations.rs) is inlined the same
+    // way; its frontend listens for `inboxChanged` (src/nativeTineLinks.ts).
     tauri_build::try_build(
-        tauri_build::Attributes::new().plugin(
-            "safe-back",
-            tauri_build::InlinedPlugin::new()
-                .commands(&["registerListener", "removeListener"])
-                .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-        ),
+        tauri_build::Attributes::new()
+            .plugin(
+                "safe-back",
+                tauri_build::InlinedPlugin::new()
+                    .commands(&["registerListener", "removeListener"])
+                    .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
+            )
+            .plugin(
+                "native-integrations",
+                tauri_build::InlinedPlugin::new()
+                    .commands(&["registerListener", "removeListener"])
+                    .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
+            ),
     )
     .expect("failed to run tauri-build");
 }

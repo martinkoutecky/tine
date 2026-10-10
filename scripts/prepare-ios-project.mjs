@@ -4,6 +4,7 @@ import process from "node:process";
 import { execFileSync } from "node:child_process";
 import { assertOpaquePng } from "./lib/opaque-png.mjs";
 import { IDENTITIES } from "./lib/app-identity.mjs";
+import { addNativeIntegrations, SHARE_EXTENSION_IDENTIFIER } from "./lib/ios-native-integrations.mjs";
 
 const root = process.cwd();
 const source = path.join(root, "src-tauri", "Tine.ios.entitlements");
@@ -23,6 +24,14 @@ const signing = {
 };
 
 const signingValues = Object.values(signing).filter(Boolean);
+// The Share Extension (ADR 0073) has its own bundle id, so its own profile.
+const extensionProfileUuid = process.env.IOS_SHARE_EXTENSION_PROFILE_UUID;
+if (signingValues.length === 3 && !extensionProfileUuid) {
+  throw new Error(
+    "iOS signing configuration requires IOS_SHARE_EXTENSION_PROFILE_UUID for " +
+      `the ${SHARE_EXTENSION_IDENTIFIER} provisioning profile`,
+  );
+}
 if (signingValues.length > 0 && signingValues.length !== 3) {
   throw new Error(
     "iOS signing configuration requires IOS_SIGNING_IDENTITY, " +
@@ -113,6 +122,9 @@ if (signingValues.length === 3) {
   if (!/^[A-F0-9]{8}(?:-[A-F0-9]{4}){3}-[A-F0-9]{12}$/i.test(signing.profileUuid)) {
     throw new Error("IOS_PROVISIONING_PROFILE_UUID is not a provisioning profile UUID");
   }
+  if (!/^[A-F0-9]{8}(?:-[A-F0-9]{4}){3}-[A-F0-9]{12}$/i.test(extensionProfileUuid)) {
+    throw new Error("IOS_SHARE_EXTENSION_PROFILE_UUID is not a provisioning profile UUID");
+  }
   if (!/^[A-Z0-9]{10}$/.test(signing.teamId)) {
     throw new Error("APPLE_DEVELOPMENT_TEAM is not an Apple team identifier");
   }
@@ -148,6 +160,8 @@ if (signingValues.length === 3) {
   <dict>
     <key>${xml(IDENTITIES.release.identifier)}</key>
     <string>${xml(signing.profileUuid)}</string>
+    <key>${xml(SHARE_EXTENSION_IDENTIFIER)}</key>
+    <string>${xml(extensionProfileUuid)}</string>
   </dict>
 </dict>
 </plist>
@@ -156,6 +170,15 @@ if (signingValues.length === 3) {
 
   console.log(`installed manual App Store signing config for profile ${signing.profileUuid}`);
 }
+
+// After the app target's signing block: the extension target carries its own.
+project = addNativeIntegrations(
+  project,
+  signingValues.length === 3
+    ? { identity: signing.identity, teamId: signing.teamId, extensionProfileUuid }
+    : null,
+);
+console.log("added Tine's app-target Swift sources and Share Extension target");
 
 fs.writeFileSync(projectSpec, project);
 fs.copyFileSync(privacySource, path.join(generatedRoot, "PrivacyInfo.xcprivacy"));
