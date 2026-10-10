@@ -32,6 +32,7 @@ mod flight;
 mod flight_store;
 mod graph;
 mod graph_verification;
+mod host_retirement;
 #[cfg(test)]
 mod host_slot_guard_tests;
 #[cfg(target_os = "ios")]
@@ -43,6 +44,7 @@ mod load_wait_guard_tests;
 mod media_protocol;
 mod migrate_identifier;
 mod native_mouse_history;
+mod page_commands;
 mod pdf_crop_rollback;
 mod platform;
 mod plugins;
@@ -836,9 +838,28 @@ pub fn run() {
                     if released
                         && closing.others(label, |l| app.get_webview_window(l).is_some()) == 0
                     {
-                        #[cfg(target_os = "linux")]
-                        platform::kill_webkit_children();
-                        app.exit(0);
+                        // A retiring page host finishes its admitted queue and
+                        // stops before the process exits (plan v3 §3).
+                        let retirement = state.graphs.read().unwrap().retirement.clone();
+                        let app = app.clone();
+                        let exit = move || {
+                            #[cfg(target_os = "linux")]
+                            platform::kill_webkit_children();
+                            app.exit(0);
+                        };
+                        if retirement.is_idle() {
+                            exit();
+                        } else {
+                            std::thread::spawn(move || {
+                                match retirement.wait_idle(std::time::Duration::from_secs(30)) {
+                                    Ok(()) => exit(),
+                                    // The host keeps its pages and Tine keeps
+                                    // running; the stuck-graph window is P2b
+                                    // (STEP3-DESIGN B-QA).
+                                    Err(_) => diag("page-host-retirement-stuck-at-exit"),
+                                }
+                            });
+                        }
                     }
                 }
                 _ => {}
@@ -1072,6 +1093,17 @@ pub fn run() {
             watcher_latency_recent,
             list_backups,
             restore_backup,
+            page_commands::page_window_reloaded,
+            page_commands::page_open,
+            page_commands::page_submit,
+            page_commands::page_move,
+            page_commands::page_discard,
+            page_commands::page_close,
+            page_commands::page_delete,
+            page_commands::page_wait,
+            page_commands::page_save_now,
+            page_commands::page_owed,
+            page_commands::page_drafts_retry,
             load_session,
             drafts::load_drafts,
             drafts::store_draft,

@@ -641,7 +641,7 @@ impl HostIo for ProductionIo {
                 Ok(found) if found.is_empty() => {}
                 Ok(found) => {
                     self.down = Some(Down::Unlisted(format!(
-                        "{} draft file(s) from an earlier session are recovered at the next launch",
+                        "{} draft file(s) from an earlier session are recovered when Tine restarts",
                         found.len()
                     )))
                 }

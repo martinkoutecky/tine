@@ -144,6 +144,67 @@ file by its stamp. Unit cost: one fold writes 1 page file (68 B for a
 rewrite and no work proportional to the graph. Proof:
 `crates/tine-store/src/store/fold_save_tests.rs`.
 
+## Page host binding (step 3b)
+
+No production page host starts before step 3b P2b: `PageHost::start` is
+crate-private and `start_for_tests` is test-gated, so everything below is
+reachable only with a test host until then. Unit cost: none; no persisted
+record changes (sessions, the orphan flag and the retirement map are memory
+only).
+
+**Sessions.** Every host launch and every `page_window_reloaded` draws a
+process-unique session; the reload answers it with `next_id`, one past the
+host's last admitted request. Every mutating page command (`page_open`,
+`page_submit`, `page_move`, `page_discard`, `page_close`, `page_delete`)
+carries the session and is not admitted under any other (`NotAdmitted`; a
+delete answers `Refused`), so a command from an earlier window, owner
+binding or host instance never applies. Mail carries the session it was
+collected under, and the window drops mail of any other. Proof
+`crates/tine-store/src/page_host/binding_tests.rs`
+`e101_every_host_instance_and_reload_draws_a_fresh_session`.
+
+**Launch on failing draft I/O (B-Q1).** The host always starts. A drafts
+directory that cannot be created, synced or listed leaves draft I/O down:
+the launch recovers nothing and touches no vehicle (declared deviation M1
+from `storage-s3.qnt:609-619`, whose launch reads every draft), saves
+proceed, and moves, renames and deletes that need an operation draft fail
+with a draft error. A vehicle whose quarantine fails stays in place and
+untouched, named in the status. A census that cannot be synced keeps the
+recovered buffers held and at risk and retires nothing (M2). `load_graph`
+replies with `draft_status` (`{unavailable, unreadable}`; none with no host).
+`page_drafts_retry` re-probes draft I/O in the running host, keeping the
+census and live input, and finishes the cleanup launch skipped. Vehicles
+first listed by a Retry are not recovered into the running host: draft I/O
+stays down and the status says they are recovered when Tine restarts (a
+"Restart Tine" action is P2b UI). Proof
+`crates/tine-store/src/page_host/production_tests.rs` (`b_q1_*`).
+
+**Retirement (plan v3 §3).** A released binding (window destroyed, window
+switched graph, failed open or failed window creation) whose host runs is
+not dropped: in the same registry-locked step it moves to `HostRetirement`,
+so no opener sees its root unowned. The retirement ends the gone window's
+session once (the model's `windowCrash`, `storage-s3.qnt:588-590`), lets
+every admitted request apply with custody, then stops the host over that
+watermark and closes the Store. A stop that cannot keep custody (a draft
+failure) is aborted, the host keeps its pages, and the stop is retried with
+backoff (1 s doubling to 30 s); there is no timeout. Reopening a retiring
+root adopts its Store and host under a fresh binding (lease, background
+work, mail retargeted to the new window; one driver per graph); the old
+binding's late release finds a different lease and does nothing. The last
+window's exit waits for every retirement, 30 s at most; past that Tine
+keeps running with the host alive (the stuck-graph window is P2b). Proof
+`src-tauri/src/host_retirement.rs` tests,
+`crates/tine-store/src/page_host/binding_stop_tests.rs` (`an_orphan_stop_*`,
+`retargeted_mail_reaches_the_adopting_window`).
+
+**Restore gate (S8).** A backup restore holds the binding's host lock
+across stop, file restore and relaunch: hosted writers, a retirement, an
+adoption and another restore wait for its outcome. The reply carries the
+relaunched host's session (`reloaded`) on success and on a partial restore
+failure alike. Proof `src-tauri/src/backup/restore.rs`
+`a_restore_holds_the_host_gate_until_one_fresh_host_runs`,
+`a_retirement_waits_for_the_restore_it_raced`.
+
 ## I-8 refusal scenarios
 
 Each row below is keyed by the source file, owning function and refusal family.
@@ -217,7 +278,7 @@ by I-9's typed failure paths.
 | `tine-graph-features::pdf` highlight and sidecar | Sidecar or notes bytes change concurrently, a malformed imported sidecar appears, or Org notes cannot round-trip; retain the source and refuse or retry within the bounded loop. |
 | `tine-graph-features::config` and `assets` | Config or an asset changes repeatedly while applying a user update; stop before overwriting the external winner. |
 | `src-tauri::backup` restore selection | A backup is incomplete, belongs to another graph, fails its manifest hash, loses a source file or a whole snapshot area (`graph/` for schema 3; `journals/`, `pages/` for schema 2; assets), or changes during verification; refuse restore before touching live content. A failed pre-restore safety snapshot also refuses publication. A schema-2 snapshot made under different `:pages-directory`/`:journals-directory` settings still refuses (it names roots, not paths); schema 3 places text at its recorded graph-relative path and ignores them (ADR 0062). |
-| `src-tauri::backup::restore_hosted` restore stop (STEP3 §7, R7) | Only with a running page host. A drained edit whose save fails (disk error) or conflicts (external-editor race), or an unretired draft, at the restore stop: restore nothing, keep the host, and name the pages (today's restore aborts when its flush fails). A fresh host that cannot start after the restore (an app-data disk error) is reported, and writers then run as with no host. Proof `src-tauri/src/backup/restore.rs` `a_restore_runs_between_its_host_stop_and_one_fresh_host`. |
+| `src-tauri::backup::restore_hosted` restore stop (STEP3 §7, R7) | Only with a running page host. A drained edit whose save fails (disk error) or conflicts (external-editor race), or an unretired draft, at the restore stop: restore nothing, keep the host, and name the pages (today's restore aborts when its flush fails). The binding's host lock is held throughout (S8), so a writer, a retirement or another restore waits for this outcome. A fresh host that cannot start after the restore (an app-data disk error) is reported, and writers then run as with no host. Proof `src-tauri/src/backup/restore.rs` `a_restore_holds_the_host_gate_until_one_fresh_host_runs`. |
 | `src-tauri::data_home::ensure_usable` app-data home (og I1a, master 8e1ea0bfd) | A disk error or a filesystem the user cannot write (a root-owned `~/.local/share`, a read-only mount): the app-data home is relocated for this launch to the first writable fallback (`~/.tine-data`, `$XDG_RUNTIME_DIR/tine-data`, `$TMPDIR/tine-data-<uid>`) and the frontend says where, once, stickily. Only when none is writable does the launch refuse: one sentence naming the `ErrorKind`, exit 1, instead of Tauri's setup panic. |
 | `src-tauri::state` graph binding | Two windows try to own overlapping roots, or a queued command carries an old binding generation; refuse a wrong-graph write. |
 | `src::carry` destination day and capture destination (og I1e, og J1, master 7bd793bd0 family) | Sync-service delivery or a journal date-format change leaves two files for today (a duplicate day), and the second one is open path-pinned under today's name. Carry and capture (quick capture, `appendToTodayJournal`, capture into a page) load the file the name resolves to (`admitPageFile`): a second file holding the name with no unsaved input is replaced by it and the write lands in the real file; one WITH unsaved input (the in-scope harm: replacing it would discard that input) refuses before any block moves or is appended, naming both files. A refused capture keeps its text in the capture window. A source page whose replacement the working set declines stops carry the same way. The duplicate-day resolver folds the pair. |

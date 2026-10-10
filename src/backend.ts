@@ -1380,8 +1380,10 @@ class TauriBackend implements Backend {
   listBackups() {
     return this.call<BackupInfo[]>("list_backups");
   }
-  restoreBackup(stamp: string) {
-    return this.call<void>("restore_backup", { stamp });
+  async restoreBackup(stamp: string) {
+    // consumedLastId 0: no page host runs before step 3b P2b, where the rebind on `reloaded` lands (S8).
+    const reply = await this.call<{ error: string | null }>("restore_backup", { stamp, consumedLastId: 0 });
+    if (reply.error) throw reply.error;
   }
   loadSession() {
     return this.call<string | null>("load_session");

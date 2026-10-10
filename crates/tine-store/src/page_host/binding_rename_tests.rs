@@ -87,7 +87,9 @@ fn host_rename_and_delete_publish_their_edit_kinds() {
         &map("Old", "New"),
     );
     assert!(renamed.is_ok(), "{renamed:?}");
-    let deleted = live.host.delete(&PageId::from("pages/gone.md"));
+    let deleted = live
+        .host
+        .delete(live.host.session(), &PageId::from("pages/gone.md"));
     assert_eq!(deleted, PageOperation::Pending);
     let expected = [
         ("pages/New.md", EditKind::RenamePage),

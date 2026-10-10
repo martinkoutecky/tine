@@ -1902,7 +1902,10 @@ fn b_q1_an_unlistable_drafts_directory_touches_no_vehicle_until_a_launch_lists_i
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
     assert_eq!(draft_dir(&f), before, "no vehicle touched");
     let retry = f.host.drafts_retry().unwrap_err();
-    assert!(retry.contains("2 draft file(s)"), "{retry}");
+    assert!(
+        retry.contains("2 draft file(s)") && retry.contains("when Tine restarts"),
+        "{retry}"
+    );
     assert_eq!(draft_dir(&f), before, "a Retry touches none either");
     start_over(&mut f, &[]);
     assert_eq!(f.host.fs.draft_status(), DraftStatus::default());

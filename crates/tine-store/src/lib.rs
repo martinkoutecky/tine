@@ -93,7 +93,10 @@ mod no_replace;
 #[cfg(test)]
 mod no_replace_tests;
 mod page_host;
-pub use page_host::{Input, PageHost, RenameRefusal, Reservation, StopMode, Stopped};
+pub use page_host::{
+    DiskToken, DraftStatus, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal,
+    Reloaded, RenameRefusal, Reservation, StopMode, StopState, Stopped,
+};
 mod page_state;
 mod path_identity;
 mod platform_step;

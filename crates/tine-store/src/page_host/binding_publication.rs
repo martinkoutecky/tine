@@ -65,7 +65,7 @@ impl PageHost {
     /// (true), or false once a needed page cannot publish without the user
     /// (a conflict, a third failed save, a third failed index publication)
     /// or at `bound`. Never success at a bound (S1).
-    pub(crate) fn wait_published(
+    pub fn wait_published(
         &self,
         needs: &[(String, u64, Option<String>)],
         bound: std::time::Duration,
@@ -98,7 +98,7 @@ impl PageHost {
 
     /// `page_save_now` (§4.4): make these keys' saves due at once, for a
     /// barrier or a block reference; a failing save keeps its backoff.
-    pub(crate) fn save_now(&self, keys: &[String]) {
+    pub fn save_now(&self, keys: &[String]) {
         self.driver
             .shared
             .with_state(|state| state.progress.save_now(keys));
@@ -110,7 +110,7 @@ impl PageHost {
     /// 0). A draft still to retire is not publication debt. `paths` limits
     /// the list to the keys those paths name (the shared entry identity);
     /// None lists every key. Bounded by the held pages; no filesystem scan.
-    pub(crate) fn owed(&self, paths: Option<&[PageId]>) -> Vec<(PageKey, u64)> {
+    pub fn owed(&self, paths: Option<&[PageId]>) -> Vec<(PageKey, u64)> {
         let only: Option<BTreeSet<PageKey>> =
             paths.map(|paths| paths.iter().map(|page| self.identify(page).0).collect());
         let wanted = |key: &PageKey| only.as_ref().is_none_or(|only| only.contains(key));

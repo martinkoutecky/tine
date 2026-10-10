@@ -50,10 +50,11 @@ pub(super) struct MoveResult {
 /// reply and Retry. `unavailable` is why draft I/O is down: while it is,
 /// every draft effect fails without touching the filesystem. `unreadable`
 /// names vehicles launch could not quarantine; they stay in place untouched.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DraftStatus {
-    pub unavailable: Option<String>,
-    pub unreadable: Vec<String>,
+    pub(crate) unavailable: Option<String>,
+    pub(crate) unreadable: Vec<String>,
 }
 
 /// One invocation exposes one publication phase. No filesystem access escapes

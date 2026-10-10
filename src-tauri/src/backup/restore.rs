@@ -12,15 +12,15 @@ use super::*;
 /// `config.edn`. Takes a fresh safety snapshot of the *current* state first
 /// (so a mistaken restore is itself reversible). With a page host, the
 /// restore runs between its stop and a fresh host (`restore_hosted`);
-/// `consumed_last_id` is the last host answer the window consumed.
-/// Destructive — the frontend confirms.
+/// `consumed_last_id` is the last host answer the window consumed (0 with
+/// no host). Destructive — the frontend confirms.
 #[tauri::command]
 pub(crate) async fn restore_backup(
     stamp: String,
-    consumed_last_id: Option<u64>,
+    consumed_last_id: u64,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
-) -> Result<(), String> {
+) -> Result<RestoreReply, String> {
     // Guard against path traversal — a stamp is only ever `YYYY-MM-DD_HH-MM-SS`.
     if stamp.is_empty()
         || !stamp
@@ -35,49 +35,54 @@ pub(crate) async fn restore_backup(
     let restore_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let base = backup_base_for_root(&restore_app, &source.root).ok_or("no app-data dir")?;
-        restore_hosted(&slot.host, consumed_last_id.unwrap_or(0), || {
+        restore_hosted(&slot.host, consumed_last_id, || {
             restore_from_backup_source(&stamp, &base, &slot.store, source, |source| {
                 do_backup_source(&restore_app, &slot.store, source.clone(), "pre-restore")
             })
         })
     })
     .await
-    .map_err(|error| error.to_string())??;
-    Ok(())
+    .map_err(|error| error.to_string())?
 }
 
-/// A backup restore around the binding's page host (STEP3 §7, R7). With a
-/// running host the binding is marked restoring, and the host stops in
-/// restore mode: every drained edit saved and published, every draft and
-/// custody debt retired. A stop that cannot complete restores nothing and
-/// the host comes back, naming the pages it could not save (today's
-/// restore likewise aborts when its flush fails). Otherwise `restore` runs
-/// and one fresh host launches on the tree as it now is, on success and on
-/// failure alike. With no host `restore` is the plain call.
+/// A restore that ran (plan v3 §5, S8): `error` when it failed part-way,
+/// and the session of the host relaunched after it, on success and on a
+/// partial failure alike (None with no host). The window rebinds to that
+/// session either way.
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub(crate) struct RestoreReply {
+    error: Option<String>,
+    reloaded: Option<tine_store::Reloaded>,
+}
+
+/// A backup restore around the binding's page host (STEP3 §7, R7; plan v3
+/// S8). The binding's host lock is held throughout, so a retirement, an
+/// adoption, another restore and every hosted writer wait for this one's
+/// outcome. A running host stops in restore mode: every drained edit saved
+/// and published, every draft and custody debt retired. A stop that cannot
+/// complete restores nothing and the host keeps running, naming the pages
+/// it could not save (today's restore likewise aborts when its flush
+/// fails). Otherwise `restore` runs and one fresh host launches on the tree
+/// as it now is, on success and on failure alike. With no host `restore` is
+/// the plain call.
 pub(super) fn restore_hosted(
     slot: &std::sync::RwLock<crate::state::PageHostSlot>,
     consumed_last_id: u64,
     restore: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<RestoreReply, String> {
     use crate::state::PageHostSlot;
-    let host = {
-        let mut slot = slot.write().unwrap();
-        match std::mem::take(&mut *slot) {
-            PageHostSlot::Running(host) => {
-                *slot = PageHostSlot::Restoring;
-                host
-            }
-            other => {
-                *slot = other;
-                drop(slot);
-                return restore();
-            }
-        }
+    let mut slot = slot.write().unwrap_or_else(|e| e.into_inner());
+    let PageHostSlot::Running(host) = std::mem::take(&mut *slot) else {
+        restore()?;
+        return Ok(RestoreReply {
+            error: None,
+            reloaded: None,
+        });
     };
     let stopped = match host.stop_saved(consumed_last_id, tine_store::StopMode::Restore) {
         Ok(stopped) => stopped,
         Err((host, pages)) => {
-            *slot.write().unwrap() = PageHostSlot::Running(*host);
+            *slot = PageHostSlot::Running(*host);
             let pages: Vec<_> = pages.into_iter().collect();
             return Err(format!(
                 "restore-aborted: unsaved pages: {}",
@@ -85,16 +90,19 @@ pub(super) fn restore_hosted(
             ));
         }
     };
-    let restored = restore();
-    let (next, relaunched) = match stopped.relaunch() {
-        Ok(host) => (PageHostSlot::Running(host), Ok(())),
-        Err(error) => (
-            PageHostSlot::Off,
-            Err(format!("page-host-relaunch-failed: {error}")),
-        ),
-    };
-    *slot.write().unwrap() = next;
-    restored.and(relaunched)
+    let error = restore().err();
+    let host = stopped.relaunch().map_err(|relaunch| {
+        let relaunch = format!("page-host-relaunch-failed: {relaunch}");
+        error
+            .iter()
+            .fold(relaunch, |relaunch, error| format!("{error}; {relaunch}"))
+    })?;
+    let reloaded = host.window_reloaded();
+    *slot = PageHostSlot::Running(host);
+    Ok(RestoreReply {
+        error,
+        reloaded: Some(reloaded),
+    })
 }
 
 fn restore_from_backup_source(
@@ -320,12 +328,13 @@ fn open_verified_restore_files(
 mod tests {
     use super::*;
 
-    /// R7 (STEP3 §7 steps 4–6): a restore with a running host runs while
-    /// the binding is marked restoring (no host to launch writers under, and
-    /// nothing launches a replacement), then binds one fresh host, after a
-    /// failed restore too; with no host the restore is the plain call.
+    /// R7 (STEP3 §7 steps 4–6), plan v3 S8: a restore with a running host
+    /// holds the binding's host gate across stop, file restore and relaunch
+    /// (a hosted writer or another restore waits for its outcome), then
+    /// binds one fresh host and replies with its session, after a failed
+    /// restore too; with no host the restore is the plain call.
     #[test]
-    fn a_restore_runs_between_its_host_stop_and_one_fresh_host() {
+    fn a_restore_holds_the_host_gate_until_one_fresh_host_runs() {
         use crate::state::PageHostSlot;
         use std::sync::{Arc, RwLock};
         let root = scratch("restore-host");
@@ -333,35 +342,115 @@ mod tests {
         std::fs::write(root.join("pages/a.md"), "- a\n").unwrap();
         let app_data = scratch("restore-host-app");
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
-        let restoring = |slot: &RwLock<PageHostSlot>| {
-            let slot = slot.read().unwrap();
-            assert!(slot.running().is_none());
-            matches!(*slot, PageHostSlot::Restoring)
-        };
+        let gated = |slot: &RwLock<PageHostSlot>| slot.try_read().is_err();
         let off = RwLock::new(PageHostSlot::Off);
         let mut ran = false;
-        restore_hosted(&off, 0, || {
+        let reply = restore_hosted(&off, 0, || {
             ran = true;
-            assert!(!restoring(&off), "no host: nothing is marked restoring");
             Ok(())
         })
         .unwrap();
         assert!(ran && matches!(*off.read().unwrap(), PageHostSlot::Off));
+        assert_eq!(reply.reloaded, None, "no host: no session to rebind to");
         let host = tine_store::PageHost::start_for_tests(&store, &app_data).unwrap();
         let slot = RwLock::new(PageHostSlot::Running(host));
+        let mut sessions = std::collections::BTreeSet::new();
         for outcome in [Ok(()), Err("restore-failed:Other: copy".to_owned())] {
-            let result = restore_hosted(&slot, 0, || {
-                assert!(restoring(&slot), "R7: the binding is restoring meanwhile");
+            let reply = restore_hosted(&slot, 0, || {
+                assert!(gated(&slot), "S8: writers wait while the restore runs");
                 outcome.clone()
-            });
-            assert_eq!(result, outcome);
+            })
+            .unwrap();
+            assert_eq!(reply.error, outcome.err());
+            let reloaded = serde_json::to_value(reply.reloaded.unwrap()).unwrap();
+            assert!(sessions.insert(reloaded["session"].as_u64().unwrap()));
             assert!(
                 slot.read().unwrap().running().is_some(),
                 "R7: one fresh host after the restore, on failure too"
             );
         }
+        // S8: a second restore waits for the first one's outcome.
+        let (entered, release) = (std::sync::Barrier::new(2), std::sync::Barrier::new(2));
+        let overlapped = std::sync::atomic::AtomicBool::new(false);
+        let inside = std::sync::atomic::AtomicBool::new(false);
+        let run = |first: bool| {
+            restore_hosted(&slot, 0, || {
+                if inside.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    overlapped.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                if first {
+                    entered.wait();
+                    release.wait();
+                }
+                inside.store(false, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })
+            .unwrap()
+        };
+        std::thread::scope(|scope| {
+            let first = scope.spawn(|| run(true));
+            entered.wait();
+            let second = scope.spawn(|| run(false));
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            release.wait();
+            first.join().unwrap();
+            second.join().unwrap();
+        });
+        assert!(
+            !overlapped.load(std::sync::atomic::Ordering::SeqCst),
+            "S8: two restores of one binding never overlap"
+        );
         *slot.write().unwrap() = PageHostSlot::Off;
         store.close();
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(app_data).unwrap();
+    }
+
+    /// Plan v3 §3 step 6, S8: a window closed while its restore runs. The
+    /// retirement waits for the restore's outcome, then stops the host the
+    /// restore relaunched, and only then closes the Store.
+    #[test]
+    fn a_retirement_waits_for_the_restore_it_raced() {
+        use crate::state::{GraphRegistry, GraphSlot, PageHostSlot};
+        use std::sync::{Arc, Barrier};
+        let root = scratch("restore-retire");
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        let app_data = scratch("restore-retire-app");
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let mut slot = GraphSlot::new(store.clone(), Store::canonical_root(&root).unwrap());
+        let host = tine_store::PageHost::start_for_tests(&store, &app_data).unwrap();
+        *slot.host.get_mut().unwrap() = PageHostSlot::Running(host);
+        let slot = Arc::new(slot);
+        let mut registry = GraphRegistry::default();
+        registry.bind("graph-1".into(), slot.clone()).unwrap();
+        let (entered, release) = (Barrier::new(2), Barrier::new(2));
+        let closed = || matches!(store.is_graph_ready(), Err(tine_store::LoadError::Closed));
+        std::thread::scope(|scope| {
+            let restore = scope.spawn(|| {
+                restore_hosted(&slot.host, 0, || {
+                    entered.wait();
+                    release.wait();
+                    Ok(())
+                })
+            });
+            entered.wait();
+            assert!(
+                registry.remove("graph-1").is_none(),
+                "retiring, not dropped"
+            );
+            let retirement = registry.retirement.clone();
+            assert!(retirement
+                .wait_idle(std::time::Duration::from_millis(200))
+                .is_err());
+            assert!(!closed(), "the Store stays open under the restore");
+            release.wait();
+            assert!(restore.join().unwrap().unwrap().reloaded.is_some());
+            let idle = retirement.wait_idle(std::time::Duration::from_secs(20));
+            assert_eq!(idle, Ok(()));
+        });
+        assert!(matches!(*slot.host_slot(), PageHostSlot::Off));
+        assert!(closed());
+        drop(slot);
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(app_data).unwrap();
     }

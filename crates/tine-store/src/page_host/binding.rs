@@ -84,9 +84,9 @@ fn next_session() -> u64 {
 #[serde(rename_all = "camelCase")]
 pub struct Reloaded {
     /// The session every later command carries.
-    pub session: u64,
+    pub(crate) session: u64,
     /// One past the host's last admitted request id.
-    pub next_id: u64,
+    pub(crate) next_id: u64,
 }
 
 /// `page_open`'s reply.
@@ -94,12 +94,12 @@ pub struct Reloaded {
 #[serde(rename_all = "camelCase")]
 pub struct Opened {
     /// The host's key for the page (its entry identity, A-H2).
-    pub key: String,
+    pub(crate) key: String,
     /// The opened path names the key's entry under the shared entry-identity
     /// rule (B1): the window's text, read from that path, is the key's. False
     /// when the path only collides with a registered entry unproved (the
     /// window then sends its text as stale input, D-b, S5).
-    pub baseline_entry: bool,
+    pub(crate) baseline_entry: bool,
 }
 
 impl From<Why> for PageRefusal {
@@ -288,15 +288,15 @@ pub struct MailNotice {
 #[serde(rename_all = "camelCase")]
 pub struct PageMail {
     /// The window session it is for (0: none, never current).
-    pub session: u64,
+    pub(crate) session: u64,
     /// The page key.
-    pub key: String,
+    pub(crate) key: String,
     /// The page's state, None once the host released it.
-    pub page: Option<MailPage>,
+    pub(crate) page: Option<MailPage>,
     /// The answer to the window's latest request, if any.
-    pub answer: Option<MailAnswer>,
+    pub(crate) answer: Option<MailAnswer>,
     /// Save and draft status.
-    pub notice: MailNotice,
+    pub(crate) notice: MailNotice,
 }
 
 /// A host page operation's disposition (delete, rename).
@@ -438,6 +438,9 @@ pub(super) struct Book {
     /// The current window session: the host's generation under a
     /// process-unique name (E97). 0 until launch draws one.
     pub session: u64,
+    /// No window owns the session any more (`orphan_stop`): the window
+    /// crash ran once for that owner. A window reload clears it.
+    orphaned: bool,
 }
 
 impl Book {
@@ -1011,13 +1014,14 @@ impl PageHost {
     /// A window (re)load (`window_crash`): unsent input is lost, admitted
     /// requests keep their custody, and the window gets a fresh session and
     /// the first request id the host can admit (R8).
-    pub(crate) fn window_reloaded(&self) -> Reloaded {
+    pub fn window_reloaded(&self) -> Reloaded {
         self.driver.shared.with_state(|state| {
             let next_id = state.progress.with_host(|host| {
                 host.window_crash();
                 host.last_admitted.saturating_add(1)
             });
             state.book.session = next_session();
+            state.book.orphaned = false;
             Reloaded {
                 session: state.book.session,
                 next_id,
@@ -1072,7 +1076,7 @@ impl PageHost {
     /// The page's index moves to the publication consumer here (§5), under
     /// the writer: a watcher reconcile already running for it finishes
     /// first, and the consumer publishes the Open read.
-    pub(crate) fn open(
+    pub fn open(
         &self,
         session: u64,
         id: u64,
@@ -1175,7 +1179,7 @@ impl PageHost {
     /// `page_submit` (§3.1): serialize against the request's comparison
     /// source, then admit. A refusal here was never sent.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn submit(
+    pub fn submit(
         &self,
         session: u64,
         id: u64,
@@ -1203,7 +1207,7 @@ impl PageHost {
     /// `page_move` (§3.1, §8): both endpoints serialized as ordinary submits
     /// on their versions, admitted as the model's two-page move.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn move_blocks(
+    pub fn move_blocks(
         &self,
         session: u64,
         id: u64,
@@ -1242,7 +1246,7 @@ impl PageHost {
     }
 
     /// `page_discard` (§3.1): the window consumed its unsent input first.
-    pub(crate) fn discard(
+    pub fn discard(
         &self,
         session: u64,
         id: u64,
@@ -1259,7 +1263,7 @@ impl PageHost {
     }
 
     /// `page_close` (§3.1): the last surface showing the page released it.
-    pub(crate) fn close(&self, session: u64, id: u64, key: &str) -> Result<(), PageRefusal> {
+    pub fn close(&self, session: u64, id: u64, key: &str) -> Result<(), PageRefusal> {
         let request = Request {
             id,
             generation: 0,
@@ -1269,12 +1273,16 @@ impl PageHost {
         self.admit(session, request, vec![])
     }
 
-    /// `page_delete` (§7): the host's delete operation. D4 refuses a page
-    /// with unsaved input; Waiting means the page is busy (retry when clean).
-    pub(crate) fn delete(&self, page: &PageId) -> PageOperation {
+    /// `page_delete` (§7): the host's delete operation, for the current
+    /// window `session` only (S2). D4 refuses a page with unsaved input;
+    /// Waiting means the page is busy (retry when clean).
+    pub fn delete(&self, session: u64, page: &PageId) -> PageOperation {
         let (key, spelling, ..) = self.identify(page);
         self.register(&key, &spelling);
         let deleted = self.driver.shared.locked_step(|state| {
+            if state.book.session != session {
+                return Disposition::Refused;
+            }
             let disposition = state.progress.with_host(|host| host.delete(&key));
             // OG-RULES Rule 8 (A-K1): the operation's write is a deletion.
             if disposition == Disposition::Pending {

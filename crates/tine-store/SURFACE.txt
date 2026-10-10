@@ -283,15 +283,44 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 12)
+## Page host (ceiling: 36)
 # Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
-# only for its retained-writer callers (census writers in tine-graph-features,
-# backup restore in src-tauri). The page commands stay crate-private until 3b.
+# for its retained-writer callers (census writers in tine-graph-features, backup restore in
+# src-tauri) and, from step 3b P1 (ceiling 12 -> 36), for the window's page commands and
+# their wire types (src-tauri page_commands.rs, one command per verb, STEP3 §3), the mail
+# bridge (PageMail, retarget) and the binding's retirement (orphan_stop, stop_abort,
+# stop_finish, StopState; src-tauri host_retirement.rs, plan v3 §3). Each verb is one
+# host operation the window already performs through the old engine; no item re-exports
+# file I/O.
 struct page_host::PageHost
 fn page_host::PageHost::reserve
 fn page_host::PageHost::rename
 fn page_host::PageHost::respell
 fn page_host::PageHost::stop_saved
+fn page_host::PageHost::window_reloaded
+fn page_host::PageHost::open
+fn page_host::PageHost::submit
+fn page_host::PageHost::move_blocks
+fn page_host::PageHost::discard
+fn page_host::PageHost::close
+fn page_host::PageHost::delete
+fn page_host::PageHost::wait_published
+fn page_host::PageHost::save_now
+fn page_host::PageHost::owed
+fn page_host::PageHost::draft_status
+fn page_host::PageHost::drafts_retry
+fn page_host::PageHost::orphan_stop
+fn page_host::PageHost::retarget
+fn page_host::PageHost::stop_abort
+fn page_host::PageHost::stop_finish
+struct page_host::Reloaded
+struct page_host::Opened
+struct page_host::PageMail
+struct page_host::DraftStatus
+enum page_host::PageRefusal
+enum page_host::DiskToken
+enum page_host::PageOperation
+enum page_host::StopState
 # test-oracle: tine-graph-features tests bind a host; production binds through lane 3b's switch.
 fn page_host::PageHost::start_for_tests
 struct page_host::Reservation
@@ -301,7 +330,7 @@ enum page_host::StopMode
 struct page_host::Stopped
 fn page_host::Stopped::relaunch
 ## Re-exports (ceiling: 9)
-use crate::page_host::{Input,PageHost,RenameRefusal,Reservation,StopMode,Stopped}
+use crate::page_host::{DiskToken,DraftStatus,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}

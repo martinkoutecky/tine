@@ -119,7 +119,7 @@ impl PageHost {
     }
 
     /// Crash-recovery availability (§4, B-Q1), for the `load_graph` reply.
-    pub(crate) fn draft_status(&self) -> DraftStatus {
+    pub fn draft_status(&self) -> DraftStatus {
         self.driver
             .shared
             .with_state(|state| state.progress.host.fs.draft_status())
@@ -129,7 +129,7 @@ impl PageHost {
     /// host and finish the cleanup launch skipped. A draft effect in flight
     /// while I/O is down fails at once; this waits for it, 5 s at most. The
     /// error says why draft I/O is still down.
-    pub(crate) fn drafts_retry(&self) -> Result<(), String> {
+    pub fn drafts_retry(&self) -> Result<(), String> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             match self.locked(|host| host.drafts_retry()) {

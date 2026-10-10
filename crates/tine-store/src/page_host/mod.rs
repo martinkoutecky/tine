@@ -2,7 +2,11 @@
 #![allow(dead_code)]
 
 mod binding;
-pub use binding::{Input, PageHost, RenameRefusal, Reservation, StopMode, Stopped};
+pub use binding::{
+    DiskToken, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal, Reloaded,
+    RenameRefusal, Reservation, StopMode, StopState, Stopped,
+};
+pub use io::DraftStatus;
 #[cfg(test)]
 mod command_tests;
 #[cfg(test)]
@@ -29,7 +33,7 @@ mod tests;
 mod writer_census_tests;
 
 use drafts::{Record, Stage, Vehicle};
-use io::{DraftStatus, ErrorKind, HostIo, IoFailure, Witness};
+use io::{ErrorKind, HostIo, IoFailure, Witness};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};

@@ -20,7 +20,9 @@ pub(crate) struct CaptureGraphBinding {
 }
 
 pub(crate) struct GraphSlot {
-    pub(crate) store: Store,
+    /// Shared with the binding's page host. An adopting binding takes it
+    /// over (`HostRetirement::adopt`), and this slot then leaves it open.
+    pub(crate) store: Arc<Store>,
     /// Latest `((` request per transport lane for this window binding.
     pub(crate) block_search_lanes: tine_graph_features::search::SearchLanes,
     pub(crate) root_key: PathBuf,
@@ -43,21 +45,22 @@ pub(crate) struct GraphSlot {
     /// Focus rescans waiting for this binding's dispatch thread (family 10).
     pub(crate) rescan: crate::watcher::RescanCursor,
     /// The binding's page host (STEP3 §6–7). Census writers run under its
-    /// reservations while one runs (`running`); a backup restore marks the
-    /// binding restoring between its stop and the fresh host's launch.
+    /// reservations while one runs (`running`). Its write lock is the
+    /// binding's host transition gate (plan v3 S8): a backup restore holds
+    /// it across stop, file restore and relaunch, and retirement and
+    /// adoption take it, so each waits for the others' outcome.
     pub(crate) host: RwLock<PageHostSlot>,
+    /// The Store went to an adopting binding (`HostRetirement::adopt`).
+    pub(crate) handed_over: AtomicBool,
 }
 
 /// Where the binding's page host stands. `Off` until lane 3b's switch
-/// starts one. `Restoring` while a backup restore runs between the old
-/// host's stop and the fresh host's launch (§7 step 4): nothing launches
-/// a replacement meanwhile, and writers run as with no host.
+/// starts one.
 #[derive(Default)]
 pub(crate) enum PageHostSlot {
     #[default]
     Off,
     Running(tine_store::PageHost),
-    Restoring,
 }
 
 impl PageHostSlot {
@@ -65,16 +68,16 @@ impl PageHostSlot {
     pub(crate) fn running(&self) -> Option<&tine_store::PageHost> {
         match self {
             Self::Running(host) => Some(host),
-            Self::Off | Self::Restoring => None,
+            Self::Off => None,
         }
     }
 }
 
 impl GraphSlot {
-    pub(crate) fn new(store: Store, root_key: PathBuf) -> Self {
+    pub(crate) fn new(store: impl Into<Arc<Store>>, root_key: PathBuf) -> Self {
         static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
         Self {
-            store,
+            store: store.into(),
             block_search_lanes: tine_graph_features::search::SearchLanes::default(),
             root_key,
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -87,11 +90,13 @@ impl GraphSlot {
             concord_ledger: Default::default(),
             rescan: Default::default(),
             host: Default::default(),
+            handed_over: AtomicBool::new(false),
         }
     }
 
     /// The host slot, read for a census writer's whole call: a restore
-    /// cannot take the host out from under the writer's reservation.
+    /// cannot take the host out from under the writer's reservation, and a
+    /// writer waits for a restore's outcome (S8).
     pub(crate) fn host_slot(&self) -> std::sync::RwLockReadGuard<'_, PageHostSlot> {
         self.host.read().unwrap()
     }
@@ -180,20 +185,30 @@ pub(crate) fn graph_meta(slot: &GraphSlot) -> tine_core::model::GraphMeta {
 pub(crate) static SLOT_CLOSE_PROBE: Mutex<Option<Box<dyn Fn(&Path) + Send>>> = Mutex::new(None);
 
 impl Drop for GraphSlot {
+    /// The host stops before its Store closes (plan v3 §3). A slot that
+    /// held a running host was retired first (`HostRetirement`), so a host
+    /// still here is a test fixture's or an unbound open's: dropping it is a
+    /// crash stop, which keeps every written draft.
     fn drop(&mut self) {
         #[cfg(test)]
         if let Some(probe) = SLOT_CLOSE_PROBE.lock().unwrap().as_ref() {
             probe(&self.root_key);
         }
-        self.store.close();
+        let host = self.host.get_mut().unwrap_or_else(|e| e.into_inner());
+        drop(std::mem::take(host));
+        if !*self.handed_over.get_mut() {
+            self.store.close();
+        }
     }
 }
 
 /// Release the graph of a window that was destroyed (or never got built);
-/// true when no graph window remains. The Store closes (~200 ms for a Ready graph) after the
-/// registry lock is released, so other windows' graph commands do not wait on
-/// it (as `load_graph` does for a displaced graph). Cost: one registry write
-/// plus the released Store's close on the calling thread.
+/// true when no graph window remains. A slot with a page host goes to its
+/// retirement (`HostRetirement`); otherwise the Store closes (~200 ms for a
+/// Ready graph) after the registry lock is released, so other windows' graph
+/// commands do not wait on it (as `load_graph` does for a displaced graph).
+/// Cost: one registry write plus the released Store's close on the calling
+/// thread.
 pub(crate) fn release_window_graph(graphs: &RwLock<GraphRegistry>, window: &str) -> bool {
     let (released, empty) = {
         let mut registry = graphs.write().unwrap();
@@ -254,6 +269,10 @@ pub(crate) fn may_exit(own_slot: bool, graph_slots: usize, others_closing: usize
 pub(crate) struct GraphRegistry {
     by_window: HashMap<WindowKey, Arc<GraphSlot>>,
     by_root: HashMap<PathBuf, WindowKey>,
+    /// Owns every released slot that holds a page host until its Store has
+    /// closed. A slot leaves the registry and enters it under the registry
+    /// lock, so no opener sees its root unowned meanwhile (plan v3 §3, S2).
+    pub(crate) retirement: crate::host_retirement::HostRetirement,
 }
 
 impl GraphRegistry {
@@ -276,9 +295,10 @@ impl GraphRegistry {
         self.by_window.len()
     }
 
-    /// Bind `slot` to `window`. A replaced binding is revoked and returned,
-    /// so the caller drops it after releasing the registry lock: closing a
-    /// Ready Store takes ~200 ms (master abf7af831884).
+    /// Bind `slot` to `window`. A replaced binding is revoked and retired,
+    /// or returned when it holds no page host, so the caller drops it after
+    /// releasing the registry lock: closing a Ready Store takes ~200 ms
+    /// (master abf7af831884).
     pub(crate) fn bind(
         &mut self,
         window: WindowKey,
@@ -305,7 +325,9 @@ impl GraphRegistry {
             self.by_root.remove(&old.root_key);
         }
         self.by_root.insert(slot.root_key.clone(), window);
-        Ok(displaced)
+        Ok(displaced
+            .filter(|old| !Arc::ptr_eq(old, &slot))
+            .and_then(|old| self.retirement.retire(old)))
     }
 
     /// Release `window`'s binding only if it is still the one an open with
@@ -328,11 +350,13 @@ impl GraphRegistry {
         }
     }
 
+    /// Unbind `window`. Its slot is retired, or returned when it holds no
+    /// page host, for the caller to drop outside the registry lock.
     pub(crate) fn remove(&mut self, window: &str) -> Option<Arc<GraphSlot>> {
         let slot = self.by_window.remove(window)?;
         slot.cancel_background();
         self.by_root.remove(&slot.root_key);
-        Some(slot)
+        self.retirement.retire(slot)
     }
 }
 

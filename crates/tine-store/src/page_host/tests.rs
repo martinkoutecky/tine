@@ -826,8 +826,9 @@ fn retained_reservation_blocks_save_and_reconciles_undo_or_publication() {
     assert_eq!(h.pages["a.md"].buf, text("transaction"));
 }
 
-/// The production files that name the retained-writer surface: the census
-/// writers (STEP3 §7) and the binding's host slot and restore.
+/// The production files that name the page host surface: the census
+/// writers (STEP3 §7), the binding's host slot, restore and retirement, the
+/// page commands and the `load_graph` reply (step 3b P1).
 const CENSUS_CALL_SITES: &[&str] = &[
     "crates/tine-graph-features/src/retained.rs",
     "crates/tine-graph-features/src/pages.rs",
@@ -838,6 +839,9 @@ const CENSUS_CALL_SITES: &[&str] = &[
     "crates/tine-graph-features/src/guide.rs",
     "src-tauri/src/state.rs",
     "src-tauri/src/backup/restore.rs",
+    "src-tauri/src/host_retirement.rs",
+    "src-tauri/src/page_commands.rs",
+    "src-tauri/src/graph.rs",
 ];
 
 #[test]
@@ -919,11 +923,20 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
                     "a production path starts a page host: {relative}: {line}"
                 );
                 let exported = [
+                    "DiskToken",
+                    "DraftStatus",
                     "Input",
+                    // `Opened` too, unlisted: a common word (capture_target,
+                    // flight_store), reached only through `PageHost::open`.
                     "PageHost",
+                    "PageMail",
+                    "PageOperation",
+                    "PageRefusal",
+                    "Reloaded",
                     "RenameRefusal",
                     "Reservation",
                     "StopMode",
+                    "StopState",
                     "Stopped",
                 ]
                 .into_iter()
@@ -948,8 +961,8 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
                     && [
                         "mod page_state;",
                         "mod page_host;",
-                        // The retained-writer export (approved by Martin 2026-10-10).
-                        "pub use page_host::{Input, PageHost, RenameRefusal, Reservation, StopMode, Stopped};",
+                        // The Page host export (concept approved by Martin 2026-10-10).
+                        "pub use page_host::{",
                     ]
                     .contains(&line.trim())
                 {

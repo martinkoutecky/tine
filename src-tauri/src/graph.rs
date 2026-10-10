@@ -2,7 +2,9 @@ use crate::backup::backup_async;
 use crate::settings::{
     approved_external_assets, remember_external_assets_approval, remember_graph,
 };
-use crate::state::{canonical_graph_root, graph_meta, slot_for_window, AppState, GraphSlot};
+use crate::state::{
+    canonical_graph_root, graph_meta, slot_for_window, AppState, GraphSlot, PageHostSlot,
+};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -426,6 +428,7 @@ fn route_bound_root(
             meta: graph_meta(&slot),
             binding_generation: slot.binding_generation,
             config_problem: config_problem(&slot.store),
+            draft_status: crate::page_commands::draft_status(&slot),
         }));
     }
     // `FocusedExisting` is an explicit activation request. Update capture
@@ -472,24 +475,53 @@ pub(crate) fn load_graph_for_label(
     if let Some(result) = routed {
         return Ok(result);
     }
-    let root = root_key.display().to_string();
-    let approved_assets = approved_external_assets(app, &root_key);
-    let LoadedGraph { store, meta } = match app.state::<StartupGraph>().take(&root_key) {
-        Some(result) => result,
-        None => open_graph_for_load(
-            &root,
-            approved_assets.as_deref(),
-            crate::watcher::watch_mode(app),
-            checkpoint_app_data(app).as_deref(),
-        ),
-    }?;
-    let slot = Arc::new(GraphSlot::new(store, root_key));
+    // A root whose page host is still retiring comes back with its Store
+    // and host (plan v3 §3, S2): a fresh binding (lease, background work,
+    // session on `page_window_reloaded`) and page mail to this window.
+    let retirement = state.graphs.read().unwrap().retirement.clone();
+    let (slot, meta) = match retirement.adopt(&root_key) {
+        Some((store, host)) => {
+            let mut slot = GraphSlot::new(store, root_key);
+            if let PageHostSlot::Running(host) = &host {
+                host.retarget(crate::page_commands::page_mail_sink(
+                    app.clone(),
+                    window_label.to_string(),
+                ));
+            }
+            *slot.host.get_mut().unwrap() = host;
+            let meta = graph_meta(&slot);
+            (slot, meta)
+        }
+        None => {
+            let root = root_key.display().to_string();
+            let approved_assets = approved_external_assets(app, &root_key);
+            let LoadedGraph { store, meta } = match app.state::<StartupGraph>().take(&root_key) {
+                Some(result) => result,
+                None => open_graph_for_load(
+                    &root,
+                    approved_assets.as_deref(),
+                    crate::watcher::watch_mode(app),
+                    checkpoint_app_data(app).as_deref(),
+                ),
+            }?;
+            (GraphSlot::new(store, root_key), meta)
+        }
+    };
+    let slot = Arc::new(slot);
     let warm_generation = begin_warm_cache(&slot);
-    let displaced = state
-        .graphs
-        .write()
-        .unwrap()
-        .bind(window_label.to_string(), slot.clone())?;
+    let displaced = {
+        let mut registry = state.graphs.write().unwrap();
+        match registry.bind(window_label.to_string(), slot.clone()) {
+            Ok(displaced) => displaced,
+            Err(error) => {
+                // An adopted host goes back to its retirement.
+                let released = registry.retirement.retire(slot);
+                drop(registry);
+                drop(released);
+                return Err(error);
+            }
+        }
+    };
     // The replaced graph's Store closes here, after the registry lock is
     // released, so other graph commands do not wait on its teardown.
     drop(displaced);
@@ -512,11 +544,13 @@ pub(crate) fn load_graph_for_label(
     }
     let binding_generation = slot.binding_generation;
     let config_problem = config_problem(&slot.store);
+    let draft_status = crate::page_commands::draft_status(&slot);
     warm_cache_async(app.clone(), window_label.to_string(), slot, warm_generation);
     Ok(LoadGraphResult::Loaded {
         meta,
         binding_generation,
         config_problem,
+        draft_status,
     })
 }
 
@@ -615,11 +649,14 @@ pub(crate) enum LoadGraphResult {
         meta: GraphMeta,
         binding_generation: u64,
         config_problem: Option<ConfigProblem>,
+        /// Crash-recovery availability (§4, B-Q1); None with no page host.
+        draft_status: Option<tine_store::DraftStatus>,
     },
     AlreadyCurrent {
         meta: GraphMeta,
         binding_generation: u64,
         config_problem: Option<ConfigProblem>,
+        draft_status: Option<tine_store::DraftStatus>,
     },
     FocusedExisting {
         window_label: String,

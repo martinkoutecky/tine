@@ -472,20 +472,59 @@ impl PageHost {
         stop_state(&state.progress, &state.book)
     }
 
+    /// Stop a host no window owns any more (plan v3 §3, `HostRetirement`;
+    /// legal as the model's `windowCrash`, `storage-s3.qnt:588-590`). Unless
+    /// a stop already began (the window's own, kept), the window's session
+    /// ends, once per abandoned owner: its mail is dropped, nothing more is
+    /// admitted, and every admitted request keeps applying with custody.
+    /// Once they have all applied, a switch stop begins over that watermark
+    /// (a stale request's answer never enters the outbox, so none is owed).
+    /// Returns where the stop stands: the caller calls `stop_finish` once
+    /// the stop may complete, or `stop_abort` on `Aborted` and asks again
+    /// later.
+    pub fn orphan_stop(&self) -> StopState {
+        self.driver.shared.with_state(|state| {
+            if state.progress.host.switch_confirmation.is_none() {
+                if !state.book.orphaned {
+                    state.book.orphaned = true;
+                    state.book.session = next_session();
+                    state.progress.with_host(|host| host.window_crash());
+                }
+                let ready = state.progress.with_host(|host| {
+                    let last = host.last_admitted;
+                    host.switch_ready(last)
+                });
+                if ready == Disposition::Applied {
+                    state.progress.stopping = Some(Stopping {
+                        restore: false,
+                        failed: BTreeSet::new(),
+                    });
+                }
+            }
+            stop_state(&state.progress, &state.book)
+        })
+    }
+
+    /// Point page mail at the window that now owns the binding (plan v3 §3,
+    /// S2: an adopting window). Mail already collected keeps the session it
+    /// was collected under.
+    pub fn retarget(&self, mail: impl FnMut(PageMail) + Send + 'static) {
+        *self.launch.mail.lock().unwrap() = Box::new(mail);
+    }
+
     /// Abort the stop: admission reopens and the pages keep their state.
-    pub(crate) fn stop_abort(&self) {
+    pub fn stop_abort(&self) {
         self.driver
             .shared
             .with_state(|state| state.progress.with_host(|host| host.switch_abort()));
     }
 
-    /// Stop the host if the stop is ready, then join the driver (§7 step
+    /// Stop the host if its stop may complete now, then join the driver (§7 step
     /// 4): a delivery in flight finishes first (with admission closed, every
     /// host step runs on the driver and is delivered with it), and the
     /// watcher indexes every page again. The binding holds no host until
-    /// `Stopped::relaunch` (the "restoring" state). Otherwise the host is
-    /// handed back.
-    pub(crate) fn stop_finish(self) -> Result<Stopped, Self> {
+    /// `Stopped::relaunch`. Otherwise the host is handed back.
+    pub fn stop_finish(self) -> Result<Stopped, Self> {
         let stopped = self.driver.shared.with_state(|state| {
             stop_state(&state.progress, &state.book) == StopState::Ready
                 && state.progress.with_host(|host| host.switch_finish()) == Disposition::Applied
