@@ -56,6 +56,15 @@ impl HeldPages {
         paths.drain().map(|(path, _)| path).collect()
     }
 
+    /// The owner's page moved to `to`, another spelling of the same entry
+    /// (an alias spelling move, STEP3 Q4): what it indexed stays its own.
+    pub(crate) fn respell(&self, from: &Path, to: PathBuf) {
+        let mut paths = self.paths.write().unwrap();
+        if let Some(entry) = paths.remove(from) {
+            paths.insert(to, entry);
+        }
+    }
+
     /// The owner key of a held path.
     pub(crate) fn key(&self, path: &Path) -> Option<String> {
         let paths = self.paths.read().unwrap();

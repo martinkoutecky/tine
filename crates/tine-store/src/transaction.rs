@@ -33,7 +33,7 @@ mod prepared;
 use prepared::PreparedRewrite;
 mod publication;
 mod read_checks;
-mod validation;
+pub(crate) mod validation;
 use io_helpers::{
     collision, content_refusal, directory_read_error, disk_rev, failed, failed_trash_dir,
     publication_path_error, sync_move_dirs,

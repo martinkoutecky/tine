@@ -5,7 +5,7 @@ use std::path::Path;
 use super::io_helpers::{content_refusal, failed};
 use super::{Content, FileId, Refusal, RenameMap, Store, Why};
 
-pub(super) fn rewrite(
+pub(crate) fn rewrite(
     old: &[u8],
     path: &Path,
     map: &RenameMap,
@@ -36,7 +36,7 @@ pub(super) fn refuse_read_only_org(old: &[u8], new: &[u8], is_org: bool) -> Resu
 /// the same guarded transaction when it still names the old identity; a custom
 /// title remains untouched. A non-round-tripping Org file is refused rather
 /// than rewritten.
-pub(super) fn rewrite_move(
+pub(crate) fn rewrite_move(
     old: &[u8],
     path: &Path,
     map: &RenameMap,

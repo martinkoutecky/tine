@@ -1,6 +1,37 @@
-//! Retained writers' reservations and the switch/restore stop (STEP3
-//! §6–§7): the binding commands that fence pages away from the host.
+//! Retained writers' reservations, the single-page rename, and the
+//! switch/restore stop (STEP3 §6–§7): the binding commands that fence
+//! pages away from the host or run a page operation for a writer.
 use super::*;
+use crate::transaction::validation::{rewrite as rewrite_refs, rewrite_move};
+use crate::RenameMap;
+
+/// Why a host rename did not run (§7, F10), or did not finish.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RenameRefusal {
+    /// `target` is another spelling of `source`'s own directory entry (a
+    /// case-folding volume, Q4): the caller moves it as a retained
+    /// transaction under a reservation of the page and `respell`s it.
+    Alias,
+    /// A page the rename would rewrite has unsaved input.
+    Unsaved(PageId),
+    /// A page the rename would change cannot be rewritten: an Org file
+    /// that does not round-trip, or bytes that are not UTF-8.
+    Unwritable(PageId),
+    /// The operation was admitted but this page could not be written (a
+    /// conflict or a persistent save error); the operation keeps its
+    /// custody and completes once the page can be written.
+    Unwritten(PageId),
+    /// The target has a file, or the host is stopped.
+    Refused,
+}
+
+/// What the rename policy recorded for one attempt (pages by spelling).
+#[derive(Default)]
+struct Rewrites {
+    changed: BTreeSet<String>,
+    skipped: BTreeSet<String>,
+    unwritable: Option<String>,
+}
 
 impl PageHost {
     /// Reserve the complete page set `discover` names for a retained
@@ -80,7 +111,148 @@ impl PageHost {
         });
     }
 
-    /// The pages among `keys` with unsaved input (Q3).
+    /// `page_rename` (§7, F10): rename `source`'s page to the absent
+    /// `target` as one host operation, rewriting `referrers` (the index's
+    /// explicit referrers; held buffers are scanned too) with `map`. The
+    /// policy is the rename transaction's own: the moving page's refs and
+    /// own title are rebound (`rewrite_move`), every other page's refs are
+    /// rewritten, a changed Org file that does not round-trip refuses the
+    /// whole operation, and a page carrying VCS conflict markers is left
+    /// byte-identical (moved verbatim) and reported. A `source` with no file
+    /// rewrites references only. Waits while a page is busy, then until the
+    /// operation's writes complete. Returns the rewritten referrers and the
+    /// pages left for their markers.
+    pub fn rename(
+        &self,
+        source: &PageId,
+        target: &PageId,
+        referrers: &[PageId],
+        map: &RenameMap,
+    ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
+        let (src, src_spelling, _) = self.identify(source);
+        let (dst, dst_spelling, _) = self.identify(target);
+        if src == dst {
+            return Err(RenameRefusal::Alias);
+        }
+        self.register(&src, &src_spelling);
+        self.register(&dst, &dst_spelling);
+        let mut refs = self.register_all(referrers.to_vec());
+        refs.remove(&src);
+        refs.remove(&dst);
+        let root = self.store.graph.root.clone();
+        let format = self.store.config().file_name_format;
+        let destination = root.join(dst_spelling.as_str());
+        let seen = loop {
+            let outcome = self.locked(|host| {
+                let spellings: BTreeMap<PageKey, String> = host
+                    .keys
+                    .iter()
+                    .map(|key| (key.clone(), host.fs.spelling(key).to_owned()))
+                    .collect();
+                let record = Mutex::new(Rewrites::default());
+                let policy = |bytes: &Text, key: &str, moving: bool| {
+                    let Some(old) = bytes else { return Ok(None) };
+                    let spelling = &spellings[key];
+                    let path = root.join(spelling);
+                    let rewritten = if moving {
+                        rewrite_move(old, &destination, map, format)
+                    } else {
+                        rewrite_refs(old, &path, map, format)
+                    };
+                    let mut record = record.lock().unwrap();
+                    let Ok(new) = rewritten else {
+                        record.unwritable = Some(spelling.clone());
+                        return Err(());
+                    };
+                    if new.as_slice() == &old[..] {
+                        return Ok(bytes.clone());
+                    }
+                    let syntax = tine_core::model::Format::from_path(&path);
+                    let marked = std::str::from_utf8(old).is_ok_and(|text| {
+                        !tine_core::concord_queue::vcs_conflict_markers(text, syntax).is_empty()
+                    });
+                    if marked {
+                        record.skipped.insert(spelling.clone());
+                        return Ok(bytes.clone());
+                    }
+                    if !moving {
+                        record.changed.insert(spelling.clone());
+                    }
+                    Ok(Some(Arc::from(new)))
+                };
+                let disposition = host.rename_with(&src, &dst, &refs, policy);
+                (disposition, record.into_inner().unwrap())
+            });
+            let Some((disposition, seen)) = outcome else {
+                return Err(RenameRefusal::Refused);
+            };
+            match disposition {
+                Disposition::Pending => break seen,
+                Disposition::Waiting => {
+                    let shared = &self.driver.shared;
+                    let state = shared.state.lock().unwrap();
+                    drop(shared.wait(state, std::time::Duration::from_millis(100)));
+                }
+                _ => {
+                    if let Some(page) = seen.unwritable {
+                        return Err(RenameRefusal::Unwritable(PageId::from(page)));
+                    }
+                    let mut touched = refs.clone();
+                    touched.extend(seen.changed.iter().cloned());
+                    touched.extend([src.clone(), dst.clone()]);
+                    return Err(match self.unsaved(&touched).into_iter().next() {
+                        Some(page) => RenameRefusal::Unsaved(self.spelling(&page)),
+                        None => RenameRefusal::Refused,
+                    });
+                }
+            }
+        };
+        let mut written = refs;
+        written.extend(seen.changed.iter().cloned());
+        written.extend([src, dst]);
+        if let Err(stuck) = self.flush(&written) {
+            let page = stuck.into_iter().next().unwrap();
+            return Err(RenameRefusal::Unwritten(self.spelling(&page)));
+        }
+        let pages = |set: BTreeSet<String>| set.into_iter().map(PageId::from).collect();
+        Ok((pages(seen.changed), pages(seen.skipped)))
+    }
+
+    /// The alias spelling move (§2, Q4): under its reservation the caller
+    /// moved `page`'s directory entry to `to`, another spelling of the same
+    /// entry. The page keeps its key, buffer, drafts and queued requests;
+    /// its I/O, path lock and held index follow `to`.
+    pub fn respell(&self, page: &PageId, to: &PageId) {
+        let graph = &self.store.graph;
+        let lock = graph.page_lock(&graph.root.join(to.as_str()));
+        let key = self.driver.shared.with_state(|state| {
+            let host = &mut state.progress.host;
+            let key = host
+                .keys
+                .iter()
+                .find(|key| host.fs.spelling(key) == page.as_str())
+                .cloned()?;
+            host.respell(&key, to.as_str(), lock);
+            Some(key)
+        });
+        if key.is_some() {
+            let _writer = self.store.writer.lock().unwrap();
+            graph.held.respell(
+                &graph.root.join(page.as_str()),
+                graph.root.join(to.as_str()),
+            );
+        }
+    }
+
+    /// A key's current spelling, as the page it names.
+    fn spelling(&self, key: &str) -> PageId {
+        let state = self.driver.shared.state.lock().unwrap();
+        PageId::from(state.progress.host.fs.spelling(key))
+    }
+
+    /// The pages among `keys` with unsaved input (Q3), including an
+    /// admitted operation's pages before its draft applies (a retiring
+    /// draft is not input: its page is saved).
     fn unsaved(&self, keys: &BTreeSet<PageKey>) -> BTreeSet<PageKey> {
         let state = self.driver.shared.state.lock().unwrap();
         let host = &state.progress.host;
@@ -88,6 +260,10 @@ impl PageHost {
         keys.iter()
             .filter(|key| {
                 host.pages.get(*key).is_some_and(|page| !page.clean())
+                    || host.worker.as_ref().is_some_and(|w| {
+                        matches!(&w.application,
+                            Some(Application::Operation { pages, .. }) if pages.contains_key(*key))
+                    })
                     || queued.iter().any(|request| match &request.kind {
                         RequestKind::Submit { .. } => &request.page == *key,
                         RequestKind::Move { receiver, .. } => {

@@ -1283,6 +1283,9 @@ fn v5_a_restore_waits_for_a_collected_publication_in_flight() {
 #[path = "binding_stop_tests.rs"]
 mod stop_saved;
 
+#[path = "binding_rename_tests.rs"]
+mod rename;
+
 /// REVIEW-3a V4, amendment A-V4: while a host holds a page, its publication
 /// consumer is the page's only index writer. The reviewer's schedule: the
 /// host has not observed disk B yet (another transaction holds the page's
