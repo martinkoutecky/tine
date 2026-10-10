@@ -47,6 +47,9 @@ export interface NativeTineLinks {
   handoff(target: LinkTarget): Promise<boolean>;
   subscribe(cb: () => void): Promise<() => void>;
   inbox?: NativeShareInbox;
+  /** Android: show the keyboard for the input a route just focused (the OS
+   * shows it only for a tapped focus). Rejects off Android. */
+  showKeyboard?(): Promise<void>;
 }
 export function nativeTineLinks(
   call: <T>(command: string, args?: Record<string, unknown>) => Promise<T>,
@@ -58,6 +61,10 @@ export function nativeTineLinks(
     take: () => call("take_tine_links"),
     handoff: (target) => call("handoff_tine_link", { target }),
     subscribe,
+    showKeyboard: async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("plugin:native-integrations|showKeyboard");
+    },
     inbox: {
       list: () => call("share_inbox_list"),
       prepare: (id, prepared) => call("share_inbox_prepare", { id, prepared }),

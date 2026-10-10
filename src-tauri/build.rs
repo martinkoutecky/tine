@@ -114,7 +114,8 @@ fn main() {
     // and the native owner consumes every gesture with nowhere to send it —
     // invisible from Rust and from the emulator alike (master 61a663291 line).
     // `native-integrations` (src/native_integrations.rs) is inlined the same
-    // way; its frontend listens for `inboxChanged` (src/nativeTineLinks.ts).
+    // way; its frontend listens for `inboxChanged` and asks `showKeyboard`
+    // after a route focuses an input (src/nativeTineLinks.ts).
     tauri_build::try_build(
         tauri_build::Attributes::new()
             .plugin(
@@ -126,7 +127,7 @@ fn main() {
             .plugin(
                 "native-integrations",
                 tauri_build::InlinedPlugin::new()
-                    .commands(&["registerListener", "removeListener"])
+                    .commands(&["registerListener", "removeListener", "showKeyboard"])
                     .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
             ),
     )
