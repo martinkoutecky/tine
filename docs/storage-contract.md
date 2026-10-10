@@ -101,17 +101,23 @@ never from rereading every page's preamble. Proof:
 
 While a page host holds a page (STEP3 §5, amendment A-V4), its publication
 consumer, or a reservation's transaction, is the page's only index writer
-(R13). `page()` then answers the bytes that writer last indexed (or, before
-its first publication, parses the file without publishing), and a full or
-on-demand build parses those same bytes; a build that read a page before its
-hold began declines its install. A newer disk read indexed there could be
+(R13). Held bytes are the page's *source*, not an overlay (A-H1): `page()`
+answers the bytes that writer last indexed before reading anything of the
+file (or, before its first publication, parses the file without publishing),
+and every full or on-demand build takes the page's presence, name and
+document from those same bytes, so a held page the owner indexed survives
+its file's removal and one it indexed absent is left out. The held key is
+the page's path under the store's own root (`PagePath`), so every platform's
+root spelling keys the same page. A build that read a page before its hold
+began declines its install. A newer disk read indexed there could be
 overwritten by an older host event still on its way. A write computed from a
 page parses the bytes whose revision guards it (`Store::read` then
 `Store::page_of`; A-V4b), never `page()`. With no host running nothing is
 held and both paths read the file. Proof:
 `crates/tine-store/src/page_host/binding_tests.rs`
 `v4_a_read_or_rebuild_never_indexes_a_held_page`,
-`crates/tine-store/src/model/held_index.rs`,
+`crates/tine-store/src/model/held_index.rs` (the `review2_*` tests and the
+seam guard),
 `crates/tine-graph-features/tests/page_rename_merge.rs`
 `merge_keeps_edits_held_pages_have_not_indexed`.
 

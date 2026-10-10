@@ -395,7 +395,8 @@ impl Core {
                 continue;
             };
             // STEP3 §5: the owner observes, indexes and publishes this read.
-            if let Some(key) = self.graph.held.key(&path) {
+            let held = self.graph.page_path_of(&path);
+            if let Some(key) = held.and_then(|held| self.graph.held.key(&held)) {
                 forwarded.push(key);
                 retry_baseline(&mut now, &path, before);
                 continue;

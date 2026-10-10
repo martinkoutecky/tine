@@ -1926,7 +1926,11 @@ impl Store {
             if self.is_closed() {
                 return Err(StoreError::Closed);
             }
-            let (id, path, entry) = self.page_target(id)?;
+            let (id, path) = self.page_spot(id)?;
+            if let Some(doc) = self.held_page(&path)? {
+                return self.page_read(id, doc);
+            }
+            let entry = self.page_entry(&id, &path)?;
             let doc = self.parse_page(&path, &entry, false)?;
             return self.page_read(id, doc);
         }
@@ -1937,7 +1941,12 @@ impl Store {
         if self.is_closed() {
             return Err(StoreError::Closed);
         }
-        let (id, path, entry) = self.page_target(id)?;
+        let (id, path) = self.page_spot(id)?;
+        // A held page is answered before its file is read (A-H1).
+        if let Some(doc) = self.held_page(&path)? {
+            return self.page_read(id, doc);
+        }
+        let entry = self.page_entry(&id, &path)?;
         let canonical = self.canonical_claim(&entry);
         let read = self.page_read(id, self.parse_page(&path, &entry, canonical)?)?;
         if self.graph.cache_generation() != before_generation

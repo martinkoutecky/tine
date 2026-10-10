@@ -210,7 +210,11 @@ impl Live {
         }
         let app = dir.path().join("app");
         fs::create_dir_all(&app).unwrap();
-        let store = Arc::new(Store::open(&graph, Default::default()).unwrap().0);
+        // The root in a non-canonical spelling (as Windows temp dirs come):
+        // the host's holds, the watcher's events and the build's lookups
+        // must all key pages by the store's resolved root (A-V4).
+        let given = graph.join("pages").join("..");
+        let store = Arc::new(Store::open(&given, Default::default()).unwrap().0);
         // A loaded index: what it holds afterwards was published to it.
         store.whole_graph_reconciled().unwrap();
         let root = store.graph.root.clone();

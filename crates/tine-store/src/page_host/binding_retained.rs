@@ -247,8 +247,8 @@ impl PageHost {
         if key.is_some() {
             let _writer = self.store.writer.lock().unwrap();
             graph.held.respell(
-                &graph.root.join(page.as_str()),
-                graph.root.join(to.as_str()),
+                &graph.page_path(page.as_str()),
+                graph.page_path(to.as_str()),
             );
         }
     }

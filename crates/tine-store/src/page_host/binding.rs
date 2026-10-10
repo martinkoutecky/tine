@@ -26,7 +26,7 @@ pub struct PageHost {
     index_faults: Arc<std::sync::atomic::AtomicU32>,
     /// Each publication's edit kinds as delivered (tests, Rule 8).
     #[cfg(test)]
-    published_kinds: Arc<Mutex<Vec<(PageKey, Vec<EditKind>)>>>,
+    published_kinds: PublishedKinds,
 }
 
 /// Why a command did not admit its request. Nothing was sent: the window
@@ -734,7 +734,7 @@ struct Bridge {
     #[cfg(test)]
     index_faults: Arc<std::sync::atomic::AtomicU32>,
     #[cfg(test)]
-    published_kinds: Arc<Mutex<Vec<(PageKey, Vec<EditKind>)>>>,
+    published_kinds: PublishedKinds,
 }
 
 impl Sink for Bridge {
@@ -762,7 +762,7 @@ impl Sink for Bridge {
         {
             let _writer = store.writer.lock().unwrap();
             for (key, spelling) in delivery.claimed {
-                store.watch.hold(store.graph.root.join(spelling), key);
+                store.watch.hold(store.graph.page_path(&spelling), key);
             }
             for publication in delivery.publications {
                 let indexing = match owner(&publication.key) {
@@ -775,7 +775,7 @@ impl Sink for Bridge {
             }
             for (key, spelling) in delivery.evicted {
                 if owner(&key) == Owner::Watcher {
-                    store.watch.release_hold(&store.graph.root.join(spelling));
+                    store.watch.release_hold(&store.graph.page_path(&spelling));
                 }
             }
         }
@@ -812,8 +812,9 @@ fn index(store: &Store, publication: &Publication) -> bool {
         return false;
     }
     let graph = &store.graph;
-    let path = graph.root.join(&publication.spelling);
-    graph.held.indexed(&path, || publication.bytes.clone());
+    let held = graph.page_path(&publication.spelling);
+    graph.held.indexed(&held, || publication.bytes.clone());
+    let path = held.to_path_buf();
     let id = FileId::from(publication.spelling.clone());
     let bytes = publication.bytes.as_deref();
     let rev = bytes.map(FileRev::from_bytes);
@@ -914,6 +915,9 @@ fn page_mail(store: &Store, binding: u64, key: PageKey, mail: Mail, facts: MailF
 
 /// The window's page-mail sink, kept across a relaunch.
 type MailSink = Arc<Mutex<Box<dyn FnMut(PageMail) + Send>>>;
+/// Each publication's edit kinds as delivered (tests, Rule 8).
+#[cfg(test)]
+type PublishedKinds = Arc<Mutex<Vec<(PageKey, Vec<EditKind>)>>>;
 
 /// A binding's launch parameters (`PageHost::start`).
 #[derive(Clone)]
@@ -1045,7 +1049,7 @@ impl PageHost {
             for (key, spelling) in &recovered {
                 store
                     .watch
-                    .hold(graph.root.join(spelling.as_str()), key.clone());
+                    .hold(graph.page_path(spelling.as_str()), key.clone());
             }
             this.driver.shared.with_state(|state| {
                 state
@@ -1177,7 +1181,7 @@ impl PageHost {
             kind: RequestKind::Open,
         };
         let _writer = store.writer.lock().unwrap();
-        let path = store.graph.root.join(spelling.as_str());
+        let path = store.graph.page_path(spelling.as_str());
         store.watch.hold(path.clone(), key.clone());
         let admitted = self.admit(request, vec![]);
         if admitted.is_err()

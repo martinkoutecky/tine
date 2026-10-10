@@ -7,6 +7,7 @@ mod checkpoint_state;
 mod collapse_only;
 pub(crate) mod held_index;
 pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
+pub(crate) use held_index::{PagePath, Source};
 mod layout_retention;
 pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
@@ -2453,6 +2454,7 @@ impl Graph {
     }
 
     /// List all pages and journals in the graph.
+    #[cfg(test)]
     pub(crate) fn list_pages(&self) -> Vec<PageEntry> {
         self.list_pages_shared().as_ref().clone()
     }
@@ -2897,11 +2899,13 @@ impl Graph {
     /// (the background warm shares its parallel parse, `parse_pages_parallel`).
     ///
     fn load_all_pages(&self) -> PageCacheBuild {
-        let entries = self.list_pages();
+        let listed = self.list_pages_shared();
+        let (entries, _) = self.build_sources(&listed, listed.as_ref().clone());
         let mut built = PageCacheBuild::with_capacity(entries.len());
-        let shards =
-            parse_pages_parallel(entries, &|| true, &|e| self.parse_page_entry_isolated(e))
-                .expect("an unstoppable parse always finishes");
+        let shards = parse_pages_parallel(entries, &|| true, &|(e, source)| {
+            self.parse_page_entry_isolated(e, source)
+        })
+        .expect("an unstoppable parse always finishes");
         for parsed in shards.into_iter().flatten() {
             built.collect(parsed);
         }
@@ -3101,6 +3105,11 @@ impl Graph {
         // Journal identity is the filename date, so the duplicate-day collapse
         // needs no content; non-journal entries pass through it unchanged.
         let entries = dedup_journal_days(listed.clone(), &journal_format, name_format);
+        // Held pages are sourced from their owners' bytes (A-H1), including
+        // one whose file the listing no longer finds.
+        let (entries, held_only) = self.build_sources(&listed, entries);
+        let mut listed = listed;
+        listed.extend(held_only);
         pass.listing_us = diag::micros(began.elapsed());
         pass.entries = entries.len() as u64;
         let mut built = PageCacheBuild::with_capacity(entries.len());
@@ -3122,7 +3131,7 @@ impl Graph {
         // Each file's stamp comes from its directory entry in the listing
         // above (no per-file open on Windows), taken before its read.
         let listing_stamp = |path: &Path| listing_stamps.get(path).cloned();
-        let parse_one = |mut e: PageEntry| {
+        let parse_one = |(mut e, source): (PageEntry, Source)| {
             let phase = std::time::Instant::now();
             let (stamp, observed) = match listing_stamp(&e.path) {
                 Some((stamp, observed)) => (Some(stamp), observed),
@@ -3131,10 +3140,8 @@ impl Graph {
             clock.stat(phase.elapsed());
             let path = e.path.clone();
             let phase = std::time::Instant::now();
-            let (read, held) = match self.build_input(&e.path) {
-                Ok((content, held)) => (Ok(content), held),
-                Err(error) => (Err(error), false),
-            };
+            let held = !matches!(source, Source::Disk);
+            let read = self.source_content(&e.path, &source);
             let read_len = match &read {
                 Ok(content) => content.as_ref().map(String::len),
                 Err(_) => None,
@@ -3145,13 +3152,9 @@ impl Graph {
                 // Held, with nothing indexed yet: its owner indexes it.
                 Ok(None) => Ok(None),
                 Ok(Some(content)) => {
-                    if e.kind == PageKind::Page {
-                        match page_identity::effective_page_name_from_text(
-                            &e.path, &e.name, &content,
-                        ) {
-                            Ok(name) => e.name = name,
-                            Err(error) => name_failure = Some(error),
-                        }
+                    match self.name_from(&e, &content) {
+                        Ok(name) => e.name = name,
+                        Err(error) => name_failure = Some(error),
                     }
                     clock.crlf(line_endings::convention(Some(&content)) == "\r\n");
                     let phase = std::time::Instant::now();
@@ -4491,10 +4494,10 @@ fn newly_reclassified_page_property_line(
 /// A shard whose thread panicked despite per-page isolation is omitted with a
 /// diagnostic line. The one parallel page parse: the on-demand build and the
 /// background warm both use it.
-fn parse_pages_parallel<T: Send>(
-    entries: Vec<PageEntry>,
+fn parse_pages_parallel<I: Send, T: Send>(
+    entries: Vec<I>,
     keep_going: &(impl Fn() -> bool + Sync),
-    parse: &(impl Fn(PageEntry) -> T + Sync),
+    parse: &(impl Fn(I) -> T + Sync),
 ) -> Option<Vec<Vec<T>>> {
     let workers = page_cache_worker_count();
     let per = if workers <= 1 || entries.len() < 64 {
@@ -4503,13 +4506,13 @@ fn parse_pages_parallel<T: Send>(
         entries.len().div_ceil(workers)
     };
     // Drain into owned contiguous chunks (no clone of PageEntry).
-    let mut chunks: Vec<Vec<PageEntry>> = Vec::with_capacity(workers);
+    let mut chunks: Vec<Vec<I>> = Vec::with_capacity(workers);
     let mut it = entries.into_iter().peekable();
     while it.peek().is_some() {
         chunks.push(it.by_ref().take(per).collect());
     }
     let stopped = std::sync::atomic::AtomicBool::new(false);
-    let run = |chunk: Vec<PageEntry>| {
+    let run = |chunk: Vec<I>| {
         let mut out = Vec::with_capacity(chunk.len());
         for (i, entry) in chunk.into_iter().enumerate() {
             if i % 24 == 0 && (stopped.load(std::sync::atomic::Ordering::Relaxed) || !keep_going())

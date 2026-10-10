@@ -64,6 +64,16 @@ const ALLOWED_GRAPH_UNIT_CALLS: &[(&str, &str, &str)] = &[
         "invalidate_cache",
     ),
     (
+        "crates/tine-store/src/model/held_index.rs",
+        "review2_rebuild_preserves_a_held_file_missing_from_disk",
+        "invalidate_cache",
+    ),
+    (
+        "crates/tine-store/src/model/held_index.rs",
+        "review2_ondemand_names_a_held_page_from_owner_bytes",
+        "invalidate_cache",
+    ),
+    (
         "crates/tine-store/src/model.rs",
         "search_cache_isolates_one_page_projection_panic",
         "warm_cache_cancellable",

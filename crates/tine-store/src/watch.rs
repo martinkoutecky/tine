@@ -945,13 +945,13 @@ impl WatchHandle {
 
     /// Hand `path`'s index to its owner, `key` (STEP3 §5). The caller holds
     /// the writer, which excludes a reconcile already running for it.
-    pub(crate) fn hold(&self, path: PathBuf, key: String) {
+    pub(crate) fn hold(&self, path: crate::model::PagePath, key: String) {
         self.core.graph.held.hold(path, key);
     }
 
     /// Hand `path`'s index back to the watcher, which reconciles it against
     /// the owner's last publication at once. The caller holds the writer.
-    pub(crate) fn release_hold(&self, path: &Path) {
+    pub(crate) fn release_hold(&self, path: &crate::model::PagePath) {
         if self.core.graph.held.release(path) {
             self.reconcile_raced(&HashSet::from([path.to_path_buf()]));
         }
@@ -959,14 +959,24 @@ impl WatchHandle {
 
     #[cfg(test)]
     pub(crate) fn holds(&self, path: &Path) -> bool {
-        self.core.graph.held.key(path).is_some()
+        let graph = &self.core.graph;
+        graph
+            .page_path_of(path)
+            .is_some_and(|path| graph.held.key(&path).is_some())
     }
 
     /// The owner stopped: every held path returns to the watcher. The
     /// caller holds the writer.
     pub(crate) fn release_holds(&self) {
         *self.core.forward.lock().unwrap() = None;
-        let paths: HashSet<PathBuf> = self.core.graph.held.release_all().into_iter().collect();
+        let paths: HashSet<PathBuf> = self
+            .core
+            .graph
+            .held
+            .release_all()
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
         self.reconcile_raced(&paths);
     }
 

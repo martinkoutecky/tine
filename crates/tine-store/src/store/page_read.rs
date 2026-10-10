@@ -10,6 +10,14 @@ impl Store {
         &self,
         id: &PageId,
     ) -> Result<(PageId, PathBuf, PageEntry), StoreError> {
+        let (id, path) = self.page_spot(id)?;
+        let entry = self.page_entry(&id, &path)?;
+        Ok((id, path, entry))
+    }
+
+    /// [`Self::page_target`]'s checks that read no page file: its disk
+    /// spelling and path, refusing a symlinked page or one outside the areas.
+    pub(super) fn page_spot(&self, id: &PageId) -> Result<(PageId, PathBuf), StoreError> {
         if self.as_page(&id.file()).is_none() {
             return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
         }
@@ -25,11 +33,32 @@ impl Store {
         if fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
             return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
         }
-        let entry = self
-            .graph
-            .entry_for_path(&path)
-            .ok_or_else(|| StoreError::InvalidTarget(id.as_str().to_owned()))?;
-        Ok((id, path, entry))
+        Ok((id, path))
+    }
+
+    /// The listing entry of the page file at `path` (its preamble names it).
+    pub(super) fn page_entry(&self, id: &PageId, path: &Path) -> Result<PageEntry, StoreError> {
+        self.graph
+            .entry_for_path(path)
+            .ok_or_else(|| StoreError::InvalidTarget(id.as_str().to_owned()))
+    }
+
+    /// A read of a page a host holds (A-V4, A-H1): its owner's indexed
+    /// bytes, named and parsed from them, with no read of the file; one
+    /// its owner has not indexed yet is parsed from the file, unpublished.
+    /// None for a page no host holds.
+    pub(super) fn held_page(&self, path: &Path) -> Result<Option<PageDto>, StoreError> {
+        let read = match self.graph.source(path) {
+            crate::model::Source::Disk => return Ok(None),
+            crate::model::Source::Held(bytes) => {
+                page_dto(|| self.graph.page_dto_for_bytes(path, &bytes))
+            }
+            crate::model::Source::HeldAbsent => Err(StoreError::NotFound),
+            crate::model::Source::HeldUnindexed => {
+                page_dto(|| self.graph.load_by_validated_path(path))
+            }
+        };
+        read.map(Some)
     }
 
     /// A parsed page as a read: its revision and read-only state.
@@ -50,7 +79,8 @@ impl Store {
         })
     }
 
-    /// Parse one page file (`Graph::read_page`; a held page: A-V4).
+    /// Parse one page file no host holds: the canonical claimant through
+    /// the cache (which it reconciles), any other file directly.
     pub(super) fn parse_page(
         &self,
         path: &Path,
@@ -64,7 +94,11 @@ impl Store {
             {
                 panic!("deterministic test page parser panic");
             }
-            self.graph.read_page(path, entry, canonical)
+            if canonical {
+                self.graph.load_page(entry).map(Some)
+            } else {
+                self.graph.load_by_validated_path(path)
+            }
         })
     }
 
@@ -88,8 +122,9 @@ impl Store {
         let _writer = self.writer.lock().unwrap();
         let (id, path, _) = self.page_target(id)?;
         let bytes = fs::read(&path).map_err(StoreError::from_io)?;
-        self.watch.hold(path.clone(), id.as_str().to_owned());
-        self.graph.held.indexed(&path, || Some(Arc::from(bytes)));
+        let held = self.graph.page_path(id.as_str());
+        self.watch.hold(held.clone(), id.as_str().to_owned());
+        self.graph.held.indexed(&held, || Some(Arc::from(bytes)));
         Ok(())
     }
 

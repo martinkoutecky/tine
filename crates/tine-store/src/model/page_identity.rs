@@ -859,30 +859,40 @@ pub(crate) fn launch_listing_walk(graph: &Graph) -> LaunchListing {
             tracked_only.push(path);
             return;
         }
-        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-            return;
-        };
-        let (name, kind, date_key) = if path.starts_with(&journals) {
-            match format.parse(stem) {
-                Some(date) => (
-                    format.title(date),
-                    PageKind::Journal,
-                    Some(date.ordinal_key()),
-                ),
-                None => (stem.to_owned(), PageKind::Journal, None),
-            }
-        } else {
-            (decode_page_name(stem, name_format), PageKind::Page, None)
-        };
-        entries.push(PageEntry {
-            name,
-            kind,
-            date_key,
-            rel_path: Some(graph.rel_path(&path).into()),
-            path,
-        });
+        entries.extend(listed_entry(graph, (&format, &journals, name_format), path));
     });
     (entries, tracked_only, errors, stamps)
+}
+
+/// The listing's entry for the graph text file `path`, named from its file
+/// name alone (no file opened): a journal by its date, an ordinary page by
+/// its decoded stem. `formats`: the journal format, the journals
+/// directory and the file name format, read once per listing.
+pub(super) fn listed_entry(
+    graph: &Graph,
+    (format, journals, name_format): (&JournalFormat, &Path, FileNameFormat),
+    path: PathBuf,
+) -> Option<PageEntry> {
+    let stem = path.file_stem().and_then(|stem| stem.to_str())?;
+    let (name, kind, date_key) = if path.starts_with(journals) {
+        match format.parse(stem) {
+            Some(date) => (
+                format.title(date),
+                PageKind::Journal,
+                Some(date.ordinal_key()),
+            ),
+            None => (stem.to_owned(), PageKind::Journal, None),
+        }
+    } else {
+        (decode_page_name(stem, name_format), PageKind::Page, None)
+    };
+    Some(PageEntry {
+        name,
+        kind,
+        date_key,
+        rel_path: Some(graph.rel_path(&path).into()),
+        path,
+    })
 }
 
 /// What [`launch_listing_walk`] returns: page entries, tracked-only files,
