@@ -169,19 +169,55 @@ impl PageHost {
     /// Stop the host if the stop is ready, then join the driver (§7 step
     /// 4): a delivery in flight finishes first (with admission closed, every
     /// host step runs on the driver and is delivered with it), and the
-    /// watcher indexes every page again. The binding holds no host until a
-    /// fresh `start` (the "restoring" state). Otherwise the host is handed
-    /// back.
-    pub fn stop_finish(self) -> Result<(), Self> {
+    /// watcher indexes every page again. The binding holds no host until
+    /// `Stopped::relaunch` (the "restoring" state). Otherwise the host is
+    /// handed back.
+    pub fn stop_finish(self) -> Result<Stopped, Self> {
         let stopped = self.driver.shared.with_state(|state| {
             stop_state(&state.progress, &state.book) == StopState::Ready
                 && state.progress.with_host(|host| host.switch_finish()) == Disposition::Applied
         });
         if stopped {
+            let launch = self.launch.clone();
             drop(self);
-            Ok(())
+            Ok(Stopped { launch })
         } else {
             Err(self)
+        }
+    }
+
+    /// A whole stop for a backup restore or a switch (§6 steps 3–5, §7
+    /// steps 3–4): begin it once the window consumed every answer up to
+    /// `consumed_last_id`, wait for its barrier, then stop. When it cannot
+    /// complete without losing custody, admission reopens and the host
+    /// comes back with the affected pages (none: the window had more to
+    /// drain, or trash custody cannot be listed); today's restore likewise
+    /// stops when its flush fails.
+    pub fn stop_saved(
+        self,
+        consumed_last_id: u64,
+        mode: StopMode,
+    ) -> Result<Stopped, (Self, BTreeSet<PageKey>)> {
+        if !self.stop_begin(consumed_last_id, mode) {
+            return Err((self, BTreeSet::new()));
+        }
+        let mut host = self;
+        loop {
+            match host.stop_state() {
+                StopState::Waiting => {
+                    let shared = &host.driver.shared;
+                    let state = shared.state.lock().unwrap();
+                    drop(shared.wait(state, std::time::Duration::from_millis(100)));
+                }
+                StopState::Ready => match host.stop_finish() {
+                    Ok(stopped) => return Ok(stopped),
+                    Err(back) => host = back,
+                },
+                StopState::Aborted(pages) => {
+                    host.stop_abort();
+                    return Err((host, pages));
+                }
+            }
         }
     }
 }

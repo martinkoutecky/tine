@@ -980,3 +980,6 @@ fn q6_a_failed_publication_never_overwrites_a_retained_transaction() {
     assert_eq!(live.indexed(&key), Some(content_rev("- t\n")));
     live.host.stop();
 }
+
+#[path = "binding_stop_tests.rs"]
+mod stop_saved;

@@ -19,6 +19,8 @@ use tine_core::model::PageDto;
 pub struct PageHost {
     driver: Driver<ProductionIo, SystemClock>,
     store: Arc<Store>,
+    /// What a relaunch after a restore binds again (§7 step 6).
+    launch: Launch,
     /// Index publications to fail before the next success (tests).
     #[cfg(test)]
     index_faults: Arc<std::sync::atomic::AtomicU32>,
@@ -650,7 +652,7 @@ impl Book {
 struct Bridge {
     store: Arc<Store>,
     binding: u64,
-    mail: Box<dyn FnMut(PageMail) + Send>,
+    mail: MailSink,
     #[cfg(test)]
     index_faults: Arc<std::sync::atomic::AtomicU32>,
 }
@@ -694,7 +696,7 @@ impl Sink for Bridge {
         }
         for (key, mail, facts) in delivery.mail {
             let mail = page_mail(store, self.binding, key, mail, facts);
-            (self.mail)(mail);
+            (self.mail.lock().unwrap())(mail);
         }
         results
     }
@@ -822,6 +824,35 @@ fn page_mail(store: &Store, binding: u64, key: PageKey, mail: Mail, facts: MailF
     }
 }
 
+/// The window's page-mail sink, kept across a relaunch.
+type MailSink = Arc<Mutex<Box<dyn FnMut(PageMail) + Send>>>;
+
+/// A binding's launch parameters (`PageHost::start`).
+#[derive(Clone)]
+struct Launch {
+    store: Arc<Store>,
+    app_data: std::path::PathBuf,
+    graph_id: String,
+    binding: u64,
+    mail: MailSink,
+}
+
+/// A host stopped for a restore (§7 step 4): the binding holds no host,
+/// and only `relaunch` binds one again, on the tree as it then is.
+#[must_use = "a stopped binding is relaunched after the restore"]
+pub struct Stopped {
+    launch: Launch,
+}
+
+impl Stopped {
+    /// Launch one fresh host for the same binding and page-mail sink (§7
+    /// step 6), on success and on a partial restore failure alike. The
+    /// error says why no host could start, as `PageHost::start`'s does.
+    pub fn relaunch(self) -> Result<PageHost, String> {
+        PageHost::launch(self.launch)
+    }
+}
+
 /// The version a request carries when it was typed on no version the host
 /// holds: host versions start at 1, so it is always stale.
 const STALE: u64 = 0;
@@ -844,6 +875,24 @@ impl PageHost {
         binding: u64,
         mail: impl FnMut(PageMail) + Send + 'static,
     ) -> Result<Self, String> {
+        Self::launch(Launch {
+            store: store.clone(),
+            app_data: app_data.to_path_buf(),
+            graph_id: graph_id.into(),
+            binding,
+            mail: Arc::new(Mutex::new(Box::new(mail))),
+        })
+    }
+
+    fn launch(launch: Launch) -> Result<Self, String> {
+        let Launch {
+            store,
+            app_data,
+            graph_id,
+            binding,
+            ..
+        } = &launch;
+        let (app_data, graph_id, binding) = (app_data.as_path(), graph_id.as_str(), *binding);
         let graph = store.graph.clone();
         let trash = crate::model::trash_root(&graph.root).join("pages");
         let mut io = ProductionIo::new(&graph.root, app_data, graph_id, &trash)
@@ -864,7 +913,7 @@ impl PageHost {
         let bridge = Bridge {
             store: store.clone(),
             binding,
-            mail: Box::new(mail),
+            mail: launch.mail.clone(),
             #[cfg(test)]
             index_faults: index_faults.clone(),
         };
@@ -884,6 +933,7 @@ impl PageHost {
         let this = Self {
             driver,
             store: store.clone(),
+            launch: launch.clone(),
             #[cfg(test)]
             index_faults,
         };
