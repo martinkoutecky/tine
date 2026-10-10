@@ -831,15 +831,64 @@ fn host_and_oracle_stay_private_unwired_and_runtime_has_no_filesystem_escape() {
     }
     visit(&root, &root.join("crates"));
     visit(&root, &root.join("src-tauri/src"));
-    for source in [
-        include_str!("mod.rs"),
-        include_str!("drafts.rs"),
-        include_str!("operations.rs"),
-        include_str!("progress.rs"),
-        include_str!("io.rs"),
-        include_str!("driver.rs"),
-        include_str!("binding.rs"),
-    ] {
+    let runtime = [
+        ("mod.rs", include_str!("mod.rs")),
+        ("binding.rs", include_str!("binding.rs")),
+        ("binding_retained.rs", include_str!("binding_retained.rs")),
+        ("draft_worker.rs", include_str!("draft_worker.rs")),
+        ("drafts.rs", include_str!("drafts.rs")),
+        ("driver.rs", include_str!("driver.rs")),
+        ("io.rs", include_str!("io.rs")),
+        ("operations.rs", include_str!("operations.rs")),
+        ("progress.rs", include_str!("progress.rs")),
+        ("save.rs", include_str!("save.rs")),
+    ];
+    // Every runtime file is scanned: a file split out of a scanned one must
+    // join this list. Any other file here is the adapter, or a module
+    // declared under `#[cfg(test)]` or inside such a module.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/page_host");
+    let declares = |parent: &str, file: &str, gated: bool| {
+        let stem = file.trim_end_matches(".rs");
+        let lines: Vec<_> = parent.lines().collect();
+        lines.iter().enumerate().any(|(i, line)| {
+            let named = *line == format!("mod {stem};") || *line == format!("#[path = \"{file}\"]");
+            named && (!gated || (i > 0 && lines[i - 1] == "#[cfg(test)]"))
+        })
+    };
+    let mut test_only: BTreeSet<String> = BTreeSet::new();
+    let files: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    loop {
+        let before = test_only.len();
+        for file in &files {
+            let gated = runtime
+                .iter()
+                .any(|(_, parent)| declares(parent, file, true));
+            let nested = test_only.iter().any(|parent| {
+                declares(
+                    &std::fs::read_to_string(dir.join(parent)).unwrap(),
+                    file,
+                    false,
+                )
+            });
+            if gated || nested {
+                test_only.insert(file.clone());
+            }
+        }
+        if test_only.len() == before {
+            break;
+        }
+    }
+    for file in &files {
+        let runtime_file = runtime.iter().any(|(name, _)| name == file);
+        assert!(
+            runtime_file || file == "production.rs" || test_only.contains(file),
+            "page_host/{file} is runtime code the scan misses"
+        );
+    }
+    for (_, source) in runtime {
         for line in source
             .lines()
             .filter(|line| !line.trim_start().starts_with("//"))
