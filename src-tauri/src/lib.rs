@@ -835,6 +835,7 @@ pub fn run() {
                     app.state::<state::ClosingWindows>().begin(label);
                 }
                 tauri::WindowEvent::Destroyed => {
+                    spotlight::released(app, label, None);
                     let closing = app.state::<state::ClosingWindows>();
                     closing.end(label);
                     let released = state::release_window_graph(&state.graphs, label);
@@ -872,6 +873,8 @@ pub fn run() {
                 flight::persist_init(dir.join("diagnostics"));
             }
             diag("setup() begin");
+            // The persisted Spotlight index may hold a graph this launch never binds.
+            spotlight::launched(app.handle());
             #[cfg(target_os = "linux")]
             youtube_identity::install_extension(app);
             // The tray decides first whether main is created hidden
