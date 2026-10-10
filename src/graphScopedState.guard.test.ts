@@ -221,7 +221,8 @@ const LEGACY_COLLECTIONS = new Set([
   "src/document/save/engine.ts#saveChain",
   "src/document/save/engine.ts#lastSaveFailure",
   "src/document/save/engine.ts#saveFailureToasts",
-  "src/document/save/engine.ts#assetWriteChain",
+  // Moved unchanged out of the save engine (step 3b P2a), shared with settle.
+  "src/document/assetWrites.ts#pending",
   "src/document/save/engine.ts#groupOf",
   "src/document/save/engine.ts#sealedGroups",
   "src/document/save/engine.ts#saveAttempts",
