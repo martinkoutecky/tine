@@ -386,9 +386,9 @@ mod tests {
         fn both(dir: &Path) {
             let (src, dst) = (dir.join("src.md"), dir.join("dst.md"));
             fs::write(&src, b"one").unwrap();
-            crate::no_replace::move_file_noreplace(&src, &dst).unwrap();
+            super::super::no_replace::move_file_noreplace(&src, &dst).unwrap();
             fs::write(&src, b"two").unwrap();
-            let refused = crate::no_replace::move_file_noreplace(&src, &dst).unwrap_err();
+            let refused = super::super::no_replace::move_file_noreplace(&src, &dst).unwrap_err();
             assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists, "{dir:?}");
             rename_replace(&src, &dst).unwrap();
             assert_eq!(fs::read(&dst).unwrap(), b"two", "{dir:?}");
