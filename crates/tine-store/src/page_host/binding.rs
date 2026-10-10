@@ -381,6 +381,10 @@ pub(super) struct Book {
     /// own save version the index has applied (§4.4).
     index: BTreeMap<PageKey, (Text, u64)>,
     retry: BTreeMap<PageKey, Retry>,
+    /// Released keys whose release observation has not yet succeeded
+    /// (V2, REVIEW-3a): the retained transaction's index stands until the
+    /// host has read its bytes, so older publications keep waiting.
+    pub handover: BTreeSet<PageKey>,
     /// A collected delivery's publications are with the sink and their
     /// results not yet recorded (V5, REVIEW-3a).
     delivering: bool,
@@ -464,11 +468,11 @@ impl Book {
         }
         // Due retries go first: each is older than any event of its key,
         // and an event of its key has superseded it above.
-        let retained = &progress.host.retained;
+        let host = &progress.host;
         let due = self
             .retry
             .iter()
-            .filter(|(key, retry)| retry.due <= now && !retained.contains(*key))
+            .filter(|(key, retry)| retry.due <= now && !self.reserved(key, host))
             .map(|(_, retry)| retry.publication.clone());
         delivery.publications.splice(0..0, due.collect::<Vec<_>>());
         for key in self.evictable(&progress.host, &delivery.publications) {
@@ -570,8 +574,8 @@ impl Book {
     }
 
     /// Owned keys the host no longer holds, with nothing left to publish:
-    /// no page, job, reservation, queued request, retry or `pending`
-    /// publication (Q6: a dirty page closed by the window stays held until
+    /// no page, job, reservation or unobserved release, queued request,
+    /// retry or `pending` publication (Q6: a dirty page closed by the window stays held until
     /// its save and cleanup finish).
     fn evictable<F: HostIo>(&self, host: &Host<F>, pending: &[Publication]) -> Vec<PageKey> {
         self.owned
@@ -581,6 +585,7 @@ impl Book {
                     && !host.busy(key)
                     && !host.queue.iter().any(|request| &request.page == *key)
                     && !self.retry.contains_key(*key)
+                    && !self.handover.contains(*key)
                     && !pending.iter().any(|p| &p.key == *key)
             })
             .cloned()
@@ -631,14 +636,20 @@ impl Book {
     pub fn next_retry<F: HostIo>(&self, host: &Host<F>) -> Option<u64> {
         self.retry
             .iter()
-            .filter(|(key, _)| !host.retained.contains(*key))
+            .filter(|(key, _)| !self.reserved(key, host))
             .map(|(_, retry)| retry.due)
             .min()
     }
 
+    /// A retained writer publishes `key`'s index: its reservation holds,
+    /// or its release has not yet been observed (Q6, V2).
+    fn reserved<F: HostIo>(&self, key: &str, host: &Host<F>) -> bool {
+        host.retained.contains(key) || self.handover.contains(key)
+    }
+
     /// Who publishes `key`'s index now (§5, Q6).
     pub fn owner<F: HostIo>(&self, key: &str, host: &Host<F>) -> Owner {
-        if host.retained.contains(key) {
+        if self.reserved(key, host) {
             Owner::Reservation
         } else if self.owned.contains(key) {
             Owner::Consumer

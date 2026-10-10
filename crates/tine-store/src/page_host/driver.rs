@@ -100,6 +100,7 @@ impl<F: HostIo, C: Clock> State<F, C> {
                 Disposition::Waiting => {}
                 _ => {
                     self.observe.remove(&key);
+                    self.book.handover.remove(&key);
                     return Disposition::Applied;
                 }
             }

@@ -39,11 +39,13 @@ impl PageHost {
     /// End a retained transaction (§7 step 5), returning at once: the
     /// driver unreserves the keys and observes each, retrying a failed
     /// read with the save backoff. A save before that observation is safe:
-    /// its guard check reads the writer's change.
+    /// its guard check reads the writer's change. The transaction's index
+    /// stands until that observation succeeds (V2).
     pub fn release(&self, reservation: Reservation) {
         self.driver.shared.with_state(|state| {
             for key in reservation.keys {
                 state.progress.host.retained.remove(&key);
+                state.book.handover.insert(key.clone());
                 state.observe.entry(key).or_default();
             }
         });

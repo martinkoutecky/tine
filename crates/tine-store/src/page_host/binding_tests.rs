@@ -981,6 +981,61 @@ fn q6_a_failed_publication_never_overwrites_a_retained_transaction() {
     live.host.stop();
 }
 
+/// V2 (REVIEW-3a): the release's observation of a retained transaction
+/// fails; until an observation succeeds, P's old due retry still must not
+/// overwrite the transaction's index. Once the read recovers, the page's
+/// publications flow again.
+#[test]
+fn v2_a_failed_release_observation_keeps_the_handover_protection() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    live.index_faults(u32::MAX);
+    let id = live.submit(&key, "- p\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    live.until_disk(&key, "- p\n");
+    let reservation = live
+        .host
+        .reserve(|| vec![PageId::from("pages/a.md")], Input::Flush)
+        .unwrap();
+    live.index_faults(0);
+    live.transaction(&key, "- p\n", "- t\n");
+    live.until_indexed(&key, "- t\n");
+    settle();
+    live.faults(super::io::Phase::Read, 1_000_000);
+    live.host.release(reservation);
+    let until = Instant::now() + Duration::from_millis(1500);
+    while Instant::now() < until {
+        live.host.driver.shared.with_state(|_| {});
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        live.indexed(&key),
+        Some(content_rev("- t\n")),
+        "V2: P's retry overwrote the retained transaction's index after a failed observation"
+    );
+    live.host.driver.shared.with_state(|state| {
+        state
+            .progress
+            .host
+            .fs
+            .faults
+            .remove(&super::io::Phase::Read);
+    });
+    let page = live.wait(&key, "observed", |mail| {
+        mail.page
+            .as_ref()
+            .is_some_and(|p| p.disk == Some(token("- t\n")))
+    });
+    settle();
+    assert_eq!(live.indexed(&key), Some(content_rev("- t\n")));
+    let id = live
+        .submit(&key, "- after\n", page.page.unwrap().version, None)
+        .unwrap();
+    live.answer(&key, id);
+    live.until_indexed(&key, "- after\n");
+    live.host.stop();
+}
+
 /// V5 (REVIEW-3a): a restore is not ready while a publication the driver
 /// collected is still being delivered; once its result is recorded, an
 /// index failure keeps the restore waiting and a success lets it close.
