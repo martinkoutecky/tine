@@ -18,6 +18,11 @@ import UniformTypeIdentifiers
 ///   without one).
 /// - Movies and arbitrary files are not offered (the dossier scope is text,
 ///   links and images), and one web link per share.
+/// - A share is saved whole or not at all (review round 1, finding 6): an
+///   attachment that fails to load, a file that is not an image, a second
+///   different web link or an unsupported attachment refuses the share with
+///   a message; OG skips them. A repeated identical link is kept once.
+/// - Several text attachments are joined one per line (OG keeps the last).
 final class ShareViewController: UIViewController {
   private let label = UILabel()
 
@@ -52,60 +57,93 @@ final class ShareViewController: UIViewController {
     UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) ?? false
   }
 
-  private func save() async {
-    var text: String?
+  /// A share Tine refuses whole, with the reason shown to the user.
+  private struct Refusal: LocalizedError {
+    let errorDescription: String?
+    init(_ message: String) { errorDescription = message }
+  }
+
+  private static func imageResource(_ url: URL) throws -> ShareInbox.Resource {
+    guard isImage(url) else {
+      throw Refusal("Tine saves text, links and images; \(url.lastPathComponent) is another kind of file.")
+    }
+    return .init(data: try Data(contentsOf: url), source: nil, name: url.lastPathComponent, type: mimeType(url))
+  }
+
+  /// Every attachment, or a refusal: nothing is saved in part.
+  private func collect() async throws -> (text: String?, webURL: String?, resources: [ShareInbox.Resource]) {
+    var texts: [String] = []
     var webURL: String?
     var resources: [ShareInbox.Resource] = []
     let items = (extensionContext?.inputItems as? [NSExtensionItem]) ?? []
     for item in items {
       for attachment in item.attachments ?? [] {
-        do {
-          if attachment.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-            let loaded = try await attachment.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil)
-            guard let url = loaded as? URL else { continue }
-            if url.isFileURL {
-              if Self.isImage(url) {
-                resources.append(.init(data: try Data(contentsOf: url), source: nil,
-                                       name: url.lastPathComponent, type: Self.mimeType(url)))
-              }
-            } else if webURL == nil {
-              webURL = url.absoluteString
+        if attachment.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+          let loaded = try await attachment.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil)
+          let url: URL
+          switch loaded {
+          case let value as URL: url = value
+          case let data as Data:
+            guard let value = URL(dataRepresentation: data, relativeTo: nil) else {
+              throw Refusal("A shared link couldn't be read.")
             }
-          } else if attachment.hasItemConformingToTypeIdentifier(UTType.text.identifier) {
-            let loaded = try await attachment.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil)
-            if let value = loaded as? String { text = value }
-          } else if attachment.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-            let loaded = try await attachment.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil)
-            switch loaded {
-            case let image as UIImage:
-              if let data = image.pngData() {
-                resources.append(.init(data: data, source: nil, name: Self.timestampName("png"), type: "image/png"))
-              }
-            case let url as URL:
-              resources.append(.init(data: try Data(contentsOf: url), source: nil,
-                                     name: url.lastPathComponent, type: Self.mimeType(url)))
-            case let data as Data:
-              resources.append(.init(data: data, source: nil, name: Self.timestampName("png"), type: "image/png"))
-            default:
-              break
-            }
+            url = value
+          default: throw Refusal("A shared link couldn't be read.")
           }
-        } catch {
-          continue
+          if url.isFileURL {
+            resources.append(try Self.imageResource(url))
+          } else if webURL == nil || webURL == url.absoluteString {
+            webURL = url.absoluteString
+          } else {
+            throw Refusal("Tine saves one web link per share; this share had several.")
+          }
+        } else if attachment.hasItemConformingToTypeIdentifier(UTType.text.identifier) {
+          let loaded = try await attachment.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil)
+          switch loaded {
+          case let value as String: texts.append(value)
+          case let value as NSAttributedString: texts.append(value.string)
+          case let data as Data:
+            guard let value = String(data: data, encoding: .utf8) else {
+              throw Refusal("Shared text couldn't be read.")
+            }
+            texts.append(value)
+          default: throw Refusal("Shared text couldn't be read.")
+          }
+        } else if attachment.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+          let loaded = try await attachment.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil)
+          switch loaded {
+          case let image as UIImage:
+            guard let data = image.pngData() else { throw Refusal("A shared image couldn't be read.") }
+            resources.append(.init(data: data, source: nil, name: Self.timestampName("png"), type: "image/png"))
+          case let url as URL:
+            resources.append(try Self.imageResource(url))
+          case let data as Data:
+            resources.append(.init(data: data, source: nil, name: Self.timestampName("png"), type: "image/png"))
+          default:
+            throw Refusal("A shared image couldn't be read.")
+          }
+        } else {
+          throw Refusal("Tine saves text, links and images; this share had something else.")
         }
       }
     }
+    let text = texts.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.joined(separator: "\n")
+    return (text.isEmpty ? nil : text, webURL, resources)
+  }
+
+  private func save() async {
     let message: String
     var saved = false
     do {
-      try ShareInbox.publish(text: text, title: nil, url: webURL, resources: resources)
+      let share = try await collect()
+      try ShareInbox.publish(text: share.text, title: nil, url: share.webURL, resources: share.resources)
       message = "Saved to Tine"
       saved = true
     } catch {
-      message = "Couldn't save to Tine: \(error.localizedDescription)"
+      message = "Couldn't save to Tine: \(error.localizedDescription) Nothing was saved."
     }
     await MainActor.run { self.label.text = message }
-    try? await Task.sleep(nanoseconds: saved ? 700_000_000 : 2_000_000_000)
+    try? await Task.sleep(nanoseconds: saved ? 700_000_000 : 3_000_000_000)
     await MainActor.run {
       self.extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
     }
