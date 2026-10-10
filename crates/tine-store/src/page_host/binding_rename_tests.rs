@@ -28,7 +28,7 @@ fn rename(
 }
 
 /// Whether the test volume treats `A` and `a` as one entry.
-fn folds_case(root: &std::path::Path) -> bool {
+pub(super) fn folds_case(root: &std::path::Path) -> bool {
     let probe = root.join("Fold-Probe");
     fs::write(&probe, b"").unwrap();
     let folds = root.join("fold-probe").exists();
@@ -450,6 +450,101 @@ fn a_new_entry_never_takes_a_respelled_key() {
         live.disk("pages/A.md"),
         "- old\n",
         "B1: the other entry changed"
+    );
+    live.host.stop();
+}
+
+/// A distinct new entry with a fresh key (REVIEW-3a4 #1) that then moved
+/// on to `pages/b.md` (respelled under its reservation), with `body` typed
+/// into it and its saves failing: unsaved input under a key that is
+/// neither its spelling nor its spelling plus a suffix.
+pub(super) fn typed_fresh_entry(live: &Live, body: &str) -> PageKey {
+    let (old, _) = live.open("pages/a.md");
+    let a = || vec![PageId::from("pages/a.md")];
+    let reservation = live.host.reserve(a, Input::Refuse).unwrap();
+    fs::rename(live.root.join("pages/a.md"), live.root.join("pages/A.md")).unwrap();
+    live.host
+        .respell(&PageId::from("pages/a.md"), &PageId::from("pages/A.md"));
+    drop(reservation);
+    fs::write(live.root.join("pages/a.md"), "- new distinct entry\n").unwrap();
+    let (new, _) = live.open("pages/a.md");
+    assert_ne!(new, old);
+    let reservation = live.host.reserve(a, Input::Refuse).unwrap();
+    fs::rename(live.root.join("pages/a.md"), live.root.join("pages/b.md")).unwrap();
+    live.host
+        .respell(&PageId::from("pages/a.md"), &PageId::from("pages/b.md"));
+    drop(reservation);
+    let (again, page) = live.open("pages/b.md");
+    assert_eq!(again, new);
+    live.faults(super::super::io::Phase::PageTemp, 100);
+    let id = live.id();
+    let generation = live.host.generation();
+    let edit = live.dto("pages/b.md", body);
+    live.host
+        .submit(
+            generation,
+            id,
+            &new,
+            &edit,
+            page.version,
+            None,
+            &[EditKind::SaveBlock],
+        )
+        .unwrap();
+    live.answer(&new, id);
+    new
+}
+
+/// REVIEW-3a5: a retained writer's refusal names a page by its current
+/// spelling, never by its opaque key, under both input contracts. The key
+/// here has a fresh suffix and has since respelled, so neither the key
+/// nor the key without its suffix is the page.
+#[test]
+fn a_reservation_refusal_names_the_page_by_its_spelling() {
+    let live = Live::new(&[("pages/a.md", "- old\n")]);
+    if folds_case(&live.root) {
+        live.host.stop();
+        return;
+    }
+    typed_fresh_entry(&live, "- typed\n");
+    let refused = |input| -> Vec<String> {
+        let b = || vec![PageId::from("pages/b.md")];
+        let pages = live.host.reserve(b, input).unwrap_err();
+        pages.iter().map(|page| page.as_str().to_owned()).collect()
+    };
+    assert_eq!(
+        refused(Input::Refuse),
+        ["pages/b.md"],
+        "REVIEW-3a5: a refusal named the page by its opaque key"
+    );
+    assert_eq!(
+        refused(Input::Flush),
+        ["pages/b.md"],
+        "REVIEW-3a5: a flush refusal named the page by its opaque key"
+    );
+    live.host.stop();
+}
+
+/// REVIEW-3a5 neighbour: a host rename refused by a referrer's unsaved
+/// input names that referrer by its current spelling, which `pages.rs`
+/// looks its title up by.
+#[test]
+fn a_rename_refusal_names_a_fresh_key_referrer_by_its_spelling() {
+    let live = Live::new(&[("pages/a.md", "- old\n"), ("pages/t.md", "- t\n")]);
+    if folds_case(&live.root) {
+        live.host.stop();
+        return;
+    }
+    typed_fresh_entry(&live, "- see [[t]]\n");
+    assert_eq!(
+        rename(
+            &live,
+            &PageId::from("pages/t.md"),
+            &PageId::from("pages/u.md"),
+            &[PageId::from("pages/b.md")],
+            &map("t", "u")
+        ),
+        Err(RenameRefusal::Unsaved(PageId::from("pages/b.md")))
     );
     live.host.stop();
 }

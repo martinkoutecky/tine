@@ -78,7 +78,7 @@ pub(super) fn restore_hosted(
         Ok(stopped) => stopped,
         Err((host, pages)) => {
             *slot.write().unwrap() = PageHostSlot::Running(*host);
-            let pages: Vec<_> = pages.into_iter().collect();
+            let pages: Vec<_> = pages.iter().map(tine_store::PageId::as_str).collect();
             return Err(format!(
                 "restore-aborted: unsaved pages: {}",
                 pages.join(", ")

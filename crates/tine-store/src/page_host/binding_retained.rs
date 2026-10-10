@@ -105,14 +105,15 @@ impl PageHost {
     /// clean (typed, at risk or on an unknown base) or a submit or move the
     /// host admitted but has not applied. `Refuse` returns those pages;
     /// `Flush` releases, waits for their saves holding nothing, and retries,
-    /// returning the pages whose save cannot complete. The reservation
+    /// returning the pages whose save cannot complete. A returned page is
+    /// named by its current spelling, never by its opaque key. The reservation
     /// exists from the fence on, so an unwind out of the rediscovery or the
     /// check withdraws it (A-R1).
     pub fn reserve(
         &self,
         mut discover: impl FnMut() -> Vec<PageId>,
         input: Input,
-    ) -> Result<Reservation, BTreeSet<PageKey>> {
+    ) -> Result<Reservation, BTreeSet<PageId>> {
         loop {
             let keys = self.register_all(discover());
             self.fence(&keys);
@@ -131,9 +132,10 @@ impl PageHost {
             }
             drop(reservation);
             if input == Input::Refuse {
-                return Err(unsaved);
+                return Err(self.spellings(&unsaved));
             }
-            self.flush(&unsaved)?;
+            self.flush(&unsaved)
+                .map_err(|stuck| self.spellings(&stuck))?;
         }
     }
 
@@ -368,6 +370,16 @@ impl PageHost {
         (key, spelling, held)
     }
 
+    /// `keys`' current spellings, the pages a refusal names (REVIEW-3a5):
+    /// a key is opaque, and need not be its page's spelling.
+    fn spellings(&self, keys: &BTreeSet<PageKey>) -> BTreeSet<PageId> {
+        let state = self.driver.shared.state.lock().unwrap();
+        let fs = &state.progress.host.fs;
+        keys.iter()
+            .map(|key| PageId::from(fs.spelling(key)))
+            .collect()
+    }
+
     /// A key's current spelling, as the page it names.
     fn spelling(&self, key: &str) -> PageId {
         let state = self.driver.shared.state.lock().unwrap();
@@ -493,13 +505,13 @@ impl PageHost {
     /// `consumed_last_id`, wait for its barrier, then stop. When it cannot
     /// complete without losing custody, admission reopens and the host
     /// comes back with the affected pages (none: the window had more to
-    /// drain, or trash custody cannot be listed); today's restore likewise
-    /// stops when its flush fails.
+    /// drain, or trash custody cannot be listed), named by their current
+    /// spellings; today's restore likewise stops when its flush fails.
     pub fn stop_saved(
         self,
         consumed_last_id: u64,
         mode: StopMode,
-    ) -> Result<Stopped, (Box<Self>, BTreeSet<PageKey>)> {
+    ) -> Result<Stopped, (Box<Self>, BTreeSet<PageId>)> {
         if !self.stop_begin(consumed_last_id, mode) {
             return Err((Box::new(self), BTreeSet::new()));
         }
@@ -516,6 +528,7 @@ impl PageHost {
                     Err(back) => host = back,
                 },
                 StopState::Aborted(pages) => {
+                    let pages = host.spellings(&pages);
                     host.stop_abort();
                     return Err((Box::new(host), pages));
                 }
