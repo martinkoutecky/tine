@@ -10,9 +10,11 @@
 //! - `<id>/item.json` + the item's resource files: written by the native
 //!   producer into `.tmp-<id>/`, then published by one directory rename;
 //! - `<id>/prepared.json`: written here, through the audited
-//!   [`crate::device_io::atomic_write`], once the frontend has shaped the
-//!   item. Its `baseline` makes ingest idempotent across a crash between
-//!   the journal write and the commit (see `src/shareIngest.ts`);
+//!   [`crate::device_io::atomic_write`], by the frontend's ingest: the graph
+//!   and journal day the item is bound to, its shaped Markdown and imported
+//!   assets, and (once an append is armed) the journal's revision and match
+//!   count just before it, which make recovery after a crash loss-free
+//!   (see `src/shareIngest.ts` and ADR 0073);
 //! - `.trash-<id>/`: a committed item between its rename and its removal;
 //! - `.rejected-<id>/`: an item that could not be read, kept for the user.
 //!
@@ -59,6 +61,10 @@ struct ItemResource {
 #[derive(Debug, Deserialize)]
 struct ItemFile {
     version: u32,
+    /// Which OG share path the item follows: `android` (the legacy
+    /// `SendIntent` result, `intent.cljs` `handle-result`) or `ios` (the
+    /// share-sheet payload, `handle-payload`).
+    source: String,
     #[serde(default)]
     created: Option<i64>,
     #[serde(default)]
@@ -71,17 +77,33 @@ struct ItemFile {
     resources: Vec<ItemResource>,
 }
 
-/// The frontend's shaping of an item, recorded before the journal write.
+/// The ingest's durable record for one item (ADR 0073), written before any
+/// graph write it describes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Prepared {
-    /// The outline Markdown handed to `appendToTodayJournal`.
-    pub markdown: String,
-    /// The journal title the append targets.
+    /// The bound graph (its root) the item is ingested into; another graph
+    /// never receives or acknowledges it.
+    pub graph: String,
+    /// The journal title the append targets, frozen once.
     pub day: String,
-    /// Root blocks of `day` equal to the first appended block, counted just
-    /// before the append was attempted; `None` until an append is attempted.
-    #[serde(default)]
-    pub baseline: Option<u32>,
+    /// The shaped outline Markdown, asset links resolved; `None` while the
+    /// item's files are being imported.
+    pub markdown: Option<String>,
+    /// Asset file names imported into `graph` for this item.
+    pub assets: Vec<String>,
+    /// Set inside the admitted read just before the append.
+    pub armed: Option<Armed>,
+}
+
+/// The journal as the append found it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Armed {
+    /// The day file's revision (`None`: the day had no file).
+    pub before: Option<String>,
+    /// Blocks on the day equal to the appended block.
+    pub matches: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -96,6 +118,7 @@ pub(crate) struct ResourceWire {
 #[derive(Debug, Serialize)]
 pub(crate) struct ItemWire {
     id: String,
+    source: String,
     created: Option<i64>,
     text: Option<String>,
     title: Option<String>,
@@ -144,6 +167,9 @@ fn read_item(dir: &Path, id: &str) -> Result<ItemWire, String> {
     if item.version != 1 {
         return Err(format!("unknown item version {}", item.version));
     }
+    if item.source != "android" && item.source != "ios" {
+        return Err(format!("unknown item source {:?}", item.source));
+    }
     if item.resources.len() > MAX_RESOURCES {
         return Err(format!("more than {MAX_RESOURCES} resources"));
     }
@@ -178,6 +204,7 @@ fn read_item(dir: &Path, id: &str) -> Result<ItemWire, String> {
     }
     Ok(ItemWire {
         id: id.to_owned(),
+        source: item.source,
         created: item.created,
         text,
         title: item.title.filter(|title| !title.trim().is_empty()),
@@ -358,13 +385,13 @@ mod tests {
         publish(
             root,
             "b",
-            r#"{"version":1,"created":2,"text":"second"}"#,
+            r#"{"version":1,"source":"android","created":2,"text":"second"}"#,
             &[],
         );
         let dir = publish(
             root,
             "a",
-            r#"{"version":1,"created":1,"url":"https://x.org","title":"X",
+            r#"{"version":1,"source":"android","created":1,"url":"https://x.org","title":"X",
                 "resources":[{"file":"p.png","name":"p.png","type":"image/png"}]}"#,
             &[("p.png", b"png")],
         );
@@ -424,21 +451,23 @@ mod tests {
         publish(
             root,
             "escape",
-            r#"{"version":1,"resources":[{"file":"../x"}]}"#,
+            r#"{"version":1,"source":"android","resources":[{"file":"../x"}]}"#,
             &[],
         );
         publish(
             root,
             "missing",
-            r#"{"version":1,"resources":[{"file":"gone.png"}]}"#,
+            r#"{"version":1,"source":"android","resources":[{"file":"gone.png"}]}"#,
             &[],
         );
-        publish(root, "empty", r#"{"version":1,"text":"  "}"#, &[]);
-        publish(root, "ok", r#"{"version":1,"text":"kept"}"#, &[]);
+        publish(root, "empty", r#"{"version":1,"source":"android","text":"  "}"#, &[]);
+        publish(root, "nosource", r#"{"version":1,"text":"t"}"#, &[]);
+        publish(root, "badsource", r#"{"version":1,"source":"web","text":"t"}"#, &[]);
+        publish(root, "ok", r#"{"version":1,"source":"android","text":"kept"}"#, &[]);
         let listing = list(root).unwrap();
-        assert_eq!(listing.rejected, 4);
+        assert_eq!(listing.rejected, 6);
         assert_eq!(listing.items.len(), 1);
-        for id in ["torn", "escape", "missing", "empty"] {
+        for id in ["torn", "escape", "missing", "empty", "nosource", "badsource"] {
             assert!(root
                 .join(format!(".rejected-{id}"))
                 .join(ITEM_FILE)
@@ -452,11 +481,16 @@ mod tests {
     fn prepare_is_durable_and_listed_back() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
-        publish(root, "a", r#"{"version":1,"text":"t"}"#, &[]);
+        publish(root, "a", r#"{"version":1,"source":"android","text":"t"}"#, &[]);
         let prepared = Prepared {
-            markdown: "- t".into(),
+            graph: "/g".into(),
             day: "Oct 10th, 2026".into(),
-            baseline: Some(2),
+            markdown: Some("- t".into()),
+            assets: vec!["p_1.png".into()],
+            armed: Some(Armed {
+                before: None,
+                matches: 2,
+            }),
         };
         prepare(root, "a", &prepared).unwrap();
         assert_eq!(
@@ -471,7 +505,7 @@ mod tests {
     fn commit_removes_the_item_and_is_idempotent() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
-        publish(root, "a", r#"{"version":1,"text":"t"}"#, &[("f", b"x")]);
+        publish(root, "a", r#"{"version":1,"source":"android","text":"t"}"#, &[("f", b"x")]);
         commit(root, "a").unwrap();
         assert!(!root.join("a").exists());
         assert!(!root.join(".trash-a").exists());
@@ -484,7 +518,7 @@ mod tests {
     fn a_committed_item_left_by_a_crash_is_removed_and_never_listed() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
-        let dir = publish(root, "a", r#"{"version":1,"text":"t"}"#, &[]);
+        let dir = publish(root, "a", r#"{"version":1,"source":"android","text":"t"}"#, &[]);
         fs::rename(dir, root.join(".trash-a")).unwrap();
         assert!(list(root).unwrap().items.is_empty());
         assert!(!root.join(".trash-a").exists());

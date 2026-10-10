@@ -25,47 +25,66 @@ describe("OG intent.cljs text helpers", () => {
   });
 });
 
-describe("shapeShare per item type", () => {
+describe("shapeShare per item type (Android: OG handle-result)", () => {
   it("plain text becomes the default template's text", () => {
-    expect(shapeShare({ text: "hello", assets: [] }, md)).toBe(`${prefix} hello`);
+    expect(shapeShare({ source: "android", text: "hello", assets: [] }, md)).toBe(`${prefix} hello`);
   });
   it("a titled link becomes a Markdown link, or an Org link on an Org journal", () => {
-    expect(shapeShare({ url: "https://x.org/p", title: "Page", assets: [] }, md)).toBe(`${prefix}  [Page](https://x.org/p)`);
-    expect(shapeShare({ url: "https://x.org/p", title: "Page", assets: [] }, { ...md, format: "org" })).toBe(`${prefix}  [[https://x.org/p][Page]]`);
+    expect(shapeShare({ source: "android", text: "https://x.org/p", title: "Page", assets: [] }, md)).toBe(`${prefix}  [Page](https://x.org/p)`);
+    expect(shapeShare({ source: "android", text: "https://x.org/p", title: "Page", assets: [] }, { ...md, format: "org" })).toBe(`${prefix}  [[https://x.org/p][Page]]`);
   });
   it("Android's highlighted text plus link (EXTRA_TEXT) keeps both", () => {
-    expect(shapeShare({ text: "\"Quoted\" https://x.org/p", title: "Page", assets: [] }, md)).toBe(`${prefix} Quoted [Page](https://x.org/p)`);
+    expect(shapeShare({ source: "android", text: "\"Quoted\" https://x.org/p", title: "Page", assets: [] }, md)).toBe(`${prefix} Quoted [Page](https://x.org/p)`);
   });
   it("an untitled link, or one whose title is the URL, stays a raw URL", () => {
-    expect(shapeShare({ url: "https://x.org/p", assets: [] }, md)).toBe(`${prefix}  https://x.org/p`);
-    expect(shapeShare({ url: "https://x.org/p", title: "https://x.org/p", assets: [] }, md)).toBe(`${prefix}  https://x.org/p`);
+    expect(shapeShare({ source: "android", text: "https://x.org/p", assets: [] }, md)).toBe(`${prefix}  https://x.org/p`);
+    expect(shapeShare({ source: "android", text: "https://x.org/p", title: "https://x.org/p", assets: [] }, md)).toBe(`${prefix}  https://x.org/p`);
   });
-  it("text shared with a page link (iOS) puts the text before the link", () => {
-    expect(shapeShare({ text: "worth reading", url: "https://x.org/p", assets: [] }, md)).toBe(`${prefix} worth reading https://x.org/p`);
+  it("text shared with a page link (iOS handle-payload) puts the text before the link", () => {
+    expect(shapeShare({ source: "ios", text: "worth reading", url: "https://x.org/p", assets: [] }, md)).toBe(`${prefix} worth reading https://x.org/p`);
   });
   it("video and tweet links become OG's embeds", () => {
-    expect(shapeShare({ url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "Song", assets: [] }, md))
+    expect(shapeShare({ source: "android", text: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "Song", assets: [] }, md))
       .toBe(`${prefix}  Song {{video https://www.youtube.com/watch?v=dQw4w9WgXcQ}}`);
-    expect(shapeShare({ url: "https://x.com/someone/status/123", assets: [] }, md)).toBe(`${prefix}  {{twitter https://x.com/someone/status/123}}`);
+    expect(shapeShare({ source: "android", text: "https://x.com/someone/status/123", assets: [] }, md)).toBe(`${prefix}  {{twitter https://x.com/someone/status/123}}`);
   });
   it("a lone image uses the media template", () => {
-    expect(shapeShare({ assets: ["![](../assets/photo.png)"] }, md)).toBe(`${prefix} ![](../assets/photo.png)`);
-    expect(shapeShare({ assets: ["![](../assets/p.png)"] }, { ...md, mediaTemplate: "{date}: {url}" })).toBe("Oct 10th, 2026: ![](../assets/p.png)");
+    expect(shapeShare({ source: "android", assets: ["![](../assets/photo.png)"] }, md)).toBe(`${prefix} ![](../assets/photo.png)`);
+    expect(shapeShare({ source: "android", assets: ["![](../assets/p.png)"] }, { ...md, mediaTemplate: "{date}: {url}" })).toBe("Oct 10th, 2026: ![](../assets/p.png)");
   });
   it("text with images, or several images, joins the rich parts one per line (handle-payload)", () => {
-    expect(shapeShare({ text: "two", assets: ["![](../assets/a.png)", "![](../assets/b.png)"] }, md))
+    expect(shapeShare({ source: "android", text: "two", assets: ["![](../assets/a.png)", "![](../assets/b.png)"] }, md))
       .toBe(`${prefix} two ![](../assets/a.png)\n![](../assets/b.png)`);
-    expect(shapeShare({ url: "https://x.org", assets: ["![](../assets/a.png)"] }, md)).toBe(`${prefix}  https://x.org\n![](../assets/a.png)`);
+    expect(shapeShare({ source: "ios", url: "https://x.org", assets: ["![](../assets/a.png)"] }, md)).toBe(`${prefix}  https://x.org\n![](../assets/a.png)`);
   });
   it("a custom text template replaces every placeholder occurrence literally", () => {
     const context = { ...md, textTemplate: "{date} — {text} ({text}) {url}" };
-    expect(shapeShare({ text: "a $& b", assets: [] }, context)).toBe("Oct 10th, 2026 — a $& b (a $& b)");
+    expect(shapeShare({ source: "android", text: "a $& b", assets: [] }, context)).toBe("Oct 10th, 2026 — a $& b (a $& b)");
   });
   it("the default template is OG's", () => {
     expect(OG_TEXT_TEMPLATE).toBe("**{time}** [[quick capture]]: {text} {url}");
   });
   it("an empty item yields nothing", () => {
-    expect(shapeShare({ text: "  ", assets: [] }, md)).toBeNull();
+    expect(shapeShare({ source: "android", text: "  ", assets: [] }, md)).toBeNull();
+  });
+});
+
+describe("iOS share sheet (OG handle-payload)", () => {
+  // Review round 1, finding 8: iOS items went through Android's transform-args.
+  it("a URL shared as text survives OG's literal {text} template", () => {
+    expect(shapeShare({ source: "ios", text: "https://example.com", assets: [] }, { ...md, textTemplate: "{text}" })).toBe("https://example.com");
+  });
+  it("a lone image uses the :text template, never :media", () => {
+    expect(shapeShare({ source: "ios", assets: ["![](../assets/photo.png)"] }, { ...md, textTemplate: "inbox {url}", mediaTemplate: "camera {url}" }))
+      .toBe("inbox ![](../assets/photo.png)");
+  });
+  it("a web link stays the raw URL: no titled link and no video or tweet embed", () => {
+    expect(shapeShare({ source: "ios", url: "https://x.org/p", title: "Page", assets: [] }, md)).toBe(`${prefix}  https://x.org/p`);
+    expect(shapeShare({ source: "ios", url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", assets: [] }, md))
+      .toBe(`${prefix}  https://www.youtube.com/watch?v=dQw4w9WgXcQ`);
+  });
+  it("text that looks like a highlight plus link is kept verbatim", () => {
+    expect(shapeShare({ source: "ios", text: "\"Quoted\" https://x.org/p", assets: [] }, md)).toBe(`${prefix} "Quoted" https://x.org/p`);
   });
 });
 
