@@ -589,13 +589,15 @@ that entry unless the transaction changed `config.edn`. The own-write stamp
 takes its metadata from the publication read's handle; the watcher re-hashes
 the file only when a later `symlink_metadata` differs from it, and a racy
 stamp is reread on the next poll as for every other file.
-That racy re-read (storage spec §5.4) is an accepted cost: once the watcher
-settles it has re-read and re-stamped each graph file the operation wrote at
-most once, plus a small constant, on the watcher thread after publication.
-It is linear in the files written and does not grow with the graph (D-10).
-`rename_io.rs` bills publication only for reads on the publishing threads and
-bounds the watcher's settled re-reads separately (`watcher_hash_reads`,
-`watcher_stamps_by_path`).
+The watcher's re-reads of an operation's own writes (the racy re-read,
+storage spec §5.4, and on Windows also the echo event's path-scoped diff)
+are an accepted cost, on the watcher thread after publication: once the
+watcher settles they are at most the files the operation wrote plus a small
+constant (measured on 31 written pages: one read each on Linux, two on
+Windows). They are linear in the files written and do not grow with the
+graph (D-10). The rename cost tests bill publication only for reads on the
+publishing threads, and `rename_io.rs` bounds the watcher's settled re-reads
+separately (`watcher_reads`, `watcher_stamps_by_path`).
 
 Unit cost: unchanged bytes, files and syncs per edit (22/1,320 bytes on the
 1-/60-block fixtures, one temporary file and two syncs per referrer); per

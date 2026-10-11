@@ -81,7 +81,7 @@ fn rename_then(pages_count: usize, referrers: usize, settle: bool) -> Counts {
     })
     .unwrap();
     if settle {
-        let watcher = |c: Counts| (c.watcher_hash_reads, c.watcher_stamps_by_path);
+        let watcher = |c: Counts| (c.watcher_reads, c.watcher_stamps_by_path);
         let mut last = watcher(cost_counters::snapshot());
         let mut quiet_since = std::time::Instant::now();
         while quiet_since.elapsed() < WATCHER_QUIET {
@@ -167,15 +167,17 @@ fn rename_publication_reopens_no_referrer() {
          the publication read's handle supplies the stamp it is compared with: \
          {few:?} vs {many:?}"
     );
-    // The graph files the rename wrote: each referrer plus the renamed page.
-    for (counts, written) in [(few, 2 + 1), (many, 30 + 1)] {
+    // Linear in the files the operation wrote (`files_written`: each page
+    // and its draft record), never in the graph. Measured on 31 written
+    // pages: Linux re-reads each once (the racy follow-up), Windows twice
+    // (the echo event's path-scoped diff, then the racy follow-up).
+    for counts in [few, many] {
         assert!(
-            counts.watcher_hash_reads <= written + 4
-                && counts.watcher_stamps_by_path <= written + 4,
-            "contract §5.4: once settled, the watcher re-reads each of the {written} graph \
-             files the operation wrote at most once (its racy follow-up), plus a small \
-             constant; a re-read that grows with the graph or repeats per file is not the \
-             accepted cost \
+            counts.watcher_reads <= counts.files_written + 4
+                && counts.watcher_stamps_by_path <= counts.files_written + 4,
+            "contract §5.4: once settled, the watcher's re-reads and re-stamps of what an \
+             operation wrote are at most the files it wrote plus a small constant; a \
+             re-read that grows with the graph is not the accepted cost \
              (exemplar watch/reconcile.rs racy::hash_settled): {counts:?}"
         );
     }

@@ -28,7 +28,7 @@ static ASSET_STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
 static STORE_READS: AtomicU64 = AtomicU64::new(0);
 static NAME_INVENTORY_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static TRANSACTION_REWRITES: AtomicU64 = AtomicU64::new(0);
-static WATCHER_HASH_READS: AtomicU64 = AtomicU64::new(0);
+static WATCHER_READS: AtomicU64 = AtomicU64::new(0);
 static WATCHER_STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
@@ -37,14 +37,23 @@ thread_local! {
     static WATCHER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Mark the current thread as the watcher's: its hash reads and by-path stamps
-/// go to `watcher_hash_reads` / `watcher_stamps_by_path`.
+/// Mark the current thread as the watcher's: its file reads (whole, preamble
+/// and hash) and by-path stamps go to `watcher_reads` / `watcher_stamps_by_path`.
 pub(crate) fn mark_watcher_thread() {
     WATCHER.with(|watcher| watcher.set(true));
 }
 
 fn on_watcher() -> bool {
     WATCHER.with(|watcher| watcher.get())
+}
+
+/// Count a file read on the watcher thread; false elsewhere.
+fn watcher_read() -> bool {
+    let watcher = on_watcher();
+    if watcher {
+        WATCHER_READS.fetch_add(1, Ordering::Relaxed);
+    }
+    watcher
 }
 
 /// Primitive counts since the last reset. The fixture uses one process per case.
@@ -116,9 +125,10 @@ pub struct Counts {
     /// Reference rewrites computed inside a transaction (preflight, under the
     /// writer and page locks) rather than handed over prepared.
     pub transaction_rewrites: u64,
-    /// `hash_reads` made on the watcher thread: the settle re-reads of files
-    /// an operation just wrote (§5.4), off the operation's own path.
-    pub watcher_hash_reads: u64,
+    /// `full_reads`, `preamble_reads` and `hash_reads` made on the watcher
+    /// thread: the settle re-reads of files an operation just wrote (§5.4),
+    /// off the operation's own path.
+    pub watcher_reads: u64,
     /// `stamps_by_path` made on the watcher thread.
     pub watcher_stamps_by_path: u64,
 }
@@ -154,7 +164,7 @@ pub fn reset() {
         &STORE_READS,
         &NAME_INVENTORY_ENTRIES,
         &TRANSACTION_REWRITES,
-        &WATCHER_HASH_READS,
+        &WATCHER_READS,
         &WATCHER_STAMPS_BY_PATH,
     ] {
         counter.store(0, Ordering::Relaxed);
@@ -192,7 +202,7 @@ pub fn snapshot() -> Counts {
         store_reads: STORE_READS.load(Ordering::Relaxed),
         name_inventory_entries: NAME_INVENTORY_ENTRIES.load(Ordering::Relaxed),
         transaction_rewrites: TRANSACTION_REWRITES.load(Ordering::Relaxed),
-        watcher_hash_reads: WATCHER_HASH_READS.load(Ordering::Relaxed),
+        watcher_reads: WATCHER_READS.load(Ordering::Relaxed),
         watcher_stamps_by_path: WATCHER_STAMPS_BY_PATH.load(Ordering::Relaxed),
     }
 }
@@ -220,10 +230,14 @@ pub(crate) fn readdir() {
     READDIR.fetch_add(1, Ordering::Relaxed);
 }
 pub(crate) fn full_read() {
-    FULL_READS.fetch_add(1, Ordering::Relaxed);
+    if !watcher_read() {
+        FULL_READS.fetch_add(1, Ordering::Relaxed);
+    }
 }
 pub(crate) fn preamble_read() {
-    PREAMBLE_READS.fetch_add(1, Ordering::Relaxed);
+    if !watcher_read() {
+        PREAMBLE_READS.fetch_add(1, Ordering::Relaxed);
+    }
     let delay = PREAMBLE_OPEN_DELAY_US.load(Ordering::Relaxed);
     if delay > 0 {
         std::thread::sleep(std::time::Duration::from_micros(delay));
@@ -289,11 +303,9 @@ pub(crate) fn query_registry_pages_read() {
     QUERY_REGISTRY_PAGES_READ.fetch_add(1, Ordering::Relaxed);
 }
 pub(crate) fn hash_read() {
-    if on_watcher() {
-        WATCHER_HASH_READS.fetch_add(1, Ordering::Relaxed);
-        return;
+    if !watcher_read() {
+        HASH_READS.fetch_add(1, Ordering::Relaxed);
     }
-    HASH_READS.fetch_add(1, Ordering::Relaxed);
 }
 
 #[cfg(feature = "test-faults")]
