@@ -208,7 +208,7 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
             path(&large),
             path(&small),
             "I-13/R4(a): an edit's publication must not read or stamp unrelated pages \
-             (aged={aged}); exemplar page_host/binding.rs index()"
+             (aged={aged}); exemplar page_host/binding_bridge.rs index()"
         );
         assert_eq!(large.files_written, 1, "the edit's one save");
     }

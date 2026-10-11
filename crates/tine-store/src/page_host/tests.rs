@@ -1081,6 +1081,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
     let runtime = [
         ("mod.rs", include_str!("mod.rs")),
         ("binding.rs", include_str!("binding.rs")),
+        ("binding_bridge.rs", include_str!("binding_bridge.rs")),
         ("binding_retained.rs", include_str!("binding_retained.rs")),
         (
             "binding_publication.rs",
