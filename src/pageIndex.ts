@@ -16,7 +16,8 @@ import type { PageEntry, PageInventory, PageInventoryEntry, PageKind, ResolvedPa
 // (`pageIndex.guard.test.ts`).
 //
 // Refresh economy: graph binding or native inventory-change signals cost one
-// IPC per tick. Text-only saves leave this answer alone (I-25).
+// IPC per tick, and a burst while one is in flight costs one more. Text-only
+// saves leave this answer alone (I-25).
 
 interface Held {
   generation: number;
@@ -34,6 +35,8 @@ const [held, setHeld] = createSignal<Held | null>(null);
 // request issued before it is dropped.
 let generation = 0;
 let queued = false;
+let inFlight = false;
+let again = false;
 const refreshScope = {};
 
 function build(inventory: PageInventory, rev: bigint): Held {
@@ -80,8 +83,24 @@ function scheduleRefresh(): void {
   queued = true;
   queueMicrotask(() => {
     queued = false;
-    void refreshPageIndex();
+    void signalled();
   });
+}
+
+/** One signal-driven fetch in flight, plus at most one trailing fetch for the
+ *  signals that arrived meanwhile (PERF-FIXES D2): a burst of publications (a
+ *  rename's referrers) costs two inventory reads, not one per publication. */
+async function signalled(): Promise<void> {
+  if (inFlight) { again = true; return; }
+  inFlight = true;
+  try {
+    do {
+      again = false;
+      await refreshPageIndex();
+    } while (again);
+  } finally {
+    inFlight = false;
+  }
 }
 
 /** Forget the held inventory (graph bind/switch, rename). */

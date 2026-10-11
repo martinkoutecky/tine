@@ -463,8 +463,9 @@ struct Host<F: HostIo> {
     /// `drafts` and `pages` by `index_vehicle` and `set_page`.
     live_ops: BTreeMap<String, LiveOp>,
     /// M4: keys whose page or live logical draft changed since `Progress`
-    /// last reconciled, `true` for a page an operation's caller applied (its
-    /// saves skip the edit debounce). Drained by `Progress::reconcile` only.
+    /// last reconciled, `true` for a page an operation's caller applied or a
+    /// window Submit changed (its saves skip the edit debounce). Drained by
+    /// `Progress::reconcile` only.
     changed: BTreeMap<PageKey, bool>,
     /// REVIEW-3b-P1 R2: pages named by draft vehicles on disk whose census
     /// launch could not make durable (M2). Cleanup debt, never recovery
@@ -1054,7 +1055,7 @@ impl<F: HostIo> Host<F> {
                     self.order.supersede(key);
                 }
                 self.version = next;
-                self.set_page(key, Some(page));
+                self.set_submitted(key, page);
                 self.answer(request, key, true);
             }
             RequestKind::Discard { .. } => self.discard(request),

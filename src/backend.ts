@@ -914,14 +914,22 @@ class TauriBackend implements Backend {
   }
   pageOpen(session: number, id: number, page: { name: string; kind: "journal" | "page"; path: string | null }) {
     const generation = this.bindingGeneration;
-    return this.ordered("page_open", async (): Promise<{ key: string; baselineEntry: boolean } | PageRefusal> => {
-      let path = page.path;
-      if (path === null) {
+    type Reply = { key: string; baselineEntry: boolean } | PageRefusal;
+    // PERF-FIXES D3: opens issued back to back (a carry-over's sources) share
+    // one `page_open` call, still in id order and in their lane place.
+    return this.ordered.joined(`page_open:${session}:${generation}`, { id, page }, async (items): Promise<Reply[]> => {
+      const paths = await Promise.all(items.map(async ({ page }): Promise<string | PageRefusal> => {
+        if (page.path !== null) return page.path;
         const resolved = await this.issue<import("./types").ResolvedPage>("resolve_page", { name: page.name, kind: page.kind }, generation);
-        if (resolved.kind === "alias") return { reason: "alias", owners: resolved.owners };
-        path = resolved.id;
-      }
-      return this.issue("page_open", { session, id, path, name: page.name }, generation);
+        return resolved.kind === "alias" ? { reason: "alias", owners: resolved.owners } : resolved.id;
+      }));
+      const sent = items.flatMap(({ id, page }, i) => {
+        const path = paths[i];
+        return typeof path === "string" ? [{ id, path, name: page.name }] : [];
+      });
+      const answers = sent.length ? await this.issue<Reply[]>("page_open", { session, pages: sent }, generation) : [];
+      let next = 0;
+      return paths.map((path) => typeof path === "string" ? answers[next++] : path);
     });
   }
   pageSubmit(session: number, id: number, key: string, dto: PageDto, version: number, resolve: DiskToken | null, kinds: EditKinds) {

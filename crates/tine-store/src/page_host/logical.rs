@@ -21,6 +21,14 @@ pub(super) struct LiveOp {
 }
 
 impl<F: HostIo> Host<F> {
+    /// A window Submit's page (PERF-FIXES D1): the window already waited for
+    /// the end of the typing burst (400 ms, 1 s at most), so its save skips
+    /// the host's edit debounce. One owner of "when to save" per edit kind.
+    pub(super) fn set_submitted(&mut self, key: &str, page: Page) {
+        self.set_page(key, Some(page));
+        self.changed.insert(key.into(), true);
+    }
+
     /// RENAME-COST L1, at `stop`: no page is held, so none owes an
     /// operation's publication.
     pub(super) fn release_owed(&mut self) {

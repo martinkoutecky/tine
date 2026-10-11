@@ -607,42 +607,76 @@ fn review_f5_retirement_preserves_subscriptions_and_queued_open_custody() {
     assert!(!p.host.pages.contains_key("a.md"));
 }
 
+/// A window Move of `a.md` into `b.md` with these texts, at their versions,
+/// its operation draft written (the clock does not move).
+fn window_move(p: &mut Timed, source: &str, receiver: &str) {
+    p.with_host(|h| {
+        let (source_version, receiver_version) = (h.pages["a.md"].version, h.pages["b.md"].version);
+        assert_eq!(
+            send(
+                h,
+                "a.md",
+                RequestKind::Move {
+                    receiver: "b.md".into(),
+                    source_text: text(source),
+                    receiver_text: text(receiver),
+                    source_version,
+                    receiver_version,
+                }
+            ),
+            Disposition::Pending
+        );
+    });
+    explode(p);
+}
+
+/// The host's edit debounce governs a window Move (PERF-FIXES D1): its
+/// pages publish 400 ms after their last change, here a second Move at
+/// 300 ms, with the same bytes or new ones: a new version restarts it.
 #[test]
-fn quiet_edit_and_debounce_publish_at_400_ms_after_last_change() {
-    for second in [false, true] {
+fn a_window_moves_pages_publish_400_ms_after_their_last_change() {
+    for second in [None, Some("source"), Some("again")] {
         let mut p = timed();
-        begin_edit(&mut p);
-        if second {
+        p.with_host(|h| {
+            open(h, "a.md");
+            open(h, "b.md");
+        });
+        window_move(&mut p, "source", "receiver");
+        if let Some(again) = second {
             time(&p, 300);
-            p.with_host(|h| edit(h, "a.md", "last"));
+            pump(&mut p);
+            assert!(!p.host.pages["a.md"].clean(), "nothing saved before the debounce");
+            window_move(&mut p, again, "receiver");
         }
-        let due = if second { 700 } else { 400 };
+        let due = if second.is_some() { 700 } else { 400 };
         time(&p, due - 1);
         pump(&mut p);
-        assert!(p.host.job.is_none());
-        assert!(!p.host.pages["a.md"].clean());
+        assert!(!p.host.pages["a.md"].clean() && !p.host.pages["b.md"].clean());
         time(&p, due);
         pump(&mut p);
-        assert!(p.host.pages["a.md"].clean());
+        assert!(p.host.pages["a.md"].clean() && p.host.pages["b.md"].clean());
         assert_eq!(
             p.host.fs.files["graph/a.md"].as_ref(),
-            if second { &b"last"[..] } else { &b"first"[..] }
+            second.unwrap_or("source").as_bytes()
         );
     }
 }
 
+/// A window Submit saves at once (PERF-FIXES D1): the window already waited
+/// for the end of the typing burst, so the host adds no second wait. A
+/// second Submit after the first one's save saves at once too.
 #[test]
-fn accepted_same_bytes_with_a_new_version_restart_the_debounce() {
+fn a_window_submit_saves_at_once_without_the_host_debounce() {
     let mut p = timed();
     begin_edit(&mut p);
-    time(&p, 300);
-    p.with_host(|h| edit(h, "a.md", "first"));
-    time(&p, 699);
-    pump(&mut p);
-    assert!(!p.host.pages["a.md"].clean());
-    time(&p, 700);
     pump(&mut p);
     assert!(p.host.pages["a.md"].clean());
+    assert_eq!(p.host.fs.files["graph/a.md"].as_ref(), &b"first"[..]);
+    time(&p, 300);
+    p.with_host(|h| edit(h, "a.md", "last"));
+    pump(&mut p);
+    assert!(p.host.pages["a.md"].clean());
+    assert_eq!(p.host.fs.files["graph/a.md"].as_ref(), &b"last"[..]);
 }
 
 #[test]
@@ -1654,32 +1688,17 @@ fn a_caller_operations_pages_skip_the_debounce_but_not_a_failed_saves_backoff() 
     );
 }
 
-/// A window Move is an ordinary edit, and so is a submit: both keep the
-/// debounce at a frozen clock (only an operation's caller is hurried).
+/// A window Move is an ordinary edit and keeps the debounce at a frozen
+/// clock; a window Submit does not (PERF-FIXES D1: the window waited).
 #[test]
-fn a_window_move_and_a_submit_keep_the_debounce() {
+fn a_window_move_keeps_the_debounce_and_a_submit_does_not() {
     let mut p = timed();
     time(&p, 1_000);
     p.with_host(|h| {
         open(h, "a.md");
         open(h, "b.md");
-        let (source_version, receiver_version) = (h.pages["a.md"].version, h.pages["b.md"].version);
-        assert_eq!(
-            send(
-                h,
-                "a.md",
-                RequestKind::Move {
-                    receiver: "b.md".into(),
-                    source_text: text("source"),
-                    receiver_text: text("receiver"),
-                    source_version,
-                    receiver_version,
-                }
-            ),
-            Disposition::Pending
-        );
     });
-    explode(&mut p);
+    window_move(&mut p, "source", "receiver");
     assert!(!p.host.pages["a.md"].clean() && !p.host.pages["b.md"].clean());
     for _ in 0..5 {
         poll(&mut p);
@@ -1697,12 +1716,8 @@ fn a_window_move_and_a_submit_keep_the_debounce() {
         open(h, "a.md");
         edit(h, "a.md", "typed");
     });
-    for _ in 0..5 {
-        poll(&mut p);
-        assert!(p.host.job.is_none(), "a submit waits for the debounce");
-    }
-    time(&p, 1_400);
     assert_eq!(poll(&mut p), Disposition::Pending);
+    assert!(p.host.job.is_some(), "a window Submit saves at once");
 }
 
 #[test]

@@ -232,9 +232,15 @@ once the write succeeds. The order is memory only:
 - The pages an operation applies for its caller (a single page's rename or
   a deletion) save without the edit debounce (400 ms, 1 s at most): the
   caller waits for their publication. A failed save's backoff still
-  applies. A window Move is an ordinary edit and keeps the debounce. Proof
+  applies. A window Move is an ordinary edit and keeps the debounce. A
+  window Submit skips it: the window already waited for the end of the
+  typing burst (`client.ts` `SEND_DEBOUNCE_MS`, `SEND_MAX_WAIT_MS`), so the
+  typing wait has one owner (PERF-FIXES D1). Proof
   `progress_tests.rs`
   `a_caller_operations_pages_skip_the_debounce_but_not_a_failed_saves_backoff`,
+  `a_window_move_keeps_the_debounce_and_a_submit_does_not`,
+  `a_window_moves_pages_publish_400_ms_after_their_last_change`,
+  `a_window_submit_saves_at_once_without_the_host_debounce`,
   `rename_cost.rs` `a_small_rename_is_not_floored_by_the_edit_debounce`.
 Unit cost: none (memory only). Proof
 `crates/tine-store/src/page_host/binding_order_tests.rs`,

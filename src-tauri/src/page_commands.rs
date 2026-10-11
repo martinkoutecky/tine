@@ -62,17 +62,31 @@ pub(crate) enum OpenReply {
     Refused(PageRefusal),
 }
 
-#[tauri::command]
-pub(crate) async fn page_open(
-    session: u64,
+/// One page of a `page_open` call.
+#[derive(serde::Deserialize)]
+pub(crate) struct OpenPage {
     id: u64,
     path: String,
     name: String,
+}
+
+/// PERF-FIXES D3: the window's back-to-back opens (a carry-over's sources)
+/// arrive as one call, in id order, and are admitted one by one as before;
+/// one round trip and one blocking-pool hop instead of one per page.
+#[tauri::command]
+pub(crate) async fn page_open(
+    session: u64,
+    pages: Vec<OpenPage>,
     ctx: GraphContext<'_>,
-) -> Result<OpenReply, String> {
+) -> Result<Vec<OpenReply>, String> {
     hosted(ctx, move |host| {
-        host.open(session, id, &PageId::from(path.as_str()), &name)
-            .map_or_else(OpenReply::Refused, OpenReply::Opened)
+        pages
+            .iter()
+            .map(|page| {
+                host.open(session, page.id, &PageId::from(page.path.as_str()), &page.name)
+                    .map_or_else(OpenReply::Refused, OpenReply::Opened)
+            })
+            .collect()
     })
     .await
 }
