@@ -67,11 +67,12 @@ const WRITERS: &[(&str, &[&str], &str)] = &[
             "logical.rs::index_op",
             "logical.rs::reindex_owed",
             "logical.rs::index_drafts",
-            "mod.rs::stop",
+            "logical.rs::release_owed",
         ],
         "RENAME-COST L1's operation vehicles: index_op follows index_vehicle (which marks every \
          page either version names), reindex_owed marks every page of a vehicle whose owed set \
-         empties or fills, index_drafts rebuilds with launch, stop ends liveness",
+         empties or fills, index_drafts rebuilds with launch, release_owed (from stop) empties every owed set as \
+         liveness ends",
     ),
     (
         "changed",

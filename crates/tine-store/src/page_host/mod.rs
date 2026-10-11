@@ -40,6 +40,7 @@ mod writer_census_tests;
 
 use drafts::{Record, Stage, Vehicle};
 use io::{ErrorKind, HostIo, IoFailure, Witness};
+use logical::LiveOp;
 use order::{Gates, OperationReply, Reply, ReplyId};
 use save::SaveJob;
 use serde::{Deserialize, Serialize};
@@ -399,17 +400,6 @@ struct DraftWorker {
     /// A caller's rename, full or references-only (a deletion writes no
     /// page): a retained writer waits for it at most `OPERATION_WAIT` (M6).
     rename: bool,
-}
-
-/// RENAME-COST L1: a durable operation vehicle retires whole once none of
-/// its pages still owes the publication of its record.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct LiveOp {
-    /// Each page the vehicle names, at its record's version.
-    versions: BTreeMap<PageKey, u64>,
-    /// Pages held at risk, without a conflict, at their record's version:
-    /// the operation's saves still to publish.
-    owed: BTreeSet<PageKey>,
 }
 
 /// A key's logical state (`Host::logical`).
@@ -1335,10 +1325,7 @@ impl<F: HostIo> Host<F> {
         // Liveness changes: Progress rebuilds its sets from what it knew (M4).
         self.alive = false;
         self.pages.clear();
-        // No page is held, so none owes an operation's publication.
-        for op in self.live_ops.values_mut() {
-            op.owed.clear();
-        }
+        self.release_owed();
         self.custody.clear();
         self.retire.clear();
         self.custody_errors.clear();

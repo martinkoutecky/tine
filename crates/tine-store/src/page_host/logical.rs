@@ -9,7 +9,26 @@ pub(super) fn owes(page: Option<&Page>, version: u64) -> bool {
     page.is_some_and(|p| p.risk && !p.conflict && p.version == version)
 }
 
+/// RENAME-COST L1: a durable operation vehicle retires whole once none of
+/// its pages still owes the publication of its record.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct LiveOp {
+    /// Each page the vehicle names, at its record's version.
+    pub(super) versions: BTreeMap<PageKey, u64>,
+    /// Pages held at risk, without a conflict, at their record's version:
+    /// the operation's saves still to publish.
+    pub(super) owed: BTreeSet<PageKey>,
+}
+
 impl<F: HostIo> Host<F> {
+    /// RENAME-COST L1, at `stop`: no page is held, so none owes an
+    /// operation's publication.
+    pub(super) fn release_owed(&mut self) {
+        for op in self.live_ops.values_mut() {
+            op.owed.clear();
+        }
+    }
+
     /// Apply the adapter's durable census changes to the draft index.
     pub(super) fn sync_drafts(&mut self) {
         for (name, bytes) in self.fs.draft_changes() {
