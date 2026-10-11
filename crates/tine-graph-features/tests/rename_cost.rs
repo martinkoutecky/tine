@@ -188,8 +188,13 @@ fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
 /// (every draft retired, every page released): the counters are reset after
 /// host startup, and the snapshot is taken once the host is quiescent. Checks
 /// every referrer's bytes and the source's deletion. Also returns how long the
-/// rename call itself took.
-fn rename_through_cleanup(pages_count: usize, referrers: usize) -> (Counts, std::time::Duration) {
+/// rename call itself took and what its caller heard: past `OPERATION_WAIT`
+/// the caller hears `TimedOut` while the host finishes the rename, so the
+/// work and bytes are checked either way (REVIEW-progress-plan R5).
+fn rename_through_cleanup(
+    pages_count: usize,
+    referrers: usize,
+) -> (Counts, std::time::Duration, std::io::Result<()>) {
     let temp = tempfile::Builder::new()
         .prefix("rename-work-")
         .tempdir()
@@ -227,7 +232,7 @@ fn rename_through_cleanup(pages_count: usize, referrers: usize) -> (Counts, std:
     }
     cost_counters::reset();
     let called = std::time::Instant::now();
-    pages::rename_page_expected(&store, &host, "Target", "Renamed", None).unwrap();
+    let heard = pages::rename_page_expected(&store, &host, "Target", "Renamed", None);
     let call = called.elapsed();
     let renamed = std::time::Instant::now();
     while !host.quiescent_for_tests() {
@@ -255,7 +260,7 @@ fn rename_through_cleanup(pages_count: usize, referrers: usize) -> (Counts, std:
     }
     drop(host);
     store.close();
-    (counts, call)
+    (counts, call, heard)
 }
 
 /// M4 (STEP3-DESIGN "Manager decisions on the P2b-fix report", REVIEW-progress-
@@ -271,8 +276,12 @@ fn rename_host_work_is_linear() {
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     // Every size is measured before any is judged, so a failure shows the growth.
     let measured = [100u64, 200, 400].map(|referrers| {
-        let (c, _) = rename_through_cleanup(80, referrers as usize);
-        eprintln!("M4 rename host work, {referrers} referrers: {c:?}");
+        let (c, call, heard) = rename_through_cleanup(80, referrers as usize);
+        eprintln!("M4 rename host work, {referrers} referrers ({call:?}, {heard:?}): {c:?}");
+        // The caller's bound is the availability gate's subject, not this one's.
+        if let Err(error) = heard {
+            assert_eq!(error.kind(), std::io::ErrorKind::TimedOut, "{error}");
+        }
         (referrers, c)
     });
     for (referrers, c) in measured {
@@ -329,7 +338,8 @@ fn a_thousand_referrer_rename_completes_inside_the_caller_bound() {
         "a release gate: run scripts/rename-thousand-referrers.sh"
     );
     let started = std::time::Instant::now();
-    let (c, _) = rename_through_cleanup(80, 1000);
+    let (c, _, heard) = rename_through_cleanup(80, 1000);
+    heard.expect("the caller hears success inside OPERATION_WAIT");
     eprintln!(
         "M4 1000 referrers: {:?} through cleanup: {c:?}",
         started.elapsed()
@@ -343,7 +353,11 @@ fn a_thousand_referrer_rename_completes_inside_the_caller_bound() {
 #[test]
 fn a_small_rename_is_not_floored_by_the_edit_debounce() {
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    let runs = [0; 3].map(|_| rename_through_cleanup(20, 2).1);
+    let runs = [0; 3].map(|_| {
+        let (_, call, heard) = rename_through_cleanup(20, 2);
+        heard.unwrap();
+        call
+    });
     eprintln!("2-referrer rename calls: {runs:?}");
     let fastest = runs.into_iter().min().unwrap();
     assert!(
