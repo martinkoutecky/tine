@@ -57,8 +57,10 @@ const WRITERS: &[(&str, &[&str], &str)] = &[
             "mod.rs::mark",
             "progress.rs::reconcile",
             "binding_retained.rs::rename",
+            "draft_worker.rs::apply_draft_terminal",
         ],
-        "the feed: mark adds, reconcile drains; binding_retained's is a rename record's own set",
+        "the feed: mark adds, reconcile drains, an operation's caller marks its applied pages \
+         urgent; binding_retained's is a rename record's own set",
     ),
     (
         "worker",

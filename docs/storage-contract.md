@@ -199,6 +199,13 @@ once the write succeeds. The order is memory only:
 - A caller's wait ends `Uncertain`, never success, when its window session
   changes or the host fails; the operation still completes once it can.
   Every caller exit removes its reply slot.
+- The pages an operation applies for its caller (a single page's rename or
+  a deletion) save without the edit debounce (400 ms, 1 s at most): the
+  caller waits for their publication. A failed save's backoff still
+  applies. A window Move is an ordinary edit and keeps the debounce. Proof
+  `progress_tests.rs`
+  `a_caller_operations_pages_skip_the_debounce_but_not_a_failed_saves_backoff`,
+  `rename_cost.rs` `a_small_rename_is_not_floored_by_the_edit_debounce`.
 Unit cost: none (memory only). Proof
 `crates/tine-store/src/page_host/binding_order_tests.rs`,
 `crates/tine-graph-features/tests/retained_over_running_rename.rs`, the model's

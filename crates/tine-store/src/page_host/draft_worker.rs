@@ -334,6 +334,12 @@ impl<F: HostIo> Host<F> {
                 }
                 if let Reply::Caller(id) = reply {
                     let pages: BTreeSet<_> = versions.keys().cloned().collect();
+                    // Its caller waits for these pages to publish: their
+                    // saves skip the edit debounce (`Progress::reconcile`).
+                    // A window Move is an ordinary edit and keeps it.
+                    for key in pages.iter().filter(|_| present) {
+                        self.changed.insert(key.clone(), true);
+                    }
                     let reply = if present {
                         OperationReply::Applied(versions)
                     } else {

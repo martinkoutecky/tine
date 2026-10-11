@@ -513,7 +513,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         if self.host.switch_confirmation.is_none() {
             self.stopping = None;
         }
-        for key in visit.keys() {
+        for (key, urgent) in &visit {
             work(Work::Reconcile, 1);
             self.moved.insert(key.clone());
             let Some(page) = self.host.pages.get(key) else {
@@ -529,6 +529,10 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             let changed = t.version != page.version;
             t.visit(page, changed, now);
             t.version = page.version;
+            // An operation's caller applied it: its save skips the debounce.
+            if *urgent && !page.clean() {
+                t.urgent = true;
+            }
             let (dirty, clean) = (!page.clean() && !page.conflict, page.clean());
             for (set, member) in [(&mut self.saves, dirty), (&mut self.clean, clean)] {
                 if member {
@@ -807,7 +811,7 @@ impl Reference {
         &mut self,
         host: &Host<F>,
         events: &[Event],
-        _visit: &BTreeMap<PageKey, bool>,
+        visit: &BTreeMap<PageKey, bool>,
         now: u64,
     ) {
         if self.incarnation != Some(host.incarnation) {
@@ -829,6 +833,9 @@ impl Reference {
             let changed = old.is_some_and(|old| old.buf != page.buf || old.version != page.version);
             t.visit(page, changed, now);
             t.version = page.version;
+            if visit.get(key) == Some(&true) && !page.clean() {
+                t.urgent = true;
+            }
         }
         apply_events(
             events,

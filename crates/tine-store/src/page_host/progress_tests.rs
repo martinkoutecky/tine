@@ -962,13 +962,19 @@ fn applied_group_operation_retries_explosion_and_retires_every_vehicle() {
     pump(&mut p);
     assert!(p.host.worker.is_some());
     time(&p, p.draft_retry_at().unwrap());
-    pump(&mut p);
-    assert!(p.host.worker.is_none());
+    // Observed when the explosion ends: the operation's pages save at once
+    // after it (caller urgency), retiring these copies.
+    explode(&mut p);
     assert!(!p.host.allocator_busy());
     let scan = drafts::scan(p.host.fs.draft_files(true));
     assert_eq!(scan.logical.len(), 3);
     assert!(scan.files.keys().all(|name| name.starts_with("p-")));
     assert_eq!(scan.files.len(), 3);
+    pump(&mut p);
+    assert!(
+        p.host.fs.draft_files(true).is_empty(),
+        "every vehicle retires"
+    );
 }
 
 #[test]
@@ -1544,4 +1550,111 @@ fn m4_r2_a_stop_and_launch_rebuild_from_the_readable_directory() {
     assert!(p.host.pages["a.md"].risk);
     pump(&mut p);
     assert_eq!(p.host.logical_drafts()["a.md"].bytes, text("first"));
+}
+
+/// Run the draft worker to its end without moving the clock: an
+/// operation's draft, its application and explosion.
+fn explode(p: &mut Timed) {
+    for _ in 0..200 {
+        if p.host.worker.is_none() {
+            return;
+        }
+        poll(p);
+    }
+    panic!("the draft worker never finished");
+}
+
+/// Caller urgency (STEP3-DESIGN M4 notes, REVIEW-progress-plan R1/R5): the
+/// pages an operation's caller applied (a rename here) save without the
+/// edit debounce once the operation's explosion completes, but a failed
+/// save's backoff still applies. The clock stays frozen at the application.
+#[test]
+fn a_caller_operations_pages_skip_the_debounce_but_not_a_failed_saves_backoff() {
+    let mut p = timed();
+    time(&p, 1_000);
+    let renamed = p.with_host(|h| {
+        h.rename(
+            "a.md",
+            "c.md",
+            &BTreeSet::new(),
+            "A",
+            "C",
+            tine_core::config::FileNameFormat::TripleLowbar,
+        )
+    });
+    assert_eq!(renamed, Disposition::Pending);
+    explode(&mut p);
+    p.host.fs.inject(Phase::PageTemp, [Fault::Before]);
+    assert_eq!(poll(&mut p), Disposition::Pending);
+    assert_eq!(
+        p.host.job.as_ref().map(|job| job.page.as_str()),
+        Some("c.md"),
+        "the destination saves at once, with no 400 ms debounce"
+    );
+    for _ in 0..20 {
+        if p.host.job.is_none() {
+            break;
+        }
+        poll(&mut p);
+    }
+    assert!(p.host.job.is_none() && p.notice("c.md").failures == 1);
+    poll(&mut p);
+    assert!(p.host.job.is_none(), "a failed urgent save still backs off");
+    time(&p, 1_100);
+    assert_eq!(poll(&mut p), Disposition::Pending);
+    assert_eq!(
+        p.host.job.as_ref().map(|job| job.page.as_str()),
+        Some("c.md")
+    );
+}
+
+/// A window Move is an ordinary edit, and so is a submit: both keep the
+/// debounce at a frozen clock (only an operation's caller is hurried).
+#[test]
+fn a_window_move_and_a_submit_keep_the_debounce() {
+    let mut p = timed();
+    time(&p, 1_000);
+    p.with_host(|h| {
+        open(h, "a.md");
+        open(h, "b.md");
+        let (source_version, receiver_version) = (h.pages["a.md"].version, h.pages["b.md"].version);
+        assert_eq!(
+            send(
+                h,
+                "a.md",
+                RequestKind::Move {
+                    receiver: "b.md".into(),
+                    source_text: text("source"),
+                    receiver_text: text("receiver"),
+                    source_version,
+                    receiver_version,
+                }
+            ),
+            Disposition::Pending
+        );
+    });
+    explode(&mut p);
+    assert!(!p.host.pages["a.md"].clean() && !p.host.pages["b.md"].clean());
+    for _ in 0..5 {
+        poll(&mut p);
+        assert!(
+            p.host.job.is_none(),
+            "a window Move's pages wait for the debounce"
+        );
+    }
+    time(&p, 1_400);
+    assert_eq!(poll(&mut p), Disposition::Pending);
+
+    let mut p = timed();
+    time(&p, 1_000);
+    p.with_host(|h| {
+        open(h, "a.md");
+        edit(h, "a.md", "typed");
+    });
+    for _ in 0..5 {
+        poll(&mut p);
+        assert!(p.host.job.is_none(), "a submit waits for the debounce");
+    }
+    time(&p, 1_400);
+    assert_eq!(poll(&mut p), Disposition::Pending);
 }
