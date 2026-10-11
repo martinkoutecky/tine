@@ -97,7 +97,7 @@ pub(in crate::backup) fn raw(entries: &[(&str, &[u8])]) -> Vec<u8> {
         .iter()
         .map(|(name, data)| stored(name, data))
         .collect();
-    assemble(&encoded, dos_time("2026-10-11_09-30-15"))
+    assemble(&encoded, dos_time("2026-10-11_09-30-15")).unwrap()
 }
 
 fn offset_of(haystack: &[u8], needle: &[u8], nth: usize) -> usize {
@@ -511,7 +511,7 @@ fn sizes_are_bounded_before_allocation() {
         size,
         stored: deflated.stored.clone(),
     };
-    let small = assemble(&[lie(5)], dos_time(""));
+    let small = assemble(&[lie(5)], dos_time("")).unwrap();
     let directory = read_directory(&mut &small[..]).err();
     assert_eq!(
         directory,
@@ -547,9 +547,9 @@ fn sizes_are_bounded_before_allocation() {
         entry(&small).err(),
         Some(Problem::Damaged("entry larger than recorded"))
     );
-    let long = assemble(&[lie(4096)], dos_time(""));
+    let long = assemble(&[lie(4096)], dos_time("")).unwrap();
     assert_eq!(entry(&long).err(), Some(Problem::Damaged("deflate sizes")));
-    let huge = assemble(&[lie(MAX_ENTRY_BYTES + 1)], dos_time(""));
+    let huge = assemble(&[lie(MAX_ENTRY_BYTES + 1)], dos_time("")).unwrap();
     assert_eq!(entry(&huge).err(), Some(Problem::TooLarge("entry")));
     // Aggregate: three entries each claiming 200 MiB.
     let claims: Vec<Encoded> = ["a.md", "b.md", "c.md"]
@@ -561,7 +561,7 @@ fn sizes_are_bounded_before_allocation() {
         })
         .chain(std::iter::once(stored(MANIFEST_NAME, b"{}")))
         .collect();
-    let bytes = assemble(&claims, dos_time(""));
+    let bytes = assemble(&claims, dos_time("")).unwrap();
     assert_eq!(verify_bytes(&bytes).err(), Some(Problem::TooLarge("total")));
     // The writer applies the same per-entry limit.
     let too_big = vec![(
@@ -571,6 +571,79 @@ fn sizes_are_bounded_before_allocation() {
     assert_eq!(
         write_archive(&too_big, b"{}", "").err(),
         Some(Problem::TooLarge("entry"))
+    );
+}
+
+/// The largest single allocation or reallocation made while `TRACK` is on,
+/// by any thread: E1's plant observes allocation sizes, not the result.
+struct Largest;
+static TRACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LARGEST: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+impl Largest {
+    fn note(size: usize) {
+        use std::sync::atomic::Ordering::Relaxed;
+        if TRACK.load(Relaxed) {
+            LARGEST.fetch_max(size, Relaxed);
+        }
+    }
+}
+
+unsafe impl std::alloc::GlobalAlloc for Largest {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        Self::note(layout.size());
+        unsafe { std::alloc::System.alloc(layout) }
+    }
+    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+        Self::note(layout.size());
+        unsafe { std::alloc::System.alloc_zeroed(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        unsafe { std::alloc::System.dealloc(ptr, layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+        Self::note(new_size);
+        unsafe { std::alloc::System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: Largest = Largest;
+
+/// E1 (review 2, R1): within every input limit, long names and a near-cap
+/// manifest still encode past [`MAX_ARCHIVE_BYTES`] (16,000 payloads of
+/// 33,554 bytes, 3,834-byte names, a 63,488,351-byte manifest: about
+/// 707 MB). The writer refuses from the computed length, and no buffer over
+/// the cap is ever allocated. The entries borrow one payload and one name,
+/// which the layout does not distinguish from distinct ones.
+#[test]
+fn an_archive_over_the_cap_is_refused_before_its_buffer_exists() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let payload = vec![0x5Au8; 33_554];
+    let name = format!("pages/{}.md", "n".repeat(3_834 - "pages/.md".len()));
+    let manifest = vec![b' '; 63_488_351];
+    let entry = |name, data| Encoded {
+        name,
+        method: STORED,
+        crc: 0,
+        size: 0,
+        stored: Cow::Borrowed(data),
+    };
+    let entries: Vec<Encoded> = (0..16_000)
+        .map(|_| entry(name.as_str(), &payload[..]))
+        .chain(std::iter::once(entry(MANIFEST_NAME, &manifest[..])))
+        .collect();
+    LARGEST.store(0, Relaxed);
+    TRACK.store(true, Relaxed);
+    let result = assemble(&entries, dos_time(""));
+    TRACK.store(false, Relaxed);
+    assert_eq!(result.err(), Some(Problem::TooLarge("archive")));
+    let largest = LARGEST.load(Relaxed) as u64;
+    assert!(
+        largest <= MAX_ARCHIVE_BYTES,
+        "E1/I-14: an over-cap archive is refused from its computed length before any \
+         output buffer is allocated (exemplar archive.rs assemble); largest allocation \
+         {largest} B"
     );
 }
 

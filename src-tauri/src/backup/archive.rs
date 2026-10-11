@@ -360,30 +360,33 @@ pub(super) fn write_archive(
         .chain(std::iter::once((MANIFEST_NAME, manifest)))
         .map(|(name, data)| Encoded::new(name, data, &mut deflater))
         .collect();
-    let out = assemble(&entries, dos_time(stamp));
-    if out.len() as u64 > MAX_ARCHIVE_BYTES {
-        return Err(Problem::TooLarge("archive"));
-    }
-    Ok(out)
+    assemble(&entries, dos_time(stamp))
 }
 
-/// Lay out encoded entries in the format above. Sizes and offsets must fit
-/// in 32 bits, which [`write_archive`]'s limits guarantee.
-pub(super) fn assemble(entries: &[Encoded], (time, date): (u16, u16)) -> Vec<u8> {
-    // Exact sizes up front (D3): no buffer outgrows the archive.
-    let names: usize = entries.iter().map(|entry| entry.name.len()).sum();
-    let data: usize = entries.iter().map(|entry| entry.stored.len()).sum();
-    let central_len = CENTRAL_LEN * entries.len() + names;
-    let mut out = Vec::with_capacity(
-        LOCAL_LEN * entries.len()
-            + names
-            + data
-            + central_len
-            + ZIP64_EOCD_LEN
-            + ZIP64_LOCATOR_LEN
-            + EOCD_LEN,
-    );
-    let mut central = Vec::with_capacity(central_len);
+/// Lay out encoded entries in the format above, refusing an archive over
+/// [`MAX_ARCHIVE_BYTES`] from its computed length, before any output buffer
+/// exists (D3, E1). Sizes and offsets then fit in 32 bits.
+pub(super) fn assemble(entries: &[Encoded], (time, date): (u16, u16)) -> Result<Vec<u8>, Problem> {
+    let count = entries.len() as u64;
+    let zip64 = count >= 0xFFFF;
+    let names: u64 = entries.iter().map(|entry| entry.name.len() as u64).sum();
+    let data: u64 = entries.iter().map(|entry| entry.stored.len() as u64).sum();
+    let central_len = CENTRAL_LEN as u64 * count + names;
+    let len = LOCAL_LEN as u64 * count
+        + names
+        + data
+        + central_len
+        + if zip64 {
+            (ZIP64_EOCD_LEN + ZIP64_LOCATOR_LEN) as u64
+        } else {
+            0
+        }
+        + EOCD_LEN as u64;
+    if len > MAX_ARCHIVE_BYTES {
+        return Err(Problem::TooLarge("archive"));
+    }
+    let mut out = Vec::with_capacity(len as usize);
+    let mut central = Vec::with_capacity(central_len as usize);
     for entry in entries {
         let flags = if entry.name.is_ascii() { 0 } else { UTF8_FLAG };
         let needed = version_needed(entry.method);
@@ -414,11 +417,9 @@ pub(super) fn assemble(entries: &[Encoded], (time, date): (u16, u16)) -> Vec<u8>
         put32(&mut central, offset);
         central.extend_from_slice(entry.name.as_bytes());
     }
-    let count = entries.len() as u64;
     let cd_offset = out.len() as u64;
     let cd_size = central.len() as u64;
     out.extend_from_slice(&central);
-    let zip64 = count >= 0xFFFF;
     if zip64 {
         let record = out.len() as u64;
         put32(&mut out, ZIP64_EOCD_SIG);
@@ -445,7 +446,8 @@ pub(super) fn assemble(entries: &[Encoded], (time, date): (u16, u16)) -> Vec<u8>
     put32(&mut out, cd_size as u32);
     put32(&mut out, cd_offset as u32);
     put16(&mut out, 0);
-    out
+    debug_assert_eq!(out.len() as u64, len);
+    Ok(out)
 }
 
 /// The only version-needed values this format writes, and so accepts
