@@ -26,6 +26,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Graph settings: when `logseq/config.edn` disappears while a graph is open (iCloud offloading it, a sync tool replacing it), Tine keeps the settings it read, as Logseq does, instead of switching to the defaults. Before, namespace pages could show as `xxx___yyy` and new ones were written under Logseq's old file names. A graph whose `config.edn` is still in iCloud and not downloaded opens read-only rather than with guessed settings (REG-OG-CONFIG-VANISH-KEEPS-FORMAT).
 - Journals: Logseq's default NOW query from `config.edn` runs, ordered by priority with unprioritised tasks last, instead of showing a "query not run" notice; its `:result-transform` is the one Tine recognises. Default journal queries with no results now show nothing, as in Logseq (REG-OG-DEFAULT-NOW-QUERY).
 - Block text stays visible immediately after applying a deadline or scheduled date; open editors resize after programmatic content changes (GH #668).
 - Query results keep an edited block in place until editing finishes, so replacing TODO with CANCELED can complete and save normally (GH #659).

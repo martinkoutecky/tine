@@ -455,6 +455,10 @@ pub(crate) struct Core {
     /// about 2 s later (§5.4; `Core::launch_diff`).
     pub(crate) follow_up: Mutex<Option<Instant>>,
     config_stamp: Mutex<Option<Stamp>>,
+    /// Whether the effective config was read from a `logseq/config.edn` file.
+    /// While it was, a config.edn that disappears keeps that config (see
+    /// `read_config`).
+    config_from_file: AtomicBool,
     /// Last observed `logseq/custom.css` (`custom_css.rs`).
     custom_css_stamp: Mutex<Option<Stamp>>,
     #[cfg(test)]
@@ -635,9 +639,25 @@ impl Core {
 
     fn read_config(&self, path: &Path) -> Result<(), LoadError> {
         let (config, problem) = match crate::model::read_parse_input(path) {
-            Ok(value) => (tine_core::config::Config::parse(&value), None),
+            Ok(value) => {
+                self.config_from_file.store(true, Ordering::SeqCst);
+                (tine_core::config::Config::parse(&value), None)
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                (tine_core::config::Config::default(), None)
+                // A config.edn that disappears while the graph is open keeps
+                // the config read from it, as Logseq does (its watcher ignores
+                // the unlink: watcher_handler.cljs `handle-changed!`). iCloud
+                // offloading it to a placeholder, or a sync tool replacing it,
+                // must not switch the graph to the defaults: the default
+                // :file/name-format is :legacy, so namespace pages would show
+                // and be written under another file name (reddit 2026-10-11).
+                if self.config_from_file.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+                (
+                    tine_core::config::Config::default(),
+                    crate::model::missing_config_problem(path),
+                )
             }
             Err(error) => (tine_core::config::Config::default(), Some(error.into())),
         };
@@ -792,6 +812,7 @@ impl WatchHandle {
             snapshot: Mutex::new(snapshot),
             racy: Mutex::new(HashSet::new()),
             follow_up: Mutex::new(None),
+            config_from_file: AtomicBool::new(config_stamp.is_some()),
             config_stamp: Mutex::new(config_stamp),
             custom_css_stamp: Mutex::new(stamp(&graph_root.join("logseq/custom.css"))),
             #[cfg(test)]

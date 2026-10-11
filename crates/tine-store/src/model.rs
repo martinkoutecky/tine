@@ -85,6 +85,21 @@ impl std::fmt::Display for ParseInputTooLarge {
 }
 impl std::error::Error for ParseInputTooLarge {}
 
+/// Why a graph with no `logseq/config.edn` must not take the defaults, if it
+/// must not. An iCloud placeholder (`logseq/.config.edn.icloud`) means the
+/// file exists but is not downloaded: its settings are unknown, so the graph
+/// opens read-only (`ConfigState::problem`) instead of writing under the
+/// default :legacy file names. A plainly absent config.edn is no problem
+/// (Logseq's defaults). Cost: one metadata call.
+pub(crate) fn missing_config_problem(config_path: &Path) -> Option<crate::IoError> {
+    let placeholder = config_path.with_file_name(".config.edn.icloud");
+    placeholder.symlink_metadata().is_ok().then(|| {
+        io::Error::other(
+            "config.edn is in iCloud but not downloaded yet; open the graph again once it is",
+        )
+        .into()
+    })
+}
 pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
     let bytes = read_parse_bytes(path)?;
     validate_parse_bytes_for_path(&bytes, path)?;
@@ -2191,7 +2206,10 @@ impl Graph {
         let root = root.as_ref().to_path_buf();
         let (config, problem) = match read_parse_input(&root.join("logseq/config.edn")) {
             Ok(text) => (Config::parse(&text), None),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => (Config::default(), None),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (
+                Config::default(),
+                missing_config_problem(&root.join("logseq/config.edn")),
+            ),
             Err(error) => (Config::default(), Some(error.into())),
         };
         let journal_format = JournalFormat::new(
