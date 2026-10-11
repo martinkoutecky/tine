@@ -199,6 +199,11 @@ struct Live {
 
 impl Live {
     fn new(files: &[(&str, &str)]) -> Self {
+        Self::with(files, false)
+    }
+
+    /// `checkpoint`: the store keeps a launch checkpoint in the app dir.
+    fn with(files: &[(&str, &str)], checkpoint: bool) -> Self {
         let dir = match std::env::var_os("TINE_HOST_FS_ROOT") {
             Some(base) => tempfile::tempdir_in(base).unwrap(),
             None => tempfile::tempdir().unwrap(),
@@ -216,7 +221,11 @@ impl Live {
         // the host's holds, the watcher's events and the build's lookups
         // must all key pages by the store's resolved root (A-V4).
         let given = graph.join("pages").join("..");
-        let store = Arc::new(Store::open(&given, Default::default()).unwrap().0);
+        let options = crate::OpenOptions {
+            launch_checkpoint: checkpoint.then(|| app.join("checkpoint.bin")),
+            ..Default::default()
+        };
+        let store = Arc::new(Store::open(&given, options).unwrap().0);
         // A loaded index: what it holds afterwards was published to it.
         store.whole_graph_reconciled().unwrap();
         let root = store.graph.root.clone();
@@ -2305,4 +2314,26 @@ fn m4_b2_a_blocked_orphan_is_evicted_when_its_obligation_ends() {
     assert!(evicted(&u.collect()).is_empty(), "still handed over");
     u.book.handover.clear();
     assert_eq!(evicted(&u.collect()), ["b.md"]);
+}
+
+/// PERF-FIXES D4: opening a page whose bytes the index already holds changes
+/// no derived state, so it leaves a written launch checkpoint clean. Before
+/// the fix each open published the page as a change and restarted the
+/// checkpoint's quiet window, so an editing session never wrote one and the
+/// next launch was cold (ab1: 0 of 7 typing/custody/drafts trials).
+#[test]
+fn opening_an_unchanged_page_leaves_the_launch_checkpoint_clean() {
+    let live = Live::with(&[("pages/a.md", "- a\n"), ("pages/b.md", "- b [[a]]\n")], true);
+    assert!(matches!(
+        live.store.write_checkpoint_now(),
+        Some(crate::CheckpointWrite::Written { .. })
+    ));
+    let dirty = || live.store.changes.checkpoint.get().unwrap().dirty();
+    assert!(!dirty());
+    live.open("pages/a.md");
+    live.open("pages/b.md");
+    assert!(
+        !dirty(),
+        "an open whose bytes the index holds must not mark the launch checkpoint dirty"
+    );
 }

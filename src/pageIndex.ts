@@ -35,7 +35,7 @@ const [held, setHeld] = createSignal<Held | null>(null);
 // request issued before it is dropped.
 let generation = 0;
 let queued = false;
-let inFlight = false;
+let inFlight: string | null = null;
 let again = false;
 const refreshScope = {};
 
@@ -87,19 +87,22 @@ function scheduleRefresh(): void {
   });
 }
 
-/** One signal-driven fetch in flight, plus at most one trailing fetch for the
- *  signals that arrived meanwhile (PERF-FIXES D2): a burst of publications (a
- *  rename's referrers) costs two inventory reads, not one per publication. */
+/** One signal-driven fetch in flight per graph binding, plus at most one
+ *  trailing fetch for the signals that arrived meanwhile (PERF-FIXES D2): a
+ *  burst of publications (a rename's referrers) costs two inventory reads,
+ *  not one per publication. A rebind or graph switch never waits behind the
+ *  previous binding's read. */
 async function signalled(): Promise<void> {
-  if (inFlight) { again = true; return; }
-  inFlight = true;
+  const binding = `${generation}:${graphEpoch()}`;
+  if (inFlight === binding) { again = true; return; }
+  inFlight = binding;
   try {
     do {
       again = false;
       await refreshPageIndex();
-    } while (again);
+    } while (again && inFlight === binding);
   } finally {
-    inFlight = false;
+    if (inFlight === binding) inFlight = null;
   }
 }
 
