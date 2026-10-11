@@ -2047,12 +2047,14 @@ fn i1c_a_removal_back_at_the_baseline_lifts_the_conflict_and_the_edit_saves() {
         .driver
         .shared
         .with_state(|state| state.progress.host.fs.faults.clear());
+    // Saved means on disk and reported saved: the bytes appear at the
+    // rename, a few milliseconds before the save's directory sync completes
+    // and the page turns clean.
     let deadline = Instant::now() + Duration::from_secs(40);
-    while live.disk(&key) != "- two\n" {
+    while live.disk(&key) != "- two\n" || !live.host.draft_status().unsaved.is_empty() {
         assert!(Instant::now() < deadline, "the held edit never saved");
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert!(live.host.draft_status().unsaved.is_empty());
     live.host.stop();
 }
 
