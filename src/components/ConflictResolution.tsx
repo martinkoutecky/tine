@@ -264,6 +264,8 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           current.conflict_rev, current.merge_base_rev, decisions(), preChoice()));
         if (outcome.kind === "stale" || !owner()) return;
         if (outcome.value === "installed") pushToast(`Resolved the conflict in “${pageName}”`, "success");
+        else if (outcome.value === "saving")
+          pushToast(`Applied the resolution to “${pageName}”, but it is not saved yet. Tine keeps trying to save it.`, "info");
         else refresh("Your draft or the file changed. Review the updated comparison, then apply it again.");
         return;
       }

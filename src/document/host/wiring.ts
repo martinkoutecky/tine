@@ -660,10 +660,11 @@ export function sameLiveDraft(a: PageDto, b: PageDto): boolean {
 
 /** Apply a reviewed Concord merge (S7): the read-only native merge produces the
  * text, and the client submits it on the reviewed disk state only if no input
- * arrived since the review. "kept": newer input stays, the user reviews again. */
+ * arrived since the review. "kept": newer input stays, the user reviews again.
+ * "saving": the host took the resolution, but its publication is not proved yet. */
 export async function applyLiveResolution(name: string, generation: number, reviewed: PageDto, path: string,
   conflictRev: string, mergeBaseRev: string | undefined, decisions: Record<string, MergeDecision>,
-  preChoice: "mine" | "theirs" | "union"): Promise<"installed" | "kept" | "gone"> {
+  preChoice: "mine" | "theirs" | "union"): Promise<"installed" | "saving" | "kept" | "gone"> {
   const c = host();
   const now = pageToDto(name);
   if (!c || pageInstanceGeneration(name) !== generation || !now || !sameLiveDraft(now, reviewed)) return "kept";
@@ -673,7 +674,9 @@ export async function applyLiveResolution(name: string, generation: number, revi
     () => backend().mergeLiveConflict(path, reviewed, conflictRev, mergeBaseRev, decisions, preChoice));
   if (answer === "review-stale") return "kept";
   if (!answer.took) return "gone";
-  return await settle(c, [name]) ? "installed" : "kept";
+  // Taken: the page now holds the resolution. A false barrier only means its
+  // publication is not proved yet (a save backoff, REVIEW-3b-P2b F2).
+  return await settle(c, [name]) ? "installed" : "saving";
 }
 
 /** The reviewed disk state as a token ("absent" is a proved missing file). */

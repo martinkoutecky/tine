@@ -153,6 +153,23 @@ describe("Concord live-draft conflicts (og 8e)", () => {
     dispose();
   });
 
+  it("F2: a taken resolution whose publication meets a save backoff says it is still saving, not that the draft changed", async () => {
+    await conflictedDraft();
+    vi.spyOn(api, "mergeLiveConflict").mockImplementation(async (_p, draft) => ({ ...draft, blocks: [block("p1", "resolved")] }));
+    // The host took the resolution; its save then failed and waits for its
+    // backoff, so the bounded publication wait answers false.
+    vi.spyOn(api, "pageWait").mockResolvedValue(false);
+    const { root, dispose } = mount(liveConflictForPage("P", PATH)!);
+    await tick();
+    apply(root);
+    await tick();
+    expect(replaceSubmits()).toHaveLength(1);
+    expect(raw()).toBe("resolved");
+    expect(toasts().some((t) => /draft or the file changed/.test(t.message))).toBe(false);
+    expect(toasts().some((t) => /not saved yet/.test(t.message))).toBe(true);
+    dispose();
+  });
+
   it("a newer disk write refuses the apply, writes nothing and refreshes the review", async () => {
     await conflictedDraft();
     vi.spyOn(api, "mergeLiveConflict").mockRejectedValue("conflict");
