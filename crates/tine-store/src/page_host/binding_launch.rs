@@ -173,6 +173,8 @@ impl PageHost {
         });
         this.recovered = recovered;
         if alive {
+            let drafts = this.recovered.len();
+            crate::bench_events::emit(|| crate::bench_events::Ev::LaunchRecovered { drafts });
             return Ok(this);
         }
         drop(this);

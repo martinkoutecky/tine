@@ -7,6 +7,7 @@
 
 import { createEffect, createRoot, createSignal, on, untrack } from "solid-js";
 import { backend } from "../../backend";
+import { benchEvent } from "../../benchEvents";
 import { captureBinding, clearOnBindingInvalidated } from "../../binding";
 import type { ClipboardSourcePage } from "../../clipboard";
 import { conflictPolicyAlwaysAsk, holdExternalChange } from "../../conflictPolicy";
@@ -847,6 +848,8 @@ async function transfer(c: HostClient, endpoints: string[], before: ReadonlyMap<
       if (shown !== undefined && !(shown && sameText(shown, text))) installPageContent(name, text);
     }
     setHostRevision((n) => n + 1);
+    // The endpoints take input again: the storage A/B's `unfreeze` (bench only).
+    benchEvent("unfreeze");
   }
   if (outcome.ok && planned) return true;
   const pages = outcome.ok ? endpoints : outcome.pages;

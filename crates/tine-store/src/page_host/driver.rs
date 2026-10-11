@@ -272,6 +272,13 @@ struct Ended<'a, F: HostIo, C: Clock>(&'a Shared<F, C>);
 
 impl<F: HostIo, C: Clock> Drop for Ended<'_, F, C> {
     fn drop(&mut self) {
+        // Bench events: the host's event vector at close (a poisoned state,
+        // after a panic, reports nothing).
+        if crate::bench_events::enabled() {
+            if let Ok(state) = self.0.state.lock() {
+                host_stats(&state.progress.host);
+            }
+        }
         self.0.ended.store(true, Ordering::SeqCst);
         self.0.condition.notify_all();
     }
@@ -443,8 +450,21 @@ pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
     Some((state, result, false))
 }
 
+/// How often the driver reports its host's event vector (bench events).
+const HOST_STATS_EVERY: Duration = Duration::from_secs(5);
+
+/// Bench events: `host`'s event vector, its length and allocation.
+fn host_stats<F: HostIo>(host: &Host<F>) {
+    crate::bench_events::emit(|| crate::bench_events::Ev::HostStats {
+        events_len: host.events.len(),
+        events_bytes: host.events.capacity() * std::mem::size_of::<Event>(),
+    });
+}
+
 fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
     let _ended = Ended(shared);
+    // The next bench `host_stats` (None: events off).
+    let mut stats = crate::bench_events::enabled().then(|| Instant::now() + HOST_STATS_EVERY);
     loop {
         // Every step retakes the state mutex, so admission, watcher reads
         // and reservations interleave with a long run of driver steps.
@@ -456,6 +476,11 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
         let Some((mut state, result, stepped)) = locked(shared, state, true, State::step) else {
             return;
         };
+        // Before the step's events are drained: what the vector holds.
+        if stats.is_some_and(|due| due <= Instant::now()) {
+            host_stats(&state.progress.host);
+            stats = Some(Instant::now() + HOST_STATS_EVERY);
+        }
         let delivery = {
             let state = &mut *state;
             state.book.collect(&mut state.progress)
@@ -486,7 +511,8 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
                 let now = state.progress.clock.now_ms();
                 let timer = until.map(|due| Duration::from_millis(due.saturating_sub(now)));
                 let lock = retry.map(|at| at.saturating_duration_since(Instant::now()));
-                state = match timer.into_iter().chain(lock).min() {
+                let report = stats.map(|due| due.saturating_duration_since(Instant::now()));
+                state = match timer.into_iter().chain(lock).chain(report).min() {
                     Some(wait) if wait.is_zero() => break,
                     Some(wait) => shared.condition.wait_timeout(state, wait).unwrap().0,
                     None => shared.condition.wait(state).unwrap(),

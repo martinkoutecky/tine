@@ -755,6 +755,14 @@ pub fn run() {
         None => builder,
     };
 
+    // Bench-only (`tine_store::bench_events`): the window reports its
+    // carry-over unfreeze only while `TINE_BENCH_EVENTS` names an events file.
+    let builder = if tine_store::bench_events::enabled() {
+        builder.append_invoke_initialization_script("globalThis.__TINE_BENCH_EVENTS__ = true;")
+    } else {
+        builder
+    };
+
     // The backend's zone offset at launch, so the frontend's first "today" is
     // already the backend's (GH #607); `local_clock` keeps it current.
     let (offset_minutes, unix_ms) = tine_core::date::JournalDate::local_utc_offset_now();
@@ -1130,6 +1138,7 @@ pub fn run() {
             page_commands::page_save_now,
             page_commands::page_owed,
             page_commands::page_drafts_retry,
+            page_commands::bench_event,
             load_session,
             drafts::legacy_drafts_file,
             save_session,

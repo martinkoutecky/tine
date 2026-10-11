@@ -1008,8 +1008,9 @@ fn page_mail(store: &Store, key: PageKey, mail: Mail, facts: MailFacts) -> PageM
                 rev: page.buf.as_deref().map(FileRev::from_bytes),
             },
             None => MailText::NoFile,
-            Some(bytes) => match graph.page_dto_for_bytes(&graph.root.join(&facts.spelling), bytes)
-            {
+            Some(bytes) => match crate::bench_events::mail_parse(&facts.spelling, || {
+                graph.page_dto_for_bytes(&graph.root.join(&facts.spelling), bytes)
+            }) {
                 Ok(Some(dto)) => MailText::Page { dto: Box::new(dto) },
                 Ok(None) => MailText::Unreadable {
                     message: "not a page path".into(),

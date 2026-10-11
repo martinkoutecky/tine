@@ -6,6 +6,15 @@ use std::path::Path;
 // revocation signal; join-or-cancel describes who reaps or bounds the work.
 const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
+        "crates/tine-store/src/bench_events.rs",
+        ".spawn(move ||",
+        // Bench only: started at most once per process, and only while
+        // TINE_BENCH_EVENTS names a file (tests also start their own).
+        1,
+        "the channel's sender: the process-wide writer's lives until exit; a test writer's drops with its `Writer`, ending the thread's receive loop",
+        "detached; the thread ends with its channel or with the process, and an unwritten line is lost (best effort, never synced, by the bench contract)",
+    ),
+    (
         "crates/tine-store/src/model.rs",
         ".spawn(move ||",
         1,

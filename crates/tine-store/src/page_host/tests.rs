@@ -1449,3 +1449,38 @@ fn lazy_group_with_d() -> Host<ModelFs> {
     assert_eq!(h.fs.draft_files(true).len(), 1);
     h
 }
+
+/// Bench events (`crate::bench_events`): a save's `save_begin` comes before
+/// its `published`, under one key, and `published` carries the version
+/// and text the host recorded as Published.
+#[test]
+fn bench_events_a_save_begins_then_publishes_under_one_key() {
+    use crate::bench_events::{capture_on_this_thread, Writer};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("events.ndjson");
+    let writer = Arc::new(Writer::start(&path).unwrap());
+    capture_on_this_thread(Some(writer.clone()));
+    let mut h = host();
+    open(&mut h, "a.md");
+    edit(&mut h, "a.md", "A2");
+    saved(&mut h, "a.md");
+    capture_on_this_thread(None);
+    writer.sync();
+    let lines: Vec<serde_json::Value> = std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .filter(|line: &serde_json::Value| line["ev"] == "save_begin" || line["ev"] == "published")
+        .collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    let (begin, published) = (&lines[0], &lines[1]);
+    assert_eq!(begin["ev"], "save_begin");
+    assert_eq!(published["ev"], "published");
+    assert_eq!(begin["key"], published["key"]);
+    assert_eq!(begin["path"], "a.md");
+    assert_eq!(published["path"], "a.md");
+    assert_eq!(published["version"], h.pages["a.md"].version);
+    assert_eq!(published["text"], "A2");
+    assert_eq!(published["bytes_len"], 2);
+    assert!(begin["t"].as_f64().unwrap() <= published["t"].as_f64().unwrap());
+}

@@ -1,6 +1,7 @@
 //! The host's save pipeline (STEP2 §3): starting a page save and
 //! advancing its guarded phases.
 use super::*;
+use crate::bench_events::Ev;
 
 /// The one page save in progress and the phase it reached.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -17,6 +18,8 @@ pub(super) struct SaveJob {
     pub(super) trash_durable: bool,
     /// Consecutive trash-move collisions on this job (K6).
     pub(super) collisions: u8,
+    /// The bench events' key of this save (0: events off).
+    pub(super) bench: u64,
 }
 
 /// Consecutive trash-move collisions one save job retries uncounted (K6).
@@ -40,6 +43,7 @@ impl<F: HostIo> Host<F> {
         if self.order.gated(key) {
             return Disposition::Waiting;
         }
+        let bench = crate::bench_events::save_begin(page.version, || self.fs.spelling(key));
         self.job = Some(SaveJob {
             page: key.into(),
             phase: if self.custody.contains_key(key) {
@@ -55,6 +59,7 @@ impl<F: HostIo> Host<F> {
             marker: None,
             trash_durable: true,
             collisions: 0,
+            bench,
         });
         Disposition::Pending
     }
@@ -321,6 +326,9 @@ impl<F: HostIo> Host<F> {
             SavePhase::DirectorySync => match self.fs.page_sync(&key) {
                 Ok(witness) => {
                     if witness == Witness::Durable && job.trash_durable && job.bytes.is_none() {
+                        crate::bench_events::emit(|| Ev::CustodyComplete {
+                            path: self.fs.spelling(&key),
+                        });
                         self.events.push(Event::DeleteDurable {
                             page: key.clone(),
                             bytes: job.removed.clone(),
@@ -348,6 +356,12 @@ impl<F: HostIo> Host<F> {
                 page.typed = false;
                 page.risk = false;
                 self.order.published(&key, job.version);
+                crate::bench_events::emit(|| Ev::Published {
+                    key: job.bench,
+                    version: job.version,
+                    path: self.fs.spelling(&key),
+                    text: job.bytes.clone(),
+                });
                 self.events.push(Event::Published {
                     page: key.clone(),
                     bytes: job.bytes,

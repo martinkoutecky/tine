@@ -103,6 +103,10 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   // Not a new format: rename_replace's one rename gained a Windows arm
   // (MoveFileExW with WRITE_THROUGH, falling back to std's rename; REVIEW-2b F10).
   "crates/tine-store/src/atomic_file.rs": { sites: 1, approval: "storage s3 step 2b (Martin 2026-10-08/09 delegation); same graph-text rename, per-platform arm" },
+  // Bench-only NDJSON event log: written only when TINE_BENCH_EVENTS names a
+  // path, never read back by Tine, absent in normal use (docs/bench-storage-ab.md
+  // on og-storage-perf-ab). Not a persisted format.
+  "crates/tine-store/src/bench_events.rs": { sites: 1, approval: "Martin 2026-10-11 (\"ok\" to approved-writer, not a format); storage s3 gate-2 A/B" },
   "src-tauri/src/youtube_identity.rs": { sites: 1, approval: "Martin's OG-QBY native YouTube identity task; temporary bundled WebProcess module, no new persisted format" },
 });
 
