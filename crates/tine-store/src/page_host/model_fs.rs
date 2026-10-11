@@ -71,7 +71,9 @@ pub(super) struct ModelFs {
 pub(super) struct Cut {
     /// Unforced names that survive anyway (a surplus copy).
     pub survive: BTreeSet<String>,
-    /// Surviving names whose unflushed external data is lost (R-UNFLUSHED).
+    /// Trash names whose unflushed external data is lost (R-UNFLUSHED), even
+    /// after their directory chain was synced: no custody phase syncs a
+    /// payload's data (RO3 (a), Martin 2026-10-11).
     pub lose: BTreeSet<String>,
 }
 
@@ -166,11 +168,19 @@ impl ModelFs {
                 .filter(|i| mask >> i & 1 == 1)
                 .map(|i| free[i].clone())
                 .collect();
+            // A durable trash name keeps its writer's unflushed data volatile.
+            let named = self
+                .stable
+                .keys()
+                .filter(|key| key.starts_with("trash/") && self.files.contains_key(*key));
             let unflushed: Vec<_> = forced
                 .iter()
                 .chain(&survive)
+                .chain(named)
                 .filter(|key| self.volatile.contains(*key))
                 .cloned()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
                 .collect();
             for lost in 0..1usize << unflushed.len() {
                 let lose = (0..unflushed.len())
@@ -221,6 +231,8 @@ impl ModelFs {
                 self.files.insert(key.clone(), readable[key].clone());
             }
         }
+        // R-UNFLUSHED: a durable name does not make unflushed data durable.
+        self.files.retain(|key, _| !cut.lose.contains(key));
         // A lost chain entry takes everything beneath it.
         if let Some(lost) = CHAIN.iter().position(|dir| !self.files.contains_key(*dir)) {
             self.files.retain(|key, _| {
@@ -483,10 +495,11 @@ impl HostIo for ModelFs {
             if !fs.files.contains_key(&key) {
                 return Ok(Witness::Durable); // R-PURGE: nothing left to keep
             }
-            fs.call()?;
-            fs.volatile.remove(&key); // (a) is a file sync, real on every filesystem
-                                      // (b) `pages/` (the payload's name), then each ancestor's sync
-                                      // makes its child chain entry durable, up to the graph root.
+            // RO3 (a) (Martin 2026-10-11): no payload data sync. Tine's own
+            // saves already synced the bytes; another program's unflushed
+            // bytes stay volatile (R-UNFLUSHED). `pages/` (the payload's
+            // name), then each ancestor's sync makes its child chain entry
+            // durable, up to the graph root.
             fs.call()?;
             fs.sync_entry(&key);
             for dir in CHAIN.iter().rev() {

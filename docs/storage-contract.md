@@ -300,6 +300,16 @@ B1/R3 cases beside them, `src/document/host/wiring.publicationDebt.test.ts`
 `crates/tine-store/src/page_host/binding_tests.rs`
 `wait_published_refuses_once_the_driver_ended_or_the_host_is_down`.
 
+**Trash custody durability (A4, RO3 (a), Martin 2026-10-11).** A deletion
+makes the trash *name* durable: the custody marker, then the move, then a sync
+of `pages/` and each existing ancestor up to the graph root, then the source
+directory. It does not sync the trashed file's data: Tine's own saves synced
+those bytes already. Residual R-UNFLUSHED: bytes another program wrote into
+the page without flushing them may be lost at a power cut after Tine deletes
+the page, even though the trash name survives; they had no durability from
+their writer either (ModelFs `cuts()`; proof
+`page_host::production_tests::trashed_external_payload_is_named_durably_before_the_deletion_witness`).
+
 **Trash collisions (K6).** A deletion's move into the trash never replaces
 what is there. Only that no-replace move's own target-exists is a collision.
 The host retires the unused custody marker and retries under a fresh name.
@@ -643,8 +653,9 @@ pages once; it still reloads only clean rewritten pages and discards moved pages
 
 Unit cost (step 3b P2b, a single page's rename through the page host, Q-P2b-2;
 re-measured after RENAME-COST 2026-10-11): the 1-/60-block referrer fixtures
-write 4 files and 300/4,137 bytes with 17 syncs: the operation draft, the
-referrer, the destination page and the source's custody marker. The
+write 4 files and 300/4,137 bytes with 16 syncs: the operation draft, the
+referrer, the destination page and the source's custody marker (17 before
+RO3 (a), which stopped syncing the trashed source's data). The
 referrer's old and new payloads are each written once into the operation
 draft, and the new one into the page (three payload copies). Each extra page
 of an operation adds one file (its page) and two syncs (the file and its

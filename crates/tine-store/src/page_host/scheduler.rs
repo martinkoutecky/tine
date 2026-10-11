@@ -1129,7 +1129,7 @@ fn loaded_delete_new_open_during_install_gets_a_modelled_push() {
 const CUSTODY_CALLS: [(Phase, usize); 4] = [
     (Phase::CustodyWrite, 3),
     (Phase::TrashMove, 7),
-    (Phase::TrashSync, 5),
+    (Phase::TrashSync, 4),
     (Phase::CustodyRetire, 2),
 ];
 

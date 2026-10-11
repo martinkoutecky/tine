@@ -192,8 +192,10 @@ fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
         // record retires with that file, uncopied (RENAME-COST L1).
         assert_eq!(cost.files_written, 4);
         assert_eq!(cost.bytes_written, bytes);
+        // RO3 (a) (Martin 2026-10-11): 17 -> 16, the source's trash payload
+        // is no longer file-synced.
         assert_eq!(
-            cost.fsyncs, 17,
+            cost.fsyncs, 16,
             "file, directory and draft syncs of one rename: {cost:?}"
         );
         assert_eq!(

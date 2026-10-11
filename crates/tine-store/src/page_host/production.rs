@@ -558,10 +558,11 @@ impl HostIo for ProductionIo {
     fn trash_sync(&mut self, _page: &str, payload: &str) -> IoResult<Witness> {
         self.before(super::io::Phase::TrashSync)?;
         // The recorded basename locates the payload; the trash is never listed.
-        #[cfg(feature = "test-faults")]
-        crate::cost_counters::fsync();
-        match crate::atomic_file::sync_file_bytes(&self.trash.join(payload)) {
-            Ok(()) => {}
+        // RO3 (a) (Martin 2026-10-11): the payload's data is not synced. Tine's
+        // own saves synced it already; another program's unflushed bytes are
+        // R-UNFLUSHED. A payload removed meanwhile owes nothing (R-PURGE).
+        match std::fs::symlink_metadata(self.trash.join(payload)) {
+            Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Witness::Durable),
             Err(error) => return Err(failure(error)),
         }
