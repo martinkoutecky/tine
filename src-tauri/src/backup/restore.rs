@@ -724,11 +724,16 @@ mod tests {
         use std::os::unix::ffi::OsStringExt;
         let root = scratch("backup-uncapturable-names");
         std::fs::create_dir_all(root.join("pages")).unwrap();
-        let non_utf = std::ffi::OsString::from_vec(b"lost-\xff.md".to_vec());
-        let non_utf_path = root.join("pages").join(non_utf);
+        // APFS refuses a name that is not UTF-8 (EILSEQ), so that file
+        // cannot exist on Apple volumes; the backslash names still can.
+        let non_utf_path = (!cfg!(any(target_os = "macos", target_os = "ios"))).then(|| {
+            let non_utf = std::ffi::OsString::from_vec(b"lost-\xff.md".to_vec());
+            let path = root.join("pages").join(non_utf);
+            std::fs::write(&path, b"- keep A\n").unwrap();
+            path
+        });
         let invalid_id_path = root.join("pages/invalid\\name.md");
         let invalid_dir_path = root.join("pages/invalid\\directory");
-        std::fs::write(&non_utf_path, b"- keep A\n").unwrap();
         std::fs::write(&invalid_id_path, b"- keep B\n").unwrap();
         std::fs::create_dir_all(&invalid_dir_path).unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
@@ -746,7 +751,9 @@ mod tests {
         assert!(out.is_empty());
         let snapshot = BackupOutcome::failed(0, failure.phase, failure.kind);
         assert!(require_safety_snapshot(snapshot, 2).is_err());
-        assert_eq!(std::fs::read(&non_utf_path).unwrap(), b"- keep A\n");
+        if let Some(path) = &non_utf_path {
+            assert_eq!(std::fs::read(path).unwrap(), b"- keep A\n");
+        }
         assert_eq!(std::fs::read(&invalid_id_path).unwrap(), b"- keep B\n");
         store.close();
         drop(store);
@@ -782,8 +789,10 @@ mod tests {
             },
         )
         .unwrap();
+        // Canonical, as `BackupSource::from_store` makes it (macOS temp
+        // directories sit behind the `/var` -> `/private/var` link).
         let source = BackupSource {
-            root: graph.clone(),
+            root: std::fs::canonicalize(&graph).unwrap(),
             journals_dir: "journals".into(),
             pages_dir: "pages".into(),
             assets_dir_name: "assets".into(),
