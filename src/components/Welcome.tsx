@@ -101,8 +101,8 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
         <div class="welcome-actions">
           <Show when={ios()}>
             <p class="welcome-busy">
-              On iPhone and iPad, graphs can live in On My iPhone or iCloud Drive → TineOutline.
-              Other Files providers aren't supported yet.
+              On iPhone and iPad, graphs can live in On My iPhone → TineOutline or iCloud Drive → TineOutline.
+              Other apps' folders (such as Logseq's) and Files providers aren't supported yet.
             </p>
           </Show>
           <button

@@ -189,7 +189,7 @@ afterEach(() => {
 // fa78c7b74): iOS opens and creates graphs only inside the app's own
 // On My iPhone / iCloud Drive containers, prepared natively first.
 describe("mobile graph folder picker", () => {
-  const OUTSIDE = "Choose a folder inside On My iPhone or iCloud Drive → TineOutline. Other Files providers aren't supported yet.";
+  const OUTSIDE = "Choose a folder inside On My iPhone → TineOutline or iCloud Drive → TineOutline. Other apps' folders and Files providers aren't supported yet.";
 
   it("opens a picked graph from Tine's iOS Documents container", async () => {
     const harness = await loadHarness(null, undefined, true, true, undefined, undefined,

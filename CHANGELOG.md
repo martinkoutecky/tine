@@ -46,6 +46,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A block opened in the right sidebar now shows its source page name in the header (GH #640).
 - Outline editing (GH #632): Tab and Shift+Tab indent and outdent blocks starting with a Markdown list marker when the caret is on the first body line. List items on later lines keep their in-block indentation.
 - Embeds (GH #642): Enter at the end of a collapsed embed creates a sibling after its host, including at the end of a page, without changing the embedded source. Undo removes the new sibling.
+- iOS (discussion #421): the folder-choice message now names both places a graph can live, On My iPhone → TineOutline and iCloud Drive → TineOutline. It said "inside On My iPhone", which read as if another app's folder there (such as Logseq's) would work.
 
 ## [0.7.0-beta.3] - 2026-10-08
 
