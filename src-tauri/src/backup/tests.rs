@@ -291,12 +291,11 @@ fn macos_home_directory_sync_is_a_strong_witness() {
     );
 }
 
-/// Item 3 + B2: steady state is one file sync and one directory sync, with
-/// the zip synced before its rename and the rename before the directory
-/// sync; the namespace's first zip also syncs `backups/` and app data.
-/// Item 4: an unchanged launch writes and syncs nothing.
+/// Item 3 + D1: every publication syncs the zip before its rename, then
+/// `<id>.zips/`, `backups/` and app data. Item 4 + D2: an unchanged launch
+/// writes nothing and settles its baseline (its file sync, then the chain).
 #[test]
-fn publication_is_durable_before_visible_and_an_unchanged_launch_writes_nothing() {
+fn a_publication_is_settled_after_its_rename_and_an_unchanged_launch_writes_nothing() {
     let g = Graph::new("backup-zip-publication");
     ops();
     assert!(g.snap("", BACKUP_KEEP_DEFAULT).failure.is_none());
@@ -1320,7 +1319,9 @@ fn listing_never_reads_snapshot_payloads() {
 /// for a first backup, an unchanged second one, one after three page
 /// edits, a repair (the newest zip damaged, graph unchanged) and a prune
 /// (one more edit, keep 1); with files deleted, the raw graph bytes the zip
-/// holds and the time a full verification of the newest zip takes. Runs
+/// holds, the time a full verification of the newest zip takes and the
+/// process's peak RSS during the backup (Linux; reset before each run,
+/// after the store's graph load finished). Runs
 /// only on a scratch COPY of a graph (it edits four pages):
 /// `TINE_BACKUP_CORPUS=<copy> cargo test -p tine launch_backup_cost -- --ignored --nocapture`.
 #[test]
@@ -1347,13 +1348,27 @@ fn launch_backup_cost_on_corpus() {
     };
     let run = |label: &str, keep: usize| {
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        // The store's own graph load runs on its thread; let it finish so the
+        // peak below is the backup's, not the load's.
+        while !store.is_graph_ready().unwrap() {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         let source = BackupSource::from_store(&store, &graph).unwrap();
         let before = files_under(&backups);
         BACKUP_OPS.with(|ops| ops.borrow_mut().clear());
+        // Linux: return freed heap to the OS, then "5" resets the peak RSS
+        // (VmHWM) to the current RSS, so the peak is this run's.
+        #[cfg(target_os = "linux")]
+        unsafe {
+            libc::malloc_trim(0);
+        }
+        let _ = std::fs::write("/proc/self/clear_refs", "5");
+        let rss_before = proc_status_kib("VmRSS");
         let started = std::time::Instant::now();
         let base = backups.join(root_backup_id(&source.root));
         let outcome = write_snapshot(&base, &store, source, "", &|| false, keep, BACKUP_LOCK_WAIT);
         let elapsed = started.elapsed();
+        let peak = proc_status_kib("VmHWM");
         assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
         let after = files_under(&backups);
         let created: Vec<_> = after
@@ -1373,11 +1388,13 @@ fn launch_backup_cost_on_corpus() {
         let verify_ms = verify_started.elapsed().as_secs_f64() * 1000.0;
         let raw: u64 = verified.manifest.files.iter().map(|file| file.len).sum();
         eprintln!(
-            "BACKUP-COST {label}: graph_files={} created_files={} deleted_files={deleted} bytes_written={bytes} syncs={syncs} wall_ms={:.1} zip_bytes={} raw_bytes={raw} full_verify_ms={verify_ms:.1}",
+            "BACKUP-COST {label}: graph_files={} created_files={} deleted_files={deleted} bytes_written={bytes} syncs={syncs} wall_ms={:.1} zip_bytes={} raw_bytes={raw} full_verify_ms={verify_ms:.1} rss_before_mib={:.1} peak_rss_mib={:.1}",
             outcome.copied,
             created.len(),
             elapsed.as_secs_f64() * 1000.0,
             std::fs::metadata(&newest).unwrap().len(),
+            rss_before as f64 / 1024.0,
+            peak as f64 / 1024.0,
         );
         store.close();
     };
@@ -1407,6 +1424,16 @@ fn launch_backup_cost_on_corpus() {
     edit(&pages[3]);
     run("prune", 1);
     let _ = std::fs::remove_dir_all(&app_data);
+}
+
+/// A `/proc/self/status` field in KiB (0 where unavailable).
+fn proc_status_kib(field: &str) -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .unwrap_or_default()
+        .lines()
+        .find_map(|line| line.strip_prefix(field)?.strip_prefix(':'))
+        .and_then(|rest| rest.trim().trim_end_matches("kB").trim().parse().ok())
+        .unwrap_or(0)
 }
 
 /// I-9: an unreadable graph file fails the backup with its phase and

@@ -361,6 +361,15 @@ mod journal_guide_tests {
             "**Damaged**",
             "A launch where nothing changed since the newest snapshot writes no new one",
             "Tine has no button that opens this folder",
+            // REVIEW-backup-zip F10 / D9: the hand-recovery procedure, the
+            // size refusal and the keep-count's exemptions.
+            "## Recovering by hand with Tine closed",
+            "Quit Tine completely",
+            "never directly over your graph",
+            "copy over what snapshots do not contain",
+            "may total at most 512 MiB",
+            "The snapshot taken before a restore is never pruned and does not count",
+            "nothing is pruned and old snapshots pile up",
         ] {
             assert!(
                 files.contains(control),
