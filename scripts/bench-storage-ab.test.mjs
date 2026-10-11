@@ -54,6 +54,8 @@ test("verdicts: a change inside the measured floor is noise; a noisy floor suppr
   assert.equal(verdict({ delta: 30, floor: null }), "no A/A floor");
   assert.equal(verdict({ delta: null, floor: 1 }), "n/a");
   assert.match(verdict({ delta: 30, floor: 5, lowerIsBetter: false }), /better/, "higher is better when told so");
+  assert.match(verdict({ delta: -80, floor: 5, neutral: true }), /no direction/, "a neutral count is never better or worse");
+  assert.match(verdict({ delta: -80, floor: 5 }), /better/, "a lower cost is better");
   assert.equal(verdict({ delta: 30, floor: 5, absDelta: 1, absFloor: 2 }), "within noise (absolute)");
   assert.equal(verdict({ delta: 14, floor: 13, absDelta: 1, absFloor: 3 }), "within noise (absolute)", "quantization noise beats a noisy relative floor");
   assert.match(verdict({ delta: 40, floor: 13, absDelta: 20, absFloor: 3 }), /noisy metric/, "a large change on a noisy metric still gives no verdict");

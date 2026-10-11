@@ -804,7 +804,7 @@ const METRIC_LIST = [
   ["session.eventVectorMaxBytes", "B", "candidate: largest event-vector size sampled", { candidateOnly: true }],
 ];
 for (const variant of ["startup", "idle10s", "edit1", "edit60", "risk1", "risk60", "burst1", "delete"]) {
-  for (const f of UNIT_FIELDS) METRIC_LIST.push([`unit.${variant}.${f}`, f.endsWith("ytes") ? "B" : "count", `syscall trace, ${variant}: ${f} (median over its windows)`, { neutral: f !== "bytes" && f !== "syncCalls" }]);
+  for (const f of UNIT_FIELDS) METRIC_LIST.push([`unit.${variant}.${f}`, f.endsWith("ytes") ? "B" : "count", `syscall trace, ${variant}: ${f} (median over its windows)`]);
 }
 METRIC_LIST.push(["unit.edit1.ipcCalls", "count", "IPC save/submit calls per edit, 1-block", { neutral: true }], ["unit.edit60.ipcCalls", "count", "IPC save/submit calls per edit, 60-block", { neutral: true }]);
 

@@ -47,7 +47,7 @@ export function deltaPct(base, cand) {
 export const NOISY_PCT = 10;
 
 /** Verdict for one metric in an A/B report, given its measured A/A floor (percent). */
-export function verdict({ delta, floor, lowerIsBetter = true, absDelta, absFloor }) {
+export function verdict({ delta, floor, lowerIsBetter = true, neutral = false, absDelta, absFloor }) {
   if (delta == null) return "n/a";
   if (floor == null) return "no A/A floor";
   // A tiny absolute change on a tiny value is not a finding however large the percentage (timer
@@ -55,6 +55,8 @@ export function verdict({ delta, floor, lowerIsBetter = true, absDelta, absFloor
   if (absFloor != null && absDelta != null && Math.abs(absDelta) <= absFloor) return "within noise (absolute)";
   if (floor > NOISY_PCT) return `noisy metric (A/A ${floor.toFixed(0)}%)`;
   if (Math.abs(delta) <= Math.max(floor, 0) * 1.0 + 1e-9) return "within noise";
+  // A neutral metric (a count whose right value depends on the design) has no direction.
+  if (neutral) return "changed (no direction)";
   const worse = lowerIsBetter ? delta > 0 : delta < 0;
   return worse ? "WORSE (beyond noise)" : "better (beyond noise)";
 }

@@ -174,7 +174,7 @@ function summarize(results, arms, noise) {
     summary.metrics[name] = { unit: info.unit, candidateOnly: !!info.candidateOnly, cells, spreadPct: spread, deltaPct: deltaPct(base, cand),
       noisy: spread != null && spread > NOISY_PCT,
       absDiff: base && cand ? cand.median - base.median : null, absFloor: info.absFloor ?? null,
-      verdict: verdict({ delta: deltaPct(base, cand), floor, lowerIsBetter: !info.neutral, absDelta: base && cand ? cand.median - base.median : null, absFloor: info.absFloor }) };
+      verdict: verdict({ delta: deltaPct(base, cand), floor, neutral: !!info.neutral, absDelta: base && cand ? cand.median - base.median : null, absFloor: info.absFloor }) };
   }
   for (const name of [...seriesNames].sort()) {
     const cells = Object.fromEntries(arms.map((a) => [a.id, describe(collectSeries(results, a.id, name))]));
