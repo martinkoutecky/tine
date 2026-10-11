@@ -342,7 +342,7 @@ fn markers(d: &mut Driver) -> usize {
 }
 
 /// REVIEW-A2 B2 / A3 B2 / F9: a crash after the move and before custody (b);
-/// launch redoes (a)+(b) before the marker retires, and a recreation of the
+/// launch redoes custody before the marker retires, and a recreation of the
 /// page never renames before that custody completes.
 #[test]
 fn restart_redoes_custody_before_marker_retires_and_before_recreation() {
@@ -1124,7 +1124,8 @@ fn loaded_delete_new_open_during_install_gets_a_modelled_push() {
 
 /// The system calls inside each custody HostIo call of a deletion on a fresh
 /// trash chain: marker temp, rename, directory sync; three mkdirs, three
-/// parent syncs, the move; payload data, `pages/` and three ancestor syncs;
+/// parent syncs, the move; payload stat (no sync), `pages/` and three ancestor
+/// syncs;
 /// marker unlink and its directory sync (REVIEW-2b-r2 R1).
 const CUSTODY_CALLS: [(Phase, usize); 4] = [
     (Phase::CustodyWrite, 3),

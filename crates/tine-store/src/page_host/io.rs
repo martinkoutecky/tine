@@ -124,9 +124,12 @@ pub(super) trait HostIo {
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>>;
     /// No-replace move of the page's file to the graph trash as `payload`.
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult;
-    /// Custody phases (A4): (a) the payload's data, then (b) the trash
-    /// directory and each existing ancestor up to the graph root. A payload
-    /// that no longer exists owes nothing (R-PURGE).
+    /// Trash custody (A4): (a) check the payload still exists, then (b) sync
+    /// the source directory, the trash directory and each existing ancestor up
+    /// to the graph root, so the payload's *name* is durable. The payload's
+    /// data is not synced: Tine's own bytes were synced before they got a
+    /// name, and another program's unflushed bytes are R-UNFLUSHED (RO3 (a)).
+    /// A payload that no longer exists owes nothing (R-PURGE).
     fn trash_sync(&mut self, page: &str, payload: &str) -> IoResult<Witness>;
     /// Strict new-file write of a custody marker into app data.
     fn custody_write(&mut self, name: &str, bytes: &[u8]) -> IoResult<()>;

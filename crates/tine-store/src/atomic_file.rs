@@ -265,9 +265,8 @@ pub(crate) fn sync_existing(path: &Path) -> io::Result<()> {
     super::directory_durability::sync_directory_entry(dir)
 }
 
-/// File part of the existing durability recipe, also used for bytes moved
-/// into trash: an external R1 writer need not have flushed those bytes.
-pub(crate) fn sync_file_bytes(path: &Path) -> io::Result<()> {
+/// File part of the existing durability recipe.
+fn sync_file_bytes(path: &Path) -> io::Result<()> {
     #[cfg(windows)]
     let file = fs::OpenOptions::new().write(true).open(path);
     #[cfg(not(windows))]

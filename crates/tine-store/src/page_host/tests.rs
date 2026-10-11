@@ -516,7 +516,7 @@ fn deletion_durably_copies_trash_before_source_removal_at_power_cut() {
     h.advance_save(0); // guard
     h.advance_save(0); // marker
     h.advance_save(0); // move
-    h.advance_save(0); // custody (a)+(b)
+    h.advance_save(0); // custody
     assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::DirectorySync);
     assert!(h.fs.stable.contains_key("graph/a.md"));
     assert!(h.fs.stable.keys().any(|k| k.starts_with("trash/a.md/")));

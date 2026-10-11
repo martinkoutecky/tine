@@ -343,7 +343,7 @@ impl<F: HostIo> Host<F> {
             },
         };
         if result.is_some() && job.phase == SavePhase::DirectorySync {
-            // Rule 2.5: custody (a)+(b) completed before this phase.
+            // Rule 2.5: custody completed before this phase.
             if let Some((marker, payload)) = job.marker.clone() {
                 self.retire_marker(&key, &marker, payload);
             }

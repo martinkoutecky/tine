@@ -119,7 +119,7 @@ impl Keys {
 }
 
 /// A4 trash custody one page owes: its markers on disk (name → payload
-/// basename) whose phases (a) and (b) have not completed in this incarnation.
+/// basename) whose custody (`HostIo::trash_sync`) has not completed in this incarnation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Debt {
     markers: BTreeMap<String, String>,
@@ -668,7 +668,7 @@ impl<F: HostIo> Host<F> {
         }
     }
 
-    /// Custody phases (a) and (b) for every marker the page owes; each
+    /// Trash custody (`HostIo::trash_sync`) for every marker the page owes; each
     /// completed marker is retired. True when nothing is owed.
     fn settle(&mut self, key: &str) -> bool {
         let markers = self.custody.get(key).map(|d| d.markers.clone());

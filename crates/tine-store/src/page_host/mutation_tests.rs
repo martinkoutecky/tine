@@ -1009,3 +1009,45 @@ fn an_unchanged_dirty_or_busy_referrer_is_left_out_of_a_rename() {
         assert!(h.worker.is_none(), "{state}");
     }
 }
+
+/// RO3 (a) review F2: a power cut may lose a deleted page's data only when
+/// another program wrote it unflushed (R-UNFLUSHED). Tine's own saved bytes
+/// survive every cut once custody completed. Fails if `cuts()` lists stable
+/// trash names regardless of `volatile` (exempting Tine's bytes from the
+/// refinement), or stops listing them (overclaiming against production).
+#[test]
+fn ro3a_power_cut_loses_only_unflushed_external_trash_data() {
+    let payload = "trash/a.md/p-1";
+    for external in [false, true] {
+        let mut fs = ModelFs::default();
+        if external {
+            fs.external("a.md", text("A"), false);
+        } else {
+            fs.page_temp("a.md", &text("A")).unwrap();
+            fs.page_rename("a.md").unwrap();
+            assert_eq!(fs.page_sync("a.md").unwrap(), Witness::Durable);
+        }
+        assert!(fs.trash_move("a.md", "p-1").result.is_ok());
+        assert_eq!(fs.trash_sync("a.md", "p-1").unwrap(), Witness::Durable);
+        assert_eq!(fs.volatile.contains(payload), external);
+        let cuts = fs.cuts(&BTreeSet::new());
+        let losing = cuts.iter().filter(|cut| cut.lose.contains(payload)).count();
+        if external {
+            assert!(losing > 0, "unflushed external data may be lost");
+        } else {
+            assert!(
+                cuts.iter().all(|cut| cut.lose.is_empty()),
+                "Tine's own synced bytes are never in a cut's lose set"
+            );
+        }
+        for cut in &cuts {
+            let mut after = fs.clone();
+            after.power_cut(&BTreeSet::new(), false, cut);
+            assert_eq!(
+                after.files.get(payload).cloned(),
+                (!cut.lose.contains(payload)).then(|| text("A").unwrap()),
+                "external={external}"
+            );
+        }
+    }
+}

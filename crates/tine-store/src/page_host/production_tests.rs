@@ -474,7 +474,7 @@ fn recapture_after_source_sync_error_does_not_revive_finished_trash_debt() {
         .insert(Phase::PageSync, [io::ErrorKind::Other].into());
     assert_eq!(f.save("a.md"), Outcome::Uncertain);
     assert!(f.host.pages["a.md"].risk);
-    // Custody (a)+(b) completed before the failed source sync, so the marker
+    // Custody completed before the failed source sync, so the marker
     // retired with that outcome (A4 rule 2.5). A recapture (nothing new to
     // write here) and a restart must not revive the finished debt.
     assert_eq!(markers(&mut f), 0);
@@ -567,8 +567,8 @@ fn relaunch(f: &mut Fixture) -> Vec<PathBuf> {
 }
 
 /// REVIEW-2b F1: every deletion producer (opDelete, an absent-text submit, a
-/// Move source) takes the one delete phase: marker, move, payload data sync,
-/// trash ancestors, publication, then marker retirement.
+/// Move source) takes the one delete phase: marker, move, trash custody
+/// (payload check, chain syncs), publication, then marker retirement.
 
 #[test]
 fn every_deletion_producer_takes_the_one_delete_phase() {
