@@ -348,7 +348,7 @@ mod journal_guide_tests {
         // og-B (ADR 0062): snapshots cover text outside pages/ and journals/.
         assert!(files.contains("pages kept in other folders or at the graph root"));
         assert!(files.contains("moved into the restore's recovery folder"));
-        // og-backup-zip (ADR 0073): a snapshot is one zip a user can open
+        // og-backup-zip (ADR 0074): a snapshot is one zip a user can open
         // without Tine, found per platform; unrestorable ones are labelled.
         for control in [
             "## Where your backups are",

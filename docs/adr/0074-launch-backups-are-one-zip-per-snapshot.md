@@ -1,4 +1,4 @@
-# 0073. Launch backups are one verified zip per snapshot
+# 0074. Launch backups are one verified zip per snapshot
 
 - **Status:** Proposed. Outcome decided by Martin on 2026-10-11 ("for now do full zips"). The schema-5
   persisted format in this ADR needs his acceptance (§12).

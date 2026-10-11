@@ -133,13 +133,11 @@ fn legacy_dir(base: &std::path::Path, name: &str, schema: u32, writer: &str) {
     .unwrap();
 }
 
-/// Format (dossier item 1): one zip holding every backed-up file at its
-/// graph-relative path, which an independent reader (Python `zipfile`)
-/// extracts byte-identical, nested, non-ASCII and a real `graph/` folder
-/// included; the manifest is the last entry.
-#[test]
-fn a_launch_backup_is_one_zip_an_independent_reader_opens() {
-    let g = Graph::new("backup-zip-format");
+/// A graph with nested, non-ASCII and `graph/` paths, its one launch zip,
+/// and `{graph-relative path: sha256}` of every file the zip must hold
+/// besides the manifest.
+fn format_graph(tag: &str) -> (Graph, PathBuf, std::collections::BTreeMap<String, String>) {
+    let g = Graph::new(tag);
     write(&g.graph.join("pages/Příliš/žluťoučký kůň.md"), "- kůň\n");
     write(&g.graph.join("graph/Inside.md"), "- a folder named graph\n");
     write(&g.graph.join("journals/2026_10_11.md"), "- j\n");
@@ -152,7 +150,7 @@ fn a_launch_backup_is_one_zip_an_independent_reader_opens() {
     let names = g.zip_names();
     assert_eq!(names.len(), 1, "{names:?}");
     let path = g.zips().join(&names[0]);
-    let mut expected: std::collections::BTreeMap<String, String> = [
+    let expected = [
         "assets/pic.edn",
         "graph/Inside.md",
         "journals/2026_10_11.md",
@@ -166,6 +164,16 @@ fn a_launch_backup_is_one_zip_an_independent_reader_opens() {
         (rel.to_owned(), format!("{:x}", Sha256::digest(bytes)))
     })
     .collect();
+    (g, path, expected)
+}
+
+/// Format (dossier item 1): one zip holding every backed-up file at its
+/// graph-relative path, which an independent reader (Python `zipfile`)
+/// extracts byte-identical, nested, non-ASCII and a real `graph/` folder
+/// included; the manifest is the last entry.
+#[test]
+fn a_launch_backup_is_one_zip_an_independent_reader_opens() {
+    let (g, path, mut expected) = format_graph("backup-zip-format");
     let manifest = verified(&path).manifest;
     assert_eq!(manifest.schema, archive::ZIP_SCHEMA);
     assert_eq!(manifest.writer, SNAPSHOT_WRITER);
@@ -175,6 +183,112 @@ fn a_launch_backup_is_one_zip_an_independent_reader_opens() {
     expected.insert(archive::MANIFEST_NAME.into(), manifest_sha.clone());
     assert_eq!(python, expected);
     g.close();
+}
+
+/// "Opens without Tine" with the platform's own extractor (REVIEW gate 6):
+/// extract a launch zip with `extract(zip, dest)` and compare every file,
+/// by NFC graph-relative path (APFS may store decomposed names), with the
+/// graph's bytes. Runs where the extractor exists; it never skips.
+#[cfg(any(windows, target_os = "macos"))]
+fn the_os_extractor_opens_a_backup(
+    tag: &str,
+    extract: impl Fn(&std::path::Path, &std::path::Path) -> std::process::Output,
+) {
+    use unicode_normalization::UnicodeNormalization;
+    fn walk(
+        dir: &std::path::Path,
+        rel: &str,
+        out: &mut std::collections::BTreeMap<String, String>,
+    ) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let name: String = entry.file_name().to_string_lossy().nfc().collect();
+            let rel = if rel.is_empty() {
+                name
+            } else {
+                format!("{rel}/{name}")
+            };
+            if entry.file_type().unwrap().is_dir() {
+                walk(&entry.path(), &rel, out);
+            } else {
+                let bytes = std::fs::read(entry.path()).unwrap();
+                out.insert(rel, format!("{:x}", Sha256::digest(bytes)));
+            }
+        }
+    }
+    let (g, zip, expected) = format_graph(tag);
+    let dest = g.root.join("extracted");
+    let output = extract(&zip, &dest);
+    assert!(
+        output.status.success(),
+        "extractor failed: {}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut extracted = std::collections::BTreeMap::new();
+    walk(&dest, "", &mut extracted);
+    let manifest = extracted
+        .remove(archive::MANIFEST_NAME)
+        .expect("the manifest is extracted too");
+    assert!(!manifest.is_empty());
+    assert_eq!(extracted, expected);
+    g.close();
+}
+
+/// Windows: PowerShell's `Expand-Archive` (.NET's zip reader, what
+/// Explorer users reach for) extracts the backup byte-identical.
+#[cfg(windows)]
+#[test]
+fn windows_expand_archive_opens_a_backup() {
+    the_os_extractor_opens_a_backup("backup-zip-expand-archive", |zip, dest| {
+        let quote = |path: &std::path::Path| path.display().to_string().replace('\'', "''");
+        std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!(
+                    "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath '{}' -DestinationPath '{}'",
+                    quote(zip),
+                    quote(dest)
+                ),
+            ])
+            .output()
+            .expect("powershell runs")
+    });
+}
+
+/// macOS: `ditto -x -k` (the Archive Utility's engine) extracts the backup
+/// byte-identical.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_ditto_opens_a_backup() {
+    the_os_extractor_opens_a_backup("backup-zip-ditto", |zip, dest| {
+        std::process::Command::new("ditto")
+            .arg("-x")
+            .arg("-k")
+            .arg(zip)
+            .arg(dest)
+            .output()
+            .expect("ditto runs")
+    });
+}
+
+/// macOS prunes only on a strong directory witness: a directory under the
+/// user's home (APFS, where app data lives) must report `Durable`, or launch
+/// backups there would accumulate forever.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_home_directory_sync_is_a_strong_witness() {
+    let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+    let dir = home.join(format!(".tine-dir-sync-probe-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let witness = tine_store::directory_durability::sync_directory_witness(&dir);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        witness.unwrap(),
+        tine_store::directory_durability::DirectoryWitness::Durable
+    );
 }
 
 /// Item 3 + B2: steady state is one file sync and one directory sync, with

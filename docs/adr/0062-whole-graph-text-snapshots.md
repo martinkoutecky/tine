@@ -4,7 +4,7 @@
   outcome; this ADR, including the schema change and the added persisted
   format, accepted the same day). He also confirmed that og never prunes
   master's snapshots: rare in practice, and the safer rule.
-- **Write format superseded** by [0073](0073-launch-backups-are-one-zip-per-snapshot.md)
+- **Write format superseded** by [0074](0074-launch-backups-are-one-zip-per-snapshot.md)
   (schema-5 zips, proposed 2026-10-11); the scope rules below carry over, and schema-3
   snapshots are still read.
 - **Date:** 2026-09-29

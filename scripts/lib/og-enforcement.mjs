@@ -82,7 +82,7 @@ export const PERSISTED_FORMATS = Object.freeze([
   "backup-graph-text-copy",
   "launch-checkpoint",
   "graph-link-identity",
-  // ADR 0073 (Martin 2026-10-11, "for now do full zips"; ADR acceptance pending).
+  // ADR 0074 (Martin 2026-10-11, "for now do full zips"; ADR acceptance pending).
   "backup-zip-snapshot",
 ]);
 export const PINNED_FORMAT_COUNT = 30;

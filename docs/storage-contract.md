@@ -355,7 +355,7 @@ failure alike. Proof `src-tauri/src/backup/restore.rs`
 `a_restore_holds_the_host_gate_until_one_fresh_host_runs`,
 `a_retirement_waits_for_the_restore_it_raced`.
 
-## Graph backups (og-backup-zip, ADR 0073)
+## Graph backups (og-backup-zip, ADR 0074)
 
 Tine snapshots a graph at launch and before a rewrite the user asked for
 (`pre-restore`, `pre-journal-rename`) into app data, outside every graph
@@ -382,7 +382,10 @@ component, NUL or backslash; on Windows also no drive, stream or reserved
 device name and no trailing dot or space. Any zip tool opens a snapshot.
 Proof `src-tauri/src/backup/tests.rs`
 `a_launch_backup_is_one_zip_an_independent_reader_opens` (Python's
-`zipfile`), `src-tauri/src/backup/archive/tests.rs`.
+`zipfile`), `windows_expand_archive_opens_a_backup` (PowerShell
+`Expand-Archive`, Windows only), `macos_ditto_opens_a_backup` (`ditto -x -k`,
+macOS only), `src-tauri/src/backup/archive/tests.rs`. Android's file
+apps are not covered by any test.
 
 **Legacy.** Schema-2/3 snapshot directories in `<graph-id>/` stay listed,
 restorable and counted by the keep-count. Tine no longer writes them and
@@ -446,7 +449,9 @@ write-through move on NTFS's metadata journal are the accepted substitute
 offer (the shared tolerated set, `directory_durability::sync_directory_witness`
 `Unsupported`) makes the snapshot weakly durable: it is published and
 restorable, logged `backup-weak-durability`, and prunes nothing. A real sync
-error fails the snapshot.
+error fails the snapshot. On macOS, a directory under the user's home must
+report `Durable` (`macos_home_directory_sync_is_a_strong_witness`), or
+backups there would never prune.
 
 **Unchanged launch.** A launch snapshot whose capture (every file's path,
 length and SHA-256, the scope and directories) equals the manifest of the
@@ -581,7 +586,7 @@ by I-9's typed failure paths.
 | `tine-graph-features::pdf` highlight and sidecar | Sidecar or notes bytes change concurrently, a malformed imported sidecar appears, or Org notes cannot round-trip; retain the source and refuse or retry within the bounded loop. |
 | `tine-graph-features::config` and `assets` | Config or an asset changes repeatedly while applying a user update; stop before overwriting the external winner. |
 | `src-tauri::backup::restore` legacy selection (schema 2/3 `dir:` ids) | A backup is incomplete, belongs to another graph, fails its manifest hash, loses a source file or a whole snapshot area (`graph/` for schema 3; `journals/`, `pages/` for schema 2; assets), or changes while it is read (its bytes are hash-checked as read, under the namespace lock); refuse restore before touching live content ("this backup is damaged; pick another" for damage). A schema-2 snapshot made under different `:pages-directory`/`:journals-directory` settings still refuses (it names roots, not paths); schema 3 places text at its recorded graph-relative path and ignores them (ADR 0062). |
-| `src-tauri::backup::restore::verified_zip` (schema 5 `zip:` ids, ADR 0073) | Power loss, a disk error or a hand edit truncates, flips or rewrites a zip: a failed checksum, CRC, length, hash, header agreement, bound or entry-to-manifest match refuses with "this backup is damaged; pick another" before anything is written. A valid manifest of a schema or field set this build does not know (a newer Tine sharing app data) refuses as made by a newer Tine. A zip of another graph root, or made under another assets directory setting (its sidecars would land in the wrong folder), refuses. On a case-folding platform, two entries whose paths differ only in letter case (a backup made on a case-sensitive volume) refuse: one would overwrite the other. On macOS and iOS, so do two that differ only in Unicode normalization (`archive::DESTINATION_FOLD`). |
+| `src-tauri::backup::restore::verified_zip` (schema 5 `zip:` ids, ADR 0074) | Power loss, a disk error or a hand edit truncates, flips or rewrites a zip: a failed checksum, CRC, length, hash, header agreement, bound or entry-to-manifest match refuses with "this backup is damaged; pick another" before anything is written. A valid manifest of a schema or field set this build does not know (a newer Tine sharing app data) refuses as made by a newer Tine. A zip of another graph root, or made under another assets directory setting (its sidecars would land in the wrong folder), refuses. On a case-folding platform, two entries whose paths differ only in letter case (a backup made on a case-sensitive volume) refuse: one would overwrite the other. On macOS and iOS, so do two that differ only in Unicode normalization (`archive::DESTINATION_FOLD`). |
 | `src-tauri::backup::restore::require_safety_snapshot` (D5) | The pre-restore safety snapshot fails (disk error, a held lock that does not clear in 30 s), or comes out empty while the live graph holds text, sidecars or `config.edn`: refuse the restore, since nothing would bring the replaced files back. |
 | `src-tauri::backup::restore` namespace lock (BUSY) | A concurrent honest Tine instance holds the graph's backup lock past 30 s (a long snapshot or prune): refuse the restore with "backups are busy in another Tine window or process; try the restore again in a moment"; nothing changed. |
 | `src-tauri::backup::write_snapshot` busy namespace | A concurrent honest Tine instance holds the graph's backup lock for more than 30 s: a launch snapshot is skipped (diag `backup-busy`), since that instance is backing up this graph now; a suffixed snapshot fails (`backup-failed:busy:WouldBlock`), and the rewrite that asked for it does not run. |
