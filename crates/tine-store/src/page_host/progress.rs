@@ -90,6 +90,11 @@ pub(super) struct Progress<F: HostIo, C: Clock> {
     /// Set by the binding when a switch or restore closes admission; ends
     /// with the switch confirmation (abort or stop).
     pub stopping: Option<Stopping>,
+    /// Held pages that cannot publish until someone acts: in conflict, or
+    /// past their third failed save. Kept by `reconcile`, so a caller
+    /// waiting for an operation's witnesses reads it per wake instead of
+    /// rescanning every answered page (REVIEW-3b-P2b R5).
+    stuck: BTreeSet<PageKey>,
 }
 
 impl<F: HostIo, C: Clock> Progress<F, C> {
@@ -109,6 +114,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             custody_retries: 0,
             save_cursor: None,
             stopping: None,
+            stuck: BTreeSet::new(),
         };
         result.reconcile();
         result
@@ -121,6 +127,12 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         let result = action(&mut self.host);
         self.reconcile();
         result
+    }
+
+    /// The held pages in conflict or with a save error, as of the last
+    /// host step.
+    pub fn stuck(&self) -> impl Iterator<Item = &PageKey> {
+        self.stuck.iter()
     }
 
     pub fn notice(&self, key: &str) -> Notice {
@@ -373,7 +385,11 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                     .is_none_or(|key| self.host.pages.get(key).is_some_and(|page| page.risk))
         });
         let drafts = self.host.logical_drafts();
+        self.stuck.clear();
         for (key, t) in &mut self.times {
+            if t.page.conflict || t.notice.save_error {
+                self.stuck.insert(key.clone());
+            }
             t.notice.draft_error = self.draft_errors.values().any(|f| f.pages.contains(key));
             let applied = drafts.get(key).is_some_and(|r| {
                 r.bytes == t.page.buf && r.base == t.page.base && r.version == t.page.version

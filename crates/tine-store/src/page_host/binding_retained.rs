@@ -429,16 +429,24 @@ impl PageHost {
                     if let Some(page) = &reply.superseded {
                         return Settled::Superseded(page.clone());
                     }
-                    let mut open = pages.keys().filter(|key| !reply.witnessed.contains(*key));
-                    let mut stuck = open.clone().filter(|key| {
-                        host.logical(key).conflict() || state.progress.notice(key).save_error
-                    });
-                    if open.next().is_none() {
+                    // `witnessed` holds answered pages only (`Order::published`).
+                    if reply.witnessed.len() == pages.len() {
                         return Settled::Applied;
                     }
-                    if let Some(page) = stuck.next() {
+                    // Per wake, the host's few stuck pages, not every answered
+                    // one: an operation's wakes grow with its pages (R5).
+                    let mut stuck = state.progress.stuck().inspect(|_| {
+                        #[cfg(feature = "test-faults")]
+                        crate::cost_counters::host_publication_probes(1);
+                    });
+                    let open = |key: &&PageKey| {
+                        pages.contains_key(*key) && !reply.witnessed.contains(*key)
+                    };
+                    if let Some(page) = stuck.find(open) {
                         return Settled::Unwritten(page.clone());
                     }
+                    #[cfg(feature = "test-faults")]
+                    crate::cost_counters::host_publication_probes(1);
                 }
                 None => {}
             }

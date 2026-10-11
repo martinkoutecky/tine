@@ -30,6 +30,7 @@ static NAME_INVENTORY_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static TRANSACTION_REWRITES: AtomicU64 = AtomicU64::new(0);
 static WATCHER_READS: AtomicU64 = AtomicU64::new(0);
 static WATCHER_STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
+static HOST_PUBLICATION_PROBES: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     /// Set on the watcher thread, whose re-reads of just-written files are
@@ -131,6 +132,11 @@ pub struct Counts {
     pub watcher_reads: u64,
     /// `stamps_by_path` made on the watcher thread.
     pub watcher_stamps_by_path: u64,
+    /// The page host's publication bookkeeping (REVIEW-3b-P2b R5): reply
+    /// slots and rename orders examined when a page publishes
+    /// (`Order::published`), answered pages examined while a caller waits for
+    /// their witness (`settle`), and index publications (`Bridge::deliver`).
+    pub host_publication_probes: u64,
 }
 
 /// Zero process-global counters. Concurrent activity contaminates measurements.
@@ -166,6 +172,7 @@ pub fn reset() {
         &TRANSACTION_REWRITES,
         &WATCHER_READS,
         &WATCHER_STAMPS_BY_PATH,
+        &HOST_PUBLICATION_PROBES,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -204,9 +211,13 @@ pub fn snapshot() -> Counts {
         transaction_rewrites: TRANSACTION_REWRITES.load(Ordering::Relaxed),
         watcher_reads: WATCHER_READS.load(Ordering::Relaxed),
         watcher_stamps_by_path: WATCHER_STAMPS_BY_PATH.load(Ordering::Relaxed),
+        host_publication_probes: HOST_PUBLICATION_PROBES.load(Ordering::Relaxed),
     }
 }
 
+pub(crate) fn host_publication_probes(count: usize) {
+    HOST_PUBLICATION_PROBES.fetch_add(count as u64, Ordering::Relaxed);
+}
 pub(crate) fn name_inventory_entries(count: usize) {
     NAME_INVENTORY_ENTRIES.fetch_add(count as u64, Ordering::Relaxed);
 }

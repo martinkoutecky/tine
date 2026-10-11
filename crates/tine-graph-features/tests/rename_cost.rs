@@ -108,13 +108,24 @@ fn rename_cost_is_linear_in_referrers_and_flat_in_graph_size() {
     );
 }
 
+/// REVIEW-3b-P2b R5: a rename's publication runs on the page host, so the
+/// measured subject is the host's publication bookkeeping
+/// (`host_publication_probes`): reply slots and orders examined per page
+/// publication, the caller's per-wake witness check, and index
+/// publications. The transaction path's record probes this test counted
+/// before (GH #623) are no longer on a rename's path.
 #[test]
 fn rename_publication_work_is_linear() {
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     for referrers in [8, 64] {
         let counts = rename(80, referrers);
-        assert!(counts.transaction_record_probes <= 6 * (referrers as u64 + 2),
-            "GH #623/I-25: final publication must inspect transaction records O(touched files), not O(referrers²); exemplar transaction/publication.rs: {counts:?}");
+        assert!(
+            counts.host_publication_probes <= 12 * (referrers as u64 + 2),
+            "GH #623/I-25/R5: publishing a rename's pages examines O(pages written), not \
+             O(referrers²): the caller waiting for its witnesses reads the host's stuck \
+             pages per wake, never every answered page (exemplar \
+             page_host/binding_retained.rs settle): {counts:?}"
+        );
     }
 }
 

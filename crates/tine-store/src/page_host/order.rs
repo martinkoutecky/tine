@@ -166,6 +166,8 @@ impl Order {
 
     /// `key` published `version` (its save's directory sync completed).
     pub fn published(&mut self, key: &str, version: u64) {
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::host_publication_probes(self.replies.len() + self.gates.len());
         for slot in self.replies.values_mut() {
             if let Some(OperationReply::Applied(pages)) = &slot.reply {
                 if pages.get(key).is_some_and(|v| version >= *v) {

@@ -563,8 +563,17 @@ whose final bytes equal the guarded output parses the changed document once;
 there is no old-document serialization/parse comparison. Failed transactions
 and external bytes keep ordinary reconciliation. The revision observations,
 publication error reporting, path locks, ordered writes and undo remain the same.
-`rename_cost.rs` checks bounded record probes and changed-document parses at the
-literal feature/store entry. The frontend matches touched paths against loaded
+`rename_cost.rs` checks changed-document parses at the literal feature/store
+entry. A rename now publishes through the page host (step 3b), so its linear
+publication work is the host's (REVIEW-3b-P2b R5): per page publication, the
+reply slots and running orders examined (`Order::published`); per index
+publication, one probe; and per wake of the caller waiting for the operation's
+witnesses, a count comparison plus the host's stuck pages (conflicted, or past
+their third failed save, kept by `Progress::reconcile`), never a rescan of every
+answered page. `rename_cost.rs` bounds these `host_publication_probes` at
+12 per written page for 8 and 64 referrers (measured about 5). The host's own
+per-step scheduling (`Progress::reconcile`) still walks every held page per
+step; that is measured, not yet bounded (RECEIPT, P2b review round). The frontend matches touched paths against loaded
 pages once; it still reloads only clean rewritten pages and discards moved pages.
 
 Unit cost (step 3b P2b, a single page's rename through the page host, Q-P2b-2):
@@ -615,6 +624,18 @@ Windows). They are linear in the files written and do not grow with the
 graph (D-10). The rename cost tests bill publication only for reads on the
 publishing threads, and `rename_io.rs` bounds the watcher's settled re-reads
 separately (`watcher_reads`, `watcher_stamps_by_path`).
+The same holds for files someone else delivered (a sync tool, an external
+editor; REVIEW-3b-P2b R4(b)): the racy rehash is linear in the files changed
+or delivered within the racy window, not in the graph. An aged unrelated file
+is not reread, and each delivered file is opened a bounded number of times per
+delivery (measured on Linux: its reconciliation's whole read and two preamble
+opens, then one racy rehash once its stamp leaves the 2 s window; one by-path
+stamp), after which the settled watcher reads nothing. `racy_delivery_cost.rs`
+pins four opens per delivered file plus a constant, the same count on 60 and
+600 pages, and none once settled. A delivery that leaves the whole graph fresh
+(a first sync) rehashes each of its files once. An edit's publication reads and
+stamps the edited page only, on aged and freshly delivered graphs of 60 and 600
+pages alike (`host_edit_cost.rs`, R4(a)).
 
 Unit cost: unchanged bytes, files and syncs per edit (22/1,320 bytes on the
 1-/60-block fixtures, one temporary file and two syncs per referrer); per

@@ -1,11 +1,12 @@
 //! I-25 unit cost of an ordinary edit on the page host (STEP3 §3, step 3b
 //! P2b): bytes, files and syncs per `page_submit` on 1- and 60-block pages,
-//! counted at the host's `HostIo` seam (`cost_counters`, Q-P2b-2). Its own
-//! test binary: the counters are process-global.
+//! counted at the host's `HostIo` seam (`cost_counters`, Q-P2b-2), and its
+//! independence of unrelated graph size (REVIEW-3b-P2b R4(a)). Its own test
+//! binary: the counters are process-global.
 use std::fs;
 use std::sync::Arc;
 use std::sync::{mpsc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use tine_store::cost_counters::{self, Counts};
 use tine_store::{EditKind, PageHost, PageId, Store};
@@ -28,10 +29,24 @@ fn answer_version(mail: &Mail, id: u64) -> u64 {
     }
 }
 
+/// The graph beside the edited page: `unrelated` other pages, and whether
+/// every file is aged past the watcher's 2 s racy window (§5.4) or fresh,
+/// as just delivered by a sync tool.
+#[derive(Clone, Copy)]
+struct Graph {
+    unrelated: usize,
+    aged: bool,
+}
+
+const ALONE: Graph = Graph {
+    unrelated: 0,
+    aged: false,
+};
+
 /// `edits` submits of the page's first block, each answered before the next,
 /// then publication of the last. Returns the counts from the first submit to
 /// publication, and the page file's final length.
-fn edit(blocks: usize, edits: usize) -> (Counts, u64) {
+fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64) {
     let dir = tempfile::Builder::new()
         .prefix("host-edit-cost-")
         .tempdir()
@@ -39,6 +54,17 @@ fn edit(blocks: usize, edits: usize) -> (Counts, u64) {
     let root = dir.path().join("graph");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::write(root.join("pages/Page.md"), "- before\n".repeat(blocks)).unwrap();
+    for index in 0..graph.unrelated {
+        let rel = format!("pages/Other{index:04}.md");
+        fs::write(root.join(&rel), format!("- unrelated [[Other{index}]]\n")).unwrap();
+    }
+    if graph.aged {
+        let old = SystemTime::now() - Duration::from_secs(3600);
+        for entry in fs::read_dir(root.join("pages")).unwrap() {
+            let file = fs::File::options().write(true).open(entry.unwrap().path());
+            file.unwrap().set_modified(old).unwrap();
+        }
+    }
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     let (sink, mail) = mpsc::channel();
@@ -97,7 +123,7 @@ fn edit(blocks: usize, edits: usize) -> (Counts, u64) {
 fn an_ordinary_edit_is_one_guarded_save_with_no_draft() {
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     for blocks in [1, 60] {
-        let (one, len) = edit(blocks, 1);
+        let (one, len) = edit(blocks, 1, ALONE);
         eprintln!("I-25 host edit unit cost: blocks={blocks} page bytes={len} one edit={one:?}");
         // One guarded save: the page's temporary file, renamed over the page,
         // then the temp file's and the directory's syncs. No draft record: an
@@ -124,7 +150,7 @@ fn a_burst_of_submits_is_bounded_by_its_submits() {
     // Five submits answered back to back (the window sends at most one per
     // debounce, 400 ms with a 1 s max wait): the host saves at most once per
     // submit and writes no draft.
-    let (burst, len) = edit(60, 5);
+    let (burst, len) = edit(60, 5, ALONE);
     eprintln!("I-25 host edit unit cost: 60 blocks, 5 submits={burst:?}");
     assert!(
         burst.files_written <= 5,
@@ -138,4 +164,38 @@ fn a_burst_of_submits_is_bounded_by_its_submits() {
         burst.fsyncs <= 2 * burst.files_written,
         "I-25: two syncs per save: {burst:?}"
     );
+}
+
+#[test]
+fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
+    let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // REVIEW-3b-P2b R4(a): the path from submit to publication (save, index
+    // publication, the waiter) reads and stamps the edited page only, on an
+    // aged graph and on one a sync tool just delivered (every file racy, so
+    // the watcher rehashes them; that is its own thread's work, §5.4).
+    for aged in [true, false] {
+        let [small, large] = [60, 600].map(|unrelated| {
+            let graph = Graph { unrelated, aged };
+            let (counts, _) = edit(1, 1, graph);
+            eprintln!("R4(a) aged={aged} unrelated={unrelated}: {counts:?}");
+            counts
+        });
+        let path = |c: &Counts| {
+            [
+                ("full_reads", c.full_reads),
+                ("preamble_reads", c.preamble_reads),
+                ("hash_reads", c.hash_reads),
+                ("stamps_by_path", c.stamps_by_path),
+                ("readdir", c.readdir),
+                ("parses", c.parses),
+            ]
+        };
+        assert_eq!(
+            path(&large),
+            path(&small),
+            "I-13/R4(a): an edit's publication must not read or stamp unrelated pages \
+             (aged={aged}); exemplar page_host/binding.rs index()"
+        );
+        assert_eq!(large.files_written, 1, "the edit's one save");
+    }
 }

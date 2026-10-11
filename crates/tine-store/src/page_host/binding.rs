@@ -825,6 +825,8 @@ impl Sink for Bridge {
                 store.watch.hold(key);
             }
             for publication in delivery.publications {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::host_publication_probes(1);
                 let indexing = match owner(&publication.key) {
                     Owner::Reservation => Indexing::Reserved,
                     _ if self.fault() => Indexing::Failed,
