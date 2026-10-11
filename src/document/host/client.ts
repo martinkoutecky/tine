@@ -84,10 +84,12 @@ interface Page {
   held: { content: Content; version: number } | null;
   /** The latest version the host took from this window: what must publish (S1). */
   needed: number | null;
-  /** The highest taken version whose publication wait answered (J6). */
+  /** The highest taken version a publication wait answered true for (J6). */
   waited: number | null;
   /** The taken version a publication wait is running for (J6). */
   waiting: number | null;
+  /** The pause before a publication wait is asked again after a false answer. */
+  retry: ReturnType<typeof setTimeout> | null;
   /** The kind a page not loaded yet is created as (`createPage`). */
   hint?: PageKind;
   refusal: PageRefusal | string | null;
@@ -110,6 +112,9 @@ export interface ReviewTicket { name: string; instance: number; session: number;
 const SEND_DEBOUNCE_MS = 400;
 /** A continuous burst still sends at least this often (STEP3 §13, §16-6). */
 const SEND_MAX_WAIT_MS = 1000;
+/** After a false publication answer no terminal notice explains (a failed call,
+ * a host that ended), the window asks again this much later. */
+const PUBLICATION_RETRY_MS = 1000;
 
 function sameToken(a: DiskToken | null | undefined, b: DiskToken | null | undefined): boolean {
   return !!a && !!b && a.kind === b.kind && (a.kind === "no-file" || a.rev === (b as { rev: string }).rev);
@@ -243,6 +248,14 @@ export class HostClient {
 
   conflicted(name: string): boolean {
     return !!this.pages.get(name)?.observed?.conflict;
+  }
+
+  /** Publication debt (J6; REVIEW-3b-P2b B1/R1): a version the host took from
+   * this window that no true publication answer has discharged. Every path that
+   * lets go of a loaded page consults it (guard: publicationDebt.guard.test.ts). */
+  owes(name: string): boolean {
+    const page = this.pages.get(name);
+    return !!page && this.owing(page);
   }
 
   /** The disk state the host last observed for the page (what Keep mine resolves against). */
@@ -494,14 +507,26 @@ export class HostClient {
   }
 
   /** Whether every need published under this session: asks again while each
-   * bounded host wait passes, false on a terminal notice or a new session. */
+   * bounded host wait passes, false on a terminal notice, a new session or the
+   * client's retirement (which settles a pending wait at once, R3). A true
+   * answer, whoever asked it (a close, a barrier, the data revision),
+   * discharges the publication debt it covers (J6). */
   async published(needs: readonly PublishedNeed[]): Promise<boolean> {
     const session = this.session;
-    for (;;) {
-      const result = await this.host.waitPublished(session, needs);
-      if (this.session !== session) return false;
-      if (result !== null) return result;
+    while (!this.retired) {
+      const result = await Promise.race([this.host.waitPublished(session, needs), this.retirement]);
+      if (this.retired || this.session !== session) return false;
+      if (result === null) continue;
+      if (result) {
+        for (const { key, version } of needs) {
+          const page = this.byKey.get(key);
+          if (page) page.waited = Math.max(page.waited ?? version, version);
+        }
+        this.onChange();
+      }
+      return result;
     }
+    return false;
   }
 
   /** The host's publication debt under this session; false (unknown) after a
@@ -613,7 +638,7 @@ export class HostClient {
     let page = this.pages.get(name);
     if (!page) {
       page = { name, key: null, on: false, version: null, editSeq: 0, sentSeq: 0, phase: { kind: "idle" }, stash: [],
-        baseline: null, observed: null, notice: null, held: null, needed: null, waited: null, waiting: null, refusal: null, refs: new Set(),
+        baseline: null, observed: null, notice: null, held: null, needed: null, waited: null, waiting: null, retry: null, refusal: null, refs: new Set(),
         kinds: [], timer: null, burst: null, waiters: [], answered: [] };
       this.pages.set(name, page);
     }
@@ -788,35 +813,52 @@ export class HostClient {
     if (changed) this.onChange();
   }
 
+  private owing(page: Page): boolean {
+    return page.needed !== null && (page.waited === null || page.waited < page.needed);
+  }
+
+  /** What makes the host answer a publication wait false for a page it holds:
+   * a conflict, a third failed save, a third failed index publication. */
+  private terminal(page: Page): boolean {
+    return !!(page.observed?.conflict || page.notice?.saveError || page.notice?.indexError);
+  }
+
   private maybeClose(page: Page): void {
     if (this.pages.get(page.name) !== page || page.refs.size || page.phase.kind !== "idle"
-      || page.editSeq > page.sentSeq || page.timer || page.observed?.conflict
+      || page.editSeq > page.sentSeq || page.timer || this.terminal(page)
       // The host still owes this page's save (a failed attempt): it stays
       // open, so its notice stays live and the close prompt lists it (Q-TS5).
-      || page.notice?.saveError || (page.notice?.failures ?? 0) > 0) return;
+      || (page.notice?.failures ?? 0) > 0) return;
     // Host content a hold (pin, move) kept back is installed before the close;
     // while the hold lasts the page stays open, so its release still installs
     // it. A push held for the user's decision is the document's (holdsPush).
     if (page.held) this.reevaluate(page);
     if (page.held && this.holds(page)) return;
     if (!page.on) { this.drop(page); return; }
-    // A version the host took from this window stays the window's until it
-    // publishes (J6, completing Q-TS5): the page stays open until its
-    // publication wait answers. True lets go; false is a terminal notice,
-    // which the rule above keeps open; a new session drops the page.
-    if (page.needed !== null && (page.waited === null || page.waited < page.needed)) {
-      if (page.waiting !== page.needed) this.awaitPublication(page, page.key!, page.needed);
+    // A version the host took from this window stays the window's until a
+    // true publication answer (J6, completing Q-TS5): only that lets go. A
+    // new session or the client's retirement drops the page instead.
+    if (this.owing(page)) {
+      if (page.waiting !== page.needed && !page.retry) this.awaitPublication(page, page.key!, page.needed!);
       return;
     }
     void this.request(page, "close", (id) => this.host.close(this.session, id, page.key!));
   }
 
+  /** Only a true answer is a publication witness (B1). A false one a terminal
+   * notice explains keeps the page while the notice stands (its mail runs
+   * `maybeClose` again); any other false (a failed call, a host that ended)
+   * keeps it and asks again after a pause. */
   private awaitPublication(page: Page, key: string, version: number): void {
     page.waiting = version;
-    void this.published([{ key, version }]).then(() => {
-      page.waited = Math.max(page.waited ?? version, version);
+    void this.published([{ key, version }]).then((published) => {
       if (page.waiting === version) page.waiting = null;
+      if (this.pages.get(page.name) !== page) return;
+      if (!published && !this.terminal(page)) {
+        page.retry = setTimeout(() => { page.retry = null; this.maybeClose(page); }, PUBLICATION_RETRY_MS);
+      }
       this.maybeClose(page);
+      this.onChange();
     });
   }
 
@@ -835,11 +877,16 @@ export class HostClient {
 
   /** Set by `retire`: a barrier over this client never succeeds again. */
   retired = false;
+  private endRetirement: () => void = () => {};
+  /** Settles (as one bounded wait passing) when the client retires. */
+  private readonly retirement = new Promise<null>((resolve) => { this.endRetirement = () => resolve(null); });
 
   /** The binding ended (a graph switch, a store reset): every page's
-   * outstanding request settles unanswered; nothing is sent again. */
+   * outstanding request and publication wait settles unanswered (false);
+   * nothing is sent or waited on again. */
   retire(): void {
     this.retired = true;
+    this.endRetirement();
     for (const page of [...this.pages.values()]) this.drop(page);
     this.unrouted = [];
     this.installed.clear();
@@ -847,6 +894,7 @@ export class HostClient {
 
   private drop(page: Page): void {
     if (page.timer) clearTimeout(page.timer);
+    if (page.retry) clearTimeout(page.retry);
     if (page.key) this.byKey.delete(page.key);
     this.pages.delete(page.name);
     page.phase = { kind: "idle" };

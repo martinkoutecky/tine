@@ -316,7 +316,8 @@ function hostChanged(): void {
   const shown = names.filter((name) => c!.conflicted(name) && c!.notice(name)?.conflictReported);
   const current = conflictList();
   if (shown.length !== current.length || shown.some((name, i) => name !== current[i])) setConflictList(shown);
-  const key = names.map((name) => `${name}\u0000${+c!.busy(name)}${+c!.conflicted(name)}${+c!.isOpen(name)}`).join("\u0001")
+  const key = names.map((name) => `${name}\u0000${+c!.busy(name)}${+c!.owes(name)}${+c!.conflicted(name)}${+c!.isOpen(name)}`)
+    .join("\u0001")
     + `\u0002${[...early.keys()].join("\u0001")}`;
   if (key !== stateKey) {
     stateKey = key;
@@ -348,17 +349,18 @@ export function conflictReason(name: string): ConflictReason | undefined {
   return { kind: "disk-changed", observedRev: disk ? (disk.kind === "no-file" ? null : disk.rev) : undefined };
 }
 
-/** Pages whose input the host has not answered or cannot save: the working
- * set never evicts them. */
+/** Pages whose input the host has not answered, has not published (the
+ * client's publication debt, J6) or cannot save: the working set never evicts them. */
 export function unsettledPages(): string[] {
   const c = host();
-  return [...early.keys(), ...transferPages, ...(c ? c.names().filter((name) => c.busy(name) || c.conflicted(name)) : [])];
+  return [...early.keys(), ...transferPages,
+    ...(c ? c.names().filter((name) => c.busy(name) || c.owes(name) || c.conflicted(name)) : [])];
 }
 
-/** The page's client state blocks a reload: input unanswered, or a conflict. */
+/** The page's client state blocks a reload: input unanswered or unpublished, or a conflict. */
 export function hostBlocksReload(name: string): boolean {
   const c = host();
-  return early.has(name) || transferPages.has(name) || (!!c && (c.busy(name) || c.conflicted(name)));
+  return early.has(name) || transferPages.has(name) || (!!c && (c.busy(name) || c.owes(name) || c.conflicted(name)));
 }
 
 /** The host holds the page for this window: its mail is the page's authority. */
@@ -373,15 +375,17 @@ export function acceptHeldPush(name: string): void {
 }
 
 /** Every page whose edits are not on disk yet, with its loaded text (GH #540
- * recovery panel and close prompt). O(open pages) plus one DTO per entry. */
+ * recovery panel and close prompt): unanswered, unpublished (J6), conflicted
+ * or failing. O(open pages) plus one DTO per entry. */
 export function unsavedDrafts(): { name: string; state: UnsavedState; path: string | null; page: PageDto | null }[] {
   const c = host();
   const names = new Set([...early.keys(),
-    ...(c ? c.names().filter((name) => c.busy(name) || c.conflicted(name) || c.notice(name)?.saveError) : [])]);
+    ...(c ? c.names().filter((name) => c.busy(name) || c.owes(name) || c.conflicted(name) || c.notice(name)?.saveError) : [])]);
   return [...names].map((name) => ({
     name,
     state: c?.conflicted(name) ? "Conflict" as const
-      : c && c.busy(name) && !c.isDirty(name) && !c.notice(name)?.saveError ? "Saving" as const : "Not saved" as const,
+      : c && (c.busy(name) || c.owes(name)) && !c.isDirty(name) && !c.notice(name)?.saveError ? "Saving" as const
+        : "Not saved" as const,
     path: pageByName(name)?.id ?? null,
     page: pageToDto(name),
   }));

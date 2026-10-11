@@ -1711,6 +1711,70 @@ fn wait_published_is_true_on_publication_false_on_conflict_or_bound() {
     live.host.stop();
 }
 
+/// REVIEW-3b-P2b R3: with real taken debt (a version whose save keeps
+/// failing), a publication wait is Refused once nothing will publish it: the
+/// driver ended, the host went down, or its state is poisoned (failure, not a
+/// panic). Never Pending at every bound, and never Applied for a dropped page.
+#[test]
+fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
+    use crate::page_host::io::Phase;
+    let taken = |live: &Live| {
+        live.faults(Phase::PageTemp, 10_000);
+        let (key, page) = live.open("pages/a.md");
+        let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+        let version = live.answer(&key, id).answer.unwrap().version;
+        vec![(key, version, None)]
+    };
+    let bound = Duration::from_millis(30);
+
+    let mut ended = Live::new(&[("pages/a.md", "- one\n")]);
+    let needs = taken(&ended);
+    let session = ended.host.session();
+    ended.host.driver.join();
+    assert!(ended.host.driver.shared.ended());
+    assert_eq!(
+        ended.host.wait_published(session, &needs, bound),
+        PageOperation::Refused,
+        "an ended driver publishes nothing"
+    );
+
+    let down = Live::new(&[("pages/a.md", "- one\n")]);
+    let needs = taken(&down);
+    let session = down.host.session();
+    down.host
+        .driver
+        .shared
+        .with_state(|state| state.progress.host.stop());
+    assert_eq!(
+        down.host.wait_published(session, &needs, bound),
+        PageOperation::Refused,
+        "a host that is down publishes nothing"
+    );
+    down.host.stop();
+
+    let poisoned = Live::new(&[("pages/a.md", "- one\n")]);
+    let needs = taken(&poisoned);
+    let session = poisoned.host.session();
+    let shared = Arc::clone(&poisoned.host.driver.shared);
+    let poisoner = std::thread::spawn(move || {
+        let _state = shared.state.lock().unwrap();
+        panic!("R3 test: poison the host state");
+    });
+    assert!(poisoner.join().is_err());
+    let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        poisoned.host.wait_published(session, &needs, bound)
+    }));
+    assert_eq!(
+        answer.ok(),
+        Some(PageOperation::Refused),
+        "a poisoned host is a failed wait, not a panic"
+    );
+    // The host is failed by construction; its own teardown panics.
+    drop(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || drop(poisoned),
+    )));
+}
+
 /// Q-P2b-4 (STEP3-DESIGN, P2b checkpoint decisions): a barrier reads the
 /// logical state. With the draft worker paused before a deletion's
 /// application, `owed` names the page at the deletion's version and

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { reviewedDiskToken } from "./client";
-import { applied, mail, mailPage, opened, page, setup, textOf, tick, took } from "./fakes.test.support";
+import { applied, mail, mailPage, NOTICE, opened, page, setup, textOf, tick, took } from "./fakes.test.support";
 
 const KEY = "pages/P.md";
 
@@ -531,6 +531,87 @@ describe("close and move edges", () => {
     host.session = 8;
     await client.rebind();
     expect([client.names(), host.count("close")]).toEqual([[], 0]);
+  });
+
+  /** P took version 4 and its last view let go; each wait the host is asked
+   * answers through `answers` (REVIEW-3b-P2b B1/R3 plants). */
+  async function owing() {
+    const ctx = await setup();
+    const { host, doc, client } = ctx;
+    const answers: ((published: boolean | null) => void)[] = [];
+    host.onWait = () => new Promise<boolean | null>((resolve) => { answers.push(resolve); });
+    const release = await opened(ctx, "P", 3);
+    doc.type("P", "ab");
+    client.noteEdit("P", "save-block", false);
+    client.sendNow("P");
+    await tick();
+    client.receive(mail(7, KEY, mailPage(4, { kind: "unchanged" }), took(host.last("submit").id, 4)));
+    release();
+    await tick();
+    return { ...ctx, answers };
+  }
+
+  it("a false wait with no terminal notice is no publication: the page stays owed and the wait is asked again (B1)", async () => {
+    const { vi } = await import("vitest");
+    vi.useFakeTimers();
+    try {
+      const { host, client, answers } = await owing();
+      expect([client.owes("P"), host.count("wait")]).toEqual([true, 1]);
+      // The bridge's failed call (or a host that ended) answers false, with no notice.
+      answers[0](false);
+      await vi.advanceTimersByTimeAsync(0);
+      expect([client.isOpen("P"), client.owes("P"), host.count("close")]).toEqual([true, true, 0]);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(host.count("wait")).toBe(2);
+      answers[1](true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect([client.owes("P"), host.count("close"), client.names()]).toEqual([false, 1, []]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a false wait under an index-error notice keeps the page until the notice clears (B1)", async () => {
+    const { vi } = await import("vitest");
+    vi.useFakeTimers();
+    try {
+      const { host, client, answers } = await owing();
+      client.receive({ ...mail(7, KEY, mailPage(4, { kind: "unchanged" })), notice: { ...NOTICE, indexError: true } });
+      answers[0](false);
+      await vi.advanceTimersByTimeAsync(5000);
+      // The notice explains the false: no close, and no wait loop while it stands.
+      expect([client.isOpen("P"), client.owes("P"), host.count("close"), host.count("wait")]).toEqual([true, true, 0, 1]);
+      client.receive(mail(7, KEY, mailPage(4, { kind: "unchanged" })));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.count("wait")).toBe(2);
+      answers[1](true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect([client.owes("P"), host.count("close")]).toEqual([false, 1]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retirement settles a pending publication wait false and asks no more (R3)", async () => {
+    const ctx = await setup();
+    const { host, client } = ctx;
+    const answers: ((published: boolean | null) => void)[] = [];
+    host.onWait = () => new Promise<boolean | null>((resolve) => { answers.push(resolve); });
+    let result: boolean | undefined;
+    void client.published([{ key: KEY, version: 4 }]).then((published) => { result = published; });
+    await tick();
+    expect(host.count("wait")).toBe(1);
+    client.retire();
+    await tick();
+    expect(result).toBe(false);
+    answers[0](null);
+    await tick();
+    expect(host.count("wait")).toBe(1);
+    // A late true never escapes a retired client, and a new call asks nothing.
+    let late: boolean | undefined;
+    void client.published([{ key: KEY, version: 4 }]).then((published) => { late = published; });
+    await tick();
+    expect([late, host.count("wait")]).toEqual([false, 1]);
   });
 
   it("a move the host does not admit restores both endpoints, clean, so no half is ever sent", async () => {

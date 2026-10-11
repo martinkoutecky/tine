@@ -36,10 +36,13 @@ impl PageHost {
     /// it does not do, nor does an unsent local restoration. A page the
     /// host does not hold has no save owed, but cannot witness a block. A
     /// page with admitted input not applied yet (Q-P2b-4) is unpublished.
+    /// False on a poisoned state: a host that panicked vouches for nothing.
     pub(crate) fn pages_published(&self, pages: &[(String, u64, Option<String>)]) -> bool {
         let mut witnesses = Vec::new();
         {
-            let state = self.driver.shared.state.lock().unwrap();
+            let Ok(state) = self.driver.shared.state.lock() else {
+                return false;
+            };
             let host = &state.progress.host;
             for (key, version, witness) in pages {
                 let page = match host.logical(key) {
@@ -73,8 +76,11 @@ impl PageHost {
     /// once a needed page cannot publish without the user (a conflict, a
     /// third failed save, a third failed index publication) or the session
     /// is not current, so a result never vouches for another session's
-    /// pages. `Pending` at `bound`: never success at a bound (S1); the
-    /// window asks again.
+    /// pages. `Refused` too once nothing will publish them (REVIEW-3b-P2b
+    /// R3): the driver ended, the host is down (it dropped its pages, which
+    /// would read as owing nothing), or the state is poisoned (a failure,
+    /// never a panic). `Pending` at `bound`: never success at a bound (S1);
+    /// the window asks again.
     pub fn wait_published(
         &self,
         session: u64,
@@ -82,20 +88,28 @@ impl PageHost {
         bound: std::time::Duration,
     ) -> PageOperation {
         let deadline = std::time::Instant::now() + bound;
-        let current = || self.driver.shared.state.lock().unwrap().book.session == session;
+        let shared = &self.driver.shared;
+        let live = || {
+            !shared.ended()
+                && shared
+                    .state
+                    .lock()
+                    .is_ok_and(|state| state.book.session == session && state.progress.host.alive)
+        };
         loop {
-            if !current() {
+            if !live() {
                 return PageOperation::Refused;
             }
             if self.pages_published(needs) {
-                return if current() {
+                return if live() {
                     PageOperation::Applied
                 } else {
                     PageOperation::Refused
                 };
             }
-            let shared = &self.driver.shared;
-            let state = shared.state.lock().unwrap();
+            let Ok(state) = shared.state.lock() else {
+                return PageOperation::Refused;
+            };
             let progress = &state.progress;
             let stuck = needs.iter().any(|(key, ..)| {
                 progress.host.logical(key).conflict()
@@ -110,7 +124,9 @@ impl PageHost {
                 return PageOperation::Pending;
             }
             let pause = (deadline - now).min(std::time::Duration::from_millis(100));
-            drop(shared.wait(state, pause));
+            if shared.wait_checked(state, pause).is_none() {
+                return PageOperation::Refused;
+            }
         }
     }
 
