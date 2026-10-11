@@ -5082,6 +5082,7 @@ dependencies = [
  "clipboard-rs",
  "dirs",
  "ed25519-dalek",
+ "flate2",
  "gdkwayland-sys",
  "gtk",
  "libc",

@@ -9,6 +9,8 @@ use std::sync::Arc;
 use tauri::Manager;
 use tine_store::{is_asset_sidecar, is_graph_text, Area, RestoreFile, Store};
 
+mod archive;
+mod naming;
 mod restore;
 pub(crate) use restore::restore_backup;
 
@@ -53,15 +55,25 @@ impl BackupOutcome {
     }
 }
 
+/// The user-visible launch failure, if any. A cancelled backup and one
+/// another Tine process kept `busy` past the lock wait are skipped, not
+/// failed: the next launch backs up (the busy one is logged).
 fn launch_failure_token(outcome: &BackupOutcome) -> Option<String> {
     outcome
         .failure
         .as_ref()
-        .filter(|failure| failure.phase != "cancelled")
+        .filter(|failure| !matches!(failure.phase, "cancelled" | "busy"))
         .map(BackupFailure::wire)
 }
 
 pub(crate) fn report_launch_outcome(outcome: &BackupOutcome) {
+    if outcome
+        .failure
+        .as_ref()
+        .is_some_and(|failure| failure.phase == "busy")
+    {
+        crate::debug::diag_private("backup-busy", "launch backup skipped");
+    }
     if let Some(token) = launch_failure_token(outcome) {
         eprintln!("[tine] {token}");
         crate::debug::diag_private("backup-failed", token);
@@ -140,7 +152,8 @@ pub(crate) fn backup_graph_now(
 
 /// Snapshot the graph before a rewrite the user asked for, refusing the rewrite
 /// when the snapshot failed so the original files stay recoverable in Backups &
-/// recovery. The tagged snapshot is exempt from the keep-count prune.
+/// recovery. The tagged snapshot counts toward the keep count like a launch
+/// one (only `pre-restore` snapshots are exempt).
 pub(crate) fn snapshot_before_rewrite(
     app: &tauri::AppHandle,
     slot: &GraphSlot,
@@ -156,13 +169,7 @@ fn rewrite_snapshot_result(outcome: BackupOutcome) -> Result<(), String> {
     }
 }
 
-/// Take one snapshot of the current graph now (synchronous). Returns the number
-/// of files copied (0 = nothing to back up). Reads the keep count from the local
-/// app-settings file and prunes old snapshots afterwards. `suffix` tags special
-/// snapshots (e.g. "pre-restore") so they get a distinct, collision-proof
-/// directory name and are exempt from the keep-count prune.
-/// The typed outcome records any graph text/config/asset-sidecar copy failure,
-/// so the caller (restore) can refuse to proceed without a full rollback snapshot.
+/// The live graph layout a snapshot records and a restore checks against.
 #[derive(Clone)]
 struct BackupSource {
     root: PathBuf,
@@ -207,17 +214,20 @@ impl BackupSource {
     }
 }
 
+/// Legacy snapshot directories in `<id>/`, which this build lists, restores
+/// and prunes but no longer writes (it writes schema-5 zips, `archive.rs`).
 /// Schema 3 (og-B, ADR 0062) keeps graph text under `graph/<graph-relative
 /// path>` and records the graph-text scope it covered; schema 2 kept only the
-/// configured `journals/` and `pages/` roots and still lists and restores.
-/// Both are master's wire formats, so either build reads the other's.
+/// configured `journals/` and `pages/` roots. Both are master's wire
+/// formats, so either build reads the other's.
 const SNAPSHOT_SCHEMA: u32 = 3;
 const LEGACY_SNAPSHOT_SCHEMA: u32 = 2;
 /// Master's `GRAPH_TEXT_SCOPE_VERSION`: the discovery exclusions this build's
 /// `graph_text_eligible` applies (`published-queries/` included).
 const GRAPH_TEXT_SCOPE_VERSION: u32 = 2;
-/// Marks this build's schema-3 snapshots; master ignores the field. Prune
-/// counts only snapshots this build wrote (docs/app-identity.md).
+/// Marks this build's snapshots (schema-3 directories before, zip manifests
+/// now); master ignores the field. Prune counts only snapshots this build
+/// wrote (docs/app-identity.md).
 const SNAPSHOT_WRITER: &str = "og";
 const SNAPSHOT_MANIFEST: &str = "snapshot.json";
 
@@ -250,7 +260,7 @@ struct SnapshotManifest {
 /// unlisted live text inside it. A `:hidden` value that failed to parse hides
 /// all graph text, so the snapshot holds none and records
 /// `hidden_parse_failed_closed: true` (restore then retires none).
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct SnapshotGraphTextPolicy {
     version: u32,
     hidden: Vec<String>,
@@ -278,23 +288,12 @@ pub(crate) fn root_backup_id(root: &std::path::Path) -> String {
     format!("{label}-{}", &digest[..32])
 }
 
+/// A legacy (schema 2/3) snapshot manifest, for test fixtures: this build
+/// writes only zips.
+#[cfg(test)]
 fn write_manifest(dir: &std::path::Path, manifest: &SnapshotManifest) -> std::io::Result<()> {
-    let path = dir.join(SNAPSHOT_MANIFEST);
-    let tmp = dir.join(".snapshot.json.tmp");
     let bytes = serde_json::to_vec_pretty(manifest).map_err(std::io::Error::other)?;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp)?;
-    use std::io::Write;
-    file.write_all(&bytes)?;
-    file.sync_all()?;
-    record_backup_op("manifest_sync");
-    drop(file);
-    crate::device_io::move_file_noreplace(&tmp, &path)?;
-    tine_store::directory_durability::sync_directory_entry(dir)?;
-    record_backup_op("manifest_dir_sync");
-    Ok(())
+    std::fs::write(dir.join(SNAPSHOT_MANIFEST), bytes)
 }
 
 #[cfg(test)]
@@ -302,6 +301,7 @@ std::thread_local! {
     static BACKUP_OPS: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// Test record of a completed durability step or publication step, in order.
 fn record_backup_op(op: &'static str) {
     #[cfg(test)]
     BACKUP_OPS.with(|ops| ops.borrow_mut().push(op));
@@ -309,57 +309,83 @@ fn record_backup_op(op: &'static str) {
     let _ = op;
 }
 
-fn write_payload(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(windows)]
+/// A test hook at a named step of publication or pruning.
+#[cfg(test)]
+enum Hook {
+    /// The step fails with this kind.
+    Fail(ErrorKind),
+    /// The directory sync at this step reports no platform witness.
+    Weak,
+    /// Run before the step (a pause, a crash by panic, another process).
+    Run(Box<dyn FnOnce()>),
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static HOOKS: std::cell::RefCell<Vec<(&'static str, Hook)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The test seam before each named step: runs or injects the first hook set
+/// for `op` on this thread. `Ok(true)` asks a directory sync to report a weak
+/// witness. Production: always `Ok(false)`.
+fn step(op: &'static str) -> std::io::Result<bool> {
+    #[cfg(test)]
     {
-        use std::os::windows::fs::OpenOptionsExt;
-        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_WRITE_THROUGH);
+        let hook = HOOKS.with(|hooks| {
+            let mut hooks = hooks.borrow_mut();
+            let at = hooks.iter().position(|(name, _)| *name == op)?;
+            // `drain`, not `remove`: host_slot_guard_tests resolves callees by name.
+            let (_, hook) = hooks.drain(at..=at).next()?;
+            Some(hook)
+        });
+        match hook {
+            Some(Hook::Fail(kind)) => return Err(std::io::Error::new(kind, "injected")),
+            Some(Hook::Weak) => return Ok(true),
+            Some(Hook::Run(run)) => run(),
+            None => {}
+        }
     }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
+    let _ = op;
+    Ok(false)
+}
+
+/// The durability a publication or a keeper certification reached
+/// (REVIEW-backup-zip R1). `Weak`: a directory sync the platform does not
+/// offer (the shared helper's tolerated set); a real sync error is `Err`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Durability {
+    Weak,
+    Strong,
+}
+
+fn sync_dir(dir: &std::path::Path, op: &'static str) -> std::io::Result<Durability> {
+    let weak = step(op)?;
+    let witness = tine_store::directory_durability::sync_directory_witness(dir)?;
+    record_backup_op(op);
+    Ok(
+        if weak || witness == tine_store::directory_durability::DirectoryWitness::Unsupported {
+            Durability::Weak
+        } else {
+            Durability::Strong
+        },
+    )
+}
+
+fn sync_file(file: &std::fs::File, op: &'static str) -> std::io::Result<()> {
+    step(op)?;
     file.sync_all()?;
-    record_backup_op("payload_sync");
+    record_backup_op(op);
     Ok(())
 }
 
-/// Sync every payload directory, children before parents. An explicit stack:
-/// a snapshot mirrors the graph's depth, which costs heap, not stack (I-22).
-fn sync_payload_dirs(dir: &std::path::Path) -> std::io::Result<()> {
-    let mut pending = vec![(dir.to_path_buf(), false)];
-    while let Some((dir, children_synced)) = pending.pop() {
-        if children_synced {
-            tine_store::directory_durability::sync_directory_entry(&dir)?;
-            record_backup_op("payload_dir_sync");
-            continue;
-        }
-        pending.push((dir.clone(), true));
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
-            if entry.file_type()?.is_dir() {
-                pending.push((entry.path(), false));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn publish_snapshot(
-    partial: &std::path::Path,
-    final_dest: &std::path::Path,
-    manifest: &SnapshotManifest,
-) -> std::io::Result<()> {
-    sync_payload_dirs(partial)?;
-    write_manifest(partial, manifest)?;
-    crate::device_io::move_file_noreplace(partial, final_dest)?;
-    record_backup_op("publish_rename");
-    tine_store::directory_durability::sync_directory_entry(
-        final_dest.parent().expect("snapshot has parent"),
-    )?;
-    record_backup_op("publication_dir_sync");
-    Ok(())
+/// `<id>.zips/`'s parent chain up to app data: `backups/`, then app data
+/// (REVIEW-backup-zip B2: the first publication and every keeper
+/// certification settle the whole chain).
+fn sync_ancestors(zips: &std::path::Path) -> std::io::Result<Durability> {
+    let backups = zips.parent().ok_or(ErrorKind::InvalidInput)?;
+    let app_data = backups.parent().ok_or(ErrorKind::InvalidInput)?;
+    let first = sync_dir(backups, "backups_dir_sync")?;
+    Ok(first.min(sync_dir(app_data, "app_data_dir_sync")?))
 }
 
 fn read_manifest(dir: &std::path::Path) -> Option<SnapshotManifest> {
@@ -444,12 +470,16 @@ fn do_backup_source(
     do_backup_source_cancellable(app, store, source, suffix, &|| false)
 }
 
-fn copy_store_area(
+/// Read every included file of `area` into `out` at `prefix` + its
+/// area-relative path, through Store, each bounded by the archive's
+/// per-entry limit. Returns (read, failed, first failure).
+fn read_store_area(
     store: &Store,
     area: Area,
-    dest: &std::path::Path,
+    prefix: &str,
     include: fn(&tine_store::FileId) -> bool,
     cancelled: &dyn Fn() -> bool,
+    out: &mut Vec<(String, Vec<u8>)>,
 ) -> (usize, usize, Option<BackupFailure>) {
     let phase = match area {
         Area::Journals => "journals",
@@ -469,16 +499,6 @@ fn copy_store_area(
             }),
         );
     }
-    if let Err(error) = std::fs::create_dir_all(dest) {
-        return (
-            0,
-            1,
-            Some(BackupFailure {
-                phase,
-                kind: error.kind(),
-            }),
-        );
-    }
     let listing = match store.scan_area(area, None) {
         Ok(listing) => listing,
         Err(error) => {
@@ -492,7 +512,7 @@ fn copy_store_area(
             )
         }
     };
-    let mut copied = 0;
+    let mut read = 0;
     let mut first_failure = listing
         .unreadable
         .iter()
@@ -509,7 +529,7 @@ fn copy_store_area(
     for entry in listing.files {
         if cancelled() {
             return (
-                copied,
+                read,
                 failed + 1,
                 Some(BackupFailure {
                     phase,
@@ -520,24 +540,10 @@ fn copy_store_area(
         if !include(&entry.id) {
             continue;
         }
-        let target = dest.join(&entry.rel);
-        match store.read(&entry.id, None) {
+        match store.read(&entry.id, Some(archive::MAX_ENTRY_BYTES)) {
             Ok((bytes, _)) => {
-                let result = target
-                    .parent()
-                    .ok_or_else(|| std::io::Error::from(ErrorKind::InvalidInput))
-                    .and_then(std::fs::create_dir_all)
-                    .and_then(|_| write_payload(&target, &bytes));
-                match result {
-                    Ok(()) => copied += 1,
-                    Err(error) => {
-                        failed += 1;
-                        first_failure.get_or_insert(BackupFailure {
-                            phase,
-                            kind: error.kind(),
-                        });
-                    }
-                }
+                out.push((format!("{prefix}{}", entry.rel), bytes));
+                read += 1;
             }
             Err(error) => {
                 failed += 1;
@@ -548,7 +554,7 @@ fn copy_store_area(
             }
         }
     }
-    (copied, failed, first_failure)
+    (read, failed, first_failure)
 }
 
 fn store_error_kind(error: &tine_store::StoreError) -> ErrorKind {
@@ -587,35 +593,6 @@ fn count_store_text(store: &Store, area: Area) -> Result<usize, ErrorKind> {
         .count())
 }
 
-struct PartialBackup {
-    path: PathBuf,
-    committed: bool,
-}
-
-impl Drop for PartialBackup {
-    fn drop(&mut self) {
-        if !self.committed {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
-}
-
-fn cleanup_partial_backups(base: &std::path::Path) {
-    let Ok(entries) = std::fs::read_dir(base) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().starts_with(".partial-") {
-            let path = entry.path();
-            if path.is_dir() {
-                let _ = std::fs::remove_dir_all(path);
-            } else {
-                let _ = std::fs::remove_file(path);
-            }
-        }
-    }
-}
-
 fn do_backup_source_cancellable(
     app: &tauri::AppHandle,
     store: &Store,
@@ -630,114 +607,77 @@ fn do_backup_source_cancellable(
         return BackupOutcome::failed(0, "app-data", ErrorKind::NotFound);
     };
     let base = data_dir.join("backups").join(root_backup_id(&source.root));
-    let outcome = write_snapshot(&base, store, source, suffix, cancelled);
-    if outcome.failure.is_none() && outcome.copied > 0 {
-        prune_backups(&base, backup_keep(app));
-    }
-    outcome
+    write_snapshot(
+        &base,
+        store,
+        source,
+        suffix,
+        cancelled,
+        backup_keep(app),
+        BACKUP_LOCK_WAIT,
+    )
 }
 
-/// Copy one snapshot into `base` and publish it; the caller prunes.
-fn write_snapshot(
-    base: &std::path::Path,
+/// `<app-data>/backups/<id>.zips/`, this build's snapshot namespace, beside
+/// the legacy `<id>/` directory (`base`). Builds before the zip format read
+/// only `<id>/`, so they never list, prune or clean it (docs/app-identity.md).
+fn zip_base(base: &std::path::Path) -> PathBuf {
+    let mut name = base.file_name().unwrap_or_default().to_os_string();
+    name.push(".zips");
+    base.with_file_name(name)
+}
+
+/// How long a backup or a restore waits for another Tine process's hold
+/// on the namespace lock before giving up (launch: skip, logged as busy).
+const BACKUP_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The graph's backed-up files, read once into memory: the zip stores and
+/// the manifest hashes the same bytes (REVIEW-backup-zip R5).
+struct Capture {
+    files: Vec<(String, Vec<u8>)>,
+    manifest: archive::ZipManifest,
+}
+
+/// Read the backed-up file set (what is backed up is unchanged: graph text
+/// at its graph-relative path, asset sidecars under the assets directory,
+/// `logseq/config.edn`). Any unreadable file fails the capture.
+fn capture(
     store: &Store,
     source: BackupSource,
-    suffix: &str,
     cancelled: &dyn Fn() -> bool,
-) -> BackupOutcome {
-    let stamp = tine_core::date::utc_backup_stamp();
-    let name = if suffix.is_empty() {
-        stamp
-    } else {
-        format!("{stamp}-{suffix}")
-    };
-    // Reserve a UNIQUE destination directory. The stamp is second-granularity, so
-    // two snapshots in the same second (e.g. a launch snapshot racing a pre-restore
-    // snapshot) would otherwise share one directory — and copy_md_dir, which copies
-    // in but never removes files absent from the live graph, would mix both
-    // snapshots' files, leaving a later restore with stale notes/sidecars. `create_dir`
-    // (non-recursive) fails atomically if the name is taken, so we bump a counter
-    // until we win an unused name.
-    if let Err(error) = std::fs::create_dir_all(&base) {
-        return BackupOutcome::failed(0, "reserve", error.kind());
-    }
-    cleanup_partial_backups(&base);
-    let mut final_dest = base.join(&name);
-    let mut dest = base.join(format!(".partial-{name}"));
-    let mut k = 2;
-    loop {
-        match std::fs::create_dir(&dest) {
-            Ok(()) => break,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                final_dest = base.join(format!("{name}-{k}"));
-                dest = base.join(format!(".partial-{name}-{k}"));
-                k += 1;
-            }
-            Err(error) => return BackupOutcome::failed(0, "reserve", error.kind()),
-        }
-    }
-    let mut partial = PartialBackup {
-        path: dest.clone(),
-        committed: false,
-    };
-    let live_text_n = match count_store_text(store, Area::Graph) {
-        Ok(count) => count,
-        Err(kind) => return BackupOutcome::failed(0, "inventory", kind),
-    };
-    // Graph text anywhere in the graph-text scope, at its graph-relative path.
-    let (ct, ft, et) = copy_store_area(
-        store,
-        Area::Graph,
-        &dest.join("graph"),
-        is_graph_text,
-        cancelled,
-    );
-    let (ca, fa, ea) = copy_store_area(
+) -> Result<Capture, BackupOutcome> {
+    let live_text_n = count_store_text(store, Area::Graph)
+        .map_err(|kind| BackupOutcome::failed(0, "inventory", kind))?;
+    let mut files = Vec::new();
+    let (ct, ft, et) =
+        read_store_area(store, Area::Graph, "", is_graph_text, cancelled, &mut files);
+    let (_, fa, ea) = read_store_area(
         store,
         Area::Assets,
-        &dest.join(&source.assets_dir_name),
+        &format!("{}/", source.assets_dir_name),
         is_asset_sidecar,
         cancelled,
+        &mut files,
     );
-    let mut n = ct + ca;
     let mut failed = ft + fa;
     let mut first_failure = et.or(ea);
     if !cancelled() {
         match store.scan_area(Area::Meta, None) {
             Ok(listing) => {
-                failed += listing
+                if let Some((_, error)) = listing
                     .unreadable
                     .iter()
-                    .filter(|(_, error)| error.kind != std::io::ErrorKind::NotFound)
-                    .count();
-                if first_failure.is_none() {
-                    first_failure = listing
-                        .unreadable
-                        .iter()
-                        .find(|(_, error)| error.kind != ErrorKind::NotFound)
-                        .map(|(_, error)| BackupFailure {
-                            phase: "config",
-                            kind: error.kind,
-                        });
+                    .find(|(_, error)| error.kind != ErrorKind::NotFound)
+                {
+                    failed += 1;
+                    first_failure.get_or_insert(BackupFailure {
+                        phase: "config",
+                        kind: error.kind,
+                    });
                 }
                 if let Some(config) = listing.files.iter().find(|entry| entry.rel == "config.edn") {
-                    match store.read(&config.id, None) {
-                        Ok((bytes, _)) => {
-                            let result =
-                                std::fs::create_dir_all(dest.join("logseq")).and_then(|_| {
-                                    write_payload(&dest.join("logseq/config.edn"), &bytes)
-                                });
-                            match result {
-                                Ok(()) => n += 1,
-                                Err(error) => {
-                                    failed += 1;
-                                    first_failure.get_or_insert(BackupFailure {
-                                        phase: "config",
-                                        kind: error.kind(),
-                                    });
-                                }
-                            }
-                        }
+                    match store.read(&config.id, Some(archive::MAX_ENTRY_BYTES)) {
+                        Ok((bytes, _)) => files.push(("logseq/config.edn".into(), bytes)),
                         Err(error) => {
                             failed += 1;
                             first_failure.get_or_insert(BackupFailure {
@@ -757,50 +697,461 @@ fn write_snapshot(
             }
         }
     }
+    let n = files.len();
     if cancelled() {
-        return BackupOutcome::failed(n, "cancelled", ErrorKind::Interrupted);
+        return Err(BackupOutcome::failed(
+            n,
+            "cancelled",
+            ErrorKind::Interrupted,
+        ));
     }
     if failed != 0 {
-        return BackupOutcome {
+        return Err(BackupOutcome {
             copied: n,
             failure: first_failure.or(Some(BackupFailure {
                 phase: "copy",
                 kind: ErrorKind::Other,
             })),
-        };
+        });
     }
     if ct != live_text_n {
-        return BackupOutcome::failed(n, "inventory", ErrorKind::InvalidData);
+        return Err(BackupOutcome::failed(
+            n,
+            "inventory",
+            ErrorKind::InvalidData,
+        ));
     }
-    if n == 0 {
-        return BackupOutcome::success(0);
-    }
-    let files = match snapshot_inventory(&dest) {
-        Ok(files) => files,
-        Err(error) => return BackupOutcome::failed(n, "inventory", error.kind()),
-    };
-    if files.len() != n {
-        return BackupOutcome::failed(n, "inventory", ErrorKind::InvalidData);
-    }
-    let manifest = SnapshotManifest {
-        schema: SNAPSHOT_SCHEMA,
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let manifest = archive::ZipManifest {
+        schema: archive::ZIP_SCHEMA,
+        writer: SNAPSHOT_WRITER.into(),
         root: source.root.display().to_string(),
         journals_dir: source.journals_dir,
         pages_dir: source.pages_dir,
-        graph_text_policy: Some(SnapshotGraphTextPolicy {
+        assets_dir: source.assets_dir_name,
+        graph_text_policy: SnapshotGraphTextPolicy {
             version: GRAPH_TEXT_SCOPE_VERSION,
             hidden: source.hidden,
             hidden_parse_failed_closed: source.hidden_parse_failed_closed,
-        }),
-        writer: Some(SNAPSHOT_WRITER.into()),
-        files,
+        },
+        files: files
+            .iter()
+            .map(|(path, bytes)| archive::ZipFile {
+                path: path.clone(),
+                sha256: format!("{:x}", Sha256::digest(bytes)),
+                len: bytes.len() as u64,
+            })
+            .collect(),
         complete: true,
     };
-    if let Err(error) = publish_snapshot(&dest, &final_dest, &manifest) {
-        return BackupOutcome::failed(n, "publish", error.kind());
+    Ok(Capture { files, manifest })
+}
+
+/// Take one snapshot of the graph into `<base>.zips/` (docs/storage-contract.md,
+/// Graph backups): capture outside the lock, then, holding the namespace
+/// lock, skip an unchanged launch, publish one zip and prune. An empty
+/// graph writes nothing (`copied == 0`). `suffix` tags special snapshots
+/// (`pre-restore`, `pre-journal-rename`); those are always written.
+fn write_snapshot(
+    base: &std::path::Path,
+    store: &Store,
+    source: BackupSource,
+    suffix: &str,
+    cancelled: &dyn Fn() -> bool,
+    keep: usize,
+    lock_wait: std::time::Duration,
+) -> BackupOutcome {
+    let capture = match capture(store, source, cancelled) {
+        Ok(capture) => capture,
+        Err(outcome) => return outcome,
+    };
+    let n = capture.files.len();
+    if n == 0 {
+        return BackupOutcome::success(0);
     }
-    partial.committed = true;
-    BackupOutcome::success(n)
+    let zips = zip_base(base);
+    if let Err(error) = std::fs::create_dir_all(&zips) {
+        return BackupOutcome::failed(n, "reserve", error.kind());
+    }
+    // Concurrent honest Tine processes (REVIEW-backup-zip B1, R2, R3): one
+    // holder at a time allocates names, publishes, cleans and prunes.
+    let lock = match crate::file_lock::lock_exclusive_until(
+        &zips.join(naming::LOCK_FILE),
+        std::time::Instant::now() + lock_wait,
+    ) {
+        Ok(Some(lock)) => lock,
+        Ok(None) => return BackupOutcome::failed(n, "busy", ErrorKind::WouldBlock),
+        Err(error) => return BackupOutcome::failed(n, "lock", error.kind()),
+    };
+    let outcome = publish_locked(base, &zips, capture, suffix, keep);
+    drop(lock);
+    outcome
+}
+
+/// One recognized snapshot in either namespace.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Record {
+    name: naming::SnapshotName,
+    namespace: naming::Namespace,
+    path: PathBuf,
+}
+
+impl Record {
+    /// Newest-last order across both namespaces (R4).
+    fn order(&self, other: &Self) -> std::cmp::Ordering {
+        self.name
+            .chrono_cmp(&other.name)
+            .then(self.namespace.cmp(&other.namespace))
+            .then_with(|| self.name.suffix.cmp(&other.name.suffix))
+    }
+}
+
+/// Both namespaces' recognized snapshots, every recognized name (partials
+/// too, for counter reservation), and the unknown entries.
+#[derive(Default)]
+struct Scan {
+    records: Vec<Record>,
+    names: Vec<naming::SnapshotName>,
+    unknown: Vec<PathBuf>,
+}
+
+fn scan(base: &std::path::Path, zips: &std::path::Path) -> std::io::Result<Scan> {
+    use naming::{Entry, Namespace};
+    let mut scan = Scan::default();
+    for (dir, namespace) in [(base, Namespace::Legacy), (zips, Namespace::Zip)] {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            let Some(file_name) = entry.file_name().to_str().map(str::to_owned) else {
+                scan.unknown.push(path);
+                continue;
+            };
+            let classified = match namespace {
+                Namespace::Legacy => naming::classify_legacy(&file_name),
+                Namespace::Zip => naming::classify_zip(&file_name),
+            };
+            match classified {
+                Entry::Snapshot(name) if namespace == Namespace::Zip || path.is_dir() => {
+                    scan.names.push(name.clone());
+                    scan.records.push(Record {
+                        name,
+                        namespace,
+                        path,
+                    });
+                }
+                Entry::Partial(name) => scan.names.push(name),
+                Entry::Lock => {}
+                Entry::Snapshot(_) | Entry::Unknown => scan.unknown.push(path),
+            }
+        }
+    }
+    scan.records.sort_by(Record::order);
+    Ok(scan)
+}
+
+/// Under the lock no cooperating writer owns a partial: every zip partial
+/// is abandoned (REVIEW-backup-zip R3). Legacy partials belong to older
+/// builds, which clean their own.
+fn remove_partials(zips: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(zips) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if let naming::Entry::Partial(_) = naming::classify_zip(&name.to_string_lossy()) {
+            if let Err(error) = std::fs::remove_file(entry.path()) {
+                crate::debug::diag_private("backup-partial-cleanup-failed", error.to_string());
+            }
+        }
+    }
+}
+
+/// Read a whole archive file, bounded by the archive limit (R7: limit + 1,
+/// then require the end).
+fn read_archive(path: &std::path::Path) -> Result<Vec<u8>, archive::Problem> {
+    let io = |error: std::io::Error| archive::Problem::Io(error.kind());
+    let file = std::fs::File::open(path).map_err(io)?;
+    let mut bytes = Vec::new();
+    file.take(archive::MAX_ARCHIVE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(io)?;
+    if bytes.len() as u64 > archive::MAX_ARCHIVE_BYTES {
+        return Err(archive::Problem::TooLarge("archive"));
+    }
+    Ok(bytes)
+}
+
+/// The listing-time status of one zip: its manifest, read from the central
+/// directory and the manifest entry only.
+fn zip_listing(path: &std::path::Path) -> Result<archive::ZipManifest, archive::Problem> {
+    let file = std::fs::File::open(path).map_err(|error| archive::Problem::Io(error.kind()))?;
+    let len = file
+        .metadata()
+        .map_err(|error| archive::Problem::Io(error.kind()))?
+        .len();
+    archive::read_listing(&mut archive::FileSource { file, len })
+}
+
+fn publish_locked(
+    base: &std::path::Path,
+    zips: &std::path::Path,
+    capture: Capture,
+    suffix: &str,
+    keep: usize,
+) -> BackupOutcome {
+    let n = capture.files.len();
+    remove_partials(zips);
+    let scan = match scan(base, zips) {
+        Ok(scan) => scan,
+        Err(error) => return BackupOutcome::failed(n, "scan", error.kind()),
+    };
+    // Item 4 + R5: a launch whose capture equals the newest state record of
+    // any suffix writes nothing, but only once that record fully verifies
+    // (B3); a damaged, missing or legacy baseline gets a fresh zip.
+    if suffix.is_empty() {
+        if let Some(newest) = scan.records.last() {
+            if newest.namespace == naming::Namespace::Zip {
+                let verified =
+                    read_archive(&newest.path).and_then(|bytes| archive::verify(&mut &bytes[..]));
+                if verified.is_ok_and(|verified| verified.manifest == capture.manifest) {
+                    crate::debug::diag_private("backup-unchanged", newest.name.render());
+                    return BackupOutcome::success(n);
+                }
+            }
+        }
+    }
+    let first = !scan
+        .records
+        .iter()
+        .any(|record| record.namespace == naming::Namespace::Zip);
+    let Some(name) = naming::allocate(&tine_core::date::utc_backup_stamp(), suffix, &scan.names)
+    else {
+        return BackupOutcome::failed(n, "naming", ErrorKind::Other);
+    };
+    let manifest = archive::encode_manifest(&capture.manifest);
+    let bytes = match archive::write_archive(&capture.files, &manifest, &name.stamp) {
+        Ok(bytes) => bytes,
+        Err(problem) => {
+            let kind = match problem {
+                archive::Problem::TooLarge(_) => ErrorKind::FileTooLarge,
+                _ => ErrorKind::InvalidInput,
+            };
+            return BackupOutcome::failed(n, "archive", kind);
+        }
+    };
+    match publish_zip(zips, &name, &bytes, first) {
+        Err((phase, error)) => BackupOutcome::failed(n, phase, error.kind()),
+        Ok((_, Durability::Weak)) => {
+            // Published, visible and restorable, but without a platform
+            // witness: nothing older may be retired on its strength.
+            crate::debug::diag_private("backup-weak-durability", name.render());
+            BackupOutcome::success(n)
+        }
+        Ok((path, Durability::Strong)) => {
+            prune_locked(base, zips, keep, Some(&path));
+            BackupOutcome::success(n)
+        }
+    }
+}
+
+/// Durable before visible (item 3): a `create_new` partial, one file sync,
+/// a no-replace rename, then the directory sync, and on the namespace's
+/// first zip the ancestors too. Runs under the namespace lock, so the
+/// no-replace fallback's check-then-rename has no cooperating racer. A
+/// failure before the rename removes the partial (a crash leaves it for the
+/// next lock holder); one after it leaves a visible zip and reports
+/// `publish-sync`.
+fn publish_zip(
+    zips: &std::path::Path,
+    name: &naming::SnapshotName,
+    bytes: &[u8],
+    first: bool,
+) -> Result<(PathBuf, Durability), (&'static str, std::io::Error)> {
+    use std::io::Write;
+    let partial = zips.join(format!(
+        "{}{}{}",
+        naming::PARTIAL_PREFIX,
+        name.render(),
+        naming::ZIP_EXT
+    ));
+    let path = zips.join(format!("{}{}", name.render(), naming::ZIP_EXT));
+    let written = step("partial_create").and_then(|_| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_WRITE_THROUGH);
+        }
+        let mut file = options.open(&partial)?;
+        file.write_all(bytes)?;
+        sync_file(&file, "zip_sync")?;
+        step("zip_rename")?;
+        crate::device_io::move_file_noreplace(&partial, &path)
+    });
+    if let Err(error) = written {
+        let _ = std::fs::remove_file(&partial);
+        return Err(("publish", error));
+    }
+    record_backup_op("zip_rename");
+    let durability = sync_dir(zips, "zips_dir_sync")
+        .and_then(|durability| {
+            Ok(if first {
+                durability.min(sync_ancestors(zips)?)
+            } else {
+                durability
+            })
+        })
+        .map_err(|error| ("publish-sync", error))?;
+    Ok((path, durability))
+}
+
+/// The keep-count prune, under the namespace lock (item 5, REVIEW B1, R5).
+/// Counted: legacy snapshots as before (this build's, not `-pre-restore`,
+/// not another Tine's) and healthy zips except `-pre-restore`; oldest beyond
+/// `keep` go. Damaged zips count toward nothing and go only once older than
+/// the oldest retained healthy zip; unsupported and unknown entries stay.
+/// Nothing is deleted unless the newest healthy zip (the keeper) fully
+/// verifies and its file and whole directory chain sync strongly first.
+/// `fresh`: a zip this lock hold just published with a strong result, whose
+/// file and `<id>.zips/` entry need no second sync.
+fn prune_locked(
+    base: &std::path::Path,
+    zips: &std::path::Path,
+    keep: usize,
+    fresh: Option<&std::path::Path>,
+) {
+    let scan = match scan(base, zips) {
+        Ok(scan) => scan,
+        Err(error) => {
+            crate::debug::diag_private("backup-prune-skipped", error.to_string());
+            return;
+        }
+    };
+    for path in &scan.unknown {
+        crate::debug::diag_private("backup-unknown-entry", path.display().to_string());
+    }
+    let mut counted = Vec::new();
+    let mut healthy = Vec::new();
+    let mut damaged = Vec::new();
+    for record in scan.records {
+        match record.namespace {
+            naming::Namespace::Legacy => {
+                if !record.name.is_pre_restore() && !is_foreign_snapshot(&record.path) {
+                    counted.push(record);
+                }
+            }
+            naming::Namespace::Zip => match zip_listing(&record.path) {
+                // Another Tine's zip: never counted, never the keeper, never deleted.
+                Ok(manifest) if manifest.writer != SNAPSHOT_WRITER => {}
+                Ok(_) => {
+                    if !record.name.is_pre_restore() {
+                        counted.push(record.clone());
+                    }
+                    healthy.push(record);
+                }
+                Err(archive::Problem::Damaged(_) | archive::Problem::TooLarge(_)) => {
+                    damaged.push(record)
+                }
+                Err(problem) => crate::debug::diag_private(
+                    "backup-unknown-entry",
+                    format!("{}: {problem:?}", record.path.display()),
+                ),
+            },
+        }
+    }
+    let excess = counted.len().saturating_sub(keep);
+    let retained = counted.split_off(excess);
+    let mut doomed = counted;
+    if let Some(oldest) = retained
+        .iter()
+        .find(|record| record.namespace == naming::Namespace::Zip)
+    {
+        doomed.extend(
+            damaged
+                .into_iter()
+                .filter(|record| record.order(oldest).is_lt()),
+        );
+    }
+    let keeper = healthy.last();
+    doomed.retain(|record| Some(record) != keeper);
+    if doomed.is_empty() {
+        return;
+    }
+    let Some(keeper) = keeper else {
+        crate::debug::diag_private("backup-prune-no-keeper", zips.display().to_string());
+        return;
+    };
+    match certify_keeper(keeper, zips, fresh == Some(keeper.path.as_path())) {
+        Ok(Durability::Strong) => {}
+        Ok(Durability::Weak) => {
+            crate::debug::diag_private("backup-prune-weak-keeper", keeper.name.render());
+            return;
+        }
+        Err(error) => {
+            crate::debug::diag_private("backup-prune-keeper-failed", error.to_string());
+            return;
+        }
+    }
+    for record in doomed {
+        let removed = step("prune_delete").and_then(|_| match record.namespace {
+            naming::Namespace::Legacy => std::fs::remove_dir_all(&record.path),
+            naming::Namespace::Zip => std::fs::remove_file(&record.path),
+        });
+        match removed {
+            Ok(()) => record_backup_op("prune_delete"),
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => crate::debug::diag_private(
+                "backup-prune-delete-failed",
+                format!("{}: {error}", record.path.display()),
+            ),
+        }
+    }
+}
+
+/// Establish the keeper before any deletion: full verification, then its
+/// file, `<id>.zips/`, `backups/` and app data synced (REVIEW B1/B2). A
+/// writer that died after its rename may have left it unsynced.
+fn certify_keeper(
+    keeper: &Record,
+    zips: &std::path::Path,
+    fresh: bool,
+) -> std::io::Result<Durability> {
+    step("keeper_verify")?;
+    read_archive(&keeper.path)
+        .and_then(|bytes| archive::verify(&mut &bytes[..]).map(|_| ()))
+        .map_err(|problem| {
+            std::io::Error::new(ErrorKind::InvalidData, format!("keeper: {problem:?}"))
+        })?;
+    let mut durability = Durability::Strong;
+    if !fresh {
+        let file = std::fs::OpenOptions::new().write(true).open(&keeper.path)?;
+        sync_file(&file, "keeper_sync")?;
+        durability = sync_dir(zips, "zips_dir_sync")?;
+    }
+    Ok(durability.min(sync_ancestors(zips)?))
+}
+
+/// The Settings keep-count change: prune under the lock, with the same
+/// keeper rule. A busy namespace is left for the next launch's prune.
+fn prune_now(base: &std::path::Path, keep: usize, lock_wait: std::time::Duration) {
+    let zips = zip_base(base);
+    if !zips.is_dir() {
+        return; // no zip, so no keeper: nothing may be deleted
+    }
+    match crate::file_lock::lock_exclusive_until(
+        &zips.join(naming::LOCK_FILE),
+        std::time::Instant::now() + lock_wait,
+    ) {
+        Ok(Some(_lock)) => prune_locked(base, &zips, keep, None),
+        Ok(None) => crate::debug::diag_private("backup-busy", "prune"),
+        Err(error) => crate::debug::diag_private("backup-prune-skipped", error.to_string()),
+    }
 }
 
 fn backup_keep(app: &tauri::AppHandle) -> usize {
@@ -812,10 +1163,16 @@ fn backup_keep(app: &tauri::AppHandle) -> usize {
         .unwrap_or(BACKUP_KEEP_DEFAULT)
 }
 
-#[derive(serde::Serialize)]
+/// One row of Settings' Backups list. `id` names the namespace
+/// (`zip:<name>` or `dir:<name>`): a zip and a legacy directory with the same
+/// name are distinct entries. `status`: `ok`, `damaged` (not restorable) or
+/// `unsupported` (written by a Tine this build does not understand).
+#[derive(Debug, serde::Serialize)]
 pub(crate) struct BackupInfo {
+    id: String,
     stamp: String,
     files: usize,
+    status: &'static str,
 }
 
 #[tauri::command]
@@ -841,7 +1198,7 @@ pub(crate) async fn set_backup_keep(
         // Apply the new (possibly lower) cap to the current graph's snapshots now.
         let slot = slot?;
         if let Some(base) = backup_base(&app, &slot.root_key) {
-            prune_backups(&base, keep);
+            prune_now(&base, keep, BACKUP_LOCK_WAIT);
         }
         Ok(())
     })
@@ -874,33 +1231,47 @@ pub(crate) async fn list_backups(
     .map_err(|error| error.to_string())
 }
 
+/// Both namespaces, newest first. Legacy snapshots list as before (an
+/// unreadable manifest hides it); a zip lists with its status, read from
+/// its central directory and manifest entry only (item 7).
 fn list_backups_from_base(base: &std::path::Path, root: &std::path::Path) -> Vec<BackupInfo> {
     let current_root = Store::canonical_root(root)
         .unwrap_or_else(|_| root.to_path_buf())
         .display()
         .to_string();
+    let Ok(scan) = scan(base, &zip_base(base)) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(&base) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if !p.is_dir() {
-                continue;
+    for record in scan.records.iter().rev() {
+        let name = record.name.render();
+        let info = match record.namespace {
+            naming::Namespace::Legacy => match read_manifest(&record.path) {
+                Some(manifest) if manifest.root == current_root => BackupInfo {
+                    id: format!("dir:{name}"),
+                    files: manifest.files.len(),
+                    stamp: name,
+                    status: "ok",
+                },
+                _ => continue,
+            },
+            naming::Namespace::Zip => {
+                let (files, status) = match zip_listing(&record.path) {
+                    Ok(manifest) if manifest.root == current_root => (manifest.files.len(), "ok"),
+                    Ok(_) | Err(archive::Problem::Io(ErrorKind::NotFound)) => continue,
+                    Err(archive::Problem::Unsupported(_)) => (0, "unsupported"),
+                    Err(_) => (0, "damaged"),
+                };
+                BackupInfo {
+                    id: format!("zip:{name}"),
+                    stamp: name,
+                    files,
+                    status,
+                }
             }
-            let Some(manifest) = read_manifest(&p) else {
-                continue;
-            };
-            if manifest.root != current_root {
-                continue;
-            }
-            let stamp = match p.file_name().and_then(|s| s.to_str()) {
-                Some(s) => s.to_string(),
-                None => continue,
-            };
-            let files = manifest.files.len();
-            out.push(BackupInfo { stamp, files });
-        }
+        };
+        out.push(info);
     }
-    out.sort_by(|a, b| b.stamp.cmp(&a.stamp)); // newest first
     out
 }
 
@@ -922,637 +1293,5 @@ fn is_foreign_snapshot(dir: &std::path::Path) -> bool {
     }
 }
 
-fn prune_backups(base: &std::path::Path, keep: usize) {
-    let Ok(rd) = std::fs::read_dir(base) else {
-        return;
-    };
-    // Only the routine launch snapshots are subject to the keep-count. Tagged
-    // snapshots (e.g. "...-pre-restore") are deliberate safety points and are
-    // never auto-pruned.
-    let mut dirs: Vec<std::path::PathBuf> = rd
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.is_dir()
-                && !p
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .map(|s| s.starts_with(".partial-"))
-                    .unwrap_or(true)
-                && !p
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .map(|s| s.contains("-pre-restore"))
-                    .unwrap_or(false)
-        })
-        .collect();
-    // A snapshot another Tine sharing this app-data dir wrote (master's schema
-    // 3, which carries no og writer mark; docs/app-identity.md) is listed and
-    // restorable here but is not ours to count or delete.
-    dirs.retain(|dir| !is_foreign_snapshot(dir));
-    dirs.sort(); // timestamp-named → chronological
-    if dirs.len() > keep {
-        for d in &dirs[..dirs.len() - keep] {
-            let _ = std::fs::remove_dir_all(d);
-        }
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("tine-tauri-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    /// A released Tine sharing this app-data dir (docs/app-identity.md) writes
-    /// schema-3 snapshots without this build's writer mark. They list and
-    /// restore here, but the launch keep-count must never delete them: they
-    /// are that Tine's backups. This build's own schema-2 and marked schema-3
-    /// snapshots are the ones the keep-count counts.
-    #[test]
-    fn prune_never_deletes_another_tines_snapshots() {
-        let base = scratch("backup-prune-foreign");
-        let snapshot = |name: &str, schema: u32, writer: &str| {
-            let dir = base.join(name);
-            std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(
-                dir.join(SNAPSHOT_MANIFEST),
-                format!(r#"{{"schema":{schema},"root":"/g","journals_dir":"journals","pages_dir":"pages",{writer}"files":[],"complete":true}}"#),
-            )
-            .unwrap();
-        };
-        let ours = format!(r#""writer":"{SNAPSHOT_WRITER}","#);
-        snapshot("2026-09-01_00-00-00", 3, "");
-        snapshot("2026-09-02_00-00-00", LEGACY_SNAPSHOT_SCHEMA, "");
-        snapshot("2026-09-03_00-00-00", 3, r#""writer":"master","#);
-        snapshot("2026-09-04_00-00-00", SNAPSHOT_SCHEMA, &ours);
-        snapshot("2026-09-05_00-00-00", SNAPSHOT_SCHEMA, &ours);
-
-        prune_backups(&base, 2);
-
-        let mut left: Vec<String> = std::fs::read_dir(&base)
-            .unwrap()
-            .flatten()
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect();
-        left.sort();
-        assert_eq!(
-            left,
-            [
-                "2026-09-01_00-00-00",
-                "2026-09-03_00-00-00",
-                "2026-09-04_00-00-00",
-                "2026-09-05_00-00-00"
-            ]
-        );
-        let _ = std::fs::remove_dir_all(base);
-    }
-
-    /// I-22: a snapshot mirrors the graph's directory depth. Linux caps a
-    /// path near 2000 one-letter levels, Windows long paths near 16,000, so
-    /// the Linux-maximal tree runs on one ninth of a 2 MiB worker stack.
-    #[test]
-    fn deep_payload_directories_sync_without_recursion() {
-        let root = scratch("backup-deep-payload");
-        let mut dir = root.clone();
-        while dir.as_os_str().len() < 3990 {
-            dir.push("d");
-        }
-        std::fs::create_dir_all(&dir).unwrap();
-        std::thread::Builder::new()
-            .stack_size(2 * 1024 * 1024 / 9)
-            .spawn(move || sync_payload_dirs(&root))
-            .unwrap()
-            .join()
-            .unwrap()
-            .unwrap();
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn backup_payload_and_directories_sync_before_publication() {
-        let root = scratch("backup-publication-order");
-        let partial = root.join(".partial-1");
-        std::fs::create_dir_all(partial.join("pages/nested")).unwrap();
-        BACKUP_OPS.with(|ops| ops.borrow_mut().clear());
-        write_payload(&partial.join("pages/nested/a.md"), b"- durable\n").unwrap();
-        let final_dest = root.join("complete-1");
-        let manifest = SnapshotManifest {
-            schema: LEGACY_SNAPSHOT_SCHEMA,
-            root: "test".into(),
-            journals_dir: "journals".into(),
-            pages_dir: "pages".into(),
-            graph_text_policy: None,
-            writer: None,
-            files: vec![],
-            complete: true,
-        };
-        publish_snapshot(&partial, &final_dest, &manifest).unwrap();
-        let ops = BACKUP_OPS.with(|ops| ops.borrow().clone());
-        let position = |name| ops.iter().position(|op| *op == name).unwrap();
-        assert!(position("payload_sync") < position("payload_dir_sync"));
-        assert!(position("payload_dir_sync") < position("manifest_sync"));
-        assert!(position("manifest_sync") < position("publish_rename"));
-        assert!(position("publish_rename") < position("publication_dir_sync"),
-            "I-1/I-2: backup publication follows fsynced payload and directory; exemplar backup.rs publish_snapshot");
-        assert_eq!(
-            std::fs::read(final_dest.join("pages/nested/a.md")).unwrap(),
-            b"- durable\n"
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    /// Launch-backup cost on a real graph (dossier og-backup-zip): files
-    /// created and bytes written under the backups dir, sync calls, wall
-    /// time, for a first backup, an unchanged second one, and one after
-    /// three page edits. Runs only on a scratch COPY of a graph (it edits
-    /// three pages):
-    /// `TINE_BACKUP_CORPUS=<copy> cargo test -p tine launch_backup_cost -- --ignored --nocapture`.
-    #[test]
-    #[ignore = "measurement; needs TINE_BACKUP_CORPUS (a scratch copy of a graph)"]
-    fn launch_backup_cost_on_corpus() {
-        let graph = PathBuf::from(std::env::var_os("TINE_BACKUP_CORPUS").expect("TINE_BACKUP_CORPUS"));
-        let app_data = graph.with_extension("backup-cost-app");
-        let _ = std::fs::remove_dir_all(&app_data);
-        let backups = app_data.join("backups");
-        let files_under = |dir: &std::path::Path| {
-            let mut out = std::collections::BTreeMap::new();
-            let mut stack = vec![dir.to_path_buf()];
-            while let Some(dir) = stack.pop() {
-                for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-                    let meta = entry.metadata().unwrap();
-                    if meta.is_dir() {
-                        stack.push(entry.path());
-                    } else {
-                        out.insert(entry.path(), meta.len());
-                    }
-                }
-            }
-            out
-        };
-        let run = |label: &str| {
-            let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-            let source = BackupSource::from_store(&store, &graph).unwrap();
-            let before = files_under(&backups);
-            BACKUP_OPS.with(|ops| ops.borrow_mut().clear());
-            let started = std::time::Instant::now();
-            let base = backups.join(root_backup_id(&source.root));
-            let outcome = write_snapshot(&base, &store, source, "", &|| false);
-            prune_backups(&base, BACKUP_KEEP_DEFAULT);
-            let elapsed = started.elapsed();
-            assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
-            let after = files_under(&backups);
-            let created: Vec<_> = after.keys().filter(|path| !before.contains_key(*path)).collect();
-            let bytes: u64 = created.iter().map(|path| after[*path]).sum();
-            let ops = BACKUP_OPS.with(|ops| ops.borrow().clone());
-            let syncs = ops.iter().filter(|op| op.ends_with("sync")).count();
-            eprintln!(
-                "BACKUP-COST {label}: graph_files={} created_files={} bytes_written={bytes} syncs={syncs} wall_ms={:.1}",
-                outcome.copied,
-                created.len(),
-                elapsed.as_secs_f64() * 1000.0
-            );
-            store.close();
-        };
-        run("first");
-        run("unchanged");
-        let mut pages: Vec<PathBuf> = std::fs::read_dir(graph.join("pages"))
-            .unwrap()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
-            .collect();
-        pages.sort();
-        for page in &pages[..3] {
-            let mut text = std::fs::read(page).unwrap();
-            text.extend_from_slice(b"\n- backup cost probe edit\n");
-            std::fs::write(page, text).unwrap();
-        }
-        run("three-edits");
-        let _ = std::fs::remove_dir_all(&app_data);
-    }
-
-    #[test]
-    fn launch_backup_copy_failure_reaches_diagnostic_adapter() {
-        let root = scratch("launch-backup-copy-error");
-        std::fs::create_dir_all(root.join("pages")).unwrap();
-        std::fs::write(root.join("pages/note.md"), b"- keep\n").unwrap();
-        let dest = root.join("blocked-destination");
-        std::fs::write(&dest, b"already a file").unwrap();
-        let store = Store::open(&root, Default::default()).unwrap().0;
-        let (copied, failed, failure) =
-            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| false);
-        assert_eq!((copied, failed), (0, 1));
-        let failure = failure.unwrap();
-        let token = launch_failure_token(&BackupOutcome {
-            copied,
-            failure: Some(failure.clone()),
-        })
-        .unwrap();
-        assert_eq!(token, format!("backup-failed:pages:{:?}", failure.kind),
-            "I-9: forced copy failure must reach the launch diagnostic adapter; exemplar backup.rs backup_async");
-        store.close();
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn backup_root_ids_do_not_conflate_punctuation() {
-        let root = scratch("backup-root-id");
-        let dash = root.join("a-b");
-        let underscore = root.join("a_b");
-        std::fs::create_dir_all(&dash).unwrap();
-        std::fs::create_dir_all(&underscore).unwrap();
-        assert_ne!(root_backup_id(&dash), root_backup_id(&underscore));
-        assert_eq!(root_backup_id(&dash), root_backup_id(&dash));
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn runtime_backup_reads_graph_files_through_store() {
-        let root = scratch("store-backup-read");
-        std::fs::create_dir_all(root.join("pages/nested")).unwrap();
-        std::fs::create_dir_all(root.join("journals")).unwrap();
-        std::fs::write(root.join("pages/nested/Note.md"), b"- note\n").unwrap();
-        std::fs::write(root.join("pages/Ignore.txt"), b"skip").unwrap();
-        let (store, _, _) = Store::open(&root, tine_store::OpenOptions::default()).unwrap();
-        let dest = root.join("backup-out");
-        let (copied, failed, failure) =
-            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| false);
-        assert_eq!((copied, failed), (1, 0));
-        assert!(failure.is_none());
-        assert_eq!(
-            std::fs::read(dest.join("nested/Note.md")).unwrap(),
-            b"- note\n"
-        );
-        assert!(!dest.join("Ignore.txt").exists());
-        store.close();
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn backup_source_refuses_retargeted_external_assets() {
-        let root = scratch("retargeted-backup-assets");
-        std::fs::create_dir_all(root.join("pages")).unwrap();
-        std::fs::create_dir_all(root.join("journals")).unwrap();
-        let first = root.with_extension("assets-first");
-        let second = root.with_extension("assets-second");
-        std::fs::create_dir_all(&first).unwrap();
-        std::fs::create_dir_all(&second).unwrap();
-        std::os::unix::fs::symlink(&first, root.join("assets")).unwrap();
-        let (store, _, _) = Store::open(
-            &root,
-            tine_store::OpenOptions {
-                approved_external_assets: Some(first.clone()),
-                watch: Default::default(),
-                launch_checkpoint: None,
-            },
-        )
-        .unwrap();
-        assert!(BackupSource::from_store(&store, &root).is_ok());
-        std::fs::remove_file(root.join("assets")).unwrap();
-        std::os::unix::fs::symlink(&second, root.join("assets")).unwrap();
-        assert!(BackupSource::from_store(&store, &root).is_err());
-        store.close();
-        let _ = std::fs::remove_dir_all(root);
-        let _ = std::fs::remove_dir_all(first);
-        let _ = std::fs::remove_dir_all(second);
-    }
-
-    /// REG-OG-C5-L06-B1 (I-9): a graph inventory that cannot be read names
-    /// its cause in the backup token. Before, every inventory failure became
-    /// `backup-failed:inventory:Other`, hiding a permission or disk error.
-    #[cfg(unix)]
-    #[test]
-    fn inventory_failure_keeps_its_error_kind() {
-        use std::os::unix::fs::PermissionsExt;
-        let root = scratch("inventory-error-kind");
-        let graph = root.join("graph");
-        for dir in ["pages/locked", "journals", "assets", "logseq"] {
-            std::fs::create_dir_all(graph.join(dir)).unwrap();
-        }
-        std::fs::write(graph.join("pages/locked/a.md"), b"- a\n").unwrap();
-        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-        let source = BackupSource::from_store(&store, &graph).unwrap();
-        let locked = graph.join("pages/locked");
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let outcome = write_snapshot(&root.join("backups"), &store, source, "", &|| false);
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let failure = outcome
-            .failure
-            .expect("an unreadable page directory fails the backup");
-        assert_eq!(
-            (failure.phase, failure.kind),
-            ("inventory", ErrorKind::PermissionDenied),
-            "I-9: the inventory failure's cause must reach the backup token; exemplar backup.rs count_store_text"
-        );
-
-        // A store closed under the backup reports that, not `Other`.
-        let source = BackupSource::from_store(&store, &graph).unwrap();
-        store.close();
-        let outcome = write_snapshot(&root.join("backups"), &store, source, "", &|| false);
-        let failure = outcome.failure.expect("a closed store fails the backup");
-        assert_eq!(
-            (failure.phase, failure.kind),
-            ("inventory", ErrorKind::BrokenPipe)
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn failed_and_abandoned_partial_backups_are_removed() {
-        let root = scratch("partial-backup-cleanup");
-        let failed = root.join(".partial-failed");
-        std::fs::create_dir_all(&failed).unwrap();
-        std::fs::write(failed.join("half.md"), b"partial").unwrap();
-        {
-            let _guard = PartialBackup {
-                path: failed.clone(),
-                committed: false,
-            };
-        }
-        assert!(!failed.exists());
-
-        let crashed = root.join(".partial-crashed");
-        std::fs::create_dir_all(&crashed).unwrap();
-        std::fs::write(crashed.join("half.md"), b"partial").unwrap();
-        cleanup_partial_backups(&root);
-        assert!(!crashed.exists());
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn cancellable_copy_stops_before_traversing_the_tree() {
-        let root = scratch("backup-cancel");
-        let graph = root.join("graph");
-        let src = graph.join("pages");
-        let dest = root.join("dest");
-        std::fs::create_dir_all(&src).unwrap();
-        for dir in ["journals", "assets", "logseq"] {
-            std::fs::create_dir_all(graph.join(dir)).unwrap();
-        }
-        std::fs::write(src.join("note.md"), b"secret").unwrap();
-        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-        let (copied, failed, failure) =
-            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| true);
-        assert_eq!((copied, failed), (0, 1));
-        assert_eq!(failure.unwrap().kind, ErrorKind::Interrupted);
-        assert!(!dest.exists());
-        drop(store);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn only_complete_v2_manifests_are_readable() {
-        let root = scratch("backup-manifest");
-        let manifest = SnapshotManifest {
-            schema: LEGACY_SNAPSHOT_SCHEMA,
-            root: root.display().to_string(),
-            journals_dir: "diary".into(),
-            pages_dir: "archive/pages".into(),
-            graph_text_policy: None,
-            writer: None,
-            files: Vec::new(),
-            complete: true,
-        };
-        write_manifest(&root, &manifest).unwrap();
-        let read = read_manifest(&root).unwrap();
-        assert_eq!(read.pages_dir, "archive/pages");
-        assert!(verify_snapshot(&root, &read));
-        std::fs::write(root.join("journals.md"), "- changed\n").unwrap();
-        assert!(!verify_snapshot(&root, &read));
-        std::fs::remove_file(root.join("journals.md")).unwrap();
-        std::fs::write(
-            root.join(SNAPSHOT_MANIFEST),
-            r#"{"schema":2,"root":"x","journals_dir":"journals","pages_dir":"pages","files":[],"complete":false}"#,
-        )
-        .unwrap();
-        assert!(read_manifest(&root).is_none());
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn manifest_listing_never_hashes_snapshot_payloads() {
-        let root = scratch("manifest-only-listing");
-        let graph = root.join("graph");
-        let base = root.join("backups");
-        let snapshot = base.join("2026-07-22_12-00-00");
-        std::fs::create_dir_all(graph.join("pages")).unwrap();
-        std::fs::create_dir_all(snapshot.join("pages")).unwrap();
-        std::fs::write(snapshot.join("pages/note.md"), b"tampered payload").unwrap();
-        write_manifest(
-            &snapshot,
-            &SnapshotManifest {
-                schema: LEGACY_SNAPSHOT_SCHEMA,
-                root: std::fs::canonicalize(&graph).unwrap().display().to_string(),
-                journals_dir: "journals".into(),
-                pages_dir: "pages".into(),
-                graph_text_policy: None,
-                writer: None,
-                files: vec![SnapshotFile {
-                    path: "pages/note.md".into(),
-                    sha256: "manifest metadata only".into(),
-                }],
-                complete: true,
-            },
-        )
-        .unwrap();
-
-        PAYLOAD_HASH_READS.with(|reads| reads.set(0));
-        let listed = list_backups_from_base(&base, &graph);
-
-        assert_eq!(
-            PAYLOAD_HASH_READS.with(|reads| reads.get()),
-            0,
-            "listing must not read or hash snapshot payloads"
-        );
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].files, 1);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn copy_asset_sidecars_dir_copies_only_edn_recursively() {
-        let root = scratch("copy-sidecars");
-        let graph = root.join("graph");
-        let src = graph.join("assets");
-        let dst = root.join("backup").join("assets");
-        std::fs::create_dir_all(src.join("nested")).unwrap();
-        for dir in ["pages", "journals", "logseq"] {
-            std::fs::create_dir_all(graph.join(dir)).unwrap();
-        }
-        std::fs::write(src.join("doc.edn"), "{:a 1}\n").unwrap();
-        std::fs::write(src.join("nested").join("hl.edn"), "{:b 2}\n").unwrap();
-        std::fs::write(src.join("image.png"), b"png").unwrap();
-        std::fs::write(src.join("nested").join("image.png"), b"png").unwrap();
-        std::fs::create_dir_all(src.join(ASSET_RESTORE_RECOVERY_DIR)).unwrap();
-        std::fs::write(
-            src.join(ASSET_RESTORE_RECOVERY_DIR).join("old.edn"),
-            "{:old true}\n",
-        )
-        .unwrap();
-
-        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-        let (copied, failed, failure) =
-            copy_store_area(&store, Area::Assets, &dst, is_asset_sidecar, &|| false);
-        assert_eq!((copied, failed), (2, 0));
-        assert!(failure.is_none());
-        assert_eq!(
-            std::fs::read_to_string(dst.join("doc.edn")).unwrap(),
-            "{:a 1}\n"
-        );
-        assert_eq!(
-            std::fs::read_to_string(dst.join("nested").join("hl.edn")).unwrap(),
-            "{:b 2}\n"
-        );
-        assert!(!dst.join("image.png").exists());
-        assert!(!dst.join("nested").join("image.png").exists());
-        assert!(!dst.join(ASSET_RESTORE_RECOVERY_DIR).exists());
-        drop(store);
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn graph_text_backup_includes_nested_pages() {
-        let root = scratch("nested-md-backup");
-        let graph = root.join("graph");
-        let pages = graph.join("pages");
-        let journals = graph.join("journals");
-        let backup = root.join("backup");
-        std::fs::create_dir_all(pages.join("client-a")).unwrap();
-        for dir in ["assets", "logseq"] {
-            std::fs::create_dir_all(graph.join(dir)).unwrap();
-        }
-        std::fs::create_dir_all(&journals).unwrap();
-        std::fs::write(pages.join("Top.md"), b"top\n").unwrap();
-        std::fs::write(pages.join("client-a/Deep.md"), b"deep\n").unwrap();
-        std::fs::write(journals.join("2026_07_09.md"), b"journal\n").unwrap();
-        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-        let live_pages = count_store_text(&store, Area::Pages).unwrap();
-        let live_journals = count_store_text(&store, Area::Journals).unwrap();
-        let (copied_pages, failed_pages, _) = copy_store_area(
-            &store,
-            Area::Pages,
-            &backup.join("pages"),
-            is_graph_text,
-            &|| false,
-        );
-        let (copied_journals, failed_journals, _) = copy_store_area(
-            &store,
-            Area::Journals,
-            &backup.join("journals"),
-            is_graph_text,
-            &|| false,
-        );
-        let copied = copied_pages + copied_journals;
-        let failed = failed_pages + failed_journals;
-        let complete = failed == 0 && copied == live_pages + live_journals;
-        assert_eq!(live_pages, 2);
-        assert_eq!(live_journals, 1);
-        assert!(complete);
-        assert_eq!(
-            std::fs::read(backup.join("pages/Top.md")).unwrap(),
-            b"top\n"
-        );
-        assert_eq!(
-            std::fs::read(backup.join("pages/client-a/Deep.md")).unwrap(),
-            b"deep\n"
-        );
-        assert_eq!(
-            std::fs::read(backup.join("journals/2026_07_09.md")).unwrap(),
-            b"journal\n"
-        );
-        drop(store);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-}
-
-#[cfg(test)]
-mod fail_read_tests {
-    use super::*;
-    #[test]
-    fn fail_read_backup_refusal_keeps_phase_and_io_kind() {
-        let error = rewrite_snapshot_result(BackupOutcome::failed(
-            0,
-            "pages",
-            ErrorKind::PermissionDenied,
-        ))
-        .unwrap_err();
-        assert_eq!(error, "backup-failed:pages:PermissionDenied");
-    }
-}
-
-#[cfg(test)]
-mod launch_schedule_tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[test]
-    fn launch_backup_does_not_copy_while_startup_is_still_running() {
-        let root = tempfile::tempdir().unwrap();
-        let slot = Arc::new(GraphSlot::new(
-            Store::open(root.path(), Default::default()).unwrap().0,
-            root.path().to_path_buf(),
-        ));
-        let (sent, received) = std::sync::mpsc::channel();
-        let worker_slot = slot.clone();
-        let worker = std::thread::spawn(move || {
-            sent.send(wait_launch_backup(&worker_slot)).unwrap();
-        });
-        let early = received.recv_timeout(Duration::from_millis(1200));
-        // End the worker after observing the result, even on the old schedule.
-        slot.cancel_background();
-        worker.join().unwrap();
-        assert!(early.is_err(), "I-20: launch backup must wait for the owning warm completion signal; exemplar src-tauri/src/backup.rs");
-    }
-}
-
-#[cfg(test)]
-mod idle_signal_tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[test]
-    fn warm_completion_quiet_deadline_and_revocation_own_the_backup_wait() {
-        let root = tempfile::tempdir().unwrap();
-        let slot = Arc::new(GraphSlot::new(
-            Store::open(root.path(), Default::default()).unwrap().0,
-            root.path().to_path_buf(),
-        ));
-        let old = slot.begin_startup_warm();
-        let current = slot.begin_startup_warm();
-        slot.finish_startup_warm(old);
-        assert!(
-            !slot.warm_done.load(Ordering::Acquire),
-            "an old warm cannot release the current backup"
-        );
-        let (sent, received) = std::sync::mpsc::channel();
-        let waiting = slot.clone();
-        let worker = std::thread::spawn(move || {
-            sent.send(waiting.wait_startup_idle(Duration::from_millis(80), Duration::from_secs(5)))
-                .unwrap();
-        });
-        assert!(received.recv_timeout(Duration::from_millis(20)).is_err());
-        slot.finish_startup_warm(current);
-        assert!(
-            received.recv_timeout(Duration::from_millis(20)).is_err(),
-            "completion must retain a quiet turn"
-        );
-        assert!(received.recv_timeout(Duration::from_secs(2)).unwrap());
-        worker.join().unwrap();
-        // A missed warm signal still preserves the safety net at the deadline.
-        slot.begin_startup_warm();
-        assert!(slot.wait_startup_idle(Duration::from_secs(5), Duration::from_millis(1)));
-        let waiting = slot.clone();
-        let worker = std::thread::spawn(move || {
-            waiting.wait_startup_idle(Duration::from_secs(5), Duration::from_secs(180))
-        });
-        slot.cancel_background();
-        assert!(!worker.join().unwrap());
-    }
-}
+mod tests;

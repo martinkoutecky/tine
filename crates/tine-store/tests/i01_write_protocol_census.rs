@@ -105,6 +105,11 @@ fn every_content_mutation_has_a_reviewed_owner() {
         "src-tauri/src/backup.rs",
         // Split from backup.rs (og-B); a seam split never shrinks the census.
         "src-tauri/src/backup/restore.rs",
+        // Zip backups (og-backup-zip): the archive codec and the names are
+        // in-memory only; the namespace lock opens its lock file.
+        "src-tauri/src/backup/archive.rs",
+        "src-tauri/src/backup/naming.rs",
+        "src-tauri/src/file_lock.rs",
         "src-tauri/src/commands.rs",
         "src-tauri/src/commands/concord.rs",
         "src-tauri/src/graph.rs",
@@ -150,13 +155,22 @@ fn every_content_mutation_has_a_reviewed_owner() {
         ),
         ("crates/tine-store/src/transaction.rs", "apply"),
         ("crates/tine-store/src/transaction.rs", "commit_timed"),
-        ("src-tauri/src/backup.rs", "cleanup_partial_backups"),
-        ("src-tauri/src/backup.rs", "drop"),
-        ("src-tauri/src/backup.rs", "prune_backups"),
-        ("src-tauri/src/backup.rs", "publish_snapshot"),
-        ("src-tauri/src/backup.rs", "sync_dir"),
-        ("src-tauri/src/backup.rs", "write_manifest"),
-        ("src-tauri/src/backup.rs", "write_payload"),
+        // Zip backups, app data only, all under the namespace lock
+        // (docs/storage-contract.md, Graph backups). Crash matrix: a crash
+        // before the no-replace rename leaves a `.partial-*.zip` that is
+        // never listed and that the next lock holder removes; after it, a
+        // complete zip whose directory entry the next keeper certification
+        // re-syncs (`a_crash_leaves_a_partial_or_a_complete_zip`).
+        ("src-tauri/src/backup.rs", "publish_zip"),
+        ("src-tauri/src/backup.rs", "remove_partials"),
+        // Deletes only after the newest healthy zip verified and synced
+        // strongly; a crash mid-prune leaves a subset the next prune
+        // finishes (`deletion_needs_a_verified_strongly_synced_keeper`).
+        ("src-tauri/src/backup.rs", "prune_locked"),
+        // Opens the keeper for writing only to `sync_all` it; no content change.
+        ("src-tauri/src/backup.rs", "certify_keeper"),
+        // Creates the persistent, empty lock file; never truncated or unlinked.
+        ("src-tauri/src/file_lock.rs", "open_lock_file"),
         // Thumbnail cache cleanup is outside graph/private-durable state.
         ("src-tauri/src/commands.rs", "import_native_capture"),
         // Deletes a forgotten graph's launch checkpoint (ADR 0070), a

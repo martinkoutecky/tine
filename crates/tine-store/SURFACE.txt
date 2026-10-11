@@ -118,9 +118,17 @@ struct store::ConfigState
 
 # Step 3b P2b: the old save engine's Store::save_pages and SavePagesOutcome are
 # deleted; page saves are the page host's (STEP3 §12; 7 -> 5).
-## Save (ceiling: 5)
+# og-backup-zip (REVIEW-backup-zip R1): a launch backup deletes old snapshots
+# only after a strong directory sync. sync_directory_entry cannot answer that:
+# it folds the tolerated "no directory sync on this filesystem" into Ok, the
+# page host's contract for graph saves. The witness form the host already used
+# (DirectoryWitness, sync_directory_witness) becomes public instead of a copy
+# of the tolerated error set in src-tauri (5 -> 7).
+## Save (ceiling: 7)
 enum edit_kind::EditKind
 fn directory_durability::sync_directory_entry
+enum directory_durability::DirectoryWitness
+fn directory_durability::sync_directory_witness
 enum store::SaveBase
 enum store::SaveOutcome
 enum store::StoreError
@@ -203,15 +211,16 @@ field publish::PublishReceipt.site
 field publish::PublishReceipt.files
 field publish::PublishReceipt.previous_kept
 
-## Restore (ceiling: 15)
+# og-backup-zip (R9): a restore source is verified bytes in memory, not a
+# path plus length re-checked at copy time (source, len -> bytes; 15 -> 14).
+## Restore (ceiling: 14)
 fn restore::Store::restore
 struct restore::RestoreFile
 struct restore::RestoreReport
 struct restore::RestoreFailed
 field restore::RestoreFile.area
 field restore::RestoreFile.rel
-field restore::RestoreFile.source
-field restore::RestoreFile.len
+field restore::RestoreFile.bytes
 # test-oracle: tests check how many files a restore copied; the app reports recovery locations only.
 field restore::RestoreReport.restored
 field restore::RestoreReport.recovery

@@ -7,8 +7,7 @@ use cap_std::{
     fs::{Dir, OpenOptions},
 };
 use std::collections::HashSet;
-use std::fs::File;
-use std::io::{self, Seek, SeekFrom};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -30,18 +29,16 @@ fn restore_abort_boundary() {
     }
 }
 
-/// One caller-supplied snapshot file. `rel` is relative to `area`; `source` is
-/// an already-open file. Restore checks regular-file metadata and `len`, but
-/// does not verify file content against a backup checksum.
+/// One caller-supplied snapshot file. `rel` is relative to `area`; `bytes`
+/// are the content the caller already verified against its backup (restore
+/// writes exactly these bytes and never re-reads a backup).
 pub struct RestoreFile {
     /// Destination graph area.
     pub area: Area,
     /// Destination name relative to `area`.
     pub rel: String,
-    /// Open source file copied from its beginning.
-    pub source: File,
-    /// Expected source length, checked before and after copying.
-    pub len: u64,
+    /// The verified content to write.
+    pub bytes: Vec<u8>,
 }
 
 /// Completed work and recovery locations, including after a partial failure.
@@ -212,35 +209,17 @@ impl Store {
                     done,
                 ));
             }
-            match file.source.metadata() {
-                Ok(meta) if meta.is_file() && meta.len() == file.len => {}
-                Ok(_) => {
-                    return Err(fail(
-                        "restore",
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "verified restore source changed",
-                        ),
-                        done,
-                    ))
-                }
-                Err(error) => return Err(fail("restore", error, done)),
-            }
             if file.area == Area::Meta {
-                use std::io::Read;
                 let checked = (|| -> io::Result<()> {
-                    if file.len > crate::model::PARSE_INPUT_MAX_BYTES {
+                    let bytes = &file.bytes;
+                    if bytes.len() as u64 > crate::model::PARSE_INPUT_MAX_BYTES {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
                             "config input too large",
                         ));
                     }
-                    let mut source = file.source.try_clone()?;
-                    source.seek(SeekFrom::Start(0))?;
-                    let mut bytes = Vec::new();
-                    source.take(file.len + 1).read_to_end(&mut bytes)?;
-                    crate::model::validate_parse_bytes_for_path(&bytes, Path::new("config.edn"))?;
-                    let text = std::str::from_utf8(&bytes)
+                    crate::model::validate_parse_bytes_for_path(bytes, Path::new("config.edn"))?;
+                    let text = std::str::from_utf8(bytes)
                         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
                     let config = tine_core::config::Config::parse(text);
                     self.graph.validate_config_layout(&config)?;
@@ -367,7 +346,7 @@ impl Store {
                         changed = true;
                     }
                     copying = true;
-                    copy_new(bound, &live_rel, &mut file.source, file.len)?;
+                    copy_new(bound, &live_rel, &file.bytes)?;
                     changed = true;
                     Ok(())
                 })();
@@ -432,7 +411,7 @@ impl Store {
                     return Err(fail("recover current config failed", error, done));
                 }
             }
-            if let Err(error) = copy_new(&graph, live, &mut file.source, file.len) {
+            if let Err(error) = copy_new(&graph, live, &file.bytes) {
                 if error.kind() == io::ErrorKind::AlreadyExists {
                     if let Ok(id) = self.file_id(Area::Meta, "config.edn") {
                         done.kept_external.push(id);
@@ -481,8 +460,7 @@ mod config_directory_tests {
         let candidate = |path: &Path| RestoreFile {
             area: Area::Meta,
             rel: "config.edn".into(),
-            source: File::open(path).unwrap(),
-            len: fs::metadata(path).unwrap().len(),
+            bytes: fs::read(path).unwrap(),
         };
         assert!(store
             .restore(crate::EditKind::ReplacePage, vec![candidate(&source)], None)
@@ -502,8 +480,7 @@ mod config_directory_tests {
                 RestoreFile {
                     area: Area::Pages,
                     rel: "A.md".into(),
-                    source: File::open(&page_source).unwrap(),
-                    len: fs::metadata(&page_source).unwrap().len(),
+                    bytes: fs::read(&page_source).unwrap(),
                 },
             ],
             None,
@@ -534,8 +511,7 @@ mod config_directory_tests {
             let input = RestoreFile {
                 area: Area::Meta,
                 rel: "config.edn".into(),
-                source: File::open(&source).unwrap(),
-                len: bytes.len() as u64,
+                bytes: bytes.clone(),
             };
             assert!(store
                 .restore(crate::EditKind::ReplacePage, vec![input], None)
@@ -706,7 +682,7 @@ fn move_if_present(recovery: &Recovery, live: &Path, recover: &Path) -> io::Resu
     }
 }
 
-fn copy_new(recovery: &Recovery, live: &Path, source: &mut File, len: u64) -> io::Result<()> {
+fn copy_new(recovery: &Recovery, live: &Path, bytes: &[u8]) -> io::Result<()> {
     let name = live
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing live file name"))?;
@@ -724,14 +700,7 @@ fn copy_new(recovery: &Recovery, live: &Path, source: &mut File, len: u64) -> io
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         let mut output = parent.open_with(&temp, &options)?.into_std();
-        source.seek(SeekFrom::Start(0))?;
-        let copied = io::copy(source, &mut output)?;
-        if copied != len {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "verified restore source changed",
-            ));
-        }
+        io::Write::write_all(&mut output, bytes)?;
         output.sync_all()?;
         drop(output);
         publish_temp(&parent, Path::new(&temp), name)?;

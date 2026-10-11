@@ -1,6 +1,6 @@
 #![cfg(feature = "test-faults")]
 
-use std::fs::{self, File};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -372,15 +372,10 @@ fn crash_restore_worker() {
     let store = open(&root);
     let files = ["A.md", "B.md"]
         .into_iter()
-        .map(|rel| {
-            let source = File::open(root.join("snapshot").join(rel)).unwrap();
-            let len = source.metadata().unwrap().len();
-            RestoreFile {
-                area: Area::Pages,
-                rel: rel.into(),
-                source,
-                len,
-            }
+        .map(|rel| RestoreFile {
+            area: Area::Pages,
+            rel: rel.into(),
+            bytes: std::fs::read(root.join("snapshot").join(rel)).unwrap(),
         })
         .collect();
     let _ = store.restore(tine_store::EditKind::ReplacePage, files, None);
@@ -440,15 +435,10 @@ fn crash_graph_restore_worker() {
     let store = open(&root);
     let files = ["pages/A.md", "Root.md"]
         .into_iter()
-        .map(|rel| {
-            let source = File::open(root.join("snapshot").join(rel)).unwrap();
-            let len = source.metadata().unwrap().len();
-            RestoreFile {
-                area: Area::Graph,
-                rel: rel.into(),
-                source,
-                len,
-            }
+        .map(|rel| RestoreFile {
+            area: Area::Graph,
+            rel: rel.into(),
+            bytes: std::fs::read(root.join("snapshot").join(rel)).unwrap(),
         })
         .collect();
     let _ = store.restore(tine_store::EditKind::ReplacePage, files, Some(&[]));
@@ -767,8 +757,8 @@ fn durable_transition_inventory_names_crash_proofs() {
         ),
         (
             "src-tauri/src/backup.rs",
-            "fn do_backup_source_cancellable",
-            "publish_snapshot(&dest",
+            "fn publish_zip",
+            "fn remove_partials",
         ),
         (
             "crates/tine-store/src/publish.rs",

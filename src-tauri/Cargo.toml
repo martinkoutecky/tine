@@ -37,6 +37,9 @@ base64 = "0.22"
 cap-std = "4.0.2"
 same-file = "1.0.6"
 sha2 = "0.10"
+# Zip launch backups (backup/archive.rs): raw Deflate through the pure-Rust
+# miniz_oxide backend only, no C codec on any target.
+flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
 ed25519-dalek = "2"
 # Handle-relative no-replace restore publication on Unix-family platforms.
 libc = "0.2"
