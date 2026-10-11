@@ -153,6 +153,15 @@ async function stopTracer(tracer) {
 
 const UNIT_FIELDS = ["bytes", "graphBytes", "appDataBytes", "writeCalls", "filesCreated", "filesTouched", "renames", "fileSyncs", "dirSyncs", "syncCalls", "unlinks", "mkdirs"];
 
+/** A launch checkpoint file under the trial's app data written after `sinceMs`. */
+function checkpointWrittenSince(s, sinceMs) {
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name);
+    return e.isDirectory() ? walk(p) : [p];
+  });
+  return walk(s.xdg).some((p) => /launch-checkpoints/.test(p) && fs.statSync(p).mtimeMs >= sinceMs);
+}
+
 // -- scenarios --------------------------------------------------------------------
 export const SCENARIOS = {
   launch: {
@@ -179,6 +188,24 @@ export const SCENARIOS = {
         await s.step(`${prefix}.iso`, () => isolatedEdit(s, prefix, page, code));
         await s.step(`${prefix}.burst`, () => burstEdit(s, prefix, page, `${code}b`));
       }
+    },
+  },
+
+  relaunch: {
+    title: "an ordinary edit, then idle past the launch checkpoint's quiet window, then a crash and relaunch: whether the idle checkpoint was written, and how warm the next launch is",
+    timeoutMs: () => 150000, maxRuns: (o) => o.runs,
+    async run(s) {
+      await s.launch();
+      await s.step("edit", () => isolatedEdit(s, "relaunchEdit", "Bench Save", "r"));
+      const since = Date.now();
+      await sleep(12000); // FIRST_IDLE is 5 s after the last publication
+      s.m("relaunch.checkpointWritten", checkpointWrittenSince(s, since - 12000) ? 1 : 0);
+      s.kill();
+      await sleep(500);
+      s.prepare({ keepGraph: true });
+      s.m("relaunch.firstPageMs", await s.launch({ tag: "relaunch" }));
+      await waitEditable(s);
+      s.m("relaunch.firstEditableMs", performance.now() - s.launchPerf0);
     },
   },
 
@@ -698,7 +725,7 @@ function draftLaunch(title, configs, pagePrefix, tag, maxRunsCap = Infinity) {
   };
 }
 
-export const DEFAULT_SCENARIOS = ["launch", "typing", "delete", "rename", "external", "blockref", "carry2", "carry5", "custody", "drafts", "unitcost"];
+export const DEFAULT_SCENARIOS = ["launch", "relaunch", "typing", "delete", "rename", "external", "blockref", "carry2", "carry5", "custody", "drafts", "unitcost"];
 
 // -- metric registry ----------------------------------------------------------------
 /** WebKit rounds timers to 1 ms and the typing probe sees 6..10 ms, so a 1-3 ms move is quantization, not signal. */
@@ -767,6 +794,9 @@ const METRIC_LIST = [
     [`${p}.firstPageMs`, "ms", "scaling probe: relaunch with recovered drafts -> first page"],
     [`${p}.firstEditableMs`, "ms", "scaling probe: -> first editable"],
   ]),
+  ["relaunch.checkpointWritten", "count", "an edit then 12 s idle wrote a launch checkpoint (1 = yes)", { neutral: true }],
+  ["relaunch.firstPageMs", "ms", "relaunch after edit + idle + crash -> first painted page"],
+  ["relaunch.firstEditableMs", "ms", "relaunch after edit + idle + crash -> first editable"],
   ["session.rssMainSlopeMiBPerMin", "MiB/min", "RSS growth of the main process over the scripted session (after warm-up); A/A on 5-minute sessions differed by ~1 MiB/min, so 1.0 is the provisional tolerance until a 30-minute A/A is run", { absFloor: 1.0 }],
   ["session.rssTreeSlopeMiBPerMin", "MiB/min", "RSS growth of the process tree"],
   ["session.rssMainMaxMiB", "MiB", "peak RSS of the main process"],
