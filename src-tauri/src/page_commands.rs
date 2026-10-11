@@ -83,8 +83,13 @@ pub(crate) async fn page_open(
         pages
             .iter()
             .map(|page| {
-                host.open(session, page.id, &PageId::from(page.path.as_str()), &page.name)
-                    .map_or_else(OpenReply::Refused, OpenReply::Opened)
+                host.open(
+                    session,
+                    page.id,
+                    &PageId::from(page.path.as_str()),
+                    &page.name,
+                )
+                .map_or_else(OpenReply::Refused, OpenReply::Opened)
             })
             .collect()
     })

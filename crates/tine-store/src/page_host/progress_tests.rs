@@ -645,7 +645,10 @@ fn a_window_moves_pages_publish_400_ms_after_their_last_change() {
         if let Some(again) = second {
             time(&p, 300);
             pump(&mut p);
-            assert!(!p.host.pages["a.md"].clean(), "nothing saved before the debounce");
+            assert!(
+                !p.host.pages["a.md"].clean(),
+                "nothing saved before the debounce"
+            );
             window_move(&mut p, again, "receiver");
         }
         let due = if second.is_some() { 700 } else { 400 };
