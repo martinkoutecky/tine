@@ -672,19 +672,24 @@ graph (D-10). An echo of a page the host still holds is forwarded to the
 host, which re-reads it as an owed observation (§5); that read has the same
 cause and the same bound, whatever thread makes it. The rename cost tests
 measure through an acknowledged drain (`PageHost::quiesce_for_tests`,
-`watch/test_drain.rs`; REVIEW-3b-P2b-2 N3), not through quiet counters: a
-sentinel written after the operation's writes reaches the watcher behind their
+`watch/test_drain.rs`; REVIEW-3b-P2b-2 N3, REVIEW-3b-P2b-3), not through quiet
+counters: each drain request writes its own sentinel, named by the request's
+id, after the operation's writes; it reaches the watcher behind their
 notifications (one watch delivers in order; checked on Linux and hosted
-Windows), and the watcher acknowledges it only after the cycle that drained
-them has reconciled, store writer included; a due racy follow-up runs first,
-and then the host has no owed observation, page, job or request left. A lost
-sentinel fails the test; a watcher blocked on the writer is never declared
-drained (`n3_a_watcher_blocked_on_the_writer_is_not_drained`). The tests bill
-publication only for the operation's own reads, and bound the settled re-reads
-separately: the
-watcher's (`watcher_reads`, `watcher_stamps_by_path`) and the host's
-re-reads of forwarded echoes (`observation_reads`, at most the files written
-plus a small constant).
+Windows), and the watcher acknowledges the id the sentinel names only after
+the cycle that drained them has reconciled, store writer included. A late or
+duplicate notification of an older sentinel acknowledges only that older
+request. A due racy follow-up runs first, and then the host has no owed
+observation, page, job or request left. A lost sentinel fails the test; a
+watcher blocked on the writer is never declared drained, nor is a drain
+answered by an older sentinel
+(`n3_a_watcher_blocked_on_the_writer_is_not_drained`,
+`n3_an_older_sentinel_does_not_acknowledge_a_newer_drain`,
+`n3_a_late_notification_of_a_completed_drain_acknowledges_only_it`). The
+tests bill publication only for the operation's own reads, and bound the
+settled re-reads separately: the watcher's (`watcher_reads`,
+`watcher_stamps_by_path`) and the host's re-reads of forwarded echoes
+(`observation_reads`, at most the files written plus a small constant).
 The same holds for files someone else delivered (a sync tool, an external
 editor; REVIEW-3b-P2b R4(b)): the racy rehash is linear in the files changed
 or delivered within the racy window, not in the graph. An aged unrelated file

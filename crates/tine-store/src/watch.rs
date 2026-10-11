@@ -337,7 +337,7 @@ struct Pending {
     custom_css: bool,
     /// Asset-lane events (metadata-only external asset observation).
     assets: AssetPending,
-    /// A test drain's sentinel arrived: the request it answers (N3).
+    /// Test drains' sentinels arrived: the latest request they name (N3).
     #[cfg(feature = "test-faults")]
     barrier: Option<u64>,
 }
@@ -1077,12 +1077,15 @@ fn install_watch(
     let callback_dirs = dirs.clone();
     let callback_graph = Arc::clone(&core.graph);
     let callback_assets = core.assets.scope().clone();
-    #[cfg(feature = "test-faults")]
+    #[cfg(test)]
     let barrier = Arc::clone(&core.barrier);
     let mut created = notify::recommended_watcher(move |event| {
+        #[cfg(test)]
+        barrier.pass_gate(&event);
         #[cfg(feature = "test-faults")]
-        if test_drain::Barrier::sentinel(&event) {
-            pending.lock().unwrap().barrier = Some(barrier.asked());
+        if let Some(id) = test_drain::Barrier::sentinel(&event) {
+            let mut pending = pending.lock().unwrap();
+            pending.barrier = pending.barrier.max(Some(id));
             let _ = wake.send(());
             return;
         }

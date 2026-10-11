@@ -151,8 +151,8 @@ pub(super) fn run(
                 core.observe_assets(&assets.0, full || assets.1 || assets_polled);
             }
             #[cfg(feature = "test-faults")]
-            if let Some(asked) = barrier {
-                core.barrier.ack(asked);
+            if let Some(id) = barrier {
+                core.barrier.ack(id);
             }
         } else {
             // Poll mode has no event paths: every cycle re-checks the config

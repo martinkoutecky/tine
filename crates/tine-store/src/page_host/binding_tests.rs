@@ -1259,6 +1259,106 @@ fn n3_a_watcher_blocked_on_the_writer_is_not_drained() {
     live.host.stop();
 }
 
+/// Sentinel files of drain requests now in the graph root.
+fn sentinels(live: &Live) -> usize {
+    fs::read_dir(&live.root)
+        .unwrap()
+        .filter(|entry| {
+            let name = entry.as_ref().unwrap().file_name();
+            name.to_string_lossy().starts_with(".tine-watch-drain-")
+        })
+        .count()
+}
+
+/// A drain of `live`'s watcher in its own thread, false after `seconds`.
+fn drain<'a>(
+    scope: &'a std::thread::Scope<'a, '_>,
+    live: &'a Live,
+    seconds: u64,
+) -> std::thread::ScopedJoinHandle<'a, bool> {
+    let watch = &live.store.watch;
+    scope.spawn(move || watch.drained_for_tests(Duration::from_secs(seconds)))
+}
+
+/// After a stale-acknowledgement plant: the gate opened and the writer
+/// released, the watcher drains and the external change is indexed.
+fn drains_after_the_plant(live: Live, key: &str) {
+    live.store.watch.gate_notifications(None);
+    assert!(live.host.quiesce_for_tests(Duration::from_secs(20)));
+    assert_eq!(live.indexed(key), Some(content_rev("- external\n")));
+    live.host.stop();
+}
+
+/// REVIEW-3b-P2b-3 N3 (Codex's first plant): an older drain's sentinel
+/// notification, delivered after a newer drain was requested, acknowledges
+/// only the older request. The external change written between the two
+/// requests is still held behind it, so the newer drain is not declared.
+#[test]
+fn n3_an_older_sentinel_does_not_acknowledge_a_newer_drain() {
+    let live = Live::new(&[("pages/a.md", "- a\n")]);
+    let key = "pages/a.md";
+    assert!(live.host.quiesce_for_tests(Duration::from_secs(20)));
+    live.store.watch.gate_notifications(Some(0));
+    let writer = live.store.writer.lock().unwrap();
+    std::thread::scope(|scope| {
+        let older = drain(scope, &live, 20);
+        until_sentinels(&live, 1);
+        fs::write(live.root.join(key), "- external\n").unwrap();
+        let newer = drain(scope, &live, 3);
+        until_sentinels(&live, 2);
+        // The older sentinel's notification only; the rest stay held.
+        live.store.watch.gate_notifications(Some(1));
+        assert!(
+            !newer.join().unwrap(),
+            "N3: an older sentinel acknowledged a newer drain"
+        );
+        assert!(older.join().unwrap(), "the older drain is acknowledged");
+    });
+    assert_eq!(live.indexed(key), Some(content_rev("- a\n")), "plant held");
+    drop(writer);
+    drains_after_the_plant(live, key);
+}
+
+/// REVIEW-3b-P2b-3 N3 (Codex's second plant): one sentinel write raises
+/// more than one notification (and its removal another). Those that arrive
+/// after a later drain was requested acknowledge their own, completed
+/// request, never the later one.
+#[test]
+fn n3_a_late_notification_of_a_completed_drain_acknowledges_only_it() {
+    let live = Live::new(&[("pages/a.md", "- a\n")]);
+    let key = "pages/a.md";
+    assert!(live.host.quiesce_for_tests(Duration::from_secs(20)));
+    live.store.watch.gate_notifications(Some(1));
+    assert!(
+        live.store.watch.drained_for_tests(Duration::from_secs(20)),
+        "the earlier drain is acknowledged by its sentinel's first notification"
+    );
+    let writer = live.store.writer.lock().unwrap();
+    fs::write(live.root.join(key), "- external\n").unwrap();
+    std::thread::scope(|scope| {
+        let later = drain(scope, &live, 3);
+        until_sentinels(&live, 1);
+        // One more notification: the earlier sentinel's next, held before
+        // the page's.
+        live.store.watch.gate_notifications(Some(1));
+        assert!(
+            !later.join().unwrap(),
+            "N3: a late notification of an earlier drain acknowledged a later one"
+        );
+    });
+    assert_eq!(live.indexed(key), Some(content_rev("- a\n")), "plant held");
+    drop(writer);
+    drains_after_the_plant(live, key);
+}
+
+fn until_sentinels(live: &Live, count: usize) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while sentinels(live) < count {
+        assert!(Instant::now() < deadline, "never {count} drain requests");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 /// A3 (REVIEW-3a): page mail's DTO (`page_dto_for_bytes`, its only
 /// conversion) names the page from the buffer it carries, not from a fresh
 /// read of the file: disk says `title:: Disk` while a conflicted or
