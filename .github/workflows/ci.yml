@@ -253,8 +253,11 @@ jobs:
           workspaces: ". -> target"
       - run: npm ci
       - run: npm run build
+      # custom-protocol: without it every `generate_context!` in the crate
+      # embeds Info.plist on macOS and the lib test fails to link
+      # (`_EMBED_INFO_PLIST` already defined).
       - name: macOS backup and file-lock tests
-        run: "cargo test --no-fail-fast -p tine --lib -- backup:: file_lock:: --nocapture"
+        run: "cargo test --no-fail-fast -p tine --lib --features custom-protocol -- backup:: file_lock:: --nocapture"
 
   android-core-compile:
     name: Full CI / Android core compile
