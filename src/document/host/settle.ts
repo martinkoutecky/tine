@@ -27,7 +27,10 @@ export async function settle(client: HostClient, scope: SettleScope, options: Se
   // an operation targeting its pages, so it holds them open (B-Q2). Otherwise
   // the window's own publication answer may close a page nothing else holds
   // (a block-ref target stamped off-screen) before this wait reaches the host.
-  const holds = options.witness && scope !== "all" ? scope.map((name) => client.acquire(name)) : [];
+  // A closed page with no input has nothing to send or prove: not opened here.
+  const holds = options.witness && scope !== "all"
+    ? scope.filter((name) => client.isOpen(name) || client.busy(name)).map((name) => client.acquire(name))
+    : [];
   try {
     return await rounds(client, scope, options);
   } finally {
