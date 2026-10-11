@@ -221,7 +221,13 @@ fn advanced_source_query(form: &str, og_options: String) -> (Query, ViewSettings
         DiagnosticKind::Syntax,
         "this is an advanced (datalog) query, not the simple DSL",
     ));
-    (query, ViewSettings::default())
+    // A recognised result transform runs as the view's sort (Martin
+    // 2026-10-11); any other refuses the query whole at resolution.
+    let view = ViewSettings {
+        sort: super::advanced_patterns::advanced_result_sort(form).unwrap_or_default(),
+        ..ViewSettings::default()
+    };
+    (query, view)
 }
 
 fn refuse_tql_source(form: &str, og_options: String) -> (Query, ViewSettings) {

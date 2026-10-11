@@ -86,10 +86,13 @@ export function pageRefFilter(name: string): Filter {
   return rel("refs", attr("name", "eq", { kind: "text", text: name }));
 }
 
-/** `(task …)` — `og.rs` `"task" | "todo"`. */
+/** `(task …)` — `og.rs` `"task" | "todo"`: the markers as given. An empty list
+*  is the IR of a bare `(task)`, which in a Logseq query adds no condition
+*  (D-18, GH #422; `Filter::is_dropped_clause`). The builder never writes it:
+*  the marker pick's Apply needs at least one marker, and "Any status" is the
+*  explicit list {@link anyTaskFilter}. */
 export function taskFilter(markers: string[]): Filter {
-  const picked = markers.length ? markers : ["TODO", "DOING", "NOW", "LATER"];
-  return attr("task", "in", textList(picked));
+  return attr("task", "in", textList(markers));
 }
 
 /** Every task status OG knows: OG `logseq.db.default/built-in-markers`
@@ -125,9 +128,11 @@ export function isAnyTaskStatus(markers: string[]): boolean {
   return covers(OG_TASK_MARKERS) || covers(TASK_MARKERS);
 }
 
-/** `(priority …)` — `og.rs` `"priority"`. */
+/** `(priority …)` — `og.rs` `"priority"`: the levels as given. An empty list is
+*  a bare `(priority)`, which adds no condition (D-18); the builder's pick
+*  needs at least one level, so it never writes one. */
 export function priorityFilter(levels: string[]): Filter {
-  return attr("priority", "in", textList(levels.length ? levels : [...PRIORITIES]));
+  return attr("priority", "in", textList(levels));
 }
 
 /** A typed comparison on a property's VALUE, chosen by {@link propertyOperators}
@@ -1092,10 +1097,10 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
   switch (kind) {
     case "task": {
       const markers = listOf(leaf.value) ?? [];
-      return [words("task: "), chip(isAnyTaskStatus(markers) ? "Any status" : markers.join(" | ") || "any")];
+      return [words("task: "), chip(isAnyTaskStatus(markers) ? "Any status" : markers.join(" | ") || "no markers")];
     }
     case "priority":
-      return [words("priority: "), chip((listOf(leaf.value) ?? []).join(" | ") || "any")];
+      return [words("priority: "), chip((listOf(leaf.value) ?? []).join(" | ") || "no levels")];
     case "scheduled":
       return [words("scheduled")];
     case "deadline":

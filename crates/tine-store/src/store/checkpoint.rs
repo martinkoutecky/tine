@@ -42,7 +42,10 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// 8 (og lane Q): a memo entry's retained-byte charge includes the plan's
 /// tag-target set; facts, depth admission and key normalisation follow the
 /// parser's literal regions and the engine date-token grammar.
-pub(crate) const FORMAT: u32 = 8;
+/// 9 (GH #422, D-18): a memoized answer to a bare `(task)` / `(priority)` or a
+/// blank `{{query}}` changed meaning (OG's "no condition"), while its memo key
+/// — the source text, or for a blank query the unchanged IR — did not.
+pub(crate) const FORMAT: u32 = 9;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.8";

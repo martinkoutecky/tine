@@ -146,15 +146,25 @@ fn gh542_reporter_advanced_queries_answer_like_logseq() {
         sorted(&["NOW doing it", "DOING in progress", "NOW page now"])
     );
 
-    // The same query with the Clojure result transform is REFUSED whole: it
-    // only orders in OG, but Tine cannot run it, and an answer that silently
-    // skipped it would be a different query's answer (Martin, 2026-10-03).
+    // The same query with OG's shipped NOW transform runs: the transform only
+    // orders, and Tine runs that exact sort (Martin 2026-10-11). Any other
+    // transform is still refused whole (Martin 2026-10-03).
     let (raws, result) = answer(
         &graph,
         &format!(
             r#"{{:title "NOW" {now_query}
             :result-transform (fn [result] (sort-by (fn [h] (get h :block/priority "Z")) result))}}"#
         ),
+    );
+    assert!(result.supported, "{:?}", result.ignored);
+    assert!(result.ignored.is_empty(), "{:?}", result.ignored);
+    assert_eq!(
+        raws,
+        sorted(&["NOW doing it", "DOING in progress", "NOW page now"])
+    );
+    let (raws, result) = answer(
+        &graph,
+        &format!(r#"{{:title "NOW" {now_query} :result-transform (fn [xs] (take 1 xs))}}"#),
     );
     assert!(!result.supported);
     assert!(raws.is_empty(), "{raws:?}");
@@ -285,5 +295,49 @@ fn gh542_joins_are_not_lowered() {
         "a join must be disclosed: supported={} ignored={:?} rows={raws:?}",
         result.supported,
         result.ignored
+    );
+}
+
+/// OG's default NOW query orders its rows by priority, a missing one as "Z"
+/// (`config.edn` `:default-queries`, Martin 2026-10-11): A before B before
+/// none, stable among equals.
+#[test]
+fn ogs_now_transform_orders_by_priority_with_missing_last() {
+    let graph = open(
+        "now-order",
+        &[(
+            "pages/Now.md",
+            "- NOW c no priority\n- NOW [#B] b first\n- DOING [#A] a\n- NOW [#B] b second\n",
+        )],
+    );
+    let QueryResult::Advanced(result) = graph
+        .graph
+        .query(
+            r#"{:title "NOW"
+                :query [:find (pull ?h [*])
+                        :where [?h :block/marker ?marker]
+                               [(contains? #{"NOW" "DOING"} ?marker)]]
+                :result-transform (fn [result] (sort-by (fn [h] (get h :block/priority "Z")) result))}"#,
+            QueryDialect::Advanced,
+        )
+        .expect("advanced query")
+    else {
+        panic!("advanced result")
+    };
+    assert!(result.supported, "{:?}", result.ignored);
+    let order: Vec<&str> = result
+        .groups
+        .iter()
+        .flat_map(|group| group.blocks.iter())
+        .map(|block| block.raw.lines().next().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        order,
+        [
+            "DOING [#A] a",
+            "NOW [#B] b first",
+            "NOW [#B] b second",
+            "NOW c no priority"
+        ]
     );
 }

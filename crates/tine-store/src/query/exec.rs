@@ -716,8 +716,11 @@ pub(crate) fn execute(
         statistics: None,
         exceeded: false,
     };
-    // §3.5: an invalid query returns nothing plus its diagnostics.
-    if query.is_invalid() {
+    // §3.5: an invalid query returns nothing plus its diagnostics. A filter
+    // that is constantly false (OG's nil query: `{{query }}`, or one whose
+    // every clause is a dropped bare `(task)` / `(priority)`, D-18) can match
+    // nothing either, so it answers without visiting a page.
+    if query.is_invalid() || plan.filter == Filter::False {
         return Ok(result);
     }
     let wants_recency = view
@@ -1176,7 +1179,9 @@ pub(crate) fn run_advanced_query_at(
     max_bytes: usize,
     today: JournalDate,
 ) -> ((AdvancedResult, bool, usize), Option<Arc<Plan>>) {
-    let (query, _) = parse_query_input(source, QueryInput::Advanced, today, Registry::none());
+    // The view carries a recognised result transform's sort (Martin
+    // 2026-10-11), so this bridge orders as the macro does.
+    let (query, view) = parse_query_input(source, QueryInput::Advanced, today, Registry::none());
     let resolved = resolve_for_execution(&query, &ExecutionContext::none(), today);
     let report = resolved.report().clone();
     if !resolved.is_executable() {
@@ -1188,13 +1193,7 @@ pub(crate) fn run_advanced_query_at(
         };
         return ((result, false, 0), None);
     }
-    let (bounded, plan) = run_block_groups(
-        graph,
-        &resolved,
-        &ViewSettings::default(),
-        max_rows,
-        max_bytes,
-    );
+    let (bounded, plan) = run_block_groups(graph, &resolved, &view, max_rows, max_bytes);
     let result = AdvancedResult {
         groups: bounded.groups,
         ran: report.ran,

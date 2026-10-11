@@ -294,12 +294,24 @@ mod journal_guide_tests {
             "Priority A tasks",
             "Config edits apply live",
             "Graph code is never executed",
+            "a query with no results shows nothing",
         ] {
             assert!(
                 text.contains(required),
                 "missing journal config guidance: {required}"
             );
         }
+    }
+
+    /// Martin 2026-10-11: Logseq's default NOW priority sort is the one
+    /// `:result-transform` Tine runs; every other one still refuses whole.
+    #[test]
+    fn the_one_supported_result_transform_is_documented() {
+        let model = include_str!("templates/query-model.md");
+        assert!(model.contains(r#"(sort-by (fn [h] (get h :block/priority "Z")) result)"#));
+        assert!(model.contains("missing one last"));
+        assert!(include_str!("templates/queries.md")
+            .contains("other than Logseq's default priority sort"));
     }
 
     #[test]
@@ -1179,7 +1191,8 @@ mod og_20d_guide_tests {
     }
 
     /// AP2/D11 (Martin 2026-10-04): the query-model reference states the rule,
-    /// names the one "finds less" exception and the refusals, and is linked
+    /// names the bare `(task)` / `(priority)` reading (as in Logseq since
+    /// GH #422, so the rule has no exception) and the refusals, and is linked
     /// from the Guide index and the Queries page.
     #[test]
     fn query_model_reference_states_the_rule_and_every_divergence_class() {
@@ -1188,7 +1201,7 @@ mod og_20d_guide_tests {
             "never less",
             "never changes your files",
             "`cafe` does not find `café`",
-            "`(task)` with no marker",
+            "`(task)` with no markers",
             "no datalog engine",
             "`:view` and `:result-transform` never run",
             "Advanced-query shapes that run",
@@ -1209,24 +1222,49 @@ mod og_20d_guide_tests {
         assert!(page("Features/Queries").contains("[[Reference/Tine query model]]"));
     }
 
+    /// GH #422, D-18: a bare `(task)` / `(priority)` adds no condition, as in
+    /// OG Logseq, and the on-query note's three rewrites are documented with
+    /// the open-task rule they write. The retired claim (bare `(task)` means
+    /// open tasks, an intentional OG difference) must not come back.
     #[test]
-    fn queries_document_bare_task_open_rule_and_og_difference() {
+    fn queries_document_bare_task_as_og_and_the_rewrite_hint() {
         let queries = page("Features/Queries");
         for detail in [
-            "`(task)`",
+            "`(task)` with no markers",
+            "`(priority)` with no levels",
+            "add no condition, exactly as in OG Logseq",
+            "`(and (task) [[x]])` finds what `[[x]]` finds",
+            "**Open tasks**",
+            "**Any task**",
+            "**A, B or C**",
             "has a task marker",
             "`DONE`",
             "`CANCELED`",
             "`CANCELLED`",
             "`WAITING`",
             "`IN-PROGRESS`",
-            "OG Logseq",
             "explicit marker lists",
         ] {
             assert!(
                 queries.contains(detail),
                 "missing bare task detail: {detail}"
             );
+        }
+        let model = page("Reference/Tine query model");
+        assert!(model.contains(
+            "`(task)` with no markers and `(priority)` with no levels add no condition."
+        ));
+        for page_text in [&queries, &model] {
+            for retired in [
+                "intentionally differs from OG",
+                "finds less",
+                "one exception",
+            ] {
+                assert!(
+                    !page_text.contains(retired),
+                    "the retired bare-task difference is back: {retired}"
+                );
+            }
         }
     }
 

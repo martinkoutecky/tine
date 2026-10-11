@@ -1233,3 +1233,64 @@ fn the_print_dialect_wire_names_are_the_query_print_command_values() {
         );
     }
 }
+
+/// GH #422, D-18: a bare `(task)` / `(priority)` prints back to OG exactly as
+/// written (it is kept in the tree), while a crossing to Tine's dialect leaves
+/// it out — TQL reads `task in ()` literally as an empty set, so printing it
+/// would turn "no condition" into "nothing". Disabled subtrees stay (I-4).
+/// A TQL source's own `task in ()` is Tine's and prints unchanged.
+#[test]
+fn a_dropped_bare_clause_round_trips_in_og_and_is_left_out_of_tql() {
+    for (form, tql_text) in [
+        ("(task)", "@block"),
+        ("(and (task) [[x]])", "@block and [[x]]"),
+        ("(or (priority) [[x]])", "@block and [[x]]"),
+        ("(and [[x]] (not (task)))", "@block and [[x]]"),
+    ] {
+        let (query, view) = og(form);
+        assert!(og_expressible(&query, &view), "{form}");
+        assert_eq!(
+            query_print(&query, &view, PrintDialect::Og, false).unwrap(),
+            form,
+            "the OG text is kept as written"
+        );
+        assert_eq!(
+            query_print(&query, &view, PrintDialect::TqlMacro, false).unwrap(),
+            tql_text,
+            "{form}"
+        );
+        let pane = query_print(&query, &view, PrintDialect::Tql, false).unwrap();
+        assert!(!pane.contains("in ()"), "{form}: {pane}");
+    }
+    let mut disabled = og("(and (task) [[x]])").0;
+    let Filter::And { items } = &mut disabled.filter else {
+        panic!("expected siblings")
+    };
+    items[1] = Filter::off(items[1].clone());
+    let printed = query_print(
+        &disabled,
+        &ViewSettings::default(),
+        PrintDialect::TqlMacro,
+        false,
+    )
+    .unwrap();
+    assert!(printed.contains("off("), "{printed}");
+    assert!(!printed.contains("in ()"), "{printed}");
+    let own = tql("@block and task in ()");
+    assert!(own.filter.is_dropped_clause());
+    assert_eq!(
+        query_print(
+            &own,
+            &ViewSettings::default(),
+            PrintDialect::TqlMacro,
+            false
+        )
+        .unwrap(),
+        "@block and task in ()"
+    );
+    assert_eq!(
+        own.evaluable_filter(),
+        own.filter,
+        "Tine's dialect reads it literally"
+    );
+}

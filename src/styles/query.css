@@ -776,7 +776,8 @@
 /* The §7.5 crossing notice: an inline region under the block (P4 hosts the same
    component inside its pane), not a toast — the bytes already changed and the
    way back must still be there when the reader looks up. */
-.query-crossing-notice {
+.query-crossing-notice,
+.query-og-hint {
   margin: 4px 0;
   padding: 8px 10px;
   border: 1px solid var(--border-color);
@@ -788,7 +789,8 @@
   outline: 2px solid var(--accent, #4a90d9);
   outline-offset: 1px;
 }
-.query-crossing-notice-text {
+.query-crossing-notice-text,
+.query-og-hint-text {
   margin: 0 0 6px;
   color: var(--text-primary);
 }
@@ -801,7 +803,8 @@
   font-family: var(--tine-mono-font, var(--ls-font-mono));
   word-break: break-word;
 }
-.query-crossing-notice-actions {
+.query-crossing-notice-actions,
+.query-og-hint-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;

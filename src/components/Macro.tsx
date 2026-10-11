@@ -43,7 +43,7 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import { QueryResultSections } from "./QueryResultSections";
-import { QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
+import { QueryOgHint, QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
 import type { PageKind, QueryHit, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
 import { bothFamilies } from "../queryTwin";
@@ -186,7 +186,9 @@ export function QueryMacro(props: {
    *  with `unsupportedLabel` to avoid showing the source. */
   strictAdvanced?: boolean;
   unsupportedLabel?: string;
-  // Render nothing when there are no results (the app-inserted journal agenda).
+  // Render nothing when there are no results: the app-inserted journal agenda
+  // and config.edn's default journal queries (OG query.cljs: a built-in query
+  // with an empty result renders nothing).
   hideWhenEmpty?: boolean;
 }): JSX.Element {
   return <FailureBoundary region="Query results"><QueryMacroContent {...props} /></FailureBoundary>;
@@ -746,8 +748,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const stop = (e: MouseEvent) => e.stopPropagation();
   const arrow = (c: string) => (sortState()?.column === columnKey(c) ? (sortState()!.desc ? " ▼" : " ▲") : "");
 
+  // An advanced query Tine cannot run stays visible with its refusal: only a
+  // run that answered "none" hides.
   const hidden = () =>
-    props.hideWhenEmpty && !isAdvanced() && !!displayed() && total() === 0 && blockingDiagnostics().length === 0;
+    props.hideWhenEmpty && !!displayed() && total() === 0 && blockingDiagnostics().length === 0
+    && (!isAdvanced() || advInfo()?.supported === true);
   const unsupportedAdvanced = () => {
     const info = advInfo();
     return isAdvanced() && info && (!info.supported || (props.strictAdvanced === true && (info.ignored ?? []).length > 0));
@@ -947,6 +952,21 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
             {/* §7.5, N3: one notice, inline while the sheet is shut and inside
                 the text pane while it is open — never both. */}
             <Show when={showCrossingNotice() && !sheetOpen()}>{crossingNotice()}</Show>
+            {/* D-18: a Logseq form that adds no condition is said out loud on
+                the query, with explicit rewrites saved like any builder edit. */}
+            <Show when={!isAdvanced() && reading()?.og_hint}>
+              {(hint) => (
+                <QueryOgHint
+                  hint={hint()}
+                  onRewrite={props.blockId && !isPublishedExport() && blockWritable(props.blockId)
+                    ? (query) => {
+                      const current = reading();
+                      if (current) void applyEdit({ query, view: current.view });
+                    }
+                    : undefined}
+                />
+              )}
+            </Show>
             <Show when={printError()}>
               {(message) => (
                 <div class="query-unsupported query-print-refused" role="alert">

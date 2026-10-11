@@ -31,7 +31,14 @@ when its bytes differ from the ones served (a `FileRev` byte-identity gate), so
 Logseq rewriting identical bytes, or Syncthing redelivering them, costs one
 read and publishes nothing. A config seen
 mid-removal (metadata read, bytes already gone) is looked at again, so the
-removal is published as a removal, not a modification that hides it. A real change reloads the configuration, discards
+removal is published as a removal, not a modification that hides it. A removal
+keeps the configuration read from the file, as Logseq's watcher does (it
+ignores the unlink: `watcher_handler.cljs` `handle-changed!`): an iCloud
+offload or a sync tool's delete-and-replace must not switch the graph to the
+defaults, whose `:file/name-format` is `:legacy`. Only a graph that never had a
+config.edn runs on the defaults; one whose config.edn is an undownloaded iCloud
+placeholder (`logseq/.config.edn.icloud`) opens read-only, its settings
+unknown. A real change reloads the configuration, discards
 parsed pages (the pages directory or name format may have moved) and publishes
 an External change naming `logseq/config.edn`. The desktop shell turns that
 into `graph-config-changed` with the fresh `GraphMeta`.
@@ -85,7 +92,8 @@ risk.
 - crates/tine-store/tests/config_live_reload.rs::an_outside_config_edit_is_taken_in_by_the_poll_watcher
 - crates/tine-store/tests/config_live_reload.rs::an_identical_config_rewrite_publishes_nothing
 - crates/tine-store/tests/config_live_reload.rs::an_unsafe_delivered_config_keeps_the_served_one_and_pages_stay_observed
-- crates/tine-store/tests/config_live_reload.rs::a_removed_then_restored_config_is_followed
+- crates/tine-store/tests/config_live_reload.rs::a_removed_config_keeps_its_settings_until_it_returns
+- crates/tine-store/tests/config_live_reload.rs::an_undownloaded_icloud_config_opens_the_graph_read_only
 - crates/tine-graph-features/tests/config_writes.rs::every_setter_edits_the_top_level_key_never_a_nested_shadow
 - crates/tine-graph-features/tests/config_writes.rs::every_setter_leaves_a_keyword_value_that_spells_its_key_alone
 - crates/tine-graph-features/tests/config_writes.rs::a_real_key_after_a_keyword_value_is_the_one_replaced

@@ -731,7 +731,8 @@ pub struct ConfigState {
     /// without a date claim if neither the new format nor a fallback parses
     /// their stem; callers must plan any file migration separately.
     pub config: Arc<tine_core::config::Config>,
-    /// Config read error, if one occurred. Missing config is not an error.
+    /// Config read error, if one occurred. A missing config is not an error,
+    /// unless an iCloud placeholder stands in for it (`missing_config_problem`).
     /// Unrecognized or malformed config values may default individually and do
     /// not set this field. Journal format strings are not validated here:
     /// unsupported format characters become literal text, and a format that

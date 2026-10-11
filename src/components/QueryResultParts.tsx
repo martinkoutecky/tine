@@ -1,6 +1,6 @@
 import { TableWrap } from "./TableWrap";
 import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
-import { pageRowFieldValue, type PageRow, type QueryStatistics, type ViewKind } from "../editor/queryIr";
+import { pageRowFieldValue, type OgQueryHint, type PageRow, type Query, type QueryStatistics, type ViewKind } from "../editor/queryIr";
 import { openPageTarget, openPageTargetInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkDest } from "../linkGesture";
@@ -9,8 +9,9 @@ import { fieldLabel, isFieldId } from "../sheet/fields";
 import { querySummary } from "../editor/queryAggregate";
 import { openPagePropertiesFromRow } from "../queryPageProps";
 
-// Presentation parts of a query block's answer: page rows and the engine's
-// statistics. Neither decides membership or computes an answer (I-12).
+// Presentation parts of a query block's answer: page rows, the engine's
+// statistics and the engine's Logseq-form hint. None decides membership or
+// computes an answer (I-12).
 
 export type QueryView = ViewKind;
 
@@ -186,5 +187,56 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onC
         )}
       </Show>
     </>
+  );
+}
+
+const OG_REWRITE_LABEL: Record<OgQueryHint["rewrites"][number]["rewrite"], string> = {
+  open_tasks: "Open tasks",
+  any_task: "Any task",
+  priorities: "A, B or C",
+};
+
+/** **The on-query cue for Logseq's "no condition" forms (D-18, GH #422).** A
+ *  bare `(task)` / `(priority)` adds no condition, and a query with no
+ *  condition shows nothing — in Logseq, and so in Tine. The engine detects it
+ *  and supplies each rewrite as a whole query (`wire_parse.rs` `OgQueryHint`);
+ *  this only says so and hands the chosen query to the host's ordinary save.
+ *  It sits beside the results and never replaces them. A host that cannot
+ *  write (read-only page, published export) passes no `onRewrite`, and the
+ *  buttons are not offered. Styled as the crossing notice's inline region. */
+export function QueryOgHint(props: { hint: OgQueryHint; onRewrite?: (query: Query) => void }): JSX.Element {
+  const has = (head: "task" | "priority") => props.hint.bare.includes(head);
+  return (
+    <div class="query-og-hint" role="note" onClick={(e) => e.stopPropagation()}>
+      <p class="query-og-hint-text">
+        <Show when={has("task")}><code>(task)</code> without markers adds no condition, as in Logseq. </Show>
+        <Show when={has("priority")}><code>(priority)</code> without levels adds no condition, as in Logseq. </Show>
+        <Show
+          when={props.hint.bare.length > 0}
+          fallback={<Show when={props.hint.no_conditions}>This query has no conditions, so it shows nothing, as in Logseq.</Show>}
+        >
+          <Show when={props.hint.no_conditions}>On its own it matches nothing.</Show>
+        </Show>
+      </p>
+      <Show when={props.onRewrite && props.hint.rewrites.length > 0}>
+        <div class="query-og-hint-actions">
+          <For each={props.hint.rewrites}>
+            {(rewrite) => (
+              <button
+                type="button"
+                class="query-og-hint-rewrite"
+                data-rewrite={rewrite.rewrite}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  props.onRewrite?.(rewrite.query);
+                }}
+              >
+                {OG_REWRITE_LABEL[rewrite.rewrite]}
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
   );
 }

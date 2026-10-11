@@ -97,3 +97,45 @@ it("leaves the device's days-ahead setting in charge when config.edn does not se
     expect(agendaQuery()).toContain("+3d");
   } finally { setAgendaDaysAhead(before); }
 });
+
+it("hides a default journal query with no results, as OG does, but keeps a refusal visible", async () => {
+  // OG query.cljs: a built-in (config.edn :default-queries) query whose result
+  // is empty renders nothing. A query Tine cannot run is not "empty".
+  const today = journalTitle(appNow());
+  const advanced = '{:query [:find (pull ?b [*]) :where [?b :block/marker "NOW"]]}';
+  const unsupported = '{:query [:find ?b :where (graph-code ?b)]}';
+  backendReadsQueries({
+    "(task TODO)": { form: "(task TODO)" },
+    "(task LATER)": { form: "(task LATER)" },
+    [advanced]: { form: advanced, kind: "advanced" },
+    [unsupported]: { form: unsupported, kind: "advanced" },
+  });
+  vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({ pages: [{
+    id: "journals/today.md", name: today, title: today, kind: "journal", pre_block: null, blocks: [],
+  }], as_of_day: currentDayKey(), next_before_day: null, done: true });
+  vi.spyOn(backend(), "queryRun").mockImplementation(async query => {
+    const source = "original" in query.source ? query.source.original : "";
+    if (source === unsupported) return blockRunResult([], { supported: false, ignored: ["graph-code"] });
+    if (source !== "(task LATER)") return blockRunResult([]);
+    return blockRunResult([{ page: "Tasks", kind: "page", blocks: [{
+      id: "later-hit", raw: "LATER Kept result", collapsed: false, children: [],
+    }] }]);
+  });
+  setGraphMeta({ disable_scheduled_and_deadline_query: true, default_journal_queries: [
+    { title: "Empty simple", body: "query (task TODO)", error: null },
+    { title: "Empty advanced", body: `query ${advanced}`, error: null },
+    { title: "Refused", body: `query ${unsupported}`, error: null },
+    { title: "Kept", body: "query (task LATER)", error: null },
+  ] } as GraphMeta);
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <PageView />, host);
+  try {
+    await vi.waitFor(() => expect(host.textContent).toContain("Kept result"));
+    await vi.waitFor(() => expect(host.textContent).toContain("query not run"));
+    await vi.waitFor(() => {
+      expect(host.textContent).not.toContain("Empty simple");
+      expect(host.textContent).not.toContain("Empty advanced");
+    });
+    expect(host.textContent).toContain("cannot run these clauses (graph-code)");
+  } finally { dispose(); }
+});
