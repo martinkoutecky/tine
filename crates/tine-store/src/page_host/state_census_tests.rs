@@ -8,8 +8,10 @@
 //! `orphans`). Parsed Rust, by token: a field access is a read, a write (an
 //! assignment, a mutating method, `&mut`, an index followed by an
 //! assignment) or an unsupported form (a method or a shape the census
-//! cannot classify, `ref mut`, a `Host`/`Book` pattern), and the last fails
-//! closed. Which functions mark correctly is the reference tracker's
+//! cannot classify, `ref mut`, a `Host`/`Book` pattern, a `&mut` of an
+//! expression that is not a place), and the last fails closed. A
+//! parenthesized place keeps its context, and only a `cfg` predicate that
+//! implies `test` makes an item test-only (REVIEW-3b-P2b-2 N2). Which functions mark correctly is the reference tracker's
 //! (`progress.rs` `Reference`); this census pins who may write at all.
 
 use proc_macro2::{Delimiter, Spacing, TokenStream, TokenTree};
@@ -168,26 +170,23 @@ enum Use {
 /// field.
 fn uses(tokens: TokenStream, watched: &BTreeSet<&str>, out: &mut BTreeSet<(String, Use)>) {
     let tokens: Vec<_> = tokens.into_iter().collect();
-    let punct = |i: usize| match tokens.get(i) {
-        Some(TokenTree::Punct(p)) => Some((p.as_char(), p.spacing())),
-        _ => None,
-    };
-    let ident = |i: usize| match tokens.get(i) {
-        Some(TokenTree::Ident(name)) => Some(name.to_string()),
-        _ => None,
-    };
-    let call = |i: usize| matches!(tokens.get(i), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis);
-    // An assignment `=` (not `==`, `=>`, `<=`, `>=`, `!=`) at `i`.
-    let assigns = |i: usize| {
-        punct(i) == Some(('=', Spacing::Alone))
-            || (punct(i) == Some(('=', Spacing::Joint))
-                && punct(i + 1) != Some(('=', Spacing::Alone))
-                && punct(i + 1) != Some(('>', Spacing::Alone)))
-    };
     for (i, token) in tokens.iter().enumerate() {
         match token {
-            TokenTree::Group(group) => uses(group.stream(), watched, out),
-            TokenTree::Ident(word) if word == "ref" && ident(i + 1).as_deref() == Some("mut") => {
+            TokenTree::Group(group) => {
+                uses(group.stream(), watched, out);
+                // A grouped place, `(self.pages).clear()`: what follows the
+                // group uses its field as it would the bare place (N2).
+                if is_place_group(&tokens, i) {
+                    if let Some(field) = place_tail(group.stream(), watched) {
+                        if let Some(found) = after_place(&tokens, &field, i + 1) {
+                            out.insert((field, found));
+                        }
+                    }
+                }
+            }
+            TokenTree::Ident(word)
+                if word == "ref" && ident(&tokens, i + 1).as_deref() == Some("mut") =>
+            {
                 out.insert((
                     "ref mut".into(),
                     Use::Unsupported("a `ref mut` binding".into()),
@@ -203,68 +202,40 @@ fn uses(tokens: TokenStream, watched: &BTreeSet<&str>, out: &mut BTreeSet<(Strin
                 ));
             }
             // `&mut` and the place it borrows: a watched field on its path
-            // escapes as a mutable alias.
-            TokenTree::Punct(p) if p.as_char() == '&' && ident(i + 1).as_deref() == Some("mut") => {
-                let mut j = i + 2;
-                while let Some(next) = tokens.get(j) {
-                    match next {
-                        TokenTree::Ident(name) => {
-                            if punct(j - 1) == Some(('.', Spacing::Alone))
-                                && watched.contains(name.to_string().as_str())
-                            {
-                                out.insert((name.to_string(), Use::Write));
-                            }
-                        }
-                        TokenTree::Punct(p) if matches!(p.as_char(), '.' | ':') => {}
-                        TokenTree::Group(g) if g.delimiter() == Delimiter::Bracket => {}
-                        _ => break,
+            // escapes as a mutable alias. An operand that is not a place (a
+            // block, `if`, `match`, ...) naming a watched field fails closed.
+            TokenTree::Punct(p)
+                if p.as_char() == '&' && ident(&tokens, i + 1).as_deref() == Some("mut") =>
+            {
+                let operand = &tokens[i + 2..];
+                let expression = matches!(operand.first(), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace)
+                    || matches!(operand.first(), Some(TokenTree::Ident(w)) if ["if", "match", "loop", "unsafe", "while", "async"].contains(&w.to_string().as_str()));
+                if expression {
+                    let end = operand
+                        .iter()
+                        .position(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == ';'))
+                        .unwrap_or(operand.len());
+                    for field in named(&operand[..end], watched) {
+                        out.insert((
+                            field,
+                            Use::Unsupported(
+                                "a `&mut` of an expression that is not a place".into(),
+                            ),
+                        ));
                     }
-                    j += 1;
+                } else {
+                    for field in borrowed(operand, watched) {
+                        out.insert((field, Use::Write));
+                    }
                 }
             }
             TokenTree::Ident(name)
                 if i > 0
-                    && punct(i - 1) == Some(('.', Spacing::Alone))
+                    && punct(&tokens, i - 1) == Some(('.', Spacing::Alone))
                     && watched.contains(name.to_string().as_str()) =>
             {
                 let field = name.to_string();
-                // The element of an index `[..]` is read unless assigned or
-                // given to a method the census cannot classify.
-                let mut next = i + 1;
-                if matches!(tokens.get(next), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Bracket)
-                {
-                    next += 1;
-                }
-                let found = if assigns(next) {
-                    Some(Use::Write)
-                } else if punct(next) == Some(('.', Spacing::Alone)) {
-                    match ident(next + 1) {
-                        Some(method) if call(next + 2) => {
-                            if WRITES.contains(&method.as_str()) {
-                                Some(Use::Write)
-                            } else if READS.contains(&method.as_str()) {
-                                None
-                            } else {
-                                Some(Use::Unsupported(format!("`.{field}.{method}(..)`")))
-                            }
-                        }
-                        // A field of it: written when assigned.
-                        Some(_) if assigns(next + 2) => Some(Use::Write),
-                        Some(_) => None,
-                        None => Some(Use::Unsupported(format!(
-                            "`.{field}.` followed by a non-name"
-                        ))),
-                    }
-                } else if matches!(
-                    punct(next),
-                    Some(('+' | '-' | '*' | '|' | '&' | '^', Spacing::Joint))
-                ) && punct(next + 1) == Some(('=', Spacing::Alone))
-                {
-                    Some(Use::Write)
-                } else {
-                    None
-                };
-                if let Some(found) = found {
+                if let Some(found) = after_place(&tokens, &field, i + 1) {
                     out.insert((field, found));
                 }
             }
@@ -273,14 +244,197 @@ fn uses(tokens: TokenStream, watched: &BTreeSet<&str>, out: &mut BTreeSet<(Strin
     }
 }
 
+fn punct(tokens: &[TokenTree], i: usize) -> Option<(char, Spacing)> {
+    match tokens.get(i) {
+        Some(TokenTree::Punct(p)) => Some((p.as_char(), p.spacing())),
+        _ => None,
+    }
+}
+
+fn ident(tokens: &[TokenTree], i: usize) -> Option<String> {
+    match tokens.get(i) {
+        Some(TokenTree::Ident(name)) => Some(name.to_string()),
+        _ => None,
+    }
+}
+
+fn parenthesized(token: Option<&TokenTree>) -> bool {
+    matches!(token, Some(TokenTree::Group(g)) if matches!(g.delimiter(), Delimiter::Parenthesis | Delimiter::None))
+}
+
+/// The group at `i` is a parenthesized expression, not a call's arguments:
+/// nothing callable (a name that is not a keyword, a closing `>` of
+/// generics, another group) precedes it.
+fn is_place_group(tokens: &[TokenTree], i: usize) -> bool {
+    const KEYWORDS: &[&str] = &[
+        "if", "match", "while", "return", "in", "let", "mut", "move", "else", "break",
+    ];
+    parenthesized(tokens.get(i))
+        && match i.checked_sub(1).and_then(|j| tokens.get(j)) {
+            Some(TokenTree::Ident(name)) => KEYWORDS.contains(&name.to_string().as_str()),
+            Some(TokenTree::Group(_)) => false,
+            Some(TokenTree::Punct(p)) => p.as_char() != '>',
+            _ => true,
+        }
+}
+
+/// The watched field a grouped place ends in: `(… .pages)`, nested
+/// groups included.
+fn place_tail(stream: TokenStream, watched: &BTreeSet<&str>) -> Option<String> {
+    let tokens: Vec<_> = stream.into_iter().collect();
+    match tokens.as_slice() {
+        [.., TokenTree::Punct(dot), TokenTree::Ident(name)]
+            if dot.as_char() == '.' && watched.contains(name.to_string().as_str()) =>
+        {
+            Some(name.to_string())
+        }
+        [.., TokenTree::Group(group)] if parenthesized(tokens.last()) => {
+            place_tail(group.stream(), watched)
+        }
+        _ => None,
+    }
+}
+
+/// How the tokens from `next` on use the watched place `field` ends: an
+/// index element is read unless assigned or given to a method the census
+/// cannot classify.
+fn after_place(tokens: &[TokenTree], field: &str, mut next: usize) -> Option<Use> {
+    let call = |i: usize| matches!(tokens.get(i), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis);
+    // An assignment `=` (not `==`, `=>`, `<=`, `>=`, `!=`) at `i`.
+    let assigns = |i: usize| {
+        punct(tokens, i) == Some(('=', Spacing::Alone))
+            || (punct(tokens, i) == Some(('=', Spacing::Joint))
+                && punct(tokens, i + 1) != Some(('=', Spacing::Alone))
+                && punct(tokens, i + 1) != Some(('>', Spacing::Alone)))
+    };
+    if matches!(tokens.get(next), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Bracket)
+    {
+        next += 1;
+    }
+    if assigns(next) {
+        Some(Use::Write)
+    } else if punct(tokens, next) == Some(('.', Spacing::Alone)) {
+        match ident(tokens, next + 1) {
+            Some(method) if call(next + 2) => {
+                if WRITES.contains(&method.as_str()) {
+                    Some(Use::Write)
+                } else if READS.contains(&method.as_str()) {
+                    None
+                } else {
+                    Some(Use::Unsupported(format!("`.{field}.{method}(..)`")))
+                }
+            }
+            // A field of it: written when assigned.
+            Some(_) if assigns(next + 2) => Some(Use::Write),
+            Some(_) => None,
+            None => Some(Use::Unsupported(format!(
+                "`.{field}.` followed by a non-name"
+            ))),
+        }
+    } else if matches!(
+        punct(tokens, next),
+        Some(('+' | '-' | '*' | '|' | '&' | '^', Spacing::Joint))
+    ) && punct(tokens, next + 1) == Some(('=', Spacing::Alone))
+    {
+        Some(Use::Write)
+    } else {
+        None
+    }
+}
+
+/// The watched fields a `&mut` operand borrows: those on its place path,
+/// through derefs, indexes and parenthesized places. A call on the path
+/// ends the place: the fields before it are its receiver, which the method
+/// rule classifies.
+fn borrowed(tokens: &[TokenTree], watched: &BTreeSet<&str>) -> Vec<String> {
+    let mut fields = Vec::new();
+    for (j, token) in tokens.iter().enumerate() {
+        match token {
+            TokenTree::Ident(name) => {
+                if punct(tokens, j.wrapping_sub(1)) == Some(('.', Spacing::Alone))
+                    && watched.contains(name.to_string().as_str())
+                {
+                    fields.push(name.to_string());
+                }
+            }
+            TokenTree::Punct(p) if matches!(p.as_char(), '.' | ':' | '*') => {}
+            TokenTree::Literal(_)
+                if punct(tokens, j.wrapping_sub(1)) == Some(('.', Spacing::Alone)) => {}
+            TokenTree::Group(g) if g.delimiter() == Delimiter::Bracket => {}
+            TokenTree::Group(g) if parenthesized(Some(token)) => {
+                let callee = matches!(
+                    j.checked_sub(1).and_then(|k| tokens.get(k)),
+                    Some(TokenTree::Ident(_) | TokenTree::Group(_))
+                );
+                if callee {
+                    fields.clear();
+                } else {
+                    fields.extend(borrowed(
+                        &g.stream().into_iter().collect::<Vec<_>>(),
+                        watched,
+                    ));
+                }
+            }
+            _ => break,
+        }
+    }
+    fields
+}
+
+/// Every watched field named anywhere in `tokens`, groups included.
+fn named(tokens: &[TokenTree], watched: &BTreeSet<&str>) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for (j, token) in tokens.iter().enumerate() {
+        match token {
+            TokenTree::Ident(name)
+                if punct(tokens, j.wrapping_sub(1)) == Some(('.', Spacing::Alone))
+                    && watched.contains(name.to_string().as_str()) =>
+            {
+                out.insert(name.to_string());
+            }
+            TokenTree::Group(g) => {
+                out.extend(named(&g.stream().into_iter().collect::<Vec<_>>(), watched))
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Test-only code: `#[test]`, or a `cfg` whose predicate implies `test`
+/// (`test`, `all(.., test, ..)`, `any` of such). `not(test)` and every
+/// other predicate are production, as is a predicate that does not parse
+/// (fail closed, N2).
 fn is_test(attrs: &[syn::Attribute]) -> bool {
+    fn implies_test(predicate: &syn::Meta) -> bool {
+        let args = |list: &syn::MetaList| {
+            list.parse_args_with(
+                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+            )
+            .map(|args| args.into_iter().collect::<Vec<_>>())
+            .unwrap_or_default()
+        };
+        match predicate {
+            syn::Meta::Path(path) => path.is_ident("test"),
+            syn::Meta::List(list) if list.path.is_ident("all") => {
+                args(list).iter().any(implies_test)
+            }
+            syn::Meta::List(list) if list.path.is_ident("any") => {
+                let args = args(list);
+                !args.is_empty() && args.iter().all(implies_test)
+            }
+            _ => false,
+        }
+    }
     attrs.iter().any(|attr| {
         attr.path()
             .segments
             .last()
             .is_some_and(|s| s.ident == "test")
             || (attr.path().is_ident("cfg")
-                && attr.meta.to_token_stream().to_string().contains("test"))
+                && attr
+                    .parse_args::<syn::Meta>()
+                    .is_ok_and(|predicate| implies_test(&predicate)))
     })
 }
 
@@ -486,6 +640,18 @@ fn the_page_state_census_catches_its_bypass_mutants() {
         ("order.rs", "fn take_disk", "fn alias_mutant (& mut self) { let p = & mut self . pages ; } fn take_disk"),
         ("order.rs", "fn take_disk", "fn index_mutant (& mut self) { self . pages [\"a\"] . conflict = true ; } fn take_disk"),
         ("order.rs", "fn take_disk", "fn unknown_mutant (& mut self) { self . pages . frobnicate () ; } fn take_disk"),
+        // REVIEW-3b-P2b-2 N2: a parenthesized place keeps its mutation
+        // context, an unclassified mutable escape fails closed, and a
+        // production-only cfg is production.
+        ("order.rs", "fn take_disk", "fn paren_alias_mutant (& mut self) { let pages = & mut (self . pages) ; pages . clear () ; } fn take_disk"),
+        ("order.rs", "fn take_disk", "#[cfg(not(test))] fn not_test_mutant (& mut self) { self . pages . clear () ; } fn take_disk"),
+        ("order.rs", "fn take_disk", "#[cfg(any(test, unix))] fn any_test_mutant (& mut self) { self . pages . clear () ; } fn take_disk"),
+        ("order.rs", "fn take_disk", "fn grouped_method_mutant (& mut self) { (self . pages) . clear () ; } fn take_disk"),
+        ("order.rs", "fn take_disk", "fn grouped_assign_mutant (& mut self) { (self . pages) = Default :: default () ; } fn take_disk"),
+        ("order.rs", "fn take_disk", "fn deref_alias_mutant (& mut self) { let p = & mut * (self . pages) ; } fn take_disk"),
+        ("order.rs", "fn take_disk", "fn tuple_alias_mutant (& mut self) { let p = & mut (self) . pages ; } fn take_disk"),
+        ("order.rs", "fn take_disk", "fn block_escape_mutant (& mut self) { let p = & mut { self . pages } ; } fn take_disk"),
+        ("order.rs", "fn take_disk", "fn match_escape_mutant (& mut self) { let p = & mut match 0 { _ => self . pages } ; } fn take_disk"),
         ("order.rs", "fn take_disk", "fn ref_mutant (& mut self) { if let Some (ref mut x) = self . job { } } fn take_disk"),
         ("order.rs", "fn take_disk", "fn pattern_mutant (h : & mut Host < F >) { let Host { pages , .. } = h ; } fn take_disk"),
         ("binding.rs", "fn record", "fn owned_mutant (& mut self) { self . owned . insert (String :: new ()) ; } fn record"),
@@ -496,15 +662,20 @@ fn the_page_state_census_catches_its_bypass_mutants() {
         ("logical.rs", "self.mark(&record.page);\n            if let Some(names)", "if let Some(names)"),
         ("logical.rs", "self.mark(&record.page);\n            let names", "let names"),
     ];
+    let mut missed = Vec::new();
     for (file, from, to) in mutants {
         let mut files = files.clone();
         let source = files.get_mut(file).unwrap();
         assert!(source.contains(from), "mutant anchor {from} in {file}");
         *source = source.replacen(from, to, 1);
         let (found, calls) = census(&files);
-        assert!(
-            !violations(&found, &calls).is_empty(),
-            "the census misses the mutant {to} in {file}"
-        );
+        if violations(&found, &calls).is_empty() {
+            missed.push(format!("{to} in {file}"));
+        }
     }
+    assert!(
+        missed.is_empty(),
+        "the census misses the mutants:\n{}",
+        missed.join("\n")
+    );
 }
