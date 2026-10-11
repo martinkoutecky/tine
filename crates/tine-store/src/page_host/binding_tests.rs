@@ -2454,6 +2454,7 @@ fn an_open_that_moves_no_row_leaves_the_checkpoint_capturable() {
         live.store.write_checkpoint_now(),
         Some(crate::CheckpointWrite::Written { .. })
     ));
+    let rev = live.store.whole_graph().unwrap().rev();
     let (a, _) = live.open("pages/a.md");
     let deadline = Instant::now() + Duration::from_secs(20);
     while !(live.host.driver.shared).with_state(|s| s.book.index.contains_key(&a)) {
@@ -2467,5 +2468,22 @@ fn an_open_that_moves_no_row_leaves_the_checkpoint_capturable() {
     assert!(
         matches!(outcome, Some(crate::CheckpointWrite::Written { .. })),
         "a checkpoint after an unchanged open: {outcome:?}"
+    );
+    // A release that moves nothing (REVIEW-settle-cow F1) neither.
+    live.close(&a);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while live.held(&a) {
+        assert!(Instant::now() < deadline, "the closed page stayed held");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let outcome = live.store.write_checkpoint_now();
+    assert!(
+        matches!(outcome, Some(crate::CheckpointWrite::Written { .. })),
+        "a checkpoint after an unchanged release: {outcome:?}"
+    );
+    assert_eq!(
+        live.store.whole_graph().unwrap().rev(),
+        rev,
+        "an unchanged open and release publish nothing"
     );
 }
