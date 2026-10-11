@@ -52,6 +52,12 @@ describe("settle (S1: final synchronous quiescence proof)", () => {
     expect(ctx.host.last("close").key).toBe("pages/P.md");
   });
 
+  it("a witness barrier does not open a closed page with no input (nothing to send or prove)", async () => {
+    const ctx = await healthy();
+    expect(await settle(ctx.client, ["P"], { witness: "id-1" })).toBe(true);
+    expect([ctx.host.count("open"), ctx.host.count("wait")]).toEqual([0, 0]);
+  });
+
   it("an edit during the fourth wait returns false (the bound is not success)", async () => {
     const ctx = await healthy();
     // An editor holds P, so the window's own publication wait before a close (J6) stays out of these counts.
