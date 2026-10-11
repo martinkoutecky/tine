@@ -222,6 +222,10 @@ jobs:
         run: cargo test --locked --manifest-path vendor/cap-primitives-4.0.2/Cargo.toml --lib removing_extended_prefix_keeps_unc_paths_absolute -- --nocapture
       - name: Windows core and graph-feature tests (including junction filesystem behavior)
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
+      # M4 availability measurement (REVIEW-3b-P2b-2 G1): the release rename of 250 and of
+      # 1000 referrers must reach its caller inside OPERATION_WAIT; the timings print here.
+      - name: Windows release rename availability (250 and 1000 referrers)
+        run: cargo test --release -p tine-graph-features --test rename_cost -- --ignored --exact --nocapture a_250_referrer_rename_completes_inside_the_caller_bound a_thousand_referrer_rename_completes_inside_the_caller_bound
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
 

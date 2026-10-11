@@ -341,25 +341,37 @@ fn rename_host_work_is_linear() {
 }
 
 /// M4 (REVIEW-progress-plan R5): the availability half of the proof, kept
-/// apart from the structural counts above. A 1000-referrer rename completes
-/// inside its caller's bound (`OPERATION_WAIT`, 10 s): `rename_page_expected`
-/// returns `TimedOut` past it. Release build only, so a loaded debug suite
-/// cannot decide it; the executable gate is `scripts/rename-thousand-referrers.sh`.
-#[test]
-#[ignore = "release availability gate: scripts/rename-thousand-referrers.sh"]
-fn a_thousand_referrer_rename_completes_inside_the_caller_bound() {
+/// apart from the structural counts above. A rename of 250 and of 1000
+/// referrers completes inside its caller's bound (`OPERATION_WAIT`, 10 s):
+/// `rename_page_expected` returns `TimedOut` past it. Release build only, so a
+/// loaded debug suite cannot decide it; the executable gate is
+/// `scripts/rename-thousand-referrers.sh` (Linux) and the `scope=windows` CI
+/// job (G1), which print the timings.
+fn release_rename_gate(referrers: usize) {
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     assert!(
         !cfg!(debug_assertions),
         "a release gate: run scripts/rename-thousand-referrers.sh"
     );
     let started = std::time::Instant::now();
-    let (c, _, heard) = rename_through_cleanup(80, 1000);
+    let (c, call, heard) = rename_through_cleanup(80, referrers);
     heard.expect("the caller hears success inside OPERATION_WAIT");
     eprintln!(
-        "M4 1000 referrers: {:?} through cleanup: {c:?}",
+        "M4 release gate, {referrers} referrers: caller {call:?}, {:?} through cleanup: {c:?}",
         started.elapsed()
     );
+}
+
+#[test]
+#[ignore = "release availability gate: scripts/rename-thousand-referrers.sh"]
+fn a_thousand_referrer_rename_completes_inside_the_caller_bound() {
+    release_rename_gate(1000);
+}
+
+#[test]
+#[ignore = "release availability gate: scripts/rename-thousand-referrers.sh"]
+fn a_250_referrer_rename_completes_inside_the_caller_bound() {
+    release_rename_gate(250);
 }
 
 /// Caller urgency: an operation's pages save without the 400 ms edit
