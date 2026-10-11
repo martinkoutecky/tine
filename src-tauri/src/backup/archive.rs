@@ -43,6 +43,8 @@ const STORED: u16 = 0;
 const DEFLATE: u16 = 8;
 /// Version made by: Unix (3), spec 2.0.
 const MADE_BY: u16 = (3 << 8) | 20;
+/// Version needed for the ZIP64 end record.
+const ZIP64_VERSION: u16 = 45;
 const REGULAR_FILE: u32 = 0o100_644 << 16;
 
 /// Why an archive cannot be used. `Damaged` and `TooLarge` are refusals of
@@ -77,7 +79,6 @@ pub(super) struct ZipManifest {
     pub(super) root: String,
     pub(super) journals_dir: String,
     pub(super) pages_dir: String,
-    pub(super) assets_dir: String,
     pub(super) graph_text_policy: super::SnapshotGraphTextPolicy,
     pub(super) files: Vec<ZipFile>,
     pub(super) complete: bool,
@@ -207,31 +208,24 @@ fn windows_part_is_safe(part: &str) -> bool {
     !reserved
 }
 
-/// Which names a destination volume treats as one file.
+/// Which names a destination volume treats as one file (restore probes
+/// it, `restore::destination_fold`). Unicode lowercasing approximates a
+/// case-insensitive volume's own table (NTFS's upcase table differs on a
+/// few characters); Store's no-replace publication still refuses a
+/// residual collision the folding does not model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Fold {
     /// Byte-exact names (the archive's own uniqueness).
     Exact,
-    /// Names equal after lowercasing (NTFS, Android shared storage).
+    /// Names equal after lowercasing.
     Case,
-    /// Lowercased, then NFC: Apple volumes also treat canonically
+    /// NFC only: a case-sensitive Apple volume still treats canonically
     /// equivalent spellings (precomposed `é` and `e` + combining accent) as
     /// one name.
+    Normalization,
+    /// Lowercased, then NFC: a case-insensitive Apple volume.
     CaseAndNormalization,
 }
-
-/// How the platform's graph volumes usually fold names: two paths equal
-/// after folding would be one file there. Only restore applies it (a
-/// case-sensitive volume on these platforms can hold both names, and its
-/// backup must not fail); Store's no-replace publication still refuses a
-/// residual collision the folding does not model.
-pub(super) const DESTINATION_FOLD: Fold = if cfg!(any(target_os = "macos", target_os = "ios")) {
-    Fold::CaseAndNormalization
-} else if cfg!(any(target_os = "windows", target_os = "android")) {
-    Fold::Case
-} else {
-    Fold::Exact
-};
 
 /// Every path safe and unique after `fold`.
 pub(super) fn paths_are_safe<'a>(
@@ -248,6 +242,7 @@ pub(super) fn paths_are_safe<'a>(
         let key = match fold {
             Fold::Exact => path.to_owned(),
             Fold::Case => path.to_lowercase(),
+            Fold::Normalization => path.nfc().collect(),
             Fold::CaseAndNormalization => path.to_lowercase().nfc().collect(),
         };
         if !seen.insert(key) {
@@ -288,16 +283,15 @@ pub(super) struct Encoded<'a> {
 }
 
 impl<'a> Encoded<'a> {
-    /// Deflate when it shrinks the entry, else store it.
+    /// Deflate when it shrinks the entry, else store it. The deflate buffer
+    /// never grows past the entry's own size (D3): output that reaches it
+    /// cannot shrink the entry, so the entry is stored.
     fn new(name: &'a str, data: &'a [u8], deflater: &mut flate2::Compress) -> Self {
         let mut crc = flate2::Crc::new();
         crc.update(data);
         deflater.reset();
-        let mut deflated = Vec::with_capacity(data.len() / 2 + 64);
-        loop {
-            if deflated.len() == deflated.capacity() {
-                deflated.reserve(deflated.capacity().max(64));
-            }
+        let mut deflated = Vec::with_capacity(data.len());
+        let shrunk = loop {
             let consumed = deflater.total_in() as usize;
             let status = deflater
                 .compress_vec(
@@ -307,10 +301,13 @@ impl<'a> Encoded<'a> {
                 )
                 .expect("deflate into memory");
             if status == flate2::Status::StreamEnd {
-                break;
+                break deflated.len() < data.len();
             }
-        }
-        let (method, stored) = if deflated.len() < data.len() {
+            if deflated.len() == deflated.capacity() {
+                break false;
+            }
+        };
+        let (method, stored) = if shrunk {
             (DEFLATE, deflated.into())
         } else {
             (STORED, data.into())
@@ -373,11 +370,23 @@ pub(super) fn write_archive(
 /// Lay out encoded entries in the format above. Sizes and offsets must fit
 /// in 32 bits, which [`write_archive`]'s limits guarantee.
 pub(super) fn assemble(entries: &[Encoded], (time, date): (u16, u16)) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut central = Vec::new();
+    // Exact sizes up front (D3): no buffer outgrows the archive.
+    let names: usize = entries.iter().map(|entry| entry.name.len()).sum();
+    let data: usize = entries.iter().map(|entry| entry.stored.len()).sum();
+    let central_len = CENTRAL_LEN * entries.len() + names;
+    let mut out = Vec::with_capacity(
+        LOCAL_LEN * entries.len()
+            + names
+            + data
+            + central_len
+            + ZIP64_EOCD_LEN
+            + ZIP64_LOCATOR_LEN
+            + EOCD_LEN,
+    );
+    let mut central = Vec::with_capacity(central_len);
     for entry in entries {
         let flags = if entry.name.is_ascii() { 0 } else { UTF8_FLAG };
-        let needed: u16 = if entry.method == DEFLATE { 20 } else { 10 };
+        let needed = version_needed(entry.method);
         let offset = out.len() as u32;
         let fields = |buf: &mut Vec<u8>| {
             put16(buf, needed);
@@ -414,8 +423,8 @@ pub(super) fn assemble(entries: &[Encoded], (time, date): (u16, u16)) -> Vec<u8>
         let record = out.len() as u64;
         put32(&mut out, ZIP64_EOCD_SIG);
         put64(&mut out, (ZIP64_EOCD_LEN - 12) as u64);
-        put16(&mut out, (MADE_BY & 0xFF00) | 45);
-        put16(&mut out, 45);
+        put16(&mut out, (MADE_BY & 0xFF00) | ZIP64_VERSION);
+        put16(&mut out, ZIP64_VERSION);
         put32(&mut out, 0);
         put32(&mut out, 0);
         put64(&mut out, count);
@@ -437,6 +446,16 @@ pub(super) fn assemble(entries: &[Encoded], (time, date): (u16, u16)) -> Vec<u8>
     put32(&mut out, cd_offset as u32);
     put16(&mut out, 0);
     out
+}
+
+/// The only version-needed values this format writes, and so accepts
+/// (D6): Stored 1.0, Deflate 2.0.
+fn version_needed(method: u16) -> u16 {
+    if method == DEFLATE {
+        20
+    } else {
+        10
+    }
 }
 
 fn put16(out: &mut Vec<u8>, value: u16) {
@@ -571,6 +590,9 @@ pub(super) fn read_directory(src: &mut impl Source) -> Result<Directory, Problem
             return Err(Problem::Damaged("ZIP64 locator"));
         }
         let record = src.read_at(record_at, ZIP64_EOCD_LEN as u64)?;
+        if u32_at(&record, 0) == ZIP64_EOCD_SIG && u16_at(&record, 14) != ZIP64_VERSION {
+            return Err(Problem::Unsupported("version needed"));
+        }
         let count = u64_at(&record, 24);
         if u32_at(&record, 0) != ZIP64_EOCD_SIG
             || u64_at(&record, 4) != (ZIP64_EOCD_LEN - 12) as u64
@@ -621,6 +643,9 @@ pub(super) fn read_directory(src: &mut impl Source) -> Result<Directory, Problem
         }
         if method != STORED && method != DEFLATE {
             return Err(Problem::Unsupported("compression method"));
+        }
+        if u16_at(fixed, 6) != version_needed(method) {
+            return Err(Problem::Unsupported("version needed"));
         }
         if extra_len != 0 || comment_len != 0 || u16_at(fixed, 34) != 0 {
             return Err(Problem::Unsupported("zip extra fields"));

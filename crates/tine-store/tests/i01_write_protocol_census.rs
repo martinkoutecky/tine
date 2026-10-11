@@ -62,6 +62,8 @@ impl<'ast> Visit<'ast> for Mutations {
                             | "remove_dir"
                             | "remove_dir_all"
                             | "create"
+                            | "create_dir"
+                            | "create_dir_all"
                     ))
                     || (parent == "OpenOptions" && method == "new")
                     || (parent == "libc"
@@ -155,20 +157,48 @@ fn every_content_mutation_has_a_reviewed_owner() {
         ),
         ("crates/tine-store/src/transaction.rs", "apply"),
         ("crates/tine-store/src/transaction.rs", "commit_timed"),
-        // Zip backups, app data only, all under the namespace lock
-        // (docs/storage-contract.md, Graph backups). Crash matrix: a crash
-        // before the no-replace rename leaves a `.partial-*.zip` that is
-        // never listed and that the next lock holder removes; after it, a
-        // complete zip whose directory entry the next keeper certification
-        // re-syncs (`a_crash_leaves_a_partial_or_a_complete_zip`).
+        // Zip backups, app data only (docs/storage-contract.md, Graph
+        // backups). Publication, partial cleanup, settling and retention run
+        // under the namespace lock; creating `<id>.zips/` necessarily
+        // precedes taking that lock (below). Crash matrix: a crash before the
+        // no-replace rename leaves a `.partial-*.zip` that is never listed
+        // and that the next lock holder removes after its name scan; after
+        // it, a complete zip that is visible but settled only once the
+        // zips -> backups -> app-data sync chain ran, which every
+        // publication and every keeper settlement runs
+        // (`a_crash_leaves_a_partial_or_a_complete_zip`,
+        // `every_publication_settles_the_whole_chain`,
+        // scripts/check-backup-syscalls.mjs).
         ("src-tauri/src/backup.rs", "publish_zip"),
         ("src-tauri/src/backup.rs", "remove_partials"),
-        // Deletes only after the newest healthy zip verified and synced
-        // strongly; a crash mid-prune leaves a subset the next prune
-        // finishes (`deletion_needs_a_verified_strongly_synced_keeper`).
-        ("src-tauri/src/backup.rs", "prune_locked"),
-        // Opens the keeper for writing only to `sync_all` it; no content change.
-        ("src-tauri/src/backup.rs", "certify_keeper"),
+        // Deletes only after a verified keeper zip is settled strongly (its
+        // own publication, or `settle`); a crash or failed delete mid-way
+        // leaves a subset the next locked maintenance, including an
+        // unchanged launch, finishes
+        // (`deletion_needs_a_verified_strongly_synced_keeper`,
+        // `a_failed_prune_delete_is_retried_by_the_next_unchanged_launch`).
+        ("src-tauri/src/backup.rs", "maintain_locked"),
+        // Opens a published zip for writing only to `sync_all` it, then
+        // syncs the directory chain; no content change.
+        ("src-tauri/src/backup.rs", "settle"),
+        // Directory creation (create_dir / create_dir_all) creates empty
+        // directories only and is idempotent: a crash leaves the directory
+        // or nothing, and the next caller recreates it. It writes no content,
+        // so no durability claim rests on it.
+        // `<id>.zips/` before the backup namespace lock: the publication's
+        // sync chain settles it; restore only reads under it.
+        ("src-tauri/src/backup.rs", "write_snapshot"),
+        ("src-tauri/src/backup/restore.rs", "under_namespace_lock"),
+        // Graph-side directories made before an audited write into them.
+        (
+            "crates/tine-store/src/model.rs",
+            "withdraw_file_to_conflict_if",
+        ),
+        ("crates/tine-store/src/publish.rs", "publish_site_at"),
+        ("crates/tine-store/src/store.rs", "create_graph"),
+        ("src-tauri/src/device_io.rs", "atomic_update_with_hooks"),
+        ("src-tauri/src/device_io.rs", "copy_tree"),
+        ("src-tauri/src/graph.rs", "default_graph_parent"),
         // Creates the persistent, empty lock file; never truncated or unlinked.
         ("src-tauri/src/file_lock.rs", "open_lock_file"),
         // Thumbnail cache cleanup is outside graph/private-durable state.
@@ -204,5 +234,20 @@ fn census_detects_an_unreviewed_direct_write() {
     assert!(
         visitor.hits.contains(&("rogue".into(), "fs::write".into())),
         "I-1: a new direct write must trigger owner review; exemplar model.rs atomic_write_new"
+    );
+}
+
+#[test]
+fn census_detects_an_unreviewed_directory_creation() {
+    let planted =
+        syn::parse_file("fn rogue() { std::fs::create_dir_all(\"backups/x.zips\").unwrap(); }")
+            .unwrap();
+    let mut visitor = Mutations::default();
+    visitor.visit_file(&planted);
+    assert!(
+        visitor
+            .hits
+            .contains(&("rogue".into(), "fs::create_dir_all".into())),
+        "I-1: a new directory creation must trigger owner review; exemplar backup.rs write_snapshot"
     );
 }

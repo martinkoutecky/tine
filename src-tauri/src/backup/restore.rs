@@ -218,11 +218,6 @@ fn verified_zip(
     if manifest.root != source.root.display().to_string() {
         return Err("backup belongs to a different graph".into());
     }
-    // Its sidecars live under the assets directory it recorded; restoring
-    // them elsewhere, or none, would retire the live ones.
-    if manifest.assets_dir != source.assets_dir_name {
-        return Err("backup was made with a different assets directory setting".into());
-    }
     let policy = &manifest.graph_text_policy;
     let scope = if policy.hidden_parse_failed_closed {
         vec![String::new()]
@@ -230,17 +225,19 @@ fn verified_zip(
         policy.hidden.clone()
     };
     // Names that differ only in case (or, on Apple, in Unicode normalization)
-    // would be one file on a folding volume.
+    // would be one file on a folding volume (D8: probed, before anything
+    // is written). Refusal row: docs/storage-contract.md, Graph backups.
     if !archive::paths_are_safe(
         manifest.files.iter().map(|file| file.path.as_str()),
         cfg!(windows),
-        archive::DESTINATION_FOLD,
+        destination_fold(&source.root),
     ) {
         return Err(
             "this backup holds names that differ only in letter case; restore it by hand".into(),
         );
     }
-    let assets = format!("{}/", manifest.assets_dir);
+    // Sidecars are graph-relative (`assets/`) and go to the graph's current
+    // assets target through Store's approved-target guard (D5).
     let files = manifest
         .files
         .iter()
@@ -251,7 +248,7 @@ fn verified_zip(
                 (Area::Meta, "config.edn")
             } else if let Some(rel) = entry
                 .path
-                .strip_prefix(&assets)
+                .strip_prefix("assets/")
                 .filter(|_| is_asset_sidecar(&id))
             {
                 (Area::Assets, rel)
@@ -268,6 +265,50 @@ fn verified_zip(
         })
         .collect::<Result<_, _>>()?;
     Ok((files, Some(scope)))
+}
+
+/// How the volume under the graph root folds names (D8), probed without
+/// writing: an entry of the root whose ASCII letters are case-flipped
+/// either is not found (the volume tells case apart) or resolves to the
+/// same file (it folds case). Every case-insensitive volume folds ASCII.
+/// No usable entry or an error counts as folding, the side that refuses.
+/// Apple volumes also fold Unicode normalization, case-sensitive or not.
+pub(super) fn destination_fold(root: &std::path::Path) -> archive::Fold {
+    let folds_case = || -> bool {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return true;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let flipped: String = name
+                .chars()
+                .map(|c| match c {
+                    'a'..='z' => c.to_ascii_uppercase(),
+                    'A'..='Z' => c.to_ascii_lowercase(),
+                    _ => c,
+                })
+                .collect();
+            if flipped == name || entry.file_type().map_or(true, |kind| kind.is_symlink()) {
+                continue;
+            }
+            let variant = root.join(&flipped);
+            return match std::fs::symlink_metadata(&variant) {
+                Err(error) if error.kind() == ErrorKind::NotFound => false,
+                Ok(_) => same_file::is_same_file(entry.path(), &variant).unwrap_or(true),
+                Err(_) => true,
+            };
+        }
+        true
+    };
+    match (
+        cfg!(any(target_os = "macos", target_os = "ios")),
+        folds_case(),
+    ) {
+        (true, true) => archive::Fold::CaseAndNormalization,
+        (true, false) => archive::Fold::Normalization,
+        (false, true) => archive::Fold::Case,
+        (false, false) => archive::Fold::Exact,
+    }
 }
 
 /// A legacy schema-2/3 snapshot directory: its manifest, its inventory,
@@ -343,7 +384,8 @@ fn verified_dir(
 
 fn require_safety_snapshot(snapshot: BackupOutcome, live_n: usize) -> Result<(), String> {
     // Any safety-snapshot failure refuses, whatever the live count
-    // (og-backup-cas D5); so does an empty snapshot of a nonempty graph.
+    // (og-backup-cas D5); so does an empty snapshot of a nonempty graph. A
+    // weak one proceeds (D1).
     if snapshot.failure.is_some() || (live_n > 0 && snapshot.copied == 0) {
         let token = snapshot.failure.map_or_else(
             || {
@@ -359,6 +401,7 @@ fn require_safety_snapshot(snapshot: BackupOutcome, live_n: usize) -> Result<(),
             "{token}: couldn't create a complete pre-restore safety snapshot — restore aborted"
         ));
     }
+    proceed_on_safety_snapshot(&snapshot);
     Ok(())
 }
 
@@ -690,10 +733,19 @@ mod tests {
         std::fs::create_dir_all(&invalid_dir_path).unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
         let mut out = Vec::new();
-        let (copied, failed, failure) =
-            read_store_area(&store, Area::Pages, "", is_graph_text, &|| false, &mut out);
-        assert_eq!((copied, failed), (0, 3));
-        assert!(require_safety_snapshot(BackupOutcome { copied, failure }, 2).is_err());
+        let failure = read_store_area(
+            &store,
+            Area::Pages,
+            "",
+            is_graph_text,
+            &|| false,
+            &mut Budget::archive(),
+            &mut out,
+        )
+        .unwrap_err();
+        assert!(out.is_empty());
+        let snapshot = BackupOutcome::failed(0, failure.phase, failure.kind);
+        assert!(require_safety_snapshot(snapshot, 2).is_err());
         assert_eq!(std::fs::read(&non_utf_path).unwrap(), b"- keep A\n");
         assert_eq!(std::fs::read(&invalid_id_path).unwrap(), b"- keep B\n");
         store.close();
@@ -788,7 +840,7 @@ mod tests {
             &root.join("backups"),
             &store,
             source,
-            |_| BackupOutcome::success(1),
+            |_| BackupOutcome::success(1, Durability::Strong),
         )
         .unwrap();
         assert_eq!(std::fs::read(graph.join("pages/New.md")).unwrap(), b"new");
@@ -993,7 +1045,7 @@ mod tests {
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
         let source = BackupSource::from_store(&store, &graph).unwrap();
         restore_from_backup_source(&format!("dir:{stamp}"), &base, &store, source, |_| {
-            BackupOutcome::success(1)
+            BackupOutcome::success(1, Durability::Strong)
         })
         .unwrap();
         assert_eq!(
@@ -1064,7 +1116,7 @@ mod tests {
             let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
             let source = BackupSource::from_store(&store, &graph).unwrap();
             restore_from_backup_source(&format!("dir:{stamp}"), &base, &store, source, |_| {
-                BackupOutcome::success(1)
+                BackupOutcome::success(1, Durability::Strong)
             })
             .unwrap();
             if failed_closed {
@@ -1112,8 +1164,10 @@ mod tests {
             ["logseq/config.edn"]
         );
         write(&graph.join("pages/Later.md"), "- later\n");
-        restore_from_backup_source(&id, &base, &store, source, |_| BackupOutcome::success(1))
-            .unwrap();
+        restore_from_backup_source(&id, &base, &store, source, |_| {
+            BackupOutcome::success(1, Durability::Strong)
+        })
+        .unwrap();
         for (rel, bytes) in [("pages/A.md", "- a\n"), ("pages/Later.md", "- later\n")] {
             assert_eq!(std::fs::read_to_string(graph.join(rel)).unwrap(), bytes);
         }
@@ -1145,9 +1199,16 @@ mod tests {
         }
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
         let mut out = Vec::new();
-        let (copied, failed, failure) =
-            read_store_area(&store, Area::Graph, "", is_graph_text, &|| false, &mut out);
-        assert_eq!((copied, failed), (3, 0), "{failure:?}");
+        let copied = read_store_area(
+            &store,
+            Area::Graph,
+            "",
+            is_graph_text,
+            &|| false,
+            &mut Budget::archive(),
+            &mut out,
+        );
+        assert_eq!(copied.unwrap(), 3);
         let mut got: Vec<String> = out.into_iter().map(|(path, _)| path).collect();
         got.sort();
         assert_eq!(
@@ -1365,7 +1426,7 @@ mod tests {
         std::fs::write(graph.join("logseq/config.edn"), "{:edited true}\n").unwrap();
         for id in [zip_id, "dir:2026-09-01_00-00-00".to_owned()] {
             let result = restore_from_backup_source(&id, &base, &store, source.clone(), |_| {
-                BackupOutcome::success(0)
+                BackupOutcome::success(0, Durability::Strong)
             });
             assert!(result.unwrap_err().contains("safety snapshot"), "{id}");
             assert_eq!(
@@ -1430,6 +1491,59 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// D5 (REVIEW-backup-zip F6): the archive is graph-relative. An
+    /// approved external assets target keeps its sidecars under `assets/`
+    /// whatever the target's own name, and a restore writes them to the
+    /// graph's current target, also after the user moved it.
+    #[cfg(unix)]
+    #[test]
+    fn external_assets_back_up_as_assets_and_restore_to_the_current_target() {
+        let root = scratch("restore-external-assets");
+        let graph = root.join("graph");
+        let media = root.join("my-media");
+        write(&graph.join("pages/A.md"), "- a\n");
+        write(&media.join("pic.edn"), "{:width 10}\n");
+        std::os::unix::fs::symlink(&media, graph.join("assets")).unwrap();
+        let open = |target: &std::path::Path| {
+            Store::open(
+                &graph,
+                tine_store::OpenOptions {
+                    approved_external_assets: Some(target.to_path_buf()),
+                    watch: Default::default(),
+                    launch_checkpoint: None,
+                },
+            )
+            .unwrap()
+            .0
+        };
+        let base = root.join("app/backups/g");
+        let store = open(&media);
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        assert!(snapshot(&base, &store, &source, "").failure.is_none());
+        let (id, manifest) = newest_zip(&base, &graph);
+        let paths: Vec<&str> = manifest.files.iter().map(|f| f.path.as_str()).collect();
+        assert!(paths.contains(&"assets/pic.edn"), "{paths:?}");
+        store.close();
+
+        let moved = root.join("media-moved");
+        std::fs::rename(&media, &moved).unwrap();
+        std::fs::remove_file(graph.join("assets")).unwrap();
+        std::os::unix::fs::symlink(&moved, graph.join("assets")).unwrap();
+        std::fs::write(moved.join("pic.edn"), "{:width 99}\n").unwrap();
+        let store = open(&moved);
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        restore_from_backup_source(&id, &base, &store, source, |source| {
+            snapshot(&base, &store, source, "pre-restore")
+        })
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(moved.join("pic.edn")).unwrap(),
+            "{:width 10}\n"
+        );
+        store.close();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// og-backup-cas D5: a failed safety snapshot refuses the restore even
     /// when the graph holds no live content to count.
     #[test]
@@ -1440,8 +1554,10 @@ mod tests {
         )
         .unwrap_err()
         .starts_with("backup-failed:reserve:PermissionDenied"));
-        assert!(require_safety_snapshot(BackupOutcome::success(0), 0).is_ok());
-        assert!(require_safety_snapshot(BackupOutcome::success(0), 1).is_err());
+        assert!(require_safety_snapshot(BackupOutcome::success(0, Durability::Strong), 0).is_ok());
+        // D1: a weak (published, unwitnessed) safety snapshot proceeds.
+        assert!(require_safety_snapshot(BackupOutcome::success(1, Durability::Weak), 1).is_ok());
+        assert!(require_safety_snapshot(BackupOutcome::success(0, Durability::Strong), 1).is_err());
     }
 
     /// R8: ids are namespace-qualified and validated by the name grammar.

@@ -16,7 +16,6 @@ fn manifest_for(files: &[(String, Vec<u8>)]) -> ZipManifest {
         root: "/g".into(),
         journals_dir: "journals".into(),
         pages_dir: "pages".into(),
-        assets_dir: "assets".into(),
         graph_text_policy: policy(),
         files: files
             .iter()
@@ -213,6 +212,14 @@ fn zip64_end_records_appear_only_for_large_entry_counts() {
     assert!(contains(&bytes, &ZIP64_EOCD_SIG.to_le_bytes()));
     let verified = verify_bytes(&bytes).unwrap();
     assert_eq!(verified.files.len(), 0xFFFF);
+    // D6: the end record's version-needed is 45, and nothing else.
+    let record = bytes.len() - EOCD_LEN - ZIP64_LOCATOR_LEN - ZIP64_EOCD_LEN;
+    let mut patched = bytes.clone();
+    patched[record + 14..record + 16].copy_from_slice(&99u16.to_le_bytes());
+    assert_eq!(
+        listing_bytes(&patched).err(),
+        Some(Problem::Unsupported("version needed"))
+    );
     let dir = std::env::temp_dir().join(format!("tine-zip64-python-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -220,6 +227,30 @@ fn zip64_end_records_appear_only_for_large_entry_counts() {
     std::fs::write(&path, &bytes).unwrap();
     assert_eq!(python_zip_digests(&path).len(), 0x10000);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// D6 (REVIEW-backup-zip F7): version-needed must be what this format
+/// writes for the entry (Stored 10, Deflate 20; the ZIP64 end record 45),
+/// even when the local and central records agree.
+#[test]
+fn an_unsupported_version_needed_is_refused() {
+    let bytes = archive_of(&sample());
+    let mut patched = bytes.clone();
+    let mut at = 0;
+    while at + 4 <= patched.len() {
+        let sig = u32::from_le_bytes(patched[at..at + 4].try_into().unwrap());
+        if sig == LOCAL_SIG {
+            patched[at + 4..at + 6].copy_from_slice(&99u16.to_le_bytes());
+        } else if sig == CENTRAL_SIG {
+            patched[at + 6..at + 8].copy_from_slice(&99u16.to_le_bytes());
+        }
+        at += 1;
+    }
+    assert!(verify_bytes(&bytes).is_ok());
+    assert_eq!(
+        verify_bytes(&patched).err(),
+        Some(Problem::Unsupported("version needed"))
+    );
 }
 
 /// A ZIP64 end record where the count does not need one is refused.
@@ -622,7 +653,7 @@ fn the_schema_5_checksum_is_pinned() {
 
 /// Python: `json.dumps(m, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`.
 const PINNED_SCHEMA_5_CHECKSUM: &str =
-    "c7fa4674fdb90dd9637b8a49cc4af8cade7e6fcda083650afa32312c5576d8d1";
+    "6980346b3a1bf14a4515e10080a1042761bfd7270e6110d90f0a09102fd476e9";
 
 #[test]
 fn the_manifest_checksum_matches_python() {

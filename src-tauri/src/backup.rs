@@ -33,17 +33,22 @@ impl BackupFailure {
     }
 }
 
+/// A snapshot's result: `failure`, or the durability its zip reached
+/// (REVIEW-backup-zip D1). `Weak` is published and restorable but not
+/// settled: the platform offered no directory-sync witness.
 #[derive(Debug)]
 pub(crate) struct BackupOutcome {
     pub(crate) copied: usize,
     pub(crate) failure: Option<BackupFailure>,
+    pub(crate) durability: Durability,
 }
 
 impl BackupOutcome {
-    pub(crate) fn success(copied: usize) -> Self {
+    pub(crate) fn success(copied: usize, durability: Durability) -> Self {
         Self {
             copied,
             failure: None,
+            durability,
         }
     }
 
@@ -51,6 +56,7 @@ impl BackupOutcome {
         Self {
             copied,
             failure: Some(BackupFailure { phase, kind }),
+            durability: Durability::Weak,
         }
     }
 }
@@ -153,7 +159,8 @@ pub(crate) fn backup_graph_now(
 /// Snapshot the graph before a rewrite the user asked for, refusing the rewrite
 /// when the snapshot failed so the original files stay recoverable in Backups &
 /// recovery. The tagged snapshot counts toward the keep count like a launch
-/// one (only `pre-restore` snapshots are exempt).
+/// one (only `pre-restore` snapshots are exempt). A weak one proceeds
+/// ([`proceed_on_safety_snapshot`]).
 pub(crate) fn snapshot_before_rewrite(
     app: &tauri::AppHandle,
     slot: &GraphSlot,
@@ -164,12 +171,27 @@ pub(crate) fn snapshot_before_rewrite(
 
 fn rewrite_snapshot_result(outcome: BackupOutcome) -> Result<(), String> {
     match outcome.failure {
-        None => Ok(()),
+        None => {
+            proceed_on_safety_snapshot(&outcome);
+            Ok(())
+        }
         Some(failure) => Err(failure.wire()),
     }
 }
 
+/// A safety snapshot (pre-restore, pre-journal-*) that published but is
+/// weak lets its operation proceed, logged (D1): the guarantee is
+/// conditional on a platform directory-sync witness, and refusing where
+/// none exists would remove restore entirely there. A sync error refuses.
+fn proceed_on_safety_snapshot(outcome: &BackupOutcome) {
+    if outcome.durability == Durability::Weak {
+        crate::debug::diag("backup-safety-weak");
+    }
+}
+
 /// The live graph layout a snapshot records and a restore checks against.
+/// `assets_dir_name` names the assets area inside a legacy snapshot
+/// directory only; a zip always holds it at `assets/` (D5).
 #[derive(Clone)]
 struct BackupSource {
     root: PathBuf,
@@ -353,7 +375,7 @@ fn step(op: &'static str) -> std::io::Result<bool> {
 /// (REVIEW-backup-zip R1). `Weak`: a directory sync the platform does not
 /// offer (the shared helper's tolerated set); a real sync error is `Err`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Durability {
+pub(crate) enum Durability {
     Weak,
     Strong,
 }
@@ -378,18 +400,47 @@ fn sync_file(file: &std::fs::File, op: &'static str) -> std::io::Result<()> {
     Ok(())
 }
 
-/// `<id>.zips/`'s parent chain up to app data: `backups/`, then app data
-/// (REVIEW-backup-zip B2: the first publication and every keeper
-/// certification settle the whole chain).
-fn sync_ancestors(zips: &std::path::Path) -> std::io::Result<Durability> {
+/// The whole directory chain of a zip in `<id>.zips/`: that directory,
+/// `backups/`, then app data. Every publication and every settle runs it;
+/// nothing infers it from an earlier zip (REVIEW-backup-zip B2, D1).
+fn sync_chain(zips: &std::path::Path) -> std::io::Result<Durability> {
     let backups = zips.parent().ok_or(ErrorKind::InvalidInput)?;
     let app_data = backups.parent().ok_or(ErrorKind::InvalidInput)?;
-    let first = sync_dir(backups, "backups_dir_sync")?;
-    Ok(first.min(sync_dir(app_data, "app_data_dir_sync")?))
+    let zips = sync_dir(zips, "zips_dir_sync")?;
+    let backups = sync_dir(backups, "backups_dir_sync")?;
+    Ok(zips
+        .min(backups)
+        .min(sync_dir(app_data, "app_data_dir_sync")?))
+}
+
+/// Settle an already-published zip: its file, then [`sync_chain`]. No
+/// bytes are written.
+fn settle(
+    path: &std::path::Path,
+    zips: &std::path::Path,
+    file_op: &'static str,
+) -> std::io::Result<Durability> {
+    // Write access only because Windows flushes no read-only handle.
+    let file = std::fs::OpenOptions::new().write(true).open(path)?;
+    sync_file(&file, file_op)?;
+    sync_chain(zips)
+}
+
+/// A whole file, refusing one longer than `limit` without retaining more
+/// than `limit + 1` bytes (D3).
+fn read_bounded(path: &std::path::Path, limit: u64) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(limit + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(ErrorKind::FileTooLarge.into());
+    }
+    Ok(bytes)
 }
 
 fn read_manifest(dir: &std::path::Path) -> Option<SnapshotManifest> {
-    let bytes = std::fs::read(dir.join(SNAPSHOT_MANIFEST)).ok()?;
+    let bytes = read_bounded(&dir.join(SNAPSHOT_MANIFEST), archive::MAX_MANIFEST_BYTES).ok()?;
     let manifest: SnapshotManifest = serde_json::from_slice(&bytes).ok()?;
     let supported = manifest.schema == LEGACY_SNAPSHOT_SCHEMA
         || (manifest.schema == SNAPSHOT_SCHEMA
@@ -470,17 +521,52 @@ fn do_backup_source(
     do_backup_source_cancellable(app, store, source, suffix, &|| false)
 }
 
+/// What a capture may still hold (D3): the archive's payload limit (the
+/// manifest is not counted) and its entry count less the manifest's. Spent
+/// while reading, so a graph over the limit is refused before the excess
+/// is retained.
+struct Budget {
+    bytes: u64,
+    entries: u64,
+}
+
+impl Budget {
+    fn archive() -> Self {
+        Self {
+            bytes: archive::MAX_TOTAL_BYTES,
+            entries: archive::MAX_ENTRIES - 1,
+        }
+    }
+
+    /// One file through Store, within the per-entry limit and what is left.
+    /// Over either: `FileTooLarge`, having read at most one byte past it.
+    fn read(&mut self, store: &Store, id: &tine_store::FileId) -> Result<Vec<u8>, ErrorKind> {
+        if self.entries == 0 {
+            return Err(ErrorKind::FileTooLarge);
+        }
+        let limit = archive::MAX_ENTRY_BYTES.min(self.bytes);
+        let (bytes, _) = store
+            .read(id, Some(limit))
+            .map_err(|error| store_error_kind(&error))?;
+        self.bytes -= bytes.len() as u64;
+        self.entries -= 1;
+        Ok(bytes)
+    }
+}
+
 /// Read every included file of `area` into `out` at `prefix` + its
-/// area-relative path, through Store, each bounded by the archive's
-/// per-entry limit. Returns (read, failed, first failure).
+/// area-relative path, through Store, within `budget`. Returns how many it
+/// read, or the first failure, named by the area's phase (an unreadable or
+/// over-limit file fails the whole capture, so reading stops there).
 fn read_store_area(
     store: &Store,
     area: Area,
     prefix: &str,
     include: fn(&tine_store::FileId) -> bool,
     cancelled: &dyn Fn() -> bool,
+    budget: &mut Budget,
     out: &mut Vec<(String, Vec<u8>)>,
-) -> (usize, usize, Option<BackupFailure>) {
+) -> Result<usize, BackupFailure> {
     let phase = match area {
         Area::Journals => "journals",
         Area::Pages => "pages",
@@ -489,72 +575,33 @@ fn read_store_area(
         Area::Trash => "trash",
         Area::Graph => "graph",
     };
+    let fail = |kind| BackupFailure { phase, kind };
     if cancelled() {
-        return (
-            0,
-            1,
-            Some(BackupFailure {
-                phase,
-                kind: ErrorKind::Interrupted,
-            }),
-        );
+        return Err(fail(ErrorKind::Interrupted));
     }
-    let listing = match store.scan_area(area, None) {
-        Ok(listing) => listing,
-        Err(error) => {
-            return (
-                0,
-                1,
-                Some(BackupFailure {
-                    phase,
-                    kind: store_error_kind(&error),
-                }),
-            )
-        }
-    };
-    let mut read = 0;
-    let mut first_failure = listing
+    let listing = store
+        .scan_area(area, None)
+        .map_err(|error| fail(store_error_kind(&error)))?;
+    if let Some((_, error)) = listing
         .unreadable
         .iter()
         .find(|(_, error)| error.kind != ErrorKind::NotFound)
-        .map(|(_, error)| BackupFailure {
-            phase,
-            kind: error.kind,
-        });
-    let mut failed = listing
-        .unreadable
-        .iter()
-        .filter(|(_, error)| error.kind != ErrorKind::NotFound)
-        .count();
+    {
+        return Err(fail(error.kind));
+    }
+    let mut read = 0;
     for entry in listing.files {
         if cancelled() {
-            return (
-                read,
-                failed + 1,
-                Some(BackupFailure {
-                    phase,
-                    kind: ErrorKind::Interrupted,
-                }),
-            );
+            return Err(fail(ErrorKind::Interrupted));
         }
         if !include(&entry.id) {
             continue;
         }
-        match store.read(&entry.id, Some(archive::MAX_ENTRY_BYTES)) {
-            Ok((bytes, _)) => {
-                out.push((format!("{prefix}{}", entry.rel), bytes));
-                read += 1;
-            }
-            Err(error) => {
-                failed += 1;
-                first_failure.get_or_insert(BackupFailure {
-                    phase,
-                    kind: store_error_kind(&error),
-                });
-            }
-        }
+        let bytes = budget.read(store, &entry.id).map_err(fail)?;
+        out.push((format!("{prefix}{}", entry.rel), bytes));
+        read += 1;
     }
-    (read, failed, first_failure)
+    Ok(read)
 }
 
 fn store_error_kind(error: &tine_store::StoreError) -> ErrorKind {
@@ -639,64 +686,36 @@ struct Capture {
 }
 
 /// Read the backed-up file set (what is backed up is unchanged: graph text
-/// at its graph-relative path, asset sidecars under the assets directory,
-/// `logseq/config.edn`). Any unreadable file fails the capture.
+/// at its graph-relative path, asset sidecars under `assets/` whatever the
+/// assets target is called (D5), `logseq/config.edn`) within `budget`.
+/// Any unreadable or over-limit file fails the capture.
 fn capture(
     store: &Store,
     source: BackupSource,
     cancelled: &dyn Fn() -> bool,
+    mut budget: Budget,
 ) -> Result<Capture, BackupOutcome> {
     let live_text_n = count_store_text(store, Area::Graph)
         .map_err(|kind| BackupOutcome::failed(0, "inventory", kind))?;
     let mut files = Vec::new();
-    let (ct, ft, et) =
-        read_store_area(store, Area::Graph, "", is_graph_text, cancelled, &mut files);
-    let (_, fa, ea) = read_store_area(
-        store,
-        Area::Assets,
-        &format!("{}/", source.assets_dir_name),
-        is_asset_sidecar,
-        cancelled,
-        &mut files,
-    );
-    let mut failed = ft + fa;
-    let mut first_failure = et.or(ea);
-    if !cancelled() {
-        match store.scan_area(Area::Meta, None) {
-            Ok(listing) => {
-                if let Some((_, error)) = listing
-                    .unreadable
-                    .iter()
-                    .find(|(_, error)| error.kind != ErrorKind::NotFound)
-                {
-                    failed += 1;
-                    first_failure.get_or_insert(BackupFailure {
-                        phase: "config",
-                        kind: error.kind,
-                    });
-                }
-                if let Some(config) = listing.files.iter().find(|entry| entry.rel == "config.edn") {
-                    match store.read(&config.id, Some(archive::MAX_ENTRY_BYTES)) {
-                        Ok((bytes, _)) => files.push(("logseq/config.edn".into(), bytes)),
-                        Err(error) => {
-                            failed += 1;
-                            first_failure.get_or_insert(BackupFailure {
-                                phase: "config",
-                                kind: store_error_kind(&error),
-                            });
-                        }
-                    }
-                }
-            }
-            Err(error) => {
-                failed += 1;
-                first_failure.get_or_insert(BackupFailure {
-                    phase: "config",
-                    kind: store_error_kind(&error),
-                });
-            }
-        }
-    }
+    let mut read = |area, prefix, include| {
+        read_store_area(
+            store,
+            area,
+            prefix,
+            include,
+            cancelled,
+            &mut budget,
+            &mut files,
+        )
+    };
+    let read = read(Area::Graph, "", is_graph_text).and_then(|text_n| {
+        read(Area::Assets, "assets/", is_asset_sidecar)?;
+        read(Area::Meta, "logseq/", |id| {
+            id.as_str() == "logseq/config.edn"
+        })?;
+        Ok(text_n)
+    });
     let n = files.len();
     if cancelled() {
         return Err(BackupOutcome::failed(
@@ -705,21 +724,22 @@ fn capture(
             ErrorKind::Interrupted,
         ));
     }
-    if failed != 0 {
-        return Err(BackupOutcome {
-            copied: n,
-            failure: first_failure.or(Some(BackupFailure {
-                phase: "copy",
-                kind: ErrorKind::Other,
-            })),
-        });
-    }
-    if ct != live_text_n {
-        return Err(BackupOutcome::failed(
-            n,
-            "inventory",
-            ErrorKind::InvalidData,
-        ));
+    match read {
+        Err(failure) => {
+            return Err(BackupOutcome {
+                copied: n,
+                failure: Some(failure),
+                durability: Durability::Weak,
+            })
+        }
+        Ok(text_n) if text_n != live_text_n => {
+            return Err(BackupOutcome::failed(
+                n,
+                "inventory",
+                ErrorKind::InvalidData,
+            ))
+        }
+        Ok(_) => {}
     }
     files.sort_by(|a, b| a.0.cmp(&b.0));
     let manifest = archive::ZipManifest {
@@ -728,7 +748,6 @@ fn capture(
         root: source.root.display().to_string(),
         journals_dir: source.journals_dir,
         pages_dir: source.pages_dir,
-        assets_dir: source.assets_dir_name,
         graph_text_policy: SnapshotGraphTextPolicy {
             version: GRAPH_TEXT_SCOPE_VERSION,
             hidden: source.hidden,
@@ -749,8 +768,8 @@ fn capture(
 
 /// Take one snapshot of the graph into `<base>.zips/` (docs/storage-contract.md,
 /// Graph backups): capture outside the lock, then, holding the namespace
-/// lock, skip an unchanged launch, publish one zip and prune. An empty
-/// graph writes nothing (`copied == 0`). `suffix` tags special snapshots
+/// lock, settle an unchanged launch's baseline or publish one zip, then
+/// apply the keep count. An empty graph writes nothing (`copied == 0`). `suffix` tags special snapshots
 /// (`pre-restore`, `pre-journal-rename`); those are always written.
 fn write_snapshot(
     base: &std::path::Path,
@@ -761,13 +780,13 @@ fn write_snapshot(
     keep: usize,
     lock_wait: std::time::Duration,
 ) -> BackupOutcome {
-    let capture = match capture(store, source, cancelled) {
+    let capture = match capture(store, source, cancelled, Budget::archive()) {
         Ok(capture) => capture,
         Err(outcome) => return outcome,
     };
     let n = capture.files.len();
     if n == 0 {
-        return BackupOutcome::success(0);
+        return BackupOutcome::success(0, Durability::Strong);
     }
     let zips = zip_base(base);
     if let Err(error) = std::fs::create_dir_all(&zips) {
@@ -856,7 +875,8 @@ fn scan(base: &std::path::Path, zips: &std::path::Path) -> std::io::Result<Scan>
 
 /// Under the lock no cooperating writer owns a partial: every zip partial
 /// is abandoned (REVIEW-backup-zip R3). Legacy partials belong to older
-/// builds, which clean their own.
+/// builds, which clean their own. Callers scan first, so a partial's name
+/// stays reserved for this hold's allocation (D4).
 fn remove_partials(zips: &std::path::Path) {
     let Ok(entries) = std::fs::read_dir(zips) else {
         return;
@@ -874,16 +894,15 @@ fn remove_partials(zips: &std::path::Path) {
 /// Read a whole archive file, bounded by the archive limit (R7: limit + 1,
 /// then require the end).
 fn read_archive(path: &std::path::Path) -> Result<Vec<u8>, archive::Problem> {
-    let io = |error: std::io::Error| archive::Problem::Io(error.kind());
-    let file = std::fs::File::open(path).map_err(io)?;
-    let mut bytes = Vec::new();
-    file.take(archive::MAX_ARCHIVE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(io)?;
-    if bytes.len() as u64 > archive::MAX_ARCHIVE_BYTES {
-        return Err(archive::Problem::TooLarge("archive"));
-    }
-    Ok(bytes)
+    read_bounded(path, archive::MAX_ARCHIVE_BYTES).map_err(|error| match error.kind() {
+        ErrorKind::FileTooLarge => archive::Problem::TooLarge("archive"),
+        kind => archive::Problem::Io(kind),
+    })
+}
+
+/// A full verification of the zip at `path`.
+fn verify_zip(path: &std::path::Path) -> Result<archive::Verified, archive::Problem> {
+    read_archive(path).and_then(|bytes| archive::verify(&mut &bytes[..]))
 }
 
 /// The listing-time status of one zip: its manifest, read from the central
@@ -905,72 +924,80 @@ fn publish_locked(
     keep: usize,
 ) -> BackupOutcome {
     let n = capture.files.len();
-    remove_partials(zips);
+    // D4: every recognized name, partials included, is reserved before a
+    // partial is cleaned.
     let scan = match scan(base, zips) {
         Ok(scan) => scan,
         Err(error) => return BackupOutcome::failed(n, "scan", error.kind()),
     };
+    remove_partials(zips);
     // Item 4 + R5: a launch whose capture equals the newest state record of
     // any suffix writes nothing, but only once that record fully verifies
-    // (B3); a damaged, missing or legacy baseline gets a fresh zip.
-    if suffix.is_empty() {
-        if let Some(newest) = scan.records.last() {
-            if newest.namespace == naming::Namespace::Zip {
-                let verified =
-                    read_archive(&newest.path).and_then(|bytes| archive::verify(&mut &bytes[..]));
-                if verified.is_ok_and(|verified| verified.manifest == capture.manifest) {
-                    crate::debug::diag_private("backup-unchanged", newest.name.render());
-                    return BackupOutcome::success(n);
-                }
+    // (B3); a damaged, missing or legacy baseline gets a fresh zip. The
+    // baseline is settled again, as a publication would be (D2: no file
+    // written, syncs of clean files only).
+    let baseline = scan
+        .records
+        .last()
+        .filter(|newest| suffix.is_empty() && newest.namespace == naming::Namespace::Zip)
+        .filter(|newest| {
+            verify_zip(&newest.path).is_ok_and(|verified| verified.manifest == capture.manifest)
+        });
+    let (path, durability) = match baseline {
+        Some(newest) => {
+            crate::debug::diag_private("backup-unchanged", newest.name.render());
+            match settle(&newest.path, zips, "baseline_sync") {
+                Ok(durability) => (newest.path.clone(), durability),
+                Err(error) => return BackupOutcome::failed(n, "publish-sync", error.kind()),
             }
         }
-    }
-    let first = !scan
-        .records
-        .iter()
-        .any(|record| record.namespace == naming::Namespace::Zip);
-    let Some(name) = naming::allocate(&tine_core::date::utc_backup_stamp(), suffix, &scan.names)
-    else {
-        return BackupOutcome::failed(n, "naming", ErrorKind::Other);
-    };
-    let manifest = archive::encode_manifest(&capture.manifest);
-    let bytes = match archive::write_archive(&capture.files, &manifest, &name.stamp) {
-        Ok(bytes) => bytes,
-        Err(problem) => {
-            let kind = match problem {
-                archive::Problem::TooLarge(_) => ErrorKind::FileTooLarge,
-                _ => ErrorKind::InvalidInput,
+        None => {
+            let Some(name) =
+                naming::allocate(&tine_core::date::utc_backup_stamp(), suffix, &scan.names)
+            else {
+                return BackupOutcome::failed(n, "naming", ErrorKind::Other);
             };
-            return BackupOutcome::failed(n, "archive", kind);
+            let manifest = archive::encode_manifest(&capture.manifest);
+            drop(scan);
+            let bytes = match archive::write_archive(&capture.files, &manifest, &name.stamp) {
+                Ok(bytes) => bytes,
+                Err(problem) => {
+                    let kind = match problem {
+                        archive::Problem::TooLarge(_) => ErrorKind::FileTooLarge,
+                        _ => ErrorKind::InvalidInput,
+                    };
+                    return BackupOutcome::failed(n, "archive", kind);
+                }
+            };
+            drop(capture);
+            match publish_zip(zips, &name, &bytes) {
+                Ok(published) => published,
+                Err((phase, error)) => return BackupOutcome::failed(n, phase, error.kind()),
+            }
         }
     };
-    match publish_zip(zips, &name, &bytes, first) {
-        Err((phase, error)) => BackupOutcome::failed(n, phase, error.kind()),
-        Ok((_, Durability::Weak)) => {
-            // Published, visible and restorable, but without a platform
-            // witness: nothing older may be retired on its strength.
-            crate::debug::diag_private("backup-weak-durability", name.render());
-            BackupOutcome::success(n)
+    match durability {
+        // Published, visible and restorable, but without a platform
+        // witness: nothing older may be retired on its strength.
+        Durability::Weak => {
+            crate::debug::diag_private("backup-weak-durability", path.display().to_string())
         }
-        Ok((path, Durability::Strong)) => {
-            prune_locked(base, zips, keep, Some(&path));
-            BackupOutcome::success(n)
-        }
+        Durability::Strong => maintain_locked(base, zips, keep, Some(&path)),
     }
+    BackupOutcome::success(n, durability)
 }
 
-/// Durable before visible (item 3): a `create_new` partial, one file sync,
-/// a no-replace rename, then the directory sync, and on the namespace's
-/// first zip the ancestors too. Runs under the namespace lock, so the
-/// no-replace fallback's check-then-rename has no cooperating racer. A
-/// failure before the rename removes the partial (a crash leaves it for the
-/// next lock holder); one after it leaves a visible zip and reports
+/// Visible after the rename, settled after the supported sync recipe
+/// (item 3, D1): a `create_new` partial, one file sync, a no-replace
+/// rename, then the whole directory chain. Runs under the namespace lock,
+/// so the no-replace fallback's check-then-rename has no cooperating racer.
+/// A failure before the rename removes the partial (a crash leaves it for
+/// the next lock holder); one after it leaves a visible zip and reports
 /// `publish-sync`.
 fn publish_zip(
     zips: &std::path::Path,
     name: &naming::SnapshotName,
     bytes: &[u8],
-    first: bool,
 ) -> Result<(PathBuf, Durability), (&'static str, std::io::Error)> {
     use std::io::Write;
     let partial = zips.join(format!(
@@ -999,28 +1026,35 @@ fn publish_zip(
         return Err(("publish", error));
     }
     record_backup_op("zip_rename");
-    let durability = sync_dir(zips, "zips_dir_sync")
-        .and_then(|durability| {
-            Ok(if first {
-                durability.min(sync_ancestors(zips)?)
-            } else {
-                durability
-            })
-        })
-        .map_err(|error| ("publish-sync", error))?;
+    let durability = sync_chain(zips).map_err(|error| ("publish-sync", error))?;
     Ok((path, durability))
 }
 
-/// The keep-count prune, under the namespace lock (item 5, REVIEW B1, R5).
-/// Counted: legacy snapshots as before (this build's, not `-pre-restore`,
-/// not another Tine's) and healthy zips except `-pre-restore`; oldest beyond
-/// `keep` go. Damaged zips count toward nothing and go only once older than
-/// the oldest retained healthy zip; unsupported and unknown entries stay.
-/// Nothing is deleted unless the newest healthy zip (the keeper) fully
-/// verifies and its file and whole directory chain sync strongly first.
-/// `fresh`: a zip this lock hold just published with a strong result, whose
-/// file and `<id>.zips/` entry need no second sync.
-fn prune_locked(
+/// One snapshot the keep count may retire or keep (D2).
+struct Candidate {
+    record: Record,
+    /// Holds a retention slot once it verifies (not `-pre-restore`).
+    counted: bool,
+    /// Its listing already shows damage.
+    damaged: bool,
+}
+
+/// The keep count, the one retention function every locked path runs
+/// (D2: changed and unchanged launches, safety snapshots, Settings; item
+/// 5, REVIEW B1, R5).
+///
+/// Counted: this build's legacy snapshots and zips except `-pre-restore`
+/// (another Tine's, unsupported and unknown entries are never touched;
+/// `-pre-restore` is never deleted, damaged or not). Listing is cheap and
+/// decides whether anything could go: more counted snapshots than `keep`,
+/// or a damaged one. Only then are snapshots fully verified, newest first,
+/// until `keep` healthy counted ones and the keeper (the newest healthy
+/// zip) are found: those hold the slots; every older counted snapshot goes,
+/// and so does a damaged one older than the oldest retained zip. Nothing is
+/// deleted until the keeper's file and directory chain are settled
+/// (`fresh`: this hold just settled it strongly). A failed deletion is
+/// logged and retried by the next locked path.
+fn maintain_locked(
     base: &std::path::Path,
     zips: &std::path::Path,
     keep: usize,
@@ -1036,50 +1070,90 @@ fn prune_locked(
     for path in &scan.unknown {
         crate::debug::diag_private("backup-unknown-entry", path.display().to_string());
     }
-    let mut counted = Vec::new();
-    let mut healthy = Vec::new();
-    let mut damaged = Vec::new();
-    for record in scan.records {
-        match record.namespace {
-            naming::Namespace::Legacy => {
-                if !record.name.is_pre_restore() && !is_foreign_snapshot(&record.path) {
-                    counted.push(record);
-                }
-            }
+    let mut candidates = Vec::new();
+    for record in scan.records.into_iter().rev() {
+        let counted = !record.name.is_pre_restore();
+        let damaged = match record.namespace {
+            naming::Namespace::Legacy if !counted || is_foreign_snapshot(&record.path) => continue,
+            naming::Namespace::Legacy => false,
             naming::Namespace::Zip => match zip_listing(&record.path) {
                 // Another Tine's zip: never counted, never the keeper, never deleted.
-                Ok(manifest) if manifest.writer != SNAPSHOT_WRITER => {}
-                Ok(_) => {
-                    if !record.name.is_pre_restore() {
-                        counted.push(record.clone());
-                    }
-                    healthy.push(record);
+                Ok(manifest) if manifest.writer != SNAPSHOT_WRITER => continue,
+                Ok(_) => false,
+                Err(archive::Problem::Damaged(_) | archive::Problem::TooLarge(_)) if counted => {
+                    true
                 }
-                Err(archive::Problem::Damaged(_) | archive::Problem::TooLarge(_)) => {
-                    damaged.push(record)
+                Err(archive::Problem::Damaged(_) | archive::Problem::TooLarge(_)) => continue,
+                Err(problem) => {
+                    crate::debug::diag_private(
+                        "backup-unknown-entry",
+                        format!("{}: {problem:?}", record.path.display()),
+                    );
+                    continue;
                 }
-                Err(problem) => crate::debug::diag_private(
-                    "backup-unknown-entry",
-                    format!("{}: {problem:?}", record.path.display()),
-                ),
             },
+        };
+        candidates.push(Candidate {
+            record,
+            counted,
+            damaged,
+        });
+    }
+    let listed_counted = candidates
+        .iter()
+        .filter(|candidate| candidate.counted && !candidate.damaged)
+        .count();
+    if listed_counted <= keep && !candidates.iter().any(|candidate| candidate.damaged) {
+        return;
+    }
+    let mut retained = 0;
+    let mut oldest_retained_zip: Option<&Record> = None;
+    let mut keeper: Option<&Record> = None;
+    let mut doomed = Vec::new();
+    let mut damaged = Vec::new();
+    for candidate in &candidates {
+        let record = &candidate.record;
+        if candidate.damaged {
+            damaged.push(record);
+            continue;
+        }
+        if retained >= keep && keeper.is_some() {
+            if candidate.counted {
+                doomed.push(record);
+            }
+            continue;
+        }
+        let zip = record.namespace == naming::Namespace::Zip;
+        let healthy = match record.namespace {
+            naming::Namespace::Zip => verify_zip(&record.path).is_ok(),
+            naming::Namespace::Legacy => read_manifest(&record.path)
+                .is_some_and(|manifest| verify_snapshot(&record.path, &manifest)),
+        };
+        if healthy && zip && keeper.is_none() {
+            keeper = Some(record);
+        }
+        if !candidate.counted {
+            continue;
+        }
+        if !healthy {
+            damaged.push(record);
+        } else if retained < keep {
+            retained += 1;
+            if zip {
+                oldest_retained_zip = Some(record);
+            }
+        } else {
+            doomed.push(record);
         }
     }
-    let excess = counted.len().saturating_sub(keep);
-    let retained = counted.split_off(excess);
-    let mut doomed = counted;
-    if let Some(oldest) = retained
-        .iter()
-        .find(|record| record.namespace == naming::Namespace::Zip)
-    {
+    if let Some(oldest) = oldest_retained_zip {
         doomed.extend(
             damaged
                 .into_iter()
                 .filter(|record| record.order(oldest).is_lt()),
         );
     }
-    let keeper = healthy.last();
-    doomed.retain(|record| Some(record) != keeper);
+    doomed.retain(|record| Some(*record) != keeper);
     if doomed.is_empty() {
         return;
     }
@@ -1087,7 +1161,12 @@ fn prune_locked(
         crate::debug::diag_private("backup-prune-no-keeper", zips.display().to_string());
         return;
     };
-    match certify_keeper(keeper, zips, fresh == Some(keeper.path.as_path())) {
+    let certified = if fresh == Some(keeper.path.as_path()) {
+        Ok(Durability::Strong)
+    } else {
+        settle(&keeper.path, zips, "keeper_sync")
+    };
+    match certified {
         Ok(Durability::Strong) => {}
         Ok(Durability::Weak) => {
             crate::debug::diag_private("backup-prune-weak-keeper", keeper.name.render());
@@ -1114,29 +1193,6 @@ fn prune_locked(
     }
 }
 
-/// Establish the keeper before any deletion: full verification, then its
-/// file, `<id>.zips/`, `backups/` and app data synced (REVIEW B1/B2). A
-/// writer that died after its rename may have left it unsynced.
-fn certify_keeper(
-    keeper: &Record,
-    zips: &std::path::Path,
-    fresh: bool,
-) -> std::io::Result<Durability> {
-    step("keeper_verify")?;
-    read_archive(&keeper.path)
-        .and_then(|bytes| archive::verify(&mut &bytes[..]).map(|_| ()))
-        .map_err(|problem| {
-            std::io::Error::new(ErrorKind::InvalidData, format!("keeper: {problem:?}"))
-        })?;
-    let mut durability = Durability::Strong;
-    if !fresh {
-        let file = std::fs::OpenOptions::new().write(true).open(&keeper.path)?;
-        sync_file(&file, "keeper_sync")?;
-        durability = sync_dir(zips, "zips_dir_sync")?;
-    }
-    Ok(durability.min(sync_ancestors(zips)?))
-}
-
 /// The Settings keep-count change: prune under the lock, with the same
 /// keeper rule. A busy namespace is left for the next launch's prune.
 fn prune_now(base: &std::path::Path, keep: usize, lock_wait: std::time::Duration) {
@@ -1148,7 +1204,7 @@ fn prune_now(base: &std::path::Path, keep: usize, lock_wait: std::time::Duration
         &zips.join(naming::LOCK_FILE),
         std::time::Instant::now() + lock_wait,
     ) {
-        Ok(Some(_lock)) => prune_locked(base, &zips, keep, None),
+        Ok(Some(_lock)) => maintain_locked(base, &zips, keep, None),
         Ok(None) => crate::debug::diag_private("backup-busy", "prune"),
         Err(error) => crate::debug::diag_private("backup-prune-skipped", error.to_string()),
     }
@@ -1277,7 +1333,7 @@ fn list_backups_from_base(base: &std::path::Path, root: &std::path::Path) -> Vec
 
 /// A snapshot the keep-count must leave alone: another Tine wrote it.
 fn is_foreign_snapshot(dir: &std::path::Path) -> bool {
-    let Some(manifest) = std::fs::read(dir.join(SNAPSHOT_MANIFEST))
+    let Some(manifest) = read_bounded(&dir.join(SNAPSHOT_MANIFEST), archive::MAX_MANIFEST_BYTES)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
     else {

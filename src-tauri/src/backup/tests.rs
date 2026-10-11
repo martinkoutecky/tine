@@ -305,16 +305,33 @@ fn publication_is_durable_before_visible_and_an_unchanged_launch_writes_nothing(
         ["zip_sync", "zip_rename", "zips_dir_sync", "backups_dir_sync", "app_data_dir_sync"],
         "I-1/I-2: a zip is synced, renamed no-replace, then its directory chain synced; exemplar backup.rs publish_zip"
     );
+    let baseline = std::fs::read(g.newest_zip()).unwrap();
     assert!(g.snap("", BACKUP_KEEP_DEFAULT).failure.is_none());
     assert_eq!(
         ops(),
-        Vec::<&str>::new(),
-        "an unchanged launch writes nothing"
+        [
+            "baseline_sync",
+            "zips_dir_sync",
+            "backups_dir_sync",
+            "app_data_dir_sync"
+        ],
+        "D2: an unchanged launch writes no file; it settles its baseline again"
     );
     assert_eq!(g.zip_names().len(), 1);
+    assert_eq!(std::fs::read(g.newest_zip()).unwrap(), baseline);
     write(&g.graph.join("pages/A.md"), "- a, edited\n");
     assert!(g.snap("", BACKUP_KEEP_DEFAULT).failure.is_none());
-    assert_eq!(ops(), ["zip_sync", "zip_rename", "zips_dir_sync"]);
+    assert_eq!(
+        ops(),
+        [
+            "zip_sync",
+            "zip_rename",
+            "zips_dir_sync",
+            "backups_dir_sync",
+            "app_data_dir_sync"
+        ],
+        "D1: every publication syncs the whole chain"
+    );
     assert_eq!(g.zip_names().len(), 2);
     // A suffixed snapshot is always written, unchanged or not.
     assert!(g
@@ -482,7 +499,11 @@ fn every_publication_boundary_keeps_the_fallback_until_a_keeper_settles() {
                     let phase = if renamed { "publish-sync" } else { "publish" };
                     assert_eq!(outcome.unwrap().failure.unwrap().phase, phase, "{case}");
                 }
-                _ => assert!(outcome.unwrap().failure.is_none(), "{case}"),
+                _ => {
+                    let outcome = outcome.unwrap();
+                    assert!(outcome.failure.is_none(), "{case}");
+                    assert_eq!(outcome.durability, Durability::Weak, "{case}");
+                }
             }
             assert!(fallback.is_dir(), "{case}: the fallback survives");
             ops();
@@ -638,8 +659,13 @@ fn two_processes_exclude_each_other_and_a_dead_writer_is_recovered() {
             assert!(g.snap("", 1).failure.is_none(), "{case}");
             assert_eq!(
                 ops(),
-                Vec::<&str>::new(),
-                "{case}: the identical capture is unchanged"
+                [
+                    "baseline_sync",
+                    "zips_dir_sync",
+                    "backups_dir_sync",
+                    "app_data_dir_sync"
+                ],
+                "{case}: the identical capture is unchanged; its baseline is settled again"
             );
         }
         let names = g.zip_names();
@@ -680,8 +706,9 @@ fn publication_failures_name_their_phase_and_delete_nothing() {
 }
 
 /// R1 + keeper rule: a weak directory witness publishes but prunes
-/// nothing; neither does a keeper that fails full verification. The next
-/// strong publication, or a healthy keeper, prunes.
+/// nothing. The keeper is the newest zip that fully verifies (D2): a
+/// payload-damaged newest zip is never it, and holds no slot; the newest
+/// healthy zip is settled before anything goes.
 #[test]
 fn deletion_needs_a_verified_strongly_synced_keeper() {
     let g = Graph::new("backup-zip-keeper");
@@ -691,28 +718,42 @@ fn deletion_needs_a_verified_strongly_synced_keeper() {
     }
     write(&g.graph.join("pages/A.md"), "- 3\n");
     hook("zips_dir_sync", Hook::Weak);
-    assert!(g.snap("", 1).failure.is_none());
+    let weak = g.snap("", 1);
+    assert!(weak.failure.is_none());
+    assert_eq!(weak.durability, Durability::Weak, "D1: callers see it");
     assert_eq!(g.zip_names().len(), 3, "weak: nothing retired");
 
-    // A keeper whose payload is damaged (listing ok) retires nothing.
-    let keeper = g.newest_zip();
-    let mut bytes = std::fs::read(&keeper).unwrap();
+    // The newest zip's payload is damaged (listing ok).
+    let damaged = g.newest_zip();
+    let mut bytes = std::fs::read(&damaged).unwrap();
     let at = bytes.windows(10).position(|w| w == b"pages/A.md").unwrap() + 10 + 2;
     bytes[at] ^= 0x01;
-    std::fs::write(&keeper, &bytes).unwrap();
+    std::fs::write(&damaged, &bytes).unwrap();
+    assert!(zip_listing(&damaged).is_ok());
+    ops();
     prune_now(&g.base, 1, std::time::Duration::from_secs(30));
     assert_eq!(
-        g.zip_names().len(),
-        3,
-        "an unverified keeper retires nothing"
+        ops(),
+        [
+            "keeper_sync",
+            "zips_dir_sync",
+            "backups_dir_sync",
+            "app_data_dir_sync",
+            "prune_delete"
+        ],
+        "the newest healthy zip is settled as keeper before the excess goes"
     );
-    // Its weak re-sync retires nothing either.
-    std::fs::write(&keeper, &bytes).unwrap();
+    assert_eq!(g.zip_names().len(), 2, "{:?}", g.zip_names());
+    assert!(
+        damaged.exists(),
+        "newer than the oldest retained healthy zip"
+    );
+    // A weak publication retires nothing.
     write(&g.graph.join("pages/A.md"), "- 4\n");
     hook("app_data_dir_sync", Hook::Weak);
     ops();
     assert!(g.snap("", 1).failure.is_none());
-    assert_eq!(g.zip_names().len(), 4);
+    assert_eq!(g.zip_names().len(), 3);
     assert_eq!(
         ops(),
         [
@@ -738,6 +779,28 @@ fn deletion_needs_a_verified_strongly_synced_keeper() {
         ]
     );
     assert_eq!(g.zip_names().len(), 1);
+    g.close();
+}
+
+/// D2: an unverified zip is never the keeper, and without a verified zip
+/// nothing is deleted, not even legacy snapshots beyond the keep count.
+#[test]
+fn without_a_verified_zip_nothing_is_deleted() {
+    let g = Graph::new("backup-zip-no-keeper");
+    let ours = format!(r#""writer":"{SNAPSHOT_WRITER}","#);
+    legacy_dir(&g.base, "2026-09-01_00-00-00", SNAPSHOT_SCHEMA, &ours);
+    legacy_dir(&g.base, "2026-09-02_00-00-00", SNAPSHOT_SCHEMA, &ours);
+    write(
+        &g.graph.join("pages/A.md"),
+        &"- a stored payload\n".repeat(200),
+    );
+    assert!(g.snap("", BACKUP_KEEP_DEFAULT).failure.is_none());
+    damage_payload(&g.newest_zip());
+    let before = g.all_names();
+    ops();
+    prune_now(&g.base, 1, std::time::Duration::from_secs(30));
+    assert_eq!(ops(), Vec::<&str>::new());
+    assert_eq!(g.all_names(), before);
     g.close();
 }
 
@@ -817,6 +880,281 @@ fn keep_n_prunes_both_namespaces_with_the_exemptions() {
     ];
     expected.sort();
     assert_eq!(g.all_names(), expected);
+    g.close();
+}
+
+/// Flip one payload byte of `pages/A.md` inside `zip` (its listing still
+/// reads ok). `A.md` must hold a payload of a few hundred bytes.
+fn damage_payload(zip: &std::path::Path) {
+    let mut bytes = std::fs::read(zip).unwrap();
+    let at = bytes.windows(10).position(|w| w == b"pages/A.md").unwrap() + 10 + 4;
+    bytes[at] ^= 0x01;
+    std::fs::write(zip, &bytes).unwrap();
+    assert!(
+        zip_listing(zip).is_ok(),
+        "the damage is in the payload only"
+    );
+}
+
+/// D1 (REVIEW-backup-zip F1, plant 2): no publication infers its ancestors
+/// settled from an earlier zip's presence. The first zip's `backups/` sync
+/// fails; the next publication still syncs file, `<id>.zips/`, `backups/`
+/// and app data before it counts as settled.
+#[test]
+fn every_publication_settles_the_whole_chain() {
+    let g = Graph::new("backup-zip-chain-every-time");
+    hook("backups_dir_sync", Hook::Fail(ErrorKind::Other));
+    assert_eq!(
+        g.snap("", BACKUP_KEEP_DEFAULT).failure.unwrap().phase,
+        "publish-sync"
+    );
+    write(&g.graph.join("pages/A.md"), "- edited\n");
+    ops();
+    let outcome = g.snap("pre-journal-rename", BACKUP_KEEP_DEFAULT);
+    assert!(outcome.failure.is_none());
+    assert_eq!(outcome.durability, Durability::Strong);
+    assert_eq!(
+        ops(),
+        [
+            "zip_sync",
+            "zip_rename",
+            "zips_dir_sync",
+            "backups_dir_sync",
+            "app_data_dir_sync"
+        ],
+        "I-1/I-2: every publication syncs its whole directory chain; exemplar backup.rs publish_zip"
+    );
+    g.close();
+}
+
+/// D2 (F2): a retention slot needs full verification. A middle zip whose
+/// payload is damaged (its listing reads ok) counts toward nothing, so
+/// keep=2 keeps both healthy zips; the damaged one is not older than the
+/// oldest retained healthy zip, so it stays too.
+#[test]
+fn a_payload_damaged_zip_holds_no_retention_slot() {
+    let g = Graph::new("backup-zip-damaged-middle");
+    let mut zips = Vec::new();
+    for text in [
+        "- a\n".to_owned(),
+        "- b stored payload\n".repeat(200),
+        "- c\n".into(),
+    ] {
+        write(&g.graph.join("pages/A.md"), &text);
+        assert!(g.snap("", BACKUP_KEEP_DEFAULT).failure.is_none());
+        zips.push(g.newest_zip());
+    }
+    damage_payload(&zips[1]);
+    prune_now(&g.base, 2, std::time::Duration::from_secs(30));
+    assert!(zips[0].exists(), "A, healthy, holds the second slot");
+    assert!(zips[2].exists(), "C, healthy, holds the first slot");
+    assert!(zips[1].exists(), "B is newer than the oldest retained zip");
+    g.close();
+}
+
+/// D2 (F2): the pre-restore exemption covers a damaged archive too.
+#[test]
+fn a_damaged_pre_restore_zip_is_never_pruned() {
+    let g = Graph::new("backup-zip-damaged-pre-restore");
+    assert!(g.snap("pre-restore", BACKUP_KEEP_DEFAULT).failure.is_none());
+    let pre_restore = g.newest_zip();
+    std::fs::write(&pre_restore, b"torn").unwrap();
+    for text in ["- 2\n", "- 3\n"] {
+        write(&g.graph.join("pages/A.md"), text);
+        assert!(g.snap("", BACKUP_KEEP_DEFAULT).failure.is_none());
+    }
+    prune_now(&g.base, 1, std::time::Duration::from_secs(30));
+    assert!(pre_restore.exists(), "{:?}", g.zip_names());
+    assert_eq!(g.zip_names().len(), 2, "{:?}", g.zip_names());
+    g.close();
+}
+
+/// D2 (F4): every locked path applies the keep count. A Settings prune
+/// that found the namespace busy is applied by the next launch, unchanged
+/// graph or not.
+#[test]
+fn an_unchanged_launch_applies_a_keep_count_a_busy_prune_left() {
+    let g = Graph::new("backup-zip-busy-settings");
+    for text in ["- 1\n", "- 2\n", "- 3\n"] {
+        write(&g.graph.join("pages/A.md"), text);
+        assert!(g.snap("", BACKUP_KEEP_DEFAULT).failure.is_none());
+    }
+    let held = crate::file_lock::lock_exclusive_until(
+        &g.zips().join(naming::LOCK_FILE),
+        std::time::Instant::now(),
+    )
+    .unwrap()
+    .unwrap();
+    prune_now(&g.base, 1, std::time::Duration::ZERO);
+    assert_eq!(g.zip_names().len(), 3, "busy: nothing pruned");
+    drop(held);
+    assert!(g.snap("", 1).failure.is_none());
+    assert_eq!(g.zip_names().len(), 1, "{:?}", g.zip_names());
+    g.close();
+}
+
+/// D2 (F4): a deletion that failed is retried by the next unchanged launch.
+#[test]
+fn a_failed_prune_delete_is_retried_by_the_next_unchanged_launch() {
+    let g = Graph::new("backup-zip-retry-delete");
+    for text in ["- 1\n", "- 2\n"] {
+        write(&g.graph.join("pages/A.md"), text);
+        assert!(g.snap("", BACKUP_KEEP_DEFAULT).failure.is_none());
+    }
+    write(&g.graph.join("pages/A.md"), "- 3\n");
+    hook("prune_delete", Hook::Fail(ErrorKind::PermissionDenied));
+    assert!(g.snap("", 1).failure.is_none());
+    assert_eq!(g.zip_names().len(), 2, "one deletion failed");
+    assert!(g.snap("", 1).failure.is_none());
+    assert_eq!(g.zip_names().len(), 1, "{:?}", g.zip_names());
+    g.close();
+}
+
+/// D4 (F5): a partial's name is reserved before it is cleaned. A partial
+/// left at a later stamp (the clock then moved backward) still sorts every
+/// new snapshot after it.
+#[test]
+fn an_abandoned_partial_still_reserves_its_name() {
+    let g = Graph::new("backup-zip-partial-reserves");
+    std::fs::create_dir_all(g.zips()).unwrap();
+    std::fs::write(
+        g.zips()
+            .join(".partial-2099-01-01_00-00-00-pre-restore-77.zip"),
+        b"abandoned",
+    )
+    .unwrap();
+    assert!(g
+        .snap("pre-journal-rename", BACKUP_KEEP_DEFAULT)
+        .failure
+        .is_none());
+    assert_eq!(
+        g.zip_names(),
+        ["2099-01-01_00-00-00-pre-journal-rename-78.zip"]
+    );
+    g.close();
+}
+
+/// D3 (REVIEW-backup-zip F3): capture spends the archive's limits while
+/// reading. Past the aggregate payload limit or the entry count the
+/// capture is refused in its phase, holding at most what fit.
+#[test]
+fn capture_refuses_at_the_aggregate_limits_while_reading() {
+    let g = Graph::new("backup-zip-capture-budget");
+    write(&g.graph.join("pages/B.md"), &"- b\n".repeat(100));
+    write(&g.graph.join("assets/pic.edn"), "{:a 1}\n");
+    for (budget, phase) in [
+        (
+            Budget {
+                bytes: 100,
+                entries: 10,
+            },
+            "graph",
+        ),
+        (
+            Budget {
+                bytes: 1 << 20,
+                entries: 1,
+            },
+            "graph",
+        ),
+        (
+            Budget {
+                bytes: 404,
+                entries: 10,
+            },
+            "assets",
+        ),
+        (
+            Budget {
+                bytes: 1 << 20,
+                entries: 2,
+            },
+            "assets",
+        ),
+    ] {
+        let label = format!("{}/{}", budget.bytes, budget.entries);
+        let Err(outcome) = capture(&g.store, g.source.clone(), &|| false, budget) else {
+            panic!("{label}: refused");
+        };
+        let failure = outcome.failure.unwrap();
+        assert_eq!(
+            (failure.phase, failure.kind),
+            (phase, ErrorKind::FileTooLarge),
+            "{label}"
+        );
+    }
+    let fits = capture(
+        &g.store,
+        g.source.clone(),
+        &|| false,
+        Budget {
+            bytes: 411,
+            entries: 3,
+        },
+    );
+    assert_eq!(fits.ok().unwrap().files.len(), 3);
+    g.close();
+}
+
+/// D8 (REVIEW-backup-zip F9): restore probes the graph volume's name
+/// folding instead of assuming the platform's. Linux test volumes tell case
+/// apart; the Windows and macOS runners' default volumes fold it (Apple
+/// also folds Unicode normalization). A root with no entry to probe counts
+/// as folding.
+#[test]
+fn restore_probes_the_destination_volume_folding() {
+    let root = scratch("backup-fold-probe");
+    let empty = restore::destination_fold(&root);
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let probed = restore::destination_fold(&root);
+    let (folding, exact) = if cfg!(any(target_os = "macos", target_os = "ios")) {
+        (
+            archive::Fold::CaseAndNormalization,
+            archive::Fold::Normalization,
+        )
+    } else {
+        (archive::Fold::Case, archive::Fold::Exact)
+    };
+    assert_eq!(empty, folding, "nothing to probe: the refusing side");
+    if cfg!(target_os = "linux") {
+        assert_eq!(probed, exact);
+    } else if cfg!(any(windows, target_os = "macos")) {
+        assert_eq!(probed, folding);
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// D7 (REVIEW-backup-zip F8): the production publication, settle and prune
+/// paths, each after a marker (`unlink` of a path that cannot exist) the
+/// syscall gate splits its trace on. `scripts/check-backup-syscalls.mjs`
+/// runs this test under `strace` and checks the order of syncs, renames
+/// and unlinks; alone it only checks the outcomes.
+#[test]
+fn syscall_gate_scenarios() {
+    let mark = |scenario: &str| {
+        let _ = std::fs::remove_file(format!("/tine-syscall-gate-marker/{scenario}"));
+    };
+    let g = Graph::new("backup-syscall-gate");
+    let mut edit = 0;
+    let mut snap = |marker: &str, keep: usize, changed: bool| {
+        if changed {
+            edit += 1;
+            write(&g.graph.join("pages/A.md"), &format!("- {edit}\n"));
+        }
+        mark(marker);
+        let outcome = g.snap("", keep);
+        assert!(outcome.failure.is_none(), "{marker}: {:?}", outcome.failure);
+    };
+    snap("first-publication", 2, true);
+    snap("unchanged-settled", 2, false);
+    snap("changed-publication", 2, true);
+    snap("publication-with-prune", 2, true);
+    assert_eq!(g.zip_names().len(), 2);
+    snap("publication-keep-12", BACKUP_KEEP_DEFAULT, true);
+    mark("settings-prune");
+    prune_now(&g.base, 1, std::time::Duration::from_secs(30));
+    assert_eq!(g.zip_names().len(), 1);
+    mark("end");
     g.close();
 }
 
@@ -1115,16 +1453,16 @@ fn runtime_backup_reads_graph_files_through_store() {
     std::fs::write(root.join("pages/Ignore.txt"), b"skip").unwrap();
     let (store, _, _) = Store::open(&root, tine_store::OpenOptions::default()).unwrap();
     let mut out = Vec::new();
-    let (read, failed, failure) = read_store_area(
+    let read = read_store_area(
         &store,
         Area::Pages,
         "pages/",
         is_graph_text,
         &|| false,
+        &mut Budget::archive(),
         &mut out,
     );
-    assert_eq!((read, failed), (1, 0));
-    assert!(failure.is_none());
+    assert_eq!(read.unwrap(), 1);
     assert_eq!(
         out,
         [("pages/nested/Note.md".to_owned(), b"- note\n".to_vec())]
@@ -1206,10 +1544,17 @@ fn a_cancelled_capture_reads_nothing() {
     std::fs::write(graph.join("pages/note.md"), b"secret").unwrap();
     let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
     let mut out = Vec::new();
-    let (read, failed, failure) =
-        read_store_area(&store, Area::Pages, "", is_graph_text, &|| true, &mut out);
-    assert_eq!((read, failed), (0, 1));
-    assert_eq!(failure.unwrap().kind, ErrorKind::Interrupted);
+    let failure = read_store_area(
+        &store,
+        Area::Pages,
+        "",
+        is_graph_text,
+        &|| true,
+        &mut Budget::archive(),
+        &mut out,
+    )
+    .unwrap_err();
+    assert_eq!(failure.kind, ErrorKind::Interrupted);
     assert!(out.is_empty());
     drop(store);
     let _ = std::fs::remove_dir_all(root);
@@ -1257,16 +1602,16 @@ fn asset_sidecars_are_captured_without_media_or_restore_recovery() {
         "{:old true}\n",
     );
     let mut out = Vec::new();
-    let (read, failed, failure) = read_store_area(
+    let read = read_store_area(
         &g.store,
         Area::Assets,
         "assets/",
         is_asset_sidecar,
         &|| false,
+        &mut Budget::archive(),
         &mut out,
     );
-    assert_eq!((read, failed), (2, 0));
-    assert!(failure.is_none());
+    assert_eq!(read.unwrap(), 2);
     out.sort();
     assert_eq!(
         out,
