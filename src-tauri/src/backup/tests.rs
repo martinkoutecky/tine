@@ -1095,34 +1095,6 @@ fn capture_refuses_at_the_aggregate_limits_while_reading() {
     g.close();
 }
 
-/// D8 (REVIEW-backup-zip F9): restore probes the graph volume's name
-/// folding instead of assuming the platform's. Linux test volumes tell case
-/// apart; the Windows and macOS runners' default volumes fold it (Apple
-/// also folds Unicode normalization). A root with no entry to probe counts
-/// as folding.
-#[test]
-fn restore_probes_the_destination_volume_folding() {
-    let root = scratch("backup-fold-probe");
-    let empty = restore::destination_fold(&root);
-    std::fs::create_dir_all(root.join("pages")).unwrap();
-    let probed = restore::destination_fold(&root);
-    let (folding, exact) = if cfg!(any(target_os = "macos", target_os = "ios")) {
-        (
-            archive::Fold::CaseAndNormalization,
-            archive::Fold::Normalization,
-        )
-    } else {
-        (archive::Fold::Case, archive::Fold::Exact)
-    };
-    assert_eq!(empty, folding, "nothing to probe: the refusing side");
-    if cfg!(target_os = "linux") {
-        assert_eq!(probed, exact);
-    } else if cfg!(any(windows, target_os = "macos")) {
-        assert_eq!(probed, folding);
-    }
-    let _ = std::fs::remove_dir_all(root);
-}
-
 /// D7 (REVIEW-backup-zip F8): the production publication, settle and prune
 /// paths, each after a marker (`unlink` of a path that cannot exist) the
 /// syscall gate splits its trace on. `scripts/check-backup-syscalls.mjs`

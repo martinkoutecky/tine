@@ -208,48 +208,13 @@ fn windows_part_is_safe(part: &str) -> bool {
     !reserved
 }
 
-/// Which names a destination volume treats as one file (restore probes
-/// it, `restore::destination_fold`). Unicode lowercasing approximates a
-/// case-insensitive volume's own table (NTFS's upcase table differs on a
-/// few characters); Store's no-replace publication still refuses a
-/// residual collision the folding does not model.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Fold {
-    /// Byte-exact names (the archive's own uniqueness).
-    Exact,
-    /// Names equal after lowercasing.
-    Case,
-    /// NFC only: a case-sensitive Apple volume still treats canonically
-    /// equivalent spellings (precomposed `é` and `e` + combining accent) as
-    /// one name.
-    Normalization,
-    /// Lowercased, then NFC: a case-insensitive Apple volume.
-    CaseAndNormalization,
-}
-
-/// Every path safe and unique after `fold`.
-pub(super) fn paths_are_safe<'a>(
-    paths: impl IntoIterator<Item = &'a str>,
-    windows: bool,
-    fold: Fold,
-) -> bool {
-    use unicode_normalization::UnicodeNormalization;
+/// Every path safe and byte-unique: the archive's own identity. Whether
+/// two names are one file at a destination is Store's restore preflight.
+pub(super) fn paths_are_safe<'a>(paths: impl IntoIterator<Item = &'a str>, windows: bool) -> bool {
     let mut seen = std::collections::HashSet::new();
-    for path in paths {
-        if !path_is_safe(path, windows) {
-            return false;
-        }
-        let key = match fold {
-            Fold::Exact => path.to_owned(),
-            Fold::Case => path.to_lowercase(),
-            Fold::Normalization => path.nfc().collect(),
-            Fold::CaseAndNormalization => path.to_lowercase().nfc().collect(),
-        };
-        if !seen.insert(key) {
-            return false;
-        }
-    }
-    true
+    paths
+        .into_iter()
+        .all(|path| path_is_safe(path, windows) && seen.insert(path))
 }
 
 // ---------------------------------------------------------------- writer
@@ -346,11 +311,7 @@ pub(super) fn write_archive(
     if total > MAX_TOTAL_BYTES {
         return Err(Problem::TooLarge("total"));
     }
-    if !paths_are_safe(
-        files.iter().map(|(path, _)| path.as_str()),
-        cfg!(windows),
-        Fold::Exact,
-    ) {
+    if !paths_are_safe(files.iter().map(|(path, _)| path.as_str()), cfg!(windows)) {
         return Err(Problem::Damaged("unsafe or duplicate path"));
     }
     let mut deflater = flate2::Compress::new(flate2::Compression::default(), false);
@@ -813,7 +774,6 @@ fn check_listing(directory: &Directory, manifest: &ZipManifest) -> Result<(), Pr
     if !paths_are_safe(
         manifest.files.iter().map(|file| file.path.as_str()),
         cfg!(windows),
-        Fold::Exact,
     ) {
         return Err(Problem::Damaged("unsafe or duplicate path"));
     }

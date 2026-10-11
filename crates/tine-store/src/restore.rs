@@ -156,6 +156,11 @@ impl Store {
     /// every file in the graph-text scope as recorded at snapshot time, with
     /// `hidden` in place of the live `:hidden`, into `<restore-id>/graph/`.
     /// `None` is the configured-roots restore described above.
+    ///
+    /// Two inputs that would be one file at their actual destination (names
+    /// differing in letter case where that directory folds case, or on Apple
+    /// volumes in Unicode normalization) refuse before anything is reserved,
+    /// retired or written; see `refuse_destination_aliases`.
     pub fn restore(
         &self,
         _kind: crate::EditKind,
@@ -270,6 +275,22 @@ impl Store {
                 ),
                 done,
             ));
+        }
+        // Destination identity has one owner (REVIEW-backup-zip-2 R2, E2):
+        // resolved here, before any recovery area is reserved.
+        let destinations = files.iter().map(|file| match file.area {
+            Area::Pages => root_path
+                .join(&self.graph.current_config().pages_dir)
+                .join(&file.rel),
+            Area::Journals => root_path
+                .join(&self.graph.current_config().journals_dir)
+                .join(&file.rel),
+            Area::Assets => assets_path.join(&file.rel),
+            Area::Graph => root_path.join(&file.rel),
+            Area::Meta | Area::Trash => root_path.join("logseq/config.edn"),
+        });
+        if let Err(error) = refuse_destination_aliases(destinations) {
+            return Err(fail("restore", error, done));
         }
         let recovery_id = format!(
             "{}-pre-restore-extras-{}-{}",
@@ -524,6 +545,160 @@ mod config_directory_tests {
     }
 }
 
+#[cfg(test)]
+mod destination_tests {
+    use super::*;
+    use std::fs;
+
+    fn graph(tag: &str) -> (PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!("tine-restore-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let root = base.join("graph");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/A.md"), "- keep me\n").unwrap();
+        // The assets target: external where the host can link it.
+        #[cfg(unix)]
+        let target = {
+            let target = base.join("folding-target");
+            fs::create_dir_all(&target).unwrap();
+            std::os::unix::fs::symlink(&target, root.join("assets")).unwrap();
+            target
+        };
+        #[cfg(not(unix))]
+        let target = {
+            fs::create_dir_all(root.join("assets")).unwrap();
+            root.join("assets")
+        };
+        fs::write(target.join("old.edn"), "{:old true}").unwrap();
+        (base, root)
+    }
+
+    fn open(root: &Path) -> Store {
+        let assets = root.join("assets");
+        let external = fs::symlink_metadata(&assets).unwrap().is_symlink();
+        let options = crate::OpenOptions {
+            approved_external_assets: external.then(|| fs::canonicalize(&assets).unwrap()),
+            ..Default::default()
+        };
+        let store = Store::open(root, options).unwrap().0;
+        store.whole_graph().unwrap();
+        store
+    }
+
+    fn inputs() -> Vec<RestoreFile> {
+        let file = |area, rel: &str, bytes: &str| RestoreFile {
+            area,
+            rel: rel.into(),
+            bytes: bytes.as_bytes().to_vec(),
+        };
+        vec![
+            file(Area::Pages, "A.md", "- restored\n"),
+            file(Area::Assets, "Pic.edn", "{:upper true}"),
+            file(Area::Assets, "pic.edn", "{:lower true}"),
+        ]
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// E2 (REVIEW-backup-zip-2 R2): a case-sensitive graph root with a
+    /// case-insensitive assets target. The host cannot make such a volume,
+    /// so the probe's answer is injected at this seam: the assets target
+    /// folds, the graph root does not. The sidecar pair refuses before
+    /// anything is retired or reserved.
+    #[test]
+    fn a_pair_aliasing_only_at_the_assets_target_refuses_before_mutation() {
+        let (base, root) = graph("alias-mixed");
+        FOLD_PROBE.with(|probe| {
+            probe.set(Some(|dir: &Path| {
+                matches!(
+                    dir.file_name().and_then(|name| name.to_str()),
+                    Some("folding-target" | "assets")
+                )
+            }))
+        });
+        let store = open(&root);
+        let target = store.graph.assets_path();
+        let result = store.restore(crate::EditKind::ReplacePage, inputs(), None);
+        FOLD_PROBE.with(|probe| probe.set(None));
+        let error = result.expect_err("a destination alias must refuse");
+        assert_eq!(error.cause.kind, io::ErrorKind::InvalidInput);
+        assert!(
+            error.done.recovery.is_empty(),
+            "E2/I-2: refused before any recovery area is reserved (exemplar restore.rs \
+             refuse_destination_aliases)"
+        );
+        assert_eq!(fs::read(root.join("pages/A.md")).unwrap(), b"- keep me\n");
+        assert_eq!(names(&root.join("pages")), ["A.md"]);
+        assert_eq!(names(&target), ["old.edn"]);
+        assert!(!root.join("logseq/.tine-trash").exists());
+        store.close();
+        drop(store);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    /// The same pair where both destinations tell case apart restores both
+    /// files. Uses the real probe, so it runs where the host's temporary
+    /// volume is case-sensitive (Linux); elsewhere it says so and stops.
+    #[test]
+    fn the_same_pair_on_case_sensitive_destinations_restores_both() {
+        let (base, root) = graph("alias-exact");
+        let store = open(&root);
+        let target = store.graph.assets_path();
+        if folds_case(&target) || folds_case(&root.join("pages")) {
+            eprintln!("skipped: this host's temporary volume folds case");
+        } else {
+            let result = store.restore(crate::EditKind::ReplacePage, inputs(), None);
+            assert!(result.is_ok(), "{result:?}");
+            assert_eq!(fs::read(target.join("Pic.edn")).unwrap(), b"{:upper true}");
+            assert_eq!(fs::read(target.join("pic.edn")).unwrap(), b"{:lower true}");
+            assert_eq!(fs::read(root.join("pages/A.md")).unwrap(), b"- restored\n");
+        }
+        store.close();
+        drop(store);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    /// D8: the probe measures the directory without writing. Linux test
+    /// volumes tell case apart; the Windows and macOS runners' default
+    /// volumes fold it. A directory with nothing to probe counts as folding.
+    #[test]
+    fn the_probe_measures_a_directory_without_writing() {
+        let dir = std::env::temp_dir().join(format!("tine-restore-probe-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        assert!(folds_case(&dir), "nothing to probe: the refusing side");
+        fs::create_dir(dir.join("pages")).unwrap();
+        let probed = folds_case(&dir);
+        if cfg!(target_os = "linux") {
+            assert!(!probed);
+        } else if cfg!(any(windows, target_os = "macos")) {
+            assert!(probed);
+        }
+        assert_eq!(names(&dir), ["pages"], "the probe writes nothing");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn names_fold_as_their_directory_compares_them() {
+        let fold = |name: &str, case, nfc| fold_name(std::ffi::OsStr::new(name), case, nfc);
+        assert_ne!(fold("A.md", false, false), fold("a.md", false, false));
+        assert_eq!(fold("A.md", true, false), fold("a.md", true, false));
+        assert_eq!(fold("Č.md", true, false), fold("č.md", true, false));
+        // Precomposed vs decomposed: distinct on NTFS and ext4, one on APFS.
+        let (nfc, nfd) = ("caf\u{e9}.md", "cafe\u{301}.md");
+        assert_ne!(fold(nfc, true, false), fold(nfd, true, false));
+        assert_eq!(fold(nfc, false, true), fold(nfd, false, true));
+        assert_eq!(fold("CAFE\u{301}.md", true, true), fold(nfc, true, true));
+    }
+}
+
 fn ensure_target_within_root(root: &Path, target: &Path) -> io::Result<()> {
     let canonical_root = crate::path_identity::canonical_existing_path(root)?;
     let (existing, canonical_existing) = crate::model::canonical_existing_ancestor(target)?;
@@ -539,6 +714,134 @@ fn ensure_target_within_root(root: &Path, target: &Path) -> io::Result<()> {
             "target escapes graph root",
         ))
     }
+}
+
+/// Refuse inputs that would be one file at their actual destination
+/// (REVIEW-backup-zip-2 R2, E2; refusal row `tine-store::restore` in
+/// docs/storage-contract.md). Scenario: a snapshot taken where `assets/Pic.edn` and
+/// `assets/pic.edn` were two files (malformed import, or a case-sensitive
+/// volume) restored where a destination folds case, for example a
+/// case-insensitive external assets target under a case-sensitive graph
+/// root: the second copy would retire the first restored file, or fail
+/// after the graph was already changed. Each destination's nearest existing
+/// ancestor directory is resolved on disk (so case variants of existing
+/// directories meet by identity); the names below it, which restore creates
+/// there, are compared under that directory's probed folding. Nothing is
+/// written: the caller runs this before reserving any recovery area. Known
+/// gap (approved with D8): Unicode lowercasing approximates a volume's own
+/// table (NTFS's upcase table differs on a few characters); a pair only
+/// that table equates passes here, and the second copy then retires the
+/// first restored file into recovery.
+fn refuse_destination_aliases(destinations: impl IntoIterator<Item = PathBuf>) -> io::Result<()> {
+    use std::collections::HashMap;
+    let normalizes = cfg!(any(target_os = "macos", target_os = "ios"));
+    let mut existing: HashMap<PathBuf, Option<usize>> = HashMap::new();
+    let mut identities: HashMap<same_file::Handle, usize> = HashMap::new();
+    let mut folds: Vec<bool> = Vec::new();
+    let mut seen = HashSet::new();
+    for destination in destinations {
+        let mut found = None;
+        for dir in destination.ancestors().skip(1) {
+            let index = match existing.get(dir) {
+                Some(index) => *index,
+                None => {
+                    let index = std::fs::metadata(dir)
+                        .ok()
+                        .filter(std::fs::Metadata::is_dir)
+                        .and_then(|_| same_file::Handle::from_path(dir).ok())
+                        .map(|handle| {
+                            *identities.entry(handle).or_insert_with(|| {
+                                folds.push(folds_case(dir));
+                                folds.len() - 1
+                            })
+                        });
+                    existing.insert(dir.to_path_buf(), index);
+                    index
+                }
+            };
+            if let Some(index) = index {
+                found = Some((dir, index));
+                break;
+            }
+        }
+        let (dir, index) = found.ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "no existing restore destination")
+        })?;
+        let below: Vec<String> = destination
+            .strip_prefix(dir)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "unsafe restore file"))?
+            .components()
+            .map(|part| fold_name(part.as_os_str(), folds[index], normalizes))
+            .collect();
+        if !seen.insert((index, below)) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "two snapshot names are one file at their destination (letter case or Unicode \
+                 form); restore it by hand",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A name as a directory that folds case (Unicode lowercase) and, on Apple
+/// volumes, Unicode normalization (NFC) compares it.
+fn fold_name(name: &std::ffi::OsStr, folds_case: bool, normalizes: bool) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let name = name.to_string_lossy();
+    let name = if folds_case {
+        name.to_lowercase()
+    } else {
+        name.into_owned()
+    };
+    if normalizes {
+        name.nfc().collect()
+    } else {
+        name
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests stand in for volumes the host cannot create (a case-insensitive
+    /// directory beside a case-sensitive one).
+    static FOLD_PROBE: std::cell::Cell<Option<fn(&Path) -> bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Whether directory `dir` folds letter case, probed without writing
+/// (REVIEW-backup-zip D8): an entry whose ASCII letters are case-flipped
+/// either is not found (the directory tells case apart) or resolves to the
+/// same file (it folds case). Every case-insensitive directory folds ASCII.
+/// No usable entry, or an error, counts as folding: the side that refuses.
+fn folds_case(dir: &Path) -> bool {
+    #[cfg(test)]
+    if let Some(probe) = FOLD_PROBE.with(std::cell::Cell::get) {
+        return probe(dir);
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return true;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let flipped: String = name
+            .chars()
+            .map(|c| match c {
+                'a'..='z' => c.to_ascii_uppercase(),
+                'A'..='Z' => c.to_ascii_lowercase(),
+                _ => c,
+            })
+            .collect();
+        if flipped == name || entry.file_type().map_or(true, |kind| kind.is_symlink()) {
+            continue;
+        }
+        let variant = dir.join(&flipped);
+        return match std::fs::symlink_metadata(&variant) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Ok(_) => same_file::is_same_file(entry.path(), &variant).unwrap_or(true),
+            Err(_) => true,
+        };
+    }
+    true
 }
 
 /// Create the recovery root `<parent_rel>/<id>` and make its entry, and every

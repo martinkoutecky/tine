@@ -69,8 +69,9 @@ We will write each snapshot as one zip, `<app data>/backups/<graph-id>.zips/<nam
   or not), another writer's zips and unknown names are never deleted.
 - **Restore.** Restore reads the whole zip under the lock and verifies it after, then hands
   `Store::restore` the verified bytes rather than rereading files. It refuses a damaged zip, an
-  unsupported schema or ZIP version, another graph, and names that collide by case on a destination
-  volume that folds case (probed without writing; on Apple platforms, also by Unicode normalization).
+  unsupported schema or ZIP version, and another graph. Names that would be one file at their
+  destination are refused by `Store::restore` itself, per destination directory (probed without
+  writing; on Apple platforms, also by Unicode normalization), before anything in the graph changes.
   Asset sidecars sit under `assets/` in the zip and restore to the graph's current assets target. Any
   failure of the pre-restore safety snapshot refuses the restore (D5); a weakly durable one proceeds.
 - **Legacy.** Schema-2/3 directories stay listed, restorable and pruned. Tine no longer writes them and

@@ -260,6 +260,9 @@ jobs:
       # (`_EMBED_INFO_PLIST` already defined).
       - name: macOS backup and file-lock tests
         run: "cargo test --no-fail-fast -p tine --lib --features custom-protocol -- backup:: file_lock:: --nocapture"
+      - name: macOS restore destination-identity tests (Store owns case and Unicode folding)
+        if: ${{ !cancelled() }}
+        run: "cargo test --no-fail-fast -p tine-store --lib -- restore:: --nocapture"
 
   android-core-compile:
     name: Full CI / Android core compile

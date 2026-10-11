@@ -224,18 +224,9 @@ fn verified_zip(
     } else {
         policy.hidden.clone()
     };
-    // Names that differ only in case (or, on Apple, in Unicode normalization)
-    // would be one file on a folding volume (D8: probed, before anything
-    // is written). Refusal row: docs/storage-contract.md, Graph backups.
-    if !archive::paths_are_safe(
-        manifest.files.iter().map(|file| file.path.as_str()),
-        cfg!(windows),
-        destination_fold(&source.root),
-    ) {
-        return Err(
-            "this backup holds names that differ only in letter case; restore it by hand".into(),
-        );
-    }
+    // Whether two names are one file at their destination is Store's
+    // question (`Store::restore`'s destination preflight, E2): this path
+    // only maps entries to areas.
     // Sidecars are graph-relative (`assets/`) and go to the graph's current
     // assets target through Store's approved-target guard (D5).
     let files = manifest
@@ -265,50 +256,6 @@ fn verified_zip(
         })
         .collect::<Result<_, _>>()?;
     Ok((files, Some(scope)))
-}
-
-/// How the volume under the graph root folds names (D8), probed without
-/// writing: an entry of the root whose ASCII letters are case-flipped
-/// either is not found (the volume tells case apart) or resolves to the
-/// same file (it folds case). Every case-insensitive volume folds ASCII.
-/// No usable entry or an error counts as folding, the side that refuses.
-/// Apple volumes also fold Unicode normalization, case-sensitive or not.
-pub(super) fn destination_fold(root: &std::path::Path) -> archive::Fold {
-    let folds_case = || -> bool {
-        let Ok(entries) = std::fs::read_dir(root) else {
-            return true;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let flipped: String = name
-                .chars()
-                .map(|c| match c {
-                    'a'..='z' => c.to_ascii_uppercase(),
-                    'A'..='Z' => c.to_ascii_lowercase(),
-                    _ => c,
-                })
-                .collect();
-            if flipped == name || entry.file_type().map_or(true, |kind| kind.is_symlink()) {
-                continue;
-            }
-            let variant = root.join(&flipped);
-            return match std::fs::symlink_metadata(&variant) {
-                Err(error) if error.kind() == ErrorKind::NotFound => false,
-                Ok(_) => same_file::is_same_file(entry.path(), &variant).unwrap_or(true),
-                Err(_) => true,
-            };
-        }
-        true
-    };
-    match (
-        cfg!(any(target_os = "macos", target_os = "ios")),
-        folds_case(),
-    ) {
-        (true, true) => archive::Fold::CaseAndNormalization,
-        (true, false) => archive::Fold::Normalization,
-        (false, true) => archive::Fold::Case,
-        (false, false) => archive::Fold::Exact,
-    }
 }
 
 /// A legacy schema-2/3 snapshot directory: its manifest, its inventory,
