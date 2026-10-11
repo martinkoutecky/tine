@@ -84,6 +84,7 @@ pub use file_kind::{is_asset_sidecar, is_graph_text};
 pub use model::{parse_input_depth_within_limit, PARSE_INPUT_MAX_BYTES};
 mod asset_watch;
 mod atomic_file;
+pub mod bench_events;
 #[cfg(feature = "test-faults")]
 pub mod cost_counters;
 pub mod directory_durability;

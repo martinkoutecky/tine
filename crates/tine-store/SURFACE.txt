@@ -168,7 +168,14 @@ enum store::TrashKind
 fn store::Store::trash_stats
 fn store::Store::purge_asset_trash
 
-## Diagnostics (ceiling: 1)
+## Diagnostics (ceiling: 3)
+# Storage A/B bench events (STEP3 §13 gate 2, branch og-bench-events): the
+# app asks once whether `TINE_BENCH_EVENTS` is set (its window then reports
+# `unfreeze`) and forwards that event. `Store::diagnostics` cannot answer
+# either: it is a per-Store pull dump, while these are one process-wide
+# append stream that exists before and without any Store.
+fn bench_events::enabled
+fn bench_events::unfreeze
 fn store::Store::diagnostics
 
 ## Listing (ceiling: 15)

@@ -253,3 +253,13 @@ pub(crate) async fn page_owed(
 pub(crate) async fn page_drafts_retry(ctx: GraphContext<'_>) -> Result<(), String> {
     hosted(ctx, PageHost::drafts_retry).await?
 }
+
+/// Bench-only (`tine_store::bench_events`): the window's `unfreeze` at `t`
+/// (its epoch ms). The window sends it only while `__TINE_BENCH_EVENTS__`
+/// is set; any other event name is ignored.
+#[tauri::command]
+pub(crate) fn bench_event(ev: String, t: f64) {
+    if ev == "unfreeze" {
+        tine_store::bench_events::unfreeze(t);
+    }
+}

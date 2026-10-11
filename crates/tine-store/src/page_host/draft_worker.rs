@@ -289,6 +289,7 @@ impl<F: HostIo> Host<F> {
     ) {
         match application {
             Application::Refresh(record) if present => {
+                self.bench_draft_durable(&record);
                 self.events.push(Event::Draft(record.clone()));
                 worker.remaining.extend(
                     self.older_vehicles(&record.page, Some(record.wseq))
@@ -315,6 +316,9 @@ impl<F: HostIo> Host<F> {
                     }
                     for (key, base) in reads {
                         self.events.push(Event::OperationRead { page: key, base });
+                    }
+                    for record in &records {
+                        self.bench_draft_durable(record);
                     }
                     self.events
                         .extend(records.iter().cloned().map(Event::Draft));
@@ -375,5 +379,14 @@ impl<F: HostIo> Host<F> {
             Application::Refresh(_) => worker.recover_notice = false,
             Application::Representation => {}
         }
+    }
+
+    /// Bench events: `record`'s vehicle is durable (renamed and its
+    /// directory synced) and the host installs it.
+    fn bench_draft_durable(&self, record: &Record) {
+        crate::bench_events::emit(|| crate::bench_events::Ev::DraftDurable {
+            path: self.fs.spelling(&record.page),
+            text: record.bytes.clone(),
+        });
     }
 }
