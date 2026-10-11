@@ -82,7 +82,14 @@ impl<'ast> Visit<'ast> for Mutations {
         let method = node.method.to_string();
         if matches!(
             method.as_str(),
-            "rename" | "remove_file" | "remove_dir" | "remove_dir_all" | "hard_link" | "create_new"
+            "rename"
+                | "remove_file"
+                | "remove_dir"
+                | "remove_dir_all"
+                | "hard_link"
+                | "create_new"
+                | "create_dir"
+                | "create_dir_all"
         ) {
             self.hits.insert((self.owner.clone(), method));
         }
@@ -181,10 +188,12 @@ fn every_content_mutation_has_a_reviewed_owner() {
         // Opens a published zip for writing only to `sync_all` it, then
         // syncs the directory chain; no content change.
         ("src-tauri/src/backup.rs", "settle"),
-        // Directory creation (create_dir / create_dir_all) creates empty
-        // directories only and is idempotent: a crash leaves the directory
-        // or nothing, and the next caller recreates it. It writes no content,
-        // so no durability claim rests on it.
+        // Empty, idempotent directory creation (create_dir_all, or a
+        // create_dir whose AlreadyExists is accepted): a crash leaves the
+        // directory or nothing, and the next caller recreates it. The
+        // creation itself carries no content; content later written inside
+        // depends on the ancestors reaching disk, which each owner's own
+        // protocol settles (or does not claim), not this admission.
         // `<id>.zips/` before the backup namespace lock: the publication's
         // sync chain settles it; restore only reads under it.
         ("src-tauri/src/backup.rs", "write_snapshot"),
@@ -199,6 +208,26 @@ fn every_content_mutation_has_a_reviewed_owner() {
         ("src-tauri/src/device_io.rs", "atomic_update_with_hooks"),
         ("src-tauri/src/device_io.rs", "copy_tree"),
         ("src-tauri/src/graph.rs", "default_graph_parent"),
+        // Directory creation as a protocol step, not idempotent setup.
+        // Exclusive reservation: `create_dir` of a fresh unique name claims a
+        // publish stage or recovery root; AlreadyExists means taken, so the
+        // owner picks another name. Crash matrix: at worst an empty, uniquely
+        // named directory; what is published into it is governed by the
+        // publish protocol's owners above (the recovery root and its
+        // ancestors are synced before use).
+        (
+            "crates/tine-store/src/publish.rs",
+            "reserve_publish_recovery",
+        ),
+        (
+            "crates/tine-store/src/publish.rs",
+            "reserve_publish_stage_at",
+        ),
+        // Restore's recovery root and missing destination parents: each
+        // created component's parent is synced before a file is retired or
+        // published inside (`reserve`, `real_parent` docs).
+        ("crates/tine-store/src/restore.rs", "real_parent"),
+        ("crates/tine-store/src/restore.rs", "reserve"),
         // Creates the persistent, empty lock file; never truncated or unlinked.
         ("src-tauri/src/file_lock.rs", "open_lock_file"),
         // Thumbnail cache cleanup is outside graph/private-durable state.
@@ -249,5 +278,22 @@ fn census_detects_an_unreviewed_directory_creation() {
             .hits
             .contains(&("rogue".into(), "fs::create_dir_all".into())),
         "I-1: a new directory creation must trigger owner review; exemplar backup.rs write_snapshot"
+    );
+}
+
+#[test]
+fn census_detects_an_unreviewed_directory_creation_through_a_handle() {
+    let planted = syn::parse_file(
+        "fn rogue(dir: &cap_std::fs::Dir) { dir.create_dir_all(\"backups/x.zips\").unwrap(); }",
+    )
+    .unwrap();
+    let mut visitor = Mutations::default();
+    visitor.visit_file(&planted);
+    assert!(
+        visitor
+            .hits
+            .contains(&("rogue".into(), "create_dir_all".into())),
+        "I-1: a handle-relative directory creation must trigger owner review too; exemplar \
+         backup.rs write_snapshot"
     );
 }
