@@ -30,6 +30,7 @@ static NAME_INVENTORY_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static TRANSACTION_REWRITES: AtomicU64 = AtomicU64::new(0);
 static WATCHER_READS: AtomicU64 = AtomicU64::new(0);
 static WATCHER_STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
+static OBSERVATION_READS: AtomicU64 = AtomicU64::new(0);
 static HOST_PUBLICATION_PROBES: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_RECONCILE_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_DRAFT_RECORD_VISITS: AtomicU64 = AtomicU64::new(0);
@@ -41,6 +42,24 @@ thread_local! {
     /// Set on the watcher thread, whose re-reads of just-written files are
     /// counted apart from the operation that wrote them (contract §5.4, K5).
     static WATCHER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set while the page host processes a watcher-forwarded observation.
+    static OBSERVING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `observe`, the page host's processing of an observation the watcher
+/// forwarded (the echo of a held page's change, often its own save): its
+/// whole-file reads go to `observation_reads`, billed by cause rather than
+/// by thread (contract §5.4, O5).
+pub(crate) fn observing<R>(observe: impl FnOnce() -> R) -> R {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            OBSERVING.with(|observing| observing.set(false));
+        }
+    }
+    OBSERVING.with(|observing| observing.set(true));
+    let _reset = Reset;
+    observe()
 }
 
 /// Mark the current thread as the watcher's: its file reads (whole, preamble
@@ -137,6 +156,10 @@ pub struct Counts {
     pub watcher_reads: u64,
     /// `stamps_by_path` made on the watcher thread.
     pub watcher_stamps_by_path: u64,
+    /// `full_reads` the page host made processing a watcher-forwarded
+    /// observation: its re-read of a held page the watcher saw change, the
+    /// echo of its own save included (§5.4, O5), off the operation's path.
+    pub observation_reads: u64,
     /// The page host's publication bookkeeping (REVIEW-3b-P2b R5): reply
     /// slots and rename orders examined when a page publishes
     /// (`Order::published`), answered pages examined while a caller waits for
@@ -195,6 +218,7 @@ pub fn reset() {
         &TRANSACTION_REWRITES,
         &WATCHER_READS,
         &WATCHER_STAMPS_BY_PATH,
+        &OBSERVATION_READS,
         &HOST_PUBLICATION_PROBES,
         &HOST_RECONCILE_VISITS,
         &HOST_DRAFT_RECORD_VISITS,
@@ -239,6 +263,7 @@ pub fn snapshot() -> Counts {
         transaction_rewrites: TRANSACTION_REWRITES.load(Ordering::Relaxed),
         watcher_reads: WATCHER_READS.load(Ordering::Relaxed),
         watcher_stamps_by_path: WATCHER_STAMPS_BY_PATH.load(Ordering::Relaxed),
+        observation_reads: OBSERVATION_READS.load(Ordering::Relaxed),
         host_publication_probes: HOST_PUBLICATION_PROBES.load(Ordering::Relaxed),
         host_reconcile_visits: HOST_RECONCILE_VISITS.load(Ordering::Relaxed),
         host_draft_record_visits: HOST_DRAFT_RECORD_VISITS.load(Ordering::Relaxed),
@@ -275,7 +300,12 @@ pub(crate) fn readdir() {
     READDIR.fetch_add(1, Ordering::Relaxed);
 }
 pub(crate) fn full_read() {
-    if !watcher_read() {
+    if watcher_read() {
+        return;
+    }
+    if OBSERVING.with(|observing| observing.get()) {
+        OBSERVATION_READS.fetch_add(1, Ordering::Relaxed);
+    } else {
         FULL_READS.fetch_add(1, Ordering::Relaxed);
     }
 }

@@ -48,6 +48,8 @@ pub(super) enum Owner {
 pub(super) struct Observation {
     pub failures: u32,
     pub due: u64,
+    /// The watcher forwarded it: its read bills as an observation's (O5).
+    pub forwarded: bool,
 }
 
 pub(super) struct State<F: HostIo, C: Clock> {
@@ -128,9 +130,10 @@ impl<F: HostIo, C: Clock> State<F, C> {
             .iter()
             .inspect(|_| work(Work::Candidates, 1))
             .find(|(key, o)| o.due <= now && self.observable(key))
-            .map(|(key, _)| key.clone());
-        if let Some(key) = owed {
-            let result = self.progress.with_host(|host| host.observe(&key));
+            .map(|(key, o)| (key.clone(), o.forwarded));
+        if let Some((key, forwarded)) = owed {
+            let observe = || self.progress.with_host(|host| host.observe(&key));
+            let result = observation(forwarded, observe);
             if self.progress.host.lock_request.is_some() {
                 return Disposition::Waiting;
             }
@@ -329,6 +332,19 @@ impl<F: HostIo, C: Clock> Drop for Driver<F, C> {
             let _ = thread.join();
         }
     }
+}
+
+/// Run `observe`; when the watcher forwarded the observation, its
+/// whole-file reads bill as `observation_reads` (§5.4, O5). Free without
+/// `test-faults`.
+#[inline]
+#[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
+fn observation<R>(forwarded: bool, observe: impl FnOnce() -> R) -> R {
+    #[cfg(feature = "test-faults")]
+    if forwarded {
+        return crate::cost_counters::observing(observe);
+    }
+    observe()
 }
 
 /// The state mutex, a step's result, and whether it ran under path locks.

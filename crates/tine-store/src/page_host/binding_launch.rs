@@ -35,7 +35,7 @@ impl PageHost {
     }
 
     /// The host holds nothing and owes nothing: no page, job, draft worker,
-    /// durable draft, queued request or index ownership. A cost test waits
+    /// durable draft, queued request, owed observation or index ownership. A cost test waits
     /// for it so it measures an operation through its cleanup (M4).
     #[cfg(feature = "test-faults")]
     pub fn quiescent_for_tests(&self) -> bool {
@@ -48,6 +48,7 @@ impl PageHost {
             && host.drafts.is_empty()
             && host.queue.is_empty()
             && host.applying.is_none()
+            && state.observe.is_empty()
             && state.book.owned().is_empty()
     }
 
@@ -98,7 +99,7 @@ impl PageHost {
             if let Some(shared) = shared.upgrade() {
                 shared.with_state(|state| {
                     for key in keys {
-                        state.observe.entry(key).or_default();
+                        state.observe.entry(key).or_default().forwarded = true;
                     }
                 });
             }

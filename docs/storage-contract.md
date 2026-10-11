@@ -653,9 +653,14 @@ are an accepted cost, on the watcher thread after publication: once the
 watcher settles they are at most the files the operation wrote plus a small
 constant (measured on 31 written pages: one read each on Linux, two on
 Windows). They are linear in the files written and do not grow with the
-graph (D-10). The rename cost tests bill publication only for reads on the
-publishing threads, and `rename_io.rs` bounds the watcher's settled re-reads
-separately (`watcher_reads`, `watcher_stamps_by_path`).
+graph (D-10). An echo of a page the host still holds is forwarded to the
+host, which re-reads it as an owed observation (§5); that read has the same
+cause and the same bound, whatever thread makes it. The rename cost tests
+quiesce the host and the watcher before measuring, bill publication only for
+the operation's own reads, and bound the settled re-reads separately: the
+watcher's (`watcher_reads`, `watcher_stamps_by_path`) and the host's
+re-reads of forwarded echoes (`observation_reads`, at most the files written
+plus a small constant).
 The same holds for files someone else delivered (a sync tool, an external
 editor; REVIEW-3b-P2b R4(b)): the racy rehash is linear in the files changed
 or delivered within the racy window, not in the graph. An aged unrelated file

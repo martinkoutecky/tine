@@ -6,6 +6,7 @@
 //! referrer costs one write and a bounded number of guard reads (I-13, I-25).
 use std::fs;
 use std::sync::Mutex;
+use std::time::Duration;
 use tine_graph_features::pages;
 use tine_store::cost_counters::{self, Counts};
 use tine_store::Store;
@@ -18,10 +19,48 @@ fn hosted<T>(
 ) -> T {
     let app_data = tempfile::tempdir().unwrap();
     let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
-    run(&host)
+    let result = run(&host);
+    quiesce(&host);
+    result
+}
+
+/// Wait until the host owes nothing and the watcher's and the host's
+/// observation reads have been quiet for `WATCHER_QUIET` (O5): every echo
+/// of the operation's own writes is then observed before the host stops,
+/// by the watcher (`watcher_reads`) or, for a page the host still held, by
+/// the host (`observation_reads`), so the split does not depend on timing.
+fn quiesce(host: &tine_store::PageHost) {
+    let echoes = || {
+        let c = cost_counters::snapshot();
+        (
+            c.watcher_reads,
+            c.watcher_stamps_by_path,
+            c.observation_reads,
+        )
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let mut last = echoes();
+    let mut quiet_since = std::time::Instant::now();
+    while quiet_since.elapsed() < WATCHER_QUIET || !host.quiescent_for_tests() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the host never quiesced"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        let now = echoes();
+        if now != last {
+            last = now;
+            quiet_since = std::time::Instant::now();
+        }
+    }
 }
 
 static CASE_LOCK: Mutex<()> = Mutex::new(());
+
+/// The watcher's re-reads of what an operation wrote land after it returns:
+/// the path-scoped diff after its debounce and the racy follow-up about 2 s
+/// later (contract §5.4). Quiet for longer than that means settled.
+const WATCHER_QUIET: Duration = Duration::from_secs(4);
 
 /// `pages` unrelated pages spread over three folders, `referrers` pages that
 /// link `[[Target]]`, and the target itself.
@@ -106,6 +145,15 @@ fn rename_cost_is_linear_in_referrers_and_flat_in_graph_size() {
         "I-25: each extra referrer costs at most three whole-file reads (stage, \
          pre-rename check, publication)"
     );
+    for counts in [few, many, large] {
+        assert!(
+            counts.observation_reads <= counts.files_written + 4,
+            "contract §5.4 (O5): once quiesced, the host's re-reads of held pages the watcher \
+             forwarded (the echoes of the operation's own writes) are at most the files it \
+             wrote plus a small constant, billed apart from the operation's own reads \
+             (exemplar page_host/driver.rs step_unblocked): {counts:?}"
+        );
+    }
 }
 
 /// REVIEW-3b-P2b R5: a rename's publication runs on the page host, so the
