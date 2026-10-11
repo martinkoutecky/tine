@@ -1775,3 +1775,84 @@ fn rename_cost_a_failing_operation_page_does_not_block_a_stop() {
         "the failing page keeps its exact draft"
     );
 }
+
+/// REVIEW-rename-cost R3-1: a stop runs its save-first saves before it
+/// explodes an operation vehicle (§6 step 3). With every owed referrer
+/// saving, the operation file retires whole: no draft copy is written.
+#[test]
+fn rename_cost_a_stop_saves_owed_referrers_before_any_draft() {
+    let refs: Vec<String> = (0..20).map(|i| format!("r{i:02}.md")).collect();
+    let mut fs = ModelFs::default();
+    fs.external("a.md", text("A"), true);
+    for r in &refs {
+        fs.external(r, text("original"), true);
+    }
+    let keys = ["a.md", "c.md"]
+        .into_iter()
+        .map(String::from)
+        .chain(refs.iter().cloned());
+    let locks = keys.map(|k| (k, Arc::new(Mutex::new(())))).collect();
+    let mut h = Host::new(fs, locks);
+    for r in &refs {
+        open(&mut h, r);
+    }
+    let set: BTreeSet<PageKey> = refs.iter().cloned().collect();
+    let renamed = h.rename_with("a.md", "c.md", &set, |bytes, key, _| {
+        Ok(if key.starts_with('r') {
+            text("operation")
+        } else {
+            bytes.clone()
+        })
+    });
+    assert_eq!(renamed, Disposition::Pending);
+    drain(&mut h);
+    saved(&mut h, "c.md");
+    assert_eq!(
+        h.fs.draft_files(true).len(),
+        1,
+        "precondition: one operation file"
+    );
+    let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    begin_stop(&mut p, false);
+    p.host.fs.calls.clear();
+    for n in 1..=200 {
+        if state(&p) != StopState::Waiting {
+            break;
+        }
+        time(&p, n * 30_000);
+        poll(&mut p);
+    }
+    assert_eq!(state(&p), StopState::Ready);
+    let copies = p
+        .host
+        .fs
+        .calls
+        .iter()
+        .filter(|c| **c == Phase::DraftTemp)
+        .count();
+    assert_eq!(
+        copies, 0,
+        "R3-1: the stop wrote draft copies its saves made unnecessary"
+    );
+    assert!(p.host.fs.draft_files(true).is_empty());
+}
+
+/// R3-1, availability: draft writes failing (a disk error in app data)
+/// while page saves succeed must not abort a stop over a rename whose saves
+/// retire the operation file.
+#[test]
+fn rename_cost_failing_draft_writes_do_not_abort_a_saving_stop() {
+    let mut h = super::lazy_operation_group();
+    saved(&mut h, "c.md");
+    let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    p.host.fs.inject(Phase::DraftTemp, [Fault::Before; 10_000]);
+    begin_stop(&mut p, false);
+    for n in 1..=200 {
+        if state(&p) != StopState::Waiting {
+            break;
+        }
+        time(&p, n * 60_000);
+        poll(&mut p);
+    }
+    assert_eq!(state(&p), StopState::Ready);
+}

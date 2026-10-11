@@ -686,7 +686,10 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         }
         let now = self.clock.now_ms();
         // Draft candidates, held or with draft vehicles only (D-10), in key
-        // order.
+        // order. A stop explodes an operation vehicle only once no
+        // save-first is owed (§6 step 3: save before any draft); the saves
+        // usually retire it whole (REVIEW-rename-cost R3-1).
+        let deferring = self.stopping.is_some() && self.owes_save_first();
         let mut next = next_after(&self.drafted, None);
         while let Some(key) = next {
             work(Work::Candidates, 1);
@@ -696,7 +699,8 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                     .last_draft
                     .is_none_or(|last| now >= last.checked_add(500).expect("clock exhausted"))
             });
-            if due && !desired.is_some_and(|page| self.held_back(&key, page)) {
+            let later = desired.is_none() && deferring && self.host.op_waits(&key);
+            if due && !later && !desired.is_some_and(|page| self.held_back(&key, page)) {
                 let result = self.host.begin_draft_with(&key, true);
                 if self.host.lock_request.is_some() {
                     return Disposition::Waiting;
