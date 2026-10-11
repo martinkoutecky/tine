@@ -188,6 +188,9 @@ once the write succeeds. The order is memory only:
 - No chaining: an operation over any page of a running order waits until
   that order ends. A deletion answers `Waiting`. A rename waits up to
   `OPERATION_WAIT` (10 s) and is then refused `Busy`, changing nothing.
+  A retained writer (§7: a merge, a namespace or spelling move) waits for
+  its reservation, holding no lock, as for a busy page (REVIEW-3b-P2b R2);
+  writers over other pages are not held up.
   Scenario: the destination's save keeps failing (disk error), or a
   referrer is conflicted (an external editor or sync delivery changed it).
 - A Discard of the destination before its witness cancels the rename in
@@ -197,7 +200,8 @@ once the write succeeds. The order is memory only:
   changes or the host fails; the operation still completes once it can.
   Every caller exit removes its reply slot.
 Unit cost: none (memory only). Proof
-`crates/tine-store/src/page_host/binding_order_tests.rs`, the model's
+`crates/tine-store/src/page_host/binding_order_tests.rs`,
+`crates/tine-graph-features/tests/retained_over_running_rename.rs`, the model's
 `orderHolds` (`storage-s3.qnt` s3.2, mutants MDF, MRD, MPR).
 
 **Ordinary edit unit cost (I-25, step 3b P2b).** An ordinary `page_submit`
@@ -225,12 +229,25 @@ collected under, and the window drops mail of any other. Proof
 
 **Window close (Q-TS5, J6).** The window sends no `page_close` for a page
 while the host owes it a save: a failed attempt (the notice), a conflict, or
-any version the host took from this window that has not published. It asks
-`page_wait` for the latest taken version and closes only when that answers
-true; a terminal notice keeps the page open under the notice rule, and a new
-session drops it without a close. Proof `src/document/host/client.test.ts`
-"keeps a page open while a version the host took from it is unpublished (J6)"
-and "lets go when the session ends (J6)".
+any version the host took from this window that has not published. That last
+is the client's one publication-debt predicate (`HostClient.owes`): a taken
+version no true `page_wait` answer has discharged. Only true discharges it.
+A false answer under a terminal notice (conflict, failed save, failed index
+publication) keeps the page while the notice stands. Any other false (a failed
+call, a host that ended) keeps it and asks again after a pause. A new session
+or the client's retirement ends the debt with the page; retirement settles a
+pending wait false and asks no more. Every let-go path consults the predicate:
+the close, working-set eviction (`unsettledPages`), the recovery panel and
+close prompt (`unsavedDrafts`, state "Saving") and reload blocking
+(`hostBlocksReload`). Natively, `page_wait` answers false once the driver has
+ended, the host is down or its state is poisoned. A down host dropped its
+pages, which would otherwise read as owing nothing. Proofs
+`src/document/host/client.test.ts` "keeps a page open while a version the host
+took from it is unpublished (J6)", "lets go when the session ends (J6)", the
+B1/R3 cases beside them, `src/document/host/wiring.publicationDebt.test.ts`
+(R1), the census `src/document/host/publicationDebt.guard.test.ts`, and
+`crates/tine-store/src/page_host/binding_tests.rs`
+`wait_published_refuses_once_the_driver_ended_or_the_host_is_down`.
 
 **Trash collisions (K6).** A deletion's move into the trash never replaces
 what is there. Only that no-replace move's own target-exists is a collision.

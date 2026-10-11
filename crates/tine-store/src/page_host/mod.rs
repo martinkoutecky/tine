@@ -1197,11 +1197,13 @@ impl<F: HostIo> Host<F> {
             .collect()
     }
 
+    /// D4 with no chaining (REVIEW-3b-P2b R2): a retained writer over a
+    /// page of a running order waits, like a host operation, until it ends.
     fn reserve(&mut self, keys: &BTreeSet<PageKey>) -> Disposition {
         if !self.keys.includes(keys) {
             return Disposition::Refused;
         }
-        if keys.iter().any(|key| self.busy(key)) {
+        if keys.iter().any(|key| self.busy(key)) || self.order.touches(keys) {
             return Disposition::Waiting;
         }
         self.retained.extend(keys.iter().cloned());

@@ -311,3 +311,127 @@ fn a_rename_whose_draft_fails_changes_nothing() {
     assert!(!live.root.join(NEW).exists());
     live.host.stop();
 }
+
+/// Reserve `pages` for a retained writer on another thread; the result
+/// arrives on the returned channel (true: reserved, false: refused).
+fn reserving<'s>(
+    scope: &'s std::thread::Scope<'s, '_>,
+    host: &'s PageHost,
+    pages: &'static [&'static str],
+    input: Input,
+) -> mpsc::Receiver<bool> {
+    let (sender, result) = mpsc::channel();
+    scope.spawn(move || {
+        let reserved = host.reserve(|| pages.iter().map(|p| PageId::from(*p)).collect(), input);
+        let _ = sender.send(reserved.is_ok());
+    });
+    result
+}
+
+const OTHER: &str = "pages/other.md";
+
+/// REVIEW-3b-P2b R2 (D4, no chaining): a retained writer's reservation over
+/// a page of a running order waits, holding no lock, until that order ends,
+/// even over its clean, witnessed destination; unrelated pages stay
+/// available. Here the referrer conflicts, so the order outlives the
+/// destination's publication; the window taking disk for the referrer lets
+/// the source's deletion finish, the order ends and the reservation is made.
+#[test]
+fn a_retained_writer_over_a_running_order_waits_until_it_completes() {
+    let live = Live::new(&[
+        (OLD, "- old\n"),
+        (REF, "- see [[Old]]\n"),
+        (OTHER, "- other\n"),
+    ]);
+    live.faults(Phase::PageTemp, 10_000);
+    assert!(rename(&live.host, &live.store).is_err());
+    let (key, _) = live.open(REF);
+    let id = live.submit(&key, "- typed\n", 0, None).unwrap();
+    let conflicted = live.answer(&key, id).page.unwrap().version;
+    clear_faults(&live);
+    until("the destination is witnessed", || {
+        live.root.join(NEW).exists()
+            && live.host.driver.shared.with_state(|state| {
+                state.progress.host.pages.get(NEW).is_none_or(|p| p.clean())
+                    && state
+                        .progress
+                        .host
+                        .pages
+                        .get(REF)
+                        .is_some_and(|p| p.conflict)
+            })
+    });
+    assert_eq!(census(&live.host).0, 1, "the order runs on");
+    std::thread::scope(|scope| {
+        let waiting = reserving(scope, &live.host, &[NEW], Input::Refuse);
+        assert_eq!(
+            waiting.recv_timeout(Duration::from_millis(500)),
+            Err(mpsc::RecvTimeoutError::Timeout),
+            "R2: a retained writer over the running order's destination waits"
+        );
+        let unrelated = live
+            .host
+            .reserve(|| vec![PageId::from(OTHER)], Input::Refuse);
+        assert!(unrelated.is_ok(), "an unrelated writer stays available");
+        drop(unrelated);
+        let id = live.id();
+        live.host
+            .discard(live.host.session(), id, &key, conflicted)
+            .unwrap();
+        live.answer(&key, id);
+        assert_eq!(
+            waiting.recv_timeout(Duration::from_secs(20)),
+            Ok(true),
+            "the order's completion lets the writer in"
+        );
+    });
+    assert_eq!(census(&live.host), (0, 0));
+    assert!(!live.root.join(OLD).exists(), "the rename completed");
+    live.host.stop();
+}
+
+/// R2: the same wait ends when the window cancels the order by discarding
+/// its unwitnessed destination. The writer over the order's source (its
+/// gated deletion) then finds the source back at its disk bytes, clean.
+#[test]
+fn a_retained_writer_over_a_running_order_waits_until_it_is_cancelled() {
+    let live = Live::new(&[
+        (OLD, "- old\n"),
+        (REF, "- see [[Old]]\n"),
+        (OTHER, "- other\n"),
+    ]);
+    live.faults(Phase::PageTemp, 10_000);
+    assert!(rename(&live.host, &live.store).is_err());
+    std::thread::scope(|scope| {
+        let waiting = reserving(scope, &live.host, &[OLD], Input::Refuse);
+        assert_eq!(
+            waiting.recv_timeout(Duration::from_millis(500)),
+            Err(mpsc::RecvTimeoutError::Timeout),
+            "R2: a retained writer over the running order's source waits"
+        );
+        let unrelated = live
+            .host
+            .reserve(|| vec![PageId::from(OTHER)], Input::Refuse);
+        assert!(unrelated.is_ok(), "an unrelated writer stays available");
+        drop(unrelated);
+        clear_faults(&live);
+        let (key, page) = live.open(NEW);
+        let id = live.id();
+        live.host
+            .discard(live.host.session(), id, &key, page.version)
+            .unwrap();
+        live.answer(&key, id);
+        assert_eq!(
+            waiting.recv_timeout(Duration::from_secs(20)),
+            Ok(true),
+            "the order's cancellation lets the writer in"
+        );
+    });
+    assert_eq!(census(&live.host), (0, 0));
+    assert_eq!(
+        live.disk(OLD),
+        "- old\n",
+        "a cancelled rename never trashes src"
+    );
+    live.host.stop();
+}
