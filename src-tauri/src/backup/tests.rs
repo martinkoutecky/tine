@@ -89,13 +89,7 @@ impl Graph {
     }
 
     fn newest_zip(&self) -> PathBuf {
-        let listed = list_backups_from_base(&self.base, &self.graph);
-        let id = &listed
-            .iter()
-            .find(|info| info.id.starts_with("zip:"))
-            .unwrap()
-            .id;
-        self.zips().join(format!("{}.zip", &id["zip:".len()..]))
+        newest_zip_in(&self.base, &self.graph)
     }
 
     fn close(self) {
@@ -103,6 +97,18 @@ impl Graph {
         drop(self.store);
         let _ = std::fs::remove_dir_all(self.root);
     }
+}
+
+/// The newest zip in listing order (stamp, then numeric counter): a path's
+/// lexical order puts `<stamp>.zip` after `<stamp>-2.zip`.
+fn newest_zip_in(base: &std::path::Path, graph: &std::path::Path) -> PathBuf {
+    let listed = list_backups_from_base(base, graph);
+    let id = &listed
+        .iter()
+        .find(|info| info.id.starts_with("zip:"))
+        .unwrap()
+        .id;
+    zip_base(base).join(format!("{}.zip", &id["zip:".len()..]))
 }
 
 fn verified(path: &std::path::Path) -> archive::Verified {
@@ -620,10 +626,11 @@ fn listing_never_reads_snapshot_payloads() {
 
 /// Launch-backup cost on a real graph (dossier og-backup-zip): files
 /// created and bytes written under the backups dir, sync calls, wall time,
-/// for a first backup, an unchanged second one, and one after three page
-/// edits; with the raw graph bytes the zip holds and the time an unchanged
-/// launch spends fully verifying its baseline. Runs only on a scratch COPY
-/// of a graph (it edits three pages):
+/// for a first backup, an unchanged second one, one after three page
+/// edits, a repair (the newest zip damaged, graph unchanged) and a prune
+/// (one more edit, keep 1); with files deleted, the raw graph bytes the zip
+/// holds and the time a full verification of the newest zip takes. Runs
+/// only on a scratch COPY of a graph (it edits four pages):
 /// `TINE_BACKUP_CORPUS=<copy> cargo test -p tine launch_backup_cost -- --ignored --nocapture`.
 #[test]
 #[ignore = "measurement; needs TINE_BACKUP_CORPUS (a scratch copy of a graph)"]
@@ -647,22 +654,14 @@ fn launch_backup_cost_on_corpus() {
         }
         out
     };
-    let run = |label: &str| {
+    let run = |label: &str, keep: usize| {
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
         let source = BackupSource::from_store(&store, &graph).unwrap();
         let before = files_under(&backups);
         BACKUP_OPS.with(|ops| ops.borrow_mut().clear());
         let started = std::time::Instant::now();
         let base = backups.join(root_backup_id(&source.root));
-        let outcome = write_snapshot(
-            &base,
-            &store,
-            source,
-            "",
-            &|| false,
-            BACKUP_KEEP_DEFAULT,
-            BACKUP_LOCK_WAIT,
-        );
+        let outcome = write_snapshot(&base, &store, source, "", &|| false, keep, BACKUP_LOCK_WAIT);
         let elapsed = started.elapsed();
         assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
         let after = files_under(&backups);
@@ -671,19 +670,19 @@ fn launch_backup_cost_on_corpus() {
             .filter(|path| !before.contains_key(*path))
             .collect();
         let bytes: u64 = created.iter().map(|path| after[*path]).sum();
+        let deleted = before
+            .keys()
+            .filter(|path| !after.contains_key(*path))
+            .count();
         let ops = BACKUP_OPS.with(|ops| ops.borrow().clone());
         let syncs = ops.iter().filter(|op| op.ends_with("sync")).count();
-        let newest = files_under(&zip_base(&base))
-            .into_keys()
-            .filter(|path| path.extension().is_some_and(|ext| ext == "zip"))
-            .max()
-            .unwrap();
+        let newest = newest_zip_in(&base, &graph);
         let verify_started = std::time::Instant::now();
         let verified = verified(&newest);
         let verify_ms = verify_started.elapsed().as_secs_f64() * 1000.0;
         let raw: u64 = verified.manifest.files.iter().map(|file| file.len).sum();
         eprintln!(
-            "BACKUP-COST {label}: graph_files={} created_files={} bytes_written={bytes} syncs={syncs} wall_ms={:.1} zip_bytes={} raw_bytes={raw} full_verify_ms={verify_ms:.1}",
+            "BACKUP-COST {label}: graph_files={} created_files={} deleted_files={deleted} bytes_written={bytes} syncs={syncs} wall_ms={:.1} zip_bytes={} raw_bytes={raw} full_verify_ms={verify_ms:.1}",
             outcome.copied,
             created.len(),
             elapsed.as_secs_f64() * 1000.0,
@@ -691,8 +690,8 @@ fn launch_backup_cost_on_corpus() {
         );
         store.close();
     };
-    run("first");
-    run("unchanged");
+    run("first", BACKUP_KEEP_DEFAULT);
+    run("unchanged", BACKUP_KEEP_DEFAULT);
     let mut pages: Vec<PathBuf> = std::fs::read_dir(graph.join("pages"))
         .unwrap()
         .flatten()
@@ -700,12 +699,22 @@ fn launch_backup_cost_on_corpus() {
         .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
         .collect();
     pages.sort();
-    for page in &pages[..3] {
+    let edit = |page: &PathBuf| {
         let mut text = std::fs::read(page).unwrap();
         text.extend_from_slice(b"\n- backup cost probe edit\n");
         std::fs::write(page, text).unwrap();
-    }
-    run("three-edits");
+    };
+    pages[..3].iter().for_each(edit);
+    run("three-edits", BACKUP_KEEP_DEFAULT);
+    let base = backups.join(root_backup_id(&graph));
+    let newest = newest_zip_in(&base, &graph);
+    let mut damaged = std::fs::read(&newest).unwrap();
+    let middle = damaged.len() / 2;
+    damaged[middle] ^= 0x01;
+    std::fs::write(&newest, damaged).unwrap();
+    run("repair", BACKUP_KEEP_DEFAULT);
+    edit(&pages[3]);
+    run("prune", 1);
     let _ = std::fs::remove_dir_all(&app_data);
 }
 
