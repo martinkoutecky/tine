@@ -267,6 +267,15 @@ fn rename_through_cleanup(
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let counts = cost_counters::snapshot();
+    // REVIEW-rename-cost: a quiescent host retired the operation vehicle,
+    // so fewer writes cannot come from a draft that was never removed.
+    let drafts = temp.path().join("app/drafts-v2");
+    assert!(drafts.is_dir(), "the host keeps its drafts at {drafts:?}");
+    let vehicles: Vec<_> = walk_files(&drafts);
+    assert!(
+        vehicles.is_empty(),
+        "drafts left after the rename: {vehicles:?}"
+    );
     assert!(
         !root.join("pages/Target.md").exists(),
         "the source is deleted"
@@ -411,3 +420,19 @@ const CANDIDATES_PER_REFERRER: u64 = 20;
 const WORKER_KEYS_PER_REFERRER: u64 = 220;
 const BOOK_PER_REFERRER: u64 = 50;
 const HOST_WORK_FLOOR: u64 = 500;
+
+fn walk_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            files.extend(walk_files(&path));
+        } else {
+            files.push(path);
+        }
+    }
+    files
+}
