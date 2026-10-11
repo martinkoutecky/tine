@@ -2439,3 +2439,33 @@ fn opening_an_unchanged_page_leaves_the_launch_checkpoint_clean() {
         "an open whose bytes the index holds must not mark the launch checkpoint dirty"
     );
 }
+
+/// An ownership transition that moves no row leaves the derived cache the
+/// published generation's: an open of an unchanged page must not make every
+/// later launch-checkpoint capture "unpublished" (it retried every 5 s and
+/// never wrote while no other publication came).
+#[test]
+fn an_open_that_moves_no_row_leaves_the_checkpoint_capturable() {
+    let live = Live::with(
+        &[("pages/a.md", "- a\n"), ("pages/b.md", "- b [[a]]\n")],
+        true,
+    );
+    assert!(matches!(
+        live.store.write_checkpoint_now(),
+        Some(crate::CheckpointWrite::Written { .. })
+    ));
+    let (a, _) = live.open("pages/a.md");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !(live.host.driver.shared).with_state(|s| s.book.index.contains_key(&a)) {
+        assert!(
+            Instant::now() < deadline,
+            "the Open read was never published"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let outcome = live.store.write_checkpoint_now();
+    assert!(
+        matches!(outcome, Some(crate::CheckpointWrite::Written { .. })),
+        "a checkpoint after an unchanged open: {outcome:?}"
+    );
+}

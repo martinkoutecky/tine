@@ -29,11 +29,10 @@ impl Graph {
         }
         self.held.bump();
         let affected = self.affected(guard.as_deref(), spelled);
-        let mut pages = guard.as_mut().map(Arc::make_mut);
         let mut memo = Memo::default();
         let mut settled = false;
         for path in affected {
-            settled |= self.settle(pages.as_deref_mut(), &mut memo, &path);
+            settled |= self.settle(guard.as_mut(), &mut memo, &path);
         }
         // The generation-keyed listings named settled pages as before.
         if settled {
@@ -85,18 +84,24 @@ impl Graph {
     /// row and no errors. True when the installed state moved: the next
     /// capture renames the path from what it names now. An owner's row
     /// already derived from its bytes moves nothing (an open's hold).
-    fn settle(&self, pages: Option<&mut Pages>, memo: &mut Memo, path: &Path) -> bool {
+    ///
+    /// `cache` is copied on write only where a row moves: a settle that
+    /// moves nothing leaves it the published generation's, which a launch
+    /// checkpoint capture requires (else every capture is "unpublished"
+    /// until the next publication).
+    fn settle(&self, cache: Option<&mut Arc<Pages>>, memo: &mut Memo, path: &Path) -> bool {
         match self.authority_in(memo, path) {
             Authority::Disk => return false,
             Authority::Owner(key, bytes) => {
                 let at = self.root.join(self.held.spellings().spelling(&key));
                 if at != path {
-                    self.retire_row(pages, path, true);
-                } else if let Some(pages) = pages {
+                    self.retire_row(cache.map(Arc::make_mut), path, true);
+                } else if let Some(cache) = cache {
                     let rev = std::str::from_utf8(&bytes).ok().map(content_rev);
                     if self.derived.disk_revs.read().unwrap().get(path) == rev.as_ref() {
                         return false;
                     } else {
+                        let pages = Arc::make_mut(cache);
                         match self.owned_row(&key, &bytes, None) {
                             Some(row) => self.put_row(pages, row),
                             None => {
@@ -107,7 +112,7 @@ impl Graph {
                 }
             }
             Authority::Withheld => {
-                self.retire_row(pages, path, true);
+                self.retire_row(cache.map(Arc::make_mut), path, true);
             }
         }
         self.held.retired.lock().unwrap().insert(path.to_path_buf());
@@ -269,7 +274,7 @@ impl Graph {
         if !unchanged || guard.is_none() {
             let before = self.cache_gen.load(Ordering::Acquire);
             let mut renamed = true;
-            if let Some(pages) = guard.as_mut().map(Arc::make_mut) {
+            if let Some(cache) = guard.as_mut() {
                 // Derived before the lock unless the installed row changed
                 // since (the writer excludes that; this keeps it exact).
                 if row.is_none() {
@@ -279,6 +284,7 @@ impl Graph {
                 }
                 match row.take() {
                     Some(row) => {
+                        let pages = Arc::make_mut(cache);
                         let slot = self.cached_page_index_for_path(pages, &path);
                         renamed = !slot
                             .and_then(|slot| pages.get(slot))
@@ -289,7 +295,7 @@ impl Graph {
                     }
                     // The owner's absence: settled like a transition.
                     None => {
-                        self.settle(Some(pages), &mut Memo::default(), &path);
+                        self.settle(Some(cache), &mut Memo::default(), &path);
                     }
                 }
             }
