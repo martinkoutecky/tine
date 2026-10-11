@@ -46,6 +46,28 @@ fn census(host: &PageHost) -> (usize, usize) {
     })
 }
 
+/// A writer parked in the flush pause, undone on drop: faults cleared, the
+/// pause resumed, then `_held` released. A failed `until` inside a thread
+/// scope then fails the test instead of hanging the scope's join on the
+/// parked writer (seen on hosted Windows, run 38130589757 attempt 2).
+/// Poison-tolerant: it also runs while a failed assertion unwinds.
+struct Unpark<'a, H> {
+    live: &'a Live,
+    pause: crate::store::TestPause,
+    _held: H,
+}
+
+impl<H> Drop for Unpark<'_, H> {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.live.host.driver.shared.state.lock() {
+            state.progress.host.fs.faults.clear();
+        }
+        let (state, resumed) = &*self.pause;
+        state.lock().unwrap_or_else(|poison| poison.into_inner()).1 = true;
+        resumed.notify_all();
+    }
+}
+
 fn until(what: &str, test: impl Fn() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(20);
     while !test() {
@@ -590,6 +612,11 @@ fn a_flush_handed_to_a_rename_is_told_busy_after_the_bound() {
             .with_state(|state| state.progress.host.worker.is_some())
     };
     std::thread::scope(|scope| {
+        let _unpark = Unpark {
+            live: &live,
+            pause: Arc::clone(&pause),
+            _held: (),
+        };
         let (sender, refused) = mpsc::channel();
         let started = Instant::now();
         let host = &live.host;
@@ -668,6 +695,11 @@ fn a_flush_over_a_mixed_set_is_told_busy_when_a_rename_holds_its_clean_page() {
             .with_state(|state| state.progress.host.worker.is_some())
     };
     std::thread::scope(|scope| {
+        let unpark = Unpark {
+            live: &live,
+            pause: Arc::clone(&pause),
+            _held: held,
+        };
         let (sender, refused) = mpsc::channel();
         let started = Instant::now();
         let host = &live.host;
@@ -689,8 +721,7 @@ fn a_flush_over_a_mixed_set_is_told_busy_when_a_rename_holds_its_clean_page() {
             .driver
             .shared
             .with_state(|state| state.progress.host.retained.is_empty());
-        drop(held);
-        clear_faults(&live);
+        drop(unpark);
         assert_eq!(
             outcome,
             Ok(Some(ReserveRefusal::Busy)),
